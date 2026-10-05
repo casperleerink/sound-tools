@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::backend::ParameterChange;
 use crate::scan::ScannedPlugin;
 use crate::{Pin, PluginProblem};
 
@@ -36,6 +37,18 @@ impl Parameter {
     /// Whether `value` is in its range.
     pub(crate) fn takes(&self, value: f64) -> bool {
         (self.minimum..=self.maximum).contains(&value)
+    }
+
+    /// Whether an automation lane may move it: the plugin says a host may automate it, and it
+    /// takes any value in its range, as a whole number of a built-in device takes no lane.
+    pub fn takes_lane(&self) -> bool {
+        self.automatable && self.steps.is_none()
+    }
+
+    /// Whether a lane may move it while a record pins it at `pin`: it takes a lane and the pin
+    /// is in its range, else the pin moves nothing and neither would its lane.
+    pub fn takes_lane_at(&self, pin: &Pin) -> bool {
+        self.takes_lane() && self.takes(pin.value)
     }
 
     /// The value of the step `index` of a stepped parameter, inside its range. A CLAP plugin
@@ -130,6 +143,28 @@ impl Steps {
     }
 }
 
+/// Parameters by their id, as the host keeps them.
+pub(crate) fn by_id(parameters: Vec<Parameter>) -> BTreeMap<u32, Parameter> {
+    let parameters = parameters.into_iter();
+    parameters
+        .map(|parameter| (parameter.id, parameter))
+        .collect()
+}
+
+/// The pins of a record that a plugin with `parameters` takes: one it has a parameter for, with
+/// a value in its range. Only these are sent; the others move nothing and are reported.
+pub(crate) fn playable<'a>(
+    parameters: &'a BTreeMap<u32, Parameter>,
+    pins: &'a BTreeMap<u32, Pin>,
+) -> impl Iterator<Item = ParameterChange> + 'a {
+    let pins = pins.iter();
+    pins.filter(|(id, pin)| parameters.get(id).is_some_and(|it| it.takes(pin.value)))
+        .map(|(id, pin)| ParameterChange {
+            id: *id,
+            value: pin.value,
+        })
+}
+
 /// The name an automation lane gives the pin `id`: its path in the record, as a lane names a
 /// number of a built-in device by its path.
 pub(crate) fn lane_of_pin(id: u32) -> String {
@@ -183,6 +218,26 @@ pub fn read_parameters(plugin: &ScannedPlugin) -> Result<Vec<Parameter>, PluginP
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plugin that narrows a range leaves a pin outside it, which takes no lane.
+    #[test]
+    fn a_pin_outside_the_range_takes_no_lane() {
+        let parameter = Parameter {
+            id: 0,
+            name: "Cutoff".to_string(),
+            minimum: 20.0,
+            maximum: 20_000.0,
+            default: 1000.0,
+            steps: None,
+            automatable: true,
+        };
+        let pin = |value| Pin {
+            name: "Cutoff".to_string(),
+            value,
+        };
+        assert!(parameter.takes_lane_at(&pin(1000.0)));
+        assert!(!parameter.takes_lane_at(&pin(30_000.0)));
+    }
 
     #[test]
     fn a_list_longer_than_the_most_names_has_none_and_a_short_one_has_one_per_text() {

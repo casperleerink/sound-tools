@@ -27,14 +27,14 @@
 //! composer can see which plugin to install and an agent can be asked to correct the record.
 //! The record itself is untouched, as everywhere else.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, Context, Div, Entity, FocusHandle, SharedString, Task, Window, div, prelude::*, px,
 };
-use sound_core::{Instance, MAX_AUTOMATED, ProjectEvent};
+use sound_core::{Instance, InstanceId, MAX_AUTOMATED, Project, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CELL_WIDTH, Cell, ROW_HEIGHT};
 use sound_ui::components::device_card::{
@@ -50,11 +50,12 @@ use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, Lanes, Session, Views, weak_callback,
+    ActiveTheme, ControlEdit, DeviceLabel, Devices, LaneNumber, Lanes, Numbers, Session, Views,
+    weak_callback,
 };
 
 use crate::parameters::{lane_of_pin, pin_of_lane};
-use crate::{Parameter, Pin, PluginRecord, Steps, WeakPlugins};
+use crate::{Parameter, Pin, PluginRecord, Plugins, Steps, WeakPlugins};
 
 /// The room at the left of the body, where the plain card has all of it.
 const LEFT_WIDTH: f32 = PLAIN_CARD_WIDTH - 2. * CARD_PADDING;
@@ -69,14 +70,14 @@ const LANE_READ_OUT: Duration = Duration::from_millis(66);
 /// `plugins` is the host of this session, held weakly: the host must go when the project goes,
 /// because that is what saves the state of every plugin.
 pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) {
-    let for_view = plugins.clone();
+    let (for_view, for_label) = (plugins.clone(), plugins.clone());
     views.register_card(move |session, plugin, frame, window, cx| {
         PluginView::new(for_view.clone(), session, plugin, frame, window, cx)
     });
     devices.describe::<PluginRecord>(move |record| {
         // The name its maker gave it, or the id, which is all that is left of a plugin this
         // machine does not have.
-        let installed = plugins
+        let installed = for_label
             .upgrade()
             .and_then(|plugins| plugins.installed_name(record.format, &record.plugin_id));
         DeviceLabel {
@@ -84,11 +85,97 @@ pub fn register(views: &mut Views, devices: &mut Devices, plugins: WeakPlugins) 
             name: installed.map_or_else(|| record.plugin_id.clone().into(), SharedString::from),
         }
     });
-    // A lane names a pin by its path, and the record by its name.
-    devices.name_numbers::<PluginRecord>(|record, lane| {
-        let pin = record.parameters.get(&pin_of_lane(lane)?)?;
-        (!pin.name.is_empty()).then(|| pin.name.clone().into())
-    });
+    devices.numbers::<PluginRecord>(PluginNumbers(plugins));
+}
+
+/// What the lanes of a track need of the parameters of a plugin: a lane names a pin by its
+/// path, `parameters.12.value`, and reads out a value in the plugin's own text, as the card does.
+/// A lane can be added for any parameter that takes one, as for a knob of a built-in device:
+/// one that is not pinned yet is pinned at what it plays now, in the same undo step.
+struct PluginNumbers(WeakPlugins);
+
+impl Numbers<PluginRecord> for PluginNumbers {
+    fn name(
+        &self,
+        _: &Project,
+        _: &InstanceId,
+        record: &PluginRecord,
+        field: &str,
+    ) -> Option<String> {
+        let pin = record.parameters.get(&pin_of_lane(field)?)?;
+        (!pin.name.is_empty()).then(|| pin.name.clone())
+    }
+
+    fn text(
+        &self,
+        _: &Project,
+        id: &InstanceId,
+        _: &PluginRecord,
+        field: &str,
+        value: f32,
+    ) -> Option<String> {
+        let plugins = self.0.upgrade()?;
+        plugins.parameter_text(id, pin_of_lane(field)?, f64::from(value))
+    }
+
+    fn lane_numbers(&self, _: &Project, id: &InstanceId, record: &PluginRecord) -> Vec<LaneNumber> {
+        let parameters = self.0.upgrade().and_then(|plugins| plugins.parameters(id));
+        let Some(parameters) = parameters else {
+            return Vec::new();
+        };
+        let numbers = parameters.values().filter(|it| can_take_lane(record, it));
+        numbers
+            .map(|parameter| LaneNumber {
+                field: lane_of_pin(parameter.id).into(),
+                name: parameter.name.clone().into(),
+            })
+            .collect()
+    }
+
+    fn take(
+        &self,
+        _: &Project,
+        id: &InstanceId,
+        record: &PluginRecord,
+        field: &str,
+    ) -> Option<(PluginRecord, f32)> {
+        let plugins = self.0.upgrade()?;
+        let parameter_id = pin_of_lane(field)?;
+        let parameters = plugins.parameters(id)?;
+        let parameter = parameters.get(&parameter_id)?;
+        if record.parameters.contains_key(&parameter_id) || !can_take_lane(record, parameter) {
+            return None;
+        }
+        let pin = pin_now(&plugins, id, parameter);
+        let value = pin.value as f32;
+        let mut record = record.clone();
+        record.parameters.insert(parameter_id, pin);
+        Some((record, value))
+    }
+}
+
+/// Whether a lane can be added for `parameter` of the plugin of `record`: pinned, its pin takes
+/// one as the host plays it; else it takes one and the record has room to pin it.
+fn can_take_lane(record: &PluginRecord, parameter: &Parameter) -> bool {
+    match record.parameters.get(&parameter.id) {
+        Some(pin) => parameter.takes_lane_at(pin),
+        None => parameter.takes_lane() && record.parameters.len() < MAX_AUTOMATED,
+    }
+}
+
+/// A pin of `parameter` at what the plugin of `id` plays now, or at its default when it cannot
+/// say: on a step for a stepped one, inside its range for the rest.
+fn pin_now(plugins: &Plugins, id: &InstanceId, parameter: &Parameter) -> Pin {
+    let now = plugins.parameter_value(id, parameter.id);
+    let now = now.map_or(parameter.default, |now| now.value);
+    let value = match &parameter.steps {
+        Some(steps) => parameter.step_value(steps, steps.index(now)),
+        None => inside(now, parameter.minimum, parameter.maximum),
+    };
+    Pin {
+        name: parameter.name.clone(),
+        value,
+    }
 }
 
 /// The control a parameter gets on the card.
@@ -141,6 +228,8 @@ pub struct PluginView {
     read_out_later: Option<Task<()>>,
     /// The list that puts a parameter on the card and takes one off.
     menu: Entity<DropdownMenu>,
+    /// The pins an automation lane moves, as the list last showed them: those do not come off.
+    laned: BTreeSet<u32>,
     /// The pin whose knob is being dragged, and what its values meant when the drag began. A
     /// drag whose knob goes away, because the pin was taken off or became another control,
     /// sends no end, so the card ends it. So it does when the plugin gives the knob other
@@ -219,7 +308,11 @@ impl PluginView {
         })
         .detach();
         let lanes = Lanes::follow_named(&session, plugin.id(), cx);
-        cx.observe(&lanes, |view, _, cx| view.read_out(cx)).detach();
+        cx.observe(&lanes, |view, _, cx| {
+            view.read_out(cx);
+            view.fill_menu(false, cx);
+        })
+        .detach();
         let mut view = Self {
             session,
             plugin,
@@ -233,6 +326,7 @@ impl PluginView {
             lane_asked: BTreeMap::new(),
             read_out_later: None,
             menu,
+            laned: BTreeSet::new(),
             dragged: None,
         };
         view.ask_the_plugin(true, cx);
@@ -270,14 +364,31 @@ impl PluginView {
         self.readouts.retain(|pin, _| pins.contains_key(pin));
         self.read_out(cx);
 
-        let Some(parameters) = &self.parameters else {
+        self.fill_menu(record_changed || !same_list, cx);
+    }
+
+    /// Fills the list of parameters again, when `changed` says what it shows did or the pins a
+    /// lane moves are others now.
+    fn fill_menu(&mut self, changed: bool, cx: &mut Context<Self>) {
+        let (Some(parameters), Some(record)) = (
+            &self.parameters,
+            self.session.read(cx).project().state(&self.plugin),
+        ) else {
             return;
         };
-        if record_changed || !same_list {
-            let entries = menu_entries(parameters, &pins);
-            self.menu
-                .update(cx, |menu, cx| menu.set_entries(entries, cx));
+        let lanes = self.lanes.read(cx);
+        let pins = record.parameters.keys();
+        let laned: BTreeSet<u32> = pins
+            .filter(|pin| lanes.is_automated(&lane_of_pin(**pin)))
+            .copied()
+            .collect();
+        if !changed && laned == self.laned {
+            return;
         }
+        let entries = menu_entries(parameters, &record.parameters, &laned);
+        self.laned = laned;
+        self.menu
+            .update(cx, |menu, cx| menu.set_entries(entries, cx));
     }
 
     /// Asks the plugin for its text for the value each pin plays now, the record's or a lane's,
@@ -370,6 +481,9 @@ impl PluginView {
             return;
         };
         if let Some(pin) = record.parameters.get(&parameter_id) {
+            if self.laned.contains(&parameter_id) {
+                return;
+            }
             let label = format!("Remove {}", pin.name);
             let remove = move |record: &mut PluginRecord, ()| {
                 record.parameters.remove(&parameter_id);
@@ -386,19 +500,10 @@ impl PluginView {
         let Some(parameter) = parameters.and_then(|list| list.get(&parameter_id)) else {
             return;
         };
-        let now = self.plugins.upgrade().and_then(|plugins| {
-            let now = plugins.parameter_value(self.plugin.id(), parameter_id)?;
-            Some(now.value)
-        });
-        let now = now.unwrap_or(parameter.default);
-        let value = match &parameter.steps {
-            Some(steps) => parameter.step_value(steps, steps.index(now)),
-            None => inside(now, parameter.minimum, parameter.maximum),
+        let Some(plugins) = self.plugins.upgrade() else {
+            return;
         };
-        let pin = Pin {
-            name: parameter.name.clone(),
-            value,
-        };
+        let pin = pin_now(&plugins, self.plugin.id(), parameter);
         let label = format!("Add {}", parameter.name);
         let add = move |record: &mut PluginRecord, pin| {
             record.parameters.insert(parameter_id, pin);
@@ -577,18 +682,27 @@ impl PluginView {
 
 /// The rows of the list of parameters: every parameter of the plugin, with a check on the
 /// pinned ones, and after them the pins the plugin has no parameter for, so those can come off
-/// too. At the most pins, the others cannot be picked and a line says why.
+/// too. At the most pins, the others cannot be picked and a line says why. A pin in `laned` an
+/// automation lane moves, and it stays: as a knob of a built-in device, its lane would move
+/// nothing without it.
 fn menu_entries(
     parameters: &BTreeMap<u32, Parameter>,
     pins: &BTreeMap<u32, Pin>,
+    laned: &BTreeSet<u32>,
 ) -> Vec<MenuEntry> {
     let full = pins.len() >= MAX_AUTOMATED;
     let listed = parameters.values().map(|parameter| {
         let pinned = pins.contains_key(&parameter.id);
-        MenuItem::new(parameter.id.to_string(), parameter.name.clone())
+        let has_lane = laned.contains(&parameter.id);
+        let item = MenuItem::new(parameter.id.to_string(), parameter.name.clone())
             .checked(pinned)
             .selectable(false)
-            .disabled(full && !pinned)
+            .disabled((full && !pinned) || has_lane);
+        if has_lane {
+            item.description("Automated. Delete its lane to take it off")
+        } else {
+            item
+        }
     });
     let unknown = pins
         .iter()

@@ -44,7 +44,7 @@ use crate::processor::{
 };
 
 use crate::backend::{Hand, KeyDirection, LoadedPlugin, ParameterChange};
-use crate::parameters::{Parameter, ParameterValue, pin_problem};
+use crate::parameters::{Parameter, ParameterValue, by_id, pin_problem, playable};
 use crate::placements::{PlacementStore, Placements};
 use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
 use crate::window::{
@@ -329,8 +329,7 @@ impl Hosted {
 
     /// The pins of `record` whose value the plugin takes, in the order of their ids, and kept
     /// as the pins the next start of the plugin gets. An automation lane may move those whose
-    /// parameter the plugin says a host may automate and takes any value in its range, as a
-    /// whole number of a built-in device takes no lane.
+    /// parameter [`Parameter::takes_lane`].
     fn automated(&mut self, record: &PluginRecord) -> Vec<AutomatedPin> {
         let mut pins = Vec::new();
         if !record.parameters.is_empty() {
@@ -341,7 +340,7 @@ impl Hosted {
                     let parameter = parameters.get(id).filter(|it| it.takes(pin.value))?;
                     Some(AutomatedPin {
                         id: *id,
-                        takes_lane: parameter.automatable && parameter.steps.is_none(),
+                        takes_lane: parameter.takes_lane_at(pin),
                         minimum: parameter.minimum,
                         maximum: parameter.maximum,
                         record: pin.value,
@@ -422,8 +421,8 @@ impl Hosted {
     /// last sent or wrote, was changed by someone else and is sent. A pin that moves nothing is
     /// not sent and not followed; the behaviour reports it.
     fn send_pins(&mut self, record: &PluginRecord) {
-        self.pins.retain(|id, _| record.parameters.contains_key(id));
         if record.parameters.is_empty() {
+            self.pins.clear();
             return;
         }
         self.parameters();
@@ -436,20 +435,15 @@ impl Hosted {
         else {
             return;
         };
-        for (id, pin) in &record.parameters {
-            if !parameters.get(id).is_some_and(|it| it.takes(pin.value)) {
-                pins.remove(id);
-                continue;
-            }
+        let playable: Vec<ParameterChange> = playable(parameters, &record.parameters).collect();
+        pins.retain(|id, _| playable.iter().any(|change| change.id == *id));
+        for change in playable {
             if !pins
-                .get(id)
-                .is_some_and(|state| same(state.record, pin.value))
+                .get(&change.id)
+                .is_some_and(|state| same(state.record, change.value))
             {
-                plugin.send(ParameterChange {
-                    id: *id,
-                    value: pin.value,
-                });
-                pins.insert(*id, PinState::sent(pin.value));
+                plugin.send(change);
+                pins.insert(change.id, PinState::sent(change.value));
             }
         }
     }
@@ -517,10 +511,15 @@ impl Hosted {
 
 /// The parameters a plugin lists, by id.
 fn listed(plugin: &mut dyn LoadedPlugin) -> BTreeMap<u32, Parameter> {
-    let parameters = plugin.parameters().into_iter();
-    parameters
-        .map(|parameter| (parameter.id, parameter))
-        .collect()
+    by_id(plugin.parameters())
+}
+
+/// The pins of the record of `id` that the plugin of `hosted` takes, as its record has them now.
+fn pins_of(hosted: &Hosted, project: &Project, id: &InstanceId) -> Vec<ParameterChange> {
+    let (Some(record), Some(parameters)) = (record_of(project, id), &hosted.parameters) else {
+        return Vec::new();
+    };
+    playable(parameters, &record.parameters).collect()
 }
 
 /// The name of the undo step of a turn of a knob: the pin it began with, or else the plugin.
@@ -1112,9 +1111,10 @@ impl Plugins {
                 lanes: listed_lanes(record),
             });
         }
+        let pins = &record.parameters;
         let opening = match record.format {
-            PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config),
-            PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config),
+            PluginFormat::Clap => crate::clap::load(&found, saved.as_deref(), config, pins),
+            PluginFormat::Vst3 => crate::vst3::load(&found, saved.as_deref(), config, pins),
         }?;
         let crate::backend::Opening {
             mut plugin,
@@ -1141,8 +1141,9 @@ impl Plugins {
             lanes: AutomatedPins::NONE,
             shown: BTreeMap::new(),
         };
-        // The record wins over the state just loaded: every pin goes to the plugin now, ahead
-        // of its first block, so a render plays them from its first frame.
+        // The record wins over the state just loaded. The backend gave the plugin every pin
+        // before it was activated, where the format lets it. They go again in the first block,
+        // for a plugin that took nothing then, which changes nothing for one that did.
         hosted.send_pins(record);
         let notes = hosted.notes(record);
         let lanes = hosted.automated(record);
@@ -1710,7 +1711,10 @@ impl Plugins {
                     let none = HostedUpdate::Plugin(None, AutomatedPins::NONE);
                     updates.push((id.clone(), hosted.plugin_id.clone(), none));
                 }
-                Restart::Waiting => match hosted.plugin.restart(hosted.config) {
+                Restart::Waiting => match hosted
+                    .plugin
+                    .restart(hosted.config, &pins_of(hosted, project, id))
+                {
                     // The engine has not given it back yet.
                     None => {}
                     Some(Ok(started)) => {

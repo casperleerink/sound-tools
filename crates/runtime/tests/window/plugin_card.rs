@@ -9,8 +9,9 @@
 use std::collections::BTreeMap;
 
 use arrangement::view::layout::{LANES_MIDDLE, NAME_LEFT, TRACK_HEIGHT};
-use arrangement::{AutomationLane, AutomationValue, TrackState};
-use gpui::{TestAppContext, point, px};
+use arrangement::view::track_lanes::LANE_BOX;
+use arrangement::{AutomationLane, AutomationValue, TrackState, travel_in};
+use gpui::{Modifiers, TestAppContext, point, px};
 use plugin_host::{Pin, PluginFormat, PluginRecord};
 
 use sound_core::{Changes, Ticks};
@@ -249,4 +250,153 @@ fn the_select_adds_a_lane_for_a_pin(cx: &mut TestAppContext) {
     };
     assert_eq!(lanes, [lane]);
     one_undo_step(&mut opened, "Add automation", &before);
+}
+
+/// The select also offers every parameter of the plugin that takes a lane and is not pinned,
+/// as it offers every knob of a built-in device. A pick pins it at the value it plays and adds
+/// the lane, as one undo step that undo takes back whole.
+#[gpui::test]
+fn the_select_adds_a_lane_for_a_parameter_that_is_not_pinned_and_pins_it(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let header = opened.track_header(0);
+    let toggle = point(
+        px(NAME_LEFT + 8.),
+        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
+    );
+    opened.click(toggle);
+
+    let before = mark(&mut opened);
+    let select = opened.control("add-lane-track-1");
+    opened.click(select);
+    assert!(opened.find("menu-instrument/parameters.0.value").is_some());
+    // Named steps and off or on take no lane.
+    assert_eq!(opened.find("menu-instrument/parameters.1.value"), None);
+    assert_eq!(opened.find("menu-instrument/parameters.5.value"), None);
+    // A long list is searched.
+    opened.cx.simulate_input("lev");
+    opened.cx.run_until_parked();
+    assert_eq!(opened.find("menu-instrument/parameters.0.value"), None);
+    let level = opened.control("menu-instrument/parameters.4.value");
+    opened.click(level);
+
+    assert_eq!(pins(&mut opened), BTreeMap::from([(4, pin("Level", 1.0))]));
+    let lanes = opened.project(|project| {
+        assert_eq!(project.problems(), []);
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        project.state(&track).unwrap().automation.clone()
+    });
+    let lane = AutomationLane {
+        device: Some("instrument".into()),
+        parameter: "parameters.4.value".into(),
+        points: vec![sound_notes::Point {
+            tick: Ticks(0),
+            value: AutomationValue(1.0),
+        }],
+    };
+    assert_eq!(lanes, [lane]);
+    assert!(opened.find("automated-pin-4").is_some());
+    one_undo_step(&mut opened, "Add automation", &before);
+}
+
+/// A pin an automation lane moves does not come off the card from the list, as a knob of a
+/// built-in device does not: its lane would move nothing. Without the lane it comes off.
+#[gpui::test]
+fn a_pin_a_lane_moves_does_not_come_off(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    automate_cutoff(&mut opened, Some(5000.0));
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    assert_eq!(
+        pins(&mut opened),
+        BTreeMap::from([(0, pin("Cutoff", 1000.0))])
+    );
+    assert_eq!(opened.undo_label().as_deref(), Some("Automate"));
+
+    opened.keys("escape");
+    automate_cutoff(&mut opened, None);
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    assert_eq!(pins(&mut opened), BTreeMap::new());
+}
+
+/// Sets the lanes of the track, as an agent writes them: `(device, parameter, tick, value)`.
+fn set_lanes(opened: &mut Opened<'_>, lanes: &[(Option<&str>, &str, u64, f32)]) {
+    let lanes = lanes
+        .iter()
+        .map(|&(device, parameter, tick, value)| AutomationLane {
+            device: device.map(str::to_string),
+            parameter: parameter.to_string(),
+            points: vec![sound_notes::Point {
+                tick: Ticks(tick),
+                value: AutomationValue(value),
+            }],
+        });
+    let lanes: Vec<AutomationLane> = lanes.collect();
+    opened.edit(|project| {
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        let mut state = project.state(&track).unwrap().clone();
+        state.automation = lanes;
+        let mut changes = Changes::new();
+        changes.set(&track, state);
+        project.commit("Automate", changes)
+    });
+}
+
+/// Shows the lanes of the first track.
+fn show_lanes(opened: &mut Opened<'_>) {
+    let header = opened.track_header(0);
+    let toggle = point(
+        px(NAME_LEFT + 8.),
+        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
+    );
+    opened.click(toggle);
+}
+
+/// The value by a point of a plugin's lane is the plugin's own text, as on the knob of its pin.
+#[gpui::test]
+fn a_point_of_a_plugin_lane_reads_out_in_the_plugins_text(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
+    set_lanes(
+        &mut opened,
+        &[(Some("instrument"), "parameters.0.value", 3840, 5000.0)],
+    );
+    show_lanes(&mut opened);
+    let y = opened.project(|project| {
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        let state = project.state(&track).unwrap();
+        let number = state.automation[0].number(track.id(), state, &travel_in(project));
+        LANE_BOX.y_of(number.unwrap().range.position(5000.0))
+    });
+    let dot = opened.in_track_lane(3840, 0, 0, y);
+    opened
+        .cx
+        .simulate_mouse_move(dot, None, Modifiers::default());
+    opened.cx.run_until_parked();
+    let timeline = opened.timeline.clone();
+    let shown = opened.cx.read(|cx| timeline.read(cx).point_readout(cx));
+    assert_eq!(shown.as_deref(), Some("5000 Hz"));
+}
+
+/// The select that adds a lane is gone while there is nothing to add, and comes back when a
+/// device of the track changes so that there is: here the instrument becomes a plugin.
+#[gpui::test]
+fn the_select_comes_back_when_a_device_brings_a_number(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let missing = r#"{"tool": "plugin", "state": {"format": "clap", "plugin_id": "sound-tools.not-here", "state_asset": "tone"}}"#;
+    write_outside(&mut opened, SLOT_FILE, missing);
+    set_lanes(
+        &mut opened,
+        &[(None, "gain_db", 0, 0.0), (None, "pan", 0, 0.0)],
+    );
+    show_lanes(&mut opened);
+    assert_eq!(opened.find("add-lane-track-1"), None);
+
+    write_outside(
+        &mut opened,
+        SLOT_FILE,
+        &test_plugin_record(PluginFormat::Clap, "tone"),
+    );
+    let select = opened.control("add-lane-track-1");
+    opened.click(select);
+    assert!(opened.find("menu-instrument/parameters.0.value").is_some());
 }

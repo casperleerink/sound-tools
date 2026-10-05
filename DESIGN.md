@@ -116,7 +116,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Arrangement | alt-drag a clip | Move it without its automation. Alt can be pressed or let go during the drag |
 | Arrangement | while a clip drag takes automation along | In each lane it takes, the line it takes follows over a light band, and the line it replaces fades. `Automation moves · alt to leave it` shows in the top left of the clip. With the lanes folded away, the clip carries a small mark instead. What shows is what drops |
 | Arrangement | **Automation**, the second line of a track header, or `a` with a track and no clip selected | Show its automation lanes under it, or fold them away. It counts the lanes (`Automation · 2`) and is brighter when the track has any. Not saved, no undo step |
-| Arrangement | Add lane, under the lanes of a track | Pick a number of the track (volume, pan) or of one of its devices that has no lane yet. The lane holds the value of its knob, so nothing sounds different yet. Tab reaches it. Gone when every number has a lane |
+| Arrangement | Add lane, under the lanes of a track | Pick a number of the track (volume, pan) or of one of its devices that has no lane yet, every parameter of a plugin that takes one included; type to search. The lane holds the value it plays now, so nothing sounds different yet. A plugin parameter that is not on its card goes on it in the same undo step. Tab reaches it. Gone when every number has a lane |
 | Arrangement | an automation lane | Each point is a dot on the line, in the track colour. Over a dot the cursor is a hand and the dot grows; elsewhere in the lane it is a crosshair: a press there adds a point |
 | Arrangement | click in an automation lane, off a dot | Add a point there, on the grid (cmd: off the grid), at the height of the pointer, on the travel of the knob. It is selected, and a drag before the button comes up moves it. One undo step |
 | Arrangement | click a dot / drag a dot | Select the point (a ring shows it) / move it, on the grid unless cmd is held. A point stays between its neighbours. Above or below the lane is the end of the range |
@@ -157,7 +157,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Track panel | drag the header of an effect card onto another card | Move the effect there. On the instrument it goes first, on `Add effect` last. It keeps its bypass |
 | Track panel | cmd-left, cmd-right in an effect card | Move that effect one place |
 | Track panel | Open window, on a plugin card | The plugin's own window, above this one, where it was last time. Again to close it |
-| Plugin card | Parameters | Search the plugin's parameters: a pick puts one on the card at the value it has, a checked one comes off. 64 at most |
+| Plugin card | Parameters | Search the plugin's parameters: a pick puts one on the card at the value it has, a checked one comes off, unless a lane moves it. 64 at most |
 | Plugin card | a parameter on the card | Two steps are a toggle, named steps a dropdown, the rest a knob, with the plugin's own text for the value; `Not found` or `Out of range` says what is wrong |
 | EQ card | click a numbered handle, or 1 to 4 on a focused control | Select that band. No undo step |
 | Sampler card | drop an audio file on the display, or `Choose file` | Copy it into the project and play it across the keyboard |

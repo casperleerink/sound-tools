@@ -26,6 +26,22 @@ use crate::view::track_lanes;
 use crate::{AudioClip, AutomationLane, TrackKind, TrackState, shown_end, travel_in};
 
 impl Timeline {
+    /// The value by the point of `lane` of `track` at `tick`, which is `value`: the device's own
+    /// text for it when [`Self::read_point`] got one, else by the unit of its field.
+    pub(super) fn readout_of(
+        &self,
+        track: &InstanceId,
+        lane: &AutomationLane,
+        tick: Ticks,
+        value: f32,
+    ) -> SharedString {
+        let key = PointKey::of(track, lane, tick);
+        match &self.point_text {
+            Some((at, read, text)) if *at == key && *read == value => text.clone(),
+            _ => track_lanes::readout(lane.device.as_deref(), &lane.parameter, value).into(),
+        }
+    }
+
     /// Everything to paint into a timeline area of this size, read from the project now.
     pub(super) fn scene(&self, width: f32, height: f32, cx: &App) -> Scene {
         let project = self.session.read(cx).project();
@@ -265,10 +281,8 @@ impl Timeline {
                     let (x, y) = track_lanes::place(viewport, range, point);
                     let hovered = is(&self.hovered_point, point.tick);
                     let selected = is(&self.selected_point, point.tick);
-                    let readout = (hovered || selected && dragging).then(|| {
-                        let device = lane.device.as_deref();
-                        track_lanes::readout(device, &lane.parameter, point.value.0).into()
-                    });
+                    let readout = (hovered || selected && dragging)
+                        .then(|| self.readout_of(track, lane, point.tick, point.value.0));
                     LanePoint {
                         x,
                         y,

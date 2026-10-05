@@ -80,8 +80,8 @@ pub(super) struct LanePoint {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PointKey {
     pub(super) track: InstanceId,
-    device: Option<String>,
-    parameter: String,
+    pub(super) device: Option<String>,
+    pub(super) parameter: String,
     pub(super) tick: Ticks,
 }
 

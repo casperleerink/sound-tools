@@ -408,6 +408,13 @@ pub(crate) fn tell_the_plugin(log: Option<&Path>, events: Option<u32>) {
     }
 }
 
+/// Makes the test plugin smooth its `Level` as a real plugin smooths its parameters, see
+/// `test_plugin_support::SMOOTH_VARIABLE`. Same rules as [`tell_the_plugin`].
+pub(crate) fn tell_the_plugin_to_smooth() {
+    // SAFETY: as in `tell_the_plugin`.
+    unsafe { std::env::set_var(test_plugin_support::SMOOTH_VARIABLE, "1") };
+}
+
 /// Makes the VST 3 test plugin say its output is silent and write nothing into it, from its
 /// second block on. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_go_silent() {

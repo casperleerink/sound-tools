@@ -491,6 +491,9 @@ impl Timeline {
         };
         if self.hover_cursor != cursor || self.hovered != hovered || self.hovered_point != point {
             (self.hover_cursor, self.hovered) = (cursor, hovered);
+            if let Some(point) = &point {
+                self.read_point(point, None, cx);
+            }
             self.hovered_point = point;
             cx.notify();
         }

@@ -43,7 +43,7 @@ use gpui::{
     App, Bounds, Context, CursorStyle, DispatchPhase, Entity, EventEmitter, ExternalPaths,
     FileDropEvent, FocusHandle, Focusable, Hitbox, HitboxBehavior, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels,
-    ScrollWheelEvent, Subscription, Window, canvas, div, prelude::*, px,
+    ScrollWheelEvent, SharedString, Subscription, Window, canvas, div, prelude::*, px,
 };
 use sound_core::{Instance, InstanceId, Project, ProjectEvent, State, Ticks, TimeSignatures};
 use sound_notes::Clip;
@@ -151,6 +151,9 @@ pub struct Timeline {
     /// pointer.
     selected_point: Option<PointKey>,
     hovered_point: Option<PointKey>,
+    /// The device's own text for the value of the point that shows its value, with the value,
+    /// see [`Self::read_point`].
+    point_text: Option<(PointKey, f32, SharedString)>,
     /// The tracks that show their automation lanes. Interface state: not saved, no undo step.
     expanded: BTreeSet<InstanceId>,
     /// The select that adds a lane, of each track that shows its lanes.
@@ -210,6 +213,19 @@ impl Timeline {
         cx.observe_self(|timeline, cx| timeline.refresh_order(cx))
             .detach();
         let project_events = cx.subscribe(&session, |timeline, _, event, cx| {
+            // What the select that adds a lane offers goes with the lanes of its track and with
+            // its devices: their records, and a plugin that loads, which runs its record again.
+            let touched = match event {
+                ProjectEvent::Changed(id)
+                | ProjectEvent::Created(id)
+                | ProjectEvent::Deleted(id) => [Some(id.clone()), id.parent()],
+                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => [None, None],
+            };
+            let tracks = touched.into_iter().flatten();
+            let tracks = tracks.filter(|track| timeline.lane_menus.contains_key(track));
+            for track in tracks.collect::<Vec<_>>() {
+                timeline.fill_lane_menu(&track, cx);
+            }
             let shown = |id: &InstanceId| timeline.shows(id, cx);
             let changed = match event {
                 ProjectEvent::Changed(id) => shown(id),
@@ -325,6 +341,7 @@ impl Timeline {
             held: Held::Nothing,
             selected_point: None,
             hovered_point: None,
+            point_text: None,
             expanded: BTreeSet::new(),
             lane_menus: BTreeMap::new(),
             clipboard,
@@ -571,6 +588,21 @@ impl Timeline {
     }
 
     /// The first selected clip: the one the note editor shows.
+    /// What shows by the point of a lane the pointer is on, or that a drag moves.
+    pub fn point_readout(&self, cx: &App) -> Option<SharedString> {
+        let dragging = matches!(&self.held, Held::Lane(_));
+        let key = self.hovered_point.as_ref();
+        let key = key.or(self.selected_point.as_ref().filter(|_| dragging))?;
+        let project = self.session.read(cx).project();
+        let state = project.state(&project.resolve::<TrackState>(&key.track)?)?;
+        let lane = state
+            .automation
+            .iter()
+            .find(|lane| key.is_in(&key.track, lane))?;
+        let point = lane.points.iter().find(|point| point.tick == key.tick)?;
+        Some(self.readout_of(&key.track, lane, key.tick, point.value.0))
+    }
+
     pub fn selected_clip(&self) -> Option<&InstanceId> {
         self.clips.primary()
     }

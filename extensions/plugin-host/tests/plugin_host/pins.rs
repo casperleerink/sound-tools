@@ -13,7 +13,8 @@ use sound_core::{Changes, Instance};
 use test_plugin_support::{EDIT_LEVEL_KEY, LATENCY_KEY, LEVEL_KEY, LIST_LEVEL_KEY, SavedState};
 
 use crate::support::{
-    FORMATS, Harness, Played, id, lifecycle, peak, record, state_asset, tell_the_plugin, vst3_state,
+    FORMATS, Harness, Played, id, lifecycle, peak, record, state_asset, tell_the_plugin,
+    tell_the_plugin_to_smooth, vst3_state,
 };
 
 /// The `Level` parameter of the test plugin of `format`.
@@ -149,6 +150,89 @@ fn a_pinned_value_reaches_the_plugin_before_its_first_block_and_is_heard() {
         );
         assert_eq!(pinned_value(&harness, level(format)), 0.25);
     }
+}
+
+/// A plugin that smooths its parameters, as real ones do, glides to a value it is sent while it
+/// plays. A pin it has before it is activated it plays from the first frame of a render: there
+/// is nothing to glide from. Its state says full level and the pin a quarter.
+#[test]
+fn a_plugin_that_smooths_plays_its_pins_from_the_first_frame() {
+    tell_the_plugin_to_smooth();
+    for format in FORMATS {
+        let mut harness = Harness::new();
+        harness.add_track(pinned(format, 0.25), one_note());
+        let left = harness.play(4096).left();
+        // The first millisecond, and after the glide would be over.
+        let (first, steady) = (peak(&left[..48]), peak(&left[1024..]));
+        assert!(is_near(first, steady), "{format:?}: {first} then {steady}");
+
+        // An edit while it plays glides, so the first test is not true of any plugin.
+        set_pin(&mut harness, level(format), 1.0);
+        let left = harness.render(4096).left();
+        let (first, steady) = (peak(&left[..48]), peak(&left[1024..]));
+        assert!(first < steady * 0.6, "{format:?}: {first} then {steady}");
+    }
+}
+
+/// A pin that changes while the plugin is started again, for a new latency, is given to it
+/// before it is activated again, as at a load: the note of its first block plays it from the
+/// first frame. A short note starts every block, so whichever block that is has one.
+#[test]
+fn a_pin_changed_while_the_plugin_is_started_again_is_played_from_the_first_frame() {
+    tell_the_plugin_to_smooth();
+    for format in FORMATS {
+        let mut harness = Harness::new();
+        let mut played = vec![on(0, 60, 100), on(1024, LATENCY_KEY, 1)];
+        for block in 3..40 {
+            let frame = block * 512;
+            played.push(on(frame, 64, 100));
+            played.push(Played::Off {
+                frame: frame + 256,
+                pitch: 64,
+            });
+        }
+        harness.add_track(pinned(format, 1.0), played);
+        let now = Instant::now();
+        // Up to the block that asks to be started again, and the pin changes in that moment.
+        for _ in 0..3 {
+            step(&mut harness, 512, now);
+        }
+        set_pin(&mut harness, level(format), 0.25);
+        let left: Vec<f32> = (0..32).flat_map(|_| step(&mut harness, 512, now)).collect();
+        // While the plugin is started again the slot is silent, for a block at least.
+        let gap = left
+            .windows(512)
+            .position(|block| block.iter().all(|it| *it == 0.0));
+        let gap = gap.expect("a silent block while the plugin is started again") + 512;
+        let start = gap
+            + left[gap..]
+                .iter()
+                .position(|it| *it != 0.0)
+                .expect("a note");
+        let (first, later) = (peak(&left[start..start + 48]), peak(&left[start + 2048..]));
+        assert!(is_near(first, later), "{format:?}: {first} then {later}");
+        assert_eq!(harness.problems(), Vec::<String>::new(), "{format:?}");
+    }
+}
+
+/// A CLAP plugin that asks for a flush as it reads its state gets one before it is activated.
+/// Six Sines takes a state it reads only at a flush or in a block, and taken in the first block
+/// it ends the notes of that block, so a render with a note at its start was silent.
+#[test]
+fn a_flush_a_plugin_asks_for_as_it_reads_its_state_comes_before_its_activation() {
+    let folder = tempfile::tempdir().unwrap();
+    let log = folder.path().join("calls.txt");
+    tell_the_plugin(Some(&log), None);
+    let mut harness = Harness::new();
+    let saved = test_plugin_support::save_state(SavedState::default());
+    let asset = state_asset("piano");
+    harness.project.assets().write(&asset, &saved).unwrap();
+    harness.add_track(record(PluginFormat::Clap, "piano"), one_note());
+    harness.play(512);
+    let calls: Vec<String> = lifecycle(&log).into_iter().map(|call| call.call).collect();
+    let at = |name: &str| calls.iter().position(|call| call == name);
+    assert!(at("flush").is_some(), "{calls:?}");
+    assert!(at("flush") < at("activate"), "{calls:?}");
 }
 
 /// A change of the record moves the plugin as it plays: no second load, and the value it took,
