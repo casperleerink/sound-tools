@@ -52,11 +52,13 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, AssetError, AssetName, Assets, BehaviourContext, BehaviourError, InputEndpoint,
-    InvalidAssetName, MAX_AUTOMATED, OutputEndpoint, Registry, RegistryError, State,
+    InvalidAssetName, MAX_AUTOMATED, OutputEndpoint, ParameterInfo, Registry, RegistryError, State,
+    ValueRange,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
-use crate::processor::HostedPlugin;
+use crate::parameters::lane_of_pin;
+use crate::processor::{AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate};
 
 pub use host::{PluginProblem, Plugins, WeakPlugins};
 pub use parameters::{
@@ -283,7 +285,7 @@ impl State for PluginRecord {
 /// The doc of the plugin record, for an agent with only file access.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "plugins",
-    when: "You put a third-party plugin on a track, set its parameters, or a plugin is reported as a problem",
+    when: "You put a third-party plugin on a track, set or automate its parameters, or a plugin is reported as a problem",
     markdown: include_str!("../agent-doc.md"),
 };
 
@@ -320,13 +322,23 @@ fn apply(
     let config = context.prepare_config();
     match plugins.open(context.id(), state, context.assets(), config, !made) {
         Ok(opened) => {
+            let lanes = AutomatedPins::new(&opened.lanes);
+            let numbers: Vec<_> = opened.lanes.iter().filter_map(number).collect();
+            // With none, the owner says the record takes no automation at all.
+            if !numbers.is_empty() {
+                let input = InputEndpoint::new(node, HostedPlugin::AUTOMATION);
+                context.runtime_automation(input, numbers)?;
+            }
             // A run that loaded a plugin hands it to the engine. Nothing here asks what the
             // engine already has, so an edit the project rejects leaves the engine and this
             // host as they were. A host that only lists opens nothing, and the slot is silent.
-            // A run that only changed pins hands nothing: the engine keeps its plugin.
-            if let host::ForEngine::Play(started) = opened.engine {
-                context.update(node, started)?;
-            }
+            // A run that only changed pins keeps the plugin the engine has, and hands it only
+            // the pins lanes may move now.
+            let update = match opened.engine {
+                host::ForEngine::Play(started) => HostedUpdate::Plugin(started, lanes),
+                host::ForEngine::Same => HostedUpdate::Pins(lanes),
+            };
+            context.update(node, update)?;
             for note in opened.notes {
                 context.problem(note.to_string());
             }
@@ -334,11 +346,21 @@ fn apply(
         Err(problem) => {
             // Whatever played here before stops, so a record that stops naming a plugin this
             // machine has goes silent instead of going on with the old one.
-            context.update(node, None)?;
+            context.update(node, HostedUpdate::Plugin(None, AutomatedPins::NONE))?;
             context.problem(problem.to_string());
         }
     }
     Ok(())
+}
+
+/// A pin that takes a lane as a number an automation lane names: by its path in the record, on
+/// the parameter's own range, in a straight line.
+fn number(pin: &AutomatedPin) -> Option<(ParameterInfo, f32)> {
+    let info = ParameterInfo {
+        field: lane_of_pin(pin.id).into(),
+        range: ValueRange::linear(pin.minimum as f32, pin.maximum as f32),
+    };
+    pin.takes_lane.then_some((info, pin.record as f32))
 }
 
 #[cfg(test)]

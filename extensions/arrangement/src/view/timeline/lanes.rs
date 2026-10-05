@@ -120,9 +120,9 @@ impl Timeline {
         // The numbers of one device come one after another, in one group.
         let mut groups: Vec<(Option<String>, Vec<MenuItem>)> = Vec::new();
         for lane in free_lanes(project, instance.id(), state) {
-            let label = match lane.device {
-                None => track_lanes::lane_name(None, &lane.parameter),
-                Some(_) => track_lanes::number_name(&lane.parameter),
+            let label = match &lane.device {
+                None => track_lanes::lane_name(&lane.parameter),
+                Some(device) => self.number_name(instance.id(), device, &lane.parameter, cx),
             };
             let value = track_lanes::menu_value(lane.device.as_deref(), &lane.parameter);
             let item = MenuItem::new(value, label).selectable(false);
@@ -165,6 +165,22 @@ impl Timeline {
                 project.tool_of(&id).unwrap_or(device).to_string().into()
             }
         }
+    }
+
+    /// What a number of a device of a track is called: as the device names it, such as the
+    /// name a plugin record gives a pin, or else its field in plain words, the unit left out,
+    /// as `Cutoff` for `cutoff_hz`. The unit is what the knob shows. A lane header puts the
+    /// name of the device before it: `Filter · Cutoff`, the device cut short when it is long.
+    pub(super) fn number_name(
+        &self,
+        track: &InstanceId,
+        device: &str,
+        field: &str,
+        cx: &App,
+    ) -> String {
+        let id = track.child(device).ok();
+        let named = id.and_then(|id| Devices::number_name(&self.session, &id, field, cx));
+        named.map_or_else(|| track_lanes::number_name(field), String::from)
     }
 
     /// The select of the lanes of a track picked a number: a lane for it, which holds the

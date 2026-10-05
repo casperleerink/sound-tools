@@ -17,14 +17,14 @@ use crate::support::{
 };
 
 /// The `Level` parameter of the test plugin of `format`.
-fn level(format: PluginFormat) -> u32 {
+pub(crate) fn level(format: PluginFormat) -> u32 {
     match format {
         PluginFormat::Clap => test_clap_plugin::LEVEL,
         PluginFormat::Vst3 => test_vst3_plugin::LEVEL,
     }
 }
 
-fn pin(name: &str, value: f64) -> Pin {
+pub(crate) fn pin(name: &str, value: f64) -> Pin {
     Pin {
         name: name.to_string(),
         value,
@@ -32,7 +32,7 @@ fn pin(name: &str, value: f64) -> Pin {
 }
 
 /// The record of the test plugin of `format` with `Level` pinned at `value`.
-fn pinned(format: PluginFormat, value: f64) -> PluginRecord {
+pub(crate) fn pinned(format: PluginFormat, value: f64) -> PluginRecord {
     let mut record = record(format, "piano");
     record.parameters.insert(level(format), pin("Level", value));
     record
@@ -47,7 +47,7 @@ fn on(frame: u64, pitch: u8, velocity: u8) -> Played {
 }
 
 /// One long note, so a render is one level to read.
-fn one_note() -> Vec<Played> {
+pub(crate) fn one_note() -> Vec<Played> {
     vec![on(0, 60, 100)]
 }
 
@@ -62,12 +62,12 @@ fn record_of(harness: &Harness) -> PluginRecord {
 }
 
 /// The value of the pin `pin` as the record holds it.
-fn pinned_value(harness: &Harness, pin: u32) -> f64 {
+pub(crate) fn pinned_value(harness: &Harness, pin: u32) -> f64 {
     record_of(harness).parameters[&pin].value
 }
 
 /// The value of the pin `pin` as the record's file holds it.
-fn written_value(harness: &Harness, pin: u32) -> f64 {
+pub(crate) fn written_value(harness: &Harness, pin: u32) -> f64 {
     let text = std::fs::read_to_string(harness.path("state/track/instrument.json")).unwrap();
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
     json["state"]["parameters"][pin.to_string()]["value"]
@@ -76,7 +76,7 @@ fn written_value(harness: &Harness, pin: u32) -> f64 {
 }
 
 /// What the plugin says the parameter is now.
-fn plugin_value(harness: &Harness, parameter: u32) -> f64 {
+pub(crate) fn plugin_value(harness: &Harness, parameter: u32) -> f64 {
     let value = harness
         .plugins
         .parameter_value(&id("track/instrument"), parameter);
@@ -85,7 +85,7 @@ fn plugin_value(harness: &Harness, parameter: u32) -> f64 {
 
 /// The record with the value of one pin changed, as one undo step, as a knob on a card or an
 /// agent writing the file would.
-fn set_pin(harness: &mut Harness, pin: u32, value: f64) {
+pub(crate) fn set_pin(harness: &mut Harness, pin: u32, value: f64) {
     let mut record = record_of(harness);
     record.parameters.get_mut(&pin).expect("the pin").value = value;
     let mut changes = Changes::new();
@@ -111,7 +111,7 @@ fn step(harness: &mut Harness, frames: usize, now: Instant) -> Vec<f32> {
     render.left()
 }
 
-fn is_near(level: f32, expected: f32) -> bool {
+pub(crate) fn is_near(level: f32, expected: f32) -> bool {
     (level - expected).abs() < 0.01
 }
 

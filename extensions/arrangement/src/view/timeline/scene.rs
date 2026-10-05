@@ -19,7 +19,7 @@ use crate::view::layout::{
     DOT_LEFT, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT, LANES_MIDDLE, NAME_LEFT, NAME_MIDDLE,
     RULER_HEIGHT, Rect, Rows, RulerBar, TRACK_HEIGHT, Viewport,
 };
-use crate::view::paint::{Fit, paint_ruler, paint_text, paint_track_label, placed};
+use crate::view::paint::{Fit, paint_ruler, paint_text, paint_track_label, placed, text_width};
 use crate::{AutomationLane, TrackKind};
 
 pub(super) struct TrackRow {
@@ -48,7 +48,10 @@ pub(super) struct TrackRow {
 pub(super) struct LaneShape {
     /// The top of the lane in the timeline area.
     pub(super) y: f32,
-    pub(super) name: SharedString,
+    /// The device whose number the lane moves, `None` for the track's own volume and pan.
+    pub(super) device: Option<SharedString>,
+    /// The number in plain words: `Cutoff`.
+    pub(super) number: SharedString,
     pub(super) accent: Hsla,
     pub(super) muted: bool,
     /// The line in the lane, from the left edge to the right one. Empty for a number the
@@ -405,14 +408,26 @@ pub(super) fn paint_scene(
             paint_track_label(name, row.accent, top, label_size, row.muted, window, cx);
             paint_lanes_toggle(row, top, window, cx);
         }
-        // The name of each lane, where the name of its track starts.
+        // The name of each lane, where the name of its track starts: `Filter · Cutoff`. A long
+        // device name, as a plugin's often is, gives way to the number, which always shows.
         for lane in &scene.lanes {
             let top = headers.origin + point(px(0.), px(lane.y.round()));
             let origin = top + point(px(NAME_LEFT), px(LANE_HEIGHT / 2. - 9.));
-            let fit = Fit::Truncate(HEADER_WIDTH - NAME_LEFT - 16.);
+            let room = HEADER_WIDTH - NAME_LEFT - 16.;
             let color = lane_text.opacity(if lane.muted { 0.4 } else { 1. });
-            let (name, weight) = (lane.name.clone(), FontWeight::NORMAL);
-            paint_text(name, origin, 12., weight, color, fit, window, cx);
+            let weight = FontWeight::NORMAL;
+            let number = match lane.device {
+                Some(_) => SharedString::from(format!(" · {}", lane.number)),
+                None => lane.number.clone(),
+            };
+            let mut left = 0.;
+            if let Some(device) = &lane.device {
+                let fit = Fit::Truncate((room - text_width(&number, 12., weight, window)).max(0.));
+                left = paint_text(device.clone(), origin, 12., weight, color, fit, window, cx);
+            }
+            let origin = origin + point(px(left), px(0.));
+            let fit = Fit::Truncate(room - left);
+            paint_text(number, origin, 12., weight, color, fit, window, cx);
         }
         // A drop under the last track makes a new audio track, whose header says so.
         if let Some(y) = scene.ghosts.as_ref().and_then(|ghosts| ghosts.new_track) {

@@ -13,6 +13,7 @@ mod background;
 mod consistency;
 mod editing;
 mod effects;
+mod lanes;
 mod lifecycle;
 mod listing;
 mod parameters;

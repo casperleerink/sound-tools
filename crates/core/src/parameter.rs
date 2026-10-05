@@ -1,5 +1,7 @@
 //! One number of a tool's saved state, with its range, its default and its scale, written once.
 
+use std::sync::Arc;
+
 /// One number of the saved state `S`: its field, its range, its default and its scale. A tool
 /// writes one constant per number and nothing else says them again: `validate`, `Default`, the
 /// knobs of its view, what a double click resets to, an automation lane and a test of its docs
@@ -37,9 +39,9 @@ impl<S> Parameter<S> {
 
     /// The parameter without its state type, for an owner that knows the tool only by its
     /// ports, such as the arrangement that automates the devices of a track.
-    pub const fn info(&self) -> ParameterInfo {
+    pub fn info(&self) -> ParameterInfo {
         ParameterInfo {
-            field: self.field,
+            field: self.field.into(),
             range: ValueRange::of(self),
         }
     }
@@ -81,10 +83,12 @@ macro_rules! lanes {
     };
 }
 
-/// A [`Parameter`] without its state type: its field and its range.
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// A number as an owner that automates it sees it: its name and its range. The name of a
+/// [`Parameter`] is its field. A device whose numbers are known only as its behaviour runs, such
+/// as the parameters of a plugin, makes its own, so the name is not a constant.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ParameterInfo {
-    pub field: &'static str,
+    pub field: Arc<str>,
     pub range: ValueRange,
 }
 

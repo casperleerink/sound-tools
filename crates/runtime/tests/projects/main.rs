@@ -25,6 +25,7 @@ mod mixer;
 mod modulation;
 #[path = "../shared/plugin_hosts.rs"]
 mod plugin_hosts;
+mod plugin_lanes;
 mod plugins;
 mod rack_order;
 mod recording;

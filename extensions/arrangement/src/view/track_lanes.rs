@@ -157,14 +157,11 @@ pub fn without_point(origin: &AutomationLane, index: usize) -> Option<Automation
     erased(origin, &(tick..=tick))
 }
 
-/// What a lane is called in its header: the volume and the pan of the track by those words,
-/// and a number of a device by the name of the device and its field, the unit left out, as
-/// `Filter · Cutoff` for `cutoff_hz`. The unit is what the knob shows.
-pub fn lane_name(device: Option<&str>, field: &str) -> String {
-    match (device, field) {
-        (None, "gain_db") => "Volume".to_string(),
-        (None, field) => number_name(field),
-        (Some(device), field) => format!("{device} · {}", number_name(field)),
+/// What a lane of the track's own volume or pan is called: by those words.
+pub fn lane_name(field: &str) -> String {
+    match field {
+        "gain_db" => "Volume".to_string(),
+        field => number_name(field),
     }
 }
 
@@ -354,23 +351,14 @@ mod tests {
 
     #[test]
     fn a_lane_is_named_in_plain_words() {
-        assert_eq!(lane_name(None, "gain_db"), "Volume");
-        assert_eq!(lane_name(None, "pan"), "Pan");
-        assert_eq!(lane_name(Some("Filter"), "cutoff_hz"), "Filter · Cutoff");
-        assert_eq!(
-            lane_name(Some("Filter"), "lfo_rate_hz"),
-            "Filter · LFO rate"
-        );
-        assert_eq!(lane_name(Some("Synth"), "decay_seconds"), "Synth · Decay");
-        assert_eq!(
-            lane_name(Some("EQ"), "bands[0].gain_db"),
-            "EQ · Band 1 gain"
-        );
-        assert_eq!(lane_name(Some("EQ"), "bands[3].q"), "EQ · Band 4 Q");
-        assert_eq!(
-            lane_name(Some("Wavetable"), "filter.cutoff_hz"),
-            "Wavetable · Filter cutoff"
-        );
+        assert_eq!(lane_name("gain_db"), "Volume");
+        assert_eq!(lane_name("pan"), "Pan");
+        assert_eq!(number_name("cutoff_hz"), "Cutoff");
+        assert_eq!(number_name("lfo_rate_hz"), "LFO rate");
+        assert_eq!(number_name("decay_seconds"), "Decay");
+        assert_eq!(number_name("bands[0].gain_db"), "Band 1 gain");
+        assert_eq!(number_name("bands[3].q"), "Band 4 Q");
+        assert_eq!(number_name("filter.cutoff_hz"), "Filter cutoff");
     }
 
     #[test]

@@ -166,12 +166,12 @@ pub(crate) fn free_lanes(
     lanes.collect()
 }
 
-/// One automation lane as it plays: the index and the field of its number, its range, and its
+/// One automation lane as it plays: the index and the name of its number, its range, and its
 /// points as places on the travel, so a straight line between them is straight on the knob.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LaneLine {
     parameter: u16,
-    field: &'static str,
+    field: Arc<str>,
     range: ValueRange,
     positions: Vec<Point<f32>>,
 }
@@ -190,9 +190,9 @@ impl LaneLine {
 pub(crate) struct LaneLines(Vec<LaneLine>);
 
 impl PlayedLanes for LaneLines {
-    fn values_at(&self, tick: Ticks, values: &mut Vec<(&'static str, f32)>) {
+    fn values_at(&self, tick: Ticks, values: &mut Vec<(Arc<str>, f32)>) {
         let lanes = self.0.iter();
-        values.extend(lanes.filter_map(|lane| Some((lane.field, lane.value_at(tick)?))));
+        values.extend(lanes.filter_map(|lane| Some((lane.field.clone(), lane.value_at(tick)?))));
     }
 }
 
@@ -302,9 +302,9 @@ fn resolve(
         None => (None, &track[..]),
     };
     let found = parameters.iter().enumerate();
-    let mut found = found.filter(|(_, info)| info.field == lane.parameter);
+    let mut found = found.filter(|(_, info)| *info.field == *lane.parameter);
     let Some((place, info)) = found.next() else {
-        let fields: Vec<&str> = parameters.iter().map(|info| info.field).collect();
+        let fields: Vec<&str> = parameters.iter().map(|info| &*info.field).collect();
         return Err(format!(
             "{field}.parameter is {:?}, and {} takes no automation of a number of that name. It takes {}",
             lane.parameter,
@@ -317,7 +317,7 @@ fn resolve(
         .map_err(|_| format!("{field}.parameter is past the first {} numbers", u16::MAX))?;
     let played = LaneLine {
         parameter,
-        field: info.field,
+        field: info.field.clone(),
         range: info.range,
         positions: positions(&lane.points, info.range),
     };

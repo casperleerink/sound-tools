@@ -226,15 +226,17 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
         .map(|problem| format!("{}: {}", problem.path, problem.message))
         .collect();
     // Every plugin the docs name is one no machine is expected to have: two instruments,
-    // one per format, and the effect of the arrangement doc. The library instrument of the
-    // library doc is not on this machine either: the test has no library.
+    // one per format, and the effect of the arrangement doc, so the lane on a pin of one of
+    // them moves nothing. The library instrument of the library doc is not on this machine
+    // either: the test has no library.
     let expected = [
         "state/arrangement/piano/warmth.json: this machine has no CLAP plugin with the id \"com.example.warmth\"",
+        "state/arrangement/rhodes/instance.json: automation[0].device is \"instrument\", and instrument.json takes no automation",
         "state/arrangement/rhodes/instrument.json: this machine has no CLAP plugin with the id \"com.example.piano\"",
         "state/arrangement/strings/instrument.json: this machine has no VST 3 plugin",
         "state/arrangement/violins/instrument.json: Violin section, sustain cannot play",
     ];
-    assert_eq!(problems.len(), 4, "{problems:?}");
+    assert_eq!(problems.len(), 5, "{problems:?}");
     for (problem, expected) in problems.iter().zip(expected) {
         assert!(problem.starts_with(expected), "{problems:?}");
     }

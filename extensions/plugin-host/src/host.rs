@@ -21,7 +21,11 @@
 //! the plugin changed itself is written to the record, as one undo step per turn of a knob. The
 //! host remembers what it last sent and read of each pin, so a value on its way to the plugin
 //! is not taken for a change of the plugin's, and a value the plugin rounds as it takes it is
-//! not written back.
+//! not written back. A pin an automation lane moves is not read at all: the lane plays into the
+//! plugin on the audio thread, and what it plays is never the composer's edit. Which pins a lane
+//! holds the audio side says itself ([`LanedPins`]), before the plugin hears the lane and until
+//! it has played the record value again, so a lane value is never taken for the plugin's own
+//! change.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,7 +39,9 @@ use sound_core::{
     AssetName, Assets, InstanceId, PrepareConfig, Project, ProjectEdit as Edit, ProjectError,
 };
 
-use crate::processor::{HostedPlugin, HostedUpdate};
+use crate::processor::{
+    AutomatedPin, AutomatedPins, HostedPlugin, HostedUpdate, LanedPins, Playing,
+};
 
 use crate::backend::{Hand, KeyDirection, LoadedPlugin, ParameterChange};
 use crate::parameters::{Parameter, ParameterValue, pin_problem};
@@ -125,6 +131,9 @@ pub(crate) struct Opened {
     /// sustain pedal cannot reach, or a pin it has no parameter for. These are not failures:
     /// the plugin plays.
     pub notes: Vec<PluginProblem>,
+    /// The pins of the record, those an automation lane may move marked, see
+    /// [`Hosted::automated`].
+    pub lanes: Vec<AutomatedPin>,
 }
 
 /// What the behaviour hands the engine.
@@ -134,7 +143,7 @@ pub(crate) enum ForEngine {
     Same,
     /// The audio side of a plugin that was just loaded, or `None` from a host that loads none
     /// ([`Plugins::listing`]), which is a slot that plays nothing and reports nothing.
-    Play(HostedUpdate),
+    Play(Option<Playing>),
 }
 
 /// How long the pins of a plugin that says nothing of a hand must be quiet before what it
@@ -188,6 +197,22 @@ struct Hosted {
     /// Where each pin of the record that moves something stands between the record and the
     /// plugin.
     pins: BTreeMap<u32, PinState>,
+    /// The pins the audio side says a lane holds, see [`Hosted::follow_lanes`].
+    laned: Arc<LanedPins>,
+    /// The pins of the record as the behaviour last ran, which the lane players were given
+    /// with them. A plugin started again gets these, so the index of a lane means the same
+    /// pin to both until the next run, whatever the plugin says of its parameters meanwhile.
+    lanes: AutomatedPins,
+    /// What the plugin's own window was last shown of each pin a lane holds.
+    shown: BTreeMap<u32, Shown>,
+}
+
+/// A lane value the plugin's own window was shown, and the value it showed then. `None` where
+/// the host shows the window nothing, as for CLAP.
+#[derive(Copy, Clone, Debug)]
+struct Shown {
+    sent: f64,
+    seen: Option<f64>,
 }
 
 /// A pin, as the host last sent it or read it.
@@ -302,6 +327,83 @@ impl Hosted {
         parameters.get_or_insert_with(|| Rc::new(listed(plugin.as_mut())))
     }
 
+    /// The pins of `record` whose value the plugin takes, in the order of their ids, and kept
+    /// as the pins the next start of the plugin gets. An automation lane may move those whose
+    /// parameter the plugin says a host may automate and takes any value in its range, as a
+    /// whole number of a built-in device takes no lane.
+    fn automated(&mut self, record: &PluginRecord) -> Vec<AutomatedPin> {
+        let mut pins = Vec::new();
+        if !record.parameters.is_empty() {
+            let parameters = self.parameters();
+            let all = record.parameters.iter();
+            pins = all
+                .filter_map(|(id, pin)| {
+                    let parameter = parameters.get(id).filter(|it| it.takes(pin.value))?;
+                    Some(AutomatedPin {
+                        id: *id,
+                        takes_lane: parameter.automatable && parameter.steps.is_none(),
+                        minimum: parameter.minimum,
+                        maximum: parameter.maximum,
+                        record: pin.value,
+                    })
+                })
+                .collect();
+        }
+        self.lanes = AutomatedPins::new(&pins);
+        pins
+    }
+
+    /// The generation of the pins a lane holds, and each with the value it plays, as the
+    /// audio side wrote them last. `None` when blocks kept writing while it was read.
+    fn held(&self) -> Option<(u64, BTreeMap<u32, f64>)> {
+        let (generation, held) = self.laned.read()?;
+        Some((generation, held.into_iter().collect()))
+    }
+
+    /// Where the format needs the host for it, shows the plugin's own window the value each
+    /// pin in `held` plays, and the record value again once its lane lets go. A window that
+    /// shows something else by then was turned by the composer since: it is left as it is, and
+    /// the next read of the pin takes that as an edit.
+    fn follow_lanes(&mut self, held: &BTreeMap<u32, f64>) {
+        let mut shown = BTreeMap::new();
+        for (id, value) in held {
+            let was = self.shown.get(id).copied();
+            let seen = match was {
+                Some(was) if same(was.sent, *value) => was.seen,
+                _ => {
+                    let change = ParameterChange {
+                        id: *id,
+                        value: *value,
+                    };
+                    // As the window took it, perhaps rounded: what a release compares with.
+                    let shows = self.plugin.show(change);
+                    shows.then(|| self.plugin.value(*id).unwrap_or(*value))
+                }
+            };
+            let sent = *value;
+            shown.insert(*id, Shown { sent, seen });
+        }
+        let released = self.shown.iter().filter(|(id, _)| !held.contains_key(id));
+        for (id, was) in released {
+            // A window that follows the processor by itself needs nothing. Its first read is
+            // the plugin taking the record value again, as for every pin a lane held.
+            let (Some(state), Some(seen)) = (self.pins.get_mut(id), was.seen) else {
+                continue;
+            };
+            let now = self.plugin.value(*id);
+            if now.is_some_and(|now| same(now, seen)) {
+                let record = ParameterChange {
+                    id: *id,
+                    value: state.record,
+                };
+                self.plugin.show(record);
+            } else {
+                state.plugin = Some(seen);
+            }
+        }
+        self.shown = shown;
+    }
+
     /// What a run of the behaviour reports: the notes of the load, and every pin of `record`
     /// that moves nothing.
     fn notes(&mut self, record: &PluginRecord) -> Vec<PluginProblem> {
@@ -354,16 +456,54 @@ impl Hosted {
 
     /// The plugin to the record: what the plugin changed of its pins itself since the last
     /// read, once every value sent is in what it says.
+    ///
+    /// A pin a lane holds is not read, and its first read once the lane is gone is the plugin
+    /// taking its record value again, not a change of its own. The audio side writes a pin held
+    /// before the plugin hears its lane, and free only after the plugin played its record value
+    /// again, so a pin held in the table as read before or after the plugin's values is left
+    /// out. A lane that came or went in between moves the generation of the table, and then
+    /// nothing is written this round: the next poll reads again.
     fn read_pins(&mut self) -> Vec<ParameterChange> {
-        let mut changes = Vec::new();
-        if !self.plugin.sent_values_played() {
-            return changes;
+        let before = self.held();
+        let mut values = Vec::new();
+        if self.plugin.sent_values_played() {
+            for id in self.pins.keys() {
+                if let Some(now) = self.plugin.value(*id) {
+                    values.push((*id, now));
+                }
+            }
         }
+        let after = self.held();
+        let laned: BTreeSet<u32> = match (&before, &after) {
+            (Some((first, before)), Some((last, after))) if first == last => {
+                before.keys().chain(after.keys()).copied().collect()
+            }
+            // A lane came or went while the plugin was read, or blocks kept writing all the
+            // while: what was read may be a lane's.
+            _ => {
+                if let Some((_, after)) = &after {
+                    self.follow_lanes(after);
+                }
+                return Vec::new();
+            }
+        };
         for (id, state) in &mut self.pins {
-            if let Some(now) = self.plugin.value(*id)
+            if laned.contains(id) {
+                state.plugin = None;
+            }
+        }
+        if let Some((_, after)) = &after {
+            self.follow_lanes(after);
+        }
+        let mut changes = Vec::new();
+        for (id, now) in values {
+            if laned.contains(&id) {
+                continue;
+            }
+            if let Some(state) = self.pins.get_mut(&id)
                 && let Some(value) = state.read(now)
             {
-                changes.push(ParameterChange { id: *id, value });
+                changes.push(ParameterChange { id, value });
             }
         }
         changes
@@ -395,6 +535,22 @@ fn turn_label(record: Option<&PluginRecord>, pin: u32) -> String {
 /// The plugin record of `id`, when there is one.
 fn record_of<'a>(project: &'a Project, id: &InstanceId) -> Option<&'a PluginRecord> {
     project.state(&project.resolve::<PluginRecord>(id)?)
+}
+
+/// What a host that loads no plugin says a pin takes a lane for: every pin, with any value. It
+/// cannot ask the plugin, and it reports no problem of a pin either, so `--inspect` does not
+/// report a lane on a pin that plays. A range this wide still works out a place on it.
+fn listed_lanes(record: &PluginRecord) -> Vec<AutomatedPin> {
+    let widest = f64::from(f32::MAX / 2.0);
+    let pins = record.parameters.iter();
+    let pins = pins.map(|(id, pin)| AutomatedPin {
+        id: *id,
+        takes_lane: true,
+        minimum: -widest,
+        maximum: widest,
+        record: pin.value,
+    });
+    pins.collect()
 }
 
 #[derive(Default)]
@@ -875,6 +1031,7 @@ impl Plugins {
                 return Ok(Opened {
                     engine: ForEngine::Same,
                     notes: hosted.notes(record),
+                    lanes: hosted.automated(record),
                 });
             }
             if let Some(hosted) = table.loaded.remove(id) {
@@ -952,6 +1109,7 @@ impl Plugins {
             return Ok(Opened {
                 engine: ForEngine::Play(None),
                 notes: Vec::new(),
+                lanes: listed_lanes(record),
             });
         }
         let opening = match record.format {
@@ -979,15 +1137,21 @@ impl Plugins {
             notes,
             parameters: None,
             pins: BTreeMap::new(),
+            laned: Arc::new(LanedPins::new()),
+            lanes: AutomatedPins::NONE,
+            shown: BTreeMap::new(),
         };
         // The record wins over the state just loaded: every pin goes to the plugin now, ahead
         // of its first block, so a render plays them from its first frame.
         hosted.send_pins(record);
         let notes = hosted.notes(record);
+        let lanes = hosted.automated(record);
+        let laned = hosted.laned.clone();
         self.0.table.borrow_mut().loaded.insert(id.clone(), hosted);
         Ok(Opened {
-            engine: ForEngine::Play(Some(started)),
+            engine: ForEngine::Play(Some(Playing { started, laned })),
             notes,
+            lanes,
         })
     }
 
@@ -1543,7 +1707,8 @@ impl Plugins {
                 Restart::Idle => {}
                 Restart::Asked => {
                     hosted.restart = Restart::Waiting;
-                    updates.push((id.clone(), hosted.plugin_id.clone(), None));
+                    let none = HostedUpdate::Plugin(None, AutomatedPins::NONE);
+                    updates.push((id.clone(), hosted.plugin_id.clone(), none));
                 }
                 Restart::Waiting => match hosted.plugin.restart(hosted.config) {
                     // The engine has not given it back yet.
@@ -1557,7 +1722,10 @@ impl Plugins {
                         if let Some(record) = record_of(project, id) {
                             hosted.send_pins(record);
                         }
-                        updates.push((id.clone(), hosted.plugin_id.clone(), Some(started)));
+                        let laned = hosted.laned.clone();
+                        let playing = Playing { started, laned };
+                        let update = HostedUpdate::Plugin(Some(playing), hosted.lanes);
+                        updates.push((id.clone(), hosted.plugin_id.clone(), update));
                     }
                     Some(Err(problem)) => {
                         // Silent until its record changes, which loads it.

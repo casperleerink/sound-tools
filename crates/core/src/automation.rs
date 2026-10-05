@@ -6,16 +6,22 @@
 //! The device keeps an [`Automated`] in place of its record, and aims at the [`Targets`] it
 //! gives. Every decision about how fast a number moves is made here, once.
 //!
+//! A device whose numbers are known only as its behaviour runs, such as a hosted plugin, names
+//! them with [`BehaviourContext::runtime_automation`](crate::BehaviourContext::runtime_automation)
+//! instead, and moves them itself: a plugin smooths its own parameters.
+//!
 //! The owner also shows its lanes to the views, as [`PlayedLanes`], so the knob of an
 //! automated number shows the value that plays.
+
+use std::sync::Arc;
 
 use crate::clock::Ticks;
 use crate::parameter::Parameter;
 use crate::processor::{EventInput, ProcessContext, Timed};
 
 /// The value of one number of a device for this block, in the units of its record (Hz, dB, 0
-/// to 1). `parameter` is the place of the number in the list of the device's
-/// [`AutomationInput`].
+/// to 1). `parameter` is the place of the number in the list the device named: its
+/// [`AutomationInput`], or the numbers it named as its behaviour ran.
 ///
 /// A lane sends its value every block, at offset 0, also while the project does not play. So
 /// a number that hears nothing in a block is no longer automated, and goes back to its record.
@@ -30,10 +36,10 @@ pub struct Automation {
 /// them with [`BehaviourContext::show_lanes`](crate::BehaviourContext::show_lanes), and works
 /// a value out here as its player does, so the knob and the sound agree.
 pub trait PlayedLanes: Send + Sync {
-    /// The value of each lane at `tick`, with the field of its number as the device names it
-    /// in its [`AutomationInput`], in the units of the record, after what `values` holds. A view
-    /// asks every frame while the project plays, so it gives the list to fill.
-    fn values_at(&self, tick: Ticks, values: &mut Vec<(&'static str, f32)>);
+    /// The value of each lane at `tick`, with the name of its number as the device names it, in
+    /// the units of the record, after what `values` holds. A view asks every frame while the
+    /// project plays, so it gives the list to fill, and a name is shared, not copied.
+    fn values_at(&self, tick: Ticks, values: &mut Vec<(Arc<str>, f32)>);
 }
 
 /// The most numbers one device takes automation for. A lane player sends one event per number

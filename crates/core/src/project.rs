@@ -295,10 +295,10 @@ impl Project {
         self.bindings.automation(instance, field)
     }
 
-    /// The fields of every number `instance` takes automation for, in the order its behaviour
+    /// The names of every number `instance` takes automation for, in the order its behaviour
     /// named them the last time it ran, each of which [`Self::automation`] gives. For an owner
     /// that offers to automate them, such as the arrangement when a lane is added.
-    pub fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &'static str> + '_ {
+    pub fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &str> + '_ {
         self.bindings.automatable(instance)
     }
 

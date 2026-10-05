@@ -5,7 +5,7 @@
 - **Model.** Automation lives on the track: one line per parameter, in project ticks. No clip automation, no toggle.
 - **Moving a clip moves the automation under it.** It replaces what was at the new spot. Alt-drag moves the clip alone. A ghost of the line follows the drag, so you see the result before you drop.
 - **Audio path.** The arrangement reads the lines every block and sends each device the new values as events. Renders stay deterministic.
-- **v1 scope.** Track volume and pan, plus every `Parameter` of the built-in instruments and effects. Plugins come later.
+- **v1 scope.** Track volume and pan, plus every `Parameter` of the built-in instruments and effects, and the pinned parameters of plugins.
 - **Knob.** An automated knob shows the playing value with an automation mark and does not drag.
 - **Curves later.** v1 lines are straight. A curve can be added later as an optional field per point, so no file changes.
 
@@ -39,7 +39,6 @@ A composer or the agent can make any built-in knob change over time: "filter ope
 ## Later
 
 - Curved lines: one optional bend amount per point for the segment after it, not bezier handles. Missing means straight, so old files read the same.
-- Plugins: CLAP and VST 3 both take parameter changes in a block, so the plugin host can take the same events.
 
 ## Notes for the implementer
 

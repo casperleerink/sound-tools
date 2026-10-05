@@ -30,6 +30,7 @@ use crate::processor::{
 /// How many parameters one block may carry, in each direction. Going in, they are the pins of
 /// the record, the pedal, the wheels, the key pressure and the composer's edits in the plugin's
 /// own window, and all of them fit at once; an edit that does not fit waits for the next block.
+/// A lane moves a pin, so it shares the queue of its pin.
 /// Coming out, a plugin that reports more than this while it plays loses the rest until the
 /// next block.
 const PARAMETER_CAPACITY: usize = sound_core::MAX_AUTOMATED + Control::REST.len() + WINDOW_EDITS;
@@ -257,6 +258,10 @@ impl Started for Vst3Processor {
             }
             self.edits_taken += 1;
         }
+    }
+
+    fn automate(&mut self, id: u32, value: f64) -> bool {
+        self.input_changes.add(id, 0, value)
     }
 
     fn push(&mut self, offset: u32, event: PluginEvent) -> bool {

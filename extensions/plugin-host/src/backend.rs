@@ -43,6 +43,14 @@ pub(crate) trait LoadedPlugin {
     /// always arrives.
     fn send(&mut self, change: ParameterChange);
 
+    /// Shows the plugin's own window the value an automation lane plays, or the record value
+    /// again once the lane lets go. Only where the format needs the host for it: a VST 3
+    /// controller hears nothing of what the processor is given. `false` where the format does
+    /// not, and then the window follows the processor by itself.
+    fn show(&mut self, _change: ParameterChange) -> bool {
+        false
+    }
+
     /// Whether every value sent has been played by the processor, so that what [`Self::value`]
     /// says now is the plugin's own and not a value still on its way. A plugin whose block
     /// failed plays nothing again, so this stays false for it, which only means nothing of it
