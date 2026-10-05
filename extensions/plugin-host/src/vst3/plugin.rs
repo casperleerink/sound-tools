@@ -174,16 +174,12 @@ pub(crate) fn load(
         // halves share their values, as most that are one object do, sets up its smoothing from
         // them as it is activated. The processor of one that keeps its own hears them in its
         // first block, at its first frame, as the host sends them below.
-        let parameters = controller
-            .as_ref()
-            .filter(|_| !pins.is_empty())
-            .map(|controller| (controller, by_id(parameters::of_controller(controller))));
-        if let Some((controller, parameters)) = &parameters {
-            for change in playable(parameters, pins) {
+        if let Some(controller) = controller.as_ref().filter(|_| !pins.is_empty()) {
+            let parameters = by_id(parameters::of_controller(controller));
+            for change in playable(&parameters, pins) {
                 controller.setParamNormalized(change.id, change.value);
             }
         }
-        let parameters = parameters.map(|(_, parameters)| parameters);
 
         let processor = component
             .cast::<IAudioProcessor>()
@@ -269,7 +265,6 @@ pub(crate) fn load(
                 mode,
             }),
             notes,
-            parameters,
         }
     };
     Ok(plugin)

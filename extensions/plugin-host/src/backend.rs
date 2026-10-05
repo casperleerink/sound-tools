@@ -5,7 +5,6 @@
 //! do something says so here rather than in the table: [`LoadedPlugin::gui`] is `None` for a
 //! plugin that can have no window at all, and the card then says so.
 
-use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
@@ -195,7 +194,4 @@ pub(crate) struct Opening {
     /// What stays true about this plugin while it plays, such as a plugin the sustain pedal
     /// cannot reach. None of these stops it from sounding.
     pub notes: Vec<PluginProblem>,
-    /// Every parameter a host may set, by id, when the load read them to give the plugin the
-    /// pins of its record before it was activated. `None` for a record with no pins.
-    pub parameters: Option<BTreeMap<u32, Parameter>>,
 }

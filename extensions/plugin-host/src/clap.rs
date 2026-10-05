@@ -395,7 +395,6 @@ pub(crate) fn load(
             waiting: BTreeMap::new(),
         }),
         notes,
-        parameters,
     })
 }
 

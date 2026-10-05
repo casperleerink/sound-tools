@@ -1120,7 +1120,6 @@ impl Plugins {
             mut plugin,
             started,
             notes,
-            parameters,
         } = opening;
         let has_window = plugin.gui().is_some_and(|gui| gui.is_offered());
         let mut hosted = Hosted {
@@ -1136,7 +1135,7 @@ impl Plugins {
             restart: Restart::Idle,
             needs_load: false,
             notes,
-            parameters: parameters.map(Rc::new),
+            parameters: None,
             pins: BTreeMap::new(),
             laned: Arc::new(LanedPins::new()),
             lanes: AutomatedPins::NONE,
