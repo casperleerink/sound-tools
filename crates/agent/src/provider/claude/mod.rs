@@ -6,7 +6,9 @@
 //! download and the sign-in are in [`setup`].
 
 mod mapper;
+// The fake CLI is a shell script.
 #[cfg(test)]
+#[cfg(unix)]
 mod process_tests;
 mod protocol;
 mod setup;
@@ -30,6 +32,7 @@ use self::mapper::Mapper;
 use self::protocol::{CliRequest, ControlResponse, Incoming, Outgoing, PermissionMode, Request};
 pub(super) use self::setup::{SIGN_IN_CHOICES, account, download, sign_in, sign_out};
 use super::{AgentEvent, ApprovalMode, Command, ThreadOptions};
+use crate::process::ProcessTree;
 
 /// The tools a composer needs. No web, no subagents, no questions: the agent asks in plain
 /// text.
@@ -100,7 +103,7 @@ fn command(program: &Path, environment: &HashMap<OsString, OsString>) -> std::pr
         // Set when the app was started from Electron; the CLI would run as plain Node.
         !nested && key != "ELECTRON_RUN_AS_NODE"
     });
-    let mut command = std::process::Command::new(program);
+    let mut command = crate::process::command(program);
     command
         .env_clear()
         .envs(environment)
@@ -114,6 +117,9 @@ fn command(program: &Path, environment: &HashMap<OsString, OsString>) -> std::pr
 #[derive(Debug)]
 pub(super) struct Events {
     child: Child,
+    /// The CLI and every program it started, such as a `cargo build`: `kill_on_drop` ends
+    /// only the CLI. Ended only while the CLI is not reaped yet.
+    tree: ProcessTree,
     /// `None` once every [`super::Thread`] is gone or the pipe broke.
     stdin: Option<ChildStdin>,
     /// The line being written and how much of it is written. It stays here between calls
@@ -159,22 +165,22 @@ impl Events {
             // into it.
             .env("CLAUDE_CODE_AUTO_CONNECT_IDE", "0")
             .env("CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1");
-        // Its own process group: a ctrl-c in the terminal that started the app does not stop
-        // the agent halfway through a write, and dropping the events ends the agent's own
-        // children too.
-        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        // Dropping the events ends the agent's own children too.
+        ProcessTree::prepare(&mut command);
         let mut child = smol::process::Command::from(command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
+        let tree = ProcessTree::of(&child)?;
         let pipe = |name| io::Error::other(format!("the {name} of claude is not a pipe"));
         let stdin = child.stdin.take().ok_or_else(|| pipe("stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| pipe("stdout"))?;
         let stderr = child.stderr.take().ok_or_else(|| pipe("stderr"))?;
         let mut events = Events {
             child,
+            tree,
             stdin: Some(stdin),
             writing: None,
             stdout: BufReader::new(stdout),
@@ -397,7 +403,7 @@ impl Events {
         }
         self.close_stdin();
         // Before the wait: until the CLI is reaped its pid cannot name another group.
-        self.end_group();
+        self.tree.end();
         let code = match self.child.status().await {
             Ok(status) => status.code(),
             Err(error) => {
@@ -410,24 +416,12 @@ impl Events {
         let events = self.mapper.exited(code, self.said.as_deref());
         self.events.extend(events);
     }
-
-    /// Ends the agent's own children, such as a `cargo build` it started. `kill_on_drop`
-    /// ends only the CLI. Only while the CLI is not reaped yet.
-    fn end_group(&self) {
-        if let Ok(group) = libc::pid_t::try_from(self.child.id()) {
-            // SAFETY: `killpg` only sends a signal; it touches no memory of ours. The group
-            // is the CLI's own (`process_group(0)` at the start), and the CLI is not reaped,
-            // so the id is still its. It fails only when the group is gone already, which
-            // is what this wants.
-            unsafe { libc::killpg(group, libc::SIGTERM) };
-        }
-    }
 }
 
 impl Drop for Events {
     fn drop(&mut self) {
         if !self.exited {
-            self.end_group();
+            self.tree.end();
         }
     }
 }

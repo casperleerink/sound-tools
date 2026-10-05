@@ -3,7 +3,6 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -24,12 +23,20 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// `path` as a `file://` URL. A Windows path starts with its drive, such as `C:\`, and needs
+/// a slash before it.
+fn file_url(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let slash = if path.starts_with('/') { "" } else { "/" };
+    format!("file://{slash}{path}")
+}
+
 /// The download of `content`, served from `source` as a `file://` URL.
 fn download(source: &Path, content: &[u8]) -> Download {
     Download {
         name: "tool",
         version: "2.0.0".to_string(),
-        url: format!("file://{}", source.display()),
+        url: file_url(source),
         sha256: sha256_hex(content),
         size: content.len() as u64,
     }
@@ -53,10 +60,27 @@ fn installs_the_program_executable_where_the_version_says() {
     let program = result.unwrap();
     assert_eq!(program, agents.join("tool/2.0.0/tool"));
     assert_eq!(fs::read(&program).unwrap(), content());
-    let mode = fs::metadata(&program).unwrap().permissions().mode();
-    assert_eq!(mode & 0o111, 0o111);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&program).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111);
+    }
     assert!(!download.partial(&agents).exists());
     assert_eq!(heard.last(), Some(&download.size));
+}
+
+/// On Windows the program is `claude.exe`, and its versions stay in `claude/`, as elsewhere.
+#[test]
+fn a_program_with_an_extension_keeps_its_versions_under_its_stem() {
+    let download = Download {
+        name: "claude.exe",
+        ..download(Path::new("/unused"), &content())
+    };
+    assert_eq!(
+        download.program(Path::new("agents")),
+        Path::new("agents/claude/2.0.0/claude.exe")
+    );
 }
 
 #[test]
