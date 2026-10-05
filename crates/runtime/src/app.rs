@@ -122,8 +122,7 @@ pub fn remember_project(folder: &Path) -> Result<()> {
 }
 
 fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
-    let folder = folder
-        .canonicalize()
+    let folder = dunce::canonicalize(folder)
         .with_context(|| format!("{} is not there", folder.display()))?;
     let file = support.join(LAST_PROJECT_FILE);
     if let Some(parent) = file.parent() {
@@ -304,7 +303,7 @@ mod tests {
         remember_project_in(support.path(), &piece).unwrap();
         assert_eq!(
             last_project_in(support.path()),
-            Some(piece.canonicalize().unwrap())
+            Some(dunce::canonicalize(&piece).unwrap())
         );
         assert!(support.path().join("last-project").is_file());
 

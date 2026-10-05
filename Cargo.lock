@@ -4713,6 +4713,7 @@ dependencies = [
  "anyhow",
  "clack-extensions",
  "clack-host",
+ "dunce",
  "gpui",
  "raw-window-handle",
  "rtrb",
@@ -5453,6 +5454,7 @@ dependencies = [
  "compressor",
  "delay",
  "drum-pad",
+ "dunce",
  "embed-resource",
  "eq",
  "filter",
@@ -6032,6 +6034,7 @@ name = "sound-agent"
 version = "0.3.1"
 dependencies = [
  "ctrlc",
+ "dunce",
  "gpui",
  "insta",
  "libc",
@@ -6052,6 +6055,7 @@ name = "sound-core"
 version = "0.3.1"
 dependencies = [
  "cpal",
+ "dunce",
  "no_denormals",
  "notify",
  "proptest 1.11.0",
@@ -6063,6 +6067,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "triple_buffer",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

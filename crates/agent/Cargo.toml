@@ -8,6 +8,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+dunce.workspace = true
 gpui.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true

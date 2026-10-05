@@ -13,6 +13,7 @@ arrangement.workspace = true
 compressor.workspace = true
 delay.workspace = true
 drum-pad.workspace = true
+dunce.workspace = true
 eq.workspace = true
 filter.workspace = true
 fit-tempo.workspace = true

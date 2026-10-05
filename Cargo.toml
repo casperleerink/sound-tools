@@ -53,6 +53,9 @@ cpal = "0.18"
 ctrlc = "3.5"
 # The icon of the Windows program, in crates/runtime/build.rs. The version gpui uses. MIT.
 embed-resource = "3.0.11"
+# `canonicalize` without the `\\?\` prefix Windows adds, which cmd, Explorer and people do not
+# read. The same as std elsewhere.
+dunce = "1.0.5"
 hound = "3.5"
 memmap2 = "0.9.11"
 image = { version = "0.25", default-features = false, features = ["png"] }

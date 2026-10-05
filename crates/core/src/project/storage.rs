@@ -186,7 +186,7 @@ impl Storage {
     /// Creates the folder when it is missing, and takes the project lock.
     pub(super) fn open_exclusive(folder: &Path) -> io::Result<Locked> {
         fs::create_dir_all(folder.join(STATE_FOLDER))?;
-        let root = folder.canonicalize()?;
+        let root = dunce::canonicalize(folder)?;
         let lock = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -201,7 +201,7 @@ impl Storage {
 
     /// Takes no lock and must never write, so it is safe next to a running runtime.
     pub(super) fn open_read_only(folder: &Path) -> io::Result<Self> {
-        Ok(Self::new(folder.canonicalize()?, None))
+        Ok(Self::new(dunce::canonicalize(folder)?, None))
     }
 
     fn new(root: PathBuf, lock: Option<fs::File>) -> Self {

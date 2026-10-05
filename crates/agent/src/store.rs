@@ -242,7 +242,7 @@ pub(crate) fn write_whole(path: &Path, text: &str) -> io::Result<()> {
 /// The folder name of a project: a name-based UUID of the path of its folder, the same
 /// however it was opened. Any path gives a name of the same short length.
 fn key(project: &Path) -> String {
-    let path = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    let path = dunce::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
     Uuid::new_v5(&Uuid::NAMESPACE_URL, path.as_os_str().as_encoded_bytes()).to_string()
 }
 
