@@ -37,9 +37,6 @@ jobs:
     needs: version
     runs-on: macos-15
     timeout-minutes: 45
-    env:
-      # rust-cache only saves a target folder inside the workspace.
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
@@ -64,9 +61,6 @@ jobs:
             arch: aarch64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
-    env:
-      # `.cargo/config.toml` builds into /private/tmp, a folder of macOS.
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
       - name: Install the system libraries

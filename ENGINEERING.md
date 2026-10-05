@@ -26,7 +26,6 @@ Rules are traps to avoid, not general advice. Add a rule only when it is non-obv
 - Extensions depend on the SDK and on small shared contract crates, never on each other. `tooling/workspace-rules` fails the tests if one does. This keeps the build wide and parallel.
 - Warnings fail CI only (`.cargo/ci-config.toml`), never a local build: a warning in agent-written code must not break a composer's build.
 - Never vary `rustflags` or environment variables between builds. Any change rebuilds everything. CI's `RTSAN_ENABLE=1` is the one exception.
-- Never set `CARGO_TARGET_DIR` on macOS. Every checkout shares the build folder of `.cargo/config.toml`, and a private one builds gpui from scratch. Agents did this to avoid waiting on the shared folder's lock, and their tests took five times longer.
 
 ## The audio engine
 
