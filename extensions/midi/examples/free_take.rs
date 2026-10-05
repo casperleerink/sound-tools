@@ -22,9 +22,13 @@
 //! target/debug/examples/free_take 60 "Free Take" 12
 //! ```
 
+// Windows has no virtual MIDI sources, so there the example only says so.
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
+
 use std::time::{Duration, Instant};
 
 use midir::MidiOutput;
+#[cfg(unix)]
 use midir::os::unix::VirtualOutput;
 
 /// The chords of the take, one per bar: the bass note and the right hand over it.
@@ -39,6 +43,12 @@ const BARS: [(u8, [u8; 3]); 8] = [
     (36, [60, 64, 67]),
 ];
 
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("Windows has no virtual MIDI sources. Run this on macOS or Linux.");
+}
+
+#[cfg(unix)]
 fn main() {
     let mut arguments = std::env::args().skip(1);
     let seconds: f64 = arguments

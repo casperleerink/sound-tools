@@ -1,5 +1,6 @@
 //! Interface edits: gestures, creation and deletion, undo and redo, and writing.
 
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use sound_core::{
@@ -244,6 +245,8 @@ fn an_invalid_interface_edit_is_rejected() {
     assert!(matches!(error, ProjectError::MissingParent(_)), "{error}");
 }
 
+// A read-only folder still takes new files on Windows.
+#[cfg(unix)]
 #[test]
 fn a_failed_write_leaves_the_previous_file_complete() {
     let mut harness = Harness::new();
