@@ -2,19 +2,31 @@
 //! and `MarkdownText` draws it. An answer arrives streaming, so the caller parses the whole
 //! message again on each batch; a 5 KB answer parses in well under a millisecond.
 //!
-//! No syntax colours and no selection. HTML is shown as its source, images as their alt text.
+//! The text of one message can be selected: drag, or double- or triple-click for a word or a
+//! line, and cmd-c copies it. A selection stays inside its message.
+//!
+//! No syntax colours. HTML is shown as its source, images as their alt text.
 
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Div, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText,
-    SharedString, StyleRefinement, StyledText, UnderlineStyle, Window, div, prelude::*, px,
+    AnyElement, App, ClipboardItem, DispatchPhase, Div, ElementId, Entity, FocusHandle, FontStyle,
+    FontWeight, HighlightStyle, InteractiveText, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, SharedString, StyleRefinement, StyledText, TextLayout,
+    UnderlineStyle, Window, actions, canvas, div, prelude::*, px,
 };
 use pulldown_cmark::{Alignment, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
 
+use sound_ui::components::text_input::words;
 use sound_ui::typography::MONO;
 use sound_ui::{ActiveTheme, Theme};
+
+actions!(agent_markdown, [Copy]);
+
+/// The key context of a message, where cmd-c copies the selection.
+pub(super) const KEY_CONTEXT: &str = "Markdown";
 
 /// A parsed message. Cheap to clone, so a view keeps it and hands it to every frame.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -393,29 +405,266 @@ impl Styled for MarkdownText {
     }
 }
 
+/// What is selected in one message, in bytes of its flat text: every text of the message one
+/// after the other, with a newline between two. It shows while the message has focus.
+struct Selection {
+    focus: FocusHandle,
+    anchor: usize,
+    head: usize,
+    dragging: bool,
+}
+
+impl Selection {
+    fn range(&self) -> Range<usize> {
+        self.anchor.min(self.head)..self.anchor.max(self.head)
+    }
+}
+
+/// One text of a message as drawn, where it starts in the flat text and where it lies on screen.
+struct Piece {
+    start: usize,
+    text: SharedString,
+    layout: TextLayout,
+}
+
+impl Piece {
+    fn end(&self) -> usize {
+        self.start + self.text.len()
+    }
+}
+
 impl RenderOnce for MarkdownText {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let selection = window.use_keyed_state(self.id.clone(), cx, |_, cx| Selection {
+            focus: cx.focus_handle(),
+            anchor: 0,
+            head: 0,
+            dragging: false,
+        });
+        let (focus, selected) = {
+            let selection = selection.read(cx);
+            let shows = selection.focus.is_focused(window);
+            (
+                selection.focus.clone(),
+                shows.then(|| selection.range()).unwrap_or_default(),
+            )
+        };
         let mut renderer = Renderer {
             theme: cx.theme().clone(),
             next_id: 0,
+            selected,
+            pieces: Vec::new(),
+            length: 0,
         };
+        let blocks = renderer.blocks(self.markdown.blocks());
+        let pieces: Rc<[Piece]> = renderer.pieces.into();
         self.base
             .id(self.id)
+            .key_context(KEY_CONTEXT)
+            .track_focus(&focus)
             .flex()
             .flex_col()
             .gap(px(12.))
             .min_w_0()
-            .children(renderer.blocks(self.markdown.blocks()))
+            .on_mouse_down(MouseButton::Left, {
+                let (selection, pieces) = (selection.clone(), pieces.clone());
+                move |event, _, cx| press(&selection, &pieces, event, cx)
+            })
+            .on_action({
+                let (selection, pieces) = (selection.clone(), pieces.clone());
+                move |_: &Copy, _, cx| {
+                    let text = selected_text(&pieces, selection.read(cx).range());
+                    if !text.is_empty() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                }
+            })
+            .children(blocks)
+            // A drag goes on outside the message, so it listens to the whole window. The
+            // canvas paints last, when every text knows where it lies.
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, (), window, cx| {
+                        if selection.read(cx).dragging {
+                            follow_drag(selection, pieces, window);
+                        }
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
     }
+}
+
+/// A click puts the caret, a double-click selects a word and a triple-click a line.
+fn press(selection: &Entity<Selection>, pieces: &[Piece], event: &MouseDownEvent, cx: &mut App) {
+    let offset = offset_at(pieces, event.position);
+    let around = |select: fn(&str, usize) -> Range<usize>| {
+        let piece = pieces
+            .iter()
+            .find(|piece| (piece.start..=piece.end()).contains(&offset))?;
+        let range = select(&piece.text, offset - piece.start);
+        Some(piece.start + range.start..piece.start + range.end)
+    };
+    let range = match event.click_count {
+        0 | 1 => Some(offset..offset),
+        2 => around(words::word_at),
+        _ => around(words::line_at),
+    }
+    .unwrap_or(offset..offset);
+    selection.update(cx, |selection, cx| {
+        selection.anchor = range.start;
+        selection.head = range.end;
+        selection.dragging = event.click_count <= 1;
+        cx.notify();
+    });
+}
+
+fn follow_drag(selection: Entity<Selection>, pieces: Rc<[Piece]>, window: &mut Window) {
+    window.on_mouse_event({
+        let selection = selection.clone();
+        move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            // The button came up where the window did not see it.
+            if event.pressed_button != Some(MouseButton::Left) {
+                selection.update(cx, |selection, cx| {
+                    selection.dragging = false;
+                    cx.notify();
+                });
+                return;
+            }
+            let head = offset_at(&pieces, event.position);
+            selection.update(cx, |selection, cx| {
+                if selection.head != head {
+                    selection.head = head;
+                    cx.notify();
+                }
+            });
+        }
+    });
+    window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+        if phase == DispatchPhase::Bubble {
+            selection.update(cx, |selection, cx| {
+                selection.dragging = false;
+                cx.notify();
+            });
+        }
+    });
+}
+
+/// The offset in the flat text nearest to a point. Between two texts it is the start of the
+/// next one, and the cells of a table row sit side by side.
+fn offset_at(pieces: &[Piece], position: Point<Pixels>) -> usize {
+    let level: Vec<&Piece> = pieces
+        .iter()
+        .filter(|piece| {
+            let bounds = piece.layout.bounds();
+            (bounds.top()..bounds.bottom()).contains(&position.y)
+        })
+        .collect();
+    let beside = level
+        .iter()
+        .find(|piece| position.x < piece.layout.bounds().right())
+        .or(level.last());
+    if let Some(piece) = beside {
+        let (Ok(index) | Err(index)) = piece.layout.index_for_position(position);
+        return piece.start + index.min(piece.text.len());
+    }
+    match pieces
+        .iter()
+        .find(|piece| position.y < piece.layout.bounds().top())
+    {
+        Some(below) => below.start,
+        None => pieces.last().map_or(0, Piece::end),
+    }
+}
+
+/// The selected text as it reads, each text on a line of its own.
+fn selected_text(pieces: &[Piece], range: Range<usize>) -> String {
+    pieces
+        .iter()
+        .filter_map(|piece| {
+            let local = local(piece.start, &piece.text, &range);
+            (!local.is_empty()).then(|| &piece.text[local])
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The part of `range` inside a text that starts at `start`, in bytes of that text. A message
+/// that changed under its selection, as one that streams, can cut a character, so the ends
+/// move back to whole characters.
+fn local(start: usize, text: &str, range: &Range<usize>) -> Range<usize> {
+    let clamp = |offset: usize| text.floor_char_boundary(offset.saturating_sub(start));
+    let local_start = clamp(range.start);
+    local_start..clamp(range.end).max(local_start)
+}
+
+/// `range` cut where the selection starts and ends, each part with whether it is selected.
+fn cut(range: Range<usize>, selected: &Range<usize>) -> impl Iterator<Item = (Range<usize>, bool)> {
+    let start = selected.start.clamp(range.start, range.end);
+    let end = selected.end.clamp(start, range.end);
+    [
+        (range.start..start, false),
+        (start..end, true),
+        (end..range.end, false),
+    ]
+    .into_iter()
+    .filter(|(part, _)| !part.is_empty())
 }
 
 struct Renderer {
     theme: Theme,
     /// Code blocks scroll and links take clicks, and both need an id of their own.
     next_id: usize,
+    /// In the flat text, empty when nothing shows.
+    selected: Range<usize>,
+    pieces: Vec<Piece>,
+    /// Of the flat text so far.
+    length: usize,
 }
 
 impl Renderer {
+    /// A text of the message, its segments styled and the selection drawn over them. The
+    /// segments cover the text in order.
+    fn text(
+        &mut self,
+        text: &SharedString,
+        segments: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    ) -> StyledText {
+        let start = self.length;
+        self.length += text.len() + 1;
+        let selected = local(start, text, &self.selected);
+        let fill = self.theme.blue.opacity(0.25);
+        let highlights: Vec<_> = segments
+            .into_iter()
+            .flat_map(|(range, style)| {
+                cut(range, &selected).map(move |(part, is_selected)| {
+                    let style = HighlightStyle {
+                        background_color: if is_selected {
+                            Some(fill)
+                        } else {
+                            style.background_color
+                        },
+                        ..style
+                    };
+                    (part, style)
+                })
+            })
+            .filter(|(_, style)| *style != HighlightStyle::default())
+            .collect();
+        let styled = StyledText::new(text.clone()).with_highlights(highlights);
+        self.pieces.push(Piece {
+            start,
+            text: text.clone(),
+            layout: styled.layout().clone(),
+        });
+        styled
+    }
+
     fn id(&mut self, name: &'static str) -> ElementId {
         self.next_id += 1;
         (name, self.next_id).into()
@@ -469,7 +718,12 @@ impl Renderer {
                 .text_size(px(13.))
                 .line_height(px(20.))
                 .text_color(self.theme.gray_900)
-                .child(div().flex_none().whitespace_nowrap().child(code.clone()))
+                .child(
+                    div()
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .child(self.text(code, [(0..code.len(), HighlightStyle::default())])),
+                )
                 .into_any_element(),
             Block::Table(table) => self.table(table),
             Block::Rule => div()
@@ -565,7 +819,7 @@ impl Renderer {
 
     fn inline(&mut self, inline: &Inline) -> AnyElement {
         let (code_fill, underline) = (self.theme.alpha_at(0.08), self.theme.gray_600);
-        let highlights = inline.spans.iter().filter_map(|span| {
+        let segments = inline.spans.iter().map(|span| {
             let style = &span.style;
             let highlight = HighlightStyle {
                 font_weight: style.bold.then_some(FontWeight::SEMIBOLD),
@@ -578,15 +832,15 @@ impl Renderer {
                 }),
                 ..HighlightStyle::default()
             };
-            (highlight != HighlightStyle::default()).then(|| (span.range.clone(), highlight))
+            (span.range.clone(), highlight)
         });
         let monospace = inline
             .spans
             .iter()
             .filter(|span| span.style.code)
             .map(|span| (span.range.clone(), SharedString::new_static(MONO)));
-        let text = StyledText::new(inline.text.clone())
-            .with_highlights(highlights)
+        let text = self
+            .text(&inline.text, segments)
             .with_font_family_overrides(monospace);
 
         let (ranges, urls): (Vec<_>, Vec<_>) = inline
@@ -1013,6 +1267,58 @@ mod tests {
                 assert_eq!(covered, inline.text.len(), "{inline:?}");
             }
         }
+    }
+
+    struct Message;
+
+    impl Render for Message {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let source = "First **paragraph**.\n\n- Größe one\n\n```\ncode line\n```";
+            div()
+                .w(px(400.))
+                .debug_selector(|| "message".into())
+                .child(MarkdownText::new("message", Markdown::parse(source)))
+        }
+    }
+
+    /// A drag from the top left to the bottom right selects the whole message, each text on a
+    /// line of its own, and a double-click a word.
+    #[gpui::test]
+    fn a_drag_selects_and_cmd_c_copies(cx: &mut gpui::TestAppContext) {
+        use gpui::{KeyBinding, Modifiers, point};
+        cx.update(|cx| {
+            sound_ui::init(cx);
+            cx.bind_keys([KeyBinding::new("cmd-c", Copy, Some(KEY_CONTEXT))]);
+        });
+        let (_, cx) = cx.add_window_view(|_, _| Message);
+        cx.run_until_parked();
+        let bounds = cx.debug_bounds("message").expect("the message is drawn");
+        let copied = |cx: &mut gpui::VisualTestContext| {
+            cx.simulate_keystrokes("cmd-c");
+            cx.read_from_clipboard().and_then(|item| item.text())
+        };
+
+        let (first, last) = (
+            bounds.origin + point(px(1.), px(1.)),
+            bounds.bottom_right() - point(px(1.), px(1.)),
+        );
+        cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(last, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(last, MouseButton::Left, Modifiers::none());
+        assert_eq!(
+            copied(cx).as_deref(),
+            Some("First paragraph.\nGröße one\ncode line")
+        );
+
+        cx.simulate_event(MouseDownEvent {
+            position: first,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count: 2,
+            first_mouse: false,
+        });
+        cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::none());
+        assert_eq!(copied(cx).as_deref(), Some("First"));
     }
 
     #[test]

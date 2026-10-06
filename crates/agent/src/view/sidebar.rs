@@ -26,7 +26,7 @@ use sound_ui::components::text_input::{Arrow, TextInput};
 
 use super::entry;
 use super::history::History;
-use super::markdown::Markdown;
+use super::markdown::{self, Markdown};
 use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
 use crate::conversation::{Conversation, Entry, request_label};
@@ -64,7 +64,10 @@ fn install_bindings(cx: &mut App) {
         return;
     }
     cx.set_global(BindingsInstalled);
-    cx.bind_keys([KeyBinding::new("cmd-.", Stop, Some(KEY_CONTEXT))]);
+    cx.bind_keys([
+        KeyBinding::new("cmd-.", Stop, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-c", markdown::Copy, Some(markdown::KEY_CONTEXT)),
+    ]);
 }
 
 /// The process of the thread, from the first send until **+** or until it ends.
