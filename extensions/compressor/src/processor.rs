@@ -11,9 +11,8 @@
 //! The two channels share one level and one gain, so the stereo image does not move.
 //!
 //! While something feeds the sidechain input, the detector hears that instead of the sound: the
-//! level, the reduction and the meters follow it, and the gain goes on the sound. It is read
-//! as it comes, so with a lookahead the reduction is ahead of the delayed sound, as it is for
-//! the sound itself.
+//! level, the reduction and the meters follow it, and the gain goes on the sound. A sidechain
+//! is not led, so even with a lookahead the reduction lines up with it and not before it.
 
 use std::f32::consts::LN_10;
 

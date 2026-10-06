@@ -4,8 +4,8 @@ use std::f64::consts::TAU;
 
 use compressor::{Compressor, CompressorState, Meters};
 use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, NodeId, Ports,
-    PrepareConfig, ProcessContext, Processor,
+    AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, Ports, PrepareConfig,
+    ProcessContext, Processor,
 };
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
@@ -97,7 +97,6 @@ pub(crate) struct Rig {
     pub control: EngineControl,
     pub engine: Engine,
     pub compressor: Node<Compressor>,
-    pub source: Node<Source>,
     /// What the card of this compressor would read.
     pub meters: Meters,
 }
@@ -130,7 +129,6 @@ impl Rig {
             control,
             engine,
             compressor,
-            source,
             meters,
         }
     }
@@ -141,13 +139,8 @@ impl Rig {
         let mut edit = self.control.edit();
         let key = edit.add_processor("key", Source::new(key)).unwrap();
         edit.commit().unwrap();
-        self.sidechain_from(key.id())
-    }
-
-    /// The connection from a processor to the sidechain.
-    pub(crate) fn sidechain_from(&self, node: NodeId) -> Connection {
         Connection::new(
-            node,
+            key.id(),
             Source::OUTPUT,
             self.compressor.id(),
             Compressor::SIDECHAIN,
