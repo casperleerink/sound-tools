@@ -4,8 +4,8 @@ use std::f64::consts::TAU;
 
 use compressor::{Compressor, CompressorState, Meters};
 use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, Ports, PrepareConfig,
-    ProcessContext, Processor,
+    AudioOutput, Connection, Engine, EngineConfig, EngineControl, Node, NodeId, Ports,
+    PrepareConfig, ProcessContext, Processor,
 };
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
@@ -97,6 +97,7 @@ pub(crate) struct Rig {
     pub control: EngineControl,
     pub engine: Engine,
     pub compressor: Node<Compressor>,
+    pub source: Node<Source>,
     /// What the card of this compressor would read.
     pub meters: Meters,
 }
@@ -129,8 +130,40 @@ impl Rig {
             control,
             engine,
             compressor,
+            source,
             meters,
         }
+    }
+
+    /// Adds a source of `key` and gives the connection that feeds it to the sidechain, not yet
+    /// made.
+    pub(crate) fn add_key(&mut self, key: Signal) -> Connection {
+        let mut edit = self.control.edit();
+        let key = edit.add_processor("key", Source::new(key)).unwrap();
+        edit.commit().unwrap();
+        self.sidechain_from(key.id())
+    }
+
+    /// The connection from a processor to the sidechain.
+    pub(crate) fn sidechain_from(&self, node: NodeId) -> Connection {
+        Connection::new(
+            node,
+            Source::OUTPUT,
+            self.compressor.id(),
+            Compressor::SIDECHAIN,
+        )
+    }
+
+    pub(crate) fn connect(&mut self, connection: Connection) {
+        let mut edit = self.control.edit();
+        edit.connect(connection).unwrap();
+        edit.commit().unwrap();
+    }
+
+    pub(crate) fn disconnect(&mut self, connection: Connection) {
+        let mut edit = self.control.edit();
+        edit.disconnect(&connection).unwrap();
+        edit.commit().unwrap();
     }
 
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.

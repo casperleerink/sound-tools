@@ -9,6 +9,11 @@
 //! does not wobble with the wave. That is what makes [`static_gain_db`] exact.
 //!
 //! The two channels share one level and one gain, so the stereo image does not move.
+//!
+//! While something feeds the sidechain input, the detector hears that instead of the sound: the
+//! level, the reduction and the meters follow it, and the gain goes on the sound. It is read
+//! as it comes, so with a lookahead the reduction is ahead of the delayed sound, as it is for
+//! the sound itself.
 
 use std::f32::consts::LN_10;
 
@@ -191,12 +196,15 @@ pub struct Compressor {
     /// Where the lookahead is read. A new lookahead is a fade between two taps of one line, not
     /// a jump.
     tap: Taps<1>,
-    /// Frames in a row of silent input, up to what a silence needs to leave everything.
+    /// Frames in a row of silence in the input and in what the detector hears, up to what a
+    /// silence needs to leave everything.
     quiet: usize,
 }
 
 impl Compressor {
     pub const INPUT: AudioInput = AudioInput::new(0);
+    /// What the detector hears instead of the input, while anything feeds it.
+    pub const SIDECHAIN: AudioInput = AudioInput::new(1);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
     pub const AUTOMATION: AutomationInput<CompressorState, { PARAMETERS.len() }> =
         AutomationInput::new(0, PARAMETERS);
@@ -297,6 +305,7 @@ impl Processor for Compressor {
     fn ports(&self) -> Ports {
         Ports::new()
             .audio_input(Self::INPUT)
+            .side_audio_input(Self::SIDECHAIN)
             .audio_output(Self::OUTPUT)
             .event_input(Self::AUTOMATION.port())
     }
@@ -320,11 +329,18 @@ impl Processor for Compressor {
         if let Some(targets) = self.state.follow(context, self.ramp_frames) {
             self.aim(&targets);
         }
-        let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
-        let silent_input = left_in
+        let inputs = &context.audio_inputs;
+        let [left_in, right_in] = inputs.get(Self::INPUT);
+        // The level and the reduction carry over when the sidechain comes or goes, so the gain
+        // moves from where it was at the attack or the release, as for any change of level,
+        // and does not click.
+        let [left_key, right_key] = match inputs.is_connected(Self::SIDECHAIN) {
+            true => inputs.get(Self::SIDECHAIN),
+            false => [left_in, right_in],
+        };
+        let silent_input = [left_in, right_in, left_key, right_key]
             .iter()
-            .chain(right_in)
-            .all(|sample| held(*sample) == 0.0);
+            .all(|channel| channel.iter().all(|sample| held(*sample) == 0.0));
         if silent_input && self.is_resting() {
             // Nothing sounds, nothing is left in the lookahead and nothing is turned down: the
             // output is silent already, and no glide can be heard. What comes next is then
@@ -338,11 +354,13 @@ impl Processor for Compressor {
         let frames = left_in
             .iter()
             .zip(right_in)
+            .zip(left_key.iter().zip(right_key))
             .zip(left_out.iter_mut())
             .zip(right_out.iter_mut());
-        for (((left_in, right_in), left_out), right_out) in frames {
+        for ((((left_in, right_in), (left_key, right_key)), left_out), right_out) in frames {
             let input = [held(*left_in), held(*right_in)];
-            let silent = input == [0.0; CHANNELS];
+            let key = [held(*left_key), held(*right_key)];
+            let silent = input == [0.0; CHANNELS] && key == [0.0; CHANNELS];
             // The first sound after a rest starts a new stretch of the detector. So where the
             // stretches of 1 ms begin depends only on when the sound came, not on how many
             // frames ran since `prepare` or on the blocks around it.
@@ -356,7 +374,7 @@ impl Processor for Compressor {
             for (line, sample) in self.lines.iter_mut().zip(input) {
                 line.write(self.position, sample);
             }
-            let level = self.detector.next(input[0].abs().max(input[1].abs()));
+            let level = self.detector.next(key[0].abs().max(key[1].abs()));
             loudest = loudest.max(level);
             let level_db = 20.0 * level.max(FLOOR).log10();
             let threshold = self.threshold.advance(1);
