@@ -12,6 +12,7 @@
 //!     "tune": 0.0,
 //!     "start_seconds": 0.0,
 //!     "reverse": false,
+//!     "loop": false,
 //!     "attack_seconds": 0.002,
 //!     "decay_seconds": 0.4,
 //!     "sustain": 1.0,
@@ -86,6 +87,13 @@ pub struct SamplerState {
     pub end_seconds: Option<f64>,
     /// Plays the file backwards, from the end back to the start.
     pub reverse: bool,
+    /// Repeats the part from `loop_start_seconds` to the end while a note sounds.
+    #[serde(rename = "loop")]
+    pub looping: bool,
+    /// Where the loop starts, in seconds of the file, from the start to the end. None is the
+    /// start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loop_start_seconds: Option<f64>,
     /// From note on to full level.
     pub attack_seconds: f32,
     /// From full level to within 0.1 % of the sustain level.
@@ -204,6 +212,8 @@ impl Default for SamplerState {
             start_seconds: 0.0,
             end_seconds: None,
             reverse: false,
+            looping: false,
+            loop_start_seconds: None,
             attack_seconds: ATTACK.default,
             decay_seconds: DECAY.default,
             sustain: SUSTAIN.default,
@@ -238,9 +248,21 @@ impl State for SamplerState {
                 "start_seconds must be a number of seconds, 0 or more, not {start}"
             ));
         }
-        match self.end_seconds {
-            Some(end) if !(end.is_finite() && end > start) => Err(format!(
+        if let Some(end) = self.end_seconds
+            && !(end.is_finite() && end > start)
+        {
+            return Err(format!(
                 "end_seconds must be after start_seconds ({start}), not {end}"
+            ));
+        }
+        match (self.loop_start_seconds, self.end_seconds) {
+            (Some(loop_start), _) if !(loop_start.is_finite() && loop_start >= start) => {
+                Err(format!(
+                    "loop_start_seconds must be at or after start_seconds ({start}), not {loop_start}"
+                ))
+            }
+            (Some(loop_start), Some(end)) if loop_start >= end => Err(format!(
+                "loop_start_seconds must be before end_seconds ({end}), not {loop_start}"
             )),
             _ => Ok(()),
         }
@@ -465,12 +487,30 @@ mod tests {
     }
 
     #[test]
+    fn the_loop_starts_between_start_and_end() {
+        let state = |loop_start| SamplerState {
+            start_seconds: 0.5,
+            end_seconds: Some(1.0),
+            loop_start_seconds: Some(loop_start),
+            ..SamplerState::default()
+        };
+        assert_eq!(state(0.5).validate(), Ok(()));
+        assert_eq!(state(0.9).validate(), Ok(()));
+        assert!(state(0.4).validate().is_err());
+        assert!(state(1.0).validate().is_err());
+        assert!(state(f64::NAN).validate().is_err());
+    }
+
+    #[test]
     fn a_record_is_short_and_an_empty_one_is_the_default() {
         let empty: SamplerState = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, SamplerState::default());
         let written = serde_json::to_string(&SamplerState::default()).unwrap();
         assert!(!written.contains("sample\""), "{written}");
         assert!(!written.contains("end_seconds"), "{written}");
+        assert!(!written.contains("loop_start_seconds"), "{written}");
+        let looped: SamplerState = serde_json::from_str(r#"{"loop": true}"#).unwrap();
+        assert!(looped.looping);
         let wrong = serde_json::from_str::<SamplerState>(r#"{"root": 128}"#);
         assert!(wrong.is_err());
         let wrong = serde_json::from_str::<SamplerState>(r#"{"sample": "../kick.wav"}"#);

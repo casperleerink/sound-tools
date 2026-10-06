@@ -7,6 +7,7 @@ mod clicks;
 mod envelope;
 mod library;
 mod loading;
+mod looping;
 mod performance;
 mod pitch;
 mod sfz;
