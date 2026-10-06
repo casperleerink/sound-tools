@@ -33,6 +33,7 @@ const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const DEVICE: &str = "device";
 const OPEN_PROJECT: &str = "open-project";
+const OPEN_RECENT: &str = "open-recent";
 /// Followed by the index in the recent projects.
 const RECENT_PROJECT: &str = "recent-project-";
 const REVEAL: &str = "reveal";
@@ -600,7 +601,7 @@ fn entries(shown: &Shown, device_name: &SharedString, recent: &[PathBuf]) -> Vec
             .shortcut(shortcut)
             .disabled(label.is_none())
     };
-    let mut entries = vec![
+    vec![
         MenuEntry::Group(
             MenuGroup::new().items([
                 // The fit belongs to the whole project: it rewrites the tempo map every other
@@ -639,19 +640,9 @@ fn entries(shown: &Shown, device_name: &SharedString, recent: &[PathBuf]) -> Vec
                 .item(MenuItem::new(DEVICE, device_name.clone())),
         ),
         MenuEntry::Separator,
-    ];
-    if !recent.is_empty() {
-        entries.push(MenuEntry::Group(
-            MenuGroup::new()
-                .label("Recent projects")
-                .items(recent_items(recent)),
-        ));
-    }
-    entries.extend([
-        MenuEntry::Group(MenuGroup::new().items(folder_items())),
+        MenuEntry::Group(MenuGroup::new().items(folder_items(recent))),
         MenuEntry::Note(concat!("Sound Tools ", env!("CARGO_PKG_VERSION")).into()),
-    ]);
-    entries
+    ]
 }
 
 /// The folder name, and the folder it is in to tell two of the same name apart.
@@ -670,19 +661,28 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
     })
 }
 
-/// The last group: another project, the project folder in the Finder, a terminal in it for a
-/// coding agent, and the command that agent runs. Windows has no command line tool, see
-/// `app::Installed`.
-fn folder_items() -> Vec<MenuItem> {
+/// The last group: another project, a recent one in a submenu, the project folder in the
+/// Finder, a terminal in it for a coding agent, and the command that agent runs. Windows has
+/// no command line tool, see `app::Installed`.
+fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
     [
         (OPEN_PROJECT, "Open project…"),
+        (OPEN_RECENT, "Open recent"),
         (REVEAL, "Reveal project folder"),
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
     ]
     .into_iter()
     .filter(|(value, _)| cfg!(unix) || *value != INSTALL_TOOL)
-    .map(|(value, label)| MenuItem::new(value, label).selectable(false))
+    .map(|(value, label)| {
+        let item = MenuItem::new(value, label).selectable(false);
+        match value {
+            OPEN_RECENT => item
+                .submenu(recent_items(recent))
+                .disabled(recent.is_empty()),
+            _ => item,
+        }
+    })
     .collect()
 }
 
@@ -802,12 +802,13 @@ mod tests {
 
     #[test]
     fn the_menu_offers_the_terminal_next_to_the_finder() {
-        let items: Vec<(SharedString, SharedString)> = folder_items()
+        let items: Vec<(SharedString, SharedString)> = folder_items(&[])
             .iter()
             .map(|item| (item.value.clone(), item.label()))
             .collect();
         let mut expected: Vec<(SharedString, SharedString)> = vec![
             (OPEN_PROJECT.into(), "Open project…".into()),
+            (OPEN_RECENT.into(), "Open recent".into()),
             (REVEAL.into(), "Reveal project folder".into()),
             (TERMINAL.into(), "Open terminal in project folder".into()),
         ];

@@ -1192,6 +1192,10 @@ fn main() -> Result<()> {
         menu.update(cx, |menu, cx| menu.open(window, cx));
     })?;
     cx.run_until_parked();
+    // Up from the bottom to "Open recent", and right opens its submenu.
+    for key in ["up", "up", "up", "up", "right"] {
+        opened.key(key, &mut cx)?;
+    }
     save(&mut cx, &opened, "menu")?;
     drop(opened);
 

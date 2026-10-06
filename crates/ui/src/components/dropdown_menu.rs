@@ -11,6 +11,10 @@
 //!
 //! [`Trigger::Chevron`] is the menu half of a [`crate::components::split_button::SplitButton`].
 //!
+//! [`MenuItem::submenu`] makes a row that opens more rows at its side, as "Open recent" does in
+//! the menus of other apps. The pointer opens it, and so do right and enter; left and escape
+//! close it. A search does not look inside it.
+//!
 //! [`DropdownMenu::searchable`] puts a field above the rows, for a list too long to read
 //! through, such as the parameters of a plugin. What is typed keeps the rows whose label or
 //! value holds it, so a plugin parameter is found by its id too, and the first of them is highlighted, so enter picks it. Up and down move from there and
@@ -22,7 +26,7 @@ use std::rc::Rc;
 use gpui::{
     App, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
     IntoElement, KeyDownEvent, MouseDownEvent, Render, RenderOnce, SharedString, Stateful,
-    StyleRefinement, Styled, Window, div, prelude::*, px,
+    StyleRefinement, Styled, Window, anchored, deferred, div, point, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
@@ -37,6 +41,7 @@ const ROW_HEIGHT: f32 = 32.;
 const MAX_FOUND: usize = 100;
 /// The rounded square an item icon sits on.
 const ICON_TILE: f32 = 24.;
+const SUBMENU_WIDTH: f32 = 280.;
 
 #[derive(Clone, Debug)]
 pub struct MenuItem {
@@ -49,6 +54,7 @@ pub struct MenuItem {
     disabled: bool,
     selectable: bool,
     checked: bool,
+    submenu: Option<Vec<MenuItem>>,
 }
 
 impl MenuItem {
@@ -62,7 +68,15 @@ impl MenuItem {
             disabled: false,
             selectable: true,
             checked: false,
+            submenu: None,
         }
+    }
+
+    /// Makes this row open `items` at its side instead of being picked. A row with no items
+    /// to open is better disabled.
+    pub fn submenu(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
+        self.submenu = Some(items.into_iter().collect());
+        self
     }
 
     /// Muted second line, as in the model picker.
@@ -149,6 +163,23 @@ pub enum MenuEntry {
     Note(SharedString),
 }
 
+/// The item with this value, in a submenu too.
+fn find<'a>(entries: &'a [MenuEntry], value: &str) -> Option<&'a MenuItem> {
+    flat(entries).into_iter().find_map(|item| {
+        if item.value.as_ref() == value {
+            return Some(item);
+        }
+        let submenu = item.submenu.as_deref().unwrap_or_default();
+        submenu.iter().find(|item| item.value.as_ref() == value)
+    })
+}
+
+/// The rows of the submenu of the row `value`, as entries, for the keyboard.
+fn submenu_entries(entries: &[MenuEntry], value: Option<&SharedString>) -> Option<Vec<MenuEntry>> {
+    let items = find(entries, value?)?.submenu.clone()?;
+    Some(vec![MenuEntry::Group(MenuGroup::new().items(items))])
+}
+
 /// Every item in render order, with its keyboard index.
 pub(crate) fn flat(entries: &[MenuEntry]) -> Vec<&MenuItem> {
     entries
@@ -232,6 +263,20 @@ fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
 }
 
 type SelectFn = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
+type SubmenuFn = Rc<dyn Fn(Option<SharedString>, &mut Window, &mut App)>;
+type HoverFn = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+
+/// The submenu that is open, see [`MenuItem::submenu`].
+#[derive(Clone)]
+pub(crate) struct OpenSubmenu {
+    /// The value of the row it opens from, when one is open.
+    value: Option<SharedString>,
+    highlighted: usize,
+    /// Tells the menu the row to open, or none when the pointer is on a row without one.
+    on_open: SubmenuFn,
+    /// Tells the menu whether the pointer is over the submenu, which is outside its bounds.
+    on_hover: HoverFn,
+}
 
 /// The menu body: groups, separators, rows.
 #[derive(IntoElement)]
@@ -242,6 +287,7 @@ pub struct MenuList {
     highlighted: usize,
     max_height: Option<f32>,
     on_select: Option<SelectFn>,
+    submenu: Option<OpenSubmenu>,
 }
 
 impl MenuList {
@@ -253,7 +299,13 @@ impl MenuList {
             highlighted: usize::MAX,
             max_height: None,
             on_select: None,
+            submenu: None,
         }
+    }
+
+    pub(crate) fn submenu(mut self, submenu: OpenSubmenu) -> Self {
+        self.submenu = Some(submenu);
+        self
     }
 
     /// Scroll the groups past this height.
@@ -287,14 +339,9 @@ impl Styled for MenuList {
 impl RenderOnce for MenuList {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, hover, line, text, tile) = (
-            theme.gray_700,
-            theme.alpha_at(0.10),
-            theme.alpha_at(0.10),
-            theme.gray_950,
-            theme.alpha_at(0.06),
-        );
+        let (muted, line) = (theme.gray_700, theme.alpha_at(0.10));
         let on_select = self.on_select;
+        let submenu = self.submenu;
         let selected = self.selected;
         let highlighted = self.highlighted;
         let mut index = 0;
@@ -320,72 +367,55 @@ impl RenderOnce for MenuList {
                             index += 1;
                             let is_selected =
                                 item.checked || selected.as_ref() == Some(&item.value);
-                            let on_select = on_select.clone();
+                            let element = row(
+                                &item,
+                                ("menu-row", row_ix).into(),
+                                is_selected,
+                                row_ix == highlighted,
+                                cx,
+                            );
                             let value = item.value.clone();
-                            let selector = item.value.clone();
-                            div()
-                                .id(("menu-row", row_ix))
-                                .debug_selector(move || format!("menu-{selector}"))
-                                .flex()
-                                .flex_none()
-                                .items_center()
-                                .gap(px(10.))
-                                .min_h(px(ROW_HEIGHT))
-                                .py(px(4.))
-                                .pl(px(if item.icon.is_some() { 6. } else { 10. }))
-                                .pr(px(8.))
-                                .rounded(px(8.))
-                                .text_size(px(14.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .when(item.disabled, |d| d.opacity(0.4))
-                                .when(!item.disabled, |d| {
-                                    d.cursor_pointer()
-                                        .hover(|s| s.bg(hover))
-                                        .when(row_ix == highlighted, |d| d.bg(hover))
-                                })
-                                .when_some(item.icon.clone(), |d, name| {
-                                    d.child(
-                                        div()
-                                            .flex()
-                                            .flex_none()
-                                            .items_center()
-                                            .justify_center()
-                                            .size(px(ICON_TILE))
-                                            .rounded(px(6.))
-                                            .bg(tile)
-                                            .child(Icon::new(name).size(16.).color(text)),
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .min_w_0()
-                                        .flex_1()
-                                        .child(div().truncate().child(item.label.clone()))
-                                        .when_some(item.description.clone(), |d, description| {
-                                            // The label truncates and this wraps: a second
-                                            // line is there to be read, and a row is as tall
-                                            // as it needs.
-                                            d.child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .line_height(px(16.))
-                                                    .font_weight(FontWeight::NORMAL)
-                                                    .text_color(muted)
-                                                    .child(description),
-                                            )
-                                        }),
-                                )
-                                .when_some(item.shortcut.clone(), |d, shortcut| {
-                                    d.child(Kbd::new(shortcut))
-                                })
-                                .when(is_selected, |d| {
-                                    d.child(Icon::new("check").size(16.).color(text))
-                                })
-                                .when_some(on_select.filter(|_| !item.disabled), |d, f| {
-                                    d.on_click(move |_, window, cx| f(value.clone(), window, cx))
-                                })
+                            let enabled = !item.disabled;
+                            // Every row the pointer reaches says which submenu is open: its
+                            // own, or none.
+                            let element = match &submenu {
+                                Some(submenu) if enabled => {
+                                    let (on_open, opens) = (submenu.on_open.clone(), value.clone());
+                                    let opens = item.submenu.is_some().then_some(opens);
+                                    element.on_hover(move |hovered, window, cx| {
+                                        if *hovered {
+                                            on_open(opens.clone(), window, cx);
+                                        }
+                                    })
+                                }
+                                _ => element,
+                            };
+                            match (&item.submenu, &submenu) {
+                                (Some(items), Some(submenu)) => element
+                                    .when(enabled, |d| {
+                                        let on_open = submenu.on_open.clone();
+                                        d.on_click(move |_, window, cx| {
+                                            on_open(Some(value.clone()), window, cx)
+                                        })
+                                    })
+                                    .when(submenu.value.as_ref() == Some(&item.value), |d| {
+                                        d.relative().child(submenu_panel(
+                                            items,
+                                            selected.as_ref(),
+                                            submenu,
+                                            on_select.clone(),
+                                            cx,
+                                        ))
+                                    }),
+                                _ => element.when_some(
+                                    on_select.clone().filter(|_| enabled),
+                                    |d, f| {
+                                        d.on_click(move |_, window, cx| {
+                                            f(value.clone(), window, cx)
+                                        })
+                                    },
+                                ),
+                            }
                         })
                         .collect();
 
@@ -442,6 +472,133 @@ impl RenderOnce for MenuList {
             })
             .children(notes)
     }
+}
+
+/// One row: its icon, its label and second line, and at the end its shortcut, a check, or the
+/// chevron of a submenu.
+fn row(
+    item: &MenuItem,
+    id: ElementId,
+    selected: bool,
+    highlighted: bool,
+    cx: &App,
+) -> Stateful<Div> {
+    let theme = cx.theme();
+    let (muted, hover, text, tile) = (
+        theme.gray_700,
+        theme.alpha_at(0.10),
+        theme.gray_950,
+        theme.alpha_at(0.06),
+    );
+    let selector = item.value.clone();
+    div()
+        .id(id)
+        .debug_selector(move || format!("menu-{selector}"))
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(10.))
+        .min_h(px(ROW_HEIGHT))
+        .py(px(4.))
+        .pl(px(if item.icon.is_some() { 6. } else { 10. }))
+        .pr(px(8.))
+        .rounded(px(8.))
+        .text_size(px(14.))
+        .font_weight(FontWeight::MEDIUM)
+        .when(item.disabled, |d| d.opacity(0.4))
+        .when(!item.disabled, |d| {
+            d.cursor_pointer()
+                .hover(|s| s.bg(hover))
+                .when(highlighted, |d| d.bg(hover))
+        })
+        .when_some(item.icon.clone(), |d, name| {
+            d.child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(ICON_TILE))
+                    .rounded(px(6.))
+                    .bg(tile)
+                    .child(Icon::new(name).size(16.).color(text)),
+            )
+        })
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .flex_1()
+                .child(div().truncate().child(item.label.clone()))
+                .when_some(item.description.clone(), |d, description| {
+                    // The label truncates and this wraps: a second line is there to be read,
+                    // and a row is as tall as it needs.
+                    d.child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(16.))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(muted)
+                            .child(description),
+                    )
+                }),
+        )
+        .when_some(item.shortcut.clone(), |d, shortcut| {
+            d.child(Kbd::new(shortcut))
+        })
+        .when(selected, |d| {
+            d.child(Icon::new("check").size(16.).color(text))
+        })
+        .when(item.submenu.is_some(), |d| {
+            d.child(Icon::new("chevron-right").size(14.).color(muted))
+        })
+}
+
+/// The rows of a submenu, beside the row it opens from, its first row level with that row.
+fn submenu_panel(
+    items: &[MenuItem],
+    selected: Option<&SharedString>,
+    submenu: &OpenSubmenu,
+    on_select: Option<SelectFn>,
+    cx: &App,
+) -> impl IntoElement {
+    let rows = items.iter().enumerate().map(|(row_ix, item)| {
+        let is_selected = item.checked || selected == Some(&item.value);
+        let value = item.value.clone();
+        row(
+            item,
+            ("menu-submenu-row", row_ix).into(),
+            is_selected,
+            row_ix == submenu.highlighted,
+            cx,
+        )
+        .when_some(on_select.clone().filter(|_| !item.disabled), |d, f| {
+            d.on_click(move |_, window, cx| f(value.clone(), window, cx))
+        })
+    });
+    let on_hover = submenu.on_hover.clone();
+    // Up by the padding and the border of the panel, and right past the padding and the
+    // border of the menu.
+    div().absolute().top(px(-5.)).left_full().child(
+        deferred(
+            anchored()
+                .offset(point(px(9.), px(0.)))
+                .snap_to_window_with_margin(px(8.))
+                .child(
+                    surface(cx)
+                        .id("menu-submenu")
+                        .w(px(SUBMENU_WIDTH))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .p(px(4.))
+                        .on_hover(move |hovered, window, cx| on_hover(*hovered, window, cx))
+                        .children(rows),
+                ),
+        )
+        .with_priority(2),
+    )
 }
 
 /// What opens the menu.
@@ -556,6 +713,11 @@ pub struct DropdownMenu {
     selected: Option<SharedString>,
     highlighted: usize,
     open: bool,
+    /// The row whose submenu is open, see [`MenuItem::submenu`].
+    submenu: Option<SharedString>,
+    submenu_highlighted: usize,
+    /// A press there is not outside the menu, though it is outside its bounds.
+    pointer_in_submenu: bool,
     side: Side,
     align: Align,
     width: f32,
@@ -598,6 +760,9 @@ impl DropdownMenu {
             selected: None,
             highlighted: usize::MAX,
             open: false,
+            submenu: None,
+            submenu_highlighted: usize::MAX,
+            pointer_in_submenu: false,
             side: Side::default(),
             align: Align::default(),
             width: 320.,
@@ -718,9 +883,7 @@ impl DropdownMenu {
 
     /// The row with this value, wherever it is in the groups.
     pub fn item(&self, value: &str) -> Option<&MenuItem> {
-        flat(&self.entries)
-            .into_iter()
-            .find(|item| item.value.as_ref() == value)
+        find(&self.entries, value)
     }
 
     pub fn value(&self) -> Option<&SharedString> {
@@ -811,16 +974,24 @@ impl DropdownMenu {
     pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = false;
         self.highlighted = usize::MAX;
+        self.set_submenu(None, cx);
         // The open menu held the focus. Without this it would be nowhere, and keys with it.
         window.focus(&self.trigger_focus, cx);
         cx.notify();
     }
 
+    /// Opens the submenu of the row `value`, or closes the one that is open.
+    fn set_submenu(&mut self, value: Option<SharedString>, cx: &mut Context<Self>) {
+        if self.submenu != value {
+            self.submenu = value;
+            self.submenu_highlighted = usize::MAX;
+            self.pointer_in_submenu = false;
+            cx.notify();
+        }
+    }
+
     fn pick(&mut self, value: SharedString, window: &mut Window, cx: &mut Context<Self>) {
-        let selectable = flat(&self.entries)
-            .iter()
-            .find(|item| item.value == value)
-            .is_none_or(|item| item.selectable);
+        let selectable = self.item(&value).is_none_or(|item| item.selectable);
         if selectable {
             self.selected = Some(value.clone());
         }
@@ -836,25 +1007,96 @@ impl DropdownMenu {
         }
     }
 
-    /// Picks the highlighted row, when there is one that can be picked.
+    /// Picks the highlighted row, when there is one that can be picked. A row with a submenu
+    /// opens it, its first row highlighted.
     fn pick_highlighted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A row can turn disabled under the highlight, as Undo does with nothing to undo.
-        let value = flat(self.shown())
+        let Some(item) = flat(self.shown())
             .get(self.highlighted)
             .filter(|item| !item.is_disabled())
-            .map(|item| item.value.clone());
-        if let Some(value) = value {
-            self.pick(value, window, cx);
+            .map(|item| (item.value.clone(), item.submenu.is_some()))
+        else {
+            return;
+        };
+        match item {
+            (value, true) => self.open_submenu_from_keys(value, cx),
+            (value, false) => self.pick(value, window, cx),
         }
     }
 
+    fn open_submenu_from_keys(&mut self, value: SharedString, cx: &mut Context<Self>) {
+        self.set_submenu(Some(value), cx);
+        let rows = submenu_entries(&self.entries, self.submenu.as_ref()).unwrap_or_default();
+        self.submenu_highlighted = highlight_step(&rows, usize::MAX, 1).unwrap_or(usize::MAX);
+    }
+
+    /// The keys of an open submenu: the same as the menu's, and left closes it as escape does.
+    fn on_submenu_key(
+        &mut self,
+        key: &str,
+        rows: &[MenuEntry],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match key {
+            "escape" | "left" => self.set_submenu(None, cx),
+            "down" | "up" => {
+                let delta = if key == "down" { 1 } else { -1 };
+                if let Some(next) = highlight_step(rows, self.submenu_highlighted, delta) {
+                    self.submenu_highlighted = next;
+                    cx.notify();
+                }
+            }
+            "enter" => {
+                let value = flat(rows)
+                    .get(self.submenu_highlighted)
+                    .filter(|item| !item.is_disabled())
+                    .map(|item| item.value.clone());
+                if let Some(value) = value {
+                    self.pick(value, window, cx);
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match ev.keystroke.key.as_str() {
-            "escape" => self.close(window, cx),
-            "down" => self.step(1, cx),
-            "up" => self.step(-1, cx),
-            "enter" => self.pick_highlighted(window, cx),
-            _ => return,
+        let key = ev.keystroke.key.as_str();
+        let used = match submenu_entries(&self.entries, self.submenu.as_ref()) {
+            Some(rows) => self.on_submenu_key(key, &rows, window, cx),
+            None => match key {
+                "escape" => {
+                    self.close(window, cx);
+                    true
+                }
+                "down" => {
+                    self.step(1, cx);
+                    true
+                }
+                "up" => {
+                    self.step(-1, cx);
+                    true
+                }
+                "enter" => {
+                    self.pick_highlighted(window, cx);
+                    true
+                }
+                "right" => {
+                    let opens = flat(self.shown())
+                        .get(self.highlighted)
+                        .filter(|item| item.submenu.is_some() && !item.is_disabled())
+                        .map(|item| item.value.clone());
+                    if let Some(value) = opens {
+                        self.open_submenu_from_keys(value, cx);
+                    }
+                    true
+                }
+                _ => false,
+            },
+        };
+        if !used {
+            return;
         }
         // An open menu keeps the key it used. Else escape would also close whatever holds the
         // menu, such as the track panel behind an instrument picker.
@@ -961,7 +1203,9 @@ impl Render for DropdownMenu {
                         .track_focus(&self.focus_handle)
                         .w(px(width))
                         .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                            this.close(window, cx)
+                            if !this.pointer_in_submenu {
+                                this.close(window, cx)
+                            }
                         }))
                         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                             this.on_key(ev, window, cx)
@@ -972,6 +1216,18 @@ impl Render for DropdownMenu {
                                 .selected(self.selected.clone())
                                 .highlighted(self.highlighted)
                                 .max_height(self.max_height)
+                                .submenu(OpenSubmenu {
+                                    value: self.submenu.clone(),
+                                    highlighted: self.submenu_highlighted,
+                                    on_open: Rc::new(cx.processor(
+                                        |this, value: Option<SharedString>, _, cx| {
+                                            this.set_submenu(value, cx)
+                                        },
+                                    )),
+                                    on_hover: Rc::new(cx.processor(|this, hovered: bool, _, _| {
+                                        this.pointer_in_submenu = hovered
+                                    })),
+                                })
                                 .on_select(cx.processor(
                                     |this, value: SharedString, window, cx| {
                                         this.pick(value, window, cx)
