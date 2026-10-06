@@ -20,12 +20,12 @@ pub struct EffectSlot {
     pub sidechain: Option<Sidechain>,
 }
 
-/// Where the sound that keys an effect comes from: a track of the same arrangement, at a tap.
-///
-/// The arrangement wires it, as only it sees every track. The track is named by its folder
-/// name, which a rename does not change, so nothing rewrites it.
+/// The track of the same arrangement, by folder name, and the tap that keys an effect.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(
+    deny_unknown_fields,
+    expecting = r#"an object such as {"track": "kick", "tap": "post_fx"}, or null"#
+)]
 pub struct Sidechain {
     /// The folder name of the track.
     pub track: String,
@@ -165,6 +165,15 @@ mod tests {
         assert!(
             unknown.to_string().contains("unknown field `off`"),
             "{unknown}"
+        );
+        let sidechain =
+            serde_json::from_str::<EffectSlot>(r#"{"name": "duck", "sidechain": "kick"}"#)
+                .unwrap_err();
+        assert!(
+            sidechain
+                .to_string()
+                .contains(r#"expected an object such as {"track": "kick", "tap": "post_fx"}"#),
+            "{sidechain}"
         );
     }
 }

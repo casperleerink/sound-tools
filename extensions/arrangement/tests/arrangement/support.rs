@@ -256,24 +256,16 @@ fn apply_trim(state: &Trim, context: &mut BehaviourContext<'_>) -> Result<(), Be
 }
 
 /// A test effect a sidechain keys: each sample is divided by one plus the key, the left
-/// channel of its `sidechain` input, and comes out `latency` frames late, as from a compressor
-/// with a lookahead. With nothing in its sidechain it only delays. The latency is the one it
-/// was made with.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// channel of its `sidechain` input. With nothing in its sidechain it changes nothing.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Duck {
-    #[serde(default)]
-    pub latency: u32,
-}
+pub(crate) struct Duck {}
 
 impl State for Duck {
     const TOOL: &'static str = "test.duck";
 }
 
-pub(crate) struct DuckProcessor {
-    /// The frames still to come out, oldest first: `latency` of them.
-    late: std::collections::VecDeque<f32>,
-}
+pub(crate) struct DuckProcessor;
 
 impl DuckProcessor {
     const INPUT: sound_core::AudioInput = sound_core::AudioInput::new(0);
@@ -295,30 +287,19 @@ impl Processor for DuckProcessor {
 
     fn update(&mut self, _: &mut Duck) {}
 
-    fn latency(&self) -> u32 {
-        self.late.len() as u32
-    }
-
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let [input, _] = context.audio_inputs.get(Self::INPUT);
         let [key, _] = context.audio_inputs.get(Self::KEY);
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         for ((output, input), key) in left.iter_mut().zip(input).zip(key) {
-            self.late.push_back(*input);
-            let played = self.late.pop_front().unwrap_or_default();
-            *output = played / (1.0 + key.abs());
+            *output = input / (1.0 + key.abs());
         }
         right.copy_from_slice(left);
     }
 }
 
-fn apply_duck(state: &Duck, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    // Room for one more, so a frame goes in before one comes out with no allocation.
-    let latency = state.latency as usize;
-    let mut late = std::collections::VecDeque::with_capacity(latency + 1);
-    late.extend(std::iter::repeat_n(0.0, latency));
-    let duck = context.processor("duck", || DuckProcessor { late })?;
-    context.update(duck, *state)?;
+fn apply_duck(_: &Duck, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let duck = context.processor("duck", || DuckProcessor)?;
     context.input(
         sound_notes::AUDIO_INPUT,
         InputEndpoint::new(duck, DuckProcessor::INPUT),

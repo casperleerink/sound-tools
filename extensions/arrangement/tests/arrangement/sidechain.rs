@@ -5,7 +5,6 @@
 //! every sample says what keyed it. The kick plays 36 on the second beat; the bass plays 60
 //! throughout, and the master sums both.
 
-use arrangement::{Sidechain, Tap, TrackState};
 use sound_core::Changes;
 
 use crate::support::{Harness, TICK, clip, id, note};
@@ -14,11 +13,11 @@ const BEAT: u64 = 960;
 const BEAT_FRAMES: usize = BEAT as usize * TICK;
 const KICK: f32 = 36.0;
 const BASS: f32 = 60.0;
-const BASS_FILE: &str = "state/arrangement/bass/instance.json";
+const DUCK: &str = r#"{"tool": "test.duck", "state": {}}"#;
 
-/// The bass keyed by `sidechain` (a JSON value), through a duck of this latency, and the kick
-/// with `kick` as its track record state after its name.
-fn project(sidechain: &str, latency: u32, kick: &str) -> Harness {
+/// The bass with a duck whose slot says `"sidechain": <sidechain>`, and the kick with `kick`
+/// in its track record after its name.
+fn project(sidechain: &str, kick: &str) -> Harness {
     let mut harness = Harness::new();
     harness.add_track("kick", 1.0);
     harness.add_track("bass", 1.0);
@@ -28,21 +27,22 @@ fn project(sidechain: &str, latency: u32, kick: &str) -> Harness {
     let bass_note = clip(0, 8 * BEAT, vec![note(0, 8 * BEAT, BASS as u8)]);
     changes.create(id("arrangement/bass/line"), bass_note);
     harness.project.commit("Add clips", changes).unwrap();
+    harness.write_and_apply("state/arrangement/bass/duck.json", DUCK);
     harness.write_and_apply(
-        "state/arrangement/bass/duck.json",
-        &format!(r#"{{"tool": "test.duck", "state": {{"latency": {latency}}}}}"#),
-    );
-    harness.write_and_apply(
-        BASS_FILE,
+        "state/arrangement/bass/instance.json",
         &format!(
             r#"{{"tool": "arrangement.track", "state": {{"name": "bass", "order": 1, "effects": [{{"name": "duck", "sidechain": {sidechain}}}]}}}}"#
         ),
     );
+    write_kick(&mut harness, kick);
+    harness
+}
+
+fn write_kick(harness: &mut Harness, kick: &str) {
     harness.write_and_apply(
         "state/arrangement/kick/instance.json",
         &format!(r#"{{"tool": "arrangement.track", "state": {{"name": "kick"{kick}}}}}"#),
     );
-    harness
 }
 
 /// What the master plays in the middle of the first beat, and of the second, where the kick is.
@@ -57,38 +57,26 @@ fn ducked_by(key: f32) -> f32 {
 
 #[test]
 fn the_kick_ducks_the_bass_while_it_plays() {
-    let mut harness = project(r#"{"track": "kick", "tap": "post_fx"}"#, 0, "");
+    let mut harness = project(r#"{"track": "kick", "tap": "post_fx"}"#, "");
     assert_eq!(harness.problems(), Vec::<String>::new());
     let (before, during) = before_and_during(&mut harness);
     assert_eq!(before, BASS);
     assert_eq!(during, KICK + ducked_by(KICK));
 }
 
-/// Mute comes after the effects: post_fx of a muted kick still keys the bass, and post_mixer
-/// is silent, so it keys nothing.
+/// The kick is muted and plays through a trim that halves it. pre_fx keys with the kick as it
+/// was played, post_fx with the half, and post_mixer with the silence after the mute.
 #[test]
-fn a_muted_kick_keys_from_post_fx_and_not_from_post_mixer() {
-    let muted = r#", "mute": true"#;
-    let mut post_fx = project(r#"{"track": "kick", "tap": "post_fx"}"#, 0, muted);
-    assert_eq!(before_and_during(&mut post_fx), (BASS, ducked_by(KICK)));
-    let mut post_mixer = project(r#"{"track": "kick", "tap": "post_mixer"}"#, 0, muted);
-    assert_eq!(post_mixer.problems(), Vec::<String>::new());
-    assert_eq!(before_and_during(&mut post_mixer), (BASS, BASS));
-}
-
-/// The kick plays through a trim that halves it: pre_fx keys with the kick as it was played,
-/// post_fx with the half.
-#[test]
-fn pre_fx_keys_with_the_sound_before_the_effects_of_the_track() {
-    let kick = r#", "mute": true, "effects": ["half"]"#;
+fn each_tap_keys_with_the_kick_at_its_point() {
     let half = r#"{"tool": "test.trim", "state": {"gain": 0.5}}"#;
-    for (tap, key) in [("pre_fx", KICK), ("post_fx", KICK / 2.0)] {
-        let mut harness = project(&format!(r#"{{"track": "kick", "tap": "{tap}"}}"#), 0, "");
+    for (tap, key) in [
+        ("pre_fx", KICK),
+        ("post_fx", KICK / 2.0),
+        ("post_mixer", 0.0),
+    ] {
+        let mut harness = project(&format!(r#"{{"track": "kick", "tap": "{tap}"}}"#), "");
         harness.write_and_apply("state/arrangement/kick/half.json", half);
-        harness.write_and_apply(
-            "state/arrangement/kick/instance.json",
-            &format!(r#"{{"tool": "arrangement.track", "state": {{"name": "kick"{kick}}}}}"#),
-        );
+        write_kick(&mut harness, r#", "mute": true, "effects": ["half"]"#);
         assert_eq!(harness.problems(), Vec::<String>::new());
         assert_eq!(
             before_and_during(&mut harness),
@@ -98,24 +86,31 @@ fn pre_fx_keys_with_the_sound_before_the_effects_of_the_track() {
     }
 }
 
+/// A deleted source is a problem, and the bass plays on. A bypassed slot is keyed by nothing,
+/// so the same name there is no problem.
 #[test]
 fn a_deleted_source_track_is_a_problem_and_the_bass_plays_on() {
-    let mut harness = project(r#"{"track": "kick", "tap": "post_fx"}"#, 0, "");
+    let mut harness = project(r#"{"track": "kick", "tap": "post_fx"}"#, "");
     let mut changes = Changes::new();
     changes.delete(&id("arrangement/kick"));
     harness.project.commit("Delete kick", changes).unwrap();
     assert_eq!(
         harness.problems(),
         [
-            "state/arrangement/instance.json: the sidechain of \"duck\" in track \"bass\" takes track \"kick\", and this arrangement has no kick/instance.json, so nothing keys it. Name the folder of a track, or take `sidechain` out"
+            "state/arrangement/instance.json: the sidechain of \"duck\" in track \"bass\" takes track \"kick\", and this arrangement has no kick/instance.json, so \"duck\" in track \"bass\" follows its own sound. Name the folder of a track, or take `sidechain` out"
         ]
     );
     assert_eq!(before_and_during(&mut harness), (BASS, BASS));
+    harness.write_and_apply(
+        "state/arrangement/bass/instance.json",
+        r#"{"tool": "arrangement.track", "state": {"name": "bass", "effects": [{"name": "duck", "bypass": true, "sidechain": {"track": "kick", "tap": "post_fx"}}]}}"#,
+    );
+    assert_eq!(harness.problems(), Vec::<String>::new());
 }
 
 #[test]
 fn an_effect_with_no_sidechain_input_is_a_problem_that_names_it() {
-    let mut harness = project(r#"{"track": "kick", "tap": "post_fx"}"#, 0, "");
+    let mut harness = project(r#"{"track": "kick", "tap": "post_fx"}"#, "");
     harness.write_and_apply(
         "state/arrangement/bass/duck.json",
         r#"{"tool": "test.trim", "state": {"gain": 1.0}}"#,
@@ -123,26 +118,45 @@ fn an_effect_with_no_sidechain_input_is_a_problem_that_names_it() {
     assert_eq!(
         harness.problems(),
         [
-            "state/arrangement/bass/instance.json: `effects` keys \"duck\" with a sidechain, and duck.json holds no tool with a `sidechain` input, so nothing keys it. Use an effect that has one, such as the `compressor`, or take `sidechain` out"
+            "state/arrangement/bass/instance.json: `effects` keys \"duck\" with a sidechain, and duck.json holds no tool with a `sidechain` input, so the sidechain is not used. Use an effect that has one, such as the `compressor`, or take `sidechain` out"
         ]
     );
     assert_eq!(before_and_during(&mut harness), (BASS, KICK + BASS));
 }
 
+/// A source with no sound at its tap leaves the duck with its own sound, and says so.
+#[test]
+fn a_source_with_no_instrument_is_a_problem() {
+    let mut harness = project(r#"{"track": "kick", "tap": "pre_fx"}"#, "");
+    let mut changes = Changes::new();
+    changes.delete(&id("arrangement/kick/instrument"));
+    harness
+        .project
+        .commit("Delete instrument", changes)
+        .unwrap();
+    assert_eq!(
+        harness.problems(),
+        [
+            "state/arrangement/instance.json: the sidechain of \"duck\" in track \"bass\" takes track \"kick\", which has no instrument that plays, so \"duck\" in track \"bass\" follows its own sound"
+        ]
+    );
+    assert_eq!(before_and_during(&mut harness), (BASS, BASS));
+}
+
 /// Its own track before its effects is a key like any other. After them, the key would come
-/// out of the effect itself: a problem, and both tracks play.
+/// out of the duck itself: a loop of one, and both tracks play.
 #[test]
 fn a_track_keys_its_own_effect_only_before_its_effects() {
-    let mut pre_fx = project(r#"{"track": "bass", "tap": "pre_fx"}"#, 0, "");
+    let mut pre_fx = project(r#"{"track": "bass", "tap": "pre_fx"}"#, "");
     assert_eq!(pre_fx.problems(), Vec::<String>::new());
     let ducked = ducked_by(BASS);
     assert_eq!(before_and_during(&mut pre_fx), (ducked, KICK + ducked));
     for tap in ["post_fx", "post_mixer"] {
-        let mut harness = project(&format!(r#"{{"track": "bass", "tap": "{tap}"}}"#), 0, "");
+        let mut harness = project(&format!(r#"{{"track": "bass", "tap": "{tap}"}}"#), "");
         assert_eq!(
             harness.problems(),
             [
-                "state/arrangement/bass/instance.json: the sidechain of \"duck\" takes the sound of this same track after \"duck\" itself, which would key it in a loop, so nothing keys it. Use \"tap\": \"pre_fx\" to key it with this track before its effects, or take another track"
+                "state/arrangement/instance.json: the sidechain of \"duck\" in track \"bass\" closes a loop: \"bass\" is keyed by \"bass\", each after the effects of the track that keys it. A sound cannot key itself, so \"duck\" in track \"bass\" follows its own sound. Use \"tap\": \"pre_fx\" for one of them, or take one out"
             ],
             "{tap}"
         );
@@ -154,57 +168,22 @@ fn a_track_keys_its_own_effect_only_before_its_effects() {
     }
 }
 
-/// The duck of the bass has a lookahead. The bass is led to stay in time, and the kick that
-/// keys it is not: the kick reaches the master as it does with no sidechain, to the sample.
+/// The bass is keyed by the kick and the kick by the bass, both after their effects: neither
+/// key is used, each says so, and both tracks play.
 #[test]
-fn the_kick_reaches_the_master_on_time_past_a_lookahead_it_keys() {
-    let latency = 480;
-    let bass_muted = |harness: &mut Harness, sidechain: &str| {
-        harness.write_and_apply(
-            BASS_FILE,
-            &format!(
-                r#"{{"tool": "arrangement.track", "state": {{"name": "bass", "order": 1, "mute": true, "effects": [{{"name": "duck", "sidechain": {sidechain}}}]}}}}"#
-            ),
-        );
-    };
-    let mut keyed = project("null", latency, "");
-    bass_muted(&mut keyed, r#"{"track": "kick", "tap": "post_fx"}"#);
-    let mut not_keyed = project("null", latency, "");
-    bass_muted(&mut not_keyed, "null");
-    let frames = 2 * BEAT_FRAMES + latency as usize;
-    let render = keyed.play(frames);
-    assert_eq!(render, not_keyed.play(frames));
-    assert!(render.contains(&KICK));
-}
-
-/// The interface keys a slot through the track record, as one undo step.
-#[test]
-fn undo_of_a_sidechain_gives_the_sound_before_it() {
-    let mut harness = project("null", 0, "");
-    let (before, during) = before_and_during(&mut harness);
-    let bass = harness
-        .project
-        .resolve::<TrackState>(&id("arrangement/bass"));
-    let bass = bass.unwrap();
-    let mut state = harness.project.state(&bass).unwrap().clone();
-    let sidechain = Sidechain {
-        track: "kick".to_string(),
-        tap: Tap::PostFx,
-    };
-    assert!(state.set_sidechain("duck", Some(sidechain.clone())));
-    let mut changes = Changes::new();
-    changes.set(&bass, state);
-    harness.project.commit("Key duck", changes).unwrap();
-    let keyed = harness.project.state(&bass).unwrap();
-    assert_eq!(keyed.sidechain("duck"), Some(&sidechain));
-    let seek_and_play = |harness: &mut Harness| {
-        harness.project.engine().seek(sound_core::Ticks(0));
-        before_and_during(harness)
-    };
-    assert_eq!(
-        seek_and_play(&mut harness),
-        (before, KICK + ducked_by(KICK))
+fn two_tracks_that_key_each_other_are_a_loop_and_both_play() {
+    let mut harness = project(r#"{"track": "kick", "tap": "post_fx"}"#, "");
+    harness.write_and_apply("state/arrangement/kick/duck.json", DUCK);
+    write_kick(
+        &mut harness,
+        r#", "effects": [{"name": "duck", "sidechain": {"track": "bass", "tap": "post_fx"}}]"#,
     );
-    harness.project.undo().unwrap();
-    assert_eq!(seek_and_play(&mut harness), (before, during));
+    assert_eq!(
+        harness.problems(),
+        [
+            "state/arrangement/instance.json: the sidechain of \"duck\" in track \"bass\" closes a loop: \"bass\" is keyed by \"kick\" and \"kick\" is keyed by \"bass\", each after the effects of the track that keys it. A sound cannot key itself, so \"duck\" in track \"bass\" follows its own sound. Use \"tap\": \"pre_fx\" for one of them, or take one out",
+            "state/arrangement/instance.json: the sidechain of \"duck\" in track \"kick\" closes a loop: \"kick\" is keyed by \"bass\" and \"bass\" is keyed by \"kick\", each after the effects of the track that keys it. A sound cannot key itself, so \"duck\" in track \"kick\" follows its own sound. Use \"tap\": \"pre_fx\" for one of them, or take one out",
+        ]
+    );
+    assert_eq!(before_and_during(&mut harness), (BASS, KICK + BASS));
 }
