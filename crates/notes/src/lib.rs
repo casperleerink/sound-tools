@@ -60,6 +60,9 @@ pub const AUDIO_OUTPUT: &str = "audio";
 /// reads as `audio` to `audio`, and no tool has to invent a name for the one thing it takes.
 pub const AUDIO_INPUT: &str = "audio";
 
+/// The second audio input of an effect that another sound can key, such as a compressor's.
+pub const SIDECHAIN_INPUT: &str = "sidechain";
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum NoteError {
     #[error("pitch must be from 0 to 127, not {0}")]
