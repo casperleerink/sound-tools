@@ -82,7 +82,7 @@ pub fn support_folder() -> Result<PathBuf> {
 
 /// The project the window had open last, when its folder is still there.
 pub fn last_project() -> Option<PathBuf> {
-    recent_projects().into_iter().next()
+    recent_folders(&support_folder().ok()?).find(|folder| folder.is_dir())
 }
 
 /// The projects the window had open, the last one first, whose folders are still there.
@@ -93,11 +93,15 @@ pub fn recent_projects() -> Vec<PathBuf> {
 }
 
 fn recent_projects_in(support: &Path) -> Vec<PathBuf> {
-    recent_lines(support)
-        .iter()
-        .filter_map(|line| path_of_bytes(line))
+    recent_folders(support)
         .filter(|folder| folder.is_dir())
         .collect()
+}
+
+fn recent_folders(support: &Path) -> impl Iterator<Item = PathBuf> {
+    recent_lines(support)
+        .into_iter()
+        .filter_map(|line| path_of_bytes(&line))
 }
 
 /// The lines of the file as they are, so a folder that is gone for now, such as one on a
