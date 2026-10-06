@@ -1,8 +1,9 @@
 //! The card of the sampler in a rack: the whole file in the waveform display, with the start and
-//! end lines, the envelope drawn over it in the time of the file and a green line where the last
-//! note is; the Instrument select, Root, Velocity, Release and Gain next to it, and Start, End,
-//! Reverse, Tune, Attack, Decay and Sustain behind expand. The rack gives the frame of the card, whose title
-//! says "Sampler" and is where another instrument is picked.
+//! end lines, the loop start line and the part that repeats while Loop is on, the envelope drawn
+//! over it in the time of the file and a green line where the last note is; the Instrument
+//! select, Root, Velocity, Release and Gain next to it, and Start, End, Loop, Loop start,
+//! Reverse, Tune, Attack, Decay and Sustain behind expand. The rack gives the frame of the card,
+//! whose title says "Sampler" and is where another instrument is picked.
 //!
 //! The Instrument select lists the library by category, with the size of each download, and
 //! `Audio file…`. Picking a library instrument is one undo step and starts its download, as
@@ -59,7 +60,7 @@ use crate::{
 
 /// The name the rack puts on the card of a sampler.
 pub const NAME: &str = "Sampler";
-/// The display, so the card is 32 + 312 + 8 + 3 x 56 = 520 pt with a sample, and 761 expanded.
+/// The display, so the card is 32 + 312 + 8 + 3 x 56 = 520 pt with a sample, and 817 expanded.
 pub const DISPLAY_WIDTH: f32 = 312.;
 /// What the display says with no file, and while one is dragged over it.
 pub const EMPTY: &str = "Drop an audio file here";
@@ -130,15 +131,29 @@ fn sfz_name(sfz: &SfzPath) -> String {
 /// be taken, and silence at the bottom, where the start line has its handle.
 const TOP: f32 = 0.88;
 
-/// A start, with the shortest part of a clip left before the end.
+/// A start, with the shortest part of a clip left before the end. It pushes the loop start
+/// along.
 fn with_start(state: &mut SamplerState, seconds: f64, file_seconds: f64) {
     let end = state.end_seconds.unwrap_or(file_seconds);
     state.start_seconds = clamped_start(seconds, 0.0, end);
+    if let Some(loop_start) = state.loop_start_seconds {
+        state.loop_start_seconds = Some(loop_start.max(state.start_seconds));
+    }
 }
 
-/// An end after the start, with no end at the end of the file, as for a clip.
+/// An end after the start, with no end at the end of the file, as for a clip. It pushes the
+/// loop start back.
 fn with_end(state: &mut SamplerState, seconds: f64, file: &Info) {
     state.end_seconds = clamped_end(seconds.min(file.seconds()), state.start_seconds, file);
+    if let Some(loop_start) = state.loop_start_seconds {
+        with_loop_start(state, loop_start, file.seconds());
+    }
+}
+
+/// A loop start from the start to the latest before the end.
+fn with_loop_start(state: &mut SamplerState, seconds: f64, file_seconds: f64) {
+    let end = state.end_seconds.unwrap_or(file_seconds);
+    state.loop_start_seconds = Some(clamped_start(seconds, state.start_seconds, end));
 }
 
 pub struct SamplerView {
@@ -409,6 +424,7 @@ impl SamplerView {
             state.library = None;
             state.start_seconds = 0.0;
             state.end_seconds = None;
+            state.loop_start_seconds = None;
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
                 changes.set(&sampler, state);
@@ -480,6 +496,27 @@ impl SamplerView {
                 }
             }));
         [start, end_knob]
+    }
+
+    /// Loop start: seconds of the file like Start, dimmed while Loop is off. A double click
+    /// puts it on the start.
+    fn loop_start_knob(&self, state: &SamplerState, cx: &mut Context<Self>) -> Knob {
+        let file = self.file(cx);
+        let length = file.map_or(1.0, |file| file.seconds());
+        let loop_start = state.loop_start_seconds.unwrap_or(state.start_seconds);
+        Knob::new("loop_start")
+            .range(KnobRange::linear(0., length as f32))
+            .value(loop_start as f32)
+            .default_value(state.start_seconds as f32)
+            .label("Loop start")
+            .readout(seconds_readout(loop_start as f32))
+            .disabled(file.is_none() || !state.looping)
+            .on_change(weak_callback(cx, move |view, change: ValueChange, cx| {
+                let set = |state: &mut SamplerState, value: f32| {
+                    with_loop_start(state, f64::from(value), length)
+                };
+                view.change("Change loop start", change, set, cx);
+            }))
     }
 
     /// Where a drop of a file goes: into [`Self::load_file`].
@@ -678,6 +715,7 @@ impl SamplerView {
             seconds_readout(state.decay_seconds),
             percent_readout(state.sustain),
         );
+        let loop_start = state.loop_start_seconds.unwrap_or(state.start_seconds);
         let display =
             WaveformDisplay::new("sampler-display", DISPLAY_WIDTH, overview, length as f32)
                 .trim(state.start_seconds as f32, end as f32)
@@ -697,6 +735,18 @@ impl SamplerView {
                 .curve(curve)
                 .caption(caption)
                 .drop_file(self.file_drop(DROP_TO_REPLACE, cx));
+        let display = match state.looping {
+            true => display.loop_start(
+                loop_start as f32,
+                weak_callback(cx, move |view, change: ValueChange, cx| {
+                    let set = |state: &mut SamplerState, seconds: f32| {
+                        with_loop_start(state, f64::from(seconds), length)
+                    };
+                    view.change("Change loop start", change, set, cx);
+                }),
+            ),
+            false => display,
+        };
         handles
             .into_iter()
             .fold(display, WaveformDisplay::handle)
@@ -737,19 +787,23 @@ impl Render for SamplerView {
                 .bottom(knob(GAIN_KNOB, cx)),
         ];
         // Behind expand: the values the handles of the display move, so the keys reach every
-        // one of them, and which way and how tuned the file plays.
+        // one of them, whether it loops, and which way and how tuned the file plays.
         let [start, end] = self.trim_knobs(&state, cx);
-        let reverse = Toggle::new(
+        let looping = on_off("loop", "Change loop", state.looping, cx, |state, on| {
+            state.looping = on
+        });
+        let reverse = on_off(
             "reverse",
-            if state.reverse { "On" } else { "Off" },
+            "Change reverse",
             state.reverse,
-        )
-        .on_change(weak_callback(cx, |view, on: bool, cx| {
-            let set = |state: &mut SamplerState, on| state.reverse = on;
-            view.change("Change reverse", ValueChange::Set(on), set, cx)
-        }));
+            cx,
+            |state, on| state.reverse = on,
+        );
         let hidden = [
             Column::new().top(start).bottom(end),
+            Column::new()
+                .top(Cell::new(looping).label("Loop"))
+                .bottom(self.loop_start_knob(&state, cx)),
             Column::new()
                 .top(Cell::new(reverse).label("Reverse"))
                 .bottom(knob(TUNE_KNOB, cx)),
@@ -774,8 +828,24 @@ impl Render for SamplerView {
     }
 }
 
+/// An On/Off toggle of the record, one undo step a click.
+fn on_off(
+    id: &'static str,
+    label: &'static str,
+    on: bool,
+    cx: &mut Context<SamplerView>,
+    set: fn(&mut SamplerState, bool),
+) -> Toggle {
+    Toggle::new(id, if on { "On" } else { "Off" }, on)
+        .on_change(weak_callback(cx, move |view, on: bool, cx| {
+            view.change(label, ValueChange::Set(on), set, cx)
+        }))
+}
+
 #[cfg(test)]
 mod tests {
+    use sound_core::State as _;
+
     use super::*;
 
     #[test]
@@ -809,5 +879,34 @@ mod tests {
         assert_eq!(state.end_seconds, None);
         with_end(&mut state, 0.8, &file);
         assert_eq!(state.end_seconds, Some(0.8));
+    }
+
+    /// Start and End push the loop start along, so every record the card writes is valid.
+    #[test]
+    fn the_loop_start_stays_between_start_and_end() {
+        let file = Info {
+            frames: 48_000,
+            channels: 1,
+            sample_rate: 48_000,
+            container: sound_media::Container::Wav,
+        };
+        let mut state = SamplerState {
+            loop_start_seconds: Some(0.3),
+            ..SamplerState::default()
+        };
+        with_start(&mut state, 0.4, 1.0);
+        assert_eq!(state.loop_start_seconds, Some(0.4));
+        assert_eq!(state.validate(), Ok(()));
+        with_end(&mut state, 0.2, &file);
+        assert_eq!(state.loop_start_seconds, Some(0.4));
+        assert_eq!(state.validate(), Ok(()));
+        with_loop_start(&mut state, 0.9, 1.0);
+        assert_eq!(state.loop_start_seconds, Some(0.4));
+        with_end(&mut state, 0.8, &file);
+        with_loop_start(&mut state, 0.1, 1.0);
+        assert_eq!(state.loop_start_seconds, Some(0.4));
+        with_loop_start(&mut state, 0.6, 1.0);
+        assert_eq!(state.loop_start_seconds, Some(0.6));
+        assert_eq!(state.validate(), Ok(()));
     }
 }

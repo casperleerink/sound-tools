@@ -310,6 +310,13 @@ impl Display {
         self
     }
 
+    /// The part from `from` across to the end of the kept part that repeats: tinted, with a thin
+    /// line at its start.
+    pub fn looped(mut self, from: Option<f32>) -> Self {
+        self.waveform.looped = from;
+        self
+    }
+
     /// A green line at a place across, where the sound plays now. Level and signal are green.
     pub fn signal_line(mut self, at: Option<f32>) -> Self {
         self.waveform.signal = at;
@@ -341,6 +348,7 @@ struct Ink {
     line: Hsla,
     waveform: Hsla,
     shade: Hsla,
+    tint: Hsla,
     signal: Hsla,
 }
 
@@ -351,6 +359,8 @@ struct Waveform {
     peaks: Vec<f32>,
     /// The part that plays, between two lines, with the rest shaded.
     kept: Option<(f32, f32)>,
+    /// Where the part that repeats starts, up to the end of the kept part.
+    looped: Option<f32>,
     /// The green line of where the sound is.
     signal: Option<f32>,
 }
@@ -466,8 +476,8 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
     });
 }
 
-/// The waveform, the shade outside the part that plays with its two lines, and the green line
-/// of where the sound is. Under the grid and the curve.
+/// The waveform, the shade outside the part that plays with its two lines, the tint of the part
+/// that repeats, and the green line of where the sound is. Under the grid and the curve.
 fn paint_waveform(bounds: Bounds<Pixels>, waveform: &Waveform, ink: Ink, window: &mut Window) {
     let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
     let middle = height / 2.;
@@ -501,6 +511,20 @@ fn paint_waveform(bounds: Bounds<Pixels>, waveform: &Waveform, ink: Ink, window:
             );
             window.paint_quad(fill(area, ink.curve));
         }
+    }
+    if let Some(from) = waveform.looped {
+        let to = waveform.kept.map_or(1., |(_, to)| to).clamp(0., 1.) * width;
+        let from = from.clamp(0., 1.) * width;
+        let area = Bounds::new(
+            bounds.origin + point(px(from), px(0.)),
+            size(px((to - from).max(0.)), bounds.size.height),
+        );
+        window.paint_quad(fill(area, ink.tint));
+        let line = Bounds::new(
+            bounds.origin + point(px(from.round() - 0.5), px(0.)),
+            size(px(THIN_WIDTH), bounds.size.height),
+        );
+        window.paint_quad(fill(line, ink.thin));
     }
     if let Some(at) = waveform.signal {
         let area = Bounds::new(
@@ -672,6 +696,7 @@ impl RenderOnce for Display {
             line: theme.alpha_at(0.16),
             waveform: theme.alpha_at(0.30),
             shade: theme.gray_50.opacity(0.72),
+            tint: theme.alpha_at(0.08),
             signal: theme.green,
         };
         let handle_colors = (theme.gray_950, theme.gray_50);
