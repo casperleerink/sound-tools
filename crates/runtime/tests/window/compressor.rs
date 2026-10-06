@@ -1,6 +1,7 @@
 //! The card of the built-in compressor in the track rack, with a simulated mouse: it is added from
 //! the control at the end of the rack, and every edit of it is one undo step written once.
 
+use arrangement::{EffectSlot, Sidechain, Tap, TrackState};
 use compressor::{CompressorState, Lookahead};
 use gpui::{TestAppContext, point, px};
 use sound_ui::POLL_INTERVAL;
@@ -13,10 +14,19 @@ const COMPRESSOR_FILE: &str = "state/arrangement/track-1/compressor.json";
 /// One track with no instrument, so the only card with knobs is the compressor, and its panel
 /// open. The compressor is added the way a composer adds it: `Add effect`, then `Compressor`.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
+    open_panel_with(cx, |_| {})
+}
+
+/// The same, after `fill` adds to the project.
+fn open_panel_with(
+    cx: &mut TestAppContext,
+    fill: impl FnOnce(&mut sound_core::Project),
+) -> Opened<'_> {
     let mut opened = support::open_with(cx, |project| {
         let mut changes = sound_core::Changes::new();
         changes.delete(&id("arrangement/track-1/instrument"));
         project.commit("Remove synth", changes).unwrap();
+        fill(project);
         project.clear_history();
     });
     let header = opened.track_header(0);
@@ -200,4 +210,87 @@ fn a_card_that_opens_later_does_not_show_what_played_before(cx: &mut TestAppCont
     opened.cx.executor().advance_clock(POLL_INTERVAL);
     opened.cx.run_until_parked();
     assert_eq!(opened.find("compressor-level"), None);
+}
+
+/// The slot of the compressor in the record of its track.
+fn slot(opened: &mut Opened<'_>) -> EffectSlot {
+    opened.project(|project| {
+        let track = project
+            .resolve::<TrackState>(&id("arrangement/track-1"))
+            .unwrap();
+        project.state(&track).unwrap().effects[0].clone()
+    })
+}
+
+fn keyed(track: &str, tap: Tap) -> EffectSlot {
+    EffectSlot {
+        sidechain: Some(Sidechain {
+            track: track.into(),
+            tap,
+        }),
+        ..EffectSlot::new("compressor")
+    }
+}
+
+/// The sidechain is off and behind expand. Picking a track turns it on after its effects, the
+/// tap select then shows, and each pick is one undo step on the slot of the track record.
+#[gpui::test]
+fn the_sidechain_picker_keys_the_compressor_from_a_track(cx: &mut TestAppContext) {
+    let mut opened = open_panel_with(cx, |project| {
+        let arrangement = runtime::main_arrangement(project).unwrap();
+        runtime::add_track(project, &arrangement).unwrap();
+    });
+    assert_eq!(opened.find("select-sidechain"), None);
+    let expand = opened.control("card-compressor-expand");
+    opened.click(expand);
+    assert_eq!(opened.find("select-sidechain-tap"), None);
+
+    let source = opened.control("select-sidechain");
+    opened.click(source);
+    let row = opened.control("menu-track-2");
+    opened.click(row);
+    assert_eq!(slot(&mut opened), keyed("track-2", Tap::PostFx));
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn on sidechain"));
+    let record = std::fs::read_to_string(opened.path("state/arrangement/track-1/instance.json"));
+    assert!(
+        record.as_ref().unwrap().contains(
+            r#"{"name": "compressor", "sidechain": {"track": "track-2", "tap": "post_fx"}}"#
+        ),
+        "{record:?}"
+    );
+    opened.project(|project| assert_eq!(project.problems(), []));
+
+    let tap = opened.control("select-sidechain-tap");
+    opened.click(tap);
+    let row = opened.control("menu-pre_fx");
+    opened.click(row);
+    assert_eq!(slot(&mut opened), keyed("track-2", Tap::PreFx));
+    assert_eq!(opened.undo_label().as_deref(), Some("Change sidechain tap"));
+
+    // Its own track is offered too, and another track keeps the tap.
+    let source = opened.control("select-sidechain");
+    opened.click(source);
+    let row = opened.control("menu-track-1");
+    opened.click(row);
+    assert_eq!(slot(&mut opened), keyed("track-1", Tap::PreFx));
+    assert_eq!(opened.undo_label().as_deref(), Some("Change sidechain"));
+
+    // One undo per pick, and the last one turns it off again.
+    opened.keys("cmd-z");
+    assert_eq!(slot(&mut opened), keyed("track-2", Tap::PreFx));
+    opened.keys("cmd-z");
+    assert_eq!(slot(&mut opened), keyed("track-2", Tap::PostFx));
+    opened.keys("cmd-z");
+    assert_eq!(slot(&mut opened), EffectSlot::new("compressor"));
+    assert_eq!(opened.undo_label().as_deref(), Some("Add Compressor"));
+    assert_eq!(opened.find("select-sidechain-tap"), None);
+
+    // Off from the select is a step of its own.
+    opened.keys("shift-cmd-z");
+    let source = opened.control("select-sidechain");
+    opened.click(source);
+    let row = opened.control("menu-Off");
+    opened.click(row);
+    assert_eq!(slot(&mut opened), EffectSlot::new("compressor"));
+    assert_eq!(opened.undo_label().as_deref(), Some("Turn off sidechain"));
 }
