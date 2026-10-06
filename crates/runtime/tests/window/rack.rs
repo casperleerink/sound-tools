@@ -69,8 +69,8 @@ fn effects(opened: &mut Opened<'_>) -> Vec<EffectSlot> {
 
 fn slot(name: &str, bypass: bool) -> EffectSlot {
     EffectSlot {
-        name: name.into(),
         bypass,
+        ..EffectSlot::new(name)
     }
 }
 
