@@ -24,7 +24,7 @@
 //! - `editor-marquee.png`: the same with a rectangle being dragged over the notes.
 //! - `track-panel.png`: the track panel open on the bass, with a sound that is not the default,
 //!   playing, so the meter under the volume shows its level.
-//! - `track-panel-solo.png`: the same with S on.
+//! - `track-panel-solo.png`: the same with S on, the other tracks at 40 %.
 //! - `track-panel-focus.png`: the same after tab went to the cutoff knob.
 //! - `master-panel.png`: the master row clicked, and its panel: the volume on its meter and the
 //!   Limiter pushed 18 dB, with four seconds of output under the ceiling and the reduction.

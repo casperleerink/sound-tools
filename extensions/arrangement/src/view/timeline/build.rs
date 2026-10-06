@@ -42,9 +42,16 @@ impl Timeline {
         }
     }
 
+    /// Whether any track is soloed, which leaves every other one silent.
+    fn soloing(&self, project: &Project) -> bool {
+        let mut tracks = self.order.iter().filter_map(|track| project.state(track));
+        tracks.any(|state| state.solo)
+    }
+
     /// Everything to paint into a timeline area of this size, read from the project now.
     pub(super) fn scene(&self, width: f32, height: f32, cx: &App) -> Scene {
         let project = self.session.read(cx).project();
+        let soloing = self.soloing(project);
         let theme = cx.theme();
         let tempo_map = &project.project_file().tempo_map;
         let time_signatures = tempo_map.time_signatures();
@@ -118,7 +125,7 @@ impl Timeline {
                 accent,
                 kind: state.kind,
                 selected: self.selected_track.as_ref() == Some(track.id()),
-                muted: state.mute,
+                silent: state.is_silent(soloing),
                 renaming: renaming == Some(track.id()),
                 armed: state.kind == TrackKind::Audio && recording.is_armed(track.id()),
                 lifted: matches!(
@@ -142,7 +149,7 @@ impl Timeline {
                 body,
                 accent,
                 selected: self.clips.contains(id),
-                muted: state.mute,
+                silent: state.is_silent(soloing),
                 carries: !expanded && lane_ghosts.iter().any(|ghost| ghost.clip == *id),
             };
             // The order of `clips()`, by start and then by id, for the few that are visible:
@@ -224,6 +231,7 @@ impl Timeline {
         cx: &App,
     ) -> Vec<LaneShape> {
         let project = self.session.read(cx).project();
+        let soloing = self.soloing(project);
         let travel = travel_in(project);
         let accent = accent(state.colour, cx.theme());
         let visible = viewport.visible_ticks(width);
@@ -298,7 +306,7 @@ impl Timeline {
                 device,
                 number: number.into(),
                 accent,
-                muted: state.mute,
+                silent: state.is_silent(soloing),
                 line: line(lane, visible.clone()),
                 ghosts: ghosts.collect(),
                 points: points.unwrap_or_default(),
@@ -312,6 +320,7 @@ impl Timeline {
     /// they grow, so the timeline itself is not painted again for them.
     pub(in crate::view) fn take_shapes(&self, width: f32, cx: &App) -> Vec<ClipShape> {
         let project = self.session.read(cx).project();
+        let soloing = self.soloing(project);
         let recording = self.recording.read(cx);
         let playhead = self.playhead.read(cx).tick;
         let viewport = self.painted.get();
@@ -341,7 +350,7 @@ impl Timeline {
                 body,
                 accent: accent(state.colour, theme),
                 selected: false,
-                muted: state.mute,
+                silent: state.is_silent(soloing),
                 carries: false,
             });
         }

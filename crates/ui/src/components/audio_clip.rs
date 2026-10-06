@@ -40,7 +40,7 @@ const FADE_LINE: f32 = 1.5;
 /// The waveform of the track colour, and the part of the file a trim hides.
 const WAVEFORM_OPACITY: f32 = 0.85;
 const HIDDEN_OPACITY: f32 = 0.25;
-/// A clip on a muted track, as any clip there.
+/// A clip on a track that does not sound, muted or left out by a solo.
 const MUTED_OPACITY: f32 = 0.4;
 const LABEL_HEIGHT: f32 = 20.;
 

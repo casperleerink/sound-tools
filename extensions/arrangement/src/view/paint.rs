@@ -160,7 +160,7 @@ pub(super) fn paint_ruler(
 
 /// The accent dot and the name of a track, as in a track header. `top` is the top left of a
 /// row, `middle` is how far down it they are, and the name ends in an ellipsis at
-/// `name_width`. A muted track has both at 40 %.
+/// `name_width`. A track that does not sound has both at 40 %.
 pub(super) fn paint_track_label(
     name: SharedString,
     accent: Hsla,
