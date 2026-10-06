@@ -18,8 +18,8 @@
 //! In a rack the view of the device draws the whole card, because it owns what the body shows,
 //! and the rack gives it a [`CardFrame`]: the title, which is the picker of the slot, the
 //! power and close icons of an effect, and the sidechain picker of an effect that takes one.
-//! Whether an effect is on and what keys it are saved on its slot, which is the rack's, so the
-//! frame reads them when the card draws.
+//! Whether an effect is on is saved on its slot, which is the rack's, so the frame reads it
+//! when the card draws.
 
 use std::rc::Rc;
 use std::sync::Arc;

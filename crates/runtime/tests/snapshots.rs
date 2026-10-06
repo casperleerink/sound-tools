@@ -1713,14 +1713,16 @@ fn main() -> Result<()> {
         opened.session.update(cx, |session, cx| {
             let track = session.project().resolve::<TrackState>(&id);
             let track = track.context("the bass is not there")?;
-            let mut keyed = session.project().state(&track).cloned();
-            let keyed = keyed.as_mut().context("its state")?;
+            let mut keyed = session
+                .project()
+                .state(&track)
+                .cloned()
+                .context("its state")?;
             let slot = keyed.effects.last_mut().context("its compressor")?;
             slot.sidechain = Some(arrangement::Sidechain {
                 track: "track-1".into(),
                 tap: arrangement::Tap::PostFx,
             });
-            let keyed = keyed.clone();
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
                 changes.set(&track, keyed);

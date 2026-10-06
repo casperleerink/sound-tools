@@ -2,8 +2,7 @@
 //! level now as a dot on it and the gain reduction as a bar, then Threshold, Ratio, Attack and
 //! Release, and behind expand Knee, Makeup, Mix and Lookahead, and the sidechain picker in a
 //! section of its own. The rack gives the view a [`CardFrame`]: the picker of the slot as the
-//! title, the power and close icons, and the sidechain picker, because what keys an effect is
-//! saved on its slot and the compressor knows no track.
+//! title, the power and close icons, and the sidechain picker.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one
