@@ -1,4 +1,4 @@
-//! The app on this machine, apart from its window: the last project it had open, whether its
+//! The app on this machine, apart from its window: the projects it had open last, whether its
 //! left panel was open, a start of the app again on another project, and the command line tool
 //! for agents.
 //!
@@ -19,8 +19,12 @@ pub fn program_file_name() -> String {
     format!("{TOOL_NAME}{}", std::env::consts::EXE_SUFFIX)
 }
 
-/// One line: the folder of the last project the window had open.
-const LAST_PROJECT_FILE: &str = "last-project";
+/// One line per folder of a project the window had open, the last one first. Named from when
+/// it held only the last one, which an older file still is.
+const RECENT_PROJECTS_FILE: &str = "last-project";
+
+/// How many projects the file keeps.
+const MAX_RECENT_PROJECTS: usize = 8;
 
 /// One word, `open` or `closed`: the left panel of the window, for every project.
 const LEFT_PANEL_FILE: &str = "left-panel";
@@ -78,14 +82,37 @@ pub fn support_folder() -> Result<PathBuf> {
 
 /// The project the window had open last, when its folder is still there.
 pub fn last_project() -> Option<PathBuf> {
-    last_project_in(&support_folder().ok()?)
+    recent_folders(&support_folder().ok()?).find(|folder| folder.is_dir())
 }
 
-fn last_project_in(support: &Path) -> Option<PathBuf> {
-    let bytes = std::fs::read(support.join(LAST_PROJECT_FILE)).ok()?;
-    let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
-    let folder = path_of_bytes(bytes)?;
-    folder.is_dir().then_some(folder)
+/// The projects the window had open, the last one first, whose folders are still there.
+pub fn recent_projects() -> Vec<PathBuf> {
+    support_folder()
+        .map(|support| recent_projects_in(&support))
+        .unwrap_or_default()
+}
+
+fn recent_projects_in(support: &Path) -> Vec<PathBuf> {
+    recent_folders(support)
+        .filter(|folder| folder.is_dir())
+        .collect()
+}
+
+fn recent_folders(support: &Path) -> impl Iterator<Item = PathBuf> {
+    recent_lines(support)
+        .into_iter()
+        .filter_map(|line| path_of_bytes(&line))
+}
+
+/// The lines of the file as they are, so a folder that is gone for now, such as one on a
+/// drive that is not plugged in, stays remembered.
+fn recent_lines(support: &Path) -> Vec<Vec<u8>> {
+    let bytes = std::fs::read(support.join(RECENT_PROJECTS_FILE)).unwrap_or_default();
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(<[u8]>::to_vec)
+        .collect()
 }
 
 /// The bytes of a path, so that any folder name comes back as it was.
@@ -116,7 +143,7 @@ fn path_of_bytes(bytes: &[u8]) -> Option<PathBuf> {
 }
 
 /// Remembers `folder` as the project to open when the app starts with no folder, which is
-/// what a double click in the Finder does.
+/// what a double click in the Finder does, and first of the recent projects.
 pub fn remember_project(folder: &Path) -> Result<()> {
     remember_project_in(&support_folder()?, folder)
 }
@@ -124,13 +151,19 @@ pub fn remember_project(folder: &Path) -> Result<()> {
 fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
     let folder = dunce::canonicalize(folder)
         .with_context(|| format!("{} is not there", folder.display()))?;
-    let file = support.join(LAST_PROJECT_FILE);
+    let first = bytes_of_path(&folder)?;
+    let mut lines = recent_lines(support);
+    lines.retain(|line| *line != first);
+    lines.insert(0, first);
+    lines.truncate(MAX_RECENT_PROJECTS);
+    let file = support.join(RECENT_PROJECTS_FILE);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("could not make {}", parent.display()))?;
     }
-    let line = [bytes_of_path(&folder)?.as_slice(), b"\n"].concat();
-    std::fs::write(&file, line).with_context(|| format!("could not write {}", file.display()))
+    let mut text = lines.join(&b'\n');
+    text.push(b'\n');
+    std::fs::write(&file, text).with_context(|| format!("could not write {}", file.display()))
 }
 
 /// The file that remembers whether the left panel is open.
@@ -293,22 +326,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_last_project_is_remembered_and_forgotten_when_its_folder_goes() {
+    fn recent_projects_are_remembered_last_first_and_skipped_while_their_folder_is_gone() {
         let support = tempfile::tempdir().unwrap();
         let projects = tempfile::tempdir().unwrap();
-        let piece = projects.path().join("my piece");
-        std::fs::create_dir(&piece).unwrap();
+        let folder = |name: &str| {
+            let folder = projects.path().join(name);
+            std::fs::create_dir(&folder).unwrap();
+            dunce::canonicalize(folder).unwrap()
+        };
+        let (piece, sketch) = (folder("my piece"), folder("sketch"));
 
-        assert_eq!(last_project_in(support.path()), None);
+        assert_eq!(recent_projects_in(support.path()), Vec::<PathBuf>::new());
+        remember_project_in(support.path(), &piece).unwrap();
+        remember_project_in(support.path(), &sketch).unwrap();
         remember_project_in(support.path(), &piece).unwrap();
         assert_eq!(
-            last_project_in(support.path()),
-            Some(dunce::canonicalize(&piece).unwrap())
+            recent_projects_in(support.path()),
+            [piece.as_path(), &sketch]
         );
         assert!(support.path().join("last-project").is_file());
 
-        std::fs::remove_dir(&piece).unwrap();
-        assert_eq!(last_project_in(support.path()), None);
+        // Skipped while it is gone, and back when it is: it may be on a drive.
+        std::fs::rename(&piece, projects.path().join("away")).unwrap();
+        assert_eq!(recent_projects_in(support.path()), [sketch.as_path()]);
+        std::fs::rename(projects.path().join("away"), &piece).unwrap();
+        assert_eq!(
+            recent_projects_in(support.path()),
+            [piece.as_path(), &sketch]
+        );
+
+        for index in 0..MAX_RECENT_PROJECTS {
+            remember_project_in(support.path(), &folder(&index.to_string())).unwrap();
+        }
+        let recent = recent_projects_in(support.path());
+        assert_eq!(recent.len(), MAX_RECENT_PROJECTS);
+        assert!(!recent.contains(&sketch));
     }
 
     #[test]

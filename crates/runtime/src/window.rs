@@ -620,6 +620,25 @@ fn widen_for_left_panel(window: &mut Window, cx: &App) {
     }
 }
 
+/// Gives the project menu of the app's window the recent projects. Off the UI thread: each is
+/// a look at a folder, which a network drive that went away can hold up. A test window never
+/// gets them, so a snapshot does not show what this machine opened.
+fn show_recent_projects(window: gpui::WindowHandle<Shell>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let recent = cx
+            .background_spawn(async { crate::app::recent_projects() })
+            .await;
+        // Fails only when the window is gone.
+        window
+            .update(cx, |shell, _, cx| {
+                let menu = shell.project_menu().clone();
+                menu.update(cx, |menu, cx| menu.set_recent_projects(recent, cx));
+            })
+            .ok();
+    })
+    .detach();
+}
+
 /// What the headless runtime prints at the end too, so a session in the window can be judged
 /// the same way.
 fn print_device_report(stream: &OutputStream) {
@@ -868,6 +887,7 @@ impl Opened {
         let shell = match opened {
             Ok(window) => {
                 cx.activate(true);
+                show_recent_projects(window, cx);
                 window
             }
             Err(error) => {

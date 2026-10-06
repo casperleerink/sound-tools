@@ -1,6 +1,6 @@
 //! The project menu: the project name top-left as a quiet menu. Fit the tempo to a take,
 //! export the project or the selected clips as a WAV, undo and redo with what they would do,
-//! the output device by name, another project, the project folder in the Finder or in a
+//! the output device by name, a recent or another project, the project folder in the Finder or in a
 //! terminal, the command line tool, and the app version. The
 //! terminal is where the composer starts a coding agent on the project, and the tool is what
 //! that agent runs to read the whole piece.
@@ -33,6 +33,9 @@ const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const DEVICE: &str = "device";
 const OPEN_PROJECT: &str = "open-project";
+const OPEN_RECENT: &str = "open-recent";
+/// Followed by the index in the recent projects.
+const RECENT_PROJECT: &str = "recent-project-";
 const REVEAL: &str = "reveal";
 const TERMINAL: &str = "terminal";
 const INSTALL_TOOL: &str = "install-tool";
@@ -41,6 +44,8 @@ pub struct ProjectMenu {
     session: Entity<Session>,
     device_name: SharedString,
     menu: Entity<DropdownMenu>,
+    /// The other projects the window had open, the last one first.
+    recent: Vec<PathBuf>,
     /// What the items were made from. They are made again only when this changes.
     shown: Shown,
     /// The file an export writes and how far it is, in percent. One at a time: the export
@@ -101,7 +106,7 @@ impl ProjectMenu {
         let name = project.root().file_name().unwrap_or_default();
         let name = name.to_string_lossy().into_owned();
         let shown = Shown::of(session.read(cx), false);
-        let items = entries(&shown, &device_name);
+        let items = entries(&shown, &device_name, &[]);
         let menu = cx.new(|cx| {
             DropdownMenu::new(name, items, cx)
                 .debug_name("project-menu")
@@ -119,9 +124,19 @@ impl ProjectMenu {
             session,
             device_name,
             menu,
+            recent: Vec::new(),
             shown,
             exporting: None,
         }
+    }
+
+    /// Set by the app, after the window opens: a test window shows none, whatever this machine
+    /// opened.
+    pub fn set_recent_projects(&mut self, recent: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let root = self.session.read(cx).project().root();
+        self.recent = recent.into_iter().filter(|folder| folder != root).collect();
+        let items = entries(&self.shown, &self.device_name, &self.recent);
+        self.menu.update(cx, |menu, cx| menu.set_entries(items, cx));
     }
 
     pub fn menu(&self) -> &Entity<DropdownMenu> {
@@ -145,7 +160,7 @@ impl ProjectMenu {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let shown = Shown::of(self.session.read(cx), self.exporting.is_some());
         if shown != self.shown {
-            let items = entries(&shown, &self.device_name);
+            let items = entries(&shown, &self.device_name, &self.recent);
             self.menu.update(cx, |menu, cx| menu.set_entries(items, cx));
             self.shown = shown;
         }
@@ -164,6 +179,14 @@ impl ProjectMenu {
             EXPORT => return export_audio(self.session.clone(), false, window, cx),
             EXPORT_SELECTION => return export_audio(self.session.clone(), true, window, cx),
             _ => {}
+        }
+        let recent = picked.0.strip_prefix(RECENT_PROJECT);
+        if let Some(folder) = recent.and_then(|index| self.recent.get(index.parse::<usize>().ok()?))
+        {
+            let folder = folder.clone();
+            return self
+                .session
+                .update(cx, |_, cx| open_recent_project(folder, cx));
         }
         // An error from any of these shows as the notice of the session.
         self.session
@@ -473,6 +496,26 @@ fn open_another_project(cx: &mut Context<Session>) {
     .detach();
 }
 
+/// Opens a recent project as [`open_another_project`] does. A folder that went away since the
+/// menu was made is not made again as a new, empty project.
+fn open_recent_project(folder: PathBuf, cx: &mut Context<Session>) {
+    cx.spawn(async move |session, cx| {
+        let remembered = cx
+            .background_spawn(async move {
+                if !folder.is_dir() {
+                    anyhow::bail!("{} is not there anymore", folder.display());
+                }
+                app::remember_project(&folder)
+            })
+            .await;
+        match remembered {
+            Ok(()) => cx.update(|cx| start_again(cx)),
+            Err(error) => report(&session, format!("{error:#}"), cx),
+        }
+    })
+    .detach();
+}
+
 /// Quits, and starts this program again once the project is closed. The project goes with the
 /// window, before the last step of a quit, which is where the new process starts. It installs
 /// an update that is ready before it opens the project.
@@ -549,7 +592,7 @@ fn installed_message(installed: &Installed) -> (String, String) {
     (message, detail)
 }
 
-fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
+fn entries(shown: &Shown, device_name: &SharedString, recent: &[PathBuf]) -> Vec<MenuEntry> {
     let command =
         |value: &'static str, label: String| MenuItem::new(value, label).selectable(false);
     let history = |value, verb: &str, label: Option<&str>, shortcut: &'static str| {
@@ -597,24 +640,49 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
                 .item(MenuItem::new(DEVICE, device_name.clone())),
         ),
         MenuEntry::Separator,
-        MenuEntry::Group(MenuGroup::new().items(folder_items())),
+        MenuEntry::Group(MenuGroup::new().items(folder_items(recent))),
         MenuEntry::Note(concat!("Sound Tools ", env!("CARGO_PKG_VERSION")).into()),
     ]
 }
 
-/// The last group: another project, the project folder in the Finder, a terminal in it for a
-/// coding agent, and the command that agent runs. Windows has no command line tool, see
-/// `app::Installed`.
-fn folder_items() -> Vec<MenuItem> {
+/// The folder name, and the folder it is in to tell two of the same name apart.
+fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
+    recent.iter().enumerate().map(|(index, folder)| {
+        let name = folder.file_name().unwrap_or(folder.as_os_str());
+        let item = MenuItem::new(
+            format!("{RECENT_PROJECT}{index}"),
+            name.to_string_lossy().into_owned(),
+        )
+        .selectable(false);
+        match folder.parent() {
+            Some(parent) => item.description(parent.display().to_string()),
+            None => item,
+        }
+    })
+}
+
+/// The last group: another project, a recent one in a submenu, the project folder in the
+/// Finder, a terminal in it for a coding agent, and the command that agent runs. Windows has
+/// no command line tool, see `app::Installed`.
+fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
     [
         (OPEN_PROJECT, "Open project…"),
+        (OPEN_RECENT, "Open recent"),
         (REVEAL, "Reveal project folder"),
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
     ]
     .into_iter()
     .filter(|(value, _)| cfg!(unix) || *value != INSTALL_TOOL)
-    .map(|(value, label)| MenuItem::new(value, label).selectable(false))
+    .map(|(value, label)| {
+        let item = MenuItem::new(value, label).selectable(false);
+        match value {
+            OPEN_RECENT => item
+                .submenu(recent_items(recent))
+                .disabled(recent.is_empty()),
+            _ => item,
+        }
+    })
     .collect()
 }
 
@@ -734,12 +802,13 @@ mod tests {
 
     #[test]
     fn the_menu_offers_the_terminal_next_to_the_finder() {
-        let items: Vec<(SharedString, SharedString)> = folder_items()
+        let items: Vec<(SharedString, SharedString)> = folder_items(&[])
             .iter()
             .map(|item| (item.value.clone(), item.label()))
             .collect();
         let mut expected: Vec<(SharedString, SharedString)> = vec![
             (OPEN_PROJECT.into(), "Open project…".into()),
+            (OPEN_RECENT.into(), "Open recent".into()),
             (REVEAL.into(), "Reveal project folder".into()),
             (TERMINAL.into(), "Open terminal in project folder".into()),
         ];
