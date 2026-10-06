@@ -9,7 +9,9 @@
 //!   "state": {
 //!     "sample": "kalimba.wav",
 //!     "root": 60,
+//!     "tune": 0.0,
 //!     "start_seconds": 0.0,
+//!     "reverse": false,
 //!     "attack_seconds": 0.002,
 //!     "decay_seconds": 0.4,
 //!     "sustain": 1.0,
@@ -74,12 +76,16 @@ pub struct SamplerState {
     pub library: Option<LibraryId>,
     /// The key that plays the sample at its own pitch.
     pub root: Pitch,
+    /// Semitones every note plays above the pitch of its key from `root`. 0.01 is a cent.
+    pub tune: f32,
     /// Where in the file a note starts, in seconds of the file.
     pub start_seconds: f64,
     /// Where in the file a note ends at the latest, in seconds of the file. None is the end of
     /// the file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_seconds: Option<f64>,
+    /// Plays the file backwards, from the end back to the start.
+    pub reverse: bool,
     /// From note on to full level.
     pub attack_seconds: f32,
     /// From full level to within 0.1 % of the sustain level.
@@ -124,6 +130,15 @@ pub const ROOT: Parameter = Parameter {
     scale: Scale::Linear,
     get: |state| f32::from(state.root.number()),
     set: |state, value| state.root = Pitch::nearest(value.round() as i64),
+};
+pub const TUNE: Parameter = Parameter {
+    field: "tune",
+    min: -24.0,
+    max: 24.0,
+    default: 0.0,
+    scale: Scale::Linear,
+    get: |state| state.tune,
+    set: |state, value| state.tune = value,
 };
 pub const ATTACK: Parameter = time(
     "attack_seconds",
@@ -174,8 +189,9 @@ pub const GAIN: Parameter = Parameter {
 
 /// Every number of the state with a fixed range, in the order of its fields. Start and end are
 /// seconds of the file, whose range is the length of the file.
-pub const PARAMETERS: [&Parameter; 7] =
-    [&ROOT, &ATTACK, &DECAY, &SUSTAIN, &RELEASE, &VELOCITY, &GAIN];
+pub const PARAMETERS: [&Parameter; 8] = [
+    &ROOT, &TUNE, &ATTACK, &DECAY, &SUSTAIN, &RELEASE, &VELOCITY, &GAIN,
+];
 
 impl Default for SamplerState {
     fn default() -> Self {
@@ -184,8 +200,10 @@ impl Default for SamplerState {
             sfz: None,
             library: None,
             root: Pitch::nearest(ROOT.default as i64),
+            tune: TUNE.default,
             start_seconds: 0.0,
             end_seconds: None,
+            reverse: false,
             attack_seconds: ATTACK.default,
             decay_seconds: DECAY.default,
             sustain: SUSTAIN.default,

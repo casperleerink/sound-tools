@@ -186,3 +186,29 @@ fn a_note_plays_from_start_to_end_and_no_further() {
     );
     assert!((last as i64 + 1 - 12_000).abs() <= 1, "{last}");
 }
+
+/// Reversed, the same part of the ramp plays from the end line back to the start line, sample
+/// for sample after the attack, and stops there.
+#[test]
+fn a_reversed_note_plays_from_end_back_to_start() {
+    let ramp: Vec<f32> = (0..48_000).map(|frame| frame as f32 / 48_000.0).collect();
+    let state = playing(
+        "ramp.wav",
+        SamplerState {
+            start_seconds: 0.25,
+            end_seconds: Some(0.5),
+            reverse: true,
+            attack_seconds: 0.001,
+            velocity_to_volume: 0.0,
+            ..SamplerState::default()
+        },
+    );
+    let mut harness = Harness::with_samples(&[("ramp.wav", SAMPLE_RATE, ramp.clone())]);
+    harness.add_track(vec![note(0, 48_000, 60, 127)], state);
+    let played = harness.play(48_000);
+    // Frame 23999 of the file first, down to frame 12000 last.
+    let backwards: Vec<f32> = ramp[12_000..24_000].iter().rev().copied().collect();
+    assert_eq!(played[100..12_000 - 96], backwards[100..12_000 - 96]);
+    let last = played.iter().rposition(|sample| *sample != 0.0).unwrap();
+    assert_eq!(last + 1, 12_000);
+}

@@ -26,7 +26,8 @@ use crate::instrument::{Instrument, Looping, Zone};
 use crate::sfz::{OffMode, Trigger};
 use crate::{ATTACK, DECAY, GAIN, RELEASE, SUSTAIN, SamplerState, VELOCITY};
 
-/// The numbers an automation lane can move: every number but the root, a key.
+/// The numbers an automation lane can move: every number but the root and the tune, which
+/// apply from the next note.
 const AUTOMATED: [&crate::Parameter; 6] = [&ATTACK, &DECAY, &SUSTAIN, &RELEASE, &VELOCITY, &GAIN];
 
 type SamplerTargets = Targets<SamplerState, { AUTOMATED.len() }>;
@@ -102,8 +103,10 @@ impl SamplerUpdate {
 #[derive(Copy, Clone)]
 struct Settings {
     root: Pitch,
+    tune: f32,
     start_seconds: f64,
     end_seconds: Option<f64>,
+    reverse: bool,
     attack_seconds: f32,
     decay_seconds: f32,
     sustain: f32,
@@ -117,8 +120,10 @@ impl Settings {
     fn new(state: &SamplerState) -> Self {
         Self {
             root: state.root,
+            tune: state.tune,
             start_seconds: state.start_seconds,
             end_seconds: state.end_seconds,
+            reverse: state.reverse,
             attack_seconds: state.attack_seconds,
             decay_seconds: state.decay_seconds,
             sustain: state.sustain,
@@ -184,8 +189,11 @@ struct Layer {
     /// Frames of the file per frame of the engine at the pitch of the note, before the wheels
     /// move it.
     key_step: f64,
-    /// The frame after the last that plays.
+    /// Where it stops: the place after the last that plays, in the direction it plays.
     end: f64,
+    /// Plays from the end of its part of the file back to the start. Only a zone of the
+    /// record does, and it never loops.
+    reverse: bool,
     looping: Looping,
     /// The level of each channel: velocity, volume, amplitude and pan.
     gains: [f32; 2],
@@ -211,6 +219,7 @@ impl Layer {
         rates: 1.0,
         key_step: 1.0,
         end: 0.0,
+        reverse: false,
         looping: Looping::No { one_shot: false },
         gains: [0.0; 2],
         envelope: None,
@@ -270,16 +279,26 @@ impl Layer {
             Trigger::Attack => Phase::Playing,
             Trigger::Release => Phase::Waiting,
         };
+        let (tune, reverse) = match from_record {
+            true => (settings.tune, settings.reverse),
+            false => (region.tune_cents / 100.0, false),
+        };
+        // Backwards it plays the same places as forwards, from the last to the first.
+        let (position, end) = match reverse {
+            true => (end - 1.0, offset - 1.0),
+            false => (offset, end),
+        };
         Self {
             phase,
             zone: index,
-            position: offset,
+            position,
             keycenter: f32::from(keycenter),
             keytrack: region.keytrack_cents / 100.0,
-            tune: region.tune_cents / 100.0,
+            tune,
             rates: file_rate / f64::from(sample_rate.max(1.0)),
             key_step: 1.0,
             end,
+            reverse,
             looping: zone.looping,
             gains: pan_gains(f64::from(level), region.pan),
             envelope,
@@ -357,6 +376,7 @@ impl Layer {
         };
         let frames = &mut frames[..count];
         let step = self.key_step * pitch_ratio;
+        let direction = if self.reverse { -1.0 } else { 1.0 };
         let start = self.position;
         self.read(zone, step, frames, scratch, filter);
         let envelope = self.envelope.as_ref().unwrap_or(record_envelope);
@@ -370,7 +390,8 @@ impl Layer {
                 Looping::Loop { .. } => 1.0,
                 Looping::No { .. } => {
                     // Engine frames from this one to the end of the part that plays.
-                    let to_end = (self.end - (start + step * index as f64)) / step;
+                    let at = start + direction * step * index as f64;
+                    let to_end = direction * (self.end - at) / step;
                     if to_end <= 0.0 {
                         self.phase = Phase::Idle;
                         break;
@@ -409,6 +430,21 @@ impl Layer {
         scratch: &mut [[f32; 2]],
         filter: &Varispeed,
     ) {
+        if self.reverse {
+            // The filter reads forwards, so it reads the same places from the far end and
+            // they are turned around.
+            let last = frames.len().saturating_sub(1) as f64;
+            filter.render(
+                &zone.audio,
+                self.position - step * last,
+                step,
+                frames,
+                scratch,
+            );
+            frames.reverse();
+            self.position -= step * frames.len() as f64;
+            return;
+        }
         let mut done = 0;
         while done < frames.len() {
             let left = frames.len() - done;
