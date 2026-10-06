@@ -4,8 +4,8 @@
 // Windows builds sound-tools.ico into the program (crates/runtime/build.rs). Make it again with
 // python3 -c "from PIL import Image; Image.open('tooling/icon/sound-tools.png').save('tooling/icon/sound-tools.ico', sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])"
 //
-// The rounded square of a macOS icon in the window colours of DESIGN.md, with a waveform of
-// seven bars in the text colour. The middle bar is lavender, the colour of the agent.
+// The rounded square of a macOS icon in the window colours of DESIGN.md, with two sine waves
+// woven over and under each other: the composer in the text colour, the agent in lavender.
 
 import AppKit
 
@@ -54,22 +54,53 @@ context.setStrokeColor(colour(0xffffff, 0.08))
 context.setLineWidth(4)
 context.strokePath()
 
-// Seven bars, mirrored about the middle line, as the waveform of an audio clip is drawn.
-let heights: [CGFloat] = [0.22, 0.46, 0.74, 1.0, 0.62, 0.38, 0.18]
-let barWidth: CGFloat = 56
-let gap: CGFloat = 36
-let tallest: CGFloat = 470
-let total = CGFloat(heights.count) * barWidth + CGFloat(heights.count - 1) * gap
-var x = (CGFloat(size) - total) / 2
-for (index, height) in heights.enumerated() {
-    let barHeight = max(barWidth, tallest * height)
-    let bar = CGRect(x: x, y: (CGFloat(size) - barHeight) / 2, width: barWidth, height: barHeight)
-    let rounded = CGPath(
-        roundedRect: bar, cornerWidth: barWidth / 2, cornerHeight: barWidth / 2, transform: nil)
-    context.addPath(rounded)
-    context.setFillColor(index == 3 ? colour(0xa9b1ff) : colour(0xe9ebef))
-    context.fillPath()
-    x += barWidth + gap
+// Two mirrored sine waves of one and a half periods. They cross twice inside: at the first
+// crossing the composer's wave lies on top, at the second the agent's, each with a gap in the
+// tile colour at the middle line so the other passes under. Both waves stop short of the ends,
+// where they would meet, so their round ends sit apart by the same gap.
+let left: CGFloat = 218
+let right: CGFloat = 806
+let amplitude: CGFloat = 140
+let periods: CGFloat = 1.5
+let lineWidth: CGFloat = 40
+let gap: CGFloat = 14
+let middle = colour(0x131519)
+// Where the two waves are one line width and a gap apart.
+let trim = asin((lineWidth + gap) / (2 * amplitude)) / (periods * 2 * .pi)
+
+func wave(_ sign: CGFloat, from start: CGFloat = 0, to end: CGFloat = 1) -> CGPath {
+    let path = CGMutablePath()
+    let steps = 200
+    for step in 0...steps {
+        let t = start + (end - start) * CGFloat(step) / CGFloat(steps)
+        let point = CGPoint(
+            x: left + (right - left) * t,
+            y: CGFloat(size) / 2 + sign * amplitude * sin(t * periods * 2 * .pi))
+        if step == 0 { path.move(to: point) } else { path.addLine(to: point) }
+    }
+    return path
+}
+
+func stroke(_ path: CGPath, _ fill: CGColor, width: CGFloat, cap: CGLineCap) {
+    context.addPath(path)
+    context.setStrokeColor(fill)
+    context.setLineWidth(width)
+    context.setLineCap(cap)
+    context.setLineJoin(.round)
+    context.strokePath()
+}
+
+let composer = colour(0xe9ebef)
+let agent = colour(0xa9b1ff)
+stroke(wave(1, from: trim, to: 1 - trim), composer, width: lineWidth, cap: .round)
+stroke(wave(-1, from: trim, to: 1 - trim), agent, width: lineWidth, cap: .round)
+// The gap is shorter than the piece over it, so the ends of the piece land on its own colour
+// and leave no seam.
+for (sign, fill, crossing) in [(CGFloat(1), composer, CGFloat(1) / 3), (-1, agent, 2 / 3)] {
+    stroke(
+        wave(sign, from: crossing - 0.06, to: crossing + 0.06), middle,
+        width: lineWidth + 2 * gap, cap: .butt)
+    stroke(wave(sign, from: crossing - 0.08, to: crossing + 0.08), fill, width: lineWidth, cap: .butt)
 }
 
 // 1024 for macOS, and 512 for Linux, the largest size of the hicolor icon theme.
