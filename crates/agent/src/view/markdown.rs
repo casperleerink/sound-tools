@@ -409,13 +409,20 @@ impl Styled for MarkdownText {
 /// after the other, with a newline between two. It shows while the message has focus.
 struct Selection {
     focus: FocusHandle,
+    /// The message it was made in. A streaming answer parses into a new one, whose offsets
+    /// mean other text, so the selection goes away.
+    markdown: Markdown,
     anchor: usize,
     head: usize,
     dragging: bool,
 }
 
 impl Selection {
-    fn range(&self) -> Range<usize> {
+    /// Empty when the message changed since.
+    fn range(&self, markdown: &Markdown) -> Range<usize> {
+        if self.markdown != *markdown {
+            return 0..0;
+        }
         self.anchor.min(self.head)..self.anchor.max(self.head)
     }
 }
@@ -437,6 +444,7 @@ impl RenderOnce for MarkdownText {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let selection = window.use_keyed_state(self.id.clone(), cx, |_, cx| Selection {
             focus: cx.focus_handle(),
+            markdown: Markdown::default(),
             anchor: 0,
             head: 0,
             dragging: false,
@@ -446,12 +454,15 @@ impl RenderOnce for MarkdownText {
             let shows = selection.focus.is_focused(window);
             (
                 selection.focus.clone(),
-                shows.then(|| selection.range()).unwrap_or_default(),
+                shows
+                    .then(|| selection.range(&self.markdown))
+                    .unwrap_or_default(),
             )
         };
         let mut renderer = Renderer {
             theme: cx.theme().clone(),
             next_id: 0,
+            selection: selection.clone(),
             selected,
             pieces: Vec::new(),
             length: 0,
@@ -468,12 +479,15 @@ impl RenderOnce for MarkdownText {
             .min_w_0()
             .on_mouse_down(MouseButton::Left, {
                 let (selection, pieces) = (selection.clone(), pieces.clone());
-                move |event, _, cx| press(&selection, &pieces, event, cx)
+                let markdown = self.markdown.clone();
+                move |event, _, cx| press(&selection, &markdown, &pieces, event, cx)
             })
             .on_action({
                 let (selection, pieces) = (selection.clone(), pieces.clone());
+                let markdown = self.markdown.clone();
                 move |_: &Copy, _, cx| {
-                    let text = selected_text(&pieces, selection.read(cx).range());
+                    let range = selection.read(cx).range(&markdown);
+                    let text = selected_text(&pieces, range);
                     if !text.is_empty() {
                         cx.write_to_clipboard(ClipboardItem::new_string(text));
                     }
@@ -498,7 +512,13 @@ impl RenderOnce for MarkdownText {
 }
 
 /// A click puts the caret, a double-click selects a word and a triple-click a line.
-fn press(selection: &Entity<Selection>, pieces: &[Piece], event: &MouseDownEvent, cx: &mut App) {
+fn press(
+    selection: &Entity<Selection>,
+    markdown: &Markdown,
+    pieces: &[Piece],
+    event: &MouseDownEvent,
+    cx: &mut App,
+) {
     let offset = offset_at(pieces, event.position);
     let around = |select: fn(&str, usize) -> Range<usize>| {
         let piece = pieces
@@ -514,6 +534,7 @@ fn press(selection: &Entity<Selection>, pieces: &[Piece], event: &MouseDownEvent
     }
     .unwrap_or(offset..offset);
     selection.update(cx, |selection, cx| {
+        selection.markdown = markdown.clone();
         selection.anchor = range.start;
         selection.head = range.end;
         selection.dragging = event.click_count <= 1;
@@ -555,31 +576,28 @@ fn follow_drag(selection: Entity<Selection>, pieces: Rc<[Piece]>, window: &mut W
     });
 }
 
-/// The offset in the flat text nearest to a point. Between two texts it is the start of the
-/// next one, and the cells of a table row sit side by side.
+/// The offset in the flat text nearest to a point, in the row of texts it is on or below: one
+/// text, or the cells of a table row, which share their top. In a gap below a text it is the
+/// end of that text.
 fn offset_at(pieces: &[Piece], position: Point<Pixels>) -> usize {
-    let level: Vec<&Piece> = pieces
+    let bounds = |piece: &Piece| piece.layout.bounds();
+    let Some(row_top) = pieces
         .iter()
-        .filter(|piece| {
-            let bounds = piece.layout.bounds();
-            (bounds.top()..bounds.bottom()).contains(&position.y)
-        })
-        .collect();
-    let beside = level
-        .iter()
-        .find(|piece| position.x < piece.layout.bounds().right())
-        .or(level.last());
-    if let Some(piece) = beside {
+        .map(|piece| bounds(piece).top())
+        .filter(|top| *top <= position.y)
+        .reduce(|highest, top| if top > highest { top } else { highest })
+    else {
+        return 0;
+    };
+    let mut row = pieces.iter().filter(|piece| bounds(piece).top() == row_top);
+    let piece = row
+        .clone()
+        .rfind(|piece| bounds(piece).left() <= position.x)
+        .or_else(|| row.next());
+    piece.map_or(0, |piece| {
         let (Ok(index) | Err(index)) = piece.layout.index_for_position(position);
-        return piece.start + index.min(piece.text.len());
-    }
-    match pieces
-        .iter()
-        .find(|piece| position.y < piece.layout.bounds().top())
-    {
-        Some(below) => below.start,
-        None => pieces.last().map_or(0, Piece::end),
-    }
+        piece.start + index.min(piece.text.len())
+    })
 }
 
 /// The selected text as it reads, each text on a line of its own.
@@ -594,9 +612,8 @@ fn selected_text(pieces: &[Piece], range: Range<usize>) -> String {
         .join("\n")
 }
 
-/// The part of `range` inside a text that starts at `start`, in bytes of that text. A message
-/// that changed under its selection, as one that streams, can cut a character, so the ends
-/// move back to whole characters.
+/// The part of `range` inside a text that starts at `start`, in bytes of that text, its ends on
+/// whole characters.
 fn local(start: usize, text: &str, range: &Range<usize>) -> Range<usize> {
     let clamp = |offset: usize| text.floor_char_boundary(offset.saturating_sub(start));
     let local_start = clamp(range.start);
@@ -620,6 +637,7 @@ struct Renderer {
     theme: Theme,
     /// Code blocks scroll and links take clicks, and both need an id of their own.
     next_id: usize,
+    selection: Entity<Selection>,
     /// In the flat text, empty when nothing shows.
     selected: Range<usize>,
     pieces: Vec<Piece>,
@@ -795,12 +813,17 @@ impl Renderer {
                             .when(column + 1 == columns, |cell| cell.rounded_tr(px(7.)))
                     })
                     .when(row > 0, |cell| cell.border_t_1().border_color(rule))
+                    // Aligned by layout, not by text: gpui finds the letter under the pointer
+                    // as if aligned text were on the left. The text still wraps in its box.
                     .map(|cell| match alignment {
-                        Alignment::Center => cell.text_center(),
-                        Alignment::Right => cell.text_right(),
+                        Alignment::Center => cell.flex().justify_center(),
+                        Alignment::Right => cell.flex().justify_end(),
                         Alignment::Left | Alignment::None => cell,
                     })
-                    .children(cell.as_ref().map(|text| self.inline(text)));
+                    .children(
+                        cell.as_ref()
+                            .map(|text| div().min_w_0().child(self.inline(text))),
+                    );
                 cells.push(cell.into_any_element());
             }
         }
@@ -851,8 +874,14 @@ impl Renderer {
         if ranges.is_empty() {
             return text.into_any_element();
         }
+        let selection = self.selection.clone();
         InteractiveText::new(self.id("links"), text)
             .on_click(ranges, move |index, _window, cx| {
+                // A drag that ends on the link it started on selects its text.
+                let selection = selection.read(cx);
+                if selection.anchor != selection.head {
+                    return;
+                }
                 if let Some(url) = urls.get(index) {
                     cx.open_url(url);
                 }
@@ -1269,20 +1298,20 @@ mod tests {
         }
     }
 
-    struct Message;
+    struct Message(Markdown);
 
     impl Render for Message {
         fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-            let source = "First **paragraph**.\n\n- Größe one\n\n```\ncode line\n```";
             div()
                 .w(px(400.))
                 .debug_selector(|| "message".into())
-                .child(MarkdownText::new("message", Markdown::parse(source)))
+                .child(MarkdownText::new("message", self.0.clone()))
         }
     }
 
     /// A drag from the top left to the bottom right selects the whole message, each text on a
-    /// line of its own, and a double-click a word.
+    /// line of its own, and a double-click a word. When the answer streams on, its offsets mean
+    /// other text, and the selection goes away.
     #[gpui::test]
     fn a_drag_selects_and_cmd_c_copies(cx: &mut gpui::TestAppContext) {
         use gpui::{KeyBinding, Modifiers, point};
@@ -1290,7 +1319,8 @@ mod tests {
             sound_ui::init(cx);
             cx.bind_keys([KeyBinding::new("cmd-c", Copy, Some(KEY_CONTEXT))]);
         });
-        let (_, cx) = cx.add_window_view(|_, _| Message);
+        let source = "First **paragraph**.\n\n- Größe one\n\n```\ncode line\n```";
+        let (message, cx) = cx.add_window_view(|_, _| Message(Markdown::parse(source)));
         cx.run_until_parked();
         let bounds = cx.debug_bounds("message").expect("the message is drawn");
         let copied = |cx: &mut gpui::VisualTestContext| {
@@ -1319,6 +1349,13 @@ mod tests {
         });
         cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::none());
         assert_eq!(copied(cx).as_deref(), Some("First"));
+
+        message.update(cx, |message, cx| {
+            message.0 = Markdown::parse("**First** paragraph");
+            cx.notify();
+        });
+        cx.write_to_clipboard(ClipboardItem::new_string("untouched".into()));
+        assert_eq!(copied(cx).as_deref(), Some("untouched"));
     }
 
     #[test]
