@@ -24,9 +24,10 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
-    IntoElement, KeyDownEvent, MouseDownEvent, Render, RenderOnce, SharedString, Stateful,
-    StyleRefinement, Styled, Window, anchored, deferred, div, point, prelude::*, px,
+    App, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    HoverListenerMode, Hsla, IntoElement, KeyDownEvent, MouseDownEvent, Render, RenderOnce,
+    SharedString, Stateful, StyleRefinement, Styled, Window, anchored, deferred, div, point,
+    prelude::*, px,
 };
 
 use crate::components::icon::Icon;
@@ -593,6 +594,9 @@ fn submenu_panel(
                         .flex_col()
                         .gap(px(2.))
                         .p(px(4.))
+                        // Still hovered after a key, so a click that follows one is not taken for
+                        // a click outside.
+                        .hover_listener_mode(HoverListenerMode::InputModalityIndependent)
                         .on_hover(move |hovered, window, cx| on_hover(*hovered, window, cx))
                         .children(rows),
                 ),

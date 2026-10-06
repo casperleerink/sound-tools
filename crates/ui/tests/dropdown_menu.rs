@@ -121,6 +121,8 @@ fn a_row_in_a_submenu_is_picked_with_the_pointer_and_with_the_keys(cx: &mut Test
     let piano = cx.debug_bounds("menu-piano").unwrap();
     assert!(piano.left() >= row.right(), "the submenu is beside its row");
     cx.simulate_mouse_move(piano.center(), None, Modifiers::none());
+    // A key in between, which GPUI takes as the end of hovering by default.
+    cx.simulate_keystrokes("down");
     cx.simulate_click(piano.center(), Modifiers::none());
     cx.run_until_parked();
     assert_eq!(*picked.borrow(), ["piano"]);
