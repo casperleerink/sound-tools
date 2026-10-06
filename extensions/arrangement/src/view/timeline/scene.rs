@@ -28,8 +28,9 @@ pub(super) struct TrackRow {
     pub(super) accent: Hsla,
     pub(super) kind: TrackKind,
     pub(super) selected: bool,
-    /// A muted track has its name, dot and clips at 40 %.
-    pub(super) muted: bool,
+    /// A track that does not sound, muted or left out by a solo, has its name, dot, clips and
+    /// lanes at 40 %.
+    pub(super) silent: bool,
     /// The name is being edited: the field of the timeline shows it, not the paint.
     pub(super) renaming: bool,
     /// An armed audio track shows the level of its input in its header, and its name is
@@ -53,7 +54,7 @@ pub(super) struct LaneShape {
     /// The number in plain words: `Cutoff`.
     pub(super) number: SharedString,
     pub(super) accent: Hsla,
-    pub(super) muted: bool,
+    pub(super) silent: bool,
     /// The line in the lane, from the left edge to the right one. Empty for a number the
     /// project does not know.
     pub(super) line: Vec<(f32, f32)>,
@@ -141,7 +142,7 @@ pub struct ClipShape {
     pub(super) body: Body,
     pub(super) accent: Hsla,
     pub(super) selected: bool,
-    pub(super) muted: bool,
+    pub(super) silent: bool,
     /// It is dragged with automation that goes along, on a track whose lanes are folded away.
     pub(super) carries: bool,
 }
@@ -310,7 +311,7 @@ fn paint_live_notes(
     cx: &App,
 ) {
     let theme = cx.theme();
-    let dim = if shape.muted { 0.4 } else { 1. };
+    let dim = if shape.silent { 0.4 } else { 1. };
     let radius = px(6.).min(body.size.width / 2.);
     let (solid, clear) = (BorderStyle::Solid, Hsla::transparent_black());
     let (window_fill, clip_fill, border) = (
@@ -405,7 +406,7 @@ pub(super) fn paint_scene(
                 false => row.name.clone(),
             };
             let label_size = (NAME_MIDDLE, name_width);
-            paint_track_label(name, row.accent, top, label_size, row.muted, window, cx);
+            paint_track_label(name, row.accent, top, label_size, row.silent, window, cx);
             paint_lanes_toggle(row, top, window, cx);
         }
         // The name of each lane, where the name of its track starts: `Filter · Cutoff`. A long
@@ -414,7 +415,7 @@ pub(super) fn paint_scene(
             let top = headers.origin + point(px(0.), px(lane.y.round()));
             let origin = top + point(px(NAME_LEFT), px(LANE_HEIGHT / 2. - 9.));
             let room = HEADER_WIDTH - NAME_LEFT - 16.;
-            let color = lane_text.opacity(if lane.muted { 0.4 } else { 1. });
+            let color = lane_text.opacity(if lane.silent { 0.4 } else { 1. });
             let weight = FontWeight::NORMAL;
             let number = match lane.device {
                 Some(_) => SharedString::from(format!(" · {}", lane.number)),
@@ -497,7 +498,7 @@ pub(super) fn paint_scene(
         }
         for shape in &scene.clips {
             let body = placed(shape.rect, timeline.origin);
-            let dim = if shape.muted { 0.4 } else { 1. };
+            let dim = if shape.silent { 0.4 } else { 1. };
             match &shape.body {
                 Body::Notes(notes) => {
                     let border = if shape.selected {
@@ -584,7 +585,7 @@ fn paint_lanes_toggle(row: &TrackRow, top: Point<Pixels>, window: &mut Window, c
         true => theme.gray_800,
         false => theme.gray_700,
     };
-    let color = color.opacity(if row.muted { 0.4 } else { 1. });
+    let color = color.opacity(if row.silent { 0.4 } else { 1. });
     let (x, y) = (DOT_LEFT + 4., LANES_MIDDLE);
     let corners = match row.expanded {
         true => [(x - 4., y - 2.), (x, y + 2.), (x + 4., y - 2.)],
@@ -638,7 +639,7 @@ fn paint_lane(lane: &LaneShape, timeline: Bounds<Pixels>, window: &mut Window, c
     let origin = timeline.origin + point(px(0.), px(lane.y));
     // An area takes no track colour: the band is the fill of a marquee.
     let band_fill = cx.theme().alpha_at(0.05);
-    let opacity = if lane.muted { 0.4 } else { 1. };
+    let opacity = if lane.silent { 0.4 } else { 1. };
     for (across, replaced) in &lane.ghosts {
         let band = Bounds::new(
             origin + point(px(across.start.round()), px(1.)),
@@ -734,7 +735,7 @@ fn audio_look(
 ) -> AudioClipLook {
     let mut look = AudioClipLook::new(body, shape.accent);
     look.selected = shape.selected;
-    look.muted = shape.muted;
+    look.muted = shape.silent;
     look.missing = audio.missing.clone();
     look.label = audio.label.clone();
     look.handles = audio.handles;

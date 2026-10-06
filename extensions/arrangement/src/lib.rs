@@ -252,6 +252,12 @@ impl TrackState {
         }
     }
 
+    /// Whether the track makes no sound: it is muted, or another track is soloed and it is
+    /// not. `soloing` is whether any track of its arrangement is soloed.
+    pub fn is_silent(&self, soloing: bool) -> bool {
+        self.mute || (soloing && !self.solo)
+    }
+
     /// Whether the effect in the child `name` is bypassed. `None` when the list does not
     /// name it.
     pub fn bypassed(&self, name: &str) -> Option<bool> {
@@ -472,9 +478,14 @@ fn apply_arrangement(
     let tracks: Vec<(String, Mix)> = context
         .children::<TrackState>()
         .map(|(name, track)| {
-            let mix = Mix::of(track);
-            let silent = mix.silent || (soloing && !track.solo);
-            (name.to_string(), Mix { silent, ..mix })
+            let silent = track.is_silent(soloing);
+            (
+                name.to_string(),
+                Mix {
+                    silent,
+                    ..Mix::of(track)
+                },
+            )
         })
         .collect();
 
