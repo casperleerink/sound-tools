@@ -86,10 +86,11 @@ pub enum GraphError {
     },
     #[error("{description}: this connection closes a cycle")]
     Cycle {
+        /// The first of `cycle`.
         connection: Connection,
         description: String,
-        /// Every connection on the cycle, `connection` among them. Leaving out any one of
-        /// them may break it.
+        /// Every connection on the cycle. Leaving out any one of them may break it. In the
+        /// order to leave them out: into a side input first, then by name.
         cycle: Vec<Connection>,
     },
     #[error("the connection does not exist")]
@@ -272,7 +273,9 @@ impl Graph {
         self.nodes.get(&id).map_or("?", |node| node.name.as_str())
     }
 
-    fn describe(&self, connection: &Connection) -> String {
+    /// The connection by the names of its processors and its ports. A processor made again
+    /// under the same name reads the same, so it names a connection across edits.
+    pub(crate) fn describe(&self, connection: &Connection) -> String {
         let source = self.name(connection.source);
         let output = connection.output;
         match connection.destination {
@@ -283,6 +286,14 @@ impl Graph {
                 format!("{source} {output:?} -> device output {channel}")
             }
         }
+    }
+
+    fn is_side_input(&self, connection: &Connection) -> bool {
+        let Destination::Node(id, InputPort::Audio(index)) = connection.destination else {
+            return false;
+        };
+        let node = self.nodes.get(&id);
+        node.is_some_and(|node| node.ports.side_audio_inputs.contains(&index))
     }
 
     /// Connections between two processors, as (source, destination, connection).
@@ -331,14 +342,16 @@ impl Graph {
                 }
             }
         }
-        match blocked.keys().next() {
+        // In name order, so the cycle found does not hang on the order of the ids.
+        match blocked.keys().min_by_key(|id| self.name(**id)) {
             None => Ok(order),
             Some(start) => Err(self.cycle_error(&blocked, *start)),
         }
     }
 
     /// Every processor left in `blocked` has a source that is also left. Walking back along
-    /// first sources must reach some processor twice, and the walk from there is a cycle.
+    /// the first source by name must reach some processor twice, and the walk from there is a
+    /// cycle.
     fn cycle_error(
         &self,
         blocked: &BTreeMap<NodeId, BTreeMap<NodeId, Connection>>,
@@ -347,9 +360,8 @@ impl Graph {
         let mut walked = vec![start];
         let mut destination = start;
         loop {
-            let Some((source, connection)) = blocked
-                .get(&destination)
-                .and_then(|sources| sources.first_key_value())
+            let sources = blocked.get(&destination).into_iter().flatten();
+            let Some((source, connection)) = sources.min_by_key(|(source, _)| self.name(**source))
             else {
                 return GraphError::UnknownNode(destination);
             };
@@ -361,14 +373,19 @@ impl Graph {
                     .copied()
                     .zip(nodes.iter().copied().skip(1).chain([*source]))
                     .collect();
-                let cycle = self
+                let mut cycle: Vec<Connection> = self
                     .node_connections()
                     .filter(|(source, destination, _)| fed_by.contains(&(*destination, *source)))
                     .map(|(_, _, connection)| *connection)
                     .collect();
+                // Only a listener hears a side input, so that is the one to leave out first.
+                cycle.sort_by_cached_key(|connection| {
+                    (!self.is_side_input(connection), self.describe(connection))
+                });
+                let first = cycle.first().copied().unwrap_or(*connection);
                 return GraphError::Cycle {
-                    connection: *connection,
-                    description: self.describe(connection),
+                    connection: first,
+                    description: self.describe(&first),
                     cycle,
                 };
             }
@@ -412,6 +429,7 @@ impl Graph {
             schedule.steps.push(Step {
                 slot: node.slot,
                 audio_sources: vec![Vec::new(); node.ports.audio_inputs],
+                side_audio_inputs: node.ports.side_audio_inputs.clone(),
                 audio_outputs: audio_start..audio_end,
                 event_sources: vec![Vec::new(); node.ports.event_inputs.len()],
                 event_inputs: event_inputs_start..schedule.event_inputs.len(),
@@ -494,6 +512,8 @@ pub(crate) struct Step {
     pub slot: usize,
     /// Per audio input port: the output buffers summed into it.
     pub audio_sources: Vec<Vec<usize>>,
+    /// The audio inputs, by index, that latency leads skip.
+    pub side_audio_inputs: Vec<usize>,
     pub audio_outputs: Range<usize>,
     /// Per event input port: the output buffers merged into it.
     pub event_sources: Vec<Vec<usize>>,

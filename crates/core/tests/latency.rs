@@ -445,3 +445,71 @@ fn a_tempo_change_while_playing_plays_every_beat_once_on_a_chain_ahead() {
         );
     }
 }
+
+/// Hears its input and makes no sound, with latency, as a compressor hears its sidechain.
+struct Listener {
+    side: bool,
+}
+
+impl Processor for Listener {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        let ports = Ports::new();
+        let ports = match self.side {
+            true => ports.side_audio_input(AUDIO_IN),
+            false => ports.audio_input(AUDIO_IN),
+        };
+        ports.audio_output(AUDIO_OUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut ()) {}
+
+    fn process(&mut self, _: &mut ProcessContext<'_>) {}
+
+    fn latency(&self) -> u32 {
+        1200
+    }
+}
+
+/// A source that plays on its own and also feeds a processor with latency. Into a side input,
+/// it stays in time with the device; into a plain input, it runs ahead by that latency, 48
+/// ticks, and would be heard early.
+#[test]
+fn what_feeds_a_side_input_is_not_led_by_its_latency() {
+    for (side, lead) in [(true, 0), (false, 48)] {
+        let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 2));
+        let heard_tick = Arc::new(AtomicU64::new(0));
+        let started_at = Arc::new(AtomicU64::new(0));
+        let mut edit = control.edit();
+        let beats = Beats {
+            heard_tick: heard_tick.clone(),
+            started_at: started_at.clone(),
+        };
+        let beats = edit.add_processor("beats", beats).unwrap();
+        let impulses = edit.add_processor("impulses", Impulses).unwrap();
+        let listener = edit.add_processor("listener", Listener { side }).unwrap();
+        let connections = [
+            Connection::new(beats.id(), BEATS_OUT, impulses.id(), BEATS_IN),
+            Connection::new(impulses.id(), AUDIO_OUT, listener.id(), AUDIO_IN),
+            Connection::to_device(impulses.id(), AUDIO_OUT, 0),
+            Connection::to_device(listener.id(), AUDIO_OUT, 0),
+        ];
+        for connection in connections {
+            edit.connect(connection).unwrap();
+        }
+        edit.commit().unwrap();
+        control.play();
+        let mut buffer = vec![0.0; 2 * 512];
+        for _ in 0..8 {
+            engine.process_block(&mut buffer);
+        }
+        assert_eq!(control.poll().unwrap().latency, 1200);
+        let heard = heard_tick.load(Ordering::Relaxed);
+        let started = started_at.load(Ordering::Relaxed);
+        assert!(heard > 0, "side {side}");
+        assert_eq!(started - heard, lead, "side {side}");
+    }
+}

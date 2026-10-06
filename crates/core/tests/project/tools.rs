@@ -6,7 +6,11 @@
 //!   reads them into one snapshot for its one processor. It sends its signal through its
 //!   owned `output` child, a `test.amplifier`, and on to the device with no `project.json`
 //!   connection. This is the shape of a track with clips and an instrument.
-//! - `test.chain`: two gains in a row, connected by its behaviour.
+//! - `test.chain`: two gains in a row, connected by its behaviour. With `feedback` it also
+//!   connects the last to the side input of the first, which closes a cycle.
+//! - `test.pair`: an owner that plays a constant through its children `a` and `b`, two chains.
+//!   With `feedback` it also connects `b` back into `a`, which closes a cycle, as an
+//!   arrangement does whose tracks each listen to the other.
 //! - `test.reporter`: data only, with a derive that reports problems.
 
 use std::path::{Path, PathBuf};
@@ -107,6 +111,8 @@ impl Gain {
     }
 
     pub(crate) const INPUT: AudioInput = AudioInput::new(0);
+    /// Heard by nothing. It is there for a chain to close a cycle through.
+    pub(crate) const SIDE: AudioInput = AudioInput::new(1);
     pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 }
 
@@ -116,6 +122,7 @@ impl Processor for Gain {
     fn ports(&self) -> Ports {
         Ports::new()
             .audio_input(Self::INPUT)
+            .side_audio_input(Self::SIDE)
             .audio_output(Self::OUTPUT)
     }
 
@@ -149,7 +156,10 @@ fn apply_amplifier(
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Chain {}
+pub(crate) struct Chain {
+    #[serde(default)]
+    pub feedback: bool,
+}
 
 impl State for Chain {
     const TOOL: &'static str = "test.chain";
@@ -158,13 +168,48 @@ impl State for Chain {
 pub(crate) const CHAIN_RECORD: &str = r#"{"tool": "test.chain", "state": {}}"#;
 
 /// The last gain is made first, so the connection between the two goes to the lower id.
-fn apply_chain(_: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+fn apply_chain(state: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let last = context.processor("last", || Gain::new(1.0))?;
     let first = context.processor("first", || Gain::new(1.0))?;
     let output = OutputEndpoint::new(first, Gain::OUTPUT);
     context.connect(output.to(InputEndpoint::new(last, Gain::INPUT)))?;
+    if state.feedback {
+        let output = OutputEndpoint::new(last, Gain::OUTPUT);
+        context.connect(output.to(InputEndpoint::new(first, Gain::SIDE)))?;
+    }
     context.input("in", InputEndpoint::new(first, Gain::INPUT));
     context.output("out", OutputEndpoint::new(last, Gain::OUTPUT));
+    Ok(())
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Pair {
+    #[serde(default)]
+    pub feedback: bool,
+}
+
+impl State for Pair {
+    const TOOL: &'static str = "test.pair";
+    const OWNS_CHILDREN: bool = true;
+}
+
+fn apply_pair(state: &Pair, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let source = context.processor("source", || Constant::new(0.5))?;
+    let (Some(a_in), Some(a_out), Some(b_in), Some(b_out)) = (
+        context.child_input("a", "in"),
+        context.child_output("a", "out"),
+        context.child_input("b", "in"),
+        context.child_output("b", "out"),
+    ) else {
+        return Ok(());
+    };
+    context.connect(OutputEndpoint::new(source, Constant::OUTPUT).to(a_in))?;
+    context.connect(a_out.to(b_in))?;
+    if state.feedback {
+        context.connect(b_out.to(a_in))?;
+    }
+    context.connect(b_out.to_device(0))?;
     Ok(())
 }
 
@@ -282,6 +327,10 @@ pub(crate) fn registry() -> Registry {
         .tool::<Chain>(EXTENSION)
         .unwrap()
         .behaviour(apply_chain);
+    registry
+        .tool::<Pair>(EXTENSION)
+        .unwrap()
+        .behaviour(apply_pair);
     registry
         .tool::<Reporter>(EXTENSION)
         .unwrap()

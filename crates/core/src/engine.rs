@@ -326,10 +326,14 @@ impl Engine {
             slot.moved |= slot.lead.is_some_and(|before| before != lead);
             slot.lead = Some(lead);
             longest = longest.max(lead);
+            // What feeds a side input is not led for this processor, see
+            // `Ports::side_audio_input`.
             let feeders = step
                 .audio_sources
                 .iter()
-                .flatten()
+                .enumerate()
+                .filter(|(input, _)| !step.side_audio_inputs.contains(input))
+                .flat_map(|(_, sources)| sources)
                 .filter_map(|buffer| audio_producers.get(*buffer))
                 .chain(
                     step.event_sources
@@ -427,6 +431,7 @@ impl Engine {
                         buffers: audio_scratch
                             .get(..step.audio_sources.len())
                             .unwrap_or_default(),
+                        sources: &step.audio_sources,
                         frames,
                         misuses: &port_misuses,
                     },

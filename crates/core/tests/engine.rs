@@ -226,6 +226,63 @@ fn fan_in_sums_and_fan_out_shares() {
     }
 }
 
+/// Plays its side input while something is connected to it, else its main input, as a
+/// compressor listens to its sidechain and falls back to what it compresses.
+struct Fallback;
+
+const SIDE: AudioInput = AudioInput::new(1);
+
+impl Processor for Fallback {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new()
+            .audio_input(INPUT)
+            .side_audio_input(SIDE)
+            .audio_output(OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let inputs = &context.audio_inputs;
+        let input = match inputs.is_connected(SIDE) {
+            true => inputs.get(SIDE),
+            false => inputs.get(INPUT),
+        };
+        for (output, input) in context.audio_outputs.get(OUTPUT).into_iter().zip(input) {
+            output.copy_from_slice(input);
+        }
+    }
+}
+
+#[test]
+fn a_processor_knows_whether_an_input_is_connected_also_when_it_is_silent() {
+    let (mut control, mut engine) = mono();
+    let mut edit = control.edit();
+    let main = edit.add_processor("main", Constant(1.0)).unwrap();
+    let silence = edit.add_processor("silence", Constant(0.0)).unwrap();
+    let fallback = edit.add_processor("fallback", Fallback).unwrap();
+    edit.connect(Connection::new(main.id(), OUTPUT, fallback.id(), INPUT))
+        .unwrap();
+    to_device(&mut edit, fallback.id());
+    edit.commit().unwrap();
+    assert_eq!(render(&mut engine, 10, 10), [1.0; 10]);
+
+    let side = Connection::new(silence.id(), OUTPUT, fallback.id(), SIDE);
+    let mut edit = control.edit();
+    edit.connect(side).unwrap();
+    edit.commit().unwrap();
+    assert_eq!(render(&mut engine, 10, 10), [0.0; 10]);
+
+    let mut edit = control.edit();
+    edit.disconnect(&side).unwrap();
+    edit.commit().unwrap();
+    assert_eq!(render(&mut engine, 10, 10), [1.0; 10]);
+}
+
 #[test]
 fn a_cycle_is_rejected_by_name_and_leaves_the_engine_unchanged() {
     let (mut control, mut engine) = mono();
