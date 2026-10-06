@@ -39,6 +39,13 @@ impl Provider {
         }
     }
 
+    /// The program's name on the `PATH`, when the composer installed it themselves.
+    pub fn command(self) -> &'static str {
+        match self {
+            Provider::Claude => "claude",
+        }
+    }
+
     /// The pinned program for this computer, or `None` when the provider has no build for it.
     pub fn download(self) -> Option<Download> {
         match self {

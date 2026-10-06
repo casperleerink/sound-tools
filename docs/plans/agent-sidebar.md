@@ -97,7 +97,7 @@ How it runs:
 
 ## 2. Install and sign in
 
-**Recommendation: the app keeps its own pinned copy of `claude` and runs Claude Code's own sign-in.**
+**Recommendation: the app keeps its own pinned copy of `claude` and runs Claude Code's own sign-in.** Changed later: a `claude` on the login shell's `PATH` comes first, and the download is for those without one (see `ARCHITECTURE.md`).
 
 Install:
 

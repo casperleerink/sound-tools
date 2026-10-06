@@ -35,7 +35,7 @@ use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{Line, SavedThread, ThreadStore, Write};
 use crate::{
     Account, AgentEvent, ApprovalAnswer, Events, Installed, Provider, SignInChoice, Thread,
-    ThreadOptions, TurnOutcome, login_shell_environment,
+    ThreadOptions, TurnOutcome, login_shell_environment, program_on_path,
 };
 
 actions!(agent_sidebar, [Stop]);
@@ -135,8 +135,9 @@ pub struct Sidebar {
 
 impl Sidebar {
     /// Reads the login shell in the background, then asks the program whether it is signed
-    /// in, or offers **Set up** when it is not downloaded yet. The program is the download in
-    /// `agents`, or the one the provider's environment variable names. The threads of the
+    /// in, or offers **Set up** when there is none yet. The program is the one the provider's
+    /// environment variable names, else the composer's own on the login shell's `PATH`, else
+    /// the download in `agents`. The threads of the
     /// project are kept in `threads`, `agent/threads` in the support folder of the machine;
     /// with `None` nothing is saved. `settings` are the app's, shared by every sidebar.
     pub fn new(
@@ -161,7 +162,9 @@ impl Sidebar {
                         Err(error) => (std::env::vars_os().collect(), Some(error)),
                     };
                     let named = std::env::var_os(provider.program_variable()).map(PathBuf::from);
-                    let program = named.or(downloaded);
+                    let program = named
+                        .or_else(|| program_on_path(provider.command(), &environment))
+                        .or(downloaded);
                     let present = program.as_ref().is_some_and(|program| program.is_file());
                     let installed = program.map(|program| Installed {
                         program,
