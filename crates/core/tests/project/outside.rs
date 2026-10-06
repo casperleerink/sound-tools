@@ -432,6 +432,51 @@ fn a_cycle_a_behaviour_declares_leaves_out_that_connection_and_the_rest_plays() 
     assert_eq!(harness.level(), 0.25);
 }
 
+const PAIR: &str = r#"{"tool": "test.pair", "state": {}}"#;
+const PAIR_FEEDBACK: &str = r#"{"tool": "test.pair", "state": {"feedback": true}}"#;
+
+fn pair(harness: &mut Harness, record: &str) {
+    harness.write("project.json", &project_file(""));
+    harness.write("state/pair/instance.json", record);
+    harness.write("state/pair/a.json", CHAIN_RECORD);
+    harness.write("state/pair/b.json", CHAIN_RECORD);
+    let paths = [harness.path("project.json"), harness.path("state/pair")];
+    harness.apply_outside_changes(&paths).unwrap();
+}
+
+/// Only the owner runs again, so a connection of its own is left out, never one inside a
+/// child: the children keep playing.
+#[test]
+fn an_owner_edit_that_closes_a_cycle_through_its_children_applies() {
+    let mut harness = Harness::new();
+    pair(&mut harness, PAIR);
+    assert_eq!(harness.level(), 0.5);
+    let path = harness.write("state/pair/instance.json", PAIR_FEEDBACK);
+    harness.apply_outside_changes(&[path]).unwrap();
+    assert_eq!(harness.project.problems().len(), 1);
+    let problem = harness.problem_at("state/pair/instance.json").unwrap();
+    assert!(problem.contains("closes a cycle"), "{problem}");
+
+    // On open every instance runs, and the same connection is left out.
+    let harness = harness.reopen();
+    assert_eq!(
+        harness.problem_at("state/pair/instance.json"),
+        Some(problem)
+    );
+}
+
+#[test]
+fn a_cycle_on_open_fixed_by_the_owner_clears_and_sound_comes_back() {
+    let mut harness = Harness::new();
+    pair(&mut harness, PAIR_FEEDBACK);
+    let mut harness = harness.reopen();
+    assert_eq!(harness.project.problems().len(), 1);
+    let path = harness.write("state/pair/instance.json", PAIR);
+    harness.apply_outside_changes(&[path]).unwrap();
+    assert_eq!(harness.project.problems(), []);
+    assert_eq!(harness.level(), 0.5);
+}
+
 #[test]
 fn a_record_in_the_wrong_form_for_its_tool_is_reported_with_the_right_path() {
     let mut harness = Harness::new();

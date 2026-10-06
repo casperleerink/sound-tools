@@ -463,6 +463,9 @@ struct Run {
     /// Connections behaviours declared that closed a cycle in an earlier attempt of the same
     /// edit, by how the graph names them, for the same reason.
     declared_cycle_closing: BTreeSet<String>,
+    /// Connections left out before that are in the graph again, by the instance that
+    /// declared them. They move back into its binding when the edit applies.
+    retried: Vec<(InstanceId, Connection)>,
     /// The bindings as they were, to put back when the attempt fails.
     backups: Vec<(InstanceId, Option<Binding>)>,
     /// Every `project.json` connection that resolved, used or not, with its index.
@@ -623,10 +626,10 @@ impl Bindings {
     /// Runs the whole change as one engine edit: one batch and at most one compile. On an
     /// error the engine and the bindings stay as they were.
     ///
-    /// A connection that closes a cycle does not fail the edit. A `project.json` line on the
-    /// cycle is left out first: it stays saved, unused and reported, like a connection to an
-    /// instance that does not exist. Else the connection the cycle error names is left out,
-    /// and reported on the instance whose behaviour declared it.
+    /// A connection that closes a cycle does not fail the edit. One connection on the cycle
+    /// is left out and reported: a `project.json` line first, which stays saved like a
+    /// connection to an instance that does not exist; else one an instance that ran declared,
+    /// the outermost first, reported on that instance.
     pub(super) fn apply(
         &mut self,
         control: &mut EngineControl,
@@ -647,9 +650,16 @@ impl Bindings {
             edit.set_tempo_map(change.tempo_map.clone());
             let result = self
                 .run(&mut edit, assets, &change, &mut run)
-                .and_then(|()| Ok(edit.commit()?));
+                .and_then(|()| Ok(edit.compile()?));
             let error = match result {
-                Ok(()) => {
+                Ok(schedule) => {
+                    edit.commit_compiled(schedule);
+                    for (id, connection) in run.retried {
+                        if let Some(binding) = self.by_instance.get_mut(&id) {
+                            binding.left_out.remove(&connection);
+                            binding.connections.insert(connection);
+                        }
+                    }
                     self.saved = run.saved;
                     self.cycle_closing = run.cycle_closing;
                     run.problems.sort();
@@ -659,36 +669,50 @@ impl Bindings {
                 }
                 Err(error) => error,
             };
-            let BindError::Graph(GraphError::Cycle {
-                connection,
-                description,
-                cycle,
-            }) = &error
-            else {
+            let BindError::Graph(GraphError::Cycle { cycle, .. }) = &error else {
                 self.restore(run.backups);
                 return Err(error);
             };
-            // A `project.json` line on the cycle is left out in the next attempt.
-            let saved_line = cycle
+            // The outermost instance that declares a connection, and whether it ran in this
+            // attempt. One that did not run would declare it again unchanged.
+            let declarer = |connection: &Connection| {
+                let retried = run
+                    .retried
+                    .iter()
+                    .filter(|(_, retried)| retried == connection);
+                let bindings = self.by_instance.iter();
+                let declaring =
+                    bindings.filter(|(_, binding)| binding.connections.contains(connection));
+                let ran = |id: &InstanceId| run.backups.iter().any(|(ran, _)| ran == id);
+                let declaring = declaring.map(|(id, _)| (id, ran(id)));
+                let retried = retried.map(|(id, _)| (id, true));
+                declaring.chain(retried).min_by_key(|(id, _)| id.depth())
+            };
+            // `project.json` lines first, then what the outermost instance declared: an owner
+            // wires its children, and a child cannot see outside itself. Ties in the order of
+            // the graph.
+            let choice = cycle
                 .iter()
-                .filter_map(|connection| run.resolved.get(connection))
-                .find(|index| !skipped.contains(*index))
-                .copied();
-            // Else the cycle is made by behaviours, and the connection the error names is left
-            // out. Asked before the bindings go back to how they were.
-            let declared = self
-                .by_instance
-                .values()
-                .any(|binding| binding.connections.contains(connection));
+                .filter_map(|connection| match run.resolved.get(connection) {
+                    Some(index) if !skipped.contains(index) => Some((0, Some(*index), connection)),
+                    _ => {
+                        let (id, ran) = declarer(connection)?;
+                        ran.then(|| (1 + id.depth(), None, connection))
+                    }
+                })
+                .min_by_key(|(rank, ..)| *rank);
+            let left_out = match choice {
+                Some((_, Some(index), _)) => skipped.insert(index),
+                Some((_, None, connection)) => {
+                    declared_cycle_closing.insert(edit.describe(connection))
+                }
+                None => false,
+            };
+            drop(edit);
             self.restore(run.backups);
-            if let Some(index) = saved_line {
-                skipped.insert(index);
-                continue;
+            if !left_out {
+                return Err(error);
             }
-            if declared && declared_cycle_closing.insert(description.clone()) {
-                continue;
-            }
-            return Err(error);
         }
     }
 
@@ -846,21 +870,18 @@ impl Bindings {
             }
         }
 
-        // The same for connections behaviours declared, of the instances that ran.
+        // The same for connections behaviours declared, of every instance: the change that
+        // breaks a cycle may come from another one. A connection whose processor is gone
+        // stays left out until its instance runs again.
         if edit.changes_graph() {
-            for (id, _) in &run.backups {
-                let Some(binding) = self.by_instance.get_mut(id) else {
-                    continue;
-                };
-                let closing = &run.declared_cycle_closing;
-                let waiting = binding.left_out.keys().copied();
-                let retried: Vec<Connection> = waiting
-                    .filter(|connection| !closing.contains(&edit.describe(connection)))
-                    .collect();
-                for connection in retried {
-                    edit.connect(connection)?;
-                    binding.left_out.remove(&connection);
-                    binding.connections.insert(connection);
+            let closing = &run.declared_cycle_closing;
+            for (id, binding) in &self.by_instance {
+                for connection in binding.left_out.keys() {
+                    let closes =
+                        !closing.is_empty() && closing.contains(&edit.describe(connection));
+                    if !closes && edit.connect(*connection).is_ok() {
+                        run.retried.push((id.clone(), *connection));
+                    }
                 }
             }
         }

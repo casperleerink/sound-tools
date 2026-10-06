@@ -8,6 +8,9 @@
 //!   connection. This is the shape of a track with clips and an instrument.
 //! - `test.chain`: two gains in a row, connected by its behaviour. With `feedback` it also
 //!   connects the last to the side input of the first, which closes a cycle.
+//! - `test.pair`: an owner that plays a constant through its children `a` and `b`, two chains.
+//!   With `feedback` it also connects `b` back into `a`, which closes a cycle, as an
+//!   arrangement does whose tracks each listen to the other.
 //! - `test.reporter`: data only, with a derive that reports problems.
 
 use std::path::{Path, PathBuf};
@@ -179,6 +182,37 @@ fn apply_chain(state: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), 
     Ok(())
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Pair {
+    #[serde(default)]
+    pub feedback: bool,
+}
+
+impl State for Pair {
+    const TOOL: &'static str = "test.pair";
+    const OWNS_CHILDREN: bool = true;
+}
+
+fn apply_pair(state: &Pair, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let source = context.processor("source", || Constant::new(0.5))?;
+    let (Some(a_in), Some(a_out), Some(b_in), Some(b_out)) = (
+        context.child_input("a", "in"),
+        context.child_output("a", "out"),
+        context.child_input("b", "in"),
+        context.child_output("b", "out"),
+    ) else {
+        return Ok(());
+    };
+    context.connect(OutputEndpoint::new(source, Constant::OUTPUT).to(a_in))?;
+    context.connect(a_out.to(b_in))?;
+    if state.feedback {
+        context.connect(b_out.to(a_in))?;
+    }
+    context.connect(b_out.to_device(0))?;
+    Ok(())
+}
+
 /// Its derive reports its message as a problem. The message "fail" also derives an invalid
 /// record, so the whole group fails.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -293,6 +327,10 @@ pub(crate) fn registry() -> Registry {
         .tool::<Chain>(EXTENSION)
         .unwrap()
         .behaviour(apply_chain);
+    registry
+        .tool::<Pair>(EXTENSION)
+        .unwrap()
+        .behaviour(apply_pair);
     registry
         .tool::<Reporter>(EXTENSION)
         .unwrap()

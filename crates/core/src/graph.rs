@@ -86,10 +86,11 @@ pub enum GraphError {
     },
     #[error("{description}: this connection closes a cycle")]
     Cycle {
+        /// The first of `cycle`.
         connection: Connection,
         description: String,
-        /// Every connection on the cycle, `connection` among them. Leaving out any one of
-        /// them may break it.
+        /// Every connection on the cycle. Leaving out any one of them may break it. In the
+        /// order to leave them out: into a side input first, then by name.
         cycle: Vec<Connection>,
     },
     #[error("the connection does not exist")]
@@ -341,14 +342,16 @@ impl Graph {
                 }
             }
         }
-        match blocked.keys().next() {
+        // In name order, so the cycle found does not hang on the order of the ids.
+        match blocked.keys().min_by_key(|id| self.name(**id)) {
             None => Ok(order),
             Some(start) => Err(self.cycle_error(&blocked, *start)),
         }
     }
 
     /// Every processor left in `blocked` has a source that is also left. Walking back along
-    /// first sources must reach some processor twice, and the walk from there is a cycle.
+    /// the first source by name must reach some processor twice, and the walk from there is a
+    /// cycle.
     fn cycle_error(
         &self,
         blocked: &BTreeMap<NodeId, BTreeMap<NodeId, Connection>>,
@@ -357,9 +360,8 @@ impl Graph {
         let mut walked = vec![start];
         let mut destination = start;
         loop {
-            let Some((source, connection)) = blocked
-                .get(&destination)
-                .and_then(|sources| sources.first_key_value())
+            let sources = blocked.get(&destination).into_iter().flatten();
+            let Some((source, connection)) = sources.min_by_key(|(source, _)| self.name(**source))
             else {
                 return GraphError::UnknownNode(destination);
             };
@@ -371,23 +373,19 @@ impl Graph {
                     .copied()
                     .zip(nodes.iter().copied().skip(1).chain([*source]))
                     .collect();
-                let cycle: Vec<Connection> = self
+                let mut cycle: Vec<Connection> = self
                     .node_connections()
                     .filter(|(source, destination, _)| fed_by.contains(&(*destination, *source)))
                     .map(|(_, _, connection)| *connection)
                     .collect();
-                // The one named is the one to leave out: one into a side input when the cycle
-                // has one, as only a listener hears it there, then the first by name, so the
-                // choice does not hang on the order the processors were made in.
-                let named = cycle
-                    .iter()
-                    .min_by_key(|connection| {
-                        (!self.is_side_input(connection), self.describe(connection))
-                    })
-                    .unwrap_or(connection);
+                // Only a listener hears a side input, so that is the one to leave out first.
+                cycle.sort_by_cached_key(|connection| {
+                    (!self.is_side_input(connection), self.describe(connection))
+                });
+                let first = cycle.first().copied().unwrap_or(*connection);
                 return GraphError::Cycle {
-                    connection: *named,
-                    description: self.describe(named),
+                    connection: first,
+                    description: self.describe(&first),
                     cycle,
                 };
             }

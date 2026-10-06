@@ -65,8 +65,7 @@ pub trait Processor: Send + 'static {
     ///
     /// The engine reads it when the processor arrives and after each of its updates, so change
     /// it in `update` and nowhere else. The engine delays nothing to make up for it: everything
-    /// before this processor, but what feeds a side input, runs that much earlier on the
-    /// timeline instead, so its output
+    /// before this processor runs that much earlier on the timeline instead, so its output
     /// reaches the device in time with everything else. See ARCHITECTURE.md, "Latency
     /// compensation".
     fn latency(&self) -> u32 {
@@ -282,11 +281,8 @@ impl Ports {
         self
     }
 
-    /// An audio input this processor listens to but does not pass on, such as the sidechain
-    /// of a compressor. Latency leads skip it: what feeds it runs only as far ahead as its
-    /// other ways to the device need, not as far as this processor does. A source that also
-    /// plays on its own then reaches the device in time, and this input hears it early or
-    /// late by the difference.
+    /// An audio input this processor only listens to, such as a sidechain. Latency leads skip
+    /// it, see ARCHITECTURE.md, "Audio engine, transport and time".
     pub fn side_audio_input(mut self, port: AudioInput) -> Self {
         self.side_audio_inputs.push(port.0);
         self.audio_input(port)

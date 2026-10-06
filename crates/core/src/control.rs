@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::clock::{Clock, TempoMap, Ticks};
 use crate::engine::{Batch, Command, Engine, EngineStatus, ErasedProcessor, Slot};
-use crate::graph::{Connection, Graph, GraphError, NodeId};
+use crate::graph::{Connection, Graph, GraphError, NodeId, Schedule};
 use crate::peaks::Peaks;
 use crate::processor::{Ports, PrepareConfig, Processor};
 use crate::transport::TransportCommand;
@@ -262,6 +262,10 @@ pub struct Edit<'a> {
 }
 
 impl Edit<'_> {
+    fn graph(&self) -> &Graph {
+        self.graph.as_ref().unwrap_or(&self.control.graph)
+    }
+
     fn graph_mut(&mut self) -> &mut Graph {
         self.graph.get_or_insert_with(|| self.control.graph.clone())
     }
@@ -332,8 +336,7 @@ impl Edit<'_> {
 
     /// The connection by the names of its processors, as a cycle error names it.
     pub(crate) fn describe(&self, connection: &Connection) -> String {
-        let graph = self.graph.as_ref().unwrap_or(&self.control.graph);
-        graph.describe(connection)
+        self.graph().describe(connection)
     }
 
     pub fn update<P: Processor>(
@@ -363,23 +366,39 @@ impl Edit<'_> {
         node: NodeId,
         update: Box<dyn Any + Send>,
     ) -> Result<(), GraphError> {
-        let graph = self.graph.as_ref().unwrap_or(&self.control.graph);
-        let slot = graph.slot(node)?;
+        let slot = self.graph().slot(node)?;
         self.commands.push(Command::Update { slot, update });
         Ok(())
     }
 
     /// Validates and compiles the whole edit, then queues it for the audio thread. On error
     /// nothing is sent and the graph stays as it was.
-    pub fn commit(mut self) -> Result<(), GraphError> {
-        if let Some(graph) = self.graph.take() {
-            let config = &self.control.config;
-            let schedule = graph.compile(config.channels, config.event_capacity)?;
+    pub fn commit(self) -> Result<(), GraphError> {
+        let schedule = self.compile()?;
+        self.commit_compiled(schedule);
+        Ok(())
+    }
+
+    /// The first half of `commit`: the schedule of the changed graph, `None` when the graph
+    /// did not change. It changes nothing, so on an error the caller can still ask the edit
+    /// about its graph.
+    pub(crate) fn compile(&self) -> Result<Option<Schedule>, GraphError> {
+        let Some(graph) = &self.graph else {
+            return Ok(None);
+        };
+        let config = &self.control.config;
+        Ok(Some(graph.compile(config.channels, config.event_capacity)?))
+    }
+
+    /// The second half of `commit`, with what `compile` gave.
+    pub(crate) fn commit_compiled(mut self, schedule: Option<Schedule>) {
+        if let Some(graph) = self.graph.take()
+            && let Some(schedule) = schedule
+        {
             self.commands.push(Command::SetSchedule(Box::new(schedule)));
             self.control.graph = graph;
         }
         self.send();
-        Ok(())
     }
 
     /// Queues the commands, once the graph is compiled or unchanged.
