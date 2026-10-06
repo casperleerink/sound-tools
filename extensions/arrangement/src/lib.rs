@@ -397,7 +397,9 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 /// The path of an instrument track is sequencer, instrument, the effects in the order of the
 /// record that are not bypassed, and out through its `audio` output, which its arrangement
 /// mixes. An audio track has its player where the other has sequencer and instrument. Every
-/// processor keeps what it holds: a note goes on sounding through an edit of a clip.
+/// processor keeps what it holds: a note goes on sounding through an edit of a clip. For its
+/// arrangement to wire sidechains, it also exposes its sound before the effects and the
+/// `sidechain` input of each keyed effect.
 fn apply_track(
     track: &TrackState,
     context: &mut BehaviourContext<'_>,
@@ -526,7 +528,8 @@ fn play_audio(
 ///
 /// Solo is decided here and not in a track, because it is about all of them. While any track is
 /// soloed, every track that is not gets the gains of a muted one, so soloing a track sounds
-/// exactly as muting every other one does.
+/// exactly as muting every other one does. Sidechains are wired here for the same reason: a
+/// key comes from another track.
 fn apply_arrangement(
     arrangement: &ArrangementState,
     context: &mut BehaviourContext<'_>,
