@@ -37,4 +37,6 @@ Starting points: an even vocal or bass is `ratio` 3 to 4, `attack_ms` 10 to 20, 
 
 Every number here but `lookahead_ms` can move over time with an automation lane of the track: see `agent-docs/arrangement.md`.
 
+Another track can key it, so it turns this track down when that one is loud: see `agent-docs/arrangement.md`.
+
 The level is the peak of both channels over the last 10 ms. Under 50 Hz that makes the gain move with the wave and adds harmonics, most with a short release: for a 25 Hz tone 14 dB over the threshold at `ratio` 4, they are 35 dB under the tone at `release_ms` 10 and 54 dB under at 120. For deep bass keep `release_ms` at 100 or more. For a steady sound whose peak is 12 dB over the threshold at `ratio` 4, the sound comes out 9 dB quieter, plus `makeup_db`. An edit applies while the track plays and glides over 20 ms, so it does not click.
