@@ -412,6 +412,7 @@ impl Graph {
             schedule.steps.push(Step {
                 slot: node.slot,
                 audio_sources: vec![Vec::new(); node.ports.audio_inputs],
+                side_audio_inputs: node.ports.side_audio_inputs.clone(),
                 audio_outputs: audio_start..audio_end,
                 event_sources: vec![Vec::new(); node.ports.event_inputs.len()],
                 event_inputs: event_inputs_start..schedule.event_inputs.len(),
@@ -494,6 +495,8 @@ pub(crate) struct Step {
     pub slot: usize,
     /// Per audio input port: the output buffers summed into it.
     pub audio_sources: Vec<Vec<usize>>,
+    /// The audio inputs, by index, that latency leads skip.
+    pub side_audio_inputs: Vec<usize>,
     pub audio_outputs: Range<usize>,
     /// Per event input port: the output buffers merged into it.
     pub event_sources: Vec<Vec<usize>>,

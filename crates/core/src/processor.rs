@@ -261,6 +261,8 @@ impl<E> From<EventOutput<E>> for OutputPort {
 #[derive(Clone, Debug, Default)]
 pub struct Ports {
     pub(crate) audio_inputs: usize,
+    /// The audio inputs, by index, declared with [`Ports::side_audio_input`].
+    pub(crate) side_audio_inputs: Vec<usize>,
     pub(crate) audio_outputs: usize,
     pub(crate) event_inputs: Vec<EventType>,
     pub(crate) event_outputs: Vec<EventType>,
@@ -277,6 +279,16 @@ impl Ports {
         self.out_of_order |= port.0 != self.audio_inputs;
         self.audio_inputs += 1;
         self
+    }
+
+    /// An audio input this processor listens to but does not pass on, such as the sidechain
+    /// of a compressor. Latency leads skip it: what feeds it runs only as far ahead as its
+    /// other ways to the device need, not as far as this processor does. A source that also
+    /// plays on its own then reaches the device in time, and this input hears it early or
+    /// late by the difference.
+    pub fn side_audio_input(mut self, port: AudioInput) -> Self {
+        self.side_audio_inputs.push(port.0);
+        self.audio_input(port)
     }
 
     pub fn audio_output(mut self, port: AudioOutput) -> Self {
@@ -403,6 +415,8 @@ impl<E: Event> ErasedEventBuffer for EventBuffer<E> {
 /// input arrive summed.
 pub struct AudioInputs<'a> {
     pub(crate) buffers: &'a [AudioBuffer],
+    /// Per port, the output buffers summed into it.
+    pub(crate) sources: &'a [Vec<usize>],
     pub(crate) frames: usize,
     pub(crate) misuses: &'a Cell<u64>,
 }
@@ -416,6 +430,16 @@ impl AudioInputs<'_> {
             Some(buffer) => buffer
                 .each_ref()
                 .map(|channel| channel.get(..frames).unwrap_or_default()),
+            None => misused(self.misuses),
+        }
+    }
+
+    /// Whether anything is connected to a port, so a processor can tell an input that is
+    /// silent from one that is not there, and fall back to another. An undeclared port is not
+    /// connected and counts in `EngineStatus::port_misuses`.
+    pub fn is_connected(&self, port: AudioInput) -> bool {
+        match self.sources.get(port.0) {
+            Some(sources) => !sources.is_empty(),
             None => misused(self.misuses),
         }
     }
