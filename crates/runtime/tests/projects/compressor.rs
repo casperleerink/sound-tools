@@ -156,3 +156,43 @@ fn a_lookahead_turned_on_while_it_plays_is_in_time_without_a_jump() {
     assert!(largest < 1e-5, "{largest}");
     assert!(heard.iter().any(|sample| sample.abs() > 0.01));
 }
+
+/// A kick on another track keys the compressor of the bass: the bass is turned down while the
+/// kick plays and comes back after it. The kick is muted, so the render is the bass alone: a
+/// muted track still keys from `post_fx`.
+#[test]
+fn a_kick_on_another_track_ducks_the_bass_while_it_plays() {
+    let mut harness = Harness::new();
+    let beat = BAR / 4;
+    harness.write_track("kick", 1, 0.3, &[("hit", clip(960, 960, &[(0, 960, 36)]))]);
+    harness.write_track(
+        "bass",
+        2,
+        0.15,
+        &[("line", clip(0, 3840, &[(0, 3840, 40)]))],
+    );
+    let duck = r#"{"threshold_db": -40.0, "ratio": 8.0, "attack_ms": 1.0, "release_ms": 20.0}"#;
+    let paths = [
+        harness.write(
+            "state/arrangement/kick/instance.json",
+            r#"{"tool": "arrangement.track", "state": {"name": "kick", "order": 1, "mute": true}}"#,
+        ),
+        harness.write("state/arrangement/bass/duck.json", &record(duck)),
+        harness.write(
+            "state/arrangement/bass/instance.json",
+            r#"{"tool": "arrangement.track", "state": {"name": "bass", "order": 2, "effects": [{"name": "duck", "sidechain": {"track": "kick", "tap": "post_fx"}}]}}"#,
+        ),
+    ];
+    assert_eq!(harness.apply(&paths), 3);
+    assert_eq!(harness.project.problems(), []);
+    let played = harness.play_from_the_start(4 * beat);
+    // The second half of each beat, after the attack and the release.
+    let level = |index: usize| {
+        let beat = frames(&played, index * beat + beat / 2, (index + 1) * beat);
+        beat.iter()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
+    };
+    let (before, during, after) = (level(0), level(1), level(3));
+    assert!(during < before / 4.0, "{during} against {before}");
+    assert!(after > before * 0.9, "{after} against {before}");
+}
