@@ -567,6 +567,8 @@ pub struct DropdownMenu {
     trigger_width: Option<f32>,
     /// A trigger this tall. `None`: the height of its kind.
     trigger_height: Option<f32>,
+    /// An icon before the label of a trigger with words, in its own color or the label's.
+    icon: Option<(SharedString, Option<Hsla>)>,
     /// What a test looks the trigger up by, see `VisualTestContext::debug_bounds`.
     debug_name: Option<SharedString>,
     /// The field above the rows of a menu that is searched, see [`Self::searchable`].
@@ -603,6 +605,7 @@ impl DropdownMenu {
             trigger: Trigger::Outline,
             trigger_width: None,
             trigger_height: None,
+            icon: None,
             debug_name: None,
             search: None,
         }
@@ -757,6 +760,18 @@ impl DropdownMenu {
 
     /// Changes what the trigger says, for a menu whose label is what it last picked, such as
     /// the instrument of a track.
+    /// Puts `name` before the label, in `color` or the label's. A select shows the picked
+    /// row's icon instead.
+    pub fn set_icon(
+        &mut self,
+        name: impl Into<SharedString>,
+        color: Option<Hsla>,
+        cx: &mut Context<Self>,
+    ) {
+        self.icon = Some((name.into(), color));
+        cx.notify();
+    }
+
     pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
         let label = label.into();
         if self.label != label {
@@ -905,13 +920,18 @@ impl Render for DropdownMenu {
                         None if !words => {
                             trigger.tooltip(move |_, cx| Tooltip::new(label.clone()).view(cx))
                         }
-                        None => trigger.child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .when(trigger_width.is_some(), |label| label.flex_1())
-                                .child(label),
-                        ),
+                        None => trigger
+                            .when_some(self.icon.clone(), |trigger, (name, color)| {
+                                trigger
+                                    .child(Icon::new(name).size(14.).color(color.unwrap_or(text)))
+                            })
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .when(trigger_width.is_some(), |label| label.flex_1())
+                                    .child(label),
+                            ),
                     })
                     .child(
                         div()

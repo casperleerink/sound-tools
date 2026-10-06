@@ -1,11 +1,12 @@
-//! The composer's menu: how much the agent may do without asking, the model, and the account
-//! with **Sign out**. Both selects are settings of the machine, see `crate::settings`.
+//! The composer's two menus: the model, with the account and **Sign out** under it, and how
+//! much the agent may do without asking. Both selects are settings of the machine, see
+//! `crate::settings`.
 
-use gpui::SharedString;
+use gpui::{Hsla, SharedString, rgb};
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 
 use crate::settings::Settings;
-use crate::{Account, ApprovalMode, Model};
+use crate::{Account, ApprovalMode, Model, Provider};
 
 /// In the order the menu lists them, from the most careful.
 const APPROVAL_MODES: [ApprovalMode; 3] = [
@@ -14,7 +15,7 @@ const APPROVAL_MODES: [ApprovalMode; 3] = [
     ApprovalMode::NeverAsk,
 ];
 
-/// Room for the descriptions of the approval modes on two lines.
+/// Room for the descriptions of the models and approval modes on two lines.
 pub(super) const WIDTH: f32 = 300.;
 
 /// The groups scroll past this, for a provider with many models.
@@ -64,20 +65,64 @@ fn approval_text(mode: ApprovalMode) -> (&'static str, &'static str, &'static st
     match mode {
         ApprovalMode::AskForEverything => (
             "ask-for-everything",
-            "Ask for everything",
+            "Ask always",
             "Asks before every edit and command, except plain reads like ls.",
         ),
         ApprovalMode::AskBeforeCommands => (
             "ask-before-commands",
-            "Ask before commands",
+            "Ask for commands",
             "Edits freely, asks before commands, except plain reads.",
         ),
         ApprovalMode::NeverAsk => (
             "never-ask",
-            "Never ask",
+            "Full access",
             "Does anything without asking. Undo and git are your safety net.",
         ),
     }
+}
+
+/// The icon of an approval mode, from the most closed.
+fn approval_icon(mode: ApprovalMode) -> &'static str {
+    match mode {
+        ApprovalMode::AskForEverything => "shield",
+        ApprovalMode::AskBeforeCommands => "lock",
+        ApprovalMode::NeverAsk => "lock-open",
+    }
+}
+
+/// The provider's logo and its brand color, before the model.
+pub(super) fn logo(provider: Provider) -> (&'static str, Hsla) {
+    match provider {
+        Provider::Claude => ("claude", rgb(0xd97757).into()),
+    }
+}
+
+/// The access menu's trigger: the mode's icon and short name.
+pub(super) fn access_label(settings: &Settings) -> (&'static str, &'static str) {
+    let mode = settings.approval_mode;
+    (approval_icon(mode), approval_text(mode).1)
+}
+
+/// The approval modes, each with what it means.
+pub(super) fn access_entries(settings: &Settings) -> Vec<MenuEntry> {
+    let approvals = APPROVAL_MODES.map(|mode| {
+        let (_, label, description) = approval_text(mode);
+        row(
+            Choice::ApprovalMode(mode),
+            label,
+            settings.approval_mode == mode,
+        )
+        .icon(approval_icon(mode))
+        .description(description)
+    });
+    vec![MenuEntry::Group(MenuGroup::new().items(approvals))]
+}
+
+/// The menus keep no pick of their own: the settings say what is checked.
+fn row(choice: Choice, label: &str, checked: bool) -> MenuItem {
+    MenuItem::new(choice.value(), label.to_string())
+        .selectable(false)
+        .checked(checked)
 }
 
 /// What the trigger says: the model the agent runs. Until the provider lists its models, the
@@ -94,24 +139,14 @@ pub(super) fn label(settings: &Settings, models: &[Model]) -> String {
     }
 }
 
-/// The approvals, the models, then the account and **Sign out**. `models` are the provider's,
-/// its default first, or none while no agent has started yet.
-pub(super) fn entries(account: &Account, settings: &Settings, models: &[Model]) -> Vec<MenuEntry> {
-    // The menu keeps no pick of its own: the settings say what is checked.
-    let row = |choice: Choice, label: &str, checked: bool| {
-        MenuItem::new(choice.value(), label.to_string())
-            .selectable(false)
-            .checked(checked)
-    };
-    let approvals = APPROVAL_MODES.map(|mode| {
-        let (_, label, description) = approval_text(mode);
-        row(
-            Choice::ApprovalMode(mode),
-            label,
-            settings.approval_mode == mode,
-        )
-        .description(description)
-    });
+/// The provider's models under its name, then the account and **Sign out**. `models` are the
+/// provider's, its default first, or none while no agent has started yet.
+pub(super) fn model_entries(
+    provider: Provider,
+    account: &Account,
+    settings: &Settings,
+    models: &[Model],
+) -> Vec<MenuEntry> {
     let picked = settings.model.as_deref();
     let models: Vec<MenuItem> = if models.is_empty() {
         // The provider lists its models when the agent starts. Until then only the pick shows.
@@ -143,9 +178,7 @@ pub(super) fn entries(account: &Account, settings: &Settings, models: &[Model]) 
         account.label(who.join(" · "))
     };
     vec![
-        MenuEntry::Group(MenuGroup::new().label("Approvals").items(approvals)),
-        MenuEntry::Separator,
-        MenuEntry::Group(MenuGroup::new().label("Model").items(models)),
+        MenuEntry::Group(MenuGroup::new().label(provider.name()).items(models)),
         MenuEntry::Separator,
         MenuEntry::Group(account),
     ]

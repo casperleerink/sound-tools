@@ -8,10 +8,11 @@
 //! - `agent-failed.png`: open again, the command denied and the turn failed, its steps open.
 //! - `agent-steps-problems.png`: a turn with a failed step that left two files not live, its
 //!   steps and its problems open.
-//! - `agent-menu.png`: the composer's menu: the approvals, the models and the account.
+//! - `agent-menu.png`: the composer's model menu: the models and the account.
+//! - `agent-access-menu.png`: the composer's access menu: the approval modes.
 //! - `agent-cannot-continue.png`: a message the agent no longer has the session for: the
 //!   composer gives way to the line with **+**.
-//! - `agent-never-ask.png`: a new thread under "Never ask", which says so above a composer of
+//! - `agent-never-ask.png`: a new thread under "Full access", which its pill says, in a composer of
 //!   three lines.
 //! - `agent-composer-full.png`: the composer at its eight rows, scrolled to the caret.
 
@@ -237,15 +238,23 @@ pub(crate) fn snapshots(
     cx.run_until_parked();
     save(cx, &opened, "agent-steps-problems")?;
 
-    let menu = cx.update(|cx| sidebar.read(cx).menu().clone());
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        menu.update(cx, |menu, cx| menu.open(window, cx));
-    })?;
-    cx.run_until_parked();
-    save(cx, &opened, "agent-menu")?;
-    cx.update_window(opened.window.into(), |_, window, cx| {
-        menu.update(cx, |menu, cx| menu.close(window, cx));
-    })?;
+    let (model_menu, access_menu) = cx.update(|cx| {
+        let sidebar = sidebar.read(cx);
+        (sidebar.model_menu().clone(), sidebar.access_menu().clone())
+    });
+    for (menu, name) in [
+        (model_menu, "agent-menu"),
+        (access_menu, "agent-access-menu"),
+    ] {
+        cx.update_window(opened.window.into(), |_, window, cx| {
+            menu.update(cx, |menu, cx| menu.open(window, cx));
+        })?;
+        cx.run_until_parked();
+        save(cx, &opened, name)?;
+        cx.update_window(opened.window.into(), |_, window, cx| {
+            menu.update(cx, |menu, cx| menu.close(window, cx));
+        })?;
+    }
 
     // A message the agent no longer has the session for.
     cx.update(|cx| {
@@ -278,7 +287,7 @@ pub(crate) fn snapshots(
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
             // As a pick in the menu does.
-            sidebar.menu().update(cx, |_, cx| {
+            sidebar.access_menu().update(cx, |_, cx| {
                 cx.emit(MenuPicked("approval-never-ask".into()));
             });
             sidebar.composer().update(cx, |composer, cx| {

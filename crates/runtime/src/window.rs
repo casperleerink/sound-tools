@@ -73,7 +73,7 @@ const WINDOW_HEIGHT: f32 = 920.;
 const MIN_WINDOW_WIDTH: f32 = 1100.;
 const MIN_WINDOW_HEIGHT: f32 = 640.;
 /// The left panel has one width, so the main area keeps the width it was designed for.
-const LEFT_PANEL_WIDTH: f32 = 360.;
+const LEFT_PANEL_WIDTH: f32 = 400.;
 
 /// What the window shows in its left panel, given by the composition root, which knows the
 /// agent: this module names no type of it. With none installed the window has no panel and

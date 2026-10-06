@@ -307,7 +307,7 @@ fn the_account_menu_in_the_composer_offers_sign_out(cx: &mut TestAppContext) {
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
     assert!(opened.find("menu-sign-out").is_none());
-    let menu = opened.control("account-menu");
+    let menu = opened.control("model-menu");
     opened.click(menu);
     assert!(opened.find("menu-sign-out").is_some());
 }
@@ -328,7 +328,7 @@ fn signing_out_mid_turn_stops_the_turn_and_its_request(cx: &mut TestAppContext) 
         BASS_CLIP,
     );
 
-    let menu = opened.control("account-menu");
+    let menu = opened.control("model-menu");
     opened.click(menu);
     let sign_out = opened.control("menu-sign-out");
     opened.click(sign_out);
@@ -791,9 +791,14 @@ fn model(id: &str) -> Model {
     }
 }
 
-/// Picks `row` in the composer's menu.
+/// Picks `row` in the composer's access menu, or its model menu.
 fn pick(opened: &mut Opened<'_>, row: &str) {
-    let menu = opened.control("account-menu");
+    let name = if row.starts_with("menu-approval") {
+        "access-menu"
+    } else {
+        "model-menu"
+    };
+    let menu = opened.control(name);
     opened.click(menu);
     let row = opened.control(row);
     opened.click(row);
@@ -816,10 +821,8 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
         models: vec![model("default"), model("haiku")],
     }]);
 
-    assert!(opened.find("agent-never-ask").is_none());
     pick(&mut opened, "menu-approval-never-ask");
     pick(&mut opened, "menu-model-haiku");
-    assert!(opened.find("agent-never-ask").is_some());
     let sent: Vec<Command> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
     assert_eq!(
         sent,
@@ -839,7 +842,6 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
         commands.try_recv().ok(),
         Some(Command::Send("Hello".to_string()))
     );
-    assert!(opened.find("agent-never-ask").is_none());
 
     // While the turn runs, a change goes to the agent at once too.
     assert!(opened.cx.read(|cx| sidebar.read(cx).is_busy()));
