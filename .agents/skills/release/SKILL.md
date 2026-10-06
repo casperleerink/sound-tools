@@ -1,13 +1,13 @@
 ---
 name: release
-description: Cut a versioned GitHub release of the Sound Tools app for macOS and Linux. Bumps the workspace version, merges it through a pull request, tags main and watches the release workflow. Use when asked to release, cut a release or ship a new version.
+description: Cut a versioned GitHub release of the Sound Tools app for macOS, Linux and Windows. Bumps the workspace version, merges it through a pull request, tags main and watches the release workflow. Use when asked to release, cut a release or ship a new version.
 argument-hint: "[patch|minor|major|<version>]"
 disable-model-invocation: true
 ---
 
 # Release
 
-A release is a tag `v<version>` on main. Pushing it starts `.github/workflows/release.yml`, which builds the macOS zip and the two Linux tarballs and makes the GitHub release with them and their `SHA256SUMS`, which the app's updater checks. The version lives in one place, `version` in `[workspace.package]` of `Cargo.toml`. The workflow fails when the tag does not match it.
+A release is a tag `v<version>` on main. Pushing it starts `.github/workflows/release.yml`, which builds the macOS zip, the two Linux tarballs and the Windows zip and makes the GitHub release with them and their `SHA256SUMS`, which the app's updater checks. The version lives in one place, `version` in `[workspace.package]` of `Cargo.toml`. The workflow fails when the tag does not match it.
 
 Stop and report at the first step that fails. Never move or delete a tag that was pushed.
 
@@ -52,17 +52,17 @@ git diff --stat                               # Cargo.toml and Cargo.lock only
 
 ## 4. Merge the bump
 
-Nobody pushes to main. The bump goes through a pull request:
+Nobody pushes to main. The bump goes through a pull request. The active `gh` account may not have the right to open or merge it; the owner's does, so `gh pr create` and `gh pr merge` run with its token:
 
 ```sh
 git switch -c "release/v$VERSION"
 git commit -am "Release v$VERSION"
 git push -u origin "release/v$VERSION"
-gh pr create --base main --title "Release v$VERSION" --body "Bumps the version to $VERSION. The tag v$VERSION on the merge commit makes the release."
+GH_TOKEN=$(gh auth token -u casperleerink) gh pr create --base main --title "Release v$VERSION" --body "Bumps the version to $VERSION. The tag v$VERSION on the merge commit makes the release."
 gh pr checks <number> --watch --fail-fast
 ```
 
-When every check is green, merge. The active `gh` account may not have the right to merge; the owner's does:
+When every check is green, merge:
 
 ```sh
 GH_TOKEN=$(gh auth token -u casperleerink) gh pr merge <number> --merge
@@ -88,8 +88,8 @@ gh run watch <id> --exit-status
 gh release view "v$VERSION" --json url --jq .url
 ```
 
-`headBranch` is the tag. Report the release URL and its four files. When a build job fails for a reason outside the code, such as a runner problem, run `gh run rerun <id> --failed`. When the code is at fault, fix it in a pull request and release the next patch.
+`headBranch` is the tag. Report the release URL and its five files. When a build job fails for a reason outside the code, such as a runner problem, run `gh run rerun <id> --failed`. When the code is at fault, fix it in a pull request and release the next patch.
 
 ## A dry run
 
-`gh workflow run release.yml --ref <branch>` builds the three files from any branch that has the workflow, and keeps them as artifacts of the run, with no tag and no release. `gh run download <id>` fetches them.
+`gh workflow run release.yml --ref <branch>` builds the four files from any branch that has the workflow, and keeps them as artifacts of the run, with no tag and no release. `gh run download <id>` fetches them.
