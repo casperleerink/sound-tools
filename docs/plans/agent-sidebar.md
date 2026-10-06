@@ -224,7 +224,7 @@ Rejected:
 - It sits in the composer's menu as one select, next to the model.
 - A change applies from the next action of the agent, through the `set_permission_mode` control request, with no restart (R10).
 - Under "Ask before commands" Claude Code still runs file commands such as `touch` and `mkdir` in the project without asking, as it counts them as edits. Commands such as `git init` or `cargo build` ask. Decided: that is fine.
-- Under "Never ask", the first message of a thread shows one quiet line above the composer ("The agent does anything without asking"), so the mode is never a surprise.
+- The composer's access pill always says the mode, so it is never a surprise. (Renamed later: Ask always, Ask for commands, Full access.)
 
 An approval request shows as the last item of the thread:
 

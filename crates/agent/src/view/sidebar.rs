@@ -34,8 +34,8 @@ use crate::install::{self, InstallError};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{Line, SavedThread, ThreadStore, Write};
 use crate::{
-    Account, AgentEvent, ApprovalAnswer, ApprovalMode, Events, Installed, Provider, SignInChoice,
-    Thread, ThreadOptions, TurnOutcome, login_shell_environment,
+    Account, AgentEvent, ApprovalAnswer, Events, Installed, Provider, SignInChoice, Thread,
+    ThreadOptions, TurnOutcome, login_shell_environment,
 };
 
 actions!(agent_sidebar, [Stop]);
@@ -90,9 +90,11 @@ pub struct Sidebar {
     signing_in: Option<SignInChoice>,
     /// The download, the sign-in or a question to the program. Dropping it cancels it.
     setup_task: Option<Task<()>>,
-    /// The approval mode, the model, and the account with **Sign out**, in the composer.
-    menu: Entity<DropdownMenu>,
-    /// What the menu's selects say, the same for every sidebar of the app.
+    /// The model, and the account with **Sign out**, in the composer.
+    model_menu: Entity<DropdownMenu>,
+    /// The approval mode, beside the model.
+    access_menu: Entity<DropdownMenu>,
+    /// What the menus' selects say, the same for every sidebar of the app.
     settings: Entity<AgentSettings>,
     conversation: Conversation,
     list: ListState,
@@ -240,21 +242,27 @@ impl Sidebar {
         let list = ListState::new(0, ListAlignment::Top, px(OVERDRAW));
         list.set_follow_mode(FollowMode::Tail);
         // Filled by `update_menu` below, as on every change.
-        let menu = cx.new(|cx| {
-            DropdownMenu::new("", Vec::new(), cx)
-                .debug_name("account-menu")
-                .trigger(Trigger::Ghost)
-                .side(Side::Top)
-                .align(Align::Start)
-                .width(menu::WIDTH)
-                .max_height(menu::MAX_HEIGHT)
-        });
+        let new_menu = |name: &'static str, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                DropdownMenu::new("", Vec::new(), cx)
+                    .debug_name(name)
+                    .trigger(Trigger::Ghost)
+                    .side(Side::Top)
+                    .align(Align::Start)
+                    .width(menu::WIDTH)
+                    .max_height(menu::MAX_HEIGHT)
+            })
+        };
+        let model_menu = new_menu("model-menu", cx);
+        let access_menu = new_menu("access-menu", cx);
+        let on_pick = |sidebar: &mut Self, _, picked: &MenuPicked, cx: &mut Context<Self>| {
+            if let Some(choice) = Choice::of(&picked.0) {
+                sidebar.pick(choice, cx);
+            }
+        };
         let subscriptions = vec![
-            cx.subscribe(&menu, |sidebar, _, picked: &MenuPicked, cx| {
-                if let Some(choice) = Choice::of(&picked.0) {
-                    sidebar.pick(choice, cx);
-                }
-            }),
+            cx.subscribe(&model_menu, on_pick),
+            cx.subscribe(&access_menu, on_pick),
             cx.observe(&settings, |sidebar, _, cx| {
                 sidebar.update_menu(cx);
                 cx.notify();
@@ -280,7 +288,8 @@ impl Sidebar {
             installed: None,
             signing_in: None,
             setup_task: None,
-            menu,
+            model_menu,
+            access_menu,
             settings,
             conversation,
             list,
@@ -423,11 +432,21 @@ impl Sidebar {
             _ => Account::default(),
         };
         let shared = self.settings.read(cx);
-        let label = menu::label(shared.settings(), shared.models());
-        let entries = menu::entries(&account, shared.settings(), shared.models());
-        self.menu.update(cx, |menu, cx| {
+        let (settings, models) = (shared.settings(), shared.models());
+        let label = menu::label(settings, models);
+        let entries = menu::model_entries(self.provider, &account, settings, models);
+        let (access_icon, access_label) = menu::access_label(settings);
+        let access_entries = menu::access_entries(settings);
+        let (logo, brand) = menu::logo(self.provider);
+        self.model_menu.update(cx, |menu, cx| {
+            menu.set_icon(logo, Some(brand), cx);
             menu.set_label(label, cx);
             menu.set_entries(entries, cx);
+        });
+        self.access_menu.update(cx, |menu, cx| {
+            menu.set_icon(access_icon, None, cx);
+            menu.set_label(access_label, cx);
+            menu.set_entries(access_entries, cx);
         });
     }
 
@@ -440,9 +459,14 @@ impl Sidebar {
         &self.input
     }
 
-    /// The composer's menu, for a snapshot that shows it open or a test that picks in it.
-    pub fn menu(&self) -> &Entity<DropdownMenu> {
-        &self.menu
+    /// The composer's model menu, with the account, for a snapshot that shows it open.
+    pub fn model_menu(&self) -> &Entity<DropdownMenu> {
+        &self.model_menu
+    }
+
+    /// The composer's menu of approval modes, for a snapshot that shows it open or picks in it.
+    pub fn access_menu(&self) -> &Entity<DropdownMenu> {
+        &self.access_menu
     }
 
     /// The session the next process of the thread resumes: the thread's own once its agent
@@ -1141,73 +1165,65 @@ impl Sidebar {
 
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (border, fill) = (theme.alpha_at(0.10), theme.gray_50);
+        let (border, fill, divider) = (theme.alpha_at(0.10), theme.gray_200, theme.gray_400);
+        let (blue, stop) = (theme.blue, theme.gray_950);
         let working = self.conversation.is_working();
         let can_send = !self.input.read(cx).text().trim().is_empty();
         // While a turn runs the send button stops it: one turn at a time.
         let button = if working {
             Button::icon_only("stop", "square")
                 .debug_selector(|| "agent-stop".to_string())
+                .variant(ButtonVariant::Solid(stop))
                 .on_click(cx.listener(|sidebar, _, _, cx| sidebar.stop(cx)))
+        } else if can_send {
+            Button::icon_only("send", "arrow-up")
+                .variant(ButtonVariant::Solid(blue))
+                .on_click(cx.listener(|sidebar, _, _, cx| sidebar.send(cx)))
         } else {
             Button::icon_only("send", "arrow-up")
-                .disabled(!can_send)
-                .on_click(cx.listener(|sidebar, _, _, cx| sidebar.send(cx)))
+                .variant(ButtonVariant::Subtle)
+                .disabled(true)
         };
-        // So the mode is never a surprise, the first message of a thread says it once.
-        let never_ask = self.settings.read(cx).settings().approval_mode == ApprovalMode::NeverAsk
-            && self.conversation.messages().next().is_none();
-        let quiet = cx.theme().gray_700;
-        div()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .p(px(24.))
-            .pt(px(8.))
-            .when(never_ask, |composer| {
-                composer.child(
+        // The access pill always says the mode, so it is never a surprise.
+        div().flex_none().px(px(12.)).pb(px(12.)).pt(px(8.)).child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .pt(px(14.))
+                .px(px(14.))
+                .pb(px(10.))
+                .rounded(px(20.))
+                .border_1()
+                .border_color(border)
+                .bg(fill)
+                .shadow(vec![BoxShadow {
+                    color: hsla(0., 0., 0., 0.4),
+                    offset: point(px(0.), px(8.)),
+                    blur_radius: px(24.),
+                    spread_radius: px(-8.),
+                    inset: false,
+                }])
+                .child(div().min_h(px(44.)).child(self.input.clone()))
+                .child(
                     div()
-                        .debug_selector(|| "agent-never-ask".to_string())
-                        .px(px(16.))
-                        .text_size(px(12.))
-                        .text_color(quiet)
-                        .child("The agent does anything without asking."),
-                )
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .p(px(16.))
-                    .rounded(px(16.))
-                    .border_1()
-                    .border_color(border)
-                    .bg(fill)
-                    .shadow(vec![BoxShadow {
-                        color: hsla(0., 0., 0., 0.25),
-                        offset: point(px(0.), px(8.)),
-                        blur_radius: px(24.),
-                        spread_radius: px(-8.),
-                        inset: false,
-                    }])
-                    .child(self.input.clone())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(self.menu.clone())
-                            .child(
-                                button
-                                    .variant(ButtonVariant::Subtle)
-                                    .size(ButtonSize::Sm)
-                                    .rounded(true)
-                                    .focus_handle(&self.send_focus),
-                            ),
-                    ),
-            )
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        // The pills sit their wash, not their words, on the box's edge.
+                        .ml(px(-6.))
+                        .child(self.model_menu.clone())
+                        .child(div().flex_none().w(px(1.)).h(px(16.)).bg(divider))
+                        .child(self.access_menu.clone())
+                        .child(div().flex_1())
+                        .child(
+                            button
+                                .size(ButtonSize::Md)
+                                .rounded(true)
+                                .focus_handle(&self.send_focus),
+                        ),
+                ),
+        )
     }
 
     /// In place of the composer once the agent lost the session: the thread stays to read,
