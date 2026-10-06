@@ -39,7 +39,7 @@ use sound_ui::components::text_input;
 use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
 
 use audio_input::OpenInput;
-use project_menu::{ProjectMenu, start_again};
+use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
 pub use transport::TransportPill;
 
 use crate::{open_or_create_with, update, views};
@@ -54,6 +54,8 @@ actions!(
         FocusNext,
         FocusPrevious,
         ToggleLeftPanel,
+        NewProject,
+        OpenProject,
         Quit
     ]
 );
@@ -544,6 +546,14 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &ToggleLeftPanel, window, cx| {
                 shell.toggle_left_panel(window, cx)
             }))
+            .on_action(cx.listener(|shell, _: &NewProject, _, cx| {
+                shell
+                    .session
+                    .update(cx, |session, cx| new_project(session, cx))
+            }))
+            .on_action(cx.listener(|shell, _: &OpenProject, _, cx| {
+                shell.session.update(cx, |_, cx| open_another_project(cx))
+            }))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .size_full()
@@ -598,6 +608,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-n", NewProject, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-o", OpenProject, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
