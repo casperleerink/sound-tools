@@ -1,6 +1,6 @@
 //! The project menu: the project name top-left as a quiet menu. Fit the tempo to a take,
 //! export the project or the selected clips as a WAV, undo and redo with what they would do,
-//! the output device by name, a recent or another project, the project folder in the Finder or in a
+//! the output device by name, a new, recent or another project, the project folder in the Finder or in a
 //! terminal, the command line tool, and the app version. The
 //! terminal is where the composer starts a coding agent on the project, and the tool is what
 //! that agent runs to read the whole piece.
@@ -9,8 +9,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
+use anyhow::Context as _;
 use gpui::{
-    App, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Window, prelude::*,
+    App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, WeakEntity,
+    Window, prelude::*,
 };
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use smol::stream::StreamExt;
@@ -32,6 +34,7 @@ const EXPORT_SELECTION: &str = "export-selection";
 const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const DEVICE: &str = "device";
+const NEW_PROJECT: &str = "new-project";
 const OPEN_PROJECT: &str = "open-project";
 const OPEN_RECENT: &str = "open-recent";
 /// Followed by the index in the recent projects.
@@ -194,6 +197,7 @@ impl ProjectMenu {
                 FIT_TEMPO => fit_tempo_to_take(session, cx),
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
+                NEW_PROJECT => new_project(session, cx),
                 OPEN_PROJECT => open_another_project(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
                 TERMINAL => open_terminal(session.project().root().to_path_buf(), cx),
@@ -468,32 +472,61 @@ fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
     .detach();
 }
 
-/// Picks another project folder in the macOS panel and opens it. The app starts again on it:
-/// this process quits the way cmd-q quits, which saves the state of every plugin and frees the
-/// project, and the new one opens the folder as the last project.
-fn open_another_project(cx: &mut Context<Session>) {
-    let picked = cx.prompt_for_paths(super::start::folder_prompt());
+/// Asks for the name and place of a new project in the save panel, next to the open project,
+/// and opens it as [`open_another_project`] does. The panel itself asks before it reuses a
+/// folder that is there, and a folder with other files in it is refused as when opened.
+pub(super) fn new_project(session: &Session, cx: &mut Context<Session>) {
+    let root = session.project().root();
+    let picked = cx.prompt_for_new_path(root.parent().unwrap_or(root), Some("New project"));
     cx.spawn(async move |session, cx| {
-        let folder = match super::start::picked_folder(picked.await.ok()) {
-            Ok(Some(folder)) => folder,
-            Ok(None) => return,
-            Err(error) => {
-                report(&session, error, cx);
+        let folder = match picked.await {
+            Ok(Ok(Some(folder))) => folder,
+            // A panel that went away without an answer is a cancel too.
+            Ok(Ok(None)) | Err(_) => return,
+            Ok(Err(error)) => {
+                report(
+                    &session,
+                    format!("The save panel did not open: {error:#}"),
+                    cx,
+                );
                 return;
             }
         };
-        let remembered = cx
-            .background_spawn(async move {
-                app::check_project_folder(&folder)?;
-                app::remember_project(&folder)
-            })
-            .await;
-        match remembered {
-            Ok(()) => cx.update(|cx| start_again(cx)),
-            Err(error) => report(&session, format!("{error:#}"), cx),
-        }
+        start_on(folder, &session, cx).await;
     })
     .detach();
+}
+
+/// Picks another project folder in the macOS panel and opens it. The app starts again on it:
+/// this process quits the way cmd-q quits, which saves the state of every plugin and frees the
+/// project, and the new one opens the folder as the last project.
+pub(super) fn open_another_project(cx: &mut Context<Session>) {
+    let picked = cx.prompt_for_paths(super::start::folder_prompt());
+    cx.spawn(
+        async move |session, cx| match super::start::picked_folder(picked.await.ok()) {
+            Ok(Some(folder)) => start_on(folder, &session, cx).await,
+            Ok(None) => {}
+            Err(error) => report(&session, error, cx),
+        },
+    )
+    .detach();
+}
+
+/// Makes `folder` when it is new and remembers it as the last project, off the UI thread, then
+/// starts the app again on it.
+async fn start_on(folder: PathBuf, session: &WeakEntity<Session>, cx: &mut AsyncApp) {
+    let remembered = cx
+        .background_spawn(async move {
+            app::check_project_folder(&folder)?;
+            std::fs::create_dir_all(&folder)
+                .with_context(|| format!("could not make {}", folder.display()))?;
+            app::remember_project(&folder)
+        })
+        .await;
+    match remembered {
+        Ok(()) => cx.update(|cx| start_again(cx)),
+        Err(error) => report(session, format!("{error:#}"), cx),
+    }
 }
 
 /// Opens a recent project as [`open_another_project`] does. A folder that went away since the
@@ -529,7 +562,7 @@ pub(super) fn start_again(cx: &mut App) {
     cx.quit();
 }
 
-fn report(session: &gpui::WeakEntity<Session>, message: String, cx: &mut gpui::AsyncApp) {
+fn report(session: &WeakEntity<Session>, message: String, cx: &mut AsyncApp) {
     // The window is gone when this fails, and there is nobody left to tell.
     if let Some(session) = session.upgrade() {
         session.update(cx, |session, cx| session.report(message, cx));
@@ -661,11 +694,12 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
     })
 }
 
-/// The last group: another project, a recent one in a submenu, the project folder in the
+/// The last group: a new project, another one, a recent one in a submenu, the project folder in the
 /// Finder, a terminal in it for a coding agent, and the command that agent runs. Windows has
 /// no command line tool, see `app::Installed`.
 fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
     [
+        (NEW_PROJECT, "New project…"),
         (OPEN_PROJECT, "Open project…"),
         (OPEN_RECENT, "Open recent"),
         (REVEAL, "Reveal project folder"),
@@ -677,6 +711,8 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
     .map(|(value, label)| {
         let item = MenuItem::new(value, label).selectable(false);
         match value {
+            NEW_PROJECT => item.shortcut("mod+n"),
+            OPEN_PROJECT => item.shortcut("mod+o"),
             OPEN_RECENT => item
                 .submenu(recent_items(recent))
                 .disabled(recent.is_empty()),
@@ -807,6 +843,7 @@ mod tests {
             .map(|item| (item.value.clone(), item.label()))
             .collect();
         let mut expected: Vec<(SharedString, SharedString)> = vec![
+            (NEW_PROJECT.into(), "New project…".into()),
             (OPEN_PROJECT.into(), "Open project…".into()),
             (OPEN_RECENT.into(), "Open recent".into()),
             (REVEAL.into(), "Reveal project folder".into()),
