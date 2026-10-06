@@ -29,7 +29,8 @@ engine itself.
    again is the same processor, with its phase and voices. One you stop declaring is removed.
    You never remove anything yourself.
 5. All behaviours of one edit group land in one engine batch, in the same block. If one fails,
-   the whole group is rejected and nothing changes.
+   the whole group is rejected and nothing changes. A connection that closes a cycle is not a
+   failure: it is left out and listed as a problem of your instance.
 
 An owner reads its children with `context.children::<S>()` and finds their ports with
 `context.child_input(name, port)` and `context.child_output(name, port)`. Children run before
@@ -68,7 +69,8 @@ by an agent during a drag applies at once, and the next move of the drag writes 
   `transport.offset_of(tick)`. It never converts time itself. It must release what it holds when
   `transport.jumped` or `transport.stopped_playing` is set, or a paused project sounds forever.
 - **Latency is declared, not handled.** A processor whose output lags says so with
-  `Processor::latency`, and changes it only in `update`. The engine leads everything before it.
+  `Processor::latency`, and changes it only in `update`. The engine leads everything before it,
+  except what feeds a side input (`Ports::side_audio_input`), such as a sidechain.
 - **There are no schema versions or migrations.** A new field needs a default so old records
   still load.
 - **An asset is opaque bytes, not state.** Plugin state and recorded takes are assets

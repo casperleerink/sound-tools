@@ -65,7 +65,8 @@ pub trait Processor: Send + 'static {
     ///
     /// The engine reads it when the processor arrives and after each of its updates, so change
     /// it in `update` and nowhere else. The engine delays nothing to make up for it: everything
-    /// before this processor runs that much earlier on the timeline instead, so its output
+    /// before this processor, but what feeds a side input, runs that much earlier on the
+    /// timeline instead, so its output
     /// reaches the device in time with everything else. See ARCHITECTURE.md, "Latency
     /// compensation".
     fn latency(&self) -> u32 {
