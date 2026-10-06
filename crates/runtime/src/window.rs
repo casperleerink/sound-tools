@@ -705,6 +705,8 @@ struct Opened {
     plugins: WeakPlugins,
     stream: OutputStream,
     device_name: String,
+    /// For the project menu, read here with the rest of what opening reads.
+    recent_projects: Vec<PathBuf>,
 }
 
 impl Opened {
@@ -737,6 +739,7 @@ impl Opened {
             plugins: weak_plugins,
             stream,
             device_name,
+            recent_projects: crate::app::recent_projects(),
         })
     }
 
@@ -747,6 +750,7 @@ impl Opened {
             plugins: weak_plugins,
             stream,
             device_name,
+            recent_projects,
         } = self;
         let title = project
             .root()
@@ -868,6 +872,13 @@ impl Opened {
         let shell = match opened {
             Ok(window) => {
                 cx.activate(true);
+                // Fails only when the window is gone already.
+                window
+                    .update(cx, |shell, _, cx| {
+                        let menu = shell.project_menu().clone();
+                        menu.update(cx, |menu, cx| menu.set_recent_projects(recent_projects, cx));
+                    })
+                    .ok();
                 window
             }
             Err(error) => {

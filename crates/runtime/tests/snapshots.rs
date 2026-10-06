@@ -1178,7 +1178,15 @@ fn main() -> Result<()> {
     })?;
     let menu = cx.update(|cx| {
         let shell = opened.window.read(cx)?;
-        anyhow::Ok(shell.project_menu().read(cx).menu().clone())
+        let project_menu = shell.project_menu().clone();
+        project_menu.update(cx, |project_menu, cx| {
+            let recent = [
+                "/Users/someone/Music/Night drive",
+                "/Users/someone/Sketches/Piano",
+            ];
+            project_menu.set_recent_projects(recent.map(PathBuf::from).to_vec(), cx);
+        });
+        anyhow::Ok(project_menu.read(cx).menu().clone())
     })?;
     cx.update_window(opened.window.into(), |_, window, cx| {
         menu.update(cx, |menu, cx| menu.open(window, cx));
