@@ -34,7 +34,7 @@ This is the main rule of the codebase.
 
 - The core has no track, clip, note, pitch, velocity, effect, plugin or audio file type, and depends on no bundled crate. `workspace-rules` checks this.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (saved `Note` and `Clip` with its expression lanes, the realtime `NoteEvent` with the bend and mod wheels and key pressure, the raw MIDI take, the port names of instruments and effects, and how the bundled instruments play notes: `Voices` and `Wheels`) and `sound-media` (reading, resampling and pitching audio files).
-- Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`. An effect has an audio input and output both named `audio`. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
+- Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`. An effect has an audio input and output both named `audio`, and may have a second input `sidechain` another sound keys it with. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
 - The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension.
 - `extensions/tone` is a small non-musical tool. It is not in the default project; it proves the core rules hold for a tool shaped differently from the arrangement.
 

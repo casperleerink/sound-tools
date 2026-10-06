@@ -37,7 +37,7 @@ use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
     RegistryError, Scale, State,
 };
-use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
+use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, SIDECHAIN_INPUT};
 
 pub use processor::{Compressor, HOLD_SECONDS, Meters, reduction_db, static_gain_db};
 
@@ -249,6 +249,10 @@ fn apply(
     context.input(
         AUDIO_INPUT,
         InputEndpoint::new(compressor, Compressor::INPUT),
+    );
+    context.input(
+        SIDECHAIN_INPUT,
+        InputEndpoint::new(compressor, Compressor::SIDECHAIN),
     );
     context.automation(compressor, Compressor::AUTOMATION);
     context.output(

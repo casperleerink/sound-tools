@@ -133,6 +133,32 @@ impl Rig {
         }
     }
 
+    /// Adds a source of `key` and gives the connection that feeds it to the sidechain, not yet
+    /// made.
+    pub(crate) fn add_key(&mut self, key: Signal) -> Connection {
+        let mut edit = self.control.edit();
+        let key = edit.add_processor("key", Source::new(key)).unwrap();
+        edit.commit().unwrap();
+        Connection::new(
+            key.id(),
+            Source::OUTPUT,
+            self.compressor.id(),
+            Compressor::SIDECHAIN,
+        )
+    }
+
+    pub(crate) fn connect(&mut self, connection: Connection) {
+        let mut edit = self.control.edit();
+        edit.connect(connection).unwrap();
+        edit.commit().unwrap();
+    }
+
+    pub(crate) fn disconnect(&mut self, connection: Connection) {
+        let mut edit = self.control.edit();
+        edit.disconnect(&connection).unwrap();
+        edit.commit().unwrap();
+    }
+
     /// Renders in device buffers of 480 frames, so short sub-blocks are part of every render.
     /// Left and right.
     pub(crate) fn render(&mut self, frames: usize) -> [Vec<f32>; 2] {
