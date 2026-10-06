@@ -12,6 +12,7 @@
 //! Everything is allocated with the processor or in the update. A sampler with no voice in use
 //! returns before it touches its output.
 
+use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use sound_core::{
@@ -56,6 +57,10 @@ const FADE_SECONDS: f32 = 0.005;
 /// The level before the end of the part of the file that plays ramps to silence over this long,
 /// so a sample cut in the middle of its sound does not click. The ramp of an audio clip's edge.
 const EDGE_SECONDS: f64 = 0.002;
+
+/// The loop of a record fades from its end into its start over this long, of the file, or half
+/// the loop when that is shorter, so the jump back does not click.
+const CROSSFADE_SECONDS: f64 = 0.01;
 
 /// How long the gain takes to reach a new value: the glide of every built-in device.
 const GLIDE_SECONDS: f32 = 0.02;
@@ -107,6 +112,8 @@ struct Settings {
     start_seconds: f64,
     end_seconds: Option<f64>,
     reverse: bool,
+    looping: bool,
+    loop_start_seconds: Option<f64>,
     attack_seconds: f32,
     decay_seconds: f32,
     sustain: f32,
@@ -124,6 +131,8 @@ impl Settings {
             start_seconds: state.start_seconds,
             end_seconds: state.end_seconds,
             reverse: state.reverse,
+            looping: state.looping,
+            loop_start_seconds: state.loop_start_seconds,
             attack_seconds: state.attack_seconds,
             decay_seconds: state.decay_seconds,
             sustain: state.sustain,
@@ -192,7 +201,7 @@ struct Layer {
     /// Where it stops: the place after the last that plays, in the direction it plays.
     end: f64,
     /// Plays from the end of its part of the file back to the start. Only a zone of the
-    /// record does, and it never loops.
+    /// record does.
     reverse: bool,
     looping: Looping,
     /// The level of each channel: velocity, volume, amplitude and pan.
@@ -283,6 +292,16 @@ impl Layer {
             true => (settings.tune, settings.reverse),
             false => (region.tune_cents / 100.0, false),
         };
+        let looping = match (from_record, settings.looping) {
+            (true, true) => {
+                let loop_start = settings
+                    .loop_start_seconds
+                    .map_or(offset, |seconds| seconds * file_rate);
+                record_loop(loop_start.clamp(offset, end), end, reverse, file_rate)
+            }
+            (true, false) => Looping::No { one_shot: false },
+            (false, _) => zone.looping,
+        };
         // Backwards it plays the same places as forwards, from the last to the first.
         let (position, end) = match reverse {
             true => (end - 1.0, offset - 1.0),
@@ -299,7 +318,7 @@ impl Layer {
             key_step: 1.0,
             end,
             reverse,
-            looping: zone.looping,
+            looping,
             gains: pan_gains(f64::from(level), region.pan),
             envelope,
             state: EnvelopeState::IDLE,
@@ -364,7 +383,7 @@ impl Layer {
         &mut self,
         zone: &Zone,
         (left, right): (&mut [f32], &mut [f32]),
-        (frames, scratch): (&mut [[f32; 2]], &mut [[f32; 2]]),
+        (frames, buffers): (&mut [[f32; 2]], Buffers<'_>),
         record_envelope: &Envelope,
         (edge_frames, sample_rate): (f64, f32),
         (filter, pitch_ratio): (&Varispeed, f64),
@@ -378,7 +397,7 @@ impl Layer {
         let step = self.key_step * pitch_ratio;
         let direction = if self.reverse { -1.0 } else { 1.0 };
         let start = self.position;
-        self.read(zone, step, frames, scratch, filter);
+        self.read(zone, step, frames, buffers, filter);
         let envelope = self.envelope.as_ref().unwrap_or(record_envelope);
         for (index, ((left, right), frame)) in left
             .iter_mut()
@@ -421,56 +440,112 @@ impl Layer {
     }
 
     /// Reads `frames.len()` frames of its file from where it is at `step`, around its loop, and
-    /// moves on.
+    /// moves on. In the last stretch of a loop with a crossfade the start of the loop fades in
+    /// while the end fades out, and the jump back lands where the start faded in to.
     fn read(
         &mut self,
         zone: &Zone,
         step: f64,
         frames: &mut [[f32; 2]],
-        scratch: &mut [[f32; 2]],
+        (scratch, other): Buffers<'_>,
         filter: &Varispeed,
     ) {
-        if self.reverse {
-            // The filter reads forwards, so it reads the same places from the far end and
-            // they are turned around.
-            let last = frames.len().saturating_sub(1) as f64;
-            filter.render(
-                &zone.audio,
-                self.position - step * last,
-                step,
-                frames,
-                scratch,
-            );
-            frames.reverse();
-            self.position -= step * frames.len() as f64;
-            return;
-        }
+        let direction = if self.reverse { -1.0 } else { 1.0 };
         let mut done = 0;
         while done < frames.len() {
             let left = frames.len() - done;
-            let count = match self.looping {
-                Looping::Loop { end, .. } if step > 0.0 => {
-                    // Frames until the place passes the end of the loop, at least one.
-                    let until = ((end - self.position) / step).ceil();
-                    (until.max(1.0) as usize).min(left)
-                }
-                _ => left,
+            let Looping::Loop {
+                start,
+                end,
+                crossfade,
+                ..
+            } = self.looping
+            else {
+                read_at(
+                    filter,
+                    zone,
+                    self.position,
+                    direction * step,
+                    &mut frames[done..],
+                    scratch,
+                );
+                self.position += direction * step * left as f64;
+                return;
             };
-            filter.render(
-                &zone.audio,
-                self.position,
-                step,
-                &mut frames[done..done + count],
-                scratch,
-            );
-            self.position += step * count as f64;
-            if let Looping::Loop { start, end, .. } = self.looping
-                && self.position >= end
-            {
-                self.position = start + (self.position - end) % (end - start);
+            // The part of the file that comes around each time: the loop less its crossfade.
+            let period = direction * (end - start) - crossfade;
+            let to_end = direction * (end - self.position);
+            let fading = crossfade > 0.0 && to_end <= crossfade;
+            let until = match fading {
+                true => to_end,
+                false => to_end - crossfade,
+            };
+            // Frames until the place passes the next point, at least one.
+            let count = ((until / step).ceil().max(1.0) as usize).min(left);
+            let run = &mut frames[done..done + count];
+            read_at(filter, zone, self.position, direction * step, run, scratch);
+            if fading {
+                let other = &mut other[..count];
+                let from = self.position - direction * period;
+                read_at(filter, zone, from, direction * step, other, scratch);
+                for (index, (frame, other)) in run.iter_mut().zip(other.iter()).enumerate() {
+                    let faded = 1.0 - (to_end - step * index as f64) / crossfade;
+                    // Equal power: the two places are not alike, so their sum keeps its level.
+                    let (fade_in, fade_out) = (faded.clamp(0.0, 1.0) as f32 * FRAC_PI_2).sin_cos();
+                    for channel in 0..2 {
+                        frame[channel] = frame[channel] * fade_out + other[channel] * fade_in;
+                    }
+                }
+            }
+            self.position += direction * step * count as f64;
+            let past = direction * (self.position - end);
+            if past >= 0.0 {
+                self.position = end - direction * (period - past % period);
             }
             done += count;
         }
+    }
+}
+
+/// The scratch of the filter, and the frames of the start of a loop that fades in.
+type Buffers<'a> = (&'a mut [[f32; 2]], &'a mut [[f32; 2]]);
+
+/// The file of `zone` at `from`, `from + step`, ... into `out`. A step below 0 reads backwards.
+fn read_at(
+    filter: &Varispeed,
+    zone: &Zone,
+    from: f64,
+    step: f64,
+    out: &mut [[f32; 2]],
+    scratch: &mut [[f32; 2]],
+) {
+    if step >= 0.0 {
+        filter.render(&zone.audio, from, step, out, scratch);
+        return;
+    }
+    // The filter reads forwards, so it reads the same places from the far end and they are
+    // turned around.
+    let last = out.len().saturating_sub(1) as f64;
+    filter.render(&zone.audio, from + step * last, -step, out, scratch);
+    out.reverse();
+}
+
+/// The loop of the record over the frames from `from` to `to` of its file, with its crossfade,
+/// in the direction it plays. A loop shorter than two frames is none.
+fn record_loop(from: f64, to: f64, reverse: bool, file_rate: f64) -> Looping {
+    let length = to - from;
+    if length < 2.0 {
+        return Looping::No { one_shot: false };
+    }
+    let (start, end) = match reverse {
+        true => (to - 1.0, from - 1.0),
+        false => (from, to),
+    };
+    Looping::Loop {
+        start,
+        end,
+        sustain: false,
+        crossfade: (CROSSFADE_SECONDS * file_rate).min(length / 2.0),
     }
 }
 
@@ -553,12 +628,11 @@ impl Voice {
         &mut self,
         instrument: &Instrument,
         (left, right): (&mut [f32], &mut [f32]),
-        buffers: (&mut [[f32; 2]], &mut [[f32; 2]]),
+        (frames, scratch, other): (&mut [[f32; 2]], &mut [[f32; 2]], &mut [[f32; 2]]),
         record_envelope: &Envelope,
         edges: (f64, f32),
         filter: (&Varispeed, f64),
     ) {
-        let (frames, scratch) = buffers;
         for layer in &mut self.layers {
             if layer.phase != Phase::Playing {
                 continue;
@@ -570,7 +644,7 @@ impl Voice {
             layer.render(
                 zone,
                 (&mut *left, &mut *right),
-                (&mut *frames, &mut *scratch),
+                (&mut *frames, (&mut *scratch, &mut *other)),
                 record_envelope,
                 edges,
                 filter,
@@ -616,6 +690,8 @@ pub struct Sampler {
     /// One stretch of one layer on its way into the output.
     frames: Box<[[f32; 2]]>,
     scratch: Box<[[f32; 2]]>,
+    /// The start of a loop on its way in, while it fades in.
+    crossfade: Box<[[f32; 2]]>,
     /// Where the last note started is in its file, for the card.
     position: Peaks,
     /// Has the samples of a note that streams from disk read ahead of it.
@@ -650,6 +726,7 @@ impl Sampler {
             filter: varispeed(),
             frames: vec![[0.0; 2]; MAX_BLOCK].into_boxed_slice(),
             scratch: vec![[0.0; 2]; SCRATCH_FRAMES].into_boxed_slice(),
+            crossfade: vec![[0.0; 2]; MAX_BLOCK].into_boxed_slice(),
             position,
             read_ahead: ReadAhead::new(),
         }
@@ -767,7 +844,7 @@ impl Sampler {
             voice.render(
                 instrument,
                 (&mut *left, &mut *right),
-                (&mut self.frames, &mut self.scratch),
+                (&mut self.frames, &mut self.scratch, &mut self.crossfade),
                 &self.envelope,
                 (edge_frames, self.sample_rate),
                 (self.filter, pitch_ratio),

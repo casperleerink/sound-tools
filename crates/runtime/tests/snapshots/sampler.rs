@@ -3,8 +3,9 @@
 //! - `sampler-playing.png`: the piece with a Kalimba track whose instrument is a Sampler of a
 //!   kalimba-like file, its panel open, playing: the envelope over the waveform, and the green
 //!   line where the last note is in the file.
-//! - `sampler-expanded.png`: the same card expanded: Start, End, Reverse, Tune, Attack, Decay
-//!   and Sustain.
+//! - `sampler-expanded.png`: the same card expanded, with Loop on from 0.6 s: Start, End,
+//!   Loop, Loop start, Reverse, Tune, Attack, Decay and Sustain, and on the display the loop
+//!   start line and the tinted part that repeats.
 //! - `sampler-drop-replace.png`: a file from the Finder over its display: `Drop to replace the
 //!   file` in the lavender ring.
 //! - `sampler-instruments.png`: its Instrument select open: the file, then the library by
@@ -77,6 +78,8 @@ fn kalimba_sampler() -> Result<SamplerState> {
         start_seconds: 0.012,
         end_seconds: Some(1.18),
         reverse: false,
+        looping: false,
+        loop_start_seconds: None,
         attack_seconds: 0.002,
         decay_seconds: 0.4,
         sustain: 0.55,
@@ -177,6 +180,21 @@ pub(crate) fn snapshots(
     let at = cx.update(|cx| card.read(cx).playing_at());
     anyhow::ensure!(at.is_some(), "no green line");
     save(cx, &opened, "sampler-playing")?;
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let project = session.project();
+            let id = sound_core::InstanceId::new("arrangement/kalimba/instrument")?;
+            let sampler = project.resolve::<SamplerState>(&id).context("no sampler")?;
+            let mut state = project.state(&sampler).context("no sampler")?.clone();
+            state.looping = true;
+            state.loop_start_seconds = Some(0.6);
+            let mut changes = Changes::new();
+            changes.set(&sampler, state);
+            session
+                .edit(cx, |project| project.commit("Loop", changes))
+                .context("not looped")
+        })
+    })?;
     cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(cx, &opened, "sampler-expanded")?;

@@ -24,6 +24,7 @@ A new track that plays a sample: copy the file in, write the track, then its ins
     "tune": 0.0,
     "start_seconds": 0.0,
     "reverse": false,
+    "loop": false,
     "attack_seconds": 0.002,
     "decay_seconds": 0.4,
     "sustain": 1.0,
@@ -44,6 +45,8 @@ These are the defaults, with a sample. A field you leave out takes its default, 
 | `start_seconds` | Where in the file every note starts. Skip silence or a click at the start of a file with it. | 0 up to the length of the file |
 | `end_seconds` | Where in the file a note stops at the latest. Leave it out to play to the end of the file. | after `start_seconds` |
 | `reverse` | Plays the file backwards. | `true` or `false` |
+| `loop` | Repeats the part from `loop_start_seconds` to the end while the note sounds. | `true` or `false` |
+| `loop_start_seconds` | Where the loop starts. Leave it out to loop from `start_seconds`. | from `start_seconds` to before `end_seconds` |
 | `attack_seconds` | From note on to full level. | 0.001 to 10 |
 | `decay_seconds` | From full level down to the sustain level. | 0.001 to 10 |
 | `sustain` | The level a held note settles at. 1 plays the file as it is while the key is held. 0 makes every note a pluck that ends after its decay. | 0 to 1 |
@@ -51,7 +54,9 @@ These are the defaults, with a sample. A field you leave out takes its default, 
 | `velocity_to_volume` | How much velocity changes the volume. 0 plays every note at full volume. 1 plays velocity 64 a quarter as loud as 127, 0.5 plays it at 63 %. | 0 to 1 |
 | `gain_db` | Output gain in dB. Set the level of a track with its `gain_db`. | -48 to 24 |
 
-A note plays from `start_seconds` to `end_seconds`, or until its release ends, whichever is first. With `reverse` it plays from `end_seconds` (or the end of the file) back to `start_seconds`. The file is never looped. A key far above the root plays the file fast and short.
+A note plays from `start_seconds` to `end_seconds`, or until its release ends, whichever is first. With `reverse` it plays from `end_seconds` (or the end of the file) back to `start_seconds`. A key far above the root plays the file fast and short.
+
+With `loop` a note plays from `start_seconds` to the end once, then repeats the part from `loop_start_seconds` to the end until its release has faded it out, so a short file can hold a long note. The loop point gets a short crossfade, so it does not click. With `reverse` the loop plays the same part backwards: from the end back to `loop_start_seconds`, then from the end again.
 
 Starting points: a sustained sound (strings, a pad, a held voice) keeps `sustain` 1 and gets `release_seconds` 0.5 or more. A plucked or struck sound (kalimba, piano, a drum) plays well with `sustain` 1 too, since the file decays by itself. To shorten one, set `sustain` 0 with `decay_seconds` as long as the part you want.
 
@@ -93,7 +98,7 @@ An SFZ instrument is a folder of samples and a text file, `.sfz`, that says whic
 }
 ```
 
-`{"sfz": "cello/cello-sustain.sfz"}` is enough; the runtime writes the other fields with their defaults. The SFZ file sets the pitch, envelope and velocity response of each sample, so `root`, `tune`, `start_seconds`, `end_seconds`, `reverse`, the envelope and `velocity_to_volume` of the record do nothing with `sfz`. `gain_db` still applies. A record has `sample` or `sfz`, not both.
+`{"sfz": "cello/cello-sustain.sfz"}` is enough; the runtime writes the other fields with their defaults. The SFZ file sets the pitch, envelope and velocity response of each sample, so `root`, `tune`, `start_seconds`, `end_seconds`, `reverse`, `loop`, `loop_start_seconds`, the envelope and `velocity_to_volume` of the record do nothing with `sfz`. `gain_db` still applies. A record has `sample` or `sfz`, not both.
 
 The folders and files of an instrument may have any names. Its samples may be anywhere under `assets/`, such as recordings in `assets/audio/`, but not outside it. Samples are WAV, AIFF or FLAC. A missing SFZ file or missing samples are listed in `problems.txt`; the rest plays, and files that arrive later play without an edit of the record. Opcodes the Sampler does not know are ignored, so a third-party SFZ file plays, at times plainer than in its own player.
 

@@ -152,13 +152,15 @@ fn the_picker_puts_an_empty_sampler_with_its_card_on_the_track(cx: &mut TestAppC
         "knob-sustain",
         "knob-tune",
         "toggle-reverse",
+        "toggle-loop",
+        "knob-loop_start",
     ] {
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
-    // The card is 520 pt, and 761 expanded: its header is as wide, inside a border of 1 pt.
+    // The card is 520 pt, and 817 expanded: its header is as wide, inside a border of 1 pt.
     let width =
         |opened: &mut Opened<'_>| opened.bounds("card-instrument-header").unwrap().size.width;
-    assert_eq!(width(&mut opened), px(761. - 2.));
+    assert_eq!(width(&mut opened), px(817. - 2.));
     // The icon moved with the right edge.
     let expand = opened.control("card-instrument-expand");
     opened.click(expand);
@@ -318,8 +320,30 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
     assert!(state(&mut opened).tune > 0.0);
     assert_eq!(opened.undo_label().as_deref(), Some("Change tune"));
 
+    // Loop is one click and one step. Then its line shows on the display: a drag of it is one
+    // step, and so is a key step of its knob.
+    assert_eq!(opened.find("handle-loop-start"), None);
+    let looping = opened.control("toggle-loop");
+    opened.click(looping);
+    assert!(state(&mut opened).looping);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change loop"));
+    let after = drag(
+        &mut opened,
+        "handle-loop-start",
+        point(px(78.), px(0.)),
+        "Change loop start",
+    );
+    // From the start line, 0.1 s, half a second on.
+    let loop_start = after.loop_start_seconds.unwrap();
+    assert!((loop_start - 0.6).abs() < 0.01, "{after:?}");
+    let knob = opened.control("knob-loop_start");
+    opened.click(knob);
+    opened.keys("up");
+    assert!(state(&mut opened).loop_start_seconds.unwrap() > loop_start);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change loop start"));
+
     // Back to where the card began, one step per gesture.
-    for _ in 0..9 {
+    for _ in 0..12 {
         opened.keys("cmd-z");
     }
     assert_eq!(state(&mut opened), before);

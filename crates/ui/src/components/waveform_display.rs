@@ -1,7 +1,8 @@
 //! Waveform display: a whole audio file in the display inset. The waveform is `alpha/30`, the
 //! part outside the start and end lines is shaded with `gray-50` at 72 %, and the start and end
 //! are 1 pt `gray-950` lines with hollow handles 8 pt above the bottom, which drag sideways. A
-//! green line is where the sound plays. A curve over it, such as gain and fades or an envelope,
+//! part that repeats, from a loop start to the end line, is tinted `alpha/8`, and its start is a
+//! thin line with a hollow handle 8 pt under the top. A green line is where the sound plays. A curve over it, such as gain and fades or an envelope,
 //! and its handles follow the rules of every display.
 //!
 //! The Clip card of the arrangement and the Sampler share it. It knows no clip and no sampler:
@@ -40,6 +41,7 @@ pub struct WaveformDisplay {
     end: f32,
     on_start: Option<ChangeHandler<f32>>,
     on_end: Option<ChangeHandler<f32>>,
+    loop_start: Option<(f32, ChangeHandler<f32>)>,
     playhead: Option<f32>,
     curve: Vec<Point<f32>>,
     handles: Vec<Handle>,
@@ -66,6 +68,7 @@ impl WaveformDisplay {
             end: seconds,
             on_start: None,
             on_end: None,
+            loop_start: None,
             playhead: None,
             curve: Vec::new(),
             handles: Vec::new(),
@@ -90,13 +93,24 @@ impl WaveformDisplay {
 
     /// Hears the handle of the start line, in seconds.
     pub fn on_start(mut self, f: impl Fn(ValueChange, &mut Window, &mut App) + 'static) -> Self {
-        self.on_start = Some(std::rc::Rc::new(f));
+        self.on_start = Some(Rc::new(f));
         self
     }
 
     /// Hears the handle of the end line, in seconds.
     pub fn on_end(mut self, f: impl Fn(ValueChange, &mut Window, &mut App) + 'static) -> Self {
-        self.on_end = Some(std::rc::Rc::new(f));
+        self.on_end = Some(Rc::new(f));
+        self
+    }
+
+    /// Where the part that repeats up to the end line starts, in seconds, and what hears its
+    /// handle.
+    pub fn loop_start(
+        mut self,
+        seconds: f32,
+        f: impl Fn(ValueChange, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.loop_start = Some((seconds, Rc::new(f)));
         self
     }
 
@@ -123,17 +137,18 @@ impl WaveformDisplay {
         self
     }
 
-    /// The handle of a line at `value` seconds, which moves it sideways over the whole file.
-    fn trim_handle(
+    /// The handle of a line at `value` seconds, `rise` points above the bottom, which moves it
+    /// sideways over the whole file.
+    fn line_handle(
         &self,
         name: &'static str,
-        value: f32,
-        default: f32,
+        (value, default): (f32, f32),
+        rise: f32,
         on: ChangeHandler<f32>,
     ) -> Handle {
         let range = KnobRange::linear(0., self.seconds.max(f32::MIN_POSITIVE));
         let x = Axis::new(range, value, default);
-        let y = Axis::fixed(TRIM_HANDLE_RISE / INSET_HEIGHT);
+        let y = Axis::fixed(rise / INSET_HEIGHT);
         Handle::new(name, x, y).hollow(true).on_change(
             move |change: ValueChange<Point<f32>>, window, cx| {
                 on(change.map(|at| at.x), window, cx)
@@ -163,14 +178,25 @@ impl RenderOnce for WaveformDisplay {
         let signal = self.playhead.map(|seconds| place(seconds, self.seconds));
         let mut handles = Vec::new();
         if let Some(on) = self.on_start.clone() {
-            handles.push(self.trim_handle("start", self.start, 0., on));
+            handles.push(self.line_handle("start", (self.start, 0.), TRIM_HANDLE_RISE, on));
         }
         if let Some(on) = self.on_end.clone() {
-            handles.push(self.trim_handle("end", self.end, self.seconds, on));
+            let values = (self.end, self.seconds);
+            handles.push(self.line_handle("end", values, TRIM_HANDLE_RISE, on));
         }
+        // At the top, clear of the start handle when the loop starts at the start.
+        if let Some((seconds, on)) = self.loop_start.clone() {
+            let rise = INSET_HEIGHT - TRIM_HANDLE_RISE;
+            handles.push(self.line_handle("loop-start", (seconds, self.start), rise, on));
+        }
+        let looped = self
+            .loop_start
+            .as_ref()
+            .map(|(seconds, _)| place(*seconds, self.seconds));
         let display = Display::new(self.id, self.width)
             .waveform(peaks)
             .kept(start, end)
+            .looped(looped)
             .signal_line(signal)
             .curve(self.curve);
         // A drop shown for a gallery hides the handles, as a file dragged over it does.

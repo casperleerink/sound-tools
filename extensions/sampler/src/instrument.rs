@@ -111,9 +111,15 @@ pub(crate) fn instruments_folder(assets: &Assets) -> PathBuf {
 pub(crate) enum Looping {
     /// Plays to its end. A one shot also ignores the key coming up.
     No { one_shot: bool },
-    /// From the first frame of the loop to the frame after its last. A sustain loop ends when
-    /// the key comes up.
-    Loop { start: f64, end: f64, sustain: bool },
+    /// From the first frame of the loop to the frame after its last, in the direction it
+    /// plays. A sustain loop ends when the key comes up. Over the last `crossfade` frames the
+    /// start fades in, and the loop then goes on from there.
+    Loop {
+        start: f64,
+        end: f64,
+        sustain: bool,
+        crossfade: f64,
+    },
 }
 
 /// One region with its sample.
@@ -592,6 +598,8 @@ fn looping(region: &Region, audio: &Audio) -> Looping {
             // The last frame of the loop is in it.
             end: (end + 1) as f64,
             sustain,
+            // An SFZ loop is cut to play as it is.
+            crossfade: 0.0,
         },
         _ => Looping::No { one_shot: false },
     }

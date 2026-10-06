@@ -128,3 +128,41 @@ fn a_gain_edit_while_a_note_sounds_glides_over_20_ms() {
     assert!((played[9_600 + 960] - quieter).abs() < 1e-6);
     assert!((played[15_000] - quieter).abs() < 1e-6);
 }
+
+/// A loop of the sine whose start is far from where its end is: at the trough while the end is
+/// at the peak, a quarter cycle on, and in phase, forwards and reversed. The jump back would
+/// step from one to the other at once; the crossfade of 10 ms, 480 frames, turns it into a
+/// sine that changes its level over a cycle. Two sines in phase add up to 1.41 times as loud
+/// halfway, and each fades by at most `pi / 2 / 480` of its level per frame.
+#[test]
+fn the_loop_point_does_not_click() {
+    let sample = sine(SAMPLE_RATE, 100.0, 0.9, 0.5, 0.25);
+    for (loop_start, reverse) in [
+        (0.005, false),
+        (0.0025, false),
+        (0.01, false),
+        (0.005, true),
+    ] {
+        let state = SamplerState {
+            looping: true,
+            loop_start_seconds: Some(loop_start),
+            reverse,
+            velocity_to_volume: 0.0,
+            ..SamplerState::default()
+        };
+        let notes = vec![note(1_000, 90_000, 60, 127)];
+        let mut harness = Harness::playing(("sine.wav", SAMPLE_RATE, sample.clone()), notes, state);
+        let played = harness.play(90_000);
+        // Past the attack: the file once and then five times around the loop.
+        let step = largest_step(&played[2_000..]);
+        let jump = (sample[23_999] - sample[(loop_start * f64::from(SAMPLE_RATE)) as usize]).abs();
+        let crossfade = 2.0 * 0.9 * std::f32::consts::FRAC_PI_2 / 480.0;
+        let bound = sine_step(0.9 * std::f32::consts::SQRT_2) + crossfade;
+        println!(
+            "loop from {loop_start} s, reverse {reverse}: largest step {step:.4}, bound {bound:.4}, the jump without a crossfade {jump:.4}"
+        );
+        // It sounds the whole time the key is held.
+        assert!(peak(&played[80_000..]) > 0.5);
+        assert!(step <= bound, "{step} > {bound}");
+    }
+}
