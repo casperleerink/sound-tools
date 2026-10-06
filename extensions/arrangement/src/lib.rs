@@ -311,13 +311,10 @@ impl State for TrackState {
         // are all lists with no order to read, so they are refused here and the agent is told
         // where the mistake is. A name with no record is not: that file may still arrive, and
         // the behaviour reports it.
-        for (
-            index,
-            EffectSlot {
+        for (index, slot) in self.effects.iter().enumerate() {
+            let EffectSlot {
                 name, sidechain, ..
-            },
-        ) in self.effects.iter().enumerate()
-        {
+            } = slot;
             if !is_child_name(name) {
                 return Err(format!(
                     "effects[{index}] must be the name of a file in the track folder without `.json`: lowercase letters, digits, `-` and `_`, not {name:?}"
