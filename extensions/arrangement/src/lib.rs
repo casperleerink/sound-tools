@@ -51,7 +51,9 @@ use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, Changes, InputEndpoint, Instance, InstanceId,
     OutputEndpoint, Peaks, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
-use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
+use sound_notes::{
+    AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, SIDECHAIN_INPUT, TRACK_TOOL, Velocity,
+};
 
 pub use audio::AudioClip;
 pub use automation::{
@@ -66,7 +68,7 @@ pub use master::{LimiterState, MasterState};
 pub use mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
 pub use player::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
 pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
-pub use slot::EffectSlot;
+pub use slot::{EffectSlot, Sidechain, Tap};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "arrangement";
@@ -81,6 +83,10 @@ const PLAYER: &str = "player";
 /// this, and the master.
 const MIXER: &str = "mixer/";
 const MASTER: &str = "master";
+/// The ports a track exposes for sidechains: the sound before its effects, and the `sidechain`
+/// input of each keyed effect, by the name of its slot after this.
+const PRE_FX: &str = "pre_fx";
+const SIDECHAIN_OF: &str = "sidechain/";
 /// The peaks an arrangement keeps: of each track, by its name after this, of the master, and
 /// the reduction of the limiter. No child name has a `/`, so no track takes the name of the
 /// master.
@@ -264,6 +270,20 @@ impl TrackState {
         let slot = self.effects.iter().find(|slot| slot.name == name)?;
         Some(slot.bypass)
     }
+
+    /// What keys the effect in the child `name`. `None` when nothing does or the list does not
+    /// name it.
+    pub fn sidechain(&self, name: &str) -> Option<&Sidechain> {
+        let slot = self.effects.iter().find(|slot| slot.name == name)?;
+        slot.sidechain.as_ref()
+    }
+
+    /// Keys the effect in the child `name` with `sidechain`, or with nothing. Whether the list
+    /// names it.
+    pub fn set_sidechain(&mut self, name: &str, sidechain: Option<Sidechain>) -> bool {
+        let slot = self.effects.iter_mut().find(|slot| slot.name == name);
+        slot.map(|slot| slot.sidechain = sidechain).is_some()
+    }
 }
 
 /// One number of a record against its range, with a message an agent can act on.
@@ -291,7 +311,13 @@ impl State for TrackState {
         // are all lists with no order to read, so they are refused here and the agent is told
         // where the mistake is. A name with no record is not: that file may still arrive, and
         // the behaviour reports it.
-        for (index, EffectSlot { name, .. }) in self.effects.iter().enumerate() {
+        for (
+            index,
+            EffectSlot {
+                name, sidechain, ..
+            },
+        ) in self.effects.iter().enumerate()
+        {
             if !is_child_name(name) {
                 return Err(format!(
                     "effects[{index}] must be the name of a file in the track folder without `.json`: lowercase letters, digits, `-` and `_`, not {name:?}"
@@ -306,6 +332,13 @@ impl State for TrackState {
             if earlier.any(|slot| slot.name == *name) {
                 return Err(format!(
                     "effects[{index}] is {name:?}, which the list already has. One effect is one child record: copy the file under another name to use it twice"
+                ));
+            }
+            if let Some(Sidechain { track, .. }) = sidechain
+                && !is_child_name(track)
+            {
+                return Err(format!(
+                    "effects[{index}].sidechain.track must be the folder name of a track: lowercase letters, digits, `-` and `_`, not {track:?}"
                 ));
             }
         }
@@ -377,8 +410,12 @@ fn apply_track(
     // The chain, from the instrument or the player through the effects. A slot that is not
     // there is reported and left out, so the sound goes on through the rest of the chain. A
     // bypassed slot is left out too: the sound goes past it untouched, and its latency with it.
+    if let Some(source) = source {
+        context.output(PRE_FX, source);
+    }
     let mut sound = source;
-    for EffectSlot { name, bypass } in &track.effects {
+    for slot in &track.effects {
+        let EffectSlot { name, bypass, .. } = slot;
         let ports = context
             .child_input(name, AUDIO_INPUT)
             .zip(context.child_output(name, AUDIO_OUTPUT));
@@ -390,6 +427,7 @@ fn apply_track(
         if *bypass {
             continue;
         }
+        expose_sidechain(slot, context);
         if let Some(sound) = sound {
             context.connect(sound.to(input))?;
         }
@@ -405,6 +443,29 @@ fn apply_track(
         ));
     }
     Ok(())
+}
+
+/// Lets the arrangement key the effect of `slot`: its `sidechain` input, as an input of the
+/// track. What can never be live is reported here, where the slot is.
+fn expose_sidechain(slot: &EffectSlot, context: &mut BehaviourContext<'_>) {
+    let Some(Sidechain { track, tap }) = &slot.sidechain else {
+        return;
+    };
+    let name = &slot.name;
+    let Some(input) = context.child_input(name, SIDECHAIN_INPUT) else {
+        context.problem(format!(
+            "`effects` keys {name:?} with a sidechain, and {name}.json holds no tool with a `{SIDECHAIN_INPUT}` input, so nothing keys it. Use an effect that has one, such as the `compressor`, or take `sidechain` out"
+        ));
+        return;
+    };
+    // The sound of this track after this effect comes out of the effect itself.
+    if track == context.id().name() && *tap != Tap::PreFx {
+        context.problem(format!(
+            "the sidechain of {name:?} takes the sound of this same track after {name:?} itself, which would key it in a loop, so nothing keys it. Use \"tap\": \"pre_fx\" to key it with this track before its effects, or take another track"
+        ));
+        return;
+    }
+    context.input(&format!("{SIDECHAIN_OF}{name}"), input);
 }
 
 /// The notes of an instrument track: its sequencer into its instrument. Gives where the sound
@@ -488,15 +549,27 @@ fn apply_arrangement(
             )
         })
         .collect();
+    let sidechains: Vec<(String, String, Sidechain)> = context
+        .children::<TrackState>()
+        .flat_map(|(name, track)| {
+            let slots = track.effects.iter();
+            slots.filter_map(move |slot| {
+                let sidechain = slot.sidechain.clone()?;
+                Some((name.to_string(), slot.name.clone(), sidechain))
+            })
+        })
+        .collect();
 
     let settings = arrangement.master.settings();
     let (peaks, reduction) = (context.peaks(MASTER_PEAKS), context.peaks(REDUCTION_PEAKS));
     let master = context.processor(MASTER, || Master::new(settings, peaks, reduction))?;
     context.update(master, settings)?;
 
+    let mut mixers = BTreeMap::new();
     for (name, mix) in tracks {
         let peaks = context.peaks(&format!("{TRACK_PEAKS}{name}"));
         let mixer = context.processor(&format!("{MIXER}{name}"), || Mixer::new(mix, peaks))?;
+        mixers.insert(name.clone(), mixer);
         context.update(mixer, mix)?;
         if let Some(sound) = context.child_output(&name, AUDIO_OUTPUT) {
             context.connect(sound.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
@@ -506,6 +579,24 @@ fn apply_arrangement(
         }
         let into_master = InputEndpoint::new(master, Master::INPUT);
         context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to(into_master))?;
+    }
+    for (name, slot, Sidechain { track, tap }) in sidechains {
+        let Some(mixer) = mixers.get(&track) else {
+            context.problem(format!(
+                "the sidechain of {slot:?} in track {name:?} takes track {track:?}, and this arrangement has no {track}/instance.json, so nothing keys it. Name the folder of a track, or take `sidechain` out"
+            ));
+            continue;
+        };
+        let sound = match tap {
+            Tap::PreFx => context.child_output(&track, PRE_FX),
+            Tap::PostFx => context.child_output(&track, AUDIO_OUTPUT),
+            Tap::PostMixer => Some(OutputEndpoint::new(*mixer, Mixer::OUTPUT)),
+        };
+        // No input when the slot is bypassed, or its track said why.
+        let key = context.child_input(&name, &format!("{SIDECHAIN_OF}{slot}"));
+        if let Some((sound, key)) = sound.zip(key) {
+            context.connect(sound.to(key))?;
+        }
     }
 
     // The main output, for now: the stereo master on the first two device channels.
