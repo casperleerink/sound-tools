@@ -36,7 +36,9 @@
 //! - `track-panel-compressor.png`: the synth, the filter and the built-in compressor, as in the
 //!   mockup, with the level of a playing chord on its curve and its gain reduction.
 //! - `track-panel-compressor-expanded.png`: the same with the compressor expanded: knee,
-//!   makeup, mix and lookahead.
+//!   makeup, mix and lookahead, and the sidechain off.
+//! - `track-panel-compressor-sidechain.png`: the same keyed from the first track, after its
+//!   effects.
 //! - `track-panel-limiter.png`: the synth and the built-in limiter pushing the bass 18 dB into
 //!   a ceiling of -6 dB, with four seconds of what it sent out and the reduction.
 //! - `track-panel-eq.png`: the synth and the built-in EQ after it, band 3 selected.
@@ -1706,6 +1708,31 @@ fn main() -> Result<()> {
     cx.update(|cx| card.update(cx, |card, cx| card.set_expanded(true, cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "track-panel-compressor-expanded")?;
+    let id = InstanceId::new("arrangement/bass")?;
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let track = session.project().resolve::<TrackState>(&id);
+            let track = track.context("the bass is not there")?;
+            let mut keyed = session
+                .project()
+                .state(&track)
+                .cloned()
+                .context("its state")?;
+            let slot = keyed.effects.last_mut().context("its compressor")?;
+            slot.sidechain = Some(arrangement::Sidechain {
+                track: "track-1".into(),
+                tap: arrangement::Tap::PostFx,
+            });
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&track, keyed);
+                project.commit("Turn on sidechain", changes)
+            });
+            anyhow::Ok(())
+        })
+    })?;
+    cx.run_until_parked();
+    save(&mut cx, &opened, "track-panel-compressor-sidechain")?;
     drop(opened);
 
     // The limiter after the synth, pushing the bass, which peaks at -22 dB, into a ceiling of

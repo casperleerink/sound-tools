@@ -1,7 +1,8 @@
 //! The card of the compressor: the transfer curve with the threshold and ratio handles, the
 //! level now as a dot on it and the gain reduction as a bar, then Threshold, Ratio, Attack and
-//! Release, and behind expand Knee, Makeup, Mix and Lookahead. The rack gives the view a
-//! [`CardFrame`]: the picker of the slot as the title, and the power and close icons.
+//! Release, and behind expand Knee, Makeup, Mix and Lookahead, and the sidechain picker in a
+//! section of its own. The rack gives the view a [`CardFrame`]: the picker of the slot as the
+//! title, the power and close icons, and the sidechain picker.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one
@@ -14,7 +15,7 @@
 use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*, px};
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
-use sound_ui::components::device_card::{CardFrame, Column};
+use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle, INSET_HEIGHT};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -211,7 +212,8 @@ pub struct CompressorView {
     /// The gesture of a drag of a knob or of a handle.
     edit: ControlEdit,
     lanes: Entity<Lanes<CompressorState>>,
-    /// Whether the card shows knee, makeup, mix and lookahead. Interface state: not saved.
+    /// Whether the card shows knee, makeup, mix, lookahead and the sidechain. Interface state:
+    /// not saved.
     expanded: bool,
     /// The select of the lookahead. It is a view of its own because it opens a list; it shows
     /// what the record says, see [`Self::show_lookahead`].
@@ -318,7 +320,7 @@ impl CompressorView {
         }
     }
 
-    /// Shows or hides knee, makeup, mix and lookahead, as the expand icon does.
+    /// Shows or hides knee, makeup, mix, lookahead and the sidechain, as the expand icon does.
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
@@ -465,6 +467,12 @@ impl Render for CompressorView {
         let card = hidden
             .into_iter()
             .fold(card, |card, column| card.hidden_column(column));
+        // Made only while it shows: it reads the tracks.
+        let sidechain = self.expanded.then(|| self.frame.sidechain_column(cx));
+        let card = match sidechain.flatten() {
+            Some(column) => card.section(Section::new().column(column)),
+            None => card,
+        };
         card.into_any_element()
     }
 }

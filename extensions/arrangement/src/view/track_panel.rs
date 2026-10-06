@@ -15,8 +15,9 @@
 //! added or removed next to it.
 //!
 //! The view of a device draws its whole card, from the frame the panel gives it: the picker as
-//! its title, and the power and close icons of an effect. Whether an effect is on is saved on
-//! its slot in the track record, so the panel edits it.
+//! its title, the power and close icons of an effect, and the sidechain picker of an effect
+//! with a `sidechain` input. Whether an effect is on is saved on its slot in the track record,
+//! so the panel edits it.
 //!
 //! The mixer strip of the track (volume, pan, mute and solo) is not a device. It is in the
 //! header column under the name of the track, on the rows of the cards, and the panel edits it
@@ -42,6 +43,7 @@ use gpui::{
     linear_color_stop, linear_gradient, prelude::*, px,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectError, ProjectEvent};
+use sound_notes::SIDECHAIN_INPUT;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT, VALUE_LINE};
 use sound_ui::components::device_card::{
@@ -62,8 +64,9 @@ use sound_ui::{
 use super::clip_card::ClipCard;
 use super::layout::{DOT_LEFT, HEADER_WIDTH, NAME_LEFT};
 use super::paint::accent;
+use super::sidechain;
 use crate::mixer::{GAIN, PAN};
-use crate::{InputChannels, Mix, Mixer, TrackKind, TrackState};
+use crate::{EffectSlot, InputChannels, Mix, Mixer, TrackKind, TrackState};
 
 /// The height of the panel: the cards and 12 pt above and below them.
 pub const PANEL_HEIGHT: f32 = CARD_HEIGHT + 2. * RACK_TOP;
@@ -282,29 +285,46 @@ impl Device {
             Slot::Instrument => frame,
             Slot::Effect => {
                 let (panel, removed, toggled) = (cx.weak_entity(), slot.clone(), slot.clone());
-                let (session, name) = (session.clone(), slot.name().to_string());
+                let project = session.read(cx).project();
                 let track = slot
                     .parent()
-                    .and_then(|track| session.read(cx).project().resolve::<TrackState>(&track));
-                let is_on = move |cx: &App| {
-                    let project = session.read(cx).project();
-                    let track = track.as_ref().and_then(|track| project.state(track));
-                    !track
-                        .and_then(|track| track.bypassed(&name))
-                        .unwrap_or(false)
+                    .and_then(|track| project.resolve::<TrackState>(&track));
+                let keyed = project.input_port(&slot, SIDECHAIN_INPUT).is_some();
+                let is_on = {
+                    let (session, track) = (session.clone(), track.clone());
+                    let name = slot.name().to_string();
+                    move |cx: &App| {
+                        let project = session.read(cx).project();
+                        let track = track.as_ref().and_then(|track| project.state(track));
+                        !track
+                            .and_then(|track| track.bypassed(&name))
+                            .unwrap_or(false)
+                    }
                 };
                 let power_panel = panel.clone();
-                frame
+                let frame = frame
                     .power(is_on, move |_, cx| {
                         power_panel
                             .update(cx, |panel, cx| panel.toggle_bypass(&toggled, cx))
                             .ok();
                     })
-                    .close(move |_, cx| {
-                        panel
-                            .update(cx, |panel, cx| panel.remove_effect(&removed, cx))
-                            .ok();
-                    })
+                    .close({
+                        let panel = panel.clone();
+                        move |_, cx| {
+                            panel
+                                .update(cx, |panel, cx| panel.remove_effect(&removed, cx))
+                                .ok();
+                        }
+                    });
+                match track.filter(|_| keyed) {
+                    Some(track) => frame.sidechain(sidechain::column(
+                        session.clone(),
+                        panel,
+                        track,
+                        slot.clone(),
+                    )),
+                    None => frame,
+                }
             }
         };
         Self {
@@ -408,6 +428,10 @@ impl TrackPanel {
                 // slot that stays. It also says which channels the track records.
                 panel.set_slots(window, cx);
                 panel.refill_input_select(cx);
+                cx.notify();
+            }
+            // Another track came, went or was renamed: a sidechain picker names the tracks.
+            if id != panel.track.id() && id.parent() == panel.track.id().parent() {
                 cx.notify();
             }
             // A record inside the track came or went and has no card: an effect record that
@@ -778,6 +802,24 @@ impl TrackPanel {
     /// Bypasses an effect, or turns it on again: one flag on its slot in the track record, as
     /// one undo step named after it.
     fn toggle_bypass(&mut self, slot: &InstanceId, cx: &mut Context<Self>) {
+        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
+        self.edit_slot(slot, cx, |effect| {
+            effect.bypass = !effect.bypass;
+            match effect.bypass {
+                true => format!("Turn off {name}"),
+                false => format!("Turn on {name}"),
+            }
+        });
+    }
+
+    /// One edit of an effect slot in the track record, as one undo step with the name `edit`
+    /// gives. No step when the slot stays as it was.
+    pub(super) fn edit_slot(
+        &mut self,
+        slot: &InstanceId,
+        cx: &mut Context<Self>,
+        edit: impl FnOnce(&mut EffectSlot) -> String,
+    ) {
         let project = self.session.read(cx).project();
         let Some(mut state) = project.state(&self.track).cloned() else {
             return;
@@ -789,12 +831,11 @@ impl TrackPanel {
         else {
             return;
         };
-        effect.bypass = !effect.bypass;
-        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
-        let label = match effect.bypass {
-            true => format!("Turn off {name}"),
-            false => format!("Turn on {name}"),
-        };
+        let before = effect.clone();
+        let label = edit(effect);
+        if *effect == before {
+            return;
+        }
         self.end_drag(cx);
         let track = self.track.clone();
         self.session.update(cx, |session, cx| {
