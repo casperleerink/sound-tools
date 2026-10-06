@@ -396,6 +396,42 @@ fn a_cycle_through_a_behaviour_connection_leaves_out_the_saved_line() {
     assert_eq!(harness.project.problems().len(), 1);
 }
 
+/// A cycle a behaviour declares is a mistake of the record, such as two tracks that each
+/// listen to the other, not a reason to refuse the edit or to leave the instance out on open.
+#[test]
+fn a_cycle_a_behaviour_declares_leaves_out_that_connection_and_the_rest_plays() {
+    let mut harness = Harness::new();
+    harness.write_and_apply("state/dc.json", &dc_record(0.5));
+    harness.write_and_apply("state/chain.json", CHAIN_RECORD);
+    let links = [amplifier_link("dc", "chain"), dc_to_device("chain")];
+    harness.write_and_apply("project.json", &project_file(&links.join(", ")));
+    assert_eq!(harness.level(), 0.5);
+
+    let feedback = r#"{"tool": "test.chain", "state": {"feedback": true}}"#;
+    assert_eq!(harness.write_and_apply("state/chain.json", feedback), 1);
+    // The connection into the side input is the one left out, so the chain still plays.
+    assert_eq!(harness.level(), 0.5);
+    let problem = harness.problem_at("state/chain.json").unwrap();
+    assert!(problem.contains("chain#last"), "{problem}");
+    assert!(problem.contains("closes a cycle"), "{problem}");
+    assert_eq!(harness.project.problems().len(), 1);
+
+    // Other edits go on, with the connection still left out, also when the chain runs again.
+    harness.write_and_apply("state/dc.json", &dc_record(0.25));
+    harness.project.rebind(&id("chain")).unwrap();
+    assert_eq!(harness.level(), 0.25);
+    assert_eq!(harness.project.problems().len(), 1);
+
+    // It opens like this too.
+    let mut harness = harness.reopen();
+    assert_eq!(harness.level(), 0.25);
+    assert_eq!(harness.problem_at("state/chain.json"), Some(problem));
+
+    harness.write_and_apply("state/chain.json", CHAIN_RECORD);
+    assert_eq!(harness.project.problems(), []);
+    assert_eq!(harness.level(), 0.25);
+}
+
 #[test]
 fn a_record_in_the_wrong_form_for_its_tool_is_reported_with_the_right_path() {
     let mut harness = Harness::new();

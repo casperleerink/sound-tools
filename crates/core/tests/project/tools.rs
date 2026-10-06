@@ -6,7 +6,8 @@
 //!   reads them into one snapshot for its one processor. It sends its signal through its
 //!   owned `output` child, a `test.amplifier`, and on to the device with no `project.json`
 //!   connection. This is the shape of a track with clips and an instrument.
-//! - `test.chain`: two gains in a row, connected by its behaviour.
+//! - `test.chain`: two gains in a row, connected by its behaviour. With `feedback` it also
+//!   connects the last to the side input of the first, which closes a cycle.
 //! - `test.reporter`: data only, with a derive that reports problems.
 
 use std::path::{Path, PathBuf};
@@ -107,6 +108,8 @@ impl Gain {
     }
 
     pub(crate) const INPUT: AudioInput = AudioInput::new(0);
+    /// Heard by nothing. It is there for a chain to close a cycle through.
+    pub(crate) const SIDE: AudioInput = AudioInput::new(1);
     pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
 }
 
@@ -116,6 +119,7 @@ impl Processor for Gain {
     fn ports(&self) -> Ports {
         Ports::new()
             .audio_input(Self::INPUT)
+            .side_audio_input(Self::SIDE)
             .audio_output(Self::OUTPUT)
     }
 
@@ -149,7 +153,10 @@ fn apply_amplifier(
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Chain {}
+pub(crate) struct Chain {
+    #[serde(default)]
+    pub feedback: bool,
+}
 
 impl State for Chain {
     const TOOL: &'static str = "test.chain";
@@ -158,11 +165,15 @@ impl State for Chain {
 pub(crate) const CHAIN_RECORD: &str = r#"{"tool": "test.chain", "state": {}}"#;
 
 /// The last gain is made first, so the connection between the two goes to the lower id.
-fn apply_chain(_: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+fn apply_chain(state: &Chain, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let last = context.processor("last", || Gain::new(1.0))?;
     let first = context.processor("first", || Gain::new(1.0))?;
     let output = OutputEndpoint::new(first, Gain::OUTPUT);
     context.connect(output.to(InputEndpoint::new(last, Gain::INPUT)))?;
+    if state.feedback {
+        let output = OutputEndpoint::new(last, Gain::OUTPUT);
+        context.connect(output.to(InputEndpoint::new(first, Gain::SIDE)))?;
+    }
     context.input("in", InputEndpoint::new(first, Gain::INPUT));
     context.output("out", OutputEndpoint::new(last, Gain::OUTPUT));
     Ok(())

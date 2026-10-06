@@ -330,6 +330,12 @@ impl Edit<'_> {
         self.graph_mut().disconnect(connection)
     }
 
+    /// The connection by the names of its processors, as a cycle error names it.
+    pub(crate) fn describe(&self, connection: &Connection) -> String {
+        let graph = self.graph.as_ref().unwrap_or(&self.control.graph);
+        graph.describe(connection)
+    }
+
     pub fn update<P: Processor>(
         &mut self,
         node: Node<P>,

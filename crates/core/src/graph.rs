@@ -272,7 +272,9 @@ impl Graph {
         self.nodes.get(&id).map_or("?", |node| node.name.as_str())
     }
 
-    fn describe(&self, connection: &Connection) -> String {
+    /// The connection by the names of its processors and its ports. A processor made again
+    /// under the same name reads the same, so it names a connection across edits.
+    pub(crate) fn describe(&self, connection: &Connection) -> String {
         let source = self.name(connection.source);
         let output = connection.output;
         match connection.destination {
@@ -283,6 +285,14 @@ impl Graph {
                 format!("{source} {output:?} -> device output {channel}")
             }
         }
+    }
+
+    fn is_side_input(&self, connection: &Connection) -> bool {
+        let Destination::Node(id, InputPort::Audio(index)) = connection.destination else {
+            return false;
+        };
+        let node = self.nodes.get(&id);
+        node.is_some_and(|node| node.ports.side_audio_inputs.contains(&index))
     }
 
     /// Connections between two processors, as (source, destination, connection).
@@ -361,14 +371,23 @@ impl Graph {
                     .copied()
                     .zip(nodes.iter().copied().skip(1).chain([*source]))
                     .collect();
-                let cycle = self
+                let cycle: Vec<Connection> = self
                     .node_connections()
                     .filter(|(source, destination, _)| fed_by.contains(&(*destination, *source)))
                     .map(|(_, _, connection)| *connection)
                     .collect();
+                // The one named is the one to leave out: one into a side input when the cycle
+                // has one, as only a listener hears it there, then the first by name, so the
+                // choice does not hang on the order the processors were made in.
+                let named = cycle
+                    .iter()
+                    .min_by_key(|connection| {
+                        (!self.is_side_input(connection), self.describe(connection))
+                    })
+                    .unwrap_or(connection);
                 return GraphError::Cycle {
-                    connection: *connection,
-                    description: self.describe(connection),
+                    connection: *named,
+                    description: self.describe(named),
                     cycle,
                 };
             }
