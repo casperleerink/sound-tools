@@ -1,7 +1,7 @@
 //! The project menu: the project name top-left as a quiet menu. Fit the tempo to a take,
 //! export the project or the selected clips as a WAV, undo and redo with what they would do,
 //! the output device by name, another project, the project folder in the Finder or in a
-//! terminal, and the command line tool. The
+//! terminal, the command line tool, and the app version. The
 //! terminal is where the composer starts a coding agent on the project, and the tool is what
 //! that agent runs to read the whole piece.
 
@@ -598,6 +598,7 @@ fn entries(shown: &Shown, device_name: &SharedString) -> Vec<MenuEntry> {
         ),
         MenuEntry::Separator,
         MenuEntry::Group(MenuGroup::new().items(folder_items())),
+        MenuEntry::Note(concat!("Sound Tools ", env!("CARGO_PKG_VERSION")).into()),
     ]
 }
 
