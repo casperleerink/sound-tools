@@ -1,6 +1,6 @@
 //! Word boundaries for option-arrow, option-backspace and double-click, as macOS text fields
 //! find them: a word is a run of letters, digits and underscores, and a jump skips whatever
-//! is between words.
+//! is between words. The agent's answers use the double- and triple-click ones too.
 
 use std::ops::Range;
 
@@ -44,7 +44,7 @@ pub(super) fn next_word_end(text: &str, offset: usize) -> usize {
 
 /// What a double-click at `offset` selects: the word, the run of spaces or the punctuation
 /// mark there. Past the end of a line it takes what is before the caret.
-pub(super) fn word_at(text: &str, offset: usize) -> Range<usize> {
+pub fn word_at(text: &str, offset: usize) -> Range<usize> {
     #[derive(PartialEq)]
     enum Class {
         Word,
@@ -87,7 +87,7 @@ pub(super) fn word_at(text: &str, offset: usize) -> Range<usize> {
 }
 
 /// The hard line around `offset`, without its newline. A triple-click selects it.
-pub(super) fn line_at(text: &str, offset: usize) -> Range<usize> {
+pub fn line_at(text: &str, offset: usize) -> Range<usize> {
     let (Some(before), Some(after)) = (text.get(..offset), text.get(offset..)) else {
         return offset..offset;
     };

@@ -15,7 +15,7 @@
 //! before the break, because the offset at the break belongs to the next row.
 
 mod rows;
-mod words;
+pub mod words;
 
 use std::ops::Range;
 use std::rc::Rc;
