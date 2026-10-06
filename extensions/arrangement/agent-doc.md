@@ -146,9 +146,10 @@ An effect with a `sidechain` input, such as the `compressor`, can follow the sou
 ```
 
 - `track`: the folder name of the track that keys it. It may be the same track.
-- `tap`: where its sound is taken. `pre_fx`: what its instrument or clips play, before its effects. `post_fx`: after its effects, before its volume, pan, mute and solo. `post_mixer`: what it sends to the master, so a muted track keys nothing.
+- `tap`: where its sound is taken. `pre_fx`: what its instrument or clips play, before its effects. `post_fx`: after its effects, before its volume, pan, mute and solo. `post_mixer`: what it sends to the master.
+- A track silenced by its mute or by the solo of another track keys nothing with `post_mixer`. Use `post_fx` to keep the key while you solo.
 - Leave `sidechain` out for none. A bypassed effect is keyed by nothing.
-- A track keys its own effect only with `pre_fx`: after its effects, the sound comes out of that effect. This, a track that does not exist and an effect with no `sidechain` input are reported in `problems.txt`.
+- Keys after the effects must not make a loop: a track that keys its own effect, or two that key each other, need `pre_fx` on one key. A loop, a track that does not exist and an effect with no `sidechain` input are reported in `problems.txt`, and the effect follows its own sound.
 
 ## Automation: lanes of a track
 
