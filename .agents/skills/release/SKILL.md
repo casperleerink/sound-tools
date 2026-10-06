@@ -70,10 +70,12 @@ GH_TOKEN=$(gh auth token -u casperleerink) gh pr merge <number> --merge
 
 ## 5. Tag
 
-Tag the merge commit, not a commit of the branch:
+Tag the merge commit, not a commit of the branch. A pull request runs only part of CI, so wait for main's full run on that commit first. It must end `success`:
 
 ```sh
 sha=$(gh pr view <number> --json mergeCommit --jq .mergeCommit.oid)
+gh run list --workflow ci.yml --branch main --commit "$sha" --json databaseId,status,conclusion
+gh run watch <id> --exit-status
 git fetch origin
 git switch main && git merge --ff-only origin/main
 git tag -a "v$VERSION" "$sha" -m "Sound Tools $VERSION"

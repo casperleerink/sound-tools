@@ -63,7 +63,7 @@ How the engine keeps to that:
 
 `Engine::process_block` is marked `#[nonblocking]` with `rtsan-standalone`. It does nothing unless the build sets `RTSAN_ENABLE=1`. Then it aborts on any allocation, lock or system call inside `process_block`, which covers every `update` and `process`. The input device callback (`CaptureWriter::write`) is marked the same way.
 
-- The CI job `test` in `.github/workflows/ci.yml` runs the whole test suite with the sanitizer on.
+- The CI job `test` in `.github/workflows/ci.yml` runs the whole test suite with the sanitizer on, on main.
 - A test in `crates/core/tests/engine.rs` starts a child that allocates inside `process` and expects the abort, so a sanitizer that is silently off fails CI.
 - `HostedPlugin` wraps each call into a third-party plugin in a `ScopedDisabler`: what a plugin does inside itself is not ours to check. Because that could hide our own buffers growing, the plugin host is also tested with a counting global allocator.
 
@@ -89,11 +89,11 @@ How the engine keeps to that:
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
 - While working, test the crates you changed: `cargo nextest run -p <crate>`. Run the whole workspace once, before the PR. A workspace run takes about a minute; most of it is compiling and linking.
 
-CI runs the commands of [README.md](README.md), "Checks", with the realtime sanitizer on for the macOS tests. The jobs (lint, test, Linux, Windows) run side by side. Lint and test run on macOS; the Linux and Windows jobs build and run the tests on Ubuntu and Windows. Add Miri for new unsafe code.
+CI runs the commands of [README.md](README.md), "Checks", with the realtime sanitizer on for the macOS tests. The jobs (lint, test, Linux, Windows) run side by side. Lint and test run on macOS; the Linux and Windows jobs build and run the tests on Ubuntu and Windows. A pull request runs only lint, the Linux tests and clippy on Windows, to stay fast; main runs everything, and a release needs main green on its commit. Add Miri for new unsafe code.
 
 To try Linux from a Mac: an `ubuntu:24.04` Docker container with the README packages, `CARGO_TARGET_DIR` on a volume, run as a normal user (root can write into the read-only folders some tests make). For the window add `xvfb` and `mesa-vulkan-drivers` and a null sound card. Set `CARGO_BUILD_JOBS=4` on Docker Desktop's default memory.
 
-To check Windows from a Mac: `cargo install cargo-xwin`, `brew install llvm`, `rustup target add x86_64-pc-windows-msvc`, then `cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets` with `/opt/homebrew/opt/llvm/bin` on the `PATH`. It catches compile errors in minutes; only the Windows CI job runs the tests. If gpui's build script says llvm-rc cannot find `resources/windows/gpui.manifest.xml`, copy gpui's `resources/windows` folder into the `out/resources/` folder of that build.
+To check Windows from a Mac: `cargo install cargo-xwin`, `brew install llvm`, `rustup target add x86_64-pc-windows-msvc`, then `cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets` with `/opt/homebrew/opt/llvm/bin` on the `PATH`. It catches compile errors in minutes; only the Windows CI job on main runs the tests. If gpui's build script says llvm-rc cannot find `resources/windows/gpui.manifest.xml`, copy gpui's `resources/windows` folder into the `out/resources/` folder of that build.
 
 ## GPUI version
 

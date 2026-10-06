@@ -12,9 +12,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
-# Three jobs run side by side. Each builds what it needs and keeps its own cache. Only main saves
+# The jobs run side by side. Each builds what it needs and keeps its own cache. Only main saves
 # the caches, so pull requests do not push main's out of the 10 GB limit. A change that only
 # touches `docs/` runs the lint job and skips the others.
+#
+# A pull request runs lint, the Linux tests and clippy on Windows: about 7 minutes. Main runs the
+# full set on every platform, and a release is tagged only on a commit that passed it.
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -54,9 +57,10 @@ jobs:
       - run: cargo shear
       - run: cargo deny check
 
+  # Main only: the slowest tests after Windows. Clippy in the lint job covers macOS on a pull request.
   test:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && github.event_name == 'push'
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -107,8 +111,9 @@ jobs:
       - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
       - run: cargo nextest run --workspace --locked
 
-  # Windows builds, lints and runs the tests. Nobody here has a Windows computer, so this job is
-  # how Windows-only failures show up.
+  # Windows lints, and on main builds and runs the tests. Nobody here has a Windows computer, so
+  # this job is how Windows-only failures show up. Its tests take about 15 minutes, too slow for
+  # every pull request; clippy catches the compile errors.
   windows:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -130,5 +135,7 @@ jobs:
         with:
           tool: cargo-nextest
       - run: cargo clippy --workspace --all-targets --locked
-      - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
-      - run: cargo nextest run --workspace --locked --no-fail-fast
+      - if: github.event_name == 'push'
+        run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
+      - if: github.event_name == 'push'
+        run: cargo nextest run --workspace --locked --no-fail-fast

@@ -149,7 +149,7 @@ cargo shear
 cargo deny check
 ```
 
-CI runs the same on macOS with the realtime sanitizer on, and the tests on Linux, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`. The plugin build comes first because the tests load the repository's own CLAP and VST 3 test plugins, which `cargo test` does not build.
+CI runs the same on macOS with the realtime sanitizer on, and the tests on Linux and Windows, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`. The plugin build comes first because the tests load the repository's own CLAP and VST 3 test plugins, which `cargo test` does not build.
 
 The two snapshot tests render the UI components and the window to PNGs without opening a window: `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`. They print the folder they write to. CI does not run them; run them after a UI change and look at the PNGs. `cargo run -p gallery` opens the component gallery in a window.
 
