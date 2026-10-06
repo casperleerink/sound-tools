@@ -121,6 +121,36 @@ An effect is any tool with an `audio` input and an `audio` output. Today that is
 
 To turn an effect off for a while, write its slot as `{"name": "warmth", "bypass": true}`, and as `"warmth"` again to turn it on. The sound goes past it untouched, without its latency, and its record stays.
 
+An effect with a `sidechain` input, such as the `compressor`, can follow the sound of another track instead of its own: the bass ducks while the kick plays. Its slot says which track keys it. Here the drums key the compressor `duck` of the sub bass, which turns the bass down on every hit:
+
+```json state/arrangement/sub/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {
+    "name": "Sub",
+    "colour": "red",
+    "order": 4,
+    "gain_db": 0.0,
+    "pan": 0.0,
+    "mute": false,
+    "effects": [{"name": "duck", "sidechain": {"track": "drums", "tap": "post_fx"}}]
+  }
+}
+```
+
+```json state/arrangement/sub/duck.json
+{
+  "tool": "compressor",
+  "state": {"threshold_db": -30.0, "ratio": 8.0, "attack_ms": 1.0, "release_ms": 150.0}
+}
+```
+
+- `track`: the folder name of the track that keys it. It may be the same track.
+- `tap`: where its sound is taken. `pre_fx`: what its instrument or clips play, before its effects. `post_fx`: after its effects, before its volume, pan, mute and solo. `post_mixer`: what it sends to the master.
+- A track silenced by its mute or by the solo of another track keys nothing with `post_mixer`. Use `post_fx` to keep the key while you solo.
+- Leave `sidechain` out for none. A bypassed effect is keyed by nothing.
+- Keys after the effects must not make a loop: a track that keys its own effect, or two that key each other, need `pre_fx` on one key. A loop, a track that does not exist and an effect with no `sidechain` input are reported in `problems.txt`, and the effect follows its own sound.
+
 ## Automation: lanes of a track
 
 A track can move a number of one of its devices, or its own volume or pan, over time. Each number that moves has a lane in `automation` in the track record, with points in project ticks.

@@ -51,7 +51,9 @@ use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, Changes, InputEndpoint, Instance, InstanceId,
     OutputEndpoint, Peaks, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
-use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, TRACK_TOOL, Velocity};
+use sound_notes::{
+    AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, SIDECHAIN_INPUT, TRACK_TOOL, Velocity,
+};
 
 pub use audio::AudioClip;
 pub use automation::{
@@ -66,7 +68,7 @@ pub use master::{LimiterState, MasterState};
 pub use mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
 pub use player::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
 pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
-pub use slot::EffectSlot;
+pub use slot::{EffectSlot, Sidechain, Tap};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "arrangement";
@@ -81,6 +83,10 @@ const PLAYER: &str = "player";
 /// this, and the master.
 const MIXER: &str = "mixer/";
 const MASTER: &str = "master";
+/// The ports a track exposes for sidechains: the sound before its effects, and the `sidechain`
+/// input of each keyed effect, by the name of its slot after this.
+const PRE_FX: &str = "pre_fx";
+const SIDECHAIN_OF: &str = "sidechain/";
 /// The peaks an arrangement keeps: of each track, by its name after this, of the master, and
 /// the reduction of the limiter. No child name has a `/`, so no track takes the name of the
 /// master.
@@ -364,7 +370,9 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 /// The path of an instrument track is sequencer, instrument, the effects in the order of the
 /// record that are not bypassed, and out through its `audio` output, which its arrangement
 /// mixes. An audio track has its player where the other has sequencer and instrument. Every
-/// processor keeps what it holds: a note goes on sounding through an edit of a clip.
+/// processor keeps what it holds: a note goes on sounding through an edit of a clip. For its
+/// arrangement to wire sidechains, it also exposes its sound before the effects and the
+/// `sidechain` input of each keyed effect.
 fn apply_track(
     track: &TrackState,
     context: &mut BehaviourContext<'_>,
@@ -377,8 +385,12 @@ fn apply_track(
     // The chain, from the instrument or the player through the effects. A slot that is not
     // there is reported and left out, so the sound goes on through the rest of the chain. A
     // bypassed slot is left out too: the sound goes past it untouched, and its latency with it.
+    if let Some(source) = source {
+        context.output(PRE_FX, source);
+    }
     let mut sound = source;
-    for EffectSlot { name, bypass } in &track.effects {
+    for slot in &track.effects {
+        let EffectSlot { name, bypass, .. } = slot;
         let ports = context
             .child_input(name, AUDIO_INPUT)
             .zip(context.child_output(name, AUDIO_OUTPUT));
@@ -390,6 +402,7 @@ fn apply_track(
         if *bypass {
             continue;
         }
+        expose_sidechain(slot, context);
         if let Some(sound) = sound {
             context.connect(sound.to(input))?;
         }
@@ -405,6 +418,22 @@ fn apply_track(
         ));
     }
     Ok(())
+}
+
+/// Lets the arrangement key the effect of `slot`: its `sidechain` input, as an input of the
+/// track.
+fn expose_sidechain(slot: &EffectSlot, context: &mut BehaviourContext<'_>) {
+    if slot.sidechain.is_none() {
+        return;
+    }
+    let name = &slot.name;
+    let Some(input) = context.child_input(name, SIDECHAIN_INPUT) else {
+        context.problem(format!(
+            "`effects` keys {name:?} with a sidechain, and {name}.json holds no tool with a `{SIDECHAIN_INPUT}` input, so the sidechain is not used. Use an effect that has one, such as the `compressor`, or take `sidechain` out"
+        ));
+        return;
+    };
+    context.input(&format!("{SIDECHAIN_OF}{name}"), input);
 }
 
 /// The notes of an instrument track: its sequencer into its instrument. Gives where the sound
@@ -488,15 +517,28 @@ fn apply_arrangement(
             )
         })
         .collect();
+    // A bypassed slot is keyed by nothing.
+    let keys: Vec<Key> = context
+        .children::<TrackState>()
+        .flat_map(|(name, track)| {
+            let slots = track.effects.iter().filter(|slot| !slot.bypass);
+            slots.filter_map(move |slot| {
+                let sidechain = slot.sidechain.clone()?;
+                Some((name.to_string(), slot.name.clone(), sidechain))
+            })
+        })
+        .collect();
 
     let settings = arrangement.master.settings();
     let (peaks, reduction) = (context.peaks(MASTER_PEAKS), context.peaks(REDUCTION_PEAKS));
     let master = context.processor(MASTER, || Master::new(settings, peaks, reduction))?;
     context.update(master, settings)?;
 
+    let mut mixers = BTreeMap::new();
     for (name, mix) in tracks {
         let peaks = context.peaks(&format!("{TRACK_PEAKS}{name}"));
         let mixer = context.processor(&format!("{MIXER}{name}"), || Mixer::new(mix, peaks))?;
+        mixers.insert(name.clone(), mixer);
         context.update(mixer, mix)?;
         if let Some(sound) = context.child_output(&name, AUDIO_OUTPUT) {
             context.connect(sound.to(InputEndpoint::new(mixer, Mixer::INPUT)))?;
@@ -507,12 +549,79 @@ fn apply_arrangement(
         let into_master = InputEndpoint::new(master, Master::INPUT);
         context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to(into_master))?;
     }
+    for (name, slot, Sidechain { track, tap }) in &keys {
+        let falls_back = format!("so {slot:?} in track {name:?} follows its own sound");
+        let Some(mixer) = mixers.get(track) else {
+            context.problem(format!(
+                "the sidechain of {slot:?} in track {name:?} takes track {track:?}, and this arrangement has no {track}/instance.json, {falls_back}. Name the folder of a track, or take `sidechain` out"
+            ));
+            continue;
+        };
+        if *tap != Tap::PreFx
+            && let Some(back) = loop_back(&keys, track, name)
+        {
+            let mut chain = vec![name.as_str()];
+            chain.extend(back);
+            let links: Vec<String> = chain
+                .windows(2)
+                .map(|pair| format!("{:?} is keyed by {:?}", pair[0], pair[1]))
+                .collect();
+            context.problem(format!(
+                "the sidechain of {slot:?} in track {name:?} closes a loop: {}, each after the effects of the track that keys it. A sound cannot key itself, {falls_back}. Use \"tap\": \"pre_fx\" for one of them, or take one out",
+                links.join(" and ")
+            ));
+            continue;
+        }
+        let sound = match tap {
+            Tap::PreFx => context.child_output(track, PRE_FX),
+            Tap::PostFx => context.child_output(track, AUDIO_OUTPUT),
+            Tap::PostMixer => Some(OutputEndpoint::new(*mixer, Mixer::OUTPUT)),
+        };
+        // No input when its track said why.
+        let Some(key) = context.child_input(name, &format!("{SIDECHAIN_OF}{slot}")) else {
+            continue;
+        };
+        let Some(sound) = sound else {
+            context.problem(format!(
+                "the sidechain of {slot:?} in track {name:?} takes track {track:?}, which has no instrument that plays, {falls_back}"
+            ));
+            continue;
+        };
+        context.connect(sound.to(key))?;
+    }
 
     // The main output, for now: the stereo master on the first two device channels.
     if context.device_channels() > 0 {
         context.connect(OutputEndpoint::new(master, Master::OUTPUT).to_device(0))?;
     }
     Ok(())
+}
+
+/// A sidechain of a slot that is on: the track of the slot, the slot, and what keys it.
+type Key = (String, String, Sidechain);
+
+/// The tracks from `from` to `to`, each keyed after the effects of the next, so each waits for
+/// the next to play. `None` when `from` does not wait for `to`. A key before the effects waits
+/// for nothing that can be keyed.
+fn loop_back<'a>(keys: &'a [Key], from: &'a str, to: &str) -> Option<Vec<&'a str>> {
+    let mut paths = vec![vec![from]];
+    let mut seen = BTreeSet::new();
+    while let Some(path) = paths.pop() {
+        let last = *path.last()?;
+        if last == to {
+            return Some(path);
+        }
+        if !seen.insert(last) {
+            continue;
+        }
+        let waits = keys
+            .iter()
+            .filter(|(keyed, _, Sidechain { tap, .. })| keyed == last && *tap != Tap::PreFx);
+        for (_, _, Sidechain { track, .. }) in waits {
+            paths.push([path.as_slice(), &[track.as_str()]].concat());
+        }
+    }
+    None
 }
 
 /// The peaks of what a track sends to the master, after its volume, pan, mute and solo: its

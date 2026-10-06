@@ -283,6 +283,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/riser/dark",
             "arrangement/strings",
             "arrangement/strings/instrument",
+            "arrangement/sub",
+            "arrangement/sub/duck",
             "arrangement/synth",
             "arrangement/synth/instrument",
             "arrangement/violins",

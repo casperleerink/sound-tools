@@ -119,8 +119,8 @@ fn a_reorder_renders_what_a_project_written_in_that_order_renders() {
         );
         reordered.project.commit("Move late", changes).unwrap();
         let bypassed = |name: &str, bypass| EffectSlot {
-            name: name.into(),
             bypass,
+            ..EffectSlot::new(name)
         };
         assert_eq!(
             effects(&reordered),

@@ -1,10 +1,11 @@
-//! One effect slot of a track: the name of the child that holds the effect, and whether the
-//! slot is bypassed.
+//! One effect slot of a track: the name of the child that holds the effect, whether the slot
+//! is bypassed, and the track that keys its sidechain.
 //!
-//! Bypass is saved on the slot and not in the record of the effect, so a plugin and a built-in
-//! effect share it and no effect has to know about it. A slot that is on is saved as the plain
-//! name, the form every record had before bypass, so such a record is written back the same.
-//! A bypassed one is saved as `{"name": "space", "bypass": true}`.
+//! Bypass and sidechain are saved on the slot and not in the record of the effect, so a plugin
+//! and a built-in effect share them and no effect has to know about them. A plain slot is saved
+//! as the name, the form every record had before bypass, so such a record is written back the
+//! same. Any other is saved as `{"name": "space", "bypass": true}`, or
+//! `{"name": "duck", "sidechain": {"track": "kick", "tap": "post_fx"}}`.
 
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -15,6 +16,32 @@ pub struct EffectSlot {
     pub name: String,
     /// A bypassed effect is out of the chain: the sound goes past it untouched.
     pub bypass: bool,
+    /// The sound that keys the `sidechain` input of the effect. `None` is nothing.
+    pub sidechain: Option<Sidechain>,
+}
+
+/// The track of the same arrangement, by folder name, and the tap that keys an effect.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    deny_unknown_fields,
+    expecting = r#"an object such as {"track": "kick", "tap": "post_fx"}, or null"#
+)]
+pub struct Sidechain {
+    /// The folder name of the track.
+    pub track: String,
+    pub tap: Tap,
+}
+
+/// Where on its track a sidechain takes the sound.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tap {
+    /// What the instrument or the player makes, before the effects of the track.
+    PreFx,
+    /// The end of the chain of the track, before its volume, pan, mute and solo.
+    PostFx,
+    /// What the track sends to the master, after its volume, pan, mute and solo.
+    PostMixer,
 }
 
 impl EffectSlot {
@@ -23,29 +50,33 @@ impl EffectSlot {
         Self {
             name: name.into(),
             bypass: false,
+            sidechain: None,
         }
     }
 }
 
-/// The long form of a slot, and the only one that can say `bypass`.
+/// The long form of a slot, and the only one that can say `bypass` or `sidechain`.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Written {
     name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     bypass: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sidechain: Option<Sidechain>,
 }
 
 impl Serialize for EffectSlot {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.bypass {
-            false => serializer.serialize_str(&self.name),
-            true => Written {
-                name: self.name.clone(),
-                bypass: true,
-            }
-            .serialize(serializer),
+        if !self.bypass && self.sidechain.is_none() {
+            return serializer.serialize_str(&self.name);
         }
+        Written {
+            name: self.name.clone(),
+            bypass: self.bypass,
+            sidechain: self.sidechain.clone(),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -63,7 +94,7 @@ impl<'de> Visitor<'de> for SlotVisitor {
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             formatter,
-            r#"the file name of an effect, such as "space", or {{"name": "space", "bypass": true}}"#
+            r#"the file name of an effect, such as "space", or {{"name": "space", "bypass": true}}, or {{"name": "duck", "sidechain": {{"track": "kick", "tap": "post_fx"}}}}"#
         )
     }
 
@@ -73,36 +104,52 @@ impl<'de> Visitor<'de> for SlotVisitor {
 
     fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<EffectSlot, M::Error> {
         // Through the derived form, so an unknown field or a missing name says so.
-        let Written { name, bypass } =
-            Written::deserialize(de::value::MapAccessDeserializer::new(map))?;
-        Ok(EffectSlot { name, bypass })
+        let Written {
+            name,
+            bypass,
+            sidechain,
+        } = Written::deserialize(de::value::MapAccessDeserializer::new(map))?;
+        Ok(EffectSlot {
+            name,
+            bypass,
+            sidechain,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::EffectSlot;
+    use super::{EffectSlot, Sidechain, Tap};
 
     #[test]
-    fn a_slot_that_is_on_is_its_name_and_a_bypassed_one_says_so() {
+    fn a_plain_slot_is_its_name_and_any_other_says_what_it_has() {
         let slots: Vec<EffectSlot> = serde_json::from_str(
-            r#"["warmth", {"name": "space", "bypass": true}, {"name": "echo"}]"#,
+            r#"["warmth", {"name": "space", "bypass": true}, {"name": "echo", "sidechain": null}, {"name": "duck", "sidechain": {"track": "kick", "tap": "post_mixer"}}]"#,
         )
         .unwrap();
+        let duck = EffectSlot {
+            sidechain: Some(Sidechain {
+                track: "kick".into(),
+                tap: Tap::PostMixer,
+            }),
+            ..EffectSlot::new("duck")
+        };
+        let space = EffectSlot {
+            bypass: true,
+            ..EffectSlot::new("space")
+        };
         assert_eq!(
             slots,
             [
                 EffectSlot::new("warmth"),
-                EffectSlot {
-                    name: "space".into(),
-                    bypass: true
-                },
+                space,
                 EffectSlot::new("echo"),
+                duck
             ]
         );
         assert_eq!(
             serde_json::to_string(&slots).unwrap(),
-            r#"["warmth",{"name":"space","bypass":true},"echo"]"#
+            r#"["warmth",{"name":"space","bypass":true},"echo",{"name":"duck","sidechain":{"track":"kick","tap":"post_mixer"}}]"#
         );
     }
 
@@ -118,6 +165,15 @@ mod tests {
         assert!(
             unknown.to_string().contains("unknown field `off`"),
             "{unknown}"
+        );
+        let sidechain =
+            serde_json::from_str::<EffectSlot>(r#"{"name": "duck", "sidechain": "kick"}"#)
+                .unwrap_err();
+        assert!(
+            sidechain
+                .to_string()
+                .contains(r#"expected an object such as {"track": "kick", "tap": "post_fx"}"#),
+            "{sidechain}"
         );
     }
 }
