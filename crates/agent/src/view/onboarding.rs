@@ -1,9 +1,14 @@
-//! What the sidebar shows until the agent is ready: the download, then the sign-in. Plain
-//! state in, buttons out, so the gallery shows every state with no process.
+//! What the sidebar shows until the agent is ready: a skeleton of the thread while it checks,
+//! the download, then the sign-in. Plain state in, buttons out, so the gallery shows every
+//! state with no process.
 
 use std::rc::Rc;
+use std::time::Duration;
 
-use gpui::{App, SharedString, Window, div, prelude::*, px};
+use gpui::{
+    Animation, AnimationExt, AnyElement, App, SharedString, Window, div, prelude::*,
+    pulsating_between, px, relative,
+};
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 
@@ -81,13 +86,68 @@ impl Onboarding {
     }
 }
 
+/// The height of the sidebar's composer box with one line of text.
+const COMPOSER_HEIGHT: f32 = 110.;
+
 /// Bytes as the composer reads a download: whole megabytes.
 fn megabytes(bytes: u64) -> u64 {
     (bytes + (1 << 19)) >> 20
 }
 
+/// The thread as it will show, in grey and pulsing: a message, an answer and the composer.
+/// Most starts end signed in, so the thread takes the same place without a jump.
+fn skeleton(cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let (bar, border, fill) = (theme.alpha_at(0.05), theme.alpha_at(0.10), theme.gray_200);
+    let line = |width: f32| div().h(px(12.)).w(relative(width)).rounded(px(6.)).bg(bar);
+    let thread = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap(px(24.))
+        .px(px(24.))
+        .pt(px(8.))
+        // A message: one line of text in the padding of its box.
+        .child(div().h(px(50.)).rounded(px(12.)).bg(bar))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(line(1.))
+                .child(line(0.85))
+                .child(line(0.6)),
+        )
+        .with_animation(
+            "agent-skeleton",
+            Animation::new(Duration::from_millis(1500))
+                .repeat()
+                .with_easing(pulsating_between(0.4, 1.0)),
+            |thread, delta| thread.opacity(delta),
+        );
+    // The composer's box, as tall as it is with one line.
+    let composer = div().px(px(12.)).pb(px(12.)).pt(px(8.)).child(
+        div()
+            .h(px(COMPOSER_HEIGHT))
+            .rounded(px(20.))
+            .border_1()
+            .border_color(border)
+            .bg(fill),
+    );
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .child(thread)
+        .child(composer)
+        .into_any_element()
+}
+
 impl RenderOnce for Onboarding {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.setup == Setup::Checking {
+            return skeleton(cx);
+        }
         let theme = cx.theme();
         let (text, muted) = (theme.gray_900, theme.gray_700);
         let name = self.provider.name();
@@ -236,6 +296,7 @@ impl RenderOnce for Onboarding {
                         .children(buttons),
                 )
             })
+            .into_any_element()
     }
 }
 

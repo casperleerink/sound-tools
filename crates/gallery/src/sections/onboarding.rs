@@ -1,5 +1,5 @@
-//! Onboarding section: every state of the agent sidebar before the thread shows, from
-//! **Set up** to signed in, each in a frame as wide as the sidebar.
+//! Onboarding section: every state of the agent sidebar before the thread shows, from the
+//! skeleton while it checks and **Set up** to signed in, each in a frame as wide as the sidebar.
 
 use gpui::{App, FontWeight, IntoElement, ParentElement, Styled, Window, div, prelude::*, px};
 use sound_agent::{Onboarding, Provider, Setup};
@@ -15,6 +15,7 @@ pub fn section(_window: &mut Window, cx: &mut App) -> impl IntoElement {
         .download()
         .map_or(0, |download| download.size);
     let states = [
+        ("Checking", Setup::Checking),
         ("Not installed", Setup::NotInstalled),
         (
             "Downloading",
