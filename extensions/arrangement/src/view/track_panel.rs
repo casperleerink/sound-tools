@@ -15,8 +15,9 @@
 //! added or removed next to it.
 //!
 //! The view of a device draws its whole card, from the frame the panel gives it: the picker as
-//! its title, and the power and close icons of an effect. Whether an effect is on is saved on
-//! its slot in the track record, so the panel edits it.
+//! its title, the power and close icons of an effect, and the sidechain picker of an effect
+//! with a `sidechain` input. Whether an effect is on and what keys it are saved on its slot in
+//! the track record, so the panel edits them.
 //!
 //! The mixer strip of the track (volume, pan, mute and solo) is not a device. It is in the
 //! header column under the name of the track, on the rows of the cards, and the panel edits it
@@ -42,6 +43,7 @@ use gpui::{
     linear_color_stop, linear_gradient, prelude::*, px,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectError, ProjectEvent};
+use sound_notes::SIDECHAIN_INPUT;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT, VALUE_LINE};
 use sound_ui::components::device_card::{
@@ -62,8 +64,9 @@ use sound_ui::{
 use super::clip_card::ClipCard;
 use super::layout::{DOT_LEFT, HEADER_WIDTH, NAME_LEFT};
 use super::paint::accent;
+use super::sidechain;
 use crate::mixer::{GAIN, PAN};
-use crate::{InputChannels, Mix, Mixer, TrackKind, TrackState};
+use crate::{EffectSlot, InputChannels, Mix, Mixer, Sidechain, Tap, TrackKind, TrackState};
 
 /// The height of the panel: the cards and 12 pt above and below them.
 pub const PANEL_HEIGHT: f32 = CARD_HEIGHT + 2. * RACK_TOP;
@@ -277,34 +280,52 @@ impl Device {
         };
         // An effect comes off the track by the close icon of its card, and is bypassed by its
         // power icon. Both hold the panel weakly, as every callback of a control does. Whether
-        // it is on is read from the track record when the card draws.
+        // it is on is read from the track record when the card draws, and so is what keys an
+        // effect that takes a sidechain.
         let frame = match kind {
             Slot::Instrument => frame,
             Slot::Effect => {
                 let (panel, removed, toggled) = (cx.weak_entity(), slot.clone(), slot.clone());
-                let (session, name) = (session.clone(), slot.name().to_string());
+                let project = session.read(cx).project();
                 let track = slot
                     .parent()
-                    .and_then(|track| session.read(cx).project().resolve::<TrackState>(&track));
-                let is_on = move |cx: &App| {
-                    let project = session.read(cx).project();
-                    let track = track.as_ref().and_then(|track| project.state(track));
-                    !track
-                        .and_then(|track| track.bypassed(&name))
-                        .unwrap_or(false)
+                    .and_then(|track| project.resolve::<TrackState>(&track));
+                let keyed = project.input_port(&slot, SIDECHAIN_INPUT).is_some();
+                let is_on = {
+                    let (session, track) = (session.clone(), track.clone());
+                    let name = slot.name().to_string();
+                    move |cx: &App| {
+                        let project = session.read(cx).project();
+                        let track = track.as_ref().and_then(|track| project.state(track));
+                        !track
+                            .and_then(|track| track.bypassed(&name))
+                            .unwrap_or(false)
+                    }
                 };
                 let power_panel = panel.clone();
-                frame
+                let frame = frame
                     .power(is_on, move |_, cx| {
                         power_panel
                             .update(cx, |panel, cx| panel.toggle_bypass(&toggled, cx))
                             .ok();
                     })
-                    .close(move |_, cx| {
-                        panel
-                            .update(cx, |panel, cx| panel.remove_effect(&removed, cx))
-                            .ok();
-                    })
+                    .close({
+                        let panel = panel.clone();
+                        move |_, cx| {
+                            panel
+                                .update(cx, |panel, cx| panel.remove_effect(&removed, cx))
+                                .ok();
+                        }
+                    });
+                match track.filter(|_| keyed) {
+                    Some(track) => frame.sidechain(sidechain::column(
+                        session.clone(),
+                        panel,
+                        track,
+                        slot.clone(),
+                    )),
+                    None => frame,
+                }
             }
         };
         Self {
@@ -778,6 +799,54 @@ impl TrackPanel {
     /// Bypasses an effect, or turns it on again: one flag on its slot in the track record, as
     /// one undo step named after it.
     fn toggle_bypass(&mut self, slot: &InstanceId, cx: &mut Context<Self>) {
+        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
+        self.edit_slot(slot, cx, |effect| {
+            effect.bypass = !effect.bypass;
+            match effect.bypass {
+                true => format!("Turn off {name}"),
+                false => format!("Turn on {name}"),
+            }
+        });
+    }
+
+    /// Keys the effect in `slot` from a track, by folder name, or from nothing. A key from no
+    /// track takes the sound after the effects of the source; another track keeps the tap.
+    pub(super) fn key_effect(
+        &mut self,
+        slot: &InstanceId,
+        source: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit_slot(slot, cx, |effect| {
+            let label = match (&effect.sidechain, &source) {
+                (_, None) => "Turn off sidechain",
+                (None, Some(_)) => "Turn on sidechain",
+                (Some(_), Some(_)) => "Change sidechain",
+            };
+            let tap = effect.sidechain.as_ref().map_or(Tap::PostFx, |key| key.tap);
+            effect.sidechain = source.map(|track| Sidechain { track, tap });
+            label.into()
+        });
+    }
+
+    /// Where on its track the sidechain of the effect in `slot` takes the sound.
+    pub(super) fn set_tap(&mut self, slot: &InstanceId, tap: Tap, cx: &mut Context<Self>) {
+        self.edit_slot(slot, cx, |effect| {
+            if let Some(key) = &mut effect.sidechain {
+                key.tap = tap;
+            }
+            "Change sidechain tap".into()
+        });
+    }
+
+    /// One edit of an effect slot in the track record, as one undo step with the name `edit`
+    /// gives. No step when the slot stays as it was.
+    fn edit_slot(
+        &mut self,
+        slot: &InstanceId,
+        cx: &mut Context<Self>,
+        edit: impl FnOnce(&mut EffectSlot) -> String,
+    ) {
         let project = self.session.read(cx).project();
         let Some(mut state) = project.state(&self.track).cloned() else {
             return;
@@ -789,12 +858,11 @@ impl TrackPanel {
         else {
             return;
         };
-        effect.bypass = !effect.bypass;
-        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
-        let label = match effect.bypass {
-            true => format!("Turn off {name}"),
-            false => format!("Turn on {name}"),
-        };
+        let before = effect.clone();
+        let label = edit(effect);
+        if *effect == before {
+            return;
+        }
         self.end_drag(cx);
         let track = self.track.clone();
         self.session.update(cx, |session, cx| {

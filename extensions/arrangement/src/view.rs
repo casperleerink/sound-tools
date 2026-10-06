@@ -34,6 +34,7 @@ mod paint;
 mod recording_overlay;
 pub mod roll;
 pub mod selection;
+mod sidechain;
 pub mod snap;
 mod timeline;
 pub mod track_lanes;
