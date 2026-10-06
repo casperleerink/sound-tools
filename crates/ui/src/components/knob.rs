@@ -105,6 +105,11 @@ pub fn milliseconds_readout(ms: f32) -> String {
     }
 }
 
+/// A pitch in semitones: `-7 st`, `0.25 st`.
+pub fn semitones_readout(semitones: f32) -> String {
+    format!("{} st", short(semitones))
+}
+
 /// A time in seconds: `5 ms`, `1.5 s`.
 pub fn seconds_readout(seconds: f32) -> String {
     match seconds < 1. {
@@ -545,6 +550,8 @@ mod tests {
         assert_eq!(seconds_readout(0.0155), "15.5 ms");
         assert_eq!(seconds_readout(1.), "1 s");
         assert_eq!(seconds_readout(60.), "60 s");
+        assert_eq!(semitones_readout(-7.), "-7 st");
+        assert_eq!(semitones_readout(0.01), "0.01 st");
     }
 
     #[test]

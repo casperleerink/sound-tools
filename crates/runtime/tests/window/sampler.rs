@@ -150,13 +150,15 @@ fn the_picker_puts_an_empty_sampler_with_its_card_on_the_track(cx: &mut TestAppC
         "knob-attack_seconds",
         "knob-decay_seconds",
         "knob-sustain",
+        "knob-tune",
+        "toggle-reverse",
     ] {
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
-    // The card is 520 pt, and 705 expanded: its header is as wide, inside a border of 1 pt.
+    // The card is 520 pt, and 761 expanded: its header is as wide, inside a border of 1 pt.
     let width =
         |opened: &mut Opened<'_>| opened.bounds("card-instrument-header").unwrap().size.width;
-    assert_eq!(width(&mut opened), px(705. - 2.));
+    assert_eq!(width(&mut opened), px(761. - 2.));
     // The icon moved with the right edge.
     let expand = opened.control("card-instrument-expand");
     opened.click(expand);
@@ -303,8 +305,21 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
     opened.keys("down");
     assert_eq!(state(&mut opened).root.number(), 59);
 
-    // Five steps back to where the card began, one per gesture.
-    for _ in 0..7 {
+    // Behind expand: Reverse is one click and one step, and so is a key step of Tune.
+    let expand = opened.control("card-instrument-expand");
+    opened.click(expand);
+    let reverse = opened.control("toggle-reverse");
+    opened.click(reverse);
+    assert!(state(&mut opened).reverse);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change reverse"));
+    let tune = opened.control("knob-tune");
+    opened.click(tune);
+    opened.keys("up");
+    assert!(state(&mut opened).tune > 0.0);
+    assert_eq!(opened.undo_label().as_deref(), Some("Change tune"));
+
+    // Back to where the card began, one step per gesture.
+    for _ in 0..9 {
         opened.keys("cmd-z");
     }
     assert_eq!(state(&mut opened), before);

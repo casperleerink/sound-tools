@@ -32,7 +32,7 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
-    Knob, ParameterKnob, decibels_readout, milliseconds_readout, pan_readout, short,
+    Knob, ParameterKnob, decibels_readout, milliseconds_readout, pan_readout, semitones_readout,
 };
 use sound_ui::components::pad::{PAD_GAP, PAD_HEIGHT, PAD_WIDTH, Pad as PadElement, PadGlyph};
 use sound_ui::components::toggle::Toggle;
@@ -96,11 +96,6 @@ fn knobs(pad: usize) -> [ParameterKnob<Pad>; 4] {
         ParameterKnob::new(decay, "Decay", "Change decay", milliseconds_readout),
         ParameterKnob::new(pan, "Pan", "Change pan", pan_readout).bipolar(),
     ]
-}
-
-/// A pitch in semitones: `-7 st`.
-fn semitones_readout(semitones: f32) -> String {
-    format!("{} st", short(semitones))
 }
 
 /// The pad an arrow key moves the selection to, from `pad`: sideways within a row, up and down
@@ -555,12 +550,6 @@ mod tests {
         assert_eq!(pad_from_key(15, "down"), Some(11));
         assert_eq!(pad_from_key(6, "left"), Some(5));
         assert_eq!(pad_from_key(6, "enter"), None);
-    }
-
-    #[test]
-    fn a_pitch_reads_in_semitones() {
-        assert_eq!(semitones_readout(-7.0), "-7 st");
-        assert_eq!(semitones_readout(12.0), "12 st");
     }
 
     /// The defaults and both ends of every range, through the travel of its knob.
