@@ -187,3 +187,29 @@ fn two_tracks_that_key_each_other_are_a_loop_and_both_play() {
     );
     assert_eq!(before_and_during(&mut harness), (BASS, KICK + BASS));
 }
+
+/// A key of an effect that takes none is no part of a loop: a trim of the bass keyed by the
+/// kick does not stop the kick's duck being keyed by the bass, which divides the kick.
+#[test]
+fn a_key_of_an_effect_without_a_sidechain_input_closes_no_loop() {
+    let mut harness = project(r#"{"track": "kick", "tap": "post_fx"}"#, "");
+    harness.write_and_apply(
+        "state/arrangement/bass/duck.json",
+        r#"{"tool": "test.trim", "state": {"gain": 1.0}}"#,
+    );
+    harness.write_and_apply("state/arrangement/kick/duck.json", DUCK);
+    write_kick(
+        &mut harness,
+        r#", "effects": [{"name": "duck", "sidechain": {"track": "bass", "tap": "post_fx"}}]"#,
+    );
+    assert_eq!(
+        harness.problems(),
+        [
+            "state/arrangement/bass/instance.json: `effects` keys \"duck\" with a sidechain, and duck.json holds no tool with a `sidechain` input, so the sidechain is not used. Use an effect that has one, such as the `compressor`, or take `sidechain` out"
+        ]
+    );
+    assert_eq!(
+        before_and_during(&mut harness),
+        (BASS, KICK / (1.0 + BASS) + BASS)
+    );
+}

@@ -517,14 +517,16 @@ fn apply_arrangement(
             )
         })
         .collect();
-    // A bypassed slot is keyed by nothing.
-    let keys: Vec<Key> = context
+    // Only the slots whose track exposed a sidechain input: not one that is bypassed, has no
+    // record or takes no key, which its track says why. None of them can close a loop.
+    let shared: &BehaviourContext<'_> = context;
+    let keys: Vec<Key> = shared
         .children::<TrackState>()
         .flat_map(|(name, track)| {
-            let slots = track.effects.iter().filter(|slot| !slot.bypass);
-            slots.filter_map(move |slot| {
+            track.effects.iter().filter_map(move |slot| {
                 let sidechain = slot.sidechain.clone()?;
-                Some((name.to_string(), slot.name.clone(), sidechain))
+                let input = shared.child_input(name, &format!("{SIDECHAIN_OF}{}", slot.name))?;
+                Some((name.to_string(), slot.name.clone(), sidechain, input))
             })
         })
         .collect();
@@ -549,7 +551,7 @@ fn apply_arrangement(
         let into_master = InputEndpoint::new(master, Master::INPUT);
         context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to(into_master))?;
     }
-    for (name, slot, Sidechain { track, tap }) in &keys {
+    for (name, slot, Sidechain { track, tap }, key) in &keys {
         let falls_back = format!("so {slot:?} in track {name:?} follows its own sound");
         let Some(mixer) = mixers.get(track) else {
             context.problem(format!(
@@ -577,17 +579,13 @@ fn apply_arrangement(
             Tap::PostFx => context.child_output(track, AUDIO_OUTPUT),
             Tap::PostMixer => Some(OutputEndpoint::new(*mixer, Mixer::OUTPUT)),
         };
-        // No input when its track said why.
-        let Some(key) = context.child_input(name, &format!("{SIDECHAIN_OF}{slot}")) else {
-            continue;
-        };
         let Some(sound) = sound else {
             context.problem(format!(
                 "the sidechain of {slot:?} in track {name:?} takes track {track:?}, which has no instrument that plays, {falls_back}"
             ));
             continue;
         };
-        context.connect(sound.to(key))?;
+        context.connect(sound.to(*key))?;
     }
 
     // The main output, for now: the stereo master on the first two device channels.
@@ -597,8 +595,9 @@ fn apply_arrangement(
     Ok(())
 }
 
-/// A sidechain of a slot that is on: the track of the slot, the slot, and what keys it.
-type Key = (String, String, Sidechain);
+/// A sidechain of a slot that can take it: the track of the slot, the slot, what keys it, and
+/// the input it keys.
+type Key = (String, String, Sidechain, InputEndpoint);
 
 /// The tracks from `from` to `to`, each keyed after the effects of the next, so each waits for
 /// the next to play. `None` when `from` does not wait for `to`. A key before the effects waits
@@ -616,8 +615,8 @@ fn loop_back<'a>(keys: &'a [Key], from: &'a str, to: &str) -> Option<Vec<&'a str
         }
         let waits = keys
             .iter()
-            .filter(|(keyed, _, Sidechain { tap, .. })| keyed == last && *tap != Tap::PreFx);
-        for (_, _, Sidechain { track, .. }) in waits {
+            .filter(|(keyed, _, Sidechain { tap, .. }, _)| keyed == last && *tap != Tap::PreFx);
+        for (_, _, Sidechain { track, .. }, _) in waits {
             paths.push([path.as_slice(), &[track.as_str()]].concat());
         }
     }
