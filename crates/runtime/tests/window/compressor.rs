@@ -273,6 +273,7 @@ fn the_sidechain_picker_keys_the_compressor_from_a_track(cx: &mut TestAppContext
     assert_eq!(slot(&mut opened), keyed("track-1", Tap::PreFx));
     assert_eq!(opened.undo_label().as_deref(), Some("Turn on sidechain"));
     no_loop(&mut opened);
+    assert_eq!(opened.find("select-sidechain-tap"), None);
     opened.keys("cmd-z");
     assert_eq!(slot(&mut opened), EffectSlot::new("compressor"));
     assert_eq!(opened.undo_label().as_deref(), Some("Add Compressor"));

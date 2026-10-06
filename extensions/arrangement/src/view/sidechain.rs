@@ -3,8 +3,8 @@
 //! and hands it to the view of the effect in the frame of the card.
 //!
 //! The source select says `Off`, or lists the tracks by name, the track of the effect too. The
-//! tap select shows once a track is picked. Both are controlled: they read the slot when the
-//! card draws, and a pick is one undo step of the panel.
+//! tap select shows once another track is picked. Both are controlled: they read the slot when
+//! the card draws, and a pick is one undo step of the panel.
 
 use gpui::{App, Entity, SharedString, WeakEntity, Window};
 use sound_core::{Instance, InstanceId};
@@ -103,7 +103,8 @@ pub(super) fn column(
             .placeholder(source)
             .on_change(pick_source);
         let column = Column::new().span(SPAN).top(cell(source, "Sidechain"));
-        let Some(keyed) = keyed else {
+        // Its own track has one tap, before its effects: any other would be a loop.
+        let Some(keyed) = keyed.filter(|keyed| keyed.track != track.id().name()) else {
             return column;
         };
         let rows = TAPS.map(|(_, label)| MenuItem::new(label, label));
