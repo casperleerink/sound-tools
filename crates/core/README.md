@@ -30,7 +30,7 @@ engine itself.
    You never remove anything yourself.
 5. All behaviours of one edit group land in one engine batch, in the same block. If one fails,
    the whole group is rejected and nothing changes. A connection that closes a cycle is not a
-   failure: it is left out and listed as a problem of your instance.
+   failure: it is left out and listed as a problem.
 
 An owner reads its children with `context.children::<S>()` and finds their ports with
 `context.child_input(name, port)` and `context.child_output(name, port)`. Children run before
