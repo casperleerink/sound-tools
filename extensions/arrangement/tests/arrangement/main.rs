@@ -14,5 +14,6 @@ mod mixer;
 mod pedal;
 mod preview;
 mod records;
+mod sidechain;
 mod support;
 mod timing;
