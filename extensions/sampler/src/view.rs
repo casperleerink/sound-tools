@@ -1,7 +1,7 @@
 //! The card of the sampler in a rack: the whole file in the waveform display, with the start and
 //! end lines, the envelope drawn over it in the time of the file and a green line where the last
 //! note is; the Instrument select, Root, Velocity, Release and Gain next to it, and Start, End,
-//! Attack, Decay and Sustain behind expand. The rack gives the frame of the card, whose title
+//! Reverse, Tune, Attack, Decay and Sustain behind expand. The rack gives the frame of the card, whose title
 //! says "Sampler" and is where another instrument is picked.
 //!
 //! The Instrument select lists the library by category, with the size of each download, and
@@ -39,7 +39,9 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     Knob, KnobRange, ParameterKnob, decibels_readout, percent_readout, seconds_readout,
+    semitones_readout,
 };
+use sound_ui::components::toggle::Toggle;
 use sound_ui::components::waveform_display::{
     FileDrop, NoFile, WaveformDisplay, clamped_end, clamped_start, place,
 };
@@ -51,12 +53,13 @@ use sound_ui::{
 use crate::instrument;
 use crate::library::{self, CATALOG, Category, Entry, LibraryId, Status, size_text};
 use crate::{
-    ATTACK, DECAY, GAIN, POSITION, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState, SfzPath, VELOCITY,
+    ATTACK, DECAY, GAIN, POSITION, RELEASE, ROOT, SUSTAIN, Sampler, SamplerState, SfzPath, TUNE,
+    VELOCITY,
 };
 
 /// The name the rack puts on the card of a sampler.
 pub const NAME: &str = "Sampler";
-/// The display, so the card is 32 + 312 + 8 + 3 x 56 = 520 pt with a sample, and 705 expanded.
+/// The display, so the card is 32 + 312 + 8 + 3 x 56 = 520 pt with a sample, and 761 expanded.
 pub const DISPLAY_WIDTH: f32 = 312.;
 /// What the display says with no file, and while one is dragged over it.
 pub const EMPTY: &str = "Drop an audio file here";
@@ -91,6 +94,7 @@ pub fn register(views: &mut Views, devices: &mut Devices) {
 type Control = ParameterKnob<SamplerState>;
 
 const ROOT_KNOB: Control = Control::new(&ROOT, "Root", "Change root", note_readout);
+const TUNE_KNOB: Control = Control::new(&TUNE, "Tune", "Change tune", semitones_readout).bipolar();
 const VELOCITY_KNOB: Control =
     Control::new(&VELOCITY, "Velocity", "Change velocity", percent_readout);
 const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", seconds_readout);
@@ -145,7 +149,7 @@ pub struct SamplerView {
     /// The gesture of a knob or handle drag.
     edit: ControlEdit,
     lanes: Entity<Lanes<SamplerState>>,
-    /// Whether the card shows Start, End, Attack, Decay and Sustain. Interface state.
+    /// Whether the card shows the knobs behind expand. Interface state.
     expanded: bool,
     /// Where the green line is, in seconds of the file, while a note sounds.
     playing_at: Option<f32>,
@@ -733,10 +737,22 @@ impl Render for SamplerView {
                 .bottom(knob(GAIN_KNOB, cx)),
         ];
         // Behind expand: the values the handles of the display move, so the keys reach every
-        // one of them.
+        // one of them, and which way and how tuned the file plays.
         let [start, end] = self.trim_knobs(&state, cx);
+        let reverse = Toggle::new(
+            "reverse",
+            if state.reverse { "On" } else { "Off" },
+            state.reverse,
+        )
+        .on_change(weak_callback(cx, |view, on: bool, cx| {
+            let set = |state: &mut SamplerState, on| state.reverse = on;
+            view.change("Change reverse", ValueChange::Set(on), set, cx)
+        }));
         let hidden = [
             Column::new().top(start).bottom(end),
+            Column::new()
+                .top(Cell::new(reverse).label("Reverse"))
+                .bottom(knob(TUNE_KNOB, cx)),
             Column::new()
                 .top(knob(ATTACK_KNOB, cx))
                 .bottom(knob(DECAY_KNOB, cx)),

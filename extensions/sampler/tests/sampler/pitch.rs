@@ -51,6 +51,27 @@ fn each_key_plays_the_sample_at_its_pitch_also_from_a_file_at_another_rate() {
     }
 }
 
+/// The tune moves the pitch of every key by its semitones, also by a cent.
+#[test]
+fn the_tune_moves_every_note_by_its_semitones() {
+    for tune in [-24.0, -0.5, 0.01, 7.0, 24.0] {
+        // Long enough for a quarter second at a quarter of the speed.
+        let sample = sine(SAMPLE_RATE, HZ, 0.5, 1.0, 0.0);
+        let state = SamplerState {
+            root: Pitch::new(69).unwrap(),
+            tune,
+            ..SamplerState::default()
+        };
+        let notes = vec![note(0, 12_000, 69, 127)];
+        let mut harness = Harness::playing(("a4.wav", SAMPLE_RATE, sample), notes, state);
+        let played = harness.play(12_000);
+        let measured = frequency(&played[500..11_500]);
+        let cents = 1200.0 * (measured / HZ).log2();
+        let expected = f64::from(tune) * 100.0;
+        assert!((cents - expected).abs() < 0.01, "{tune}: {cents} cents");
+    }
+}
+
 /// At the root, from a file at the engine's rate, the sample comes out sample for sample.
 #[test]
 fn the_root_plays_the_file_as_it_is() {

@@ -3,7 +3,8 @@
 //! - `sampler-playing.png`: the piece with a Kalimba track whose instrument is a Sampler of a
 //!   kalimba-like file, its panel open, playing: the envelope over the waveform, and the green
 //!   line where the last note is in the file.
-//! - `sampler-expanded.png`: the same card expanded: Start, End, Attack, Decay and Sustain.
+//! - `sampler-expanded.png`: the same card expanded: Start, End, Reverse, Tune, Attack, Decay
+//!   and Sustain.
 //! - `sampler-drop-replace.png`: a file from the Finder over its display: `Drop to replace the
 //!   file` in the lavender ring.
 //! - `sampler-instruments.png`: its Instrument select open: the file, then the library by
@@ -72,8 +73,10 @@ fn kalimba_sampler() -> Result<SamplerState> {
         sfz: None,
         library: None,
         root: Pitch::new(72)?,
+        tune: 0.,
         start_seconds: 0.012,
         end_seconds: Some(1.18),
+        reverse: false,
         attack_seconds: 0.002,
         decay_seconds: 0.4,
         sustain: 0.55,
