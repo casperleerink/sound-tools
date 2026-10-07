@@ -54,6 +54,7 @@ actions!(
         FocusNext,
         FocusPrevious,
         ToggleLeftPanel,
+        OpenCloseLeftPanel,
         NewProject,
         OpenProject,
         Quit
@@ -291,8 +292,9 @@ impl Shell {
         }
     }
 
-    /// The icon in the title row opens and closes the panel, and leaves the focus where it is.
-    fn click_left_panel_icon(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// The icon in the title row and cmd-B open and close the panel, and leave the focus where
+    /// it is.
+    fn open_or_close_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let open = !self.left_panel_open;
         if !open && self.left_panel_area.contains_focused(window, cx) {
             self.give_focus_back(window, cx);
@@ -381,7 +383,7 @@ impl Shell {
                         .size(ButtonSize::Sm)
                         .focus_handle(&self.left_panel_icon_focus)
                         .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.click_left_panel_icon(window, cx)
+                            shell.open_or_close_left_panel(window, cx)
                         })),
                 )
                 .when(busy, |icon| {
@@ -546,6 +548,9 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &ToggleLeftPanel, window, cx| {
                 shell.toggle_left_panel(window, cx)
             }))
+            .on_action(cx.listener(|shell, _: &OpenCloseLeftPanel, window, cx| {
+                shell.open_or_close_left_panel(window, cx)
+            }))
             .on_action(cx.listener(|shell, _: &NewProject, _, cx| {
                 shell
                     .session
@@ -608,6 +613,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-n", NewProject, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-o", OpenProject, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-q", Quit, None),
