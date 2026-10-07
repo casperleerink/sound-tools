@@ -343,6 +343,22 @@ pub struct Edit {
     step: Step,
 }
 
+/// Every record of `changes` is one its tool accepts.
+fn validate(changes: &Changes) -> Result<(), ProjectError> {
+    for change in &changes.changes {
+        if let Change::Set(id, record) = change {
+            record
+                .state
+                .validate()
+                .map_err(|message| ProjectError::InvalidState {
+                    id: id.clone(),
+                    message,
+                })?;
+        }
+    }
+    Ok(())
+}
+
 impl Project {
     /// Begins a request: until it ends, every outside change joins one undo step named
     /// `label`, however far apart the changes are. For an agent that knows where a request
@@ -388,17 +404,7 @@ impl Project {
     /// Applies changes now, as one group. Sound and views follow, no file is written. Call it
     /// as often as the gesture moves. On an error nothing of the group is applied.
     pub fn publish(&mut self, edit: &mut Edit, changes: Changes) -> Result<(), ProjectError> {
-        for change in &changes.changes {
-            if let Change::Set(id, record) = change {
-                record
-                    .state
-                    .validate()
-                    .map_err(|message| ProjectError::InvalidState {
-                        id: id.clone(),
-                        message,
-                    })?;
-            }
-        }
+        validate(&changes)?;
         // A derive may rewrite the tempo map, so a change to a record that has one touches
         // `project.json` as surely as a tempo edit does.
         let touches_project_file = changes.changes.iter().any(|change| match change {
@@ -410,6 +416,16 @@ impl Project {
         }
         let applied = self.apply(changes.changes, Source::Interface)?;
         edit.step.absorb(applied);
+        Ok(())
+    }
+
+    /// Applies changes to the sound and the state, and to nothing else: no file is written, no
+    /// derive runs and there is no undo step. The one change a read-only project takes, for a
+    /// render that plays it other than its files say, such as with one track soloed. On a
+    /// project that writes, the next edit of these records would save them.
+    pub fn apply_in_memory(&mut self, changes: Changes) -> Result<(), ProjectError> {
+        validate(&changes)?;
+        self.apply(changes.changes, Source::Load)?;
         Ok(())
     }
 
