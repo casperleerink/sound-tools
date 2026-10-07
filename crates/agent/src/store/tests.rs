@@ -350,7 +350,7 @@ fn the_index_keeps_every_thread_and_names_the_current_one() {
     };
     assert_eq!(recent(&store), ["First"]);
 
-    // **+**: no thread is current, and both stay, the one a message last went to first.
+    // **+**: no thread is current, and both stay, the one last shown first.
     store.write(&Write::Current(None)).unwrap();
     assert!(store.current().unwrap().is_none());
     assert_eq!(recent(&store), ["Second", "First"]);

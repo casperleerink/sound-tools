@@ -143,7 +143,7 @@ pub struct Sidebar {
     new_thread_while_loading: bool,
     /// The threads of the project, once it is read. `None` while nothing is saved.
     store: Option<ThreadStore>,
-    /// The project's other threads, the one a message last went to first.
+    /// The project's other threads, the last one shown first.
     recent: Vec<RecentThread>,
     /// Reads a recent thread the composer opened. No message goes until it is in.
     opening: Option<Task<()>>,
@@ -1208,7 +1208,7 @@ impl Sidebar {
         let Some((editor, _)) = self.instructions.take() else {
             return;
         };
-        editor.update(cx, |editor, cx| editor.save(cx));
+        editor.update(cx, |editor, cx| editor.close(cx));
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }

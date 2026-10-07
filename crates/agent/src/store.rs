@@ -5,7 +5,7 @@
 //! state of this machine, it would be noise in git, and the agent would read its own chat.
 //! Each project has one folder, `agent/threads/<project key>/`:
 //!
-//! - `index.json` lists the threads ([`SavedThread`]), the one a message last went to last,
+//! - `index.json` lists the threads ([`SavedThread`]), the one last shown last,
 //!   and names the current one, if any.
 //! - `<thread id>.jsonl` is what the sidebar showed: one [`Line`] per line, the composer's
 //!   messages and the [`AgentEvent`]s with the time each came. Replayed through
@@ -143,7 +143,7 @@ impl ThreadStore {
         Ok(Some((thread, replay(&text))))
     }
 
-    /// The threads other than the current one, the one a message last went to first, at most
+    /// The threads other than the current one, the one last shown first, at most
     /// `limit`. A thread whose log does not read, or holds no message, is left out.
     pub(crate) fn recent(&self, limit: usize) -> Result<Vec<RecentThread>, String> {
         let index = self.index()?;
@@ -190,7 +190,8 @@ impl ThreadStore {
     fn save(&self, current: Option<&SavedThread>) -> Result<(), String> {
         let mut index = self.index()?;
         index.current = current.map(|thread| thread.id.clone());
-        // Last in the list, so the threads are in the order a message last went to them.
+        // Last in the list, so the threads are in the order they were last shown: opened, or
+        // sent a message.
         if let Some(thread) = current {
             index.threads.retain(|saved| saved.id != thread.id);
             index.threads.push(thread.clone());

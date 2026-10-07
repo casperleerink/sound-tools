@@ -73,6 +73,8 @@ pub(super) struct InstructionsEditor {
     input: Entity<TextInput>,
     /// The text as it was read or last handed to the writer, so only a change is written.
     saved: String,
+    /// The text as it was read. A close writes any other text again, in case a save failed.
+    read: String,
     /// Reads the file. Nothing saves before it is in, so a slow read never empties the file.
     reading: Option<Task<()>>,
     /// The writer of the sidebar, which outlives the editor and says when a write fails.
@@ -121,6 +123,7 @@ impl InstructionsEditor {
             file,
             input,
             saved: String::new(),
+            read: String::new(),
             reading: Some(reading),
             saves,
             waiting: None,
@@ -132,6 +135,7 @@ impl InstructionsEditor {
         match text {
             Ok(text) => {
                 self.saved = text.clone();
+                self.read = text.clone();
                 self.input.update(cx, |input, cx| input.set_text(text, cx));
             }
             Err(error) => {
@@ -161,12 +165,24 @@ impl InstructionsEditor {
         }));
     }
 
-    /// Hands the text to the writer now, if it changed. The sidebar calls it on close.
-    pub(super) fn save(&mut self, cx: &App) {
+    /// Hands the text to the writer now, if it changed since the last save.
+    fn save(&mut self, cx: &App) {
         let text = self.text(cx);
-        if self.reading.is_some() || text == self.saved {
-            return;
+        if self.reading.is_none() && text != self.saved {
+            self.hand(text);
         }
+    }
+
+    /// Hands the text to the writer when it is not the one that was read. The sidebar calls it
+    /// on close, so a save that failed while the composer typed is tried once more.
+    pub(super) fn close(&mut self, cx: &App) {
+        let text = self.text(cx);
+        if self.reading.is_none() && (text != self.saved || text != self.read) {
+            self.hand(text);
+        }
+    }
+
+    fn hand(&mut self, text: String) {
         self.saved = text.clone();
         // The writer ends only with the sidebar, which owns the receiver's task.
         self.saves.try_send((self.file.clone(), text)).ok();
