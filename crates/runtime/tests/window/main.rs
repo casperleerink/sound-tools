@@ -62,6 +62,7 @@ mod recording_audio;
 mod reverb;
 mod sampler;
 mod saturator;
+mod script;
 mod several_notes;
 mod shell;
 mod support;

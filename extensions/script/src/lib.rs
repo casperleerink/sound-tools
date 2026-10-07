@@ -8,6 +8,7 @@
 //! {
 //!   "tool": "script",
 //!   "state": {
+//!     "name": "Tremolo",
 //!     "code": [
 //!       "param rate = 4 [0.1, 20]",
 //!       "param depth = 0.5 [0, 1]",
@@ -23,12 +24,14 @@
 //! `agent-doc.md`.
 //!
 //! Known gaps of this first version: a script is an effect only, the same code runs on each
-//! channel apart, nothing knows the tempo, a param cannot be automated, and the card is not
-//! made yet.
+//! channel apart, nothing knows the tempo, and a param cannot be automated.
+//!
+//! [`view`] is the card, and the only module here that uses GPUI.
 
 pub mod language;
 mod machine;
 mod processor;
+pub mod view;
 
 use std::collections::BTreeMap;
 
@@ -50,6 +53,9 @@ pub const EXTENSION: &str = "script";
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ScriptState {
+    /// What the card is called. Empty is "Script".
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
     /// The script, one line per string.
     pub code: Vec<String>,
     /// Where each param stands, by name. A param left out is at the default its line gives.
