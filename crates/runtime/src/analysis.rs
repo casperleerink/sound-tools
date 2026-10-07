@@ -94,8 +94,9 @@ pub struct Meter {
     /// The mean weighted power of the last four blocks, oldest first. What [`Self::warm_up`]
     /// heard, or silence before the start.
     recent: [f64; BLOCKS_PER_WINDOW],
-    /// The blocks of 100 ms that ended after the start. From the fourth on, a block of 400 ms
-    /// holds no warm-up, and counts for the whole.
+    /// Whether the block being filled started after the start, and how many such blocks
+    /// ended. From the fourth on, a block of 400 ms holds no warm-up, and counts for the whole.
+    block_measured: bool,
     measured_blocks: usize,
     /// The power of every whole block of 400 ms, for the gates.
     windows: Vec<f64>,
@@ -141,6 +142,7 @@ impl Meter {
             block_frames: 0,
             frames_per_block: (rate / 10.0).round() as u64,
             recent: [0.0; BLOCKS_PER_WINDOW],
+            block_measured: false,
             measured_blocks: 0,
             windows: Vec::new(),
             max_momentary: 0.0,
@@ -177,6 +179,9 @@ impl Meter {
                 true => value,
                 false => 0.0,
             });
+            if self.block_frames == 0 {
+                self.block_measured = false;
+            }
             self.hear(values);
             self.spectrum.push(values);
         }
@@ -238,6 +243,9 @@ impl Meter {
         {
             self.row += 1;
         }
+        if self.block_frames == 0 {
+            self.block_measured = true;
+        }
         let (power, oversampled, momentary) = self.hear(values);
         let [left, right] = values.map(f64::from);
         if let Some(row) = self.rows.get_mut(self.row) {
@@ -265,7 +273,9 @@ impl Meter {
 
     /// The momentary loudness of a block of 400 ms that ends in the current row.
     fn add_momentary(&mut self, momentary: f64) {
-        self.measured_blocks += 1;
+        if self.block_measured {
+            self.measured_blocks += 1;
+        }
         if self.measured_blocks >= BLOCKS_PER_WINDOW {
             self.windows.push(momentary);
             self.max_momentary = self.max_momentary.max(momentary);
@@ -719,6 +729,17 @@ mod tests {
         // what the filters ring with in the first milliseconds.
         let mut meter = Meter::new(RATE, vec![]);
         meter.warm_up(&tone);
+        meter.push(&vec![0.0; 2 * 48_000]);
+        let measures = meter.finish();
+        for loudness in [measures.integrated, measures.max_momentary] {
+            assert!(
+                loudness.is_none_or(|loudness| loudness < -60.0),
+                "{loudness:?}"
+            );
+        }
+        // The same when the warm-up ends in the middle of a block of 100 ms.
+        let mut meter = Meter::new(RATE, vec![]);
+        meter.warm_up(&tone[..2 * 2_400]);
         meter.push(&vec![0.0; 2 * 48_000]);
         let measures = meter.finish();
         for loudness in [measures.integrated, measures.max_momentary] {
