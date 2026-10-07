@@ -43,6 +43,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
     assert_eq!(
         headings,
         [
+            "## The composer's instructions",
             "## Docs",
             "## Layout",
             "## Time",
@@ -86,7 +87,7 @@ fn the_map_lists_every_doc_and_all_of_them_are_written_and_stable_on_reopen() {
     ));
     assert_eq!(
         std::fs::read_to_string(harness.path("CLAUDE.md")).unwrap(),
-        "@AGENTS.md\n"
+        "@AGENTS.md\n@instructions.md\n"
     );
 
     // Written only when the text changes: reopening moves no modification time.

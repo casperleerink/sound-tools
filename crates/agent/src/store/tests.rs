@@ -344,20 +344,25 @@ fn the_index_keeps_every_thread_and_names_the_current_one() {
     );
     assert_eq!(store.current().unwrap().unwrap().0, second);
 
-    // **+**: no thread is current, and both stay.
+    let recent = |store: &ThreadStore| -> Vec<String> {
+        let recent = store.recent(10).unwrap();
+        recent.into_iter().map(|thread| thread.title).collect()
+    };
+    assert_eq!(recent(&store), ["First"]);
+
+    // **+**: no thread is current, and both stay, the one a message last went to first.
     store.write(&Write::Current(None)).unwrap();
     assert!(store.current().unwrap().is_none());
-    // Back to the first.
+    assert_eq!(recent(&store), ["Second", "First"]);
+    // Back to the first: it moves to the front once it is left again.
     store.write(&Write::Current(Some(first.clone()))).unwrap();
     assert_eq!(store.current().unwrap().unwrap().0, first);
-    let ids: Vec<_> = store
-        .index()
-        .unwrap()
-        .threads
-        .into_iter()
-        .map(|thread| thread.id)
-        .collect();
-    assert_eq!(ids, [first.id, second.id]);
+    assert_eq!(recent(&store), ["Second"]);
+    store.write(&Write::Current(None)).unwrap();
+    assert_eq!(recent(&store), ["First", "Second"]);
+    let (opened, conversation) = store.thread(&second.id).unwrap().unwrap();
+    assert_eq!(opened, second);
+    assert_eq!(shown(&conversation), ["Second", "Two."]);
 }
 
 /// An index that does not read is put aside, never written over, and the store goes on.

@@ -3,7 +3,8 @@
 //! `AGENTS.md` is the map. It holds what an agent needs on every task and lists the docs,
 //! one line each saying when to open it. The docs themselves are one file per extension or
 //! task under `agent-docs/`, so an agent reads the map and then only what its task needs.
-//! `CLAUDE.md` imports the map, so Codex and Claude Code both find it. `problems.txt` lists
+//! `CLAUDE.md` imports the map, so Codex and Claude Code both find it, and the composer's
+//! `instructions.md`, which the runtime never writes. `problems.txt` lists
 //! what [`Project::problems`] holds. It is there the whole time a runtime has the project
 //! open, with one plain line when there are no problems, and it goes away when the project
 //! closes. So an agent can tell "all is well" from "nobody is watching". Every file is
@@ -19,8 +20,11 @@ pub const AGENT_DOC_FILE: &str = "AGENTS.md";
 /// The folder of the docs the map points at.
 pub const AGENT_DOCS_FOLDER: &str = "agent-docs";
 pub const PROBLEMS_FILE: &str = "problems.txt";
+/// The composer's instructions for this project, which the agent follows and adds to when asked
+/// to remember something. Claude Code skips the import while the file does not exist.
+pub const INSTRUCTIONS_FILE: &str = "instructions.md";
 const CLAUDE_FILE: &str = "CLAUDE.md";
-const CLAUDE_TEXT: &str = "@AGENTS.md\n";
+const CLAUDE_TEXT: &str = "@AGENTS.md\n@instructions.md\n";
 /// The whole of `problems.txt` when every file is live.
 pub const NO_PROBLEMS: &str = "No problems. Every file is live.\n";
 const MAP: &str = include_str!("agent_doc.md");

@@ -36,6 +36,7 @@ fn start(scenario: &str, output: &Path) -> (Thread, Events) {
         model: None,
         approval_mode: ApprovalMode::default(),
         resume: None,
+        instructions: None,
     })
     .unwrap()
 }

@@ -5,7 +5,8 @@
 //!
 //! One line by default. `multi_line(n)` wraps at the width of the box, grows up to `n` rows and
 //! then scrolls, for the agent composer: enter submits, shift-enter adds a newline, up and down
-//! move by rows, and cmd-z undoes.
+//! move by rows, and cmd-z undoes. `fill()` is a multi-line input as tall as its box, where
+//! enter adds a newline too, for a text that is the whole view.
 //!
 //! The editing keys follow macOS text fields: option moves and deletes by words, cmd by rows
 //! (and cmd-up and down to the ends of a multi-line text), shift with any of them selects,
@@ -205,6 +206,8 @@ pub struct TextInput {
     size: InputSize,
     /// `Some(n)` wraps, grows up to `n` rows and then scrolls. `None` is one line.
     max_rows: Option<usize>,
+    /// As tall as its box, see [`Self::fill`].
+    fills: bool,
     /// How far the rows are scrolled up, in a multi-line input.
     scroll_top: Pixels,
     /// Set by every edit and caret move, so the next frame scrolls to the caret. The wheel
@@ -245,6 +248,7 @@ impl TextInput {
             is_selecting: false,
             size: InputSize::default(),
             max_rows: None,
+            fills: false,
             scroll_top: px(0.),
             follow_caret: false,
             goal_x: None,
@@ -275,6 +279,14 @@ impl TextInput {
     /// row up to `max_rows`, and then scrolls.
     pub fn multi_line(mut self, max_rows: usize) -> Self {
         self.max_rows = Some(max_rows.max(1));
+        self
+    }
+
+    /// A multi-line input as tall as its box, which scrolls past it. Enter adds a newline, as
+    /// in a text editor: there is nothing to submit.
+    pub fn fill(mut self) -> Self {
+        self.max_rows = Some(usize::MAX);
+        self.fills = true;
         self
     }
 
@@ -693,7 +705,9 @@ impl TextInput {
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(f) = self.on_submit.clone() {
+        if self.fills {
+            self.replace_text_in_range(None, "\n", window, cx);
+        } else if let Some(f) = self.on_submit.clone() {
             f(&self.content.clone(), window, cx);
         }
     }
@@ -1138,6 +1152,10 @@ impl Element for TextElement {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         let input = self.input.read(cx);
+        if input.fills {
+            style.size.height = relative(1.).into();
+            return (window.request_layout(style, [], cx), ());
+        }
         let Some(max_rows) = input.max_rows else {
             style.size.height = line_height.into();
             return (window.request_layout(style, [], cx), ());
@@ -1359,6 +1377,7 @@ impl Render for TextInput {
 
         div()
             .w_full()
+            .when(self.fills, |d| d.h_full())
             .when(!multi_line, |d| {
                 d.h(px(if bare { ROW_HEIGHT } else { size.height() }))
             })

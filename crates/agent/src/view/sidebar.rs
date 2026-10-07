@@ -1,10 +1,12 @@
-//! The sidebar: the header with **+**, the onboarding until the agent is set up, then the
+//! The sidebar: the header with **New**, the onboarding until the agent is set up, then the
 //! thread in a gpui `list` and the composer.
 //!
-//! One thread per sidebar. Its process starts on the first send and ends with **+**. Every
-//! message is one request of the session, so the agent's file writes for it are one undo step.
-//! The thread is saved on the machine as it goes (`crate::store`), and the sidebar opens on the
-//! project's last one.
+//! One thread per sidebar. Its process starts on the first send and ends with **New**, or
+//! when a recent thread opens from its menu. Every message is one request of the session, so
+//! the agent's file writes for it are one undo step. The thread is saved on the machine as it
+//! goes (`crate::store`), and the sidebar opens on the project's last one. The menu of **New**
+//! also opens the composer's instructions to the agent in place of the thread
+//! (`super::instructions`).
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -17,22 +19,24 @@ use gpui::{
     list, point, prelude::*, px,
 };
 use smol::future;
-use sound_core::{GROUPING_WINDOW, Problem, ProjectEvent};
+use sound_core::{GROUPING_WINDOW, INSTRUCTIONS_FILE, Problem, ProjectEvent};
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
 use sound_ui::components::popover::{Align, Side};
+use sound_ui::components::split_button::{SplitButton, SplitChoices};
 use sound_ui::components::text_input::{Arrow, TextInput};
 
 use super::entry;
 use super::history::History;
+use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Scope};
 use super::markdown::{self, Markdown};
 use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
 use crate::conversation::{Conversation, Entry, request_label};
 use crate::install::{self, InstallError};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
-use crate::store::{Line, SavedThread, ThreadStore, Write};
+use crate::store::{Line, RecentThread, SavedThread, ThreadStore, Write};
 use crate::{
     Account, AgentEvent, ApprovalAnswer, Events, Installed, Provider, SignInChoice, Thread,
     ThreadOptions, TurnOutcome, login_shell_environment, program_on_path,
@@ -54,6 +58,9 @@ const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// How long the program may take to say whether it is signed in.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How many threads **Open recent** lists.
+const RECENT: usize = 10;
 
 struct BindingsInstalled;
 impl Global for BindingsInstalled {}
@@ -93,6 +100,8 @@ pub struct Sidebar {
     signing_in: Option<SignInChoice>,
     /// The download, the sign-in or a question to the program. Dropping it cancels it.
     setup_task: Option<Task<()>>,
+    /// **New**, with the recent threads and the instructions in its menu.
+    new_button: Entity<SplitButton>,
     /// The model, and the account with **Sign out**, in the composer.
     model_menu: Entity<DropdownMenu>,
     /// The approval mode, beside the model.
@@ -119,7 +128,6 @@ pub struct Sidebar {
     history: History,
     /// The sidebar itself, for when it has no composer.
     focus_handle: FocusHandle,
-    new_thread_focus: FocusHandle,
     send_focus: FocusHandle,
     /// Allow, Allow for this thread, Deny.
     approval_focus: [FocusHandle; 3],
@@ -131,8 +139,18 @@ pub struct Sidebar {
     writes: Option<smol::channel::Sender<Write>>,
     /// Reads the last thread of the project. No message goes until it is in.
     loading: Option<Task<()>>,
-    /// **+** was clicked while the last thread was read: the new thread wins over it.
+    /// **New** was clicked while the last thread was read: the new thread wins over it.
     new_thread_while_loading: bool,
+    /// The threads of the project, once it is read. `None` while nothing is saved.
+    store: Option<ThreadStore>,
+    /// The project's other threads, the one a message last went to first.
+    recent: Vec<RecentThread>,
+    /// Reads a recent thread the composer opened. No message goes until it is in.
+    opening: Option<Task<()>>,
+    /// The instructions shown in place of the thread.
+    instructions: Option<(Entity<InstructionsEditor>, Subscription)>,
+    /// Hands the instructions to their writer, in the order they were typed.
+    saves: smol::channel::Sender<Save>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -148,9 +166,18 @@ impl Sidebar {
         agents: Option<PathBuf>,
         threads: Option<PathBuf>,
         settings: Entity<AgentSettings>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut sidebar = Self::with(session, agents, Setup::Checking, threads, settings, cx);
+        let mut sidebar = Self::with(
+            session,
+            agents,
+            Setup::Checking,
+            threads,
+            settings,
+            window,
+            cx,
+        );
         let provider = sidebar.provider;
         let downloaded = sidebar
             .agents
@@ -191,6 +218,7 @@ impl Sidebar {
         installed: Option<Installed>,
         threads: Option<PathBuf>,
         settings: Entity<AgentSettings>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let setup = match installed {
@@ -199,7 +227,7 @@ impl Sidebar {
             },
             None => Setup::NotInstalled,
         };
-        let mut sidebar = Self::with(session, None, setup, threads, settings, cx);
+        let mut sidebar = Self::with(session, None, setup, threads, settings, window, cx);
         sidebar.installed = installed;
         sidebar
     }
@@ -210,6 +238,7 @@ impl Sidebar {
         setup: Setup,
         threads: Option<PathBuf>,
         settings: Entity<AgentSettings>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         install_bindings(cx);
@@ -261,14 +290,28 @@ impl Sidebar {
         };
         let model_menu = new_menu("model-menu", cx);
         let access_menu = new_menu("access-menu", cx);
-        let on_pick = |sidebar: &mut Self, _, picked: &MenuPicked, cx: &mut Context<Self>| {
-            if let Some(choice) = Choice::of(&picked.0) {
-                sidebar.pick(choice, cx);
-            }
-        };
+        let new_button = cx.new(|cx| {
+            let choices = SplitChoices {
+                label: "New".into(),
+                main_value: Choice::NewThread.value(),
+                menu_label: "Recent threads and instructions".into(),
+                // Filled by `update_new_menu` below, as on every change.
+                entries: Vec::new(),
+            };
+            SplitButton::new("agent-new-thread", choices, cx)
+                .icon("plus")
+                .align_end(cx)
+        });
         let subscriptions = vec![
-            cx.subscribe(&model_menu, on_pick),
-            cx.subscribe(&access_menu, on_pick),
+            cx.subscribe_in(&model_menu, window, |sidebar, _, picked, window, cx| {
+                sidebar.picked(picked, window, cx);
+            }),
+            cx.subscribe_in(&access_menu, window, |sidebar, _, picked, window, cx| {
+                sidebar.picked(picked, window, cx);
+            }),
+            cx.subscribe_in(&new_button, window, |sidebar, _, picked, window, cx| {
+                sidebar.picked(picked, window, cx);
+            }),
             cx.observe(&settings, |sidebar, _, cx| {
                 sidebar.update_menu(cx);
                 cx.notify();
@@ -294,6 +337,7 @@ impl Sidebar {
             installed: None,
             signing_in: None,
             setup_task: None,
+            new_button,
             model_menu,
             access_menu,
             settings,
@@ -308,7 +352,6 @@ impl Sidebar {
             input,
             history: History::default(),
             focus_handle: cx.focus_handle(),
-            new_thread_focus: cx.focus_handle().tab_stop(true),
             send_focus: cx.focus_handle().tab_stop(true),
             approval_focus: [(); 3].map(|_| cx.focus_handle().tab_stop(true)),
             agent: None,
@@ -316,25 +359,31 @@ impl Sidebar {
             writes: None,
             loading,
             new_thread_while_loading: false,
+            store: None,
+            recent: Vec::new(),
+            opening: None,
+            instructions: None,
+            saves: save_instructions(cx),
             _subscriptions: subscriptions,
         };
         sidebar.update_menu(cx);
+        sidebar.update_new_menu(cx);
         sidebar
     }
 
     /// Reads the current thread of `project` from `threads` in the background.
     fn load(threads: PathBuf, project: PathBuf, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |sidebar, cx| {
-            let (store, current) = cx
+            let (store, current, recent) = cx
                 .background_spawn(async move {
                     let store = ThreadStore::new(&threads, &project);
-                    let current = store.current();
-                    (store, current)
+                    let (current, recent) = (store.current(), store.recent(RECENT));
+                    (store, current, recent)
                 })
                 .await;
             // A sidebar that went in the meantime shows nothing.
             sidebar
-                .update(cx, |sidebar, cx| sidebar.loaded(store, current, cx))
+                .update(cx, |sidebar, cx| sidebar.loaded(store, current, recent, cx))
                 .ok();
         })
     }
@@ -343,13 +392,21 @@ impl Sidebar {
         &mut self,
         store: ThreadStore,
         current: Result<Option<(SavedThread, Conversation)>, String>,
+        recent: Result<Vec<RecentThread>, String>,
         cx: &mut Context<Self>,
     ) {
         self.loading = None;
-        self.writes = Some(write_in_order(store, cx));
-        // **+** while it loaded: the saved thread stays in the store, and the new one is current.
+        self.writes = Some(write_in_order(store.clone(), cx));
+        self.store = Some(store);
+        // The index did not read: `current` says so.
+        self.recent = recent.unwrap_or_default();
+        // **New** while it loaded: the saved thread stays in the store, and the new one is
+        // current.
         let current = match std::mem::take(&mut self.new_thread_while_loading) {
             true => {
+                if let Ok(Some((saved, conversation))) = &current {
+                    self.remember(saved, conversation);
+                }
                 self.keep([Write::Current(None)]);
                 Ok(None)
             }
@@ -369,7 +426,21 @@ impl Sidebar {
         }
         self.forget_entries();
         self.list.reset(self.conversation.entries().len());
+        self.update_new_menu(cx);
         cx.notify();
+    }
+
+    /// Puts a thread first in **Open recent**, by its first message. A thread with none has
+    /// nothing to show.
+    fn remember(&mut self, saved: &SavedThread, conversation: &Conversation) {
+        let Some(message) = conversation.messages().next() else {
+            return;
+        };
+        self.recent.retain(|thread| thread.id != saved.id);
+        let title = request_label(message);
+        let id = saved.id.clone();
+        self.recent.insert(0, RecentThread { id, title });
+        self.recent.truncate(RECENT);
     }
 
     /// For a conversation that is another one now: what the sidebar keeps by entry is not
@@ -420,7 +491,10 @@ impl Sidebar {
         }
     }
 
-    fn pick(&mut self, choice: Choice, cx: &mut Context<Self>) {
+    fn picked(&mut self, picked: &MenuPicked, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(choice) = Choice::of(&picked.0) else {
+            return;
+        };
         match choice {
             Choice::ApprovalMode(mode) => self
                 .settings
@@ -429,7 +503,17 @@ impl Sidebar {
                 .settings
                 .update(cx, |settings, cx| settings.set_model(model, cx)),
             Choice::SignOut => self.sign_out(cx),
+            Choice::NewThread => self.new_thread(window, cx),
+            Choice::OpenThread(id) => self.open_thread(id, window, cx),
+            Choice::Instructions(scope) => self.open_instructions(scope, window, cx),
         }
+    }
+
+    fn update_new_menu(&mut self, cx: &mut Context<Self>) {
+        let all_projects = self.settings.read(cx).instructions_file().is_some();
+        let entries = menu::new_entries(&self.recent, all_projects);
+        let menu = self.new_button.read(cx).menu().clone();
+        menu.update(cx, |menu, cx| menu.set_entries(entries, cx));
     }
 
     fn update_menu(&mut self, cx: &mut Context<Self>) {
@@ -473,6 +557,11 @@ impl Sidebar {
     /// The composer's menu of approval modes, for a snapshot that shows it open or picks in it.
     pub fn access_menu(&self) -> &Entity<DropdownMenu> {
         &self.access_menu
+    }
+
+    /// The menu of **New**, for a snapshot that shows it open.
+    pub fn new_menu(&self, cx: &App) -> Entity<DropdownMenu> {
+        self.new_button.read(cx).menu().clone()
     }
 
     /// The session the next process of the thread resumes: the thread's own once its agent
@@ -894,6 +983,7 @@ impl Sidebar {
     fn send(&mut self, cx: &mut Context<Self>) {
         let message = self.input.read(cx).text().trim().to_string();
         let ready = self.loading.is_none()
+            && self.opening.is_none()
             && self.settings.read(cx).is_read()
             && self.conversation.can_continue();
         if message.is_empty() || self.conversation.is_working() || !ready {
@@ -929,6 +1019,9 @@ impl Sidebar {
     fn start(&self, installed: Installed, cx: &mut Context<Self>) -> io::Result<Agent> {
         let folder = self.session.read(cx).project().root().to_path_buf();
         let settings = self.settings.read(cx).settings().clone();
+        // The flag needs a file that exists. One look, beside starting a process.
+        let instructions = (self.settings.read(cx).instructions_file())
+            .filter(|instructions| instructions.is_file());
         let (thread, events) = Thread::start(ThreadOptions {
             provider: self.provider,
             installed,
@@ -936,6 +1029,7 @@ impl Sidebar {
             model: settings.model.clone(),
             approval_mode: settings.approval_mode,
             resume: self.resume(),
+            instructions,
         })?;
         let (sender, receiver) = smol::channel::unbounded();
         let reading = cx.background_spawn(read(events, sender));
@@ -1007,15 +1101,114 @@ impl Sidebar {
 
     /// Drops the thread and its process, and starts empty.
     fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.end_agent(cx);
+        self.leave_thread(window, cx);
         // The old one stays in the store, and no thread is current until the next message.
-        self.saved = None;
         self.keep([Write::Current(None)]);
         // With no writer yet, the thread that loads must not come back.
         self.new_thread_while_loading = self.loading.is_some();
-        self.conversation = Conversation::default();
+        window.focus(&self.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Drops the thread and its process, and shows the recent thread `id` once it is read.
+    fn open_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        self.leave_thread(window, cx);
+        self.opening = Some(cx.spawn(async move |sidebar, cx| {
+            let opened = cx.background_spawn(async move { store.thread(&id) }).await;
+            // A sidebar that went in the meantime shows nothing.
+            sidebar
+                .update(cx, |sidebar, cx| sidebar.opened(opened, cx))
+                .ok();
+        }));
+        window.focus(&self.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    fn opened(
+        &mut self,
+        opened: Result<Option<(SavedThread, Conversation)>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.opening = None;
+        match opened {
+            Ok(Some((saved, conversation))) => {
+                self.recent.retain(|thread| thread.id != saved.id);
+                self.keep([Write::Current(Some(saved.clone()))]);
+                self.saved = Some(saved);
+                // Only notices came meanwhile: no message goes while it reads.
+                let meanwhile = std::mem::replace(&mut self.conversation, conversation);
+                self.conversation.append(meanwhile);
+            }
+            // Gone from the index meanwhile, such as by a copy of the app on the same project.
+            Ok(None) => self
+                .conversation
+                .notice("That thread is not saved any more."),
+            Err(error) => self
+                .conversation
+                .notice(format!("The thread could not be read: {error}")),
+        }
+        self.forget_entries();
+        self.list.reset(self.conversation.entries().len());
+        self.update_new_menu(cx);
+        cx.notify();
+    }
+
+    /// Ends the thread's process, keeps the thread in **Open recent**, and empties the
+    /// sidebar. A recent thread still being read stays where it is.
+    fn leave_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_instructions(window, cx);
+        self.end_agent(cx);
+        self.opening = None;
+        let conversation = std::mem::take(&mut self.conversation);
+        if let Some(saved) = self.saved.take() {
+            self.remember(&saved, &conversation);
+        }
         self.forget_entries();
         self.list.reset(0);
+        self.update_new_menu(cx);
+    }
+
+    /// Shows the instructions in `scope` in place of the thread.
+    fn open_instructions(&mut self, scope: Scope, window: &mut Window, cx: &mut Context<Self>) {
+        let file = match scope {
+            Scope::Project => Some(
+                self.session
+                    .read(cx)
+                    .project()
+                    .root()
+                    .join(INSTRUCTIONS_FILE),
+            ),
+            Scope::AllProjects => self.settings.read(cx).instructions_file(),
+        };
+        let Some(file) = file else {
+            return;
+        };
+        self.close_instructions(window, cx);
+        let saves = self.saves.clone();
+        let editor = cx.new(|cx| InstructionsEditor::new(scope, file, saves, window, cx));
+        let subscription = cx.subscribe_in(&editor, window, |sidebar, _, event, window, cx| {
+            match event {
+                InstructionsEvent::Close => {}
+                InstructionsEvent::Unreadable(message) => {
+                    sidebar.conversation.notice(message.clone());
+                    sidebar.show(None, cx);
+                }
+            }
+            sidebar.close_instructions(window, cx);
+        });
+        self.instructions = Some((editor, subscription));
+        cx.notify();
+    }
+
+    /// Saves what the instructions hold and shows the thread again.
+    fn close_instructions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((editor, _)) = self.instructions.take() else {
+            return;
+        };
+        editor.update(cx, |editor, cx| editor.save(cx));
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }
@@ -1141,8 +1334,11 @@ impl Sidebar {
             .into_any_element()
     }
 
+    /// The title, and **New** at the right. Over the instructions: their title, and the way
+    /// back at the left.
     fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let editing = self.instructions.is_some();
+        let header = div()
             .relative()
             .flex()
             .flex_none()
@@ -1153,20 +1349,27 @@ impl Sidebar {
                 div()
                     .text_size(px(14.))
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Agent"),
-            )
-            .child(
-                div().absolute().right(px(16.)).child(
-                    Button::icon_only("new-thread", "plus")
-                        .debug_selector(|| "agent-new-thread".to_string())
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Xs)
-                        .focus_handle(&self.new_thread_focus)
-                        .on_click(
-                            cx.listener(|sidebar, _, window, cx| sidebar.new_thread(window, cx)),
-                        ),
-                ),
-            )
+                    .child(if editing { "Instructions" } else { "Agent" }),
+            );
+        if !editing {
+            return header.child(
+                div()
+                    .absolute()
+                    .right(px(16.))
+                    .child(self.new_button.clone()),
+            );
+        }
+        header.child(
+            div().absolute().left(px(16.)).child(
+                Button::icon_only("instructions-back", "arrow-left")
+                    .debug_selector(|| "agent-instructions-back".to_string())
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Xs)
+                    .on_click(cx.listener(|sidebar, _, window, cx| {
+                        sidebar.close_instructions(window, cx);
+                    })),
+            ),
+        )
     }
 
     fn composer_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1233,7 +1436,7 @@ impl Sidebar {
     }
 
     /// In place of the composer once the agent lost the session: the thread stays to read,
-    /// and **+** is the way on.
+    /// and **+** is the way on, as **New** is.
     fn cannot_continue(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex_none()
@@ -1259,6 +1462,30 @@ impl Sidebar {
                     .on_click(cx.listener(|sidebar, _, window, cx| sidebar.new_thread(window, cx))),
             )
     }
+}
+
+/// Writes the instructions in turn, so the last text typed is the one on disk. Detached: it
+/// ends when the sidebar does, after the writes still queued. A failed one shows in the thread.
+fn save_instructions(cx: &mut Context<Sidebar>) -> smol::channel::Sender<Save> {
+    let (sender, receiver) = smol::channel::unbounded::<Save>();
+    cx.spawn(async move |sidebar, cx| {
+        while let Ok((file, text)) = receiver.recv().await {
+            let written = cx
+                .background_spawn(async move { instructions::write(&file, &text) })
+                .await;
+            if let Err(error) = written {
+                // A sidebar that went has nobody to tell.
+                sidebar
+                    .update(cx, |sidebar, cx| {
+                        sidebar.conversation.notice(error);
+                        sidebar.show(None, cx);
+                    })
+                    .ok();
+            }
+        }
+    })
+    .detach();
+    sender
 }
 
 /// Hands each write to the background in turn, so the files get them in order. Detached: it
@@ -1327,6 +1554,9 @@ impl Focusable for Sidebar {
     /// The composer, which cmd-L focuses, or the sidebar itself while it has none, so cmd-L
     /// and escape still work there.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some((editor, _)) = &self.instructions {
+            return editor.focus_handle(cx);
+        }
         match self.setup {
             Setup::Ready { .. } if self.conversation.can_continue() => self.input.focus_handle(cx),
             _ => self.focus_handle.clone(),
@@ -1339,19 +1569,23 @@ impl Render for Sidebar {
         let theme = cx.theme();
         // The hairline of the arrangement's lines, so the edges weigh the same.
         let (hairline, text) = (theme.alpha_at(0.05), theme.gray_950);
-        let body = match &self.setup {
-            setup @ (Setup::Checking
-            | Setup::NotInstalled
-            | Setup::Downloading { .. }
-            | Setup::DownloadFailed { .. }
-            | Setup::SignedOut { .. }
-            | Setup::SigningIn
-            | Setup::Stopped { .. }) => Onboarding::new(self.provider, setup.clone())
+        let body = match (&self.instructions, &self.setup) {
+            (Some((editor, _)), _) => editor.clone().into_any_element(),
+            (
+                None,
+                setup @ (Setup::Checking
+                | Setup::NotInstalled
+                | Setup::Downloading { .. }
+                | Setup::DownloadFailed { .. }
+                | Setup::SignedOut { .. }
+                | Setup::SigningIn
+                | Setup::Stopped { .. }),
+            ) => Onboarding::new(self.provider, setup.clone())
                 .on_action(
                     cx.listener(|sidebar, action: &SetupAction, _, cx| sidebar.act(*action, cx)),
                 )
                 .into_any_element(),
-            Setup::Ready { .. } => div()
+            (None, Setup::Ready { .. }) => div()
                 .flex_1()
                 .min_h_0()
                 .flex()

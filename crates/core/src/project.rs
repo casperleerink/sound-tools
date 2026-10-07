@@ -24,7 +24,9 @@ pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName}
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
 pub use editing::{Changes, Derived, Edit, OUTSIDE_UNDO_WINDOW};
 pub use file::{FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination};
-pub use generated::{AGENT_DOC_FILE, AGENT_DOCS_FOLDER, NO_PROBLEMS, PROBLEMS_FILE};
+pub use generated::{
+    AGENT_DOC_FILE, AGENT_DOCS_FOLDER, INSTRUCTIONS_FILE, NO_PROBLEMS, PROBLEMS_FILE,
+};
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{AgentDoc, Registry, RegistryError, ToolRegistration, Was};
 pub use storage::StorageError;

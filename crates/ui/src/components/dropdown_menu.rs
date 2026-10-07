@@ -862,6 +862,12 @@ impl DropdownMenu {
         self
     }
 
+    /// [`Self::align`] of a menu that is already made, such as the one of a split button.
+    pub fn set_align(&mut self, align: Align, cx: &mut Context<Self>) {
+        self.align = align;
+        cx.notify();
+    }
+
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
         self

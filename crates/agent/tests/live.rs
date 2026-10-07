@@ -35,6 +35,7 @@ fn start_with(
         model: Some("haiku".to_string()),
         approval_mode,
         resume,
+        instructions: None,
     })
     .unwrap()
 }

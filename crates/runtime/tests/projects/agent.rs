@@ -58,6 +58,7 @@ fn the_agent_adds_a_clip_as_one_undo_step() {
         model: None,
         approval_mode: ApprovalMode::AskBeforeCommands,
         resume: None,
+        instructions: None,
     })
     .unwrap();
 
