@@ -8,6 +8,7 @@ Here the pad plays through a tremolo named `tremolo`:
 {
   "tool": "script",
   "state": {
+    "name": "Tremolo",
     "code": [
       "param rate = 4 [0.1, 20]",
       "param depth = 0.5 [0, 1]",
@@ -23,6 +24,7 @@ Here the pad plays through a tremolo named `tremolo`:
 
 | Field | Meaning |
 | --- | --- |
+| `name` | What the card of the effect is called, such as `"Tape echo"`. Left out, it is "Script". |
 | `code` | The script, one line per string. |
 | `values` | Where each param stands, by name. A param left out is at the default of its line. Leave it out to use every default. |
 
@@ -31,7 +33,7 @@ Here the pad plays through a tremolo named `tremolo`:
 The script runs once for every sample, on each channel apart. It reads the sample that comes in as `in` and sets `out` to the sample that leaves. A script that never sets `out` passes the sound through.
 
 - `name = expression` sets a name. A name is set once and read on the lines below it.
-- `param name = default [min, max]` is a number the composer turns: a knob, and a field of `values`. A change of it glides over 20 ms, so it does not click.
+- `param name = default [min, max]` is a number the composer turns: a knob on the card, labelled by its name, and a field of `values`. A change of it glides over 20 ms, so it does not click.
 - `history name` declares a value that feeds back: reading it gives what it was set to in the sample before, 0 at first. Set it once, on a line below.
 - `// ...` is a comment.
 
@@ -65,6 +67,7 @@ A tape echo whose repeats get darker and softer:
 {
   "tool": "script",
   "state": {
+    "name": "Tape echo",
     "code": [
       "param time = 350 [1, 2000]",
       "param feedback = 0.45 [0, 0.95]",
