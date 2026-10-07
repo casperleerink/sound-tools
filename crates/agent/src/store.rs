@@ -5,7 +5,8 @@
 //! state of this machine, it would be noise in git, and the agent would read its own chat.
 //! Each project has one folder, `agent/threads/<project key>/`:
 //!
-//! - `index.json` lists the threads ([`SavedThread`]) and names the current one, if any.
+//! - `index.json` lists the threads ([`SavedThread`]), the one last shown last,
+//!   and names the current one, if any.
 //! - `<thread id>.jsonl` is what the sidebar showed: one [`Line`] per line, the composer's
 //!   messages and the [`AgentEvent`]s with the time each came. Replayed through
 //!   [`Conversation::apply`] it gives the same conversation back, so the display needs no
@@ -22,7 +23,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::conversation::Conversation;
+use crate::conversation::{Conversation, request_label};
 use crate::{AgentEvent, TurnOutcome};
 
 const INDEX: &str = "index.json";
@@ -56,6 +57,14 @@ struct Index {
     /// a thread.
     current: Option<String>,
     threads: Vec<SavedThread>,
+}
+
+/// A thread that is not the current one, for **Open recent**.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RecentThread {
+    pub id: String,
+    /// Its first message, on one line and cut short.
+    pub title: String,
 }
 
 /// One line of a thread's log.
@@ -116,21 +125,57 @@ impl ThreadStore {
     /// The current thread, and what it showed. A line that does not read is left out, with a
     /// notice in its place.
     pub(crate) fn current(&self) -> Result<Option<(SavedThread, Conversation)>, String> {
+        match self.index()?.current {
+            Some(current) => self.thread(&current),
+            None => Ok(None),
+        }
+    }
+
+    /// The thread with this id, and what it showed, or `None` when the index has no such
+    /// thread.
+    pub(crate) fn thread(&self, id: &str) -> Result<Option<(SavedThread, Conversation)>, String> {
         let mut index = self.index()?;
-        let Some(current) = index.current else {
-            return Ok(None);
-        };
-        let Some(position) = index.threads.iter().position(|saved| saved.id == current) else {
+        let Some(position) = index.threads.iter().position(|saved| saved.id == id) else {
             return Ok(None);
         };
         let thread = index.threads.swap_remove(position);
-        let path = self.log(&thread.id);
-        let text = match fs::read(&path) {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(format!("{} could not be read: {error}", path.display())),
-        };
+        let text = self.read_log(&thread.id)?;
         Ok(Some((thread, replay(&text))))
+    }
+
+    /// The threads other than the current one, the one last shown first, at most
+    /// `limit`. A thread whose log does not read, or holds no message, is left out.
+    pub(crate) fn recent(&self, limit: usize) -> Result<Vec<RecentThread>, String> {
+        let index = self.index()?;
+        let others = (index.threads.iter().rev())
+            .filter(|thread| index.current.as_ref() != Some(&thread.id));
+        let recent = others
+            .filter_map(|thread| {
+                let text = self.read_log(&thread.id).ok()?;
+                let message = text
+                    .lines()
+                    .find_map(|line| match serde_json::from_str(line) {
+                        Ok(Line::Sent { message, .. }) => Some(message),
+                        _ => None,
+                    })?;
+                Some(RecentThread {
+                    id: thread.id.clone(),
+                    title: request_label(&message),
+                })
+            })
+            .take(limit)
+            .collect();
+        Ok(recent)
+    }
+
+    /// The text of a thread's log, empty when it has none yet.
+    fn read_log(&self, thread: &str) -> Result<String, String> {
+        let path = self.log(thread);
+        match fs::read(&path) {
+            Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+            Err(error) => Err(format!("{} could not be read: {error}", path.display())),
+        }
     }
 
     pub(crate) fn write(&self, write: &Write) -> Result<(), String> {
@@ -145,11 +190,11 @@ impl ThreadStore {
     fn save(&self, current: Option<&SavedThread>) -> Result<(), String> {
         let mut index = self.index()?;
         index.current = current.map(|thread| thread.id.clone());
+        // Last in the list, so the threads are in the order they were last shown: opened, or
+        // sent a message.
         if let Some(thread) = current {
-            match index.threads.iter_mut().find(|saved| saved.id == thread.id) {
-                Some(saved) => *saved = thread.clone(),
-                None => index.threads.push(thread.clone()),
-            }
+            index.threads.retain(|saved| saved.id != thread.id);
+            index.threads.push(thread.clone());
         }
         let path = self.folder.join(INDEX);
         let failed = |error: String| format!("{} was not written: {error}", path.display());

@@ -267,6 +267,7 @@ fn starts_claude_with_the_trimmed_flags() {
         model: Some("haiku".to_string()),
         approval_mode,
         resume,
+        instructions: Some(PathBuf::from("/support/agent/instructions.md")),
     };
     let flags = |approval_mode, resume| {
         arguments(&options(approval_mode, resume), "id")

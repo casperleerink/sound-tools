@@ -1,6 +1,6 @@
 //! The agent sidebar in the left panel: a turn fed as events with no process, the request it
-//! makes one undo step, the approval row, cmd-L and escape, the panel remembered closed, and
-//! the thread saved and opened again.
+//! makes one undo step, the approval row, cmd-L and escape, the panel remembered closed, the
+//! thread saved and opened again, and the project's instructions.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -44,11 +44,11 @@ fn install_sidebar_with(
     cx.update(|cx| {
         let settings = cx.new(|cx| AgentSettings::new(None, cx));
         let shared = settings.clone();
-        LeftPanelSlot::new(Some(remembered), move |session, _, cx| {
+        LeftPanelSlot::new(Some(remembered), move |session, window, cx| {
             let (installed, threads) = (installed.clone(), Some(threads.clone()));
             let settings = shared.clone();
-            let sidebar =
-                cx.new(|cx| Sidebar::with_program(session, installed, threads, settings, cx));
+            let sidebar = cx
+                .new(|cx| Sidebar::with_program(session, installed, threads, settings, window, cx));
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx);
@@ -605,6 +605,89 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
     });
 }
 
+/// The thread the sidebar shows, by its id in the index of the project's threads.
+fn current_thread(machine: &Path) -> String {
+    let projects = std::fs::read_dir(machine.join("agent/threads")).unwrap();
+    let [project] = projects.collect::<Vec<_>>().try_into().unwrap();
+    let index = std::fs::read_to_string(project.unwrap().path().join("index.json")).unwrap();
+    let index: serde_json::Value = serde_json::from_str(&index).unwrap();
+    index["current"].as_str().unwrap().to_string()
+}
+
+/// A thread left with **New** is in **Open recent**, and opens again from there.
+#[gpui::test]
+fn a_thread_left_with_new_opens_again_from_open_recent(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    opened.begin(MESSAGE);
+    opened.receive([
+        AgentEvent::TurnStarted,
+        AgentEvent::TextDone {
+            text: "Added a bass line.".to_string(),
+        },
+        AgentEvent::TurnEnded {
+            outcome: TurnOutcome::Completed,
+        },
+    ]);
+    let shown = entries(&mut opened);
+    let thread = current_thread(machine.path());
+    let new_thread = opened.control("agent-new-thread");
+    opened.click(new_thread);
+    assert_eq!(entries(&mut opened), "[]");
+
+    for control in [
+        "agent-new-thread-menu".to_string(),
+        "menu-recent".to_string(),
+        format!("menu-thread-{thread}"),
+    ] {
+        let control = opened.control(&control);
+        opened.click(control);
+    }
+    opened.cx.run_until_parked();
+    assert_eq!(entries(&mut opened), shown);
+    assert_eq!(current_thread(machine.path()), thread);
+}
+
+/// The project's instructions are typed in the sidebar and saved in the project folder, where
+/// every agent reads them. Enter adds a line. An empty text removes the file.
+#[gpui::test]
+fn instructions_typed_in_the_sidebar_are_saved_in_the_project(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    let file = opened.folder.path().join("instructions.md");
+    let open_instructions = |opened: &mut Opened<'_>| {
+        for control in ["agent-new-thread-menu", "menu-instructions-project"] {
+            let control = opened.control(control);
+            opened.click(control);
+        }
+        // The file is read in the background.
+        opened.cx.run_until_parked();
+    };
+
+    open_instructions(&mut opened);
+    opened
+        .cx
+        .simulate_input("Never automate the volume directly.");
+    opened.keys("enter");
+    opened.cx.simulate_input("Use a utility.");
+    let back = opened.control("agent-instructions-back");
+    opened.click(back);
+    opened.cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "Never automate the volume directly.\nUse a utility.\n"
+    );
+
+    // Opened again it shows the file; emptied and closed with escape, the file goes.
+    open_instructions(&mut opened);
+    opened.keys("cmd-a backspace escape");
+    opened.cx.run_until_parked();
+    assert!(!file.exists());
+    assert!(opened.composer_focused());
+}
+
 /// The agent no longer has the session: the thread stays to read, also when the project opens
 /// again, and only **+** goes on.
 #[gpui::test]
@@ -893,10 +976,11 @@ fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
     let sidebar = opened.sidebar();
     let session = opened.session.clone();
     let shared = settings.clone();
-    let other = opened.cx.update(|_, cx| {
+    let other = opened.cx.update(|window, cx| {
         sidebar.update(cx, |sidebar, _| sidebar.connect(thread));
-        let other = cx
-            .new(|cx| Sidebar::with_program(session, Some(nonexistent_claude()), None, shared, cx));
+        let installed = Some(nonexistent_claude());
+        let other =
+            cx.new(|cx| Sidebar::with_program(session, installed, None, shared, window, cx));
         other.update(cx, |other, _| other.connect(other_thread));
         other
     });

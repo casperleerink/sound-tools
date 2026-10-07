@@ -22,7 +22,7 @@ fn the_map_is_written_on_open_and_lists_the_docs_of_the_enabled_extensions() {
     assert!(map.contains("| `agent-docs/project-json.md` | You change the tempo"));
     assert!(map.contains("| `agent-docs/test-tools.md` | You work on a test record. |"));
     assert!(!map.contains("{{"), "a placeholder is left: {map}");
-    assert_eq!(harness.read("CLAUDE.md"), "@AGENTS.md\n");
+    assert_eq!(harness.read("CLAUDE.md"), "@AGENTS.md\n@instructions.md\n");
 
     // The docs themselves.
     let doc = harness.read(&format!("{AGENT_DOCS_FOLDER}/test-tools.md"));

@@ -1,11 +1,13 @@
-//! The composer's two menus: the model, with the account and **Sign out** under it, and how
-//! much the agent may do without asking. Both selects are settings of the machine, see
-//! `crate::settings`.
+//! The sidebar's menus. In the composer: the model, with the account and **Sign out** under it,
+//! and how much the agent may do without asking, both settings of the machine (see
+//! `crate::settings`). In the header: **New**, the recent threads, and the instructions.
 
 use gpui::{Hsla, SharedString, rgb};
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 
+use super::instructions::Scope;
 use crate::settings::Settings;
+use crate::store::RecentThread;
 use crate::{Account, ApprovalMode, Model, Provider};
 
 /// In the order the menu lists them, from the most careful.
@@ -28,17 +30,25 @@ pub(super) enum Choice {
     /// One of the provider's models, or `None` for its default.
     Model(Option<String>),
     SignOut,
+    NewThread,
+    /// A recent thread of the project, by id.
+    OpenThread(String),
+    Instructions(Scope),
 }
 
 impl Choice {
     /// The row's value in the menu, which [`Choice::of`] reads back. A test finds the row as
     /// `menu-<value>`.
-    fn value(&self) -> SharedString {
+    pub(super) fn value(&self) -> SharedString {
         match self {
             Choice::ApprovalMode(mode) => format!("approval-{}", approval_text(*mode).0).into(),
             Choice::Model(Some(id)) => format!("model-{id}").into(),
             Choice::Model(None) => "model".into(),
             Choice::SignOut => "sign-out".into(),
+            Choice::NewThread => "new-thread".into(),
+            Choice::OpenThread(id) => format!("thread-{id}").into(),
+            Choice::Instructions(Scope::Project) => "instructions-project".into(),
+            Choice::Instructions(Scope::AllProjects) => "instructions-all-projects".into(),
         }
     }
 
@@ -46,10 +56,16 @@ impl Choice {
         match value {
             "sign-out" => return Some(Choice::SignOut),
             "model" => return Some(Choice::Model(None)),
+            "new-thread" => return Some(Choice::NewThread),
+            "instructions-project" => return Some(Choice::Instructions(Scope::Project)),
+            "instructions-all-projects" => return Some(Choice::Instructions(Scope::AllProjects)),
             _ => {}
         }
         if let Some(id) = value.strip_prefix("model-") {
             return Some(Choice::Model(Some(id.to_string())));
+        }
+        if let Some(id) = value.strip_prefix("thread-") {
+            return Some(Choice::OpenThread(id.to_string()));
         }
         let name = value.strip_prefix("approval-")?;
         APPROVAL_MODES
@@ -125,6 +141,31 @@ fn row(choice: Choice, label: &str, checked: bool) -> MenuItem {
         .checked(checked)
 }
 
+/// **New**'s menu: a new thread, as the button beside it, the recent threads when there are
+/// any, and the instructions. Those for all projects need a support folder to be kept in.
+pub(super) fn new_entries(recent: &[RecentThread], all_projects: bool) -> Vec<MenuEntry> {
+    let new = MenuItem::new(Choice::NewThread.value(), "New thread").selectable(false);
+    let recent = (!recent.is_empty()).then(|| {
+        let threads = recent.iter().map(|thread| {
+            MenuItem::new(Choice::OpenThread(thread.id.clone()).value(), &thread.title)
+                .selectable(false)
+        });
+        MenuItem::new("recent", "Open recent").submenu(threads)
+    });
+    let instructions = [
+        (Scope::Project, "This project", true),
+        (Scope::AllProjects, "All projects", all_projects),
+    ]
+    .map(|(scope, label, enabled)| {
+        row(Choice::Instructions(scope), label, false).disabled(!enabled)
+    });
+    vec![
+        MenuEntry::Group(MenuGroup::new().item(new).items(recent)),
+        MenuEntry::Separator,
+        MenuEntry::Group(MenuGroup::new().label("Instructions").items(instructions)),
+    ]
+}
+
 /// What the trigger says: the model the agent runs. Until the provider lists its models, the
 /// id that is picked, or "Default".
 pub(super) fn label(settings: &Settings, models: &[Model]) -> String {
@@ -194,6 +235,10 @@ mod tests {
             Choice::Model(None),
             Choice::Model(Some("claude-opus-5-5".to_string())),
             Choice::SignOut,
+            Choice::NewThread,
+            Choice::OpenThread("5f0c7a1e-0000-4000-8000-000000000000".to_string()),
+            Choice::Instructions(Scope::Project),
+            Choice::Instructions(Scope::AllProjects),
         ]);
         for choice in choices {
             assert_eq!(Choice::of(&choice.value()), Some(choice));

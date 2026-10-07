@@ -5,6 +5,8 @@
 //! file.
 //!
 //! [`AgentSettings`] holds them once for the app, so every sidebar shows and changes the same.
+//! It also knows where the composer's instructions for every project are: `instructions.md`
+//! beside the settings, read when an agent starts (see `crate::view::instructions`).
 
 use std::fs;
 use std::io;
@@ -15,6 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::store::write_whole;
 use crate::{ApprovalMode, Model};
+
+const INSTRUCTIONS_FILE: &str = "instructions.md";
 
 /// The settings of the app, read once and shared by every sidebar. A sidebar observes it to
 /// show it, and hears an [`AgentSettingsEvent`] to tell its agent.
@@ -78,6 +82,12 @@ impl AgentSettings {
         }
         cx.emit(AgentSettingsEvent::Read);
         cx.notify();
+    }
+
+    /// The composer's instructions for every project, beside the settings file.
+    pub fn instructions_file(&self) -> Option<PathBuf> {
+        let file = self.file.as_ref()?;
+        Some(file.with_file_name(INSTRUCTIONS_FILE))
     }
 
     pub fn settings(&self) -> &Settings {

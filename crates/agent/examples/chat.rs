@@ -65,6 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             model: None,
             approval_mode: ApprovalMode::default(),
             resume: None,
+            instructions: None,
         })?;
         let session_id = thread.session_id().to_string();
         let mut thread = Some(thread);

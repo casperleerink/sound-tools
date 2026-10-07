@@ -94,6 +94,9 @@ fn arguments(options: &ThreadOptions, session_id: &str) -> Vec<OsString> {
     if let Some(model) = &options.model {
         arguments.extend(["--model".into(), model.into()]);
     }
+    if let Some(instructions) = &options.instructions {
+        arguments.extend(["--append-system-prompt-file".into(), instructions.into()]);
+    }
     arguments
 }
 

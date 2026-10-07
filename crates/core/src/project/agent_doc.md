@@ -6,6 +6,10 @@ A piece of music saved as small JSON files. You work on it by editing these file
 
 This file is the map. It holds what you need on every task. The docs below hold the rest, one file each. Open the one your task needs and leave the others closed.
 
+## The composer's instructions
+
+`instructions.md`, when it exists, holds the composer's instructions for this project. Read it before you start and follow it; where it disagrees with the docs, it wins. When the composer asks you to remember something for this project, or corrects a mistake you might make again, add a short line to it. Write it as a plain rule, and keep the lines that are there.
+
 ## Docs
 
 {{docs}}
@@ -21,6 +25,7 @@ state/                    every instance of a tool, one JSON record each
     <child>.json          a child instance
     <child>/instance.json a child instance that owns children itself
 problems.txt              written by the runtime while it has the project open: the files that are not live, and why
+instructions.md           the composer's instructions for this project, if any
 AGENTS.md, CLAUDE.md      this map, generated
 agent-docs/               the docs of the list above, generated
 ```

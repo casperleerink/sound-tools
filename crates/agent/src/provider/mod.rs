@@ -163,6 +163,9 @@ pub struct ThreadOptions {
     /// The session to continue, from an earlier [`Thread::session_id`], or `None` for a new
     /// one.
     pub resume: Option<String>,
+    /// A file of the composer's instructions for every project, added to the agent's system
+    /// prompt. The project's own are in the folder, where the agent reads them itself.
+    pub instructions: Option<PathBuf>,
 }
 
 /// One step of a turn, such as an edit or a command. The id is the provider's; a test that

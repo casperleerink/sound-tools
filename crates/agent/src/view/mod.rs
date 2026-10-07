@@ -2,6 +2,7 @@
 
 mod entry;
 mod history;
+mod instructions;
 mod markdown;
 mod menu;
 mod onboarding;

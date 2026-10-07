@@ -238,13 +238,15 @@ pub(crate) fn snapshots(
     cx.run_until_parked();
     save(cx, &opened, "agent-steps-problems")?;
 
-    let (model_menu, access_menu) = cx.update(|cx| {
+    let (model_menu, access_menu, new_menu) = cx.update(|cx| {
         let sidebar = sidebar.read(cx);
-        (sidebar.model_menu().clone(), sidebar.access_menu().clone())
+        let menus = (sidebar.model_menu(), sidebar.access_menu());
+        (menus.0.clone(), menus.1.clone(), sidebar.new_menu(cx))
     });
     for (menu, name) in [
         (model_menu, "agent-menu"),
         (access_menu, "agent-access-menu"),
+        (new_menu, "agent-new-menu"),
     ] {
         cx.update_window(opened.window.into(), |_, window, cx| {
             menu.update(cx, |menu, cx| menu.open(window, cx));
@@ -311,6 +313,16 @@ pub(crate) fn snapshots(
     });
     cx.run_until_parked();
     save(cx, &opened, "agent-composer-full")?;
+
+    // The project's instructions, none yet, in place of the thread.
+    cx.update(|cx| {
+        let menu = sidebar.read(cx).new_menu(cx);
+        menu.update(cx, |_, cx| {
+            cx.emit(MenuPicked("instructions-project".into()))
+        });
+    });
+    cx.run_until_parked();
+    save(cx, &opened, "agent-instructions")?;
     Ok(())
 }
 
@@ -320,14 +332,15 @@ pub(crate) fn snapshots(
 fn open_with_sidebar(cx: &mut HeadlessAppContext) -> Result<(Opened, Entity<Sidebar>)> {
     cx.update(|cx| {
         let settings = cx.new(|cx| AgentSettings::new(None, cx));
-        LeftPanelSlot::new(None, move |session, _, cx| {
+        LeftPanelSlot::new(None, move |session, window, cx| {
             let installed = Installed {
                 program: "/nonexistent/claude".into(),
                 environment: HashMap::new(),
             };
             let settings = settings.clone();
-            let sidebar =
-                cx.new(|cx| Sidebar::with_program(session, Some(installed), None, settings, cx));
+            let sidebar = cx.new(|cx| {
+                Sidebar::with_program(session, Some(installed), None, settings, window, cx)
+            });
             LeftPanel::new(sidebar, Sidebar::is_busy, cx)
         })
         .install(cx)

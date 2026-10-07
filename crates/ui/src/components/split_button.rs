@@ -12,6 +12,7 @@ use gpui::{
 
 use crate::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuPicked, Trigger};
 use crate::components::icon::Icon;
+use crate::components::popover::Align;
 use crate::focus::KeyboardFocus;
 use crate::theme::ActiveTheme;
 
@@ -90,6 +91,13 @@ impl SplitButton {
     /// An icon before the words of the main half, such as `plus`.
     pub fn icon(mut self, name: impl Into<SharedString>) -> Self {
         self.icon = Some(name.into());
+        self
+    }
+
+    /// Opens the menu from the right edge of the chevron, for a button at the right of its view.
+    pub fn align_end(self, cx: &mut Context<Self>) -> Self {
+        self.menu
+            .update(cx, |menu, cx| menu.set_align(Align::End, cx));
         self
     }
 
