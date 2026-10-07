@@ -26,6 +26,7 @@ metronome.workspace = true
 midi.workspace = true
 modulation.workspace = true
 plugin-host.workspace = true
+realfft.workspace = true
 reverb.workspace = true
 sampler.workspace = true
 saturator.workspace = true

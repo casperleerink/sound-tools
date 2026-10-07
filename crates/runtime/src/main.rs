@@ -8,12 +8,19 @@
 //! runtime <project-folder> --inspect                       print a summary, open no device
 //! runtime <project-folder> --render <wav>                 render the project and its tail
 //! runtime <project-folder> --render <wav> --seconds <n>    render the first n seconds
-//! runtime <project-folder> --render <wav> --from <ticks> --to <ticks>
+//! runtime <project-folder> --render <wav> --from <at> --to <at>
 //!                                                          render a range and its tail
+//! runtime <project-folder> --analyze                       measure the project and its tail
+//! runtime <audio-file> --analyze                           measure a WAV, AIFF or FLAC file
 //! runtime --plugins                                        list the plugins of this machine
 //! runtime --plugin-params <format> <plugin_id>             list the parameters of one plugin
 //! runtime --help                                           print this usage
 //! ```
+//!
+//! `<at>` is a position in ticks (`3840`), or a time as a playhead shows it (`1:23.5`) or in
+//! seconds (`83.5s`). A render and an analysis of a project take `--from` and `--to`, either
+//! one alone, or `--seconds`, and `--solo <track>`, as often as there are tracks to hear, by
+//! name or id. Solo changes no file. An analysis of a file takes times only.
 //!
 //! A render with `--progress` at the end also prints `progress: <percent>` lines, for the
 //! progress bar of the window's export.
@@ -35,10 +42,14 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, bail};
-use plugin_host::PluginFormat;
+use anyhow::{Context as _, Result, anyhow, bail};
+use plugin_host::{PluginFormat, Plugins};
+use runtime::analysis::Meter;
+use runtime::analysis::report::{Timeline, report};
 use runtime::{OFFLINE, open_or_create_with, open_read_only_with, problems, summary};
-use sound_core::{Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks};
+use sound_core::{
+    Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
+};
 
 fn print_summary(project: &Project) {
     println!("project: {}", project.root().display());
@@ -239,21 +250,175 @@ enum Span {
     Range(Ticks, Ticks),
 }
 
-/// Renders `span`, or with none the project from the start to the end of the last clip, and
-/// the tail. With `progress` it prints each whole percent of the span it reaches.
-fn render(folder: &Path, wav: &Path, span: Option<Span>, progress: bool) -> Result<()> {
+/// Where a render starts or ends: ticks, or a time as the composer reads it off the playhead,
+/// which is how they say where they heard something.
+#[derive(Clone, Copy)]
+enum Position {
+    Ticks(Ticks),
+    Seconds(f64),
+}
+
+impl Position {
+    /// `3840` is ticks, `1:23.5` minutes and seconds, `83.5s` seconds.
+    fn parse(text: &str) -> Result<Self> {
+        if let Ok(ticks) = text.parse() {
+            return Ok(Self::Ticks(Ticks(ticks)));
+        }
+        let seconds = match (text.strip_suffix('s'), text.split_once(':')) {
+            (Some(seconds), _) => seconds.parse().ok(),
+            (None, Some((minutes, seconds))) => {
+                match (minutes.parse::<u32>(), seconds.parse::<f64>()) {
+                    (Ok(minutes), Ok(seconds)) => Some(f64::from(minutes) * 60.0 + seconds),
+                    _ => None,
+                }
+            }
+            (None, None) => None,
+        };
+        match seconds {
+            Some(seconds) if seconds.is_finite() && seconds >= 0.0 => Ok(Self::Seconds(seconds)),
+            _ => Err(anyhow!(
+                "{text:?} is not a position: give ticks (3840), a time (1:23.5) or seconds (83.5s)"
+            )),
+        }
+    }
+
+    fn tick(self, clock: &Clock) -> Ticks {
+        match self {
+            Self::Ticks(ticks) => ticks,
+            Self::Seconds(seconds) => clock.tick_at_seconds(seconds),
+        }
+    }
+}
+
+/// What a render and an analysis play: the flags after `--render <wav>` or `--analyze`.
+#[derive(Default)]
+struct Options {
+    seconds: Option<f64>,
+    from: Option<Position>,
+    to: Option<Position>,
+    solo: Vec<String>,
+}
+
+impl Options {
+    fn parse(mut arguments: &[&str]) -> Result<Self> {
+        let mut options = Self::default();
+        while let [flag, value, rest @ ..] = arguments {
+            match *flag {
+                "--seconds" => {
+                    options.seconds = Some(value.parse().context("--seconds takes a number")?);
+                }
+                "--from" => options.from = Some(Position::parse(value)?),
+                "--to" => options.to = Some(Position::parse(value)?),
+                "--solo" => options.solo.push(value.to_string()),
+                _ => bail!(USAGE),
+            }
+            arguments = rest;
+        }
+        if !arguments.is_empty() {
+            bail!(USAGE);
+        }
+        Ok(options)
+    }
+
+    /// What a render of `project` plays. With neither `--from` nor `--to`, the project from the
+    /// start to the end of the last clip, and the tail.
+    fn span(&self, project: &Project) -> Result<Span> {
+        let clock = project.clock();
+        match (self.seconds, self.from, self.to) {
+            (Some(seconds), None, None) => Ok(Span::Seconds(seconds)),
+            (Some(_), _, _) => {
+                bail!("--seconds renders from the start: give it alone, or --from and --to")
+            }
+            (None, from, to) => {
+                let from = from.map_or(Ticks(0), |from| from.tick(clock));
+                let to = match to {
+                    Some(to) => to.tick(clock),
+                    None => runtime::project_end(project)
+                        .context("the project has no clips, so there is nothing to render")?,
+                };
+                if to <= from {
+                    bail!("--to must come after --from");
+                }
+                Ok(Span::Range(from, to))
+            }
+        }
+    }
+
+    /// The span of an audio file of `length` seconds, in seconds. A file has no ticks.
+    fn file_span(&self, length: f64) -> Result<(f64, f64)> {
+        if !self.solo.is_empty() {
+            bail!("--solo is for a project: a file has no tracks");
+        }
+        let seconds = |position: Option<Position>, otherwise: f64| match position {
+            None => Ok(otherwise),
+            Some(Position::Seconds(seconds)) => Ok(seconds.min(length)),
+            Some(Position::Ticks(_)) => {
+                bail!("a file has no ticks: give a time, such as 1:23.5 or 83.5s")
+            }
+        };
+        let (from, to) = match (self.seconds, self.from, self.to) {
+            (Some(seconds), None, None) => (0.0, seconds.min(length)),
+            (Some(_), _, _) => {
+                bail!("--seconds measures from the start: give it alone, or --from and --to")
+            }
+            (None, from, to) => (seconds(from, 0.0)?, seconds(to, length)?),
+        };
+        if to <= from {
+            bail!("--to must come after --from, and --from before the end of the file");
+        }
+        Ok((from, to))
+    }
+}
+
+/// Opens the project read-only, with the tracks of `--solo` soloed in memory.
+fn open_for_render(folder: &Path, options: &Options) -> Result<(Project, Engine, Plugins)> {
     let plugins = runtime::plugins(true)?;
     let (mut project, mut engine) = open_read_only_with(folder, plugins.clone())?;
     print_problems(&project);
-    // Before the file is made, so a render that cannot happen leaves no empty file behind.
-    let span = match span {
-        Some(span) => span,
-        None => {
-            let end = runtime::project_end(&project)
-                .context("the project has no clips, so there is nothing to render")?;
-            Span::Range(Ticks(0), end)
+    runtime::solo(&mut project, &mut engine, &plugins, &options.solo)?;
+    Ok((project, engine, plugins))
+}
+
+/// Plays `span` into `write`, and prints what the plugin host reported on the way.
+///
+/// The plugin host is polled for every buffer, as the live loop does: a render answers a
+/// plugin's main-thread requests or it renders what a plugin that is waiting for one sounds
+/// like, which can be nothing at all.
+fn play(
+    project: &mut Project,
+    engine: &mut Engine,
+    plugins: &Plugins,
+    span: &Span,
+    write: impl FnMut(&[f32]) -> Result<()>,
+) -> Result<()> {
+    let problems = match *span {
+        Span::Seconds(seconds) => {
+            project.engine().play();
+            let frames = (seconds * f64::from(OFFLINE.sample_rate)) as usize;
+            runtime::render_into(project, engine, plugins, frames, write)?
         }
+        Span::Range(from, to) => runtime::render_range(project, engine, plugins, from, to, write)?,
     };
+    for problem in problems {
+        println!("error: {problem}");
+    }
+    Ok(())
+}
+
+/// Above zero, notes were lost: more events in one block than a port holds, or more held notes
+/// than a track keeps.
+fn print_event_overflows(project: &mut Project) -> Result<()> {
+    let status = project.engine().poll()?;
+    println!("event overflows: {}", status.event_overflows);
+    Ok(())
+}
+
+/// Renders the span of `options` to `wav`. With `progress` it prints each whole percent of the
+/// span it reaches.
+fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Result<()> {
+    let (mut project, mut engine, plugins) = open_for_render(folder, options)?;
+    // Before the file is made, so a render that cannot happen leaves no empty file behind.
+    let span = options.span(&project)?;
     let rate = f64::from(OFFLINE.sample_rate);
     let length = match span {
         Span::Seconds(seconds) => (seconds * rate) as u64,
@@ -287,21 +452,7 @@ fn render(folder: &Path, wav: &Path, span: Option<Span>, progress: bool) -> Resu
         }
         Ok(())
     };
-    // The plugin host is polled for every buffer, as the live loop does: a render answers a
-    // plugin's main-thread requests or it renders what a plugin that is waiting for one sounds
-    // like, which can be nothing at all.
-    let problems = match span {
-        Span::Seconds(_) => {
-            project.engine().play();
-            runtime::render_into(&mut project, &mut engine, &plugins, length as usize, write)?
-        }
-        Span::Range(from, to) => {
-            runtime::render_range(&mut project, &mut engine, &plugins, from, to, write)?
-        }
-    };
-    for problem in problems {
-        println!("error: {problem}");
-    }
+    play(&mut project, &mut engine, &plugins, &span, write)?;
     let frames = writer.len() / OFFLINE.channels as u32;
     writer.finalize()?;
     let seconds = f64::from(frames) / f64::from(OFFLINE.sample_rate);
@@ -309,10 +460,91 @@ fn render(folder: &Path, wav: &Path, span: Option<Span>, progress: bool) -> Resu
         "rendered {seconds:.2} s to {}, peak {peak:.4}",
         wav.display()
     );
-    // Above zero, notes were lost: more events in one block than a port holds, or more held
-    // notes than a track keeps.
-    let status = project.engine().poll()?;
-    println!("event overflows: {}", status.event_overflows);
+    print_event_overflows(&mut project)
+}
+
+/// How much earlier than its start a range of an analysis plays: long enough for most tails of
+/// reverbs and releases to reach into it.
+const WARM_UP_SECONDS: f64 = 4.0;
+
+/// Renders the span of `options` and prints what it measures, row by row: no file is written.
+/// See [`runtime::analysis`].
+fn analyze(path: &Path, options: &Options) -> Result<()> {
+    if path.is_file() {
+        return analyze_file(path, options);
+    }
+    let (mut project, mut engine, plugins) = open_for_render(path, options)?;
+    let span = options.span(&project)?;
+    let clock = project.clock().clone();
+    let timeline = match span {
+        Span::Seconds(seconds) => Timeline::Project {
+            from: Ticks(0),
+            to: clock.tick_at_seconds(seconds),
+            tail: false,
+            clock: clock.clone(),
+        },
+        Span::Range(from, to) => Timeline::Project {
+            clock: clock.clone(),
+            from,
+            to,
+            tail: true,
+        },
+    };
+    // A range plays from a little earlier, so what sounds into it from before, such as the
+    // tail of a reverb, is in it as it is when the whole piece plays. The meter hears that
+    // part and measures none of it.
+    let (span, mut warm_up) = match span {
+        Span::Range(from, to) => {
+            let earlier = (clock.seconds_of(from) - WARM_UP_SECONDS).max(0.0);
+            let earlier = clock.tick_at_seconds(earlier).min(from);
+            let frames = clock.frame_of(from).0 - clock.frame_of(earlier).0;
+            (Span::Range(earlier, to), frames as usize * OFFLINE.channels)
+        }
+        span => (span, 0),
+    };
+    let mut meter = Meter::new(OFFLINE.sample_rate, timeline.row_starts());
+    let measure = |samples: &[f32]| {
+        let (before, after) = samples.split_at(warm_up.min(samples.len()));
+        warm_up -= before.len();
+        meter.warm_up(before);
+        meter.push(after);
+        Ok(())
+    };
+    play(&mut project, &mut engine, &plugins, &span, measure)?;
+    println!("{}", report(&timeline, &meter.finish()));
+    print_event_overflows(&mut project)
+}
+
+/// Measures an audio file, such as a sample under `assets/`, as [`analyze`] measures a render.
+fn analyze_file(path: &Path, options: &Options) -> Result<()> {
+    let bytes =
+        std::fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    let audio = sound_media::Audio::parse(bytes)
+        .with_context(|| format!("{} is not a WAV, AIFF or FLAC file", path.display()))?;
+    let (from, to) = options.file_span(audio.seconds())?;
+    let rate = audio.sample_rate();
+    println!(
+        "{}: {} Hz, {} channels, {:.2} s",
+        path.display(),
+        rate,
+        audio.channels(),
+        audio.seconds()
+    );
+    let timeline = Timeline::File {
+        sample_rate: rate,
+        from,
+        to,
+    };
+    let mut meter = Meter::new(rate, timeline.row_starts());
+    let start = (from * f64::from(rate)).round() as i64;
+    let frames = ((to - from) * f64::from(rate)).round() as i64;
+    let mut buffer = vec![[0.0_f32; 2]; 4096];
+    for first in (0..frames).step_by(buffer.len()) {
+        let buffer = &mut buffer[..(frames - first).min(4096) as usize];
+        audio.read(start + first, buffer);
+        meter.push(buffer.as_flattened());
+    }
+    println!("{}", report(&timeline, &meter.finish()));
     Ok(())
 }
 
@@ -394,7 +626,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [--seconds <n> | --from <ticks> --to <ticks>] [--progress]]]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at>] [--solo <track>]...\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's
@@ -452,25 +684,11 @@ fn main() -> Result<()> {
         // The child of a plugin scan. It loads one bundle, which is why it is a process of
         // its own: a plugin that crashes while it is looked at costs this child and no more.
         [plugin_host::SCAN_ARGUMENT, format, bundle] => scan_one_bundle(format, Path::new(bundle)),
-        [folder, "--render", wav] => render(Path::new(folder), Path::new(wav), None, progress),
-        [folder, "--render", wav, "--seconds", seconds] => {
-            let seconds = seconds.parse().context("--seconds takes a number")?;
-            render(
-                Path::new(folder),
-                Path::new(wav),
-                Some(Span::Seconds(seconds)),
-                progress,
-            )
+        [folder, "--render", wav, options @ ..] => {
+            let options = Options::parse(options)?;
+            render(Path::new(folder), Path::new(wav), &options, progress)
         }
-        [folder, "--render", wav, "--from", from, "--to", to] => {
-            let from = from.parse().context("--from takes a position in ticks")?;
-            let to = to.parse().context("--to takes a position in ticks")?;
-            if to <= from {
-                bail!("--to must come after --from");
-            }
-            let span = Span::Range(Ticks(from), Ticks(to));
-            render(Path::new(folder), Path::new(wav), Some(span), progress)
-        }
+        [path, "--analyze", options @ ..] => analyze(Path::new(path), &Options::parse(options)?),
         _ => bail!(USAGE),
     }
 }
