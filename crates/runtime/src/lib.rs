@@ -3,6 +3,7 @@
 //! the application window. Tests of whole projects, with every bundled extension, use this
 //! crate.
 
+pub mod analysis;
 pub mod app;
 pub mod recorder;
 pub mod update;
@@ -11,7 +12,7 @@ pub mod window;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use arrangement::{ArrangementState, Colour, TrackKind};
+use arrangement::{ArrangementState, Colour, TrackKind, TrackState};
 use gpui::{App, AppContext as _};
 use instrument::SynthState;
 use plugin_host::{
@@ -43,15 +44,42 @@ pub const OFFLINE: EngineConfig = EngineConfig {
 /// being opened somewhere else. Hence no path of this executable in it.
 const INSPECT_DOC: AgentDoc = AgentDoc {
     name: "inspect",
-    when: "You can run commands and want the whole piece in one read or as a WAV",
-    markdown: "# Inspect from a command line
+    when: "You can run commands and want to check how your work sounds, read the whole piece in one go, or write it as a WAV",
+    markdown: "# Inspect, measure and render from a command line
 
-When you can run commands, the Sound Tools runtime prints where each time signature starts, the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems. `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak. `--seconds <n>` or `--from <ticks> --to <ticks>` renders part of it. Both work while the project is open and change nothing.
+When you can run commands, the Sound Tools runtime reads the project for you. Every form works while the project is open and changes nothing.
 
 ```sh
 sound-tools . --inspect
+sound-tools . --analyze
 sound-tools . --render <wav>
 ```
+
+- `--inspect` prints where each time signature starts, the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems.
+- `--analyze` plays the piece and its tail offline and prints what it measures, of the whole and in up to 32 rows. Use it after a change, to check that it sounds as you meant.
+- `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak.
+
+`--analyze` and `--render` take the same options:
+
+- `--from <at>` and `--to <at>`, together or alone: a part of the piece, and its tail. `<at>` is ticks (`3840`), or a time as the composer reads it off the playhead (`1:23.5`) or in seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
+- `--seconds <n>`: the first `n` seconds, with no tail.
+- `--solo <track>`, once per track: only these tracks play, by name or id. No file changes.
+
+`sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`, with `--from` and `--to` as times.
+
+## What `--analyze` prints
+
+The first line is the whole: its loudness (integrated, gated as streaming services measure it), the loudest 400 ms, and the true peak and where it is. Each row then starts at a tick, a bar and a time:
+
+- `LUFS`: the loudness of the row, weighted like hearing. `max`: its loudest 400 ms, which shows short hits that the loudness of the row hides.
+- `peak`: the true peak in dBTP, between the samples too. Above 0 clips.
+- `sub` under 60 Hz, `bass` 60 to 250, `lowmid` 250 to 500, `mid` 500 to 2k, `highmid` 2k to 6k, `high` above 6k: the level of each band in dB.
+- `width`: the share of the sound in the side. 0% is mono, 50% as wide as two unrelated channels; above 50% the channels cancel when summed to mono.
+- `-` is silence. A track that should play and measures `-` alone did not load or plays nothing.
+
+A mono file is measured as it plays in a project, on both channels: 3 dB above what a meter of one channel shows.
+
+Compare rows and runs, not rules of thumb: the same part before and after your change, a soloed track against the whole, a verse against a chorus. The numbers do not say whether it sounds good; the composer does.
 
 `sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu (on Windows the installer puts it there), or skip this step: `problems.txt` tells you whether your files loaded.",
 };
@@ -271,6 +299,55 @@ pub fn main_arrangement(project: &Project) -> Option<Instance<ArrangementState>>
     let (id, _) =
         instances.find(|(id, tool)| id.parent().is_none() && *tool == ArrangementState::TOOL)?;
     project.resolve(id)
+}
+
+/// Solos the tracks of the main arrangement that `names` names, by name or by id, and unmutes
+/// them: every other track goes silent. Only in memory, so a render of a read-only project can
+/// play one part alone and leave every file as it is. Call it before the render plays. Gives
+/// what the plugin host reported meanwhile.
+pub fn solo(
+    project: &mut Project,
+    engine: &mut Engine,
+    plugins: &Plugins,
+    names: &[String],
+) -> Result<Vec<plugin_host::PluginProblem>> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(arrangement) = main_arrangement(project) else {
+        bail!("the project has no arrangement, so it has no tracks to solo");
+    };
+    let tracks = arrangement::tracks(project, arrangement.id());
+    let called = |(track, state): &(Instance<TrackState>, &TrackState), name: &String| {
+        state.name == *name || track.id().as_str() == name
+    };
+    if let Some(missing) = names
+        .iter()
+        .find(|name| !tracks.iter().any(|track| called(track, name)))
+    {
+        let all: Vec<String> = tracks
+            .iter()
+            .map(|(_, state)| format!("{:?}", state.name))
+            .collect();
+        bail!(
+            "no track is called {missing:?}. The tracks: {}",
+            all.join(", ")
+        );
+    }
+    let mut changes = Changes::new();
+    for track in &tracks {
+        let mut state = track.1.clone();
+        state.solo = names.iter().any(|name| called(track, name));
+        state.mute &= !state.solo;
+        changes.set(&track.0, state);
+    }
+    project.apply_in_memory(changes)?;
+    // A track that changes its mute fades, which would fade in the start of the render. The
+    // engine runs stopped until the fades are over.
+    let fade = arrangement::RAMP_SECONDS * engine.sample_rate() as f32;
+    render_into(project, engine, plugins, 2 * fade.ceil() as usize, |_| {
+        Ok(())
+    })
 }
 
 /// The name and colour of the next track: `Track <n>`, in the next colour of the palette, so

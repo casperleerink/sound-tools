@@ -34,6 +34,7 @@ mod reverb;
 mod sampler;
 mod saturator;
 mod scale;
+mod solo;
 mod summary;
 mod support;
 mod utility;

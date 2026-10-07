@@ -5468,6 +5468,7 @@ dependencies = [
  "midi",
  "modulation",
  "plugin-host",
+ "realfft",
  "reverb",
  "sampler",
  "saturator",

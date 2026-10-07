@@ -51,6 +51,9 @@ pub enum ProjectError {
     AlreadyOpen(String),
     #[error("the project is open read-only")]
     ReadOnly,
+    /// [`Project::apply_in_memory`] on a project that writes, whose next edit would save it.
+    #[error("only a read-only project takes changes in memory: this one writes its files")]
+    WritesFiles,
     /// `project.json` could not be loaded when the project opened.
     #[error("{path}: {message}")]
     InvalidProjectFile { path: String, message: String },
@@ -129,7 +132,9 @@ pub struct Problem {
 /// Where a state application comes from. The differences are small on purpose.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Source {
-    /// Opening the project: applying everything from empty.
+    /// Opening the project: applying everything from empty. Also a change only in memory, see
+    /// [`Project::apply_in_memory`]: like loading, it writes nothing, derives nothing and is no
+    /// undo step.
     Load,
     Interface,
     /// The files already hold this state.
@@ -180,7 +185,8 @@ impl Project {
     }
 
     /// Opens without the lock and never writes, so it works next to a running runtime. Every
-    /// editing call fails with [`ProjectError::ReadOnly`]. For inspecting and offline rendering.
+    /// editing call but [`Self::apply_in_memory`] fails with [`ProjectError::ReadOnly`]. For
+    /// inspecting and offline rendering.
     pub fn open_read_only(
         folder: &Path,
         registry: Registry,

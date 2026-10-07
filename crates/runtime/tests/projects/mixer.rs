@@ -20,7 +20,7 @@ fn peak(samples: &[f32]) -> f32 {
 }
 
 /// Every file under the project folder, by relative path, with its bytes.
-fn files(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+pub(crate) fn files(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
     let mut found = Vec::new();
     let mut folders = vec![root.to_path_buf()];
     while let Some(folder) = folders.pop() {
