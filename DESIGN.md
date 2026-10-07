@@ -68,6 +68,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Anywhere | cmd-z, shift-cmd-z | Undo, redo. Both wait while a drag is going on |
 | Anywhere | tab, shift-tab | Move the focus: the sidebar icon, project menu, transport, the agent sidebar, arrangement, the panel below |
 | Anywhere | cmd-L | Open the agent sidebar with the focus in its composer. In the composer, close it again |
+| Anywhere | cmd-B | Open or close the agent sidebar, like its icon. The focus stays where it is |
 | Anywhere | cmd-q | Quit. There is no save: every finished edit is already in the folder |
 | A MIDI keyboard | any key, the sustain pedal, the bend and mod wheels, key pressure | Play the instrument of the selected track, whether the project plays or not. The synth, the Wavetable and the Sampler bend two semitones and add a vibrato with the mod wheel; the Wavetable can also route the mod wheel and the key pressure in its matrix. A plugin gets them as MIDI (CLAP) or on the parameters it maps them to (VST 3). A take records the wheels too |
 | Title row | the sidebar icon, right of the traffic lights | Open or close the agent sidebar. It stays as it is at the next start. While it is closed and the agent works or asks, the icon carries a lavender dot |

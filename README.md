@@ -97,7 +97,7 @@ Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
 The agent sidebar runs Claude Code in the project folder, with no terminal.
 
 1. Run the app on a project and press space.
-2. Open the agent sidebar: the icon right of the traffic lights, or cmd-L. The first time, **Set up** downloads Claude Code and signs you in, in your browser.
+2. Open the agent sidebar: the icon right of the traffic lights, cmd-B, or cmd-L to also focus its composer. The first time, **Set up** downloads Claude Code and signs you in, in your browser.
 3. Ask in plain language:
    - `Add a bass line in bars 5 to 8 that follows the chords on the piano track`
    - `Add a new track with a simple melody over bars 1 to 4`

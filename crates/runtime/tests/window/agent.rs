@@ -300,6 +300,36 @@ fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mu
     assert!(opened.composer_focused());
 }
 
+#[gpui::test]
+fn cmd_b_opens_and_closes_the_panel_and_leaves_the_focus(cx: &mut TestAppContext) {
+    let machine = tempfile::tempdir().unwrap();
+    install_sidebar(cx, machine.path());
+    let mut opened = support::open_with(cx, |_| {});
+    assert!(opened.panel_open());
+    let timeline = opened.timeline.clone();
+    opened
+        .cx
+        .update(|window, cx| window.focus(&timeline.focus_handle(cx), cx));
+    let timeline_focused = |opened: &mut support::Opened<'_>| {
+        opened
+            .cx
+            .update(|window, cx| timeline.focus_handle(cx).is_focused(window))
+    };
+
+    opened.keys("cmd-b");
+    assert!(!opened.panel_open());
+    assert!(timeline_focused(&mut opened));
+    opened.keys("cmd-b");
+    assert!(opened.panel_open());
+    assert!(timeline_focused(&mut opened));
+
+    // From the composer, closing gives the focus back.
+    opened.keys("cmd-l");
+    opened.keys("cmd-b");
+    assert!(!opened.panel_open());
+    assert!(timeline_focused(&mut opened));
+}
+
 /// The account menu sits in the composer and offers **Sign out**.
 #[gpui::test]
 fn the_account_menu_in_the_composer_offers_sign_out(cx: &mut TestAppContext) {
