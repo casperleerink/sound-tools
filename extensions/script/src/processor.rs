@@ -9,8 +9,8 @@ use crate::machine::{Machine, Values};
 /// How long the old code fades out while the new one fades in.
 const FADE_SECONDS: f32 = 0.01;
 
-/// What the behaviour sends on every run: a machine of the code, which only plays when the
-/// code is new, and where every param stands.
+/// What the behaviour sends on every run: a machine when the code is new, and where every
+/// param stands.
 pub struct ScriptUpdate {
     pub machine: Option<Box<Machine>>,
     pub values: Values,
@@ -29,9 +29,9 @@ impl Script {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
 
-    pub fn new(machine: Machine) -> Self {
+    pub fn new(machine: Box<Machine>) -> Self {
         Self {
-            current: Box::new(machine),
+            current: machine,
             fading: None,
             fade_frames: 1,
             fade_left: 0,
@@ -53,11 +53,7 @@ impl Processor for Script {
     }
 
     fn update(&mut self, update: &mut ScriptUpdate) {
-        let new_code = update
-            .machine
-            .as_ref()
-            .is_some_and(|machine| machine.hash() != self.current.hash());
-        if new_code && let Some(machine) = update.machine.take() {
+        if let Some(machine) = update.machine.take() {
             let old = std::mem::replace(&mut self.current, machine);
             // The one that faded before rides back with this update, to be dropped there.
             update.machine = self.fading.replace(old);

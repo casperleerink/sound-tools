@@ -43,7 +43,7 @@ fn realtime_ratio_of_one_hundred_scripts() {
             let (code, values) = state.compile().unwrap();
             let machine = Machine::new(code, &values, SAMPLE_RATE as f32);
             let script = edit
-                .add_processor(&format!("script-{index}"), Script::new(machine))
+                .add_processor(&format!("script-{index}"), Script::new(Box::new(machine)))
                 .unwrap();
             edit.connect(Connection::to_device(script.id(), Script::OUTPUT, 0))
                 .unwrap();

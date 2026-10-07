@@ -78,8 +78,37 @@ fn apply_sharer(state: &Sharer, context: &mut BehaviourContext<'_>) -> Result<()
     Ok(())
 }
 
+/// Says on every run whether its `key` changed since the run before, into [`CHANGED`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct Keyed {
+    key: u64,
+    other: u32,
+    fail: bool,
+}
+
+impl State for Keyed {
+    const TOOL: &'static str = "test.keyed";
+}
+
+thread_local! {
+    static CHANGED: std::cell::RefCell<Vec<bool>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn apply_keyed(state: &Keyed, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let changed = context.changed("key", state.key);
+    CHANGED.with(|seen| seen.borrow_mut().push(changed));
+    if state.fail {
+        return Err(BehaviourError::Other("told to fail".to_string()));
+    }
+    Ok(())
+}
+
 fn open_at(folder: &Path) -> (Project, Engine) {
     let mut registry = registry();
+    registry
+        .tool::<Keyed>(EXTENSION)
+        .unwrap()
+        .behaviour(apply_keyed);
     registry
         .tool::<Switch>(EXTENSION)
         .unwrap()
@@ -129,6 +158,27 @@ fn a_processor_name_can_change_its_type() {
     assert_eq!(level(&mut engine), 0.0);
     project.undo().unwrap();
     assert_eq!(level(&mut engine), 0.5);
+}
+
+#[test]
+fn a_behaviour_hears_whether_a_key_changed_since_the_run_that_applied() {
+    let (mut project, _engine, _folder) = open();
+    let keyed = |key, other, fail| Keyed { key, other, fail };
+    let mut changes = Changes::new();
+    let instance = changes.create(id("keyed"), keyed(1, 0, false));
+    project.commit("Add", changes).unwrap();
+    let set = |project: &mut Project, state: Keyed| {
+        let mut changes = Changes::new();
+        changes.set(&instance, state);
+        project.commit("Set", changes).map(|_| ())
+    };
+    set(&mut project, keyed(1, 1, false)).unwrap();
+    // Rejected: the key it saw did not apply.
+    set(&mut project, keyed(2, 2, true)).unwrap_err();
+    set(&mut project, keyed(1, 3, false)).unwrap();
+    set(&mut project, keyed(2, 4, false)).unwrap();
+    let seen = CHANGED.with(|seen| seen.take());
+    assert_eq!(seen, [true, false, true, false, true]);
 }
 
 #[test]

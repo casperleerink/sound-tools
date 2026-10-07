@@ -45,7 +45,7 @@ pub struct ParameterSpec {
 #[derive(Clone, Debug)]
 pub struct Code {
     pub parameters: Vec<ParameterSpec>,
-    /// Of the source lines, so a processor tells new code from new values.
+    /// Of the source lines, so a behaviour tells new code from new values.
     pub(crate) hash: u64,
     pub(crate) operations: Vec<Operation>,
     /// The register of `out`, `None` when the script never sets it and passes its input.

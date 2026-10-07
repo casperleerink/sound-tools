@@ -105,11 +105,6 @@ impl Machine {
         }
     }
 
-    /// Which source this runs, to tell new code from new values.
-    pub fn hash(&self) -> u64 {
-        self.code.hash
-    }
-
     /// Glides every param to its new value.
     pub fn aim(&mut self, values: &Values) {
         let ramp = RAMP_SECONDS * self.sample_rate;
