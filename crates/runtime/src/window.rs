@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use arrangement::view::layout::RULER_HEIGHT;
 use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding, MouseButton,
     MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
@@ -64,7 +65,8 @@ actions!(
 /// Room for the traffic lights of a macOS window, left of the project menu.
 const TRAFFIC_LIGHTS_WIDTH: f32 = 80.;
 const TOP_ROW_HEIGHT: f32 = 48.;
-/// The notices sit this far in from the right of the window and below the title row.
+/// The notices sit this far in from the right of the window and below the ruler of the main
+/// view.
 const NOTICE_INSET: f32 = 24.;
 /// The widest a notice gets. A longer message wraps, to three lines at most.
 const NOTICE_WIDTH: f32 = 400.;
@@ -438,14 +440,15 @@ impl Shell {
             count => Some(format!("{count} files are not live, see problems.txt")),
         };
         let error = session.notice().cloned();
-        // Top-right, under the title row: clear of the transport, the track headers and the
-        // panel below, whatever the main view shows. A definite width, so that a message wraps
+        // Top-right, under the title row and the ruler of the main view: clear of the transport,
+        // the bar numbers, the track headers and the panel below. Not in the title row: there
+        // are the window buttons on Windows. A definite width, so that a message wraps
         // at the width it gets and the box is as tall as its lines: with only a largest width
         // the text was measured on one line and then painted on three. A notice is as wide as
         // its text up to this width.
         div()
             .absolute()
-            .top(px(TOP_ROW_HEIGHT + NOTICE_INSET))
+            .top(px(TOP_ROW_HEIGHT + RULER_HEIGHT + NOTICE_INSET))
             .right(px(NOTICE_INSET))
             .w(px(NOTICE_WIDTH))
             .flex()

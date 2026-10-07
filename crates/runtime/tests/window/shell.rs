@@ -379,10 +379,10 @@ fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
         .update(|_, cx| session.update(cx, |session, cx| session.report(long, cx)));
     let notice = opened.bounds("notice-error").unwrap();
     let window = opened.cx.update(|window, _| window.viewport_size());
-    // 24 pt in from the right and under the title row, so it never covers the transport, and
-    // 400 pt wide at most.
+    // 24 pt in from the right and under the ruler, so it never covers the transport or the bar
+    // numbers, and 400 pt wide at most.
     assert_eq!(notice.right(), window.width - px(24.), "{notice:?}");
-    assert_eq!(notice.top(), px(TOP_ROW + 24.));
+    assert_eq!(notice.top(), px(TOP_ROW + RULER_HEIGHT + 24.));
     assert!(notice.size.width <= px(400.), "{notice:?}");
     // As tall as the three lines of 20 pt it paints and its padding: the lines stay inside it.
     assert!(
