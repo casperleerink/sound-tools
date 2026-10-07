@@ -42,6 +42,8 @@ const ABSOLUTE_GATE: f64 = -70.0;
 /// A block this far under the loudness of the louder blocks does not count either: the quiet
 /// stretches of a piece do not pull its loudness down.
 const RELATIVE_GATE: f64 = 10.0;
+/// How many frames late the oversampled sound comes out: half of the way up and down again.
+const PEAK_DELAY: u64 = Oversampler::DELAY_FRAMES as u64 / 2;
 /// Under this a level is shown as silence: -100 dB.
 const SILENT_POWER: f64 = 1e-10;
 
@@ -92,7 +94,9 @@ pub struct Meter {
     /// The mean weighted power of the last four blocks, oldest first. What [`Self::warm_up`]
     /// heard, or silence before the start.
     recent: [f64; BLOCKS_PER_WINDOW],
-    blocks: usize,
+    /// The blocks of 100 ms that ended after the start. From the fourth on, a block of 400 ms
+    /// holds no warm-up, and counts for the whole.
+    measured_blocks: usize,
     /// The power of every whole block of 400 ms, for the gates.
     windows: Vec<f64>,
     max_momentary: f64,
@@ -137,7 +141,7 @@ impl Meter {
             block_frames: 0,
             frames_per_block: (rate / 10.0).round() as u64,
             recent: [0.0; BLOCKS_PER_WINDOW],
-            blocks: 0,
+            measured_blocks: 0,
             windows: Vec::new(),
             max_momentary: 0.0,
             waiting_row: 0,
@@ -179,37 +183,51 @@ impl Meter {
     }
 
     /// The weighting, the blocks and the oversampling, which run before the start too. Gives the
-    /// true peak of the frame and the momentary loudness of the block it ends, if it ends one.
+    /// weighted power of the frame, the highest sample at four times the rate of the frame
+    /// [`PEAK_DELAY`] before it, and the momentary loudness of the block it ends, if it ends one.
     fn hear(&mut self, values: [f32; CHANNELS]) -> (f64, f32, Option<f64>) {
         let mut power = 0.0;
-        let mut true_peak = 0.0_f32;
-        let channels = values
-            .iter()
-            .zip(&mut self.weighting)
-            .zip(&mut self.oversamplers);
-        for ((value, weighting), oversampler) in channels {
+        for (value, weighting) in values.iter().zip(&mut self.weighting) {
             let weighted = weighting.process(f64::from(*value));
             power += weighted * weighted;
-            let mut four = [0.0; Oversampler::FACTOR];
-            oversampler.up(&self.oversampling, &[*value], &mut four);
-            let highest = four
-                .iter()
-                .fold(value.abs(), |peak, sample| peak.max(sample.abs()));
-            true_peak = true_peak.max(highest);
         }
+        let oversampled = self.oversampled_peak(values);
         self.block_sum += power;
         self.block_frames += 1;
         if self.block_frames < self.frames_per_block {
-            return (power, true_peak, None);
+            return (power, oversampled, None);
         }
         // A block of 100 ms is full: the block of 400 ms that ends with it is the momentary
         // loudness of this moment.
         self.recent.rotate_left(1);
         self.recent[BLOCKS_PER_WINDOW - 1] = self.block_sum / self.block_frames as f64;
         (self.block_sum, self.block_frames) = (0.0, 0);
-        self.blocks += 1;
         let momentary = self.recent.iter().sum::<f64>() / BLOCKS_PER_WINDOW as f64;
-        (power, true_peak, Some(momentary))
+        (power, oversampled, Some(momentary))
+    }
+
+    /// The highest sample at four times the rate, of the frame [`PEAK_DELAY`] before `values`.
+    fn oversampled_peak(&mut self, values: [f32; CHANNELS]) -> f32 {
+        let mut peak = 0.0_f32;
+        for (value, oversampler) in values.iter().zip(&mut self.oversamplers) {
+            let mut four = [0.0; Oversampler::FACTOR];
+            oversampler.up(&self.oversampling, &[*value], &mut four);
+            peak = four
+                .iter()
+                .fold(peak, |peak, sample| peak.max(sample.abs()));
+        }
+        peak
+    }
+
+    /// A peak of `frame`, from the start: the row it is in and the whole.
+    fn add_peak(&mut self, frame: u64, peak: f32) {
+        let row = self.row_starts.partition_point(|start| *start <= frame);
+        if let Some(row) = self.rows.get_mut(row.saturating_sub(1)) {
+            row.true_peak = row.true_peak.max(peak);
+        }
+        if peak > self.true_peak.0 {
+            self.true_peak = (peak, frame);
+        }
     }
 
     fn measure(&mut self, values: [f32; CHANNELS]) {
@@ -220,17 +238,21 @@ impl Meter {
         {
             self.row += 1;
         }
-        let (power, true_peak, momentary) = self.hear(values);
+        let (power, oversampled, momentary) = self.hear(values);
         let [left, right] = values.map(f64::from);
         if let Some(row) = self.rows.get_mut(self.row) {
             row.frames += 1;
             row.weighted += power;
-            row.true_peak = row.true_peak.max(true_peak);
             row.mid += (left + right) * (left + right) / 4.0;
             row.side += (left - right) * (left - right) / 4.0;
         }
-        if true_peak > self.true_peak.0 {
-            self.true_peak = (true_peak, self.frame);
+        let sample_peak = values
+            .iter()
+            .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+        self.add_peak(self.frame, sample_peak);
+        // The oversampled sound comes out late: before the start, it is the warm-up's.
+        if let Some(frame) = self.frame.checked_sub(PEAK_DELAY) {
+            self.add_peak(frame, oversampled);
         }
         if let Some(momentary) = momentary {
             self.add_momentary(momentary);
@@ -243,10 +265,11 @@ impl Meter {
 
     /// The momentary loudness of a block of 400 ms that ends in the current row.
     fn add_momentary(&mut self, momentary: f64) {
-        if self.blocks >= BLOCKS_PER_WINDOW {
+        self.measured_blocks += 1;
+        if self.measured_blocks >= BLOCKS_PER_WINDOW {
             self.windows.push(momentary);
+            self.max_momentary = self.max_momentary.max(momentary);
         }
-        self.max_momentary = self.max_momentary.max(momentary);
         // A row shorter than a block of 100 ms may end none: the block of 400 ms that ends
         // next covers it, so it is the loudest of that row.
         let waiting = self.rows.iter_mut().take(self.row).skip(self.waiting_row);
@@ -286,6 +309,13 @@ impl Meter {
         for pushed in frames + 1..frames + WINDOW as u64 / 2 {
             if let Some(bands) = self.spectrum.push([0.0; CHANNELS]) {
                 self.add_spectrum(pushed, bands);
+            }
+        }
+        // The same for the oversampling: the peaks of the last frames are still in it.
+        for late in frames..frames + PEAK_DELAY {
+            let peak = self.oversampled_peak([0.0; CHANNELS]);
+            if let Some(frame) = late.checked_sub(PEAK_DELAY) {
+                self.add_peak(frame, peak);
             }
         }
         // Rows after the last whole block of 100 ms: the last block of 400 ms is the closest.
@@ -581,6 +611,28 @@ mod tests {
         close(measures.true_peak.map(|(peak, _)| peak), -6.02, 0.2);
     }
 
+    /// 16 frames of the sine above: in the row they are in, also at the very end.
+    #[test]
+    fn a_short_burst_has_its_true_peak_in_its_own_row() {
+        let burst = &sine(12_000.0, 0.5, std::f64::consts::FRAC_PI_4, 1.0, 1.0)[..2 * 16];
+        let mut samples = vec![0.0; 2 * (48_000 - 24)];
+        samples.extend(burst);
+        samples.extend(vec![0.0; 2 * 48_008]);
+        let measures = measure(&samples, vec![0, 48_000]);
+        close(measures.rows[0].true_peak, -6.02, 0.3);
+        assert!(measures.rows[1].true_peak.is_none_or(|peak| peak < -20.0));
+        let at = measures.true_peak.unwrap().1;
+        assert!((47_976..47_992).contains(&at), "{at}");
+
+        let mut samples = vec![0.0; 2 * 48_000];
+        samples.extend(burst);
+        close(
+            measure(&samples, vec![]).true_peak.map(|(peak, _)| peak),
+            -6.02,
+            0.3,
+        );
+    }
+
     #[test]
     fn a_tone_is_in_its_band_at_its_level_and_the_other_bands_are_far_under_it() {
         // RMS of a sine of amplitude 0.5: -9.03 dB.
@@ -654,6 +706,7 @@ mod tests {
         assert_eq!(measures.frames, 48_000);
         // The first 100 ms already have a whole block of 400 ms of the tone behind them.
         close(measures.rows[0].max_momentary, -23.0, 0.1);
+        close(measures.integrated, -23.0, 0.1);
         // Rows shorter than a block of 100 ms get the block that covers them.
         let mut meter = Meter::new(RATE, vec![0, 1_000, 2_000, 47_990]);
         meter.warm_up(before);
@@ -661,7 +714,19 @@ mod tests {
         for row in meter.finish().rows {
             close(row.max_momentary, -23.0, 0.1);
         }
-        close(measures.integrated, -23.0, 0.1);
+
+        // Silence after the tone: the whole is silent, whatever the warm-up heard, but for
+        // what the filters ring with in the first milliseconds.
+        let mut meter = Meter::new(RATE, vec![]);
+        meter.warm_up(&tone);
+        meter.push(&vec![0.0; 2 * 48_000]);
+        let measures = meter.finish();
+        for loudness in [measures.integrated, measures.max_momentary] {
+            assert!(
+                loudness.is_none_or(|loudness| loudness < -60.0),
+                "{loudness:?}"
+            );
+        }
     }
 
     #[test]

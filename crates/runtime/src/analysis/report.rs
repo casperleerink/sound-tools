@@ -1,7 +1,7 @@
 //! The text `--analyze` prints: which rows a report has and where they start, and the table of
 //! what was measured in them.
 
-use sound_core::{Clock, Frames, Ticks};
+use sound_core::{Clock, Frames, Ticks, TimeSignatures};
 
 use super::{BANDS, Measures};
 
@@ -26,7 +26,7 @@ pub enum Timeline {
 }
 
 /// How far apart the rows of a project are.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Step {
     Ticks(u64),
     Bars(usize),
@@ -62,41 +62,33 @@ impl Timeline {
                 let parts = [
                     (
                         beat / 4,
-                        (Step::Ticks(beat / 4), "a quarter beat".to_string()),
+                        Step::Ticks(beat / 4),
+                        "a quarter beat".to_string(),
                     ),
-                    (beat / 2, (Step::Ticks(beat / 2), "half a beat".to_string())),
-                    (beat, (Step::Ticks(beat), "a beat".to_string())),
-                    (bar, (Step::Bars(1), "a bar".to_string())),
+                    (beat / 2, Step::Ticks(beat / 2), "half a beat".to_string()),
+                    (beat, Step::Ticks(beat), "a beat".to_string()),
+                    (bar, Step::Bars(1), "a bar".to_string()),
                 ];
-                let bars = (1..).map(|power| {
-                    let count = 1_usize << power;
-                    (
-                        bar * count as u64,
-                        (Step::Bars(count), format!("{count} bars")),
-                    )
+                let bars = (1..).map_while(|power| {
+                    let count = 1_usize.checked_shl(power)?;
+                    let size = bar.checked_mul(u64::try_from(count).ok()?)?;
+                    Some((size, Step::Bars(count), format!("{count} bars")))
                 });
                 let span = to.0 - from.0;
-                let (step, name) = shortest(parts.into_iter().chain(bars), span)
-                    .map_or((Step::Ticks(span), "the whole".to_string()), |(_, size)| {
-                        size
-                    });
-                // Rows of bars start on the bar lines, whatever time signatures come after `from`.
-                let ticks: Vec<Ticks> = match step {
-                    // After the first, on the grid of the bar that `from` is in.
-                    Step::Ticks(ticks) => {
-                        let ticks = ticks.max(1);
-                        let bar = signatures.bar_at(*from).start.0;
-                        let first = bar + (from.0 - bar).div_ceil(ticks) * ticks;
-                        let grid = (first..to.0).step_by(ticks as usize).map(Ticks);
-                        let grid = grid.filter(|tick| tick > from);
-                        std::iter::once(*from).chain(grid).collect()
+                // The size is a guess from the bar at `from`: later bars may be shorter, and a
+                // start off the grid makes a row more. So the rows are counted.
+                let fits = |(size, step, name): (u64, Step, String)| {
+                    if span.div_ceil(size.max(1)) > MOST_ROWS {
+                        return None;
                     }
-                    Step::Bars(count) => {
-                        let later = signatures.bars_from(*from).skip(count).step_by(count);
-                        let starts = std::iter::once(*from).chain(later.map(|bar| bar.start));
-                        starts.take_while(|tick| tick < to).collect()
-                    }
+                    let ticks = row_ticks(signatures, *from, *to, step, size);
+                    (ticks.len() as u64 <= MOST_ROWS).then_some((name, ticks))
                 };
+                let (name, ticks) = parts
+                    .into_iter()
+                    .chain(bars)
+                    .find_map(fits)
+                    .unwrap_or(("the whole".to_string(), vec![*from]));
                 let start = clock.frame_of(*from).0;
                 let mut rows: Vec<Row> = ticks
                     .into_iter()
@@ -159,6 +151,37 @@ impl Timeline {
             } => time(from + frame as f64 / f64::from(*sample_rate)),
         }
     }
+}
+
+/// Where the rows of a project start: at `from`, then every `step` on the grid of the bar that
+/// `from` is in, or on every `count`th bar line. A first row shorter than half a row joins the
+/// next, so that it is long enough to measure.
+fn row_ticks(
+    signatures: &TimeSignatures,
+    from: Ticks,
+    to: Ticks,
+    step: Step,
+    size: u64,
+) -> Vec<Ticks> {
+    let later: Vec<Ticks> = match step {
+        Step::Ticks(ticks) => {
+            let ticks = ticks.max(1);
+            let bar = signatures.bar_at(from).start.0;
+            let first = bar + (from.0 - bar).div_ceil(ticks) * ticks;
+            (first..to.0).step_by(ticks as usize).map(Ticks).collect()
+        }
+        Step::Bars(count) => {
+            let lines = signatures.bars_from(from).skip(count).step_by(count);
+            lines
+                .map(|bar| bar.start)
+                .take_while(|tick| *tick < to)
+                .collect()
+        }
+    };
+    let later = later
+        .into_iter()
+        .skip_while(|tick| tick.0 < from.0 + size / 2);
+    std::iter::once(from).chain(later).collect()
 }
 
 /// The tick, the bar and the time of `tick`: the cells of a row of a project.
@@ -288,10 +311,15 @@ mod tests {
         assert_eq!(cells.len(), 24);
         assert_eq!(cells[0], ["8640", "3:2:000", "0:04.50"]);
         assert_eq!(cells[1], ["9120", "3:2:480", "0:04.75"]);
-        // From off the grid: the next row is on it.
+        // From off the grid: the next row is on it, unless that leaves a first row shorter
+        // than half a row.
         let (_, cells) = rows(&project(8700, 8640 + 3 * 3840, false));
-        assert_eq!(cells[0][0], "8700");
-        assert_eq!(cells[1][0], "9120");
+        assert_eq!([&cells[0][0], &cells[1][0]], ["8700", "9120"]);
+        let (_, cells) = rows(&project(9000, 8640 + 3 * 3840, false));
+        assert_eq!([&cells[0][0], &cells[1][0]], ["9000", "9600"]);
+        // 32 half beats from off the grid would be 33 rows.
+        let (size, cells) = rows(&project(8700, 8700 + 32 * 480, false));
+        assert_eq!((size.as_str(), cells.len()), ("rows of a beat", 17));
     }
 
     #[test]
@@ -318,6 +346,22 @@ mod tests {
             ]
         );
         assert_eq!(bars.len(), 20);
+
+        // Bars that get shorter than the first: still at most 32 rows.
+        let runs = [("4/4", 1), ("2/4", 100)].map(|(signature, bars)| SignatureRun {
+            signature: signature.parse().unwrap(),
+            bars: std::num::NonZeroU32::new(bars).unwrap(),
+        });
+        let signatures = TimeSignatures::new(runs.to_vec()).unwrap();
+        let tempo_map = TempoMap::constant(signatures, Tempo::from_bpm(120.0).unwrap());
+        let timeline = Timeline::Project {
+            clock: Clock::new(tempo_map, 48_000),
+            from: Ticks(0),
+            to: Ticks(3840 + 60 * 1920),
+            tail: false,
+        };
+        let (size, cells) = rows(&timeline);
+        assert_eq!((size.as_str(), cells.len()), ("rows of 2 bars", 31));
     }
 
     #[test]

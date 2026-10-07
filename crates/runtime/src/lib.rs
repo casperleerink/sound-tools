@@ -77,6 +77,8 @@ The first line is the whole: its loudness (integrated, gated as streaming servic
 - `width`: the share of the sound in the side. 0% is mono, 50% as wide as two unrelated channels; above 50% the channels cancel when summed to mono.
 - `-` is silence. A track that should play and measures `-` alone did not load or plays nothing.
 
+A mono file is measured as it plays in a project, on both channels: 3 dB above what a meter of one channel shows.
+
 Compare rows and runs, not rules of thumb: the same part before and after your change, a soloed track against the whole, a verse against a chorus. The numbers do not say whether it sounds good; the composer does.
 
 `sound-tools` is the command line tool of the Sound Tools app. When it is not on your `PATH`, ask the composer to pick **Install command line tool** in the project menu (on Windows the installer puts it there), or skip this step: `problems.txt` tells you whether your files loaded.",
@@ -301,15 +303,16 @@ pub fn main_arrangement(project: &Project) -> Option<Instance<ArrangementState>>
 
 /// Solos the tracks of the main arrangement that `names` names, by name or by id, and unmutes
 /// them: every other track goes silent. Only in memory, so a render of a read-only project can
-/// play one part alone and leave every file as it is. Call it before the render plays.
+/// play one part alone and leave every file as it is. Call it before the render plays. Gives
+/// what the plugin host reported meanwhile.
 pub fn solo(
     project: &mut Project,
     engine: &mut Engine,
     plugins: &Plugins,
     names: &[String],
-) -> Result<()> {
+) -> Result<Vec<plugin_host::PluginProblem>> {
     if names.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let Some(arrangement) = main_arrangement(project) else {
         bail!("the project has no arrangement, so it has no tracks to solo");
@@ -342,8 +345,9 @@ pub fn solo(
     // A track that changes its mute fades, which would fade in the start of the render. The
     // engine runs stopped until the fades are over.
     let fade = arrangement::RAMP_SECONDS * engine.sample_rate() as f32;
-    render(project, engine, plugins, 2 * fade.ceil() as usize)?;
-    Ok(())
+    render_into(project, engine, plugins, 2 * fade.ceil() as usize, |_| {
+        Ok(())
+    })
 }
 
 /// The name and colour of the next track: `Track <n>`, in the next colour of the palette, so

@@ -268,7 +268,9 @@ impl Position {
             (Some(seconds), _) => seconds.parse().ok(),
             (None, Some((minutes, seconds))) => {
                 match (minutes.parse::<u32>(), seconds.parse::<f64>()) {
-                    (Ok(minutes), Ok(seconds)) => Some(f64::from(minutes) * 60.0 + seconds),
+                    (Ok(minutes), Ok(seconds)) if (0.0..60.0).contains(&seconds) => {
+                        Some(f64::from(minutes) * 60.0 + seconds)
+                    }
                     _ => None,
                 }
             }
@@ -375,7 +377,9 @@ fn open_for_render(folder: &Path, options: &Options) -> Result<(Project, Engine,
     let plugins = runtime::plugins(true)?;
     let (mut project, mut engine) = open_read_only_with(folder, plugins.clone())?;
     print_problems(&project);
-    runtime::solo(&mut project, &mut engine, &plugins, &options.solo)?;
+    for problem in runtime::solo(&mut project, &mut engine, &plugins, &options.solo)? {
+        println!("error: {problem}");
+    }
     Ok((project, engine, plugins))
 }
 
@@ -523,11 +527,16 @@ fn analyze_file(path: &Path, options: &Options) -> Result<()> {
         .with_context(|| format!("{} is not a WAV, AIFF or FLAC file", path.display()))?;
     let (from, to) = options.file_span(audio.seconds())?;
     let rate = audio.sample_rate();
+    // As it plays in a project: a mono file on both channels, which reads 3 dB above a meter
+    // of one channel, and a file with more channels as its first two.
+    let channels = match audio.channels() {
+        1 => "mono, measured on both channels".to_string(),
+        2 => "stereo".to_string(),
+        count => format!("{count} channels, measured as its first two"),
+    };
     println!(
-        "{}: {} Hz, {} channels, {:.2} s",
+        "{}: {rate} Hz, {channels}, {:.2} s",
         path.display(),
-        rate,
-        audio.channels(),
         audio.seconds()
     );
     let timeline = Timeline::File {
@@ -536,13 +545,19 @@ fn analyze_file(path: &Path, options: &Options) -> Result<()> {
         to,
     };
     let mut meter = Meter::new(rate, timeline.row_starts());
-    let start = (from * f64::from(rate)).round() as i64;
-    let frames = ((to - from) * f64::from(rate)).round() as i64;
+    let at = |seconds: f64| (seconds * f64::from(rate)).round() as i64;
+    let (start, end) = (at(from), at(to));
+    // From the file itself, as a range of a project warms up from what plays before it.
+    let warm_up = at((from - WARM_UP_SECONDS).max(0.0));
     let mut buffer = vec![[0.0_f32; 2]; 4096];
-    for first in (0..frames).step_by(buffer.len()) {
-        let buffer = &mut buffer[..(frames - first).min(4096) as usize];
-        audio.read(start + first, buffer);
-        meter.push(buffer.as_flattened());
+    for first in (warm_up..end).step_by(buffer.len()) {
+        let buffer = &mut buffer[..(end - first).min(4096) as usize];
+        audio.read(first, buffer);
+        let samples = buffer.as_flattened();
+        let before = ((start - first).clamp(0, 4096) as usize).min(buffer.len());
+        let (before, after) = samples.split_at(before * 2);
+        meter.warm_up(before);
+        meter.push(after);
     }
     println!("{}", report(&timeline, &meter.finish()));
     Ok(())
@@ -690,5 +705,28 @@ fn main() -> Result<()> {
         }
         [path, "--analyze", options @ ..] => analyze(Path::new(path), &Options::parse(options)?),
         _ => bail!(USAGE),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_position_is_ticks_a_time_or_seconds() {
+        let seconds = |text| match Position::parse(text) {
+            Ok(Position::Seconds(seconds)) => Some(seconds),
+            _ => None,
+        };
+        assert!(matches!(
+            Position::parse("3840"),
+            Ok(Position::Ticks(Ticks(3840)))
+        ));
+        assert_eq!(seconds("1:23.5"), Some(83.5));
+        assert_eq!(seconds("0:05"), Some(5.0));
+        assert_eq!(seconds("83.5s"), Some(83.5));
+        for wrong in ["1:75", "1:-5", "-3s", "1:2:3", "bar 5", "", "inf s"] {
+            assert!(Position::parse(wrong).is_err(), "{wrong}");
+        }
     }
 }

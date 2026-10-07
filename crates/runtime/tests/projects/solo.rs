@@ -28,7 +28,8 @@ fn a_soloed_track_plays_alone_unmuted_and_no_file_changes() {
     let harness = bass_and_lead();
     let before = files(harness.project.root());
     let (mut project, mut engine, plugins) = open_read_only(harness.project.root());
-    runtime::solo(&mut project, &mut engine, &plugins, &["bass".to_string()]).unwrap();
+    let problems = runtime::solo(&mut project, &mut engine, &plugins, &["bass".to_string()]);
+    assert!(problems.unwrap().is_empty());
     project.engine().play();
     let soloed = runtime::render(&mut project, &mut engine, &plugins, BAR).unwrap();
     assert_eq!(files(harness.project.root()), before);
