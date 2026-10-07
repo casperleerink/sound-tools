@@ -5708,10 +5708,12 @@ dependencies = [
 name = "script"
 version = "0.6.0"
 dependencies = [
+ "gpui",
  "serde",
  "serde_json",
  "sound-core",
  "sound-notes",
+ "sound-ui",
  "tempfile",
  "thiserror 2.0.20",
 ]
