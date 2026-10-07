@@ -639,6 +639,29 @@ fn reopening_restores_instances_children_connections_and_tempo() {
     assert_eq!(harness.project.drain_events(), []);
 }
 
+/// A render with a track soloed: the sound changes, the files do not. A project that writes
+/// refuses, because its next edit would save the change.
+#[test]
+fn only_a_read_only_project_takes_changes_in_memory() {
+    let mut harness = one_dc();
+    let error = harness.project.apply_in_memory(Changes::new()).unwrap_err();
+    assert!(matches!(error, ProjectError::WritesFiles), "{error}");
+
+    let file = harness.folder.path().join("state/dc.json");
+    let before = std::fs::read(&file).unwrap();
+    let (control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
+    let mut reader = Project::open_read_only(harness.folder.path(), registry(), control).unwrap();
+    let dc = reader.resolve::<Dc>(&id("dc")).unwrap();
+    let mut changes = Changes::new();
+    changes.set(&dc, Dc { value: 0.5 });
+    reader.apply_in_memory(changes).unwrap();
+    assert_eq!(reader.state(&dc).unwrap().value, 0.5);
+    let mut buffer = [0.0; 480];
+    engine.process_block(&mut buffer);
+    assert_eq!(buffer[479], 0.5);
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+}
+
 #[test]
 fn a_second_open_of_the_same_folder_fails_with_a_typed_error() {
     let harness = one_dc();

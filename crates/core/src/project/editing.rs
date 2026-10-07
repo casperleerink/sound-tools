@@ -421,9 +421,13 @@ impl Project {
 
     /// Applies changes to the sound and the state, and to nothing else: no file is written, no
     /// derive runs and there is no undo step. The one change a read-only project takes, for a
-    /// render that plays it other than its files say, such as with one track soloed. On a
-    /// project that writes, the next edit of these records would save them.
+    /// render that plays it other than its files say, such as with one track soloed. A project
+    /// that writes refuses with [`ProjectError::WritesFiles`]: its next edit of these records
+    /// would save them, and the folder would no longer be the truth.
     pub fn apply_in_memory(&mut self, changes: Changes) -> Result<(), ProjectError> {
+        if !self.read_only {
+            return Err(ProjectError::WritesFiles);
+        }
         validate(&changes)?;
         self.apply(changes.changes, Source::Load)?;
         Ok(())

@@ -20,7 +20,7 @@ This file holds the technical decisions and the reasons for them: the model, the
 
 ## Shape of the system
 
-- One process, the runtime (`crates/runtime`), opens one project folder. It runs as a window, `--headless`, `--inspect` (print a summary, read-only) or `--render` (offline WAV, read-only). `--plugins` lists the plugins of the machine.
+- One process, the runtime (`crates/runtime`), opens one project folder. It runs as a window, `--headless`, `--inspect` (print a summary, read-only), `--render` (offline WAV, read-only) or `--analyze` (measure a render or an audio file, read-only). `--plugins` lists the plugins of the machine.
 - The agent works in the project folder: Claude Code run by the agent sidebar, or any coding agent in a terminal. It edits files; the runtime applies them live. There is no separate edit API for agents.
 - Crates: `crates/core` (engine, clock, transport, live project folder), `crates/notes` (the note contract), `crates/media` (audio files), `crates/ui` (the UI SDK and the session bridge), `crates/agent` (the agent sidebar), `crates/runtime` (the app), `crates/gallery` (component gallery). Each extension is a crate under `extensions/`.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name. A new project enables every registered one.
@@ -88,6 +88,7 @@ my-piece/
 Built in `crates/core/src/project` (`editing.rs`, `outside.rs`, `watcher.rs`).
 
 - There is one state application. Window edits, file changes, loading, undo, redo and cancel all call it with a group of changes, and it applies the group whole or not at all. Loading is applying from empty.
+- `Project::apply_in_memory` applies a group like loading does: no write, no derive, no undo step. Only a read-only project takes it, for a render that plays other than its files say, such as `--solo`. A project that writes refuses, so the folder stays the truth.
 - The watcher only says which paths changed. The runtime reads them again and applies the difference. Event kinds are not used, so edits, new files, deletes and moves take one road. Changes that come less than 100 ms apart are one group; the runtime groups raw events itself, because a debouncer can split a burst.
 - The runtime recognises its own writes by a fingerprint of the bytes, and a file that decodes to the current state is no change.
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. There is no field merge and no conflict rejection. Do not reopen this as a sync problem.

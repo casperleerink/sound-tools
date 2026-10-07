@@ -51,6 +51,9 @@ pub enum ProjectError {
     AlreadyOpen(String),
     #[error("the project is open read-only")]
     ReadOnly,
+    /// [`Project::apply_in_memory`] on a project that writes, whose next edit would save it.
+    #[error("only a read-only project takes changes in memory: this one writes its files")]
+    WritesFiles,
     /// `project.json` could not be loaded when the project opened.
     #[error("{path}: {message}")]
     InvalidProjectFile { path: String, message: String },
