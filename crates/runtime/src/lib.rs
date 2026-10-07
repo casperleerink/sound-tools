@@ -151,6 +151,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     reverb::register(&mut registry)?;
     sampler::register(&mut registry)?;
     saturator::register(&mut registry)?;
+    script::register(&mut registry)?;
     tone::register(&mut registry)?;
     utility::register(&mut registry)?;
     wavetable::register(&mut registry)?;

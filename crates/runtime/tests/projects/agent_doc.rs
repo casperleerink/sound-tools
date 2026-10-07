@@ -260,6 +260,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/cello",
             "arrangement/cello/instrument",
             "arrangement/drums",
+            "arrangement/drums/crush",
             "arrangement/drums/glue",
             "arrangement/guitar",
             "arrangement/guitar/swirl",
@@ -276,6 +277,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/organ/heat",
             "arrangement/pad",
             "arrangement/pad/narrow",
+            "arrangement/pad/tremolo",
             "arrangement/piano",
             "arrangement/piano/instrument",
             "arrangement/piano/intro",
@@ -294,6 +296,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/violins/instrument",
             "arrangement/vocal",
             "arrangement/vocal/clear",
+            "arrangement/vocal/tape-echo",
             "arrangement/voice",
             "arrangement/voice/verse-take",
             "drone",
@@ -355,12 +358,12 @@ fn is_within(part: &serde_json::Value, whole: &serde_json::Value) -> bool {
 /// Compressor it is about 1130, with the doc of audio about 1150, with the Sampler about 1170,
 /// with the Drum pad about 1200, with the Saturator about 1230, with the Limiter about 1255,
 /// with the Utility about 1280, with the Modulation about 1300, with the Delay about 1320,
-/// with the Wavetable about 1340, with the doc of SFZ files about 1350, and with the library
-/// about 1365.
+/// with the Wavetable about 1340, with the doc of SFZ files about 1350, with the library
+/// about 1365, and with the Script about 1390.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1375, "the map has {words} words");
+    assert!(words < 1400, "the map has {words} words");
 }
