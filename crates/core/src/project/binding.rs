@@ -97,6 +97,8 @@ struct Binding {
     lanes: BTreeMap<InstanceId, Arc<dyn PlayedLanes>>,
     /// The levels its processors show, by the name the behaviour chose.
     peaks: BTreeMap<String, Peaks>,
+    /// The keys of [`BehaviourContext::changed`], by the name the behaviour chose.
+    keys: BTreeMap<String, u64>,
     /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
     problems: Vec<String>,
     /// Connections it declared that are not in the graph because they close a cycle, each with
@@ -259,6 +261,17 @@ impl BehaviourContext<'_> {
         let peaks = previous.cloned().unwrap_or_default();
         self.next.peaks.insert(name.to_string(), peaks.clone());
         peaks
+    }
+
+    /// Whether `key` differs from the one this instance gave under `name` the last time its
+    /// behaviour ran, and true the first time. For a behaviour that builds something costly
+    /// from part of its state, such as code to compile or memory to allocate, and sends it only
+    /// when that part changed: a hash of it is the key. A run of a rejected group did not
+    /// happen, so the next run compares with the run before it.
+    pub fn changed(&mut self, name: &str, key: u64) -> bool {
+        let previous = self.previous.and_then(|previous| previous.keys.get(name));
+        self.next.keys.insert(name.to_string(), key);
+        previous != Some(&key)
     }
 
     /// Sends parameters or an `Arc` snapshot. It applies in the same block as the rest of the

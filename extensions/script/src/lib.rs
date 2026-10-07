@@ -115,15 +115,18 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     Ok(())
 }
 
-/// Runs for every valid state. A machine is made every run, and the processor keeps the one it
-/// has unless the code is new, so the memory of a delay goes on through a change of a value.
+/// Runs for every valid state. A machine is made only when the code changed, and the processor
+/// fades to it; a new value alone glides in the machine that plays, so the memory of a delay
+/// goes on and a knob move allocates nothing.
 fn apply(state: &ScriptState, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let (code, values) = state.compile().map_err(BehaviourError::Other)?;
     let sample_rate = context.prepare_config().sample_rate as f32;
+    let new_code = context.changed("code", code.hash);
+    let mut machine = new_code.then(|| Box::new(Machine::new(code.clone(), &values, sample_rate)));
     let script = context.processor("script", || {
-        Script::new(Machine::new(code.clone(), &values, sample_rate))
+        let machine = machine.take();
+        Script::new(machine.unwrap_or_else(|| Box::new(Machine::new(code, &values, sample_rate))))
     })?;
-    let machine = Some(Box::new(Machine::new(code, &values, sample_rate)));
     context.update(script, ScriptUpdate { machine, values })?;
     context.input(AUDIO_INPUT, InputEndpoint::new(script, Script::INPUT));
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(script, Script::OUTPUT));
