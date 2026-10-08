@@ -8,30 +8,34 @@ $ErrorActionPreference = 'Stop'
 
 $folder = Join-Path $env:LOCALAPPDATA 'Programs\Sound Tools'
 $program = Join-Path $folder 'sound-tools.exe'
-$old = "$program.old"
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Sound Tools.lnk'
 
 try {
     New-Item -ItemType Directory -Force -Path $folder | Out-Null
-    # Windows cannot overwrite a running program but can rename it, so a running Sound Tools
-    # does not stop the update. The app removes the old one at its next start.
+    # The program, and the Bun that runs the tools of a project. Windows cannot overwrite a
+    # running program but can rename it, so a running Sound Tools or Bun does not stop the
+    # update. The app removes the old ones at its next start.
     # The copy goes next to it first, so a copy that stops halfway leaves the old program whole.
     # The swap is then two renames.
-    $new = "$program.new"
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'sound-tools.exe') -Destination $new -Force
-    if (Test-Path -LiteralPath $old) {
-        Remove-Item -LiteralPath $old -Force
-    }
-    if (Test-Path -LiteralPath $program) {
-        Move-Item -LiteralPath $program -Destination $old
-    }
-    try {
-        Move-Item -LiteralPath $new -Destination $program
-    } catch {
+    foreach ($name in 'sound-tools.exe', 'bun.exe') {
+        $target = Join-Path $folder $name
+        $new = "$target.new"
+        $old = "$target.old"
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $new -Force
         if (Test-Path -LiteralPath $old) {
-            Move-Item -LiteralPath $old -Destination $program
+            Remove-Item -LiteralPath $old -Force
         }
-        throw
+        if (Test-Path -LiteralPath $target) {
+            Move-Item -LiteralPath $target -Destination $old
+        }
+        try {
+            Move-Item -LiteralPath $new -Destination $target
+        } catch {
+            if (Test-Path -LiteralPath $old) {
+                Move-Item -LiteralPath $old -Destination $target
+            }
+            throw
+        }
     }
 
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
