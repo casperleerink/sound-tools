@@ -44,8 +44,6 @@ const handlers = new Map<number, Handler[]>();
 const drawn = new Map<number, Extract<Request, { type: "render" }>>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
-/** The file each tool comes from. */
-const files = new Map<string, string>();
 let version = 0;
 
 const NAME = /^[a-z0-9_-]+$/;
@@ -126,9 +124,10 @@ function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
 async function load() {
   version += 1;
   sdk.host.tools.clear();
-  files.clear();
   // New code starts its memory again.
   memories.clear();
+  /** The file each tool comes from. */
+  const files = new Map<string, string>();
   const errors: Array<{ file: string; message: string }> = [];
   for (const file of readdirSync(folder).sort()) {
     if (!/\.tsx?$/.test(file) || file === "sdk.ts" || file.endsWith(".d.ts")) {
@@ -384,6 +383,10 @@ watch(folder, (_, file) => {
 });
 
 for await (const line of console) {
+  // Bun gives the end of the input after the last newline as one more, empty, line.
+  if (line === "") {
+    continue;
+  }
   await loading;
   const request = JSON.parse(line) as Request;
   switch (request.type) {
