@@ -298,6 +298,14 @@ def check_experiment(folder: Path) -> dict:
     }
 
 
+def check_life(folder: Path) -> dict:
+    checks = check_experiment(folder)
+    tools = project_tools(folder)
+    text = "".join(tools.values())
+    # A note per living cell with `play`, or a trigger per row: either plays the column.
+    return {**checks, "plays from its loop": "play(" in text or "fire(" in text}
+
+
 def check_generative(folder: Path) -> dict:
     tools = project_tools(folder)
     tool = instruments(folder).get("pad")
@@ -342,6 +350,13 @@ SCENARIOS = {
                            "slowly wanders between notes of D dorian with a long, washy tail. "
                            "Give its card a way to change how dense and how bright it is, and "
                            "let me see which note it is on."),
+    "life-builder": (setup_tape_builder, check_life,
+                     "Turn this project into a generative toy instead of a song, just one "
+                     "screen and no timeline: a Game of Life grid. I click cells to bring them "
+                     "to life or kill them, the grid steps on by itself, and a cursor sweeps "
+                     "across it column by column, playing the living cells of its column as a "
+                     "chord: lower rows are lower notes of a pentatonic scale. A soft, "
+                     "bell-like sound."),
     "composer-sequencer": (setup_acid_bass, check_acid_bass,
                            "The acid bass is cool. Make its pattern play every eighth note and "
                            "nothing in between, put an accent on each beat, and make it a bit "
@@ -383,9 +398,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", choices=SCENARIOS)
     parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--first", type=int, default=1, help="the number of the first run, so "
+                        "evals of one scenario can run side by side")
     arguments = parser.parse_args()
     LOGS.mkdir(exist_ok=True)
-    for number in range(1, arguments.runs + 1):
+    for number in range(arguments.first, arguments.first + arguments.runs):
         result = evaluate(arguments.scenario, number)
         print(json.dumps(result), flush=True)
         with open(LOGS / "results.jsonl", "a") as results:
