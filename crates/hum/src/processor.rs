@@ -174,7 +174,7 @@ impl Hum {
             current_parameters: [0.0; MAX_PARAMETERS],
             current_lives: [0.0; MAX_LIVES],
             counts,
-            arrays: values.arrays,
+            arrays: values.arrays.unwrap_or_default(),
             fired: 0,
             watches,
             beat: 0.0,
@@ -202,7 +202,9 @@ impl Hum {
         }
         // Aimed at in the next block, unless a lane moves them.
         self.records = values.parameters;
-        std::mem::swap(&mut self.arrays, &mut values.arrays);
+        if let Some(arrays) = &mut values.arrays {
+            std::mem::swap(&mut self.arrays, arrays);
+        }
         std::mem::swap(&mut self.automated, &mut values.automated);
         let fade_frames = self.fade_frames;
         let swap = |voice: &mut HumVoice, machine: &mut Option<Box<Machine>>| {

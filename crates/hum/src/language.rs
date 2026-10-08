@@ -53,7 +53,8 @@ pub struct ParameterSpec {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArraySpec {
     pub name: String,
-    pub length: usize,
+    /// `None` for a `sample`: as long as its sound.
+    pub length: Option<usize>,
     pub default: f32,
     pub min: f32,
     pub max: f32,
@@ -289,7 +290,9 @@ const BUILT_IN: &[&str] = &[
 const OUTPUTS: &[&str] = &["out", "out_left", "out_right"];
 
 /// What a line can start with besides a name.
-const KEYWORDS: &[&str] = &["param", "live", "trigger", "watch", "history", "buffer"];
+const KEYWORDS: &[&str] = &[
+    "param", "live", "trigger", "watch", "history", "buffer", "sample",
+];
 
 /// A filter's `q` when a call leaves it out: no peak.
 const DEFAULT_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
@@ -464,6 +467,20 @@ impl Compiler {
                 tokens.next();
                 self.buffer(&mut tokens)?;
             }
+            Some("sample") => {
+                // A sound the record names, such as a recording, read as a list.
+                tokens.next();
+                let name = self.new_name(&mut tokens)?;
+                let index = self.code.arrays.len() as u16;
+                self.code.arrays.push(ArraySpec {
+                    name: name.clone(),
+                    length: None,
+                    default: 0.0,
+                    min: -1.0,
+                    max: 1.0,
+                });
+                self.names.insert(name, Binding::Table(Table::Array(index)));
+            }
             _ => self.assignment(&mut tokens)?,
         }
         match tokens.next() {
@@ -568,7 +585,7 @@ impl Compiler {
             let index = self.code.arrays.len() as u16;
             self.code.arrays.push(ArraySpec {
                 name: name.clone(),
-                length: length as usize,
+                length: Some(length as usize),
                 default,
                 min,
                 max,
@@ -1102,7 +1119,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(code.parameters.len(), 1);
-        assert_eq!(code.arrays[0].length, 16);
+        assert_eq!(code.arrays[0].length, Some(16));
         assert_eq!(code.lives[0].name, "x");
         assert_eq!(code.triggers, ["hit"]);
         assert_eq!(code.watches, ["level"]);

@@ -17,7 +17,9 @@ use crate::language::{
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Values {
     pub parameters: [f32; MAX_PARAMETERS],
-    pub arrays: Vec<Vec<f32>>,
+    /// `None` leaves the lists the processor has: a sample is long, so it is sent only when
+    /// it or another list changed, not at every turn of a knob.
+    pub arrays: Option<Vec<Vec<f32>>>,
     /// For each number an automation lane can move, in the order of its index, the param it
     /// moves.
     pub automated: Vec<u16>,

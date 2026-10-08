@@ -464,7 +464,7 @@ impl Sounds {
                 None => parameter.default,
             };
         }
-        values.arrays = (code.arrays.iter())
+        let arrays = (code.arrays.iter())
             .map(|array| {
                 let list = state.get(&array.name).and_then(Value::as_array);
                 let numbers = list.map(|list| {
@@ -472,10 +472,13 @@ impl Sounds {
                         .map(|item| item.as_f64().map_or(array.default, |n| n as f32))
                 });
                 let mut numbers: Vec<f32> = numbers.map(Iterator::collect).unwrap_or_default();
-                numbers.resize(array.length, array.default);
+                if let Some(length) = array.length {
+                    numbers.resize(length, array.default);
+                }
                 numbers
             })
             .collect();
+        values.arrays = Some(arrays);
         values
     }
 
