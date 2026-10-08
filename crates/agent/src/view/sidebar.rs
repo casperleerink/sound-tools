@@ -839,30 +839,40 @@ impl Sidebar {
             };
             let ready = matches!(setup, Setup::Ready { .. });
             // A sidebar that went in the meantime has nobody to tell.
-            let Ok(listed) = sidebar.update(cx, |sidebar, cx| {
-                sidebar.set_setup(setup, cx);
-                !sidebar.settings.read(cx).models().is_empty()
-            }) else {
-                return;
-            };
-            if !ready || listed {
+            if sidebar
+                .update(cx, |sidebar, cx| sidebar.set_setup(setup, cx))
+                .is_err()
+                || !ready
+            {
                 return;
             }
-            // The menu shows the models before the first message starts an agent.
+            // The menu shows the models before the first message starts an agent. Asked after
+            // every check, as another account may offer others.
             let listing =
                 cx.background_spawn(async move { provider.models(installed, folder).await });
-            // On failure the menu keeps "Default": the first message starts an agent, which
-            // says what went wrong.
-            if let Ok(models) = listing.await {
-                sidebar
-                    .update(cx, |sidebar, cx| {
-                        sidebar
-                            .settings
-                            .update(cx, |settings, cx| settings.set_models(models, cx));
-                    })
-                    .ok();
-            }
+            let timeout = cx.background_executor().timer(CHECK_TIMEOUT);
+            let listed = future::or(async { Some(listing.await) }, async {
+                timeout.await;
+                None
+            })
+            .await;
+            sidebar
+                .update(cx, |sidebar, cx| match listed {
+                    Some(Ok(models)) => sidebar
+                        .settings
+                        .update(cx, |settings, cx| settings.set_models(models, cx)),
+                    Some(Err(error)) => sidebar.models_not_listed(&error.to_string(), cx),
+                    None => sidebar.models_not_listed("it did not answer within 30 seconds", cx),
+                })
+                .ok();
         }));
+    }
+
+    fn models_not_listed(&mut self, error: &str, cx: &mut Context<Self>) {
+        let name = self.provider.name();
+        self.conversation
+            .notice(format!("{name} did not list its models: {error}"));
+        self.show(None, cx);
     }
 
     /// Downloads the pinned program, from where an earlier try stopped.

@@ -226,6 +226,20 @@ fn the_models_come_with_no_message() {
     );
 }
 
+/// The agent waits on, so only the error ends the wait.
+#[test]
+fn models_refused_say_why() {
+    let folder = tempfile::tempdir().unwrap();
+    let account = folder.path().join("account");
+    let installed = installed("models_refused", &account, &folder.path().join("output"));
+    let models = within(
+        "the refusal",
+        Provider::Claude.models(installed, std::env::temp_dir()),
+    );
+    let error = models.unwrap_err().to_string();
+    assert!(error.contains("not now"), "{error}");
+}
+
 #[test]
 fn signs_in_with_the_choice_then_out() {
     let folder = tempfile::tempdir().unwrap();

@@ -98,7 +98,9 @@ impl Provider {
         while let Some(event) = events.next().await {
             match event {
                 AgentEvent::Started { models, .. } => return Ok(models),
-                AgentEvent::Exited {
+                // Nothing else was asked, so an error is the answer to starting.
+                AgentEvent::Error { message }
+                | AgentEvent::Exited {
                     reason: ExitReason::Failed { message },
                 } => return Err(io::Error::other(message)),
                 _ => {}
