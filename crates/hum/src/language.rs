@@ -6,8 +6,7 @@
 //! before it, so one pass in order computes a frame. A `history` reads what it was set to in
 //! the frame before, which is how a value feeds back.
 //!
-//! The reference for writers is `agent-doc.md`. An error names the line of the code, so the
-//! writer finds it.
+//! An error names the line of the code, so whoever reads the code finds it.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
