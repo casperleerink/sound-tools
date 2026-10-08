@@ -34,6 +34,7 @@ use super::markdown::{self, Markdown};
 use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
 use crate::conversation::{Conversation, Entry, request_label};
+use crate::environment::put_first_on_path;
 use crate::install::{self, InstallError};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
 use crate::store::{Line, RecentThread, SavedThread, ThreadStore, Write};
@@ -161,11 +162,14 @@ impl Sidebar {
     /// the download in `agents`. The threads of the
     /// project are kept in `threads`, `agent/threads` in the support folder of the machine;
     /// with `None` nothing is saved. `settings` are the app's, shared by every sidebar.
+    /// `first_on_path` goes first on the agent's `PATH`: the folder of the programs the app
+    /// ships, so the agent runs the same ones.
     pub fn new(
         session: Entity<sound_ui::Session>,
         agents: Option<PathBuf>,
         threads: Option<PathBuf>,
         settings: Entity<AgentSettings>,
+        first_on_path: Option<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -187,7 +191,7 @@ impl Sidebar {
         sidebar.setup_task = Some(cx.spawn(async move |sidebar, cx| {
             let found = cx
                 .background_spawn(async move {
-                    let (environment, error) = match login_shell_environment().await {
+                    let (mut environment, error) = match login_shell_environment().await {
                         Ok(environment) => (environment, None),
                         Err(error) => (std::env::vars_os().collect(), Some(error)),
                     };
@@ -196,6 +200,12 @@ impl Sidebar {
                         .or_else(|| program_on_path(provider.command(), &environment))
                         .or(downloaded);
                     let present = program.as_ref().is_some_and(|program| program.is_file());
+                    // Without it the agent still runs, with only the composer's own programs.
+                    if let Some(folder) = &first_on_path
+                        && let Err(error) = put_first_on_path(&mut environment, folder)
+                    {
+                        eprintln!("{} is not on the agent's PATH: {error}", folder.display());
+                    }
                     let installed = program.map(|program| Installed {
                         program,
                         environment,
