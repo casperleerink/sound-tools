@@ -15,7 +15,8 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
-    BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint, Watch,
+    BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint,
+    ParameterInfo, ValueRange, Watch,
 };
 use sound_hum::{Code, Hum, HumUpdate, Kind, Machine, Values, compile};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
@@ -384,19 +385,19 @@ impl ToolInfo {
              {rows}\n\
              A field left out is at its default, so `\"state\": {{}}` is the tool at its defaults. \
              A knob, a toggle or a pattern changes the sound at once. A choice changes what the \
-             sound is made of: the new sound fades in over 10 ms.\n",
+             sound is made of: the new sound fades in over 10 ms. A knob can be automated by a \
+             lane of its track, as the numbers of any device (`agent-docs/arrangement.md`).\n",
             defaults.join(", "),
         )
     }
 
     /// The tool for the core. `bun` makes its Hum.
     pub(crate) fn json_tool(&self, bun: &Arc<Bun>) -> JsonTool {
-        let info = Arc::new(self.clone());
-        let check = Arc::new(move |state: &Value| info.check(state));
         let sounds = Sounds::new(self, bun);
+        let info = sounds.info.clone();
         JsonTool {
             name: self.name.clone(),
-            check,
+            check: Arc::new(move |state: &Value| info.check(state)),
             behaviour: Box::new(move |state, context| sounds.apply(state, context)),
             doc: Some(JsonToolDoc {
                 when: self.when.clone(),
@@ -412,7 +413,7 @@ pub(crate) struct Sounds {
     bun: Arc<Bun>,
     /// By the choices as JSON. A failure is kept too, so a record that cannot play does not
     /// ask again on every turn of a knob. A tool defined again starts empty.
-    compiled: Rc<RefCell<HashMap<String, Result<Rc<Code>, String>>>>,
+    compiled: RefCell<HashMap<String, Result<Rc<Code>, String>>>,
 }
 
 impl Sounds {
@@ -420,8 +421,24 @@ impl Sounds {
         Self {
             info: Arc::new(info.clone()),
             bun: bun.clone(),
-            compiled: Rc::default(),
+            compiled: RefCell::default(),
         }
+    }
+
+    /// The knobs of the tool, in order, with the range a lane moves each one over and their
+    /// default.
+    fn knobs(&self) -> impl Iterator<Item = (&str, ValueRange, f32)> {
+        let fields = self.info.fields.0.iter();
+        fields.filter_map(|(name, field)| match field {
+            Field::Knob {
+                min,
+                max,
+                unit,
+                default,
+                ..
+            } => Some((name.as_str(), knob_range(*min, *max, *unit), *default)),
+            _ => None,
+        })
     }
 
     /// The compiled Hum for the choices of `state`.
@@ -447,8 +464,13 @@ impl Sounds {
 
     /// Where the params and lists of `code` stand in `state`: a knob or a toggle by the name of
     /// its `param` line, a pattern by the name of its list.
-    fn values(code: &Code, state: &Value) -> Values {
+    fn values(&self, code: &Code, state: &Value) -> Values {
         let mut values = Values::default();
+        // The knobs, in the order of `automated`: each one's param.
+        values.automated = (self.knobs())
+            .filter_map(|(name, ..)| code.parameters.iter().position(|p| p.name == name))
+            .map(|index| index as u16)
+            .collect();
         for (value, parameter) in values.parameters.iter_mut().zip(&code.parameters) {
             *value = match state.get(&parameter.name) {
                 Some(Value::Bool(on)) => f32::from(u8::from(*on)),
@@ -481,7 +503,7 @@ impl Sounds {
         self.info.check(state).map_err(BehaviourError::Other)?;
         let code = self.code(state).map_err(BehaviourError::Other)?;
         let kind = self.info.kind();
-        let values = Self::values(&code, state);
+        let values = self.values(&code, state);
         // Declared every run, so they stay the same while the code keeps them.
         let watches: Vec<Watch> = code
             .watches
@@ -515,7 +537,7 @@ impl Sounds {
             hum,
             HumUpdate::Set {
                 machines,
-                values,
+                values: Box::new(values),
                 watches,
             },
         )?;
@@ -528,7 +550,31 @@ impl Sounds {
             }
         }
         context.output(AUDIO_OUTPUT, OutputEndpoint::new(hum, Hum::OUTPUT));
+        // Every knob can be automated, as a number of any device. A toggle or a pattern is no
+        // straight line, and a lane cannot move it.
+        let numbers: Vec<(ParameterInfo, f32)> = (self.knobs())
+            .map(|(name, range, default)| {
+                let record = state.get(name).and_then(Value::as_f64);
+                let info = ParameterInfo {
+                    field: name.into(),
+                    range,
+                };
+                (info, record.map_or(default, |value| value as f32))
+            })
+            .collect();
+        if !numbers.is_empty() {
+            let input = InputEndpoint::new(hum, Hum::AUTOMATION);
+            context.runtime_automation(input, numbers)?;
+        }
         Ok(())
+    }
+}
+
+/// How a knob turns: a frequency on a log scale, as it is heard, anything else straight.
+pub(crate) fn knob_range(min: f32, max: f32, unit: Option<Unit>) -> ValueRange {
+    match unit {
+        Some(Unit::Hz) if min > 0.0 => ValueRange::logarithmic(min, max),
+        _ => ValueRange::linear(min, max),
     }
 }
 
