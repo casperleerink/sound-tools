@@ -213,6 +213,24 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
 }
 
 #[test]
+fn a_note_from_the_interface_plays_a_voice_as_a_key_would() {
+    let code = ["out = 0.2 * sin(phasor(freq) * tau) * adsr(gate, 1, 1, 1, 1)"];
+    let mut played = play(Kind::Instrument { voices: 8 }, &code, Vec::new());
+    assert_eq!(loudest(&played.render(4_800)), 0.0);
+    played
+        .control
+        .update(played.hum, HumUpdate::Note(on(69)))
+        .unwrap();
+    let output = played.render(24_000);
+    assert!((frequency(&output[2_400..]) - 440.0).abs() < 1.0);
+    played
+        .control
+        .update(played.hum, HumUpdate::Note(off(69)))
+        .unwrap();
+    assert_eq!(loudest(&played.render(24_000)[4_800..]), 0.0);
+}
+
+#[test]
 fn a_live_control_glides_to_where_the_interface_puts_it() {
     let mut played = play(Kind::Source, &["live x = 0 [0, 1]", "out = x"], Vec::new());
     assert_eq!(played.render(64)[63], 0.0);

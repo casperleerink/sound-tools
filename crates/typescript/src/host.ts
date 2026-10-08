@@ -274,6 +274,11 @@ function players(instance: string) {
     fire(control: string) {
       send({ type: "control", instance, name: control });
     },
+    play(pitch: number, seconds = 0.25, velocity = 0.8) {
+      const key = Math.max(0, Math.min(127, Math.round(pitch)));
+      send({ type: "note", instance, pitch: key, velocity });
+      setTimeout(() => send({ type: "note", instance, pitch: key }), seconds * 1000);
+    },
   };
 }
 
@@ -329,7 +334,7 @@ function draw(tool: string, page: boolean): Sent {
     throw new Error(`no tool ${tool} is loaded`);
   }
   const memory = spec.memory ? spec.memory() : {};
-  const quiet = { set() {}, fire() {} };
+  const quiet = { set() {}, fire() {}, play() {} };
   if (spec.tick) {
     try {
       spec.tick({ state: {}, watches: {}, memory, dt: 1 / 30, ...quiet });

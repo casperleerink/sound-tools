@@ -107,6 +107,14 @@ pub(crate) enum Event {
         #[serde(default)]
         value: Option<f32>,
     },
+    /// A card or a control loop pressed a key of an instance at a velocity from 0 to 1, or let
+    /// it go when there is none.
+    Note {
+        instance: String,
+        pitch: u8,
+        #[serde(default)]
+        velocity: Option<f32>,
+    },
 }
 
 #[derive(Debug, Deserialize)]

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use gpui::{App, AppContext, Context, Entity, Task, WeakEntity};
 use sound_core::{InstanceId, Problem, Project};
 use sound_hum::{Hum, HumUpdate};
+use sound_notes::{NoteEvent, Pitch, Velocity};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
 use crate::bun::{Bun, Event, Loaded, Looped, Request};
@@ -342,6 +343,38 @@ impl Live {
         });
     }
 
+    /// Plays a key of the voices of an instance, as the keyboard would.
+    fn note(&mut self, id: &InstanceId, pitch: u8, velocity: Option<f32>, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let tools = self.tools.borrow();
+        let tool = session.read(cx).project().tool_of(id);
+        let Some(info) = tools.iter().find(|info| Some(info.name.as_str()) == tool) else {
+            return;
+        };
+        if info.kind == ToolKind::Effect {
+            return eprintln!("error: {} is an effect, which plays no notes", info.name);
+        }
+        let processor = info.processor();
+        drop(tools);
+        let pitch = Pitch::nearest(i64::from(pitch));
+        let event = match velocity {
+            Some(velocity) => NoteEvent::On {
+                pitch,
+                velocity: Velocity::nearest((velocity.clamp(0.0, 1.0) * 127.0).round() as i64),
+            },
+            None => NoteEvent::Off { pitch },
+        };
+        session.update(cx, |session, cx| {
+            let update = HumUpdate::Note(event);
+            let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
+            if let Err(error) = sent {
+                session.report(error, cx);
+            }
+        });
+    }
+
     fn stopped(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
@@ -448,6 +481,14 @@ impl Live {
                 value,
             } => match InstanceId::new(&instance) {
                 Ok(id) => self.control(&id, &name, value, cx),
+                Err(error) => eprintln!("error: {error}"),
+            },
+            Event::Note {
+                instance,
+                pitch,
+                velocity,
+            } => match InstanceId::new(&instance) {
+                Ok(id) => self.note(&id, pitch, velocity, cx),
                 Err(error) => eprintln!("error: {error}"),
             },
         }

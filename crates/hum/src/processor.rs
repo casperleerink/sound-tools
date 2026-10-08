@@ -65,6 +65,9 @@ pub enum HumUpdate {
     Live { index: usize, value: f32 },
     /// From the interface: a trigger fires in the next frame. Not saved.
     Trigger { index: usize },
+    /// From the interface: a note for the voices, as if it came in on [`Hum::NOTES`] at the
+    /// start of the next block. Not saved.
+    Note(NoteEvent),
 }
 
 pub struct Hum {
@@ -411,6 +414,7 @@ impl Processor for Hum {
                     self.fired |= 1 << *index;
                 }
             }
+            HumUpdate::Note(event) => self.follow(*event),
         }
     }
 

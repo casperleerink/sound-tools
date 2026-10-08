@@ -498,17 +498,27 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
 }
 
 /** What the control loop of an instance gets each time it runs. */
-export interface Tick<State, C extends Controls, M> {
+/** What plays an instance as a performer would: nothing saves it and no undo takes it back. */
+export interface Performer<C extends Controls> {
+  /** Moves a live control. */
+  set(control: ControlNames<C, "live">, value: number): void;
+  /** Fires a trigger. */
+  fire(control: ControlNames<C, "trigger">): void;
+  /**
+   * Plays a note on the tool's own voices, as a key held for `seconds` (0.25 when left out):
+   * `pitch` is MIDI, 69 is A4, and `velocity` is 0 to 1 (0.8 when left out). An instrument
+   * plays each note on a voice of its own; a source follows the newest.
+   */
+  play(pitch: number, seconds?: number, velocity?: number): void;
+}
+
+export interface Tick<State, C extends Controls, M> extends Performer<C> {
   state: State;
   /** The last value of each `watch`, by name. */
   watches: Record<string, number>;
   memory: M;
   /** Seconds since the last tick. */
   dt: number;
-  /** Moves a live control. */
-  set(control: ControlNames<C, "live">, value: number): void;
-  /** Fires a trigger. */
-  fire(control: ControlNames<C, "trigger">): void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -542,7 +552,7 @@ export interface Style {
 }
 
 /** What a card or a page gets each time it draws. */
-export interface Card<State, C extends Controls = Controls, M = unknown> {
+export interface Card<State, C extends Controls = Controls, M = unknown> extends Performer<C> {
   /** The record as it is now. */
   state: State;
   /** What the control loop keeps. A click may change it too; the card draws again after. */
@@ -554,10 +564,6 @@ export interface Card<State, C extends Controls = Controls, M = unknown> {
    * the tool does not accept is refused, and the window says why.
    */
   update(label: string, change: (state: State) => void): void;
-  /** Moves a live control. Not saved, no undo step. */
-  set(control: ControlNames<C, "live">, value: number): void;
-  /** Fires a trigger. */
-  fire(control: ControlNames<C, "trigger">): void;
 }
 
 /**
