@@ -3,10 +3,10 @@
 //!
 //! A project with an `extensions/` folder starts Bun on `host.ts` when it opens. Bun loads every
 //! `.ts` and `.tsx` file there and says which tools they define: the fields of a record, a doc
-//! for agents, and a function that makes the tool's sound in Hum. The runtime registers each
-//! as a [`JsonTool`] before the records load, so a record of one loads like any other. Its
-//! check runs in Rust; only a new combination of choices asks Bun for Hum. In the window, a
-//! save of a file defines the tools again and draws the cards again.
+//! for agents, and a sound, a graph of signals that the SDK turns into Hum. The runtime
+//! registers each as a [`JsonTool`] before the records load, so a record of one loads like any
+//! other. Its check runs in Rust; only a new combination of choices asks Bun for Hum. In the
+//! window, a save of a file defines the tools again and draws the cards again.
 //!
 //! Nothing of it runs on the audio thread, and a knob never waits for Bun: it moves a value of
 //! the Hum that plays, as the knob of a built-in effect moves its processor.
@@ -48,7 +48,7 @@ const TSCONFIG: &str = r#"{
 /// How an agent writes a tool of the project.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "extensions",
-    when: "No tool does what you need: write a new effect for this project",
+    when: "No tool does what you need: write a new effect, instrument or experiment for this project",
     markdown: include_str!("agent-doc.md"),
 };
 
