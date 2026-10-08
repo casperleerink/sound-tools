@@ -5713,10 +5713,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sound-core",
+ "sound-hum",
  "sound-notes",
  "sound-ui",
  "tempfile",
- "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -6085,6 +6085,14 @@ dependencies = [
  "thiserror 2.0.20",
  "triple_buffer",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sound-hum"
+version = "0.6.0"
+dependencies = [
+ "sound-core",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
