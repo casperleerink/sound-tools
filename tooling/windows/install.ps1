@@ -37,6 +37,7 @@ try {
             throw
         }
     }
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'bun-LICENSE.md') -Destination $folder -Force
 
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
     $link.TargetPath = $program

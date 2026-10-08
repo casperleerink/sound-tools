@@ -33,7 +33,7 @@ scratch="$(mktemp -d)"
 folder="$scratch/$name"
 mkdir -p "$folder"
 cp "$target/release/runtime.exe" "$folder/sound-tools.exe"
-tooling/fetch-bun.sh "$folder"
+tooling/fetch-bun.sh "$folder" "$folder"
 cp tooling/windows/install.ps1 LICENSE "$folder/"
 "$folder/sound-tools.exe" --version
 

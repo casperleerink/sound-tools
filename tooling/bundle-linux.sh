@@ -33,7 +33,7 @@ cp "$target/release/runtime" "$folder/sound-tools"
 # They are most of its size. The names of the functions stay.
 strip --strip-debug "$folder/sound-tools"
 # Bun runs the tools of a project, from next to the program.
-tooling/fetch-bun.sh "$folder"
+tooling/fetch-bun.sh "$folder" "$folder"
 cp tooling/icon/sound-tools-512.png "$folder/sound-tools.png"
 cp tooling/linux/sound-tools.desktop tooling/linux/install.sh LICENSE "$folder/"
 "$folder/sound-tools" --version

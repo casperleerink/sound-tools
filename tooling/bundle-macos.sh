@@ -36,7 +36,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/sound-tools"
 # Bun runs the tools of a project, from next to the program.
-tooling/fetch-bun.sh "$app/Contents/MacOS"
+tooling/fetch-bun.sh "$app/Contents/MacOS" "$app/Contents/Resources"
 
 # The icon: every size macOS asks for, from the one PNG in the repository.
 iconset="$(mktemp -d)/AppIcon.iconset"

@@ -17,6 +17,7 @@ for name in sound-tools bun; do
   cp "$here/$name" "$lib/$name.new"
   mv -f "$lib/$name.new" "$lib/$name"
 done
+cp "$here/bun-LICENSE.md" "$lib/"
 # A link, as the app's own "Install command line tool" makes, so that item still works.
 ln -sf "$program" "$link"
 sed "s|^Exec=.*|Exec=\"$program\"|" "$here/sound-tools.desktop" > "$desktop"
