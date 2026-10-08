@@ -16,8 +16,8 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
-    Assets, BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint,
-    ParameterInfo, ValueRange, Watch,
+    Assets, BehaviourContext, BehaviourError, InputEndpoint, InstanceId, JsonTool, JsonToolDoc,
+    OutputEndpoint, ParameterInfo, ValueRange, Watch,
 };
 use sound_hum::{ArraySpec, Code, Hum, HumUpdate, Kind, Machine, Values, compile};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
@@ -441,6 +441,10 @@ impl ToolInfo {
     }
 }
 
+/// Where the samples of an instance are read: its assets, the rate of the engine and itself,
+/// which waits for a sample read on its thread.
+type Read<'a> = (&'a Assets, u32, &'a InstanceId);
+
 /// The behaviour of a tool: its Hum per combination of choices, asked of Bun once each.
 pub(crate) struct Sounds {
     info: Arc<ToolInfo>,
@@ -520,15 +524,16 @@ impl Sounds {
 
     /// The lists of `code` from `state`: a pattern as the record holds it, a sample as its
     /// sound, which is silence while it cannot be read.
-    fn lists(&self, code: &Code, state: &Value, assets: &Assets, rate: u32) -> Vec<Vec<f32>> {
+    fn lists(&self, code: &Code, state: &Value, (assets, rate, id): Read<'_>) -> Vec<Vec<f32>> {
         let list = |array: &ArraySpec| {
             let Some(length) = array.length else {
                 let file = state
                     .get(&array.name)
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let sound = self.samples.get(assets, file, rate);
-                return sound.map(|sound| sound.to_vec()).unwrap_or_default();
+                let sound = self.samples.get(assets, file, rate, id);
+                // Silent while it is read, or when it cannot be.
+                return (sound.ok().flatten()).map_or_else(Vec::new, |sound| sound.to_vec());
             };
             let items = state.get(&array.name).and_then(Value::as_array);
             let numbers = items.into_iter().flatten();
@@ -547,8 +552,7 @@ impl Sounds {
         &self,
         code: &Code,
         state: &Value,
-        assets: &Assets,
-        rate: u32,
+        (assets, rate, id): Read<'_>,
     ) -> (u64, Vec<String>) {
         let mut hasher = DefaultHasher::new();
         let mut problems = Vec::new();
@@ -557,9 +561,9 @@ impl Sounds {
             value.map(Value::to_string).hash(&mut hasher);
             let file = value.and_then(Value::as_str).unwrap_or_default();
             if array.length.is_none() && !file.is_empty() {
-                let read = self.samples.get(assets, file, rate);
+                let read = self.samples.get(assets, file, rate, id);
                 read.as_ref()
-                    .map(|sound| sound.len())
+                    .map(|sound| sound.as_ref().map(|sound| sound.len()))
                     .ok()
                     .hash(&mut hasher);
                 if let Err(problem) = read {
@@ -581,12 +585,14 @@ impl Sounds {
         let code = self.code(state).map_err(BehaviourError::Other)?;
         let kind = self.info.kind();
         let mut values = self.values(&code, state);
-        let (assets, rate) = (
+        let (assets, rate, id) = (
             context.assets().clone(),
             context.prepare_config().sample_rate,
+            context.id().clone(),
         );
+        let reading = (&assets, rate, &id);
         // A list, a sample most of all, is sent only when it changed: not at every knob turn.
-        let (lists_key, problems) = self.lists_key(&code, state, &assets, rate);
+        let (lists_key, problems) = self.lists_key(&code, state, reading);
         for problem in problems {
             context.problem(problem);
         }
@@ -600,7 +606,7 @@ impl Sounds {
         let sample_rate = context.prepare_config().sample_rate as f32;
         let new_code = context.changed("code", code.hash);
         if new_code || new_lists {
-            values.arrays = Some(self.lists(&code, state, &assets, rate));
+            values.arrays = Some(self.lists(&code, state, reading));
         }
         let made = || Box::new(Machine::new(code.as_ref().clone(), sample_rate));
         let mut machines: Vec<Option<Box<Machine>>> = match new_code {
@@ -611,8 +617,7 @@ impl Sounds {
         let hum = context.processor(self.info.processor(), || {
             created = true;
             let first = machines.first_mut().and_then(Option::take);
-            let lists =
-                (values.arrays.take()).unwrap_or_else(|| self.lists(&code, state, &assets, rate));
+            let lists = (values.arrays.take()).unwrap_or_else(|| self.lists(&code, state, reading));
             let values = Values {
                 arrays: Some(lists),
                 ..values.clone()

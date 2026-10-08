@@ -479,6 +479,30 @@ impl Live {
     fn frame(&mut self, cx: &mut Context<Self>) {
         self.run_loops(cx);
         self.look_at_watches(cx);
+        self.take_samples(cx);
+    }
+
+    /// Runs the behaviour of every instance whose sample was read on its thread again, so it
+    /// plays it.
+    fn take_samples(&mut self, cx: &mut Context<Self>) {
+        let read = crate::samples::take_read();
+        let Some(session) = self.session.upgrade().filter(|_| !read.is_empty()) else {
+            return;
+        };
+        session.update(cx, |session, cx| {
+            let failed = session.background(cx, |project| {
+                // One deleted while its sample was read has nothing to play it.
+                (read.iter())
+                    .filter_map(|id| {
+                        project.tool_of(id)?;
+                        project.rebind(id).err()
+                    })
+                    .collect::<Vec<_>>()
+            });
+            for error in failed {
+                session.report(error, cx);
+            }
+        });
     }
 
     /// Runs the control loop of every instance whose tool has one, cards or not.

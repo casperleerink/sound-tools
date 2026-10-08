@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 
+pub use samples::read_in_background;
 pub use window::start_window;
 
 use crate::bun::{Bun, Loaded};
