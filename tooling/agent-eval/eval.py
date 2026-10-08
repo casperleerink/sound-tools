@@ -204,6 +204,60 @@ def check_tape_builder(folder: Path) -> dict:
     }
 
 
+ACID_BASS = (HERE / "fixtures" / "acid-bass.tsx").read_text()
+
+
+def setup_acid_bass(folder: Path) -> None:
+    setup_with_bass(folder)
+    write(folder, "extensions/acid-bass.tsx", ACID_BASS)
+    write(folder, "state/arrangement/bass/instrument.json", {"tool": "acid-bass", "state": {
+        "steps": [1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1],
+        "accents": [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0],
+        "cutoff": 380, "resonance": 0.7, "note": 36}})
+
+
+def check_acid_bass(folder: Path) -> dict:
+    state = record(folder, "state/arrangement/bass/instrument.json").get("state", {})
+    accents = state.get("accents", [])
+    return {
+        "eighths": state.get("steps") == [1, 0] * 8,
+        "accents on the beats": len(accents) == 16 and all(accents[i] == 1 for i in (0, 4, 8, 12)),
+        "darker": state.get("cutoff", 380) < 380,
+        "an octave lower": state.get("note") == 24,
+        "no problems": no_problems(folder),
+    }
+
+
+def check_experiment(folder: Path) -> dict:
+    tools = project_tools(folder)
+    top = [path for path in (folder / "state").glob("*.json")
+           if record(folder, str(path.relative_to(folder))).get("tool") in tools]
+    name = top[0].stem if top else None
+    tool = record(folder, f"state/{name}.json").get("tool") if name else None
+    text = tools.get(tool, "")
+    connections = json.loads((folder / "project.json").read_text()).get("connections", [])
+    return {
+        "no arrangement": not (folder / "state/arrangement").exists(),
+        "a project tool at the top": bool(top),
+        "with a page, a canvas and a tick": all(word in text for word in ("page", "Canvas", "tick")),
+        "connected to the device": any(c.get("from", {}).get("instance") == name for c in connections),
+        "no problems": no_problems(folder),
+    }
+
+
+def check_generative(folder: Path) -> dict:
+    tools = project_tools(folder)
+    tool = instruments(folder).get("pad")
+    text = tools.get(tool, "")
+    return {
+        "a project tool plays the pad": tool in tools,
+        "a source": '"source"' in text,
+        "shows its note": "watch(" in text,
+        "it sounds": sounds(folder, "pad"),
+        "no problems": no_problems(folder),
+    }
+
+
 SCENARIOS = {
     "builtin": (setup_builtin, check_builtin,
                 "Put a dotted-eighth echo on the lead, quieter than the dry sound, and make the "
@@ -224,6 +278,21 @@ SCENARIOS = {
                           "is playing lights up, it plays along with the tempo of the piece, "
                           "and it has knobs for the filter cutoff, the resonance and the note "
                           "it plays. Make a pattern that grooves to start with."),
+    "experiment-builder": (setup_tape_builder, check_experiment,
+                           "Turn this project into an interactive sound toy instead of a song, "
+                           "just one screen and no timeline: a 'gravity harp'. I drop balls "
+                           "with the mouse onto a few horizontal strings; when a ball hits a "
+                           "string it plucks it, each string a different note of a pentatonic "
+                           "scale, and the ball bounces off."),
+    "generative-builder": (setup_tape_builder, check_generative,
+                           "Make the pad play a generative ambient part by itself, forever: it "
+                           "slowly wanders between notes of D dorian with a long, washy tail. "
+                           "Give its card a way to change how dense and how bright it is, and "
+                           "let me see which note it is on."),
+    "composer-sequencer": (setup_acid_bass, check_acid_bass,
+                           "The acid bass is cool. Make its pattern play every eighth note and "
+                           "nothing in between, put an accent on each beat, and make it a bit "
+                           "darker and an octave lower."),
     "toy-builder": (setup_tape_builder, check_toy,
                     "Make me a 'storm' on a new track: a windy, noisy drone I play live with an "
                     "XY pad, across is how dark or bright, up is how wild, plus a 'thunder' "
