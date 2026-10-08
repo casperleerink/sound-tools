@@ -11,7 +11,7 @@ use sound_core::{
 };
 use sound_notes::{NoteEvent, Velocity, Voice, Voices, frequency_hz};
 
-use crate::language::{MAX_LIVES, MAX_PARAMETERS};
+use crate::language::{Code, MAX_LIVES, MAX_PARAMETERS};
 use crate::machine::{Inputs, Machine, Note, Values};
 
 /// How long the old code fades out while the new one fades in.
@@ -68,8 +68,8 @@ pub enum HumUpdate {
 pub struct Hum {
     kind: Kind,
     players: Players,
-    parameters: Vec<Smoothed>,
-    lives: Vec<Smoothed>,
+    parameters: [Smoothed; MAX_PARAMETERS],
+    lives: [Smoothed; MAX_LIVES],
     /// The values of this frame, which every voice reads.
     current_parameters: [f32; MAX_PARAMETERS],
     current_lives: [f32; MAX_LIVES],
@@ -127,10 +127,8 @@ impl Hum {
     /// `machine` is the first voice; an instrument plays copies of it.
     pub fn new(kind: Kind, machine: Box<Machine>, values: Values, watches: Vec<Watch>) -> Self {
         let code = machine.code();
-        let counts = (code.parameters.len(), code.lives.len());
-        let lives: Vec<Smoothed> = (0..MAX_LIVES)
-            .map(|index| Smoothed::new(code.lives.get(index).map_or(0.0, |live| live.default)))
-            .collect();
+        let counts = counts_of(code);
+        let lives = lives_of(code);
         let voice = HumVoice {
             machine,
             fading: None,
@@ -147,7 +145,7 @@ impl Hum {
                     always: false,
                     ..voice
                 };
-                Players::Many(Box::new(Voices::new(idle, voices.clamp(1, MAX_VOICES))))
+                Players::Many(Box::new(Voices::new(idle, voices)))
             }
             Kind::Effect | Kind::Source => Players::One(Box::new(Single {
                 voice,
@@ -157,21 +155,14 @@ impl Hum {
                 },
             })),
         };
-        let mut current_parameters = [0.0; MAX_PARAMETERS];
-        current_parameters.copy_from_slice(&values.parameters);
-        let current_lives =
-            std::array::from_fn(|index| lives.get(index).map_or(0.0, Smoothed::current));
         Self {
             kind,
             players,
-            parameters: values
-                .parameters
-                .iter()
-                .map(|value| Smoothed::new(*value))
-                .collect(),
+            parameters: values.parameters.map(Smoothed::new),
             lives,
-            current_parameters,
-            current_lives,
+            // Every frame moves them before a voice reads them.
+            current_parameters: [0.0; MAX_PARAMETERS],
+            current_lives: [0.0; MAX_LIVES],
             counts,
             arrays: values.arrays,
             fired: 0,
@@ -190,14 +181,30 @@ impl Hum {
         values: &mut Values,
         watches: &mut Vec<Watch>,
     ) {
-        let new_code = machines.first().is_some_and(Option::is_some);
+        if let Some(Some(machine)) = machines.first() {
+            // The params and lives of new code may differ in number and order: they start
+            // where they stand, and the fade covers the jump.
+            let code = machine.code();
+            self.counts = counts_of(code);
+            self.lives = lives_of(code);
+            self.parameters = values.parameters.map(Smoothed::new);
+            std::mem::swap(&mut self.watches, watches);
+        } else {
+            let ramp = RAMP_SECONDS * self.sample_rate;
+            for (parameter, value) in self.parameters.iter_mut().zip(values.parameters) {
+                parameter.set_target(value, ramp);
+            }
+        }
+        std::mem::swap(&mut self.arrays, &mut values.arrays);
         let fade_frames = self.fade_frames;
         let swap = |voice: &mut HumVoice, machine: &mut Option<Box<Machine>>| {
             if let Some(new) = machine.take() {
                 let old = std::mem::replace(&mut voice.machine, new);
                 // The one that faded before rides back with this update, to be dropped there.
                 *machine = voice.fading.replace(old);
-                voice.fade_left = fade_frames;
+                // An idle voice is silent, so it has nothing to fade from. It also plays no
+                // frame that would count the fade down before its next note.
+                voice.fade_left = if voice.is_idle() { 0 } else { fade_frames };
             }
         };
         match &mut self.players {
@@ -210,30 +217,6 @@ impl Hum {
                 for (voice, machine) in voices.iter_mut().zip(machines.iter_mut()) {
                     swap(voice, machine);
                 }
-            }
-        }
-        let ramp = RAMP_SECONDS * self.sample_rate;
-        for (parameter, value) in self.parameters.iter_mut().zip(&values.parameters) {
-            if new_code {
-                // The order of the params may have changed with the code; the fade covers it.
-                *parameter = Smoothed::new(*value);
-            } else {
-                parameter.set_target(*value, ramp);
-            }
-        }
-        std::mem::swap(&mut self.arrays, &mut values.arrays);
-        if new_code {
-            std::mem::swap(&mut self.watches, watches);
-            let code = match &self.players {
-                Players::One(single) => single.voice.machine.code(),
-                Players::Many(voices) => match voices.iter().next() {
-                    Some(voice) => voice.machine.code(),
-                    None => return,
-                },
-            };
-            self.counts = (code.parameters.len(), code.lives.len());
-            for (index, live) in self.lives.iter_mut().enumerate() {
-                *live = Smoothed::new(code.lives.get(index).map_or(0.0, |live| live.default));
             }
         }
     }
@@ -279,6 +262,18 @@ impl Keys {
             _ => {}
         }
     }
+}
+
+/// How many params and live controls `code` has, so a frame moves only those.
+fn counts_of(code: &Code) -> (usize, usize) {
+    (code.parameters.len(), code.lives.len())
+}
+
+/// The live controls of `code` at their defaults.
+fn lives_of(code: &Code) -> [Smoothed; MAX_LIVES] {
+    std::array::from_fn(|index| {
+        Smoothed::new(code.lives.get(index).map_or(0.0, |live| live.default))
+    })
 }
 
 fn velocity_of(velocity: Velocity) -> f32 {
