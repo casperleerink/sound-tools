@@ -223,8 +223,8 @@ fn write_sdk(extensions: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Bun on the `PATH`, or where its installer puts it. An app opened from the Finder has a
-/// short `PATH`.
+/// The Bun the app ships, else Bun on the `PATH`, else where its installer puts it. An app
+/// opened from the Finder has a short `PATH`.
 fn bun_program() -> Option<PathBuf> {
     let bun = format!("bun{}", std::env::consts::EXE_SUFFIX);
     let on_path = std::env::var_os("PATH")
@@ -233,7 +233,19 @@ fn bun_program() -> Option<PathBuf> {
         .map(|folder| folder.join(&bun));
     let installed =
         std::env::var_os("HOME").map(|home| Path::new(&home).join(".bun/bin").join(&bun));
-    on_path.chain(installed).find(|path| path.is_file())
+    (bundled_bun().into_iter())
+        .chain(on_path)
+        .chain(installed)
+        .find(|path| path.is_file())
+}
+
+/// The Bun the app ships next to its program: in `Sound Tools.app/Contents/MacOS`, or in the
+/// folder the Linux or Windows install puts the program in. `None` for `cargo run`.
+pub fn bundled_bun() -> Option<PathBuf> {
+    // The program may run through a link, such as the command line tool.
+    let program = dunce::canonicalize(std::env::current_exe().ok()?).ok()?;
+    let bun = program.with_file_name(format!("bun{}", std::env::consts::EXE_SUFFIX));
+    bun.is_file().then_some(bun)
 }
 
 #[cfg(test)]

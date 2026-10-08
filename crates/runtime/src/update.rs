@@ -303,19 +303,22 @@ impl Updater {
             .map(Some)
     }
 
-    /// Removes the program an update moved aside. `install.ps1` renames the running
-    /// `sound-tools.exe` to `sound-tools.exe.old`, because Windows cannot overwrite a running
+    /// Removes the programs an update moved aside. `install.ps1` renames the running
+    /// `sound-tools.exe` and `bun.exe` to `.old`, because Windows cannot overwrite a running
     /// program but can rename it. Linux and macOS leave none.
-    fn remove_old_program(&self) {
+    fn remove_old_programs(&self) {
         let Place::Script { program } = &self.place else {
             return;
         };
-        let old = with_suffix(program, ".old");
-        match fs::remove_file(&old) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            // The program that started this one may still be ending. The next start tries again.
-            Err(error) => eprintln!("error: could not remove {}: {error}", old.display()),
+        let bun = program.with_file_name(format!("bun{}", std::env::consts::EXE_SUFFIX));
+        for old in [program, &bun].map(|program| with_suffix(program, ".old")) {
+            match fs::remove_file(&old) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                // The program that started this one, or a Bun of another window, may still be
+                // ending. The next start tries again.
+                Err(error) => eprintln!("error: could not remove {}: {error}", old.display()),
+            }
         }
     }
 }
@@ -521,7 +524,7 @@ pub fn start_pending_update() -> bool {
     else {
         return false;
     };
-    updater.remove_old_program();
+    updater.remove_old_programs();
     let program = match updater.install_pending() {
         Ok(Some(program)) => program,
         Ok(None) => return false,

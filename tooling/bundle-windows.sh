@@ -5,9 +5,9 @@
 #   tooling/bundle-windows.sh [output-folder]
 #
 # Writes sound-tools-<version>-windows-x86_64.zip to dist/ by default. It holds a folder with
-# the program, LICENSE and install.ps1, which puts the program in
-# %LOCALAPPDATA%\Programs\Sound Tools. The program is the whole app: the plugin scan runs it
-# again, and the icon is inside it.
+# the program, bun.exe, LICENSE and install.ps1, which puts the two programs in
+# %LOCALAPPDATA%\Programs\Sound Tools. The program is the whole app but for Bun, which runs
+# the tools of a project: the plugin scan runs the program again, and the icon is inside it.
 set -euo pipefail
 
 output="${1:-dist}"
@@ -33,6 +33,7 @@ scratch="$(mktemp -d)"
 folder="$scratch/$name"
 mkdir -p "$folder"
 cp "$target/release/runtime.exe" "$folder/sound-tools.exe"
+tooling/fetch-bun.sh "$folder"
 cp tooling/windows/install.ps1 LICENSE "$folder/"
 "$folder/sound-tools.exe" --version
 

@@ -4,7 +4,7 @@
 #   tooling/bundle-linux.sh [output-folder]
 #
 # Writes sound-tools-<version>-linux-<arch>.tar.gz to dist/ by default. It holds the program,
-# a desktop file, the icon and install.sh, which puts them in ~/.local.
+# Bun, a desktop file, the icon and install.sh, which puts them in ~/.local.
 set -euo pipefail
 
 output="${1:-dist}"
@@ -32,6 +32,8 @@ cp "$target/release/runtime" "$folder/sound-tools"
 # The release profile keeps line tables for backtraces, and on Linux they are in the program.
 # They are most of its size. The names of the functions stay.
 strip --strip-debug "$folder/sound-tools"
+# Bun runs the tools of a project, from next to the program.
+tooling/fetch-bun.sh "$folder"
 cp tooling/icon/sound-tools-512.png "$folder/sound-tools.png"
 cp tooling/linux/sound-tools.desktop tooling/linux/install.sh LICENSE "$folder/"
 "$folder/sound-tools" --version

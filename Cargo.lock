@@ -6111,6 +6111,7 @@ dependencies = [
 name = "sound-typescript"
 version = "0.7.0"
 dependencies = [
+ "dunce",
  "gpui",
  "hound",
  "serde",

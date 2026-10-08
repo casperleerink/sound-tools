@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::{os::unix::ffi::OsStringExt, process::Stdio, time::Duration};
 
@@ -75,13 +75,18 @@ pub async fn login_shell_environment() -> io::Result<HashMap<OsString, OsString>
     Ok(environment)
 }
 
+/// The name of the `PATH` in `environment`. Windows names are not case-sensitive, and there it
+/// is usually `Path`.
+fn path_key(environment: &HashMap<OsString, OsString>) -> Option<&OsString> {
+    environment
+        .keys()
+        .find(|key| *key == "PATH" || (cfg!(windows) && key.eq_ignore_ascii_case("PATH")))
+}
+
 /// Where `name` is on the `PATH` of `environment`, as a shell would find it. On Windows that
 /// is `<name>.exe`.
 pub fn program_on_path(name: &str, environment: &HashMap<OsString, OsString>) -> Option<PathBuf> {
-    // Windows names are not case-sensitive, and there it is usually `Path`.
-    let (_, path) = environment
-        .iter()
-        .find(|(key, _)| *key == "PATH" || (cfg!(windows) && key.eq_ignore_ascii_case("PATH")))?;
+    let path = environment.get(path_key(environment)?)?;
     let file = format!("{name}{}", env::consts::EXE_SUFFIX);
     env::split_paths(path)
         .map(|folder| folder.join(&file))
@@ -90,6 +95,21 @@ pub fn program_on_path(name: &str, environment: &HashMap<OsString, OsString>) ->
                 .metadata()
                 .is_ok_and(|metadata| metadata.is_file() && executable(&metadata))
         })
+}
+
+/// Puts `folder` first on the `PATH` of `environment`, so its programs come before the ones
+/// the composer installed. Fails when the name of `folder` holds the separator of the `PATH`.
+pub(crate) fn put_first_on_path(
+    environment: &mut HashMap<OsString, OsString>,
+    folder: &Path,
+) -> Result<(), env::JoinPathsError> {
+    let key = path_key(environment)
+        .cloned()
+        .unwrap_or_else(|| "PATH".into());
+    let rest = environment.get(&key).map(env::split_paths).into_iter();
+    let path = env::join_paths(std::iter::once(folder.to_path_buf()).chain(rest.flatten()))?;
+    environment.insert(key, path);
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -142,5 +162,18 @@ mod tests {
         assert_eq!(environment[&OsString::from("PATH")], "/usr/bin:/bin");
         assert_eq!(environment[&OsString::from("NOTE")], "two\nlines");
         assert_eq!(environment[&OsString::from("EMPTY")], "");
+    }
+
+    #[test]
+    fn a_folder_goes_before_the_composers_path() {
+        let mut environment = HashMap::from([("PATH".into(), "/usr/bin:/bin".into())]);
+        put_first_on_path(&mut environment, Path::new("/App/Contents/MacOS")).unwrap();
+        assert_eq!(
+            environment[&OsString::from("PATH")],
+            "/App/Contents/MacOS:/usr/bin:/bin"
+        );
+        let mut empty = HashMap::new();
+        put_first_on_path(&mut empty, Path::new("/App/Contents/MacOS")).unwrap();
+        assert_eq!(empty[&OsString::from("PATH")], "/App/Contents/MacOS");
     }
 }
