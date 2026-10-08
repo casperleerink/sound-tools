@@ -445,6 +445,7 @@ impl SimulatedInput {
             Ok(OpenedInput {
                 stream: None,
                 reader,
+                live: sound_core::live_input(48_000, 2).1,
             })
         })
     }

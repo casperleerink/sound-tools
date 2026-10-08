@@ -18,6 +18,16 @@ const SILENT: AudioBuffer = [[0.0; MAX_BLOCK]; CHANNELS];
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub(crate) u64);
 
+/// Where a connection starts.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Source {
+    Node(NodeId, OutputPort),
+    /// The first device input channel of an audio port. Its left side hears this channel and
+    /// its right side the next one, or this one again on an input that has no next one. See
+    /// [`LiveInput`](crate::LiveInput).
+    DeviceInput(usize),
+}
+
 /// Where a connection ends.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Destination {
@@ -29,8 +39,7 @@ pub enum Destination {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Connection {
-    pub source: NodeId,
-    pub output: OutputPort,
+    pub source: Source,
     pub destination: Destination,
 }
 
@@ -42,17 +51,30 @@ impl Connection {
         input: impl Into<InputPort>,
     ) -> Self {
         Self {
-            source,
-            output: output.into(),
+            source: Source::Node(source, output.into()),
             destination: Destination::Node(destination, input.into()),
         }
     }
 
     pub fn to_device(source: NodeId, output: impl Into<OutputPort>, channel: usize) -> Self {
         Self {
-            source,
-            output: output.into(),
+            source: Source::Node(source, output.into()),
             destination: Destination::DeviceOutput(channel),
+        }
+    }
+
+    pub fn from_device(channel: usize, destination: NodeId, input: impl Into<InputPort>) -> Self {
+        Self {
+            source: Source::DeviceInput(channel),
+            destination: Destination::Node(destination, input.into()),
+        }
+    }
+
+    /// The processor the connection starts at, when it does not start at the device.
+    pub(crate) fn source_node(&self) -> Option<NodeId> {
+        match self.source {
+            Source::Node(node, _) => Some(node),
+            Source::DeviceInput(_) => None,
         }
     }
 }
@@ -162,7 +184,7 @@ impl Graph {
     pub(crate) fn remove_node(&mut self, id: NodeId) -> Result<usize, GraphError> {
         let node = self.nodes.remove(&id).ok_or(GraphError::UnknownNode(id))?;
         self.connections.retain(|connection| {
-            connection.source != id
+            connection.source_node() != Some(id)
                 && !matches!(connection.destination, Destination::Node(node, _) if node == id)
         });
         self.free_slots.push(node.slot);
@@ -178,21 +200,30 @@ impl Graph {
         connection: Connection,
         channels: usize,
     ) -> Result<(), GraphError> {
-        let source = self.node(connection.source)?;
-        let unknown_output = || GraphError::UnknownOutput {
-            node: source.name.clone(),
-            port: connection.output,
-        };
-        let output = match connection.output {
-            OutputPort::Audio(index) if index < source.ports.audio_outputs => Carries::Audio,
-            OutputPort::Events(index) => Carries::Events(
-                *source
-                    .ports
-                    .event_outputs
-                    .get(index)
-                    .ok_or_else(unknown_output)?,
-            ),
-            OutputPort::Audio(_) => return Err(unknown_output()),
+        let output = match connection.source {
+            // How many channels the input has is known only once it opens. A channel it does
+            // not have is silence.
+            Source::DeviceInput(_) => Carries::Audio,
+            Source::Node(id, port) => {
+                let source = self.node(id)?;
+                let unknown_output = || GraphError::UnknownOutput {
+                    node: source.name.clone(),
+                    port,
+                };
+                match port {
+                    OutputPort::Audio(index) if index < source.ports.audio_outputs => {
+                        Carries::Audio
+                    }
+                    OutputPort::Events(index) => Carries::Events(
+                        *source
+                            .ports
+                            .event_outputs
+                            .get(index)
+                            .ok_or_else(unknown_output)?,
+                    ),
+                    OutputPort::Audio(_) => return Err(unknown_output()),
+                }
+            }
         };
         let input = match connection.destination {
             Destination::DeviceOutput(channel) if channel < channels => Carries::Audio,
@@ -258,8 +289,7 @@ impl Graph {
             let Destination::DeviceOutput(taken) = existing.destination else {
                 return None;
             };
-            let same_port =
-                existing.source == connection.source && existing.output == connection.output;
+            let same_port = existing.source == connection.source;
             let distance = taken.abs_diff(channel);
             (same_port && distance != 0 && distance < CHANNELS).then_some(taken)
         })
@@ -276,15 +306,13 @@ impl Graph {
     /// The connection by the names of its processors and its ports. A processor made again
     /// under the same name reads the same, so it names a connection across edits.
     pub(crate) fn describe(&self, connection: &Connection) -> String {
-        let source = self.name(connection.source);
-        let output = connection.output;
+        let source = match connection.source {
+            Source::Node(id, output) => format!("{} {output:?}", self.name(id)),
+            Source::DeviceInput(channel) => format!("device input {channel}"),
+        };
         match connection.destination {
-            Destination::Node(id, input) => {
-                format!("{source} {output:?} -> {} {input:?}", self.name(id))
-            }
-            Destination::DeviceOutput(channel) => {
-                format!("{source} {output:?} -> device output {channel}")
-            }
+            Destination::Node(id, input) => format!("{source} -> {} {input:?}", self.name(id)),
+            Destination::DeviceOutput(channel) => format!("{source} -> device output {channel}"),
         }
     }
 
@@ -298,14 +326,14 @@ impl Graph {
 
     /// Connections between two processors, as (source, destination, connection).
     fn node_connections(&self) -> impl Iterator<Item = (NodeId, NodeId, &Connection)> {
-        self.connections
-            .iter()
-            .filter_map(|connection| match connection.destination {
-                Destination::Node(destination, _) => {
-                    Some((connection.source, destination, connection))
+        self.connections.iter().filter_map(|connection| {
+            match (connection.source, connection.destination) {
+                (Source::Node(source, _), Destination::Node(destination, _)) => {
+                    Some((source, destination, connection))
                 }
-                Destination::DeviceOutput(_) => None,
-            })
+                _ => None,
+            }
+        })
     }
 
     /// Kahn's algorithm. Ready processors run in name order, so the result is reproducible.
@@ -437,14 +465,42 @@ impl Graph {
             });
         }
 
+        // One buffer for each device input channel that is heard, after those of the steps.
+        // The engine fills it at the start of every sub-block.
+        let heard: BTreeSet<usize> = (self.connections.iter())
+            .filter_map(|connection| match connection.source {
+                Source::DeviceInput(channel) => Some(channel),
+                Source::Node(..) => None,
+            })
+            .collect();
+        for channel in heard {
+            let buffer = schedule.audio_outputs.len();
+            schedule.device_inputs.push((channel, buffer));
+            schedule.audio_outputs.push(SILENT);
+        }
+
         for connection in &self.connections {
-            let step = |id| step_of.get(id).and_then(|index| schedule.steps.get(*index));
-            let Some(source) = step(&connection.source) else {
-                return Err(GraphError::UnknownNode(connection.source));
-            };
-            let buffer = match connection.output {
-                OutputPort::Audio(index) => source.audio_outputs.start + index,
-                OutputPort::Events(index) => source.event_outputs.start + index,
+            let buffer = match connection.source {
+                Source::Node(id, output) => {
+                    let step = step_of
+                        .get(&id)
+                        .and_then(|index| schedule.steps.get(*index));
+                    let Some(source) = step else {
+                        return Err(GraphError::UnknownNode(id));
+                    };
+                    match output {
+                        OutputPort::Audio(index) => source.audio_outputs.start + index,
+                        OutputPort::Events(index) => source.event_outputs.start + index,
+                    }
+                }
+                Source::DeviceInput(channel) => {
+                    let mut inputs = schedule.device_inputs.iter();
+                    // Every channel heard has its buffer, made above.
+                    let Some((_, buffer)) = inputs.find(|(heard, _)| *heard == channel) else {
+                        continue;
+                    };
+                    *buffer
+                }
             };
             let sources = match connection.destination {
                 Destination::DeviceOutput(channel) => schedule.device_sources.get_mut(channel),
@@ -486,8 +542,9 @@ impl Graph {
             .for_each(|sources| sources.sort_unstable());
 
         // Which step writes each buffer, so the audio thread can walk from a step back to the
-        // steps that feed it when it works out the leads, see `Engine::find_leads`.
-        schedule.audio_producers = vec![0; schedule.audio_outputs.len()];
+        // steps that feed it when it works out the leads, see `Engine::find_leads`. No step
+        // writes a buffer of the device input, so its entry names none.
+        schedule.audio_producers = vec![usize::MAX; schedule.audio_outputs.len()];
         schedule.event_producers = vec![0; schedule.event_outputs.len()];
         for (index, step) in schedule.steps.iter().enumerate() {
             for buffer in step.audio_outputs.clone() {
@@ -532,6 +589,9 @@ pub(crate) struct Schedule {
     pub event_inputs: Vec<Box<dyn ErasedEventBuffer>>,
     /// Per device channel: the output buffers summed into it.
     pub device_sources: Vec<Vec<usize>>,
+    /// Each device input channel that is heard, with the buffer the engine fills with its
+    /// stereo pair.
+    pub device_inputs: Vec<(usize, usize)>,
     /// Per audio output buffer and per event output buffer: the step that writes it.
     pub audio_producers: Vec<usize>,
     pub event_producers: Vec<usize>,
@@ -640,9 +700,9 @@ mod tests {
                         let Destination::Node(destination, _) = on_cycle.destination else {
                             panic!("a device connection cannot be on a cycle");
                         };
-                        prop_assert!(reaches(&built, destination, on_cycle.source));
+                        prop_assert!(reaches(&built, destination, on_cycle.source_node().unwrap()));
                     }
-                    prop_assert!(reaches(&built, destination, connection.source));
+                    prop_assert!(reaches(&built, destination, connection.source_node().unwrap()));
                 }
                 Err(other) => panic!("unexpected error {other}"),
                 Ok(schedule) => {
@@ -660,8 +720,8 @@ mod tests {
                         let source_step = &schedule.steps[step_of_slot[&built.slot(source).unwrap()]];
                         let destination_index = step_of_slot[&built.slot(destination).unwrap()];
                         let destination_step = &schedule.steps[destination_index];
-                        let (OutputPort::Audio(output), Destination::Node(_, InputPort::Audio(input))) =
-                            (connection.output, connection.destination)
+                        let (Source::Node(_, OutputPort::Audio(output)), Destination::Node(_, InputPort::Audio(input))) =
+                            (connection.source, connection.destination)
                         else {
                             panic!("only audio ports are generated");
                         };

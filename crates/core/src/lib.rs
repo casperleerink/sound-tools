@@ -42,9 +42,10 @@ pub use dsp::{HIGHEST_PHASE_STEP, OnePole, Taps, held, poly_blep};
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};
 pub use gain::{amplitude, pan_gains};
-pub use graph::{Connection, Destination, GraphError, NodeId};
+pub use graph::{Connection, Destination, GraphError, NodeId, Source};
 pub use input::{
-    CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream, capture,
+    CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream,
+    LiveInput, LiveWriter, capture, live_input,
 };
 pub use lfo::{Lfo, LfoShape};
 pub use limiter::PeakLimiter;
@@ -64,8 +65,8 @@ pub use project::{
     FORMAT, GROUPING_WINDOW, INSTRUCTIONS_FILE, InputEndpoint, Instance, InstanceId,
     InvalidAssetName, InvalidInstanceId, JsonTool, JsonToolDoc, NO_PROBLEMS, OUTSIDE_UNDO_WINDOW,
     OutputEndpoint, PROBLEMS_FILE, Place, PortReference, Problem, Project, ProjectError,
-    ProjectEvent, ProjectFile, Registry, RegistryError, SavedConnection, SavedDestination, State,
-    StorageError, ToolRegistration, Was,
+    ProjectEvent, ProjectFile, Registry, RegistryError, SavedConnection, SavedDestination,
+    SavedSource, State, StorageError, ToolRegistration, Was,
 };
 pub use saturation::soft_clip;
 pub use svf::{FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response};

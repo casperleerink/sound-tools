@@ -22,7 +22,7 @@ use plugin_host::{
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
-    ProjectError, Registry, SavedDestination, State, Ticks,
+    ProjectError, Registry, SavedDestination, SavedSource, State, Ticks,
 };
 use sound_typescript::Extensions;
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
@@ -527,12 +527,15 @@ pub fn summary(project: &Project) -> String {
 
     lines.push(format!("connections: {}", project_file.connections.len()));
     for connection in &project_file.connections {
-        let from = &connection.from;
+        let from = match &connection.from {
+            SavedSource::DeviceInput(channel) => format!("device input {channel}"),
+            SavedSource::Output(output) => format!("{}:{}", output.instance, output.port),
+        };
         let to = match &connection.to {
             SavedDestination::DeviceOutput(channel) => format!("device output {channel}"),
             SavedDestination::Input(input) => format!("{}:{}", input.instance, input.port),
         };
-        lines.push(format!("  {}:{} -> {to}", from.instance, from.port));
+        lines.push(format!("  {from} -> {to}"));
     }
     lines.push(problems(project));
     lines.join("\n")

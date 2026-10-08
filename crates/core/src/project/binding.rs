@@ -9,14 +9,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::assets::Assets;
-use super::file::{PortReference, SavedConnection, SavedDestination};
+use super::file::{PortReference, SavedConnection, SavedDestination, SavedSource};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
 use crate::automation::{AutomationInput, MAX_AUTOMATED, PlayedLanes};
 use crate::clock::TempoMap;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
-use crate::graph::{Connection, Destination, GraphError, NodeId};
+use crate::graph::{Connection, Destination, GraphError, NodeId, Source};
 use crate::parameter::{AutomatedNumber, ParameterInfo};
 use crate::peaks::Peaks;
 use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
@@ -513,7 +513,7 @@ impl Run {
 }
 
 fn touches(connection: &Connection, removed: &BTreeSet<NodeId>) -> bool {
-    removed.contains(&connection.source)
+    matches!(connection.source, Source::Node(node, _) if removed.contains(&node))
         || matches!(connection.destination, Destination::Node(node, _) if removed.contains(&node))
 }
 
@@ -564,10 +564,7 @@ fn device_clashes(lines: &[(usize, Connection)]) -> BTreeMap<usize, LeftOut> {
         };
         let overlapping = carried.iter().find(|(_, other, taken)| {
             let distance = taken.abs_diff(channel);
-            other.source == connection.source
-                && other.output == connection.output
-                && distance != 0
-                && distance < CHANNELS
+            other.source == connection.source && distance != 0 && distance < CHANNELS
         });
         match overlapping {
             Some((winner, _, winner_channel)) => {
@@ -941,16 +938,21 @@ impl Bindings {
                 )
             })
         };
-        let from = &connection.from;
-        let output = binding(from)?.outputs.get(&from.port).ok_or_else(|| {
-            format!(
-                "instance {:?} has no output {:?}",
-                from.instance.as_str(),
-                from.port
-            )
-        })?;
-        match &connection.to {
-            SavedDestination::DeviceOutput(channel) => Ok(output.to_device(*channel)),
+        let source = match &connection.from {
+            SavedSource::DeviceInput(channel) => Source::DeviceInput(*channel),
+            SavedSource::Output(from) => {
+                let output = binding(from)?.outputs.get(&from.port).ok_or_else(|| {
+                    format!(
+                        "instance {:?} has no output {:?}",
+                        from.instance.as_str(),
+                        from.port
+                    )
+                })?;
+                Source::Node(output.node, output.port)
+            }
+        };
+        let destination = match &connection.to {
+            SavedDestination::DeviceOutput(channel) => Destination::DeviceOutput(*channel),
             SavedDestination::Input(to) => {
                 let input = binding(to)?.inputs.get(&to.port).ok_or_else(|| {
                     format!(
@@ -959,8 +961,12 @@ impl Bindings {
                         to.port
                     )
                 })?;
-                Ok(output.to(*input))
+                Destination::Node(input.node, input.port)
             }
-        }
+        };
+        Ok(Connection {
+            source,
+            destination,
+        })
     }
 }

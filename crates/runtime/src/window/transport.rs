@@ -130,7 +130,8 @@ pub struct TransportPill {
     seen: Playhead,
     /// The recording of the record control, from its start until its clips are made.
     take: Option<Take>,
-    /// The audio input, open while a track is armed, and its recorder.
+    /// The audio input, open while a track is armed or `project.json` connects it, and its
+    /// recorder.
     audio: AudioInput,
     recording: Entity<Recording>,
     tempo_drag: Option<TempoDrag>,
@@ -195,6 +196,11 @@ impl TransportPill {
                     pill.finish_recording(tick, cx);
                 }
             }
+            // An agent may connect the device input in `project.json`, or take it away, while
+            // the window runs.
+            if matches!(event, ProjectEvent::ProjectFileChanged) {
+                pill.follow_input(cx);
+            }
             // A deleted track is no longer armed.
             if matches!(event, ProjectEvent::Deleted(_)) {
                 let project = pill.session.read(cx).project();
@@ -212,10 +218,15 @@ impl TransportPill {
         })
         .detach();
         // The input is open while a track is armed: that is how a composer sees the level
-        // before a take.
+        // before a take. A project that connects the device input opens it with the window.
         let recording = session.read(cx).recording().clone();
-        cx.observe(&recording, |pill, _, cx| pill.follow_arming(cx))
+        cx.observe(&recording, |pill, _, cx| pill.follow_input(cx))
             .detach();
+        let pill = cx.weak_entity();
+        cx.defer(move |cx| {
+            // A window that went in the meantime opens nothing.
+            pill.update(cx, |pill, cx| pill.follow_input(cx)).ok();
+        });
         // The end is not read during a drag, see `refresh`. The end of a gesture sends no
         // event, and the session notifies after it.
         cx.observe(&session, |pill, _, cx| {
@@ -612,7 +623,7 @@ impl TransportPill {
             });
         }
         drop(audio_takes);
-        self.follow_arming(cx);
+        self.follow_input(cx);
     }
 
     /// Opens the input on the background executor, when it is not open or on its way.
@@ -642,9 +653,16 @@ impl TransportPill {
         let assets = self.session.read(cx).project().assets().clone();
         match self.audio.opened(generation, opened, &assets) {
             None => {}
-            Some(Ok(channels)) => self.recording.update(cx, |recording, cx| {
-                recording.set_input_channels(Some(channels), cx)
-            }),
+            Some(Ok((channels, live))) => {
+                self.recording.update(cx, |recording, cx| {
+                    recording.set_input_channels(Some(channels), cx)
+                });
+                // The engine reads it while the input is open, whether a connection hears it
+                // or not, so it never falls behind.
+                self.session.update(cx, |session, cx| {
+                    session.background(cx, |project| project.set_live_input(Some(live)))
+                });
+            }
             Some(Err(error)) => {
                 self.session
                     .update(cx, |session, cx| session.report(error, cx));
@@ -665,17 +683,23 @@ impl TransportPill {
         }
     }
 
-    /// The input is open while a track is armed or audio records, and closed otherwise, so the
-    /// device is not held and macOS shows no microphone in use.
-    fn follow_arming(&mut self, cx: &mut Context<Self>) {
+    /// The input is open while a track is armed, audio records or `project.json` connects the
+    /// device input, and closed otherwise, so the device is not held and macOS shows no
+    /// microphone in use. One that went away is closed and not opened again here: the next
+    /// arming or change of `project.json` opens the default input there is then.
+    fn follow_input(&mut self, cx: &mut Context<Self>) {
         let armed = self.recording.read(cx).armed().next().is_some();
         let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
-        if armed {
+        let heard = (self.session.read(cx).project().project_file()).hears_device_input();
+        if (armed || heard) && !self.audio.is_gone() {
             self.open_input(cx);
         } else if !records && self.audio.is_open_or_opening() {
             self.audio.close();
             self.recording
                 .update(cx, |recording, cx| recording.set_input_channels(None, cx));
+            self.session.update(cx, |session, cx| {
+                session.background(cx, |project| project.set_live_input(None))
+            });
         }
     }
 
@@ -686,7 +710,7 @@ impl TransportPill {
             self.recording
                 .update(cx, |recording, cx| recording.set_levels(levels, cx));
             if silent {
-                let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then arm again.";
+                let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then open the project again.";
                 self.session
                     .update(cx, |session, cx| session.report(notice, cx));
             }
@@ -732,7 +756,7 @@ impl TransportPill {
             .update(cx, |recording, cx| recording.retain_armed(|_| false, cx));
         // The recorder writes the last of the take first; the input closes once it is done.
         if !records {
-            self.follow_arming(cx);
+            self.follow_input(cx);
         }
     }
 

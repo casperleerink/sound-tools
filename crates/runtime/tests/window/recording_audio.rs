@@ -1,11 +1,15 @@
 //! Recording audio in the window, with a simulated input and no device: arming a track from its
 //! header, the input select, the record control and `r` on armed tracks, a take ended by the
-//! record control, stop, pause and seek, and an input that goes away while it records.
+//! record control, stop, pause and seek, an input that goes away while it records, and the same
+//! input played live through a `device_input` connection.
 
 use arrangement::{AudioClip, Colour, InputChannels, TrackState};
 use gpui::TestAppContext;
-use sound_core::{Changes, Project, Ticks};
+use sound_core::{
+    Changes, PortReference, Project, SavedConnection, SavedDestination, SavedSource, Ticks,
+};
 use sound_ui::Recording;
+use utility::UtilityState;
 
 use crate::support::{Opened, SimulatedInput, id, open_with_input};
 
@@ -567,4 +571,63 @@ fn a_take_ended_before_its_input_failed_to_open_lets_the_next_one_start(cx: &mut
     opened.keys("r");
     opened.settle();
     assert!(opened.is_recording(), "the record control did nothing");
+}
+
+/// `project.json` connects the device input into a Utility at the top that plays on the device:
+/// the window opens the input with no track armed and the engine plays it live. A take records
+/// from the same open input as before, and the input closes only once nothing needs it.
+#[gpui::test]
+fn a_connection_from_the_device_input_opens_it_and_plays_it_live(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    let utility = id("utility");
+    let port = PortReference::new(&utility, "audio");
+    let hear = SavedConnection {
+        from: SavedSource::DeviceInput(0),
+        to: SavedDestination::Input(port.clone()),
+    };
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.create(utility.clone(), UtilityState::default());
+        changes.connect(SavedConnection::to_device(port.clone(), 0));
+        project.commit("Add a utility", changes)
+    });
+    opened.settle();
+    assert_eq!(input.openings(), 0, "nothing hears the input yet");
+
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.connect(hear.clone());
+        project.commit("Hear the input", changes)
+    });
+    opened.settle();
+    assert_eq!(input.openings(), 1);
+    play(&mut opened, &input, 4_096, tone);
+    let output = opened.render(512);
+    assert_eq!(output[output.len() - 2..], [0.5, 0.25]);
+
+    arm(&mut opened, "voice");
+    opened.keys("r");
+    opened.settle();
+    play(&mut opened, &input, 24_000, tone);
+    opened.keys("r");
+    opened.settle();
+    until_clips(&mut opened, &input, tone);
+    assert_eq!(audio_clips(&mut opened, VOICE).len(), 1);
+    assert_eq!(input.openings(), 1, "the take used the input that was open");
+
+    // Disarmed, the input stays open for the connection. Without it, it closes.
+    arm(&mut opened, "voice");
+    let recording = recording(&mut opened);
+    let channels =
+        |opened: &mut Opened<'_>| opened.cx.read(|cx| recording.read(cx).input_channels());
+    assert_eq!(channels(&mut opened), Some(2));
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.disconnect(hear);
+        project.commit("Hear the input no more", changes)
+    });
+    opened.settle();
+    assert_eq!(channels(&mut opened), None);
+    let output = opened.render(512);
+    assert!(output.iter().all(|sample| *sample == 0.0));
 }
