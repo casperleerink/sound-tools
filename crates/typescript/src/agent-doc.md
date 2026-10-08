@@ -31,7 +31,7 @@ tool({
 
 - `name`: the `tool` of its records and the name of its doc. Lowercase letters, digits, `-` and `_`, and not the name of a built-in tool.
 - `title`: what the card and the effect picker say.
-- `when` and `doc`: what the next agent reads in the map and in `agent-docs/<name>.md`. Say what the tool does to the sound and what each field does musically. The runtime adds where the record goes and a table of the fields, so do not repeat those.
+- `when` and `doc`: what the next agent reads in the map and in `agent-docs/<name>.md`. Say what the tool does to the sound and what each field does musically, also between its ends: is the middle of a knob half as much, or less? The runtime adds where the record goes and a table of the fields, so do not repeat those.
 - `state`: the fields of its record. A field name is also a Hum name: lowercase letters, digits and `_`.
 - `sound`: its sound in Hum. It runs once per sample on each channel apart, reads the sample that comes in as `in` and sets `out`. The whole language is in `agent-docs/script.md`, under "Hum, the language".
 
