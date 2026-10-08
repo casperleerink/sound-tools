@@ -190,6 +190,19 @@ fn an_adsr_rises_holds_at_its_sustain_and_falls_to_silence_after_the_gate() {
 }
 
 #[test]
+fn an_adsr_whose_sustain_was_not_a_number_sounds_again_after_it() {
+    // `in / in` is not a number while `in` is 0.
+    let mut envelope = machine(&["out = adsr(gate, 1, 1, 0.5 * in / in, 1)"]);
+    let held = |_| Note {
+        gate: true,
+        ..Note::default()
+    };
+    let input = |frame: usize| if frame < 100 { 0.0 } else { 1.0 };
+    let output = run_with(&mut envelope, &[], held, input, 200);
+    assert_eq!(output[199], 0.5);
+}
+
+#[test]
 fn rise_fires_once_when_a_value_goes_up_and_hold_keeps_it_until_the_next() {
     let mut clock = machine(&[
         "tick = rise(wrap(in) < 0.5)",

@@ -297,7 +297,9 @@ impl Machine {
                     Some(envelope) => {
                         let times = [read(attack), read(decay), read(release)]
                             .map(|ms| (ms * 0.001 * sample_rate).max(1.0));
-                        envelope.next(read(gate) > 0.0, times, read(sustain).clamp(0.0, 1.0))
+                        // A sustain that is not a number would stay in the level for good.
+                        let sustain = finite(read(sustain)).clamp(0.0, 1.0);
+                        envelope.next(read(gate) > 0.0, times, sustain)
                     }
                     None => 0.0,
                 },
