@@ -5707,7 +5707,7 @@ dependencies = [
 
 [[package]]
 name = "script"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "gpui",
  "serde",
@@ -6089,7 +6089,7 @@ dependencies = [
 
 [[package]]
 name = "sound-hum"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sound-core",
  "thiserror 2.0.20",
@@ -6123,7 +6123,7 @@ dependencies = [
 
 [[package]]
 name = "sound-typescript"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "gpui",
  "serde",
