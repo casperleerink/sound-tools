@@ -369,7 +369,7 @@ fn a_tool_change_to_one_that_owns_nothing_drops_the_connections_to_its_children(
     changes.create(output.clone(), Amplifier { gain: 2.0 });
     let dc = changes.create(id("dc"), Dc { value: 0.25 });
     changes.connect(SavedConnection {
-        from: PortReference::new(dc.id(), "out"),
+        from: PortReference::new(dc.id(), "out").into(),
         to: SavedDestination::Input(PortReference::new(&output, "in")),
     });
     harness.project.commit("Add", changes).unwrap();

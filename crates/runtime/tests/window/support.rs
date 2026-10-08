@@ -17,7 +17,7 @@ use plugin_host::WeakPlugins;
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use runtime::window::{Shell, TransportPill, bind_keys};
 use runtime::{OFFLINE, views};
-use sound_core::{CaptureWriter, Engine, InstanceId, Project, Ticks};
+use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{POLL_INTERVAL, Playhead, Session};
 use tempfile::TempDir;
@@ -241,6 +241,8 @@ pub(crate) fn open_project(
 #[derive(Clone, Default)]
 pub(crate) struct SimulatedInput {
     writer: Arc<Mutex<Option<CaptureWriter>>>,
+    /// What the engine plays live, written with the capture.
+    live: Arc<Mutex<Option<LiveWriter>>>,
     /// Input frames written so far.
     written: Arc<AtomicU64>,
     /// Times the window opened it.
@@ -257,12 +259,15 @@ impl SimulatedInput {
                 return Err(sound_core::DeviceError::NoInputDevice);
             }
             let (writer, reader) = sound_core::capture(48_000, 2);
+            let (live_writer, live) = sound_core::live_input(48_000, 2);
             *input.writer.lock().unwrap() = Some(writer);
+            *input.live.lock().unwrap() = Some(live_writer);
             input.written.store(0, Ordering::Relaxed);
             input.openings.fetch_add(1, Ordering::Relaxed);
             Ok(OpenedInput {
                 stream: None,
                 reader,
+                live,
             })
         })
     }
@@ -285,12 +290,16 @@ impl SimulatedInput {
         let samples: Vec<f32> = (first..until).flat_map(sample).collect();
         let nanos = |frame: u64| frame * 1_000_000_000 / 48_000;
         writer.write(&samples, nanos(first), 0);
+        if let Some(live) = self.live.lock().unwrap().as_mut() {
+            live.write(&samples);
+        }
         self.written.store(until, Ordering::Relaxed);
     }
 
     /// The device goes away, as an interface that is unplugged.
     pub(crate) fn unplug(&self) {
         self.writer.lock().unwrap().take();
+        self.live.lock().unwrap().take();
     }
 }
 

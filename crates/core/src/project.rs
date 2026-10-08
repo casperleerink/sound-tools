@@ -23,7 +23,9 @@ use std::path::{Path, PathBuf};
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
 pub use editing::{Changes, Derived, Edit, OUTSIDE_UNDO_WINDOW};
-pub use file::{FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination};
+pub use file::{
+    FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
+};
 pub use generated::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, INSTRUCTIONS_FILE, NO_PROBLEMS, PROBLEMS_FILE,
 };
@@ -45,6 +47,7 @@ use crate::automation::PlayedLanes;
 use crate::clock::{Clock, Ticks, TimeSignatures};
 use crate::control::EngineControl;
 use crate::graph::GraphError;
+use crate::input::LiveInput;
 use crate::parameter::AutomatedNumber;
 use crate::peaks::Peaks;
 use crate::processor::Processor;
@@ -169,6 +172,9 @@ pub struct Project {
     /// The generated files may no longer match the project. See `generated.rs`.
     generated_are_stale: bool,
     watcher: Option<Watcher>,
+    /// The sample rate and channels of the live input, while one is given. See
+    /// [`Self::set_live_input`].
+    live_input: Option<(u32, usize)>,
 }
 
 impl Project {
@@ -225,6 +231,7 @@ impl Project {
             derive_problems: BTreeMap::new(),
             generated_are_stale: true,
             watcher: None,
+            live_input: None,
         };
         let mut changes = Vec::new();
         match project.storage.read_project_file()? {
@@ -289,6 +296,49 @@ impl Project {
             name: name.to_string(),
         })?;
         Ok(self.engine.update(node, update)?)
+    }
+
+    /// Plays the input of a device into the `device_input` connections of `project.json`, or
+    /// silence with `None`, which is what they hear until an input is given. An input at another
+    /// sample rate than the engine stays silent, and each of those connections is a problem that
+    /// says why, as is one from a channel the input does not have.
+    pub fn set_live_input(&mut self, input: Option<LiveInput>) {
+        let before = self.live_input_problems();
+        self.live_input = (input.as_ref()).map(|input| (input.sample_rate(), input.channels()));
+        self.engine.set_live_input(input);
+        if before != self.live_input_problems() {
+            self.push_event(ProjectEvent::ProblemsChanged);
+        }
+    }
+
+    /// Why a `device_input` connection is silent with the input that was given.
+    fn live_input_problems(&self) -> Vec<String> {
+        let Some((input_rate, channels)) = self.live_input else {
+            return Vec::new();
+        };
+        let output_rate = self.engine.config().sample_rate;
+        let connections = self.project_file.connections.iter().enumerate();
+        connections
+            .filter_map(|(index, connection)| {
+                let SavedSource::DeviceInput(channel) = connection.from else {
+                    return None;
+                };
+                if input_rate != output_rate {
+                    return Some(format!(
+                        "connections[{index}]: not heard, because the audio input runs at {input_rate} Hz and the output at {output_rate} Hz. Live input needs both at one rate: set them to the same rate in the sound settings of the system (Audio MIDI Setup on macOS)"
+                    ));
+                }
+                let has = match channels {
+                    1 => "one channel".to_string(),
+                    channels => format!("{channels} channels"),
+                };
+                (channel >= channels).then(|| {
+                    format!(
+                        "connections[{index}]: not heard, because the audio input has {has}, counted from 0, and no channel {channel}"
+                    )
+                })
+            })
+            .collect()
     }
 
     /// The input port that the behaviour of `instance` named, for code below the tools that
@@ -542,13 +592,11 @@ impl Project {
             path: path.clone(),
             message: message.clone(),
         });
-        let connections = self
-            .bindings
-            .connection_problems()
-            .iter()
+        let connections = (self.bindings.connection_problems().iter().cloned())
+            .chain(self.live_input_problems())
             .map(|message| Problem {
                 path: storage::PROJECT_FILE.to_string(),
-                message: message.clone(),
+                message,
             });
         // What a behaviour or a derive said about its own instance while it ran. The record is
         // live and untouched; part of what it asks for is not.
@@ -597,6 +645,7 @@ impl Project {
         let project_file_before = self.project_file.clone();
         let derive_problems_before = self.derive_problems.clone();
         let problems_before = self.bindings.connection_problems().to_vec();
+        let live_input_problems_before = self.live_input_problems();
         // What behaviours said last time, so that `problems.txt` and the views follow a
         // behaviour that starts or stops reporting. Empty in a project with nothing to report.
         let instance_problems_before = self.instance_problems();
@@ -645,6 +694,7 @@ impl Project {
             self.push_event(ProjectEvent::ProjectFileChanged);
         }
         if problems_before != self.bindings.connection_problems()
+            || live_input_problems_before != self.live_input_problems()
             || instance_problems_before != self.instance_problems()
         {
             self.push_event(ProjectEvent::ProblemsChanged);
