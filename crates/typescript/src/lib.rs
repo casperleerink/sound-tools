@@ -4,9 +4,9 @@
 //! A project with an `extensions/` folder starts Bun on `host.ts` when it opens. Bun loads every
 //! `.ts` and `.tsx` file there and says which tools they define: the fields of a record, a doc
 //! for agents, and a function that makes the tool's sound in Hum. The runtime registers each
-//! as a [`JsonTool`](sound_core::JsonTool) before the records load, so a record of one loads
-//! like any other. Its check runs in Rust; only a new combination of choices asks Bun for Hum.
-//! In the window, a save of a file defines the tools again and draws the cards again.
+//! as a [`JsonTool`] before the records load, so a record of one loads like any other. Its
+//! check runs in Rust; only a new combination of choices asks Bun for Hum. In the window, a
+//! save of a file defines the tools again and draws the cards again.
 //!
 //! Nothing of it runs on the audio thread, and a knob never waits for Bun: it moves a value of
 //! the Hum that plays, as the knob of a built-in effect moves its processor.
@@ -19,9 +19,8 @@ mod window;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use sound_core::{AgentDoc, Problem, Project, Registry};
+use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 
 pub use window::start_window;
 
@@ -29,9 +28,6 @@ use crate::bun::{Bun, Loaded};
 
 /// The folder of a project that holds its own tools and cards.
 pub const FOLDER: &str = "extensions";
-
-/// How long the first load may take. Bun starts in a few tens of milliseconds.
-const FIRST_LOAD_TIMEOUT: Duration = Duration::from_secs(10);
 
 const SDK: &str = include_str!("sdk.ts");
 const HOST: &str = include_str!("host.ts");
@@ -58,12 +54,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// The running tools of a project, from its first load.
 pub struct Extensions {
-    bun: Option<Arc<Bun>>,
-    loaded: Option<Loaded>,
-    /// What went wrong before the project could hear of it, such as Bun missing.
+    /// Bun and the tools it loaded first. `None` when it did not start or load.
+    running: Option<(Arc<Bun>, Loaded)>,
+    /// What is wrong with `extensions/`, for the problems of the project.
     problems: Vec<Problem>,
-    /// How long Bun took from start to its first load.
-    pub started_in: Duration,
 }
 
 impl Extensions {
@@ -74,75 +68,73 @@ impl Extensions {
         if !extensions.is_dir() {
             return None;
         }
-        let started = Instant::now();
-        let mut this = Self {
-            bun: None,
-            loaded: None,
-            problems: Vec::new(),
-            started_in: Duration::ZERO,
-        };
-        let problem = |message: String| Problem {
-            path: format!("{FOLDER}/"),
-            message,
-        };
-        let Some(bun_program) = bun_program() else {
-            let message = "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again";
-            this.problems.push(problem(message.to_string()));
-            return Some(this);
-        };
-        let bun = write_files(&extensions)
-            .and_then(|host| Bun::start(&bun_program, &host, &extensions))
-            .map_err(|error| error.to_string());
-        let loaded = bun.and_then(|bun| {
-            let loaded = bun.first_load(FIRST_LOAD_TIMEOUT)?;
-            Ok((Arc::new(bun), loaded))
-        });
-        match loaded {
-            Ok((bun, loaded)) => {
-                this.bun = Some(bun);
-                this.loaded = Some(loaded);
-            }
-            Err(error) => this.problems.push(problem(error)),
-        }
-        this.started_in = started.elapsed();
-        Some(this)
+        let started = bun_program()
+            .ok_or_else(|| {
+                "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
+            })
+            .and_then(|program| {
+                let host = write_files(&extensions).map_err(|error| error.to_string())?;
+                Bun::start(&program, &host, &extensions)
+            });
+        Some(match started {
+            Ok((bun, loaded)) => Self {
+                running: Some((Arc::new(bun), loaded)),
+                problems: Vec::new(),
+            },
+            Err(message) => Self {
+                running: None,
+                problems: vec![Problem {
+                    path: format!("{FOLDER}/"),
+                    message,
+                }],
+            },
+        })
     }
 
     /// Registers every tool of the first load. Call it before the project opens, so their
-    /// records load with it. A tool that cannot be registered becomes a problem of its file.
+    /// records load with it.
     pub fn register(&mut self, registry: &mut Registry) {
-        let (Some(bun), Some(loaded)) = (&self.bun, &self.loaded) else {
+        let Some((bun, loaded)) = &mut self.running else {
             return;
         };
-        for info in &loaded.tools {
-            if let Err(error) = registry.json_tool(info.json_tool(bun)) {
-                self.problems.push(Problem {
-                    path: format!("{FOLDER}/{}", info.file),
-                    message: error.to_string(),
-                });
-            }
-        }
+        self.problems = define(bun, loaded, |tool| {
+            registry.json_tool(tool).map_err(|error| error.to_string())
+        });
     }
 
-    /// Lists what is wrong with `extensions/` among the problems of the project: files that
-    /// failed to load, and tools whose sound at their defaults is no Hum that compiles.
+    /// Lists what is wrong with `extensions/` among the problems of the project.
     pub fn report(&self, project: &mut Project) {
-        let mut problems = self.problems.clone();
-        if let (Some(bun), Some(loaded)) = (&self.bun, &self.loaded) {
-            problems.extend(problems_of(bun, loaded));
-        }
-        project.set_problems_in(&format!("{FOLDER}/"), problems);
+        project.set_problems_in(&format!("{FOLDER}/"), self.problems.clone());
     }
 }
 
-/// What is wrong with a load: its errors, and every tool whose Hum at its defaults fails.
-fn problems_of(bun: &Arc<Bun>, loaded: &Loaded) -> Vec<Problem> {
+/// Defines each tool of `loaded` with `define` and keeps the ones it takes. Says what is wrong
+/// with the load: the errors of its files, the tools `define` refused, and every tool whose
+/// sound, card or page fails at its defaults.
+fn define(
+    bun: &Arc<Bun>,
+    loaded: &mut Loaded,
+    mut define: impl FnMut(JsonTool) -> Result<(), String>,
+) -> Vec<Problem> {
+    let of_file = |file: &str, message: String| Problem {
+        path: format!("{FOLDER}/{file}"),
+        message,
+    };
     let mut problems: Vec<Problem> = (loaded.errors.iter())
-        .map(|error| Problem {
-            path: format!("{FOLDER}/{}", error.file),
-            message: error.message.clone(),
-        })
+        .map(|error| of_file(&error.file, error.message.clone()))
         .collect();
+    loaded
+        .tools
+        .retain(|info| match define(info.json_tool(bun)) {
+            Ok(()) => true,
+            Err(message) => {
+                problems.push(of_file(
+                    &info.file,
+                    format!("tool {}: {message}", info.name),
+                ));
+                false
+            }
+        });
     for info in &loaded.tools {
         let sound = tools::Sounds::new(info, bun).code(&serde_json::json!({}));
         let card = drawn(bun, &info.name, false)
@@ -156,10 +148,10 @@ fn problems_of(bun: &Arc<Bun>, loaded: &Loaded) -> Vec<Problem> {
             .into_iter()
             .filter_map(Result::err)
         {
-            problems.push(Problem {
-                path: format!("{FOLDER}/{}", info.file),
-                message: format!("tool {}: {message}", info.name),
-            });
+            problems.push(of_file(
+                &info.file,
+                format!("tool {}: {message}", info.name),
+            ));
         }
     }
     problems
@@ -190,10 +182,12 @@ fn write_files(extensions: &Path) -> std::io::Result<PathBuf> {
 /// Bun on the `PATH`, or where its installer puts it. An app opened from the Finder has a
 /// short `PATH`.
 fn bun_program() -> Option<PathBuf> {
+    let bun = format!("bun{}", std::env::consts::EXE_SUFFIX);
     let on_path = std::env::var_os("PATH")
         .into_iter()
         .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-        .map(|folder| folder.join("bun"));
-    let installed = std::env::var_os("HOME").map(|home| Path::new(&home).join(".bun/bin/bun"));
+        .map(|folder| folder.join(&bun));
+    let installed =
+        std::env::var_os("HOME").map(|home| Path::new(&home).join(".bun/bin").join(&bun));
     on_path.chain(installed).find(|path| path.is_file())
 }

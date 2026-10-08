@@ -431,7 +431,6 @@ impl Sounds {
         if let Some(code) = self.compiled.borrow().get(&key) {
             return code.clone();
         }
-        let asked = std::time::Instant::now();
         let code = self.bun.sound(&self.info.name, &choices).and_then(|lines| {
             let file = &self.info.file;
             compile(&lines).map(Rc::new).map_err(|error| {
@@ -442,13 +441,6 @@ impl Sounds {
                 )
             })
         });
-        if std::env::var_os("SOUND_TOOLS_TIMING").is_some() {
-            let name = &self.info.name;
-            eprintln!(
-                "timing: the Hum of {name} {key} came and compiled in {:?}",
-                asked.elapsed()
-            );
-        }
         self.compiled.borrow_mut().insert(key, code.clone());
         code
     }
