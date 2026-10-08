@@ -35,6 +35,8 @@ app="$output/Sound Tools.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/sound-tools"
+# Bun runs the tools of a project, from next to the program.
+tooling/fetch-bun.sh "$app/Contents/MacOS"
 
 # The icon: every size macOS asks for, from the one PNG in the repository.
 iconset="$(mktemp -d)/AppIcon.iconset"
@@ -87,10 +89,12 @@ PLIST
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 # Ad hoc: no certificate, no hardened runtime. The entitlements let it record and load the
-# CLAP and VST 3 plugins of other makers.
+# CLAP and VST 3 plugins of other makers. --deep signs bun the same way, in place of the
+# signature of its makers, so the app verifies as one.
 codesign --force --deep --sign - --entitlements tooling/macos/entitlements.plist "$app"
 codesign --verify --deep --strict "$app"
 "$app/Contents/MacOS/sound-tools" --version
+"$app/Contents/MacOS/bun" --version
 echo "built $app ($version)"
 
 if [[ "$zip" == true ]]; then
