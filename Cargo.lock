@@ -5472,13 +5472,13 @@ dependencies = [
  "reverb",
  "sampler",
  "saturator",
- "script",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "smol",
  "sound-agent",
  "sound-core",
+ "sound-hum",
  "sound-media",
  "sound-notes",
  "sound-typescript",
@@ -5703,20 +5703,6 @@ dependencies = [
  "objc-foundation",
  "objc_id",
  "once_cell",
-]
-
-[[package]]
-name = "script"
-version = "0.7.0"
-dependencies = [
- "gpui",
- "serde",
- "serde_json",
- "sound-core",
- "sound-hum",
- "sound-notes",
- "sound-ui",
- "tempfile",
 ]
 
 [[package]]
@@ -6092,6 +6078,7 @@ name = "sound-hum"
 version = "0.7.0"
 dependencies = [
  "sound-core",
+ "sound-notes",
  "thiserror 2.0.20",
 ]
 

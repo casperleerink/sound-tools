@@ -26,6 +26,7 @@ mod project;
 mod saturation;
 mod svf;
 mod transport;
+mod watch;
 
 pub use automation::{Automated, Automation, AutomationInput, MAX_AUTOMATED, PlayedLanes, Targets};
 pub use clock::{
@@ -69,3 +70,4 @@ pub use project::{
 pub use saturation::soft_clip;
 pub use svf::{FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response};
 pub use transport::Transport;
+pub use watch::Watch;

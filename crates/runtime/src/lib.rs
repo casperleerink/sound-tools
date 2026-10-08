@@ -152,12 +152,12 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     reverb::register(&mut registry)?;
     sampler::register(&mut registry)?;
     saturator::register(&mut registry)?;
-    script::register(&mut registry)?;
     tone::register(&mut registry)?;
     utility::register(&mut registry)?;
     wavetable::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
     registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
+    registry.runtime_agent_doc(sound_hum::AGENT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
@@ -189,7 +189,6 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     delay::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
-    script::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     // What the picker says under its offers: that the scan of this machine is still running,
     // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST

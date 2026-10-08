@@ -9,4 +9,5 @@ workspace = true
 
 [dependencies]
 sound-core.workspace = true
+sound-notes.workspace = true
 thiserror.workspace = true

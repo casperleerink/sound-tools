@@ -48,6 +48,7 @@ use crate::graph::GraphError;
 use crate::parameter::AutomatedNumber;
 use crate::peaks::Peaks;
 use crate::processor::Processor;
+use crate::watch::Watch;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
@@ -327,6 +328,11 @@ impl Project {
     /// the instance is created again.
     pub fn peaks(&self, instance: &InstanceId, name: &str) -> Option<Peaks> {
         self.bindings.peaks(instance, name).cloned()
+    }
+
+    /// Every watch the behaviour of `instance` keeps, by name, see [`BehaviourContext::watch`].
+    pub fn watches(&self, instance: &InstanceId) -> Vec<(String, Watch)> {
+        self.bindings.watches(instance)
     }
 
     /// The clock the engine plays by, for conversions while reading, such as ticks to seconds.

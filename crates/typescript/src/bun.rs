@@ -2,7 +2,7 @@
 //! for its answer, which a behaviour asks for the Hum of a tool, and messages that come when
 //! they come, which the window reads. One JSON message per line, both ways.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -31,6 +31,8 @@ pub(crate) enum Request<'a> {
         card: u64,
         tool: &'a str,
         state: serde_json::Value,
+        /// The last value of each watch of the instance, by name.
+        watches: &'a BTreeMap<String, f32>,
     },
     Event {
         card: u64,
@@ -61,14 +63,19 @@ pub(crate) enum Event {
         label: String,
         state: serde_json::Value,
     },
+    /// A card moved a live control, or fired a trigger when there is no value.
+    Control {
+        card: u64,
+        name: String,
+        #[serde(default)]
+        value: Option<f32>,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Loaded {
     pub tools: Vec<ToolInfo>,
-    /// Every tool that has a card in `extensions/`: the project's own and built-in ones.
-    pub cards: BTreeSet<String>,
     pub errors: Vec<LoadError>,
 }
 

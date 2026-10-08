@@ -1,38 +1,77 @@
 //! Runs compiled [`Code`] one frame at a time, for both channels, with the memory of every
-//! `history`, `phasor`, `delay`, filter and `smooth` of the script. Made on the control
-//! thread, where it allocates all of it; running it allocates nothing.
+//! `history`, `phasor`, `delay`, filter, envelope and buffer of the code: the memory of one
+//! voice. Made on the control thread, where it allocates all of it; running it allocates
+//! nothing.
+//!
+//! What every voice shares, the values of the record and of the interface, the note and the
+//! transport, the processor gives each frame as [`Inputs`].
 
-use sound_core::{
-    CHANNELS, DelayLine, SVF_MAX_Q, Smoothed, SvfFactors, SvfSection, amplitude, soft_clip,
-};
+use sound_core::{CHANNELS, DelayLine, SVF_MAX_Q, SvfFactors, SvfSection, amplitude, soft_clip};
 
 use crate::language::{
-    Binary, Code, FilterKind, MAX_DELAY_MS, MAX_PARAMETERS, Operation, Register, Unary,
+    Binary, Code, FilterKind, MAX_PARAMETERS, Operation, Register, Table, Unary,
 };
 
-/// Where every param stands, in the order of the `param` lines.
-pub type Values = [f32; MAX_PARAMETERS];
+/// Where every param stands, in the order of the `param` lines, and every list of the record,
+/// in the order of the `param name[length]` lines.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Values {
+    pub parameters: [f32; MAX_PARAMETERS],
+    pub arrays: Vec<Vec<f32>>,
+}
 
-/// How long a new value of a param takes to arrive. A jump would click.
-const RAMP_SECONDS: f32 = 0.02;
+impl Default for Values {
+    fn default() -> Self {
+        Self {
+            parameters: [0.0; MAX_PARAMETERS],
+            arrays: Vec::new(),
+        }
+    }
+}
 
-/// What leaves the script is held to this, about 12 dB over full scale, so a feedback that
+/// What leaves the code is held to this, about 12 dB over full scale, so a feedback that
 /// runs away is loud but not deafening.
 const LIMIT: f32 = 4.0;
 
+/// The note a voice plays. A source follows the newest held note; an effect has none.
+#[derive(Copy, Clone, Debug, Default)]
+pub(crate) struct Note {
+    pub(crate) pitch: f32,
+    pub(crate) frequency: f32,
+    pub(crate) velocity: f32,
+    pub(crate) gate: bool,
+    /// The first frame of the note.
+    pub(crate) onset: bool,
+}
+
+/// What every voice reads in one frame, from the processor.
+pub(crate) struct Inputs<'a> {
+    pub(crate) input: [f32; CHANNELS],
+    pub(crate) parameters: &'a [f32],
+    pub(crate) lives: &'a [f32],
+    pub(crate) arrays: &'a [Vec<f32>],
+    /// One bit per trigger, set in the frame it fires.
+    pub(crate) triggers: u32,
+    pub(crate) beat: f64,
+    pub(crate) bpm: f32,
+    pub(crate) playing: bool,
+    pub(crate) note: Note,
+}
+
+#[derive(Clone)]
 pub struct Machine {
     code: Code,
     sample_rate: f32,
-    parameters: Vec<Smoothed>,
-    /// The values of the parameters in this frame.
-    current: Vec<f32>,
     registers: Vec<f32>,
     channels: [Memory; CHANNELS],
-    /// Where the delays write the next frame.
+    /// Where the delays and buffers write the next frame.
     position: usize,
+    /// The last value of each watch, of the left channel.
+    watched: Vec<f32>,
 }
 
 /// The memory of one channel.
+#[derive(Clone)]
 struct Memory {
     histories: Vec<f32>,
     phases: Vec<f32>,
@@ -40,9 +79,12 @@ struct Memory {
     delays: Vec<DelayLine>,
     filters: Vec<Filter>,
     smooths: Vec<Smooth>,
+    envelopes: Vec<Envelope>,
+    memories: Vec<f32>,
+    buffers: Vec<Vec<f32>>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Filter {
     section: SvfSection,
     factors: SvfFactors,
@@ -53,18 +95,38 @@ struct Filter {
     q: f32,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Smooth {
     value: f32,
     ms: f32,
     factor: f32,
 }
 
+/// A straight-line ADSR. A new gate starts the attack from where the level is, so a note that
+/// takes over a sounding voice does not click. The release takes its whole time from wherever
+/// the level is when the gate falls, as a musician hears "a release of 20 ms".
+#[derive(Clone, Default)]
+struct Envelope {
+    level: f32,
+    stage: Stage,
+    gate: bool,
+    /// How much the release takes off per frame.
+    release_step: f32,
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+enum Stage {
+    #[default]
+    Idle,
+    Attack,
+    Decay,
+    Sustain,
+    Release,
+}
+
 impl Machine {
-    /// Starts at `values`, with no glide in.
-    pub fn new(code: Code, values: &Values, sample_rate: f32) -> Self {
+    pub fn new(code: Code, sample_rate: f32) -> Self {
         let slots = &code.slots;
-        let delay_frames = (MAX_DELAY_MS * 0.001 * sample_rate) as usize;
         let channels = std::array::from_fn(|channel| Memory {
             histories: vec![0.0; usize::from(slots.histories)],
             phases: vec![0.0; usize::from(slots.phasors)],
@@ -73,8 +135,8 @@ impl Machine {
             noises: (0..u32::from(slots.noises))
                 .map(|slot| 0x9E37_79B9 ^ (slot * 2 + channel as u32 + 1).wrapping_mul(0x85EB_CA6B))
                 .collect(),
-            delays: (0..slots.delays)
-                .map(|_| DelayLine::new(delay_frames + 4))
+            delays: (slots.delays.iter())
+                .map(|ms| DelayLine::new((ms * 0.001 * sample_rate) as usize + 4))
                 .collect(),
             filters: (0..slots.filters)
                 .map(|_| Filter {
@@ -88,49 +150,54 @@ impl Machine {
                     ..Smooth::default()
                 })
                 .collect(),
+            envelopes: vec![Envelope::default(); usize::from(slots.envelopes)],
+            memories: vec![0.0; usize::from(slots.memories)],
+            buffers: (slots.buffers.iter())
+                .map(|seconds| vec![0.0; ((seconds * sample_rate) as usize).max(1)])
+                .collect(),
         });
-        let parameters = values
-            .iter()
-            .take(code.parameters.len())
-            .map(|value| Smoothed::new(*value))
-            .collect();
         Self {
             sample_rate,
-            parameters,
-            current: values.iter().take(code.parameters.len()).copied().collect(),
             registers: vec![0.0; code.operations.len()],
             channels,
             position: 0,
+            watched: vec![0.0; code.watches.len()],
             code,
         }
     }
 
-    /// Glides every param to its new value.
-    pub fn aim(&mut self, values: &Values) {
-        let ramp = RAMP_SECONDS * self.sample_rate;
-        for (parameter, value) in self.parameters.iter_mut().zip(values) {
-            parameter.set_target(*value, ramp);
-        }
+    pub fn code(&self) -> &Code {
+        &self.code
+    }
+
+    /// The last value of each watch, in the order of [`Code::watches`].
+    pub(crate) fn watched(&self) -> &[f32] {
+        &self.watched
     }
 
     /// One frame of both channels.
-    pub fn frame(&mut self, input: [f32; CHANNELS]) -> [f32; CHANNELS] {
-        for (current, parameter) in self.current.iter_mut().zip(&mut self.parameters) {
-            *current = parameter.advance(1);
-        }
+    pub(crate) fn frame(&mut self, inputs: &Inputs<'_>) -> [f32; CHANNELS] {
         let mut output = [0.0; CHANNELS];
         for (channel, sample) in output.iter_mut().enumerate() {
-            *sample = self.run(channel, input[channel]);
+            *sample = self.run(channel, inputs);
+            if channel == 0 {
+                for (watched, register) in self.watched.iter_mut().zip(&self.code.watch_registers) {
+                    *watched = self
+                        .registers
+                        .get(usize::from(*register))
+                        .copied()
+                        .unwrap_or(0.0);
+                }
+            }
         }
         self.position = self.position.wrapping_add(1);
         output
     }
 
-    fn run(&mut self, channel: usize, input: f32) -> f32 {
+    fn run(&mut self, channel: usize, inputs: &Inputs<'_>) -> f32 {
         let Self {
             code,
             sample_rate,
-            current,
             registers,
             channels,
             position,
@@ -140,6 +207,8 @@ impl Machine {
         let Some(memory) = channels.get_mut(channel) else {
             return 0.0;
         };
+        let input = inputs.input.get(channel).copied().unwrap_or(0.0);
+        let note = inputs.note;
         for (index, operation) in code.operations.iter().enumerate() {
             let read =
                 |register: Register| registers.get(usize::from(register)).copied().unwrap_or(0.0);
@@ -148,14 +217,18 @@ impl Machine {
                 Operation::Input => input,
                 Operation::Channel => channel as f32,
                 Operation::SampleRate => sample_rate,
-                Operation::Parameter(index) => {
-                    current.get(usize::from(index)).copied().unwrap_or(0.0)
-                }
-                Operation::History(slot) => memory
-                    .histories
-                    .get(usize::from(slot))
-                    .copied()
-                    .unwrap_or(0.0),
+                Operation::Beat => inputs.beat as f32,
+                Operation::Bpm => inputs.bpm,
+                Operation::Playing => truth(inputs.playing),
+                Operation::Frequency => note.frequency,
+                Operation::Pitch => note.pitch,
+                Operation::Gate => truth(note.gate),
+                Operation::Velocity => note.velocity,
+                Operation::Onset => truth(note.onset),
+                Operation::Parameter(index) => at(inputs.parameters, index),
+                Operation::Live(index) => at(inputs.lives, index),
+                Operation::Trigger(index) => truth(inputs.triggers & (1 << index) != 0),
+                Operation::History(slot) => at(&memory.histories, slot),
                 Operation::Unary(unary, x) => apply_unary(unary, read(x)),
                 Operation::Binary(binary, a, b) => apply_binary(binary, read(a), read(b)),
                 Operation::Clamp(x, low, high) => read(x).max(read(low)).min(read(high)),
@@ -213,6 +286,78 @@ impl Machine {
                         None => 0.0,
                     }
                 }
+                Operation::Envelope {
+                    gate,
+                    attack,
+                    decay,
+                    sustain,
+                    release,
+                    slot,
+                } => match memory.envelopes.get_mut(usize::from(slot)) {
+                    Some(envelope) => {
+                        let times = [read(attack), read(decay), read(release)]
+                            .map(|ms| (ms * 0.001 * sample_rate).max(1.0));
+                        envelope.next(read(gate) > 0.0, times, read(sustain).clamp(0.0, 1.0))
+                    }
+                    None => 0.0,
+                },
+                Operation::Hold { input, when, slot } => {
+                    match memory.memories.get_mut(usize::from(slot)) {
+                        Some(held) => {
+                            if read(when) > 0.0 {
+                                *held = finite(read(input));
+                            }
+                            *held
+                        }
+                        None => 0.0,
+                    }
+                }
+                Operation::Rise { input, slot } => match memory.memories.get_mut(usize::from(slot))
+                {
+                    Some(before) => {
+                        let now = read(input);
+                        let rose = *before <= 0.0 && now > 0.0;
+                        *before = finite(now);
+                        truth(rose)
+                    }
+                    None => 0.0,
+                },
+                Operation::Change { input, slot } => {
+                    match memory.memories.get_mut(usize::from(slot)) {
+                        Some(before) => {
+                            let now = finite(read(input));
+                            let changed = *before != now;
+                            *before = now;
+                            truth(changed)
+                        }
+                        None => 0.0,
+                    }
+                }
+                Operation::Read { table, index } => {
+                    let values = table_of(table, inputs.arrays, &memory.buffers);
+                    read_at(values, read(index))
+                }
+                Operation::Lookup { table, phase } => {
+                    let values = table_of(table, inputs.arrays, &memory.buffers);
+                    look_up(values, read(phase))
+                }
+                Operation::Length(table) => {
+                    table_of(table, inputs.arrays, &memory.buffers).len() as f32
+                }
+                Operation::Write {
+                    buffer,
+                    index,
+                    value,
+                } => {
+                    let value = finite(read(value));
+                    if let Some(values) = memory.buffers.get_mut(usize::from(buffer))
+                        && let Some(slot) = wrapped(values.len(), read(index))
+                        && let Some(sample) = values.get_mut(slot)
+                    {
+                        *sample = value;
+                    }
+                    value
+                }
             };
             if let Some(register) = registers.get_mut(index) {
                 *register = value;
@@ -233,6 +378,47 @@ impl Machine {
         };
         finite(output).clamp(-LIMIT, LIMIT)
     }
+}
+
+fn at(values: &[f32], index: u16) -> f32 {
+    values.get(usize::from(index)).copied().unwrap_or(0.0)
+}
+
+fn table_of<'a>(table: Table, arrays: &'a [Vec<f32>], buffers: &'a [Vec<f32>]) -> &'a [f32] {
+    let values = match table {
+        Table::Array(index) => arrays.get(usize::from(index)),
+        Table::Buffer(index) => buffers.get(usize::from(index)),
+    };
+    values.map_or(&[], Vec::as_slice)
+}
+
+/// The slot of `index` in a table of `length`: the whole part, wrapped, so any index reads.
+fn wrapped(length: usize, index: f32) -> Option<usize> {
+    if length == 0 || !index.is_finite() {
+        return None;
+    }
+    Some(index.floor().rem_euclid(length as f32) as usize % length)
+}
+
+fn read_at(values: &[f32], index: f32) -> f32 {
+    wrapped(values.len(), index)
+        .and_then(|slot| values.get(slot))
+        .copied()
+        .unwrap_or(0.0)
+}
+
+/// The table read at `phase` from 0 to 1 over its whole length, wrapped, with a straight line
+/// between two values, as a wavetable or a sample is played.
+fn look_up(values: &[f32], phase: f32) -> f32 {
+    let length = values.len();
+    if length == 0 || !phase.is_finite() {
+        return 0.0;
+    }
+    let position = (phase - phase.floor()) * length as f32;
+    let fraction = position - position.floor();
+    let first = read_at(values, position);
+    let second = read_at(values, position + 1.0);
+    first + (second - first) * fraction
 }
 
 impl Filter {
@@ -271,6 +457,49 @@ impl Smooth {
     }
 }
 
+impl Envelope {
+    /// `frames` are of the attack, the decay and the release.
+    fn next(&mut self, gate: bool, [attack, decay, release]: [f32; 3], sustain: f32) -> f32 {
+        if gate && !self.gate {
+            self.stage = Stage::Attack;
+        } else if !gate && self.gate {
+            self.stage = Stage::Release;
+            self.release_step = self.level / release;
+        }
+        self.gate = gate;
+        match self.stage {
+            Stage::Idle => self.level = 0.0,
+            Stage::Attack => {
+                self.level += 1.0 / attack;
+                if self.level >= 1.0 {
+                    self.level = 1.0;
+                    self.stage = Stage::Decay;
+                }
+            }
+            Stage::Decay => {
+                self.level -= (1.0 - sustain) / decay;
+                if self.level <= sustain {
+                    self.level = sustain;
+                    self.stage = Stage::Sustain;
+                }
+            }
+            Stage::Sustain => self.level = sustain,
+            Stage::Release => {
+                self.level -= self.release_step;
+                if self.level <= 0.0 {
+                    self.level = 0.0;
+                    self.stage = Stage::Idle;
+                }
+            }
+        }
+        self.level
+    }
+}
+
+fn truth(condition: bool) -> f32 {
+    if condition { 1.0 } else { 0.0 }
+}
+
 fn apply_unary(unary: Unary, x: f32) -> f32 {
     match unary {
         Unary::Negate => -x,
@@ -290,7 +519,6 @@ fn apply_unary(unary: Unary, x: f32) -> f32 {
 }
 
 fn apply_binary(binary: Binary, a: f32, b: f32) -> f32 {
-    let truth = |condition: bool| if condition { 1.0 } else { 0.0 };
     match binary {
         Binary::Add => a + b,
         Binary::Subtract => a - b,

@@ -6,33 +6,42 @@
 //! before it, so one pass in order computes a frame. A `history` reads what it was set to in
 //! the frame before, which is how a value feeds back.
 //!
-//! The reference for writers of scripts is `agent-doc.md`. An error names the line of the
-//! record as `code[<index>]`, so an agent finds it in the array.
+//! The reference for writers is `agent-doc.md`. An error names the line of the code, so the
+//! writer finds it.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-/// The most params a script can have: the update carries their values in a fixed array.
+/// The most params, and so the most knobs and toggles: the update carries their values in a
+/// fixed array.
 pub const MAX_PARAMETERS: usize = 32;
+/// The most `live` controls and the most triggers: a trigger is one bit of a `u32`.
+pub const MAX_LIVES: usize = 32;
+/// The most watches.
+pub const MAX_WATCHES: usize = 16;
 /// The longest a `delay` can be.
 pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
-/// Each delay holds [`MAX_DELAY_MS`] per channel, so their number is held too.
+/// Each delay holds up to [`MAX_DELAY_MS`] per channel and voice, so their number is held too.
 const MAX_DELAYS: usize = 16;
+/// The seconds of all the buffers of one code together, per channel and voice.
+const MAX_BUFFER_SECONDS: f32 = 30.0;
+/// The longest list a `param` can be.
+const MAX_ARRAY_LENGTH: usize = 1024;
 const MAX_OPERATIONS: usize = 4096;
 
 /// The index of an operation, and of the register it writes.
 pub(crate) type Register = u16;
 
-/// What is wrong with a script, on which line of `code`.
+/// What is wrong with code, on which line.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 #[error("code[{line}]: {message}")]
 pub struct CompileError {
-    /// The index of the line in `code`, from 0.
+    /// The index of the line, from 0.
     pub line: usize,
     pub message: String,
 }
 
-/// A `param` line: a number a knob or the record sets, glided so a change does not click.
+/// A `param` or a `live` line: a number glided so a change does not click.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParameterSpec {
     pub name: String,
@@ -41,29 +50,63 @@ pub struct ParameterSpec {
     pub max: f32,
 }
 
-/// A compiled script.
+/// A `param name[length]` line: a list the record sets, such as the steps of a sequence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArraySpec {
+    pub name: String,
+    pub length: usize,
+    pub default: f32,
+    pub min: f32,
+    pub max: f32,
+}
+
+/// Compiled code.
 #[derive(Clone, Debug)]
 pub struct Code {
+    /// Numbers the record sets, in the order of their lines.
     pub parameters: Vec<ParameterSpec>,
+    /// Lists the record sets.
+    pub arrays: Vec<ArraySpec>,
+    /// Numbers the interface plays and nothing saves.
+    pub lives: Vec<ParameterSpec>,
+    /// Names of the triggers, which the interface fires.
+    pub triggers: Vec<String>,
+    /// Names of the values the interface reads.
+    pub watches: Vec<String>,
     /// Of the source lines, so a behaviour tells new code from new values.
     pub hash: u64,
     pub(crate) operations: Vec<Operation>,
-    /// The register of `out`, `None` when the script never sets it and passes its input.
+    /// The register of `out`, `None` when the code never sets it and passes its input.
     pub(crate) output: Option<Register>,
     /// What each `history` takes for the next frame: the slot and the register.
     pub(crate) history_writes: Vec<(u16, Register)>,
+    /// The register of each watch, in the order of [`Self::watches`].
+    pub(crate) watch_registers: Vec<Register>,
     pub(crate) slots: Slots,
 }
 
-/// How many of each kind of memory the operations use, per channel.
+/// How much of each kind of memory the operations use, per channel.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Slots {
     pub(crate) histories: u16,
     pub(crate) phasors: u16,
     pub(crate) noises: u16,
-    pub(crate) delays: u16,
+    /// The longest each delay reaches, in milliseconds.
+    pub(crate) delays: Vec<f32>,
     pub(crate) filters: u16,
     pub(crate) smooths: u16,
+    pub(crate) envelopes: u16,
+    /// One number each, for `hold`, `rise` and `change`.
+    pub(crate) memories: u16,
+    /// The seconds of each buffer.
+    pub(crate) buffers: Vec<f32>,
+}
+
+/// Where `lookup`, `len` and `name[i]` read: a list of the record, or a buffer.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum Table {
+    Array(u16),
+    Buffer(u16),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -72,7 +115,17 @@ pub(crate) enum Operation {
     Input,
     Channel,
     SampleRate,
+    Beat,
+    Bpm,
+    Playing,
+    Frequency,
+    Pitch,
+    Gate,
+    Velocity,
+    Onset,
     Parameter(u16),
+    Live(u16),
+    Trigger(u16),
     History(u16),
     Unary(Unary, Register),
     Binary(Binary, Register, Register),
@@ -101,6 +154,41 @@ pub(crate) enum Operation {
         input: Register,
         ms: Register,
         slot: u16,
+    },
+    Envelope {
+        gate: Register,
+        attack: Register,
+        decay: Register,
+        sustain: Register,
+        release: Register,
+        slot: u16,
+    },
+    Hold {
+        input: Register,
+        when: Register,
+        slot: u16,
+    },
+    Rise {
+        input: Register,
+        slot: u16,
+    },
+    Change {
+        input: Register,
+        slot: u16,
+    },
+    Read {
+        table: Table,
+        index: Register,
+    },
+    Lookup {
+        table: Table,
+        phase: Register,
+    },
+    Length(Table),
+    Write {
+        buffer: u16,
+        index: Register,
+        value: Register,
     },
 }
 
@@ -167,15 +255,27 @@ const FUNCTIONS: &[(&str, &str)] = &[
     ("mix", "a, b, amount"),
     ("phasor", "hz"),
     ("noise", ""),
-    ("delay", "x, ms"),
+    ("delay", "x, ms[, longest_ms]"),
     ("lowpass", "x, hz, q"),
     ("highpass", "x, hz, q"),
     ("bandpass", "x, hz, q"),
     ("smooth", "x, ms"),
+    ("adsr", "gate, attack_ms, decay_ms, sustain, release_ms"),
+    ("hold", "x, when"),
+    ("rise", "x"),
+    ("change", "x"),
+    ("lookup", "table, phase"),
+    ("len", "table"),
 ];
 
-/// The names a script reads but never sets.
-const BUILT_IN: &[&str] = &["in", "channel", "sr", "pi", "tau"];
+/// The names code reads but never sets.
+const BUILT_IN: &[&str] = &[
+    "in", "channel", "sr", "pi", "tau", "beat", "bpm", "playing", "freq", "pitch", "gate",
+    "velocity", "onset",
+];
+
+/// What a line can start with besides a name.
+const KEYWORDS: &[&str] = &["param", "live", "trigger", "watch", "history", "buffer"];
 
 /// A filter's `q` when a call leaves it out: no peak.
 const DEFAULT_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
@@ -186,10 +286,15 @@ pub fn compile(lines: &[String]) -> Result<Code, CompileError> {
     let mut compiler = Compiler {
         code: Code {
             parameters: Vec::new(),
+            arrays: Vec::new(),
+            lives: Vec::new(),
+            triggers: Vec::new(),
+            watches: Vec::new(),
             hash: hasher.finish(),
             operations: Vec::new(),
             output: None,
             history_writes: Vec::new(),
+            watch_registers: Vec::new(),
             slots: Slots::default(),
         },
         names: HashMap::new(),
@@ -221,6 +326,7 @@ pub fn compile(lines: &[String]) -> Result<Code, CompileError> {
 enum Binding {
     Value(Register),
     History { slot: u16, set: bool, line: usize },
+    Table(Table),
 }
 
 struct Compiler {
@@ -265,17 +371,57 @@ impl Compiler {
             tokens: &tokens,
             next: 0,
         };
-        match tokens.peek() {
-            None => return Ok(()),
-            Some(Token::Name(word)) if word == "param" => {
+        let Some(first) = tokens.peek().cloned() else {
+            return Ok(());
+        };
+        let keyword = match &first {
+            Token::Name(word) if KEYWORDS.contains(&word.as_str()) => Some(word.clone()),
+            Token::Name(_) => None,
+            token => {
+                return self.error(format!(
+                    "a line starts with a name or one of {}, not {token}",
+                    KEYWORDS.join(", ")
+                ));
+            }
+        };
+        match keyword.as_deref() {
+            Some("param") => {
                 tokens.next();
                 self.parameter(&mut tokens)?;
             }
-            Some(Token::Name(word)) if word == "history" => {
+            Some("live") => {
+                tokens.next();
+                self.live(&mut tokens)?;
+            }
+            Some("trigger") => {
                 tokens.next();
                 let name = self.new_name(&mut tokens)?;
-                let slot = self.code.slots.histories;
-                self.code.slots.histories += 1;
+                if self.code.triggers.len() == MAX_LIVES {
+                    return self.error(format!("code has at most {MAX_LIVES} triggers"));
+                }
+                let index = self.code.triggers.len() as u16;
+                let register = self.emit(Operation::Trigger(index))?;
+                self.code.triggers.push(name.clone());
+                self.names.insert(name, Binding::Value(register));
+            }
+            Some("watch") => {
+                tokens.next();
+                let name = self.new_name(&mut tokens)?;
+                if !tokens.eat("=") {
+                    return self.error(format!("a watch is `watch {name} = <value>`"));
+                }
+                if self.code.watches.len() == MAX_WATCHES {
+                    return self.error(format!("code has at most {MAX_WATCHES} watches"));
+                }
+                let register = self.expression(&mut tokens)?;
+                self.code.watches.push(name.clone());
+                self.code.watch_registers.push(register);
+                self.names.insert(name, Binding::Value(register));
+            }
+            Some("history") => {
+                tokens.next();
+                let name = self.new_name(&mut tokens)?;
+                let slot = next(&mut self.code.slots.histories);
                 self.names.insert(
                     name,
                     Binding::History {
@@ -285,12 +431,11 @@ impl Compiler {
                     },
                 );
             }
-            Some(Token::Name(_)) => self.assignment(&mut tokens)?,
-            Some(token) => {
-                return self.error(format!(
-                    "a line starts with `param`, `history` or a name, not {token}"
-                ));
+            Some("buffer") => {
+                tokens.next();
+                self.buffer(&mut tokens)?;
             }
+            _ => self.assignment(&mut tokens)?,
         }
         match tokens.next() {
             None => Ok(()),
@@ -333,61 +478,166 @@ impl Compiler {
         Ok(tokens)
     }
 
-    /// `param <name> = <default> [<min>, <max>]`
-    fn parameter(&mut self, tokens: &mut Tokens<'_>) -> Result<(), CompileError> {
-        const FORM: &str = "a param is `param <name> = <default> [<min>, <max>]`";
-        let name = self.new_name(tokens)?;
-        let number = |compiler: &Self, tokens: &mut Tokens<'_>| {
-            let negative = tokens.eat("-");
-            match tokens.next() {
-                Some(Token::Number(number)) if negative => Ok(-number),
-                Some(Token::Number(number)) => Ok(*number),
-                _ => compiler.error(FORM),
-            }
-        };
+    /// A number written in the code, with an optional `-`.
+    fn literal(&self, tokens: &mut Tokens<'_>, form: &str) -> Result<f32, CompileError> {
+        let negative = tokens.eat("-");
+        match tokens.next() {
+            Some(Token::Number(number)) if negative => Ok(-number),
+            Some(Token::Number(number)) => Ok(*number),
+            _ => self.error(form.to_string()),
+        }
+    }
+
+    /// `= <default> [<min>, <max>]`, checked.
+    fn range(
+        &self,
+        name: &str,
+        tokens: &mut Tokens<'_>,
+        form: &str,
+    ) -> Result<(f32, f32, f32), CompileError> {
         if !tokens.eat("=") {
-            return self.error(FORM);
+            return self.error(form.to_string());
         }
-        let default = number(self, tokens)?;
+        let default = self.literal(tokens, form)?;
         if !tokens.eat("[") {
-            return self.error(FORM);
+            return self.error(form.to_string());
         }
-        let min = number(self, tokens)?;
+        let min = self.literal(tokens, form)?;
         if !tokens.eat(",") {
-            return self.error(FORM);
+            return self.error(form.to_string());
         }
-        let max = number(self, tokens)?;
+        let max = self.literal(tokens, form)?;
         if !tokens.eat("]") {
-            return self.error(FORM);
+            return self.error(form.to_string());
         }
         if min >= max {
-            return self.error(format!("param `{name}`: the range [{min}, {max}] is empty"));
+            return self.error(format!("`{name}`: the range [{min}, {max}] is empty"));
         }
         if !(min..=max).contains(&default) {
             return self.error(format!(
-                "param `{name}`: the default {default} is outside [{min}, {max}]"
+                "`{name}`: the default {default} is outside [{min}, {max}]"
             ));
         }
+        Ok((default, min, max))
+    }
+
+    /// `param <name> = <default> [<min>, <max>]`, or `param <name>[<length>] = ...` for a list.
+    fn parameter(&mut self, tokens: &mut Tokens<'_>) -> Result<(), CompileError> {
+        const FORM: &str = "a param is `param <name> = <default> [<min>, <max>]`, or `param <name>[<length>] = <default> [<min>, <max>]` for a list";
+        let name = self.new_name(tokens)?;
+        if tokens.eat("[") {
+            let length = self.literal(tokens, FORM)?;
+            if !tokens.eat("]") {
+                return self.error(FORM);
+            }
+            if length < 1.0 || length.fract() != 0.0 || length as usize > MAX_ARRAY_LENGTH {
+                return self.error(format!(
+                    "param `{name}`: a list holds 1 to {MAX_ARRAY_LENGTH} values"
+                ));
+            }
+            let (default, min, max) = self.range(&name, tokens, FORM)?;
+            let index = self.code.arrays.len() as u16;
+            self.code.arrays.push(ArraySpec {
+                name: name.clone(),
+                length: length as usize,
+                default,
+                min,
+                max,
+            });
+            self.names.insert(name, Binding::Table(Table::Array(index)));
+            return Ok(());
+        }
+        let (default, min, max) = self.range(&name, tokens, FORM)?;
         if self.code.parameters.len() == MAX_PARAMETERS {
-            return self.error(format!("a script has at most {MAX_PARAMETERS} params"));
+            return self.error(format!("code has at most {MAX_PARAMETERS} params"));
         }
         let index = self.code.parameters.len() as u16;
         let register = self.emit(Operation::Parameter(index))?;
-        self.code.parameters.push(ParameterSpec {
+        let spec = ParameterSpec {
             name: name.clone(),
             default,
             min,
             max,
-        });
+        };
+        self.code.parameters.push(spec);
         self.names.insert(name, Binding::Value(register));
         Ok(())
     }
 
-    /// `<name> = <expression>`. A name is set once; a `history` is set once after its line.
+    /// `live <name> = <default> [<min>, <max>]`
+    fn live(&mut self, tokens: &mut Tokens<'_>) -> Result<(), CompileError> {
+        const FORM: &str = "a live control is `live <name> = <default> [<min>, <max>]`";
+        let name = self.new_name(tokens)?;
+        let (default, min, max) = self.range(&name, tokens, FORM)?;
+        if self.code.lives.len() == MAX_LIVES {
+            return self.error(format!("code has at most {MAX_LIVES} live controls"));
+        }
+        let index = self.code.lives.len() as u16;
+        let register = self.emit(Operation::Live(index))?;
+        let spec = ParameterSpec {
+            name: name.clone(),
+            default,
+            min,
+            max,
+        };
+        self.code.lives.push(spec);
+        self.names.insert(name, Binding::Value(register));
+        Ok(())
+    }
+
+    /// `buffer <name> = <seconds>`
+    fn buffer(&mut self, tokens: &mut Tokens<'_>) -> Result<(), CompileError> {
+        const FORM: &str = "a buffer is `buffer <name> = <seconds>`";
+        let name = self.new_name(tokens)?;
+        if !tokens.eat("=") {
+            return self.error(FORM);
+        }
+        let seconds = self.literal(tokens, FORM)?;
+        let total: f32 = self.code.slots.buffers.iter().sum::<f32>() + seconds;
+        if seconds <= 0.0 || total > MAX_BUFFER_SECONDS {
+            return self.error(format!(
+                "buffer `{name}`: the buffers of code hold up to {MAX_BUFFER_SECONDS} s together"
+            ));
+        }
+        let index = self.code.slots.buffers.len() as u16;
+        self.code.slots.buffers.push(seconds);
+        self.names
+            .insert(name, Binding::Table(Table::Buffer(index)));
+        Ok(())
+    }
+
+    /// `<name> = <expression>`, or `<buffer>[<index>] = <expression>`. A name is set once; a
+    /// `history` is set once after its line.
     fn assignment(&mut self, tokens: &mut Tokens<'_>) -> Result<(), CompileError> {
         let Some(Token::Name(name)) = tokens.next().cloned() else {
             return self.error("a line starts with a name");
         };
+        if tokens.eat("[") {
+            let buffer = match self.names.get(&name) {
+                Some(Binding::Table(Table::Buffer(buffer))) => *buffer,
+                Some(Binding::Table(Table::Array(_))) => {
+                    return self.error(format!(
+                        "`{name}` is a list the record sets: code reads it and cannot write it"
+                    ));
+                }
+                _ => {
+                    return self.error(format!(
+                        "`{name}` is no buffer: declare `buffer {name} = <seconds>` first"
+                    ));
+                }
+            };
+            let index = self.expression(tokens)?;
+            if !tokens.eat("]") || !tokens.eat("=") {
+                return self.error(format!("a write is `{name}[<index>] = <value>`"));
+            }
+            let value = self.expression(tokens)?;
+            self.emit(Operation::Write {
+                buffer,
+                index,
+                value,
+            })?;
+            return Ok(());
+        }
         if !tokens.eat("=") {
             return self.error(format!("`{name}` is not set: write `{name} = ...`"));
         }
@@ -416,7 +666,7 @@ impl Compiler {
         let Some(Token::Name(name)) = tokens.next().cloned() else {
             return self.error("a name must follow");
         };
-        if BUILT_IN.contains(&name.as_str()) || name == "out" {
+        if BUILT_IN.contains(&name.as_str()) || name == "out" || KEYWORDS.contains(&name.as_str()) {
             return self.error(format!("`{name}` is built in"));
         }
         if self.names.contains_key(&name) {
@@ -427,7 +677,7 @@ impl Compiler {
 
     fn emit(&mut self, operation: Operation) -> Result<Register, CompileError> {
         if self.code.operations.len() == MAX_OPERATIONS {
-            return self.error(format!("a script has at most {MAX_OPERATIONS} operations"));
+            return self.error(format!("code has at most {MAX_OPERATIONS} operations"));
         }
         self.code.operations.push(operation);
         Ok((self.code.operations.len() - 1) as Register)
@@ -505,9 +755,26 @@ impl Compiler {
                 Ok(value)
             }
             Some(Token::Name(name)) if tokens.eat("(") => self.call(&name, tokens),
+            Some(Token::Name(name)) if tokens.eat("[") => {
+                let table = self.table(&name)?;
+                let index = self.expression(tokens)?;
+                if !tokens.eat("]") {
+                    return self.error(format!("a `[` after `{name}` is not closed"));
+                }
+                self.emit(Operation::Read { table, index })
+            }
             Some(Token::Name(name)) => self.read(&name),
             Some(token) => self.error(format!("expected a value, found {token}")),
             None => self.error("expected a value at the end of the line"),
+        }
+    }
+
+    fn table(&self, name: &str) -> Result<Table, CompileError> {
+        match self.names.get(name) {
+            Some(Binding::Table(table)) => Ok(*table),
+            _ => self.error(format!(
+                "`{name}` is no list or buffer: declare `param {name}[<length>] = ...` or `buffer {name} = <seconds>` first"
+            )),
         }
     }
 
@@ -518,9 +785,22 @@ impl Compiler {
             "sr" => Operation::SampleRate,
             "pi" => Operation::Constant(std::f32::consts::PI),
             "tau" => Operation::Constant(std::f32::consts::TAU),
+            "beat" => Operation::Beat,
+            "bpm" => Operation::Bpm,
+            "playing" => Operation::Playing,
+            "freq" => Operation::Frequency,
+            "pitch" => Operation::Pitch,
+            "gate" => Operation::Gate,
+            "velocity" => Operation::Velocity,
+            "onset" => Operation::Onset,
             _ => match self.names.get(name) {
                 Some(Binding::Value(register)) => return Ok(*register),
                 Some(Binding::History { slot, .. }) => Operation::History(*slot),
+                Some(Binding::Table(_)) => {
+                    return self.error(format!(
+                        "`{name}` is a list of values: read one with `{name}[<index>]` or `lookup({name}, <phase>)`"
+                    ));
+                }
                 None => {
                     return self.error(format!(
                         "unknown name `{name}`. A name is set on a line above where it is read; to read a value from the last frame, declare `history {name}` first"
@@ -532,6 +812,26 @@ impl Compiler {
     }
 
     fn call(&mut self, name: &str, tokens: &mut Tokens<'_>) -> Result<Register, CompileError> {
+        // `lookup` and `len` take a table by name, which is no value.
+        let table = match name {
+            "lookup" | "len" => {
+                let Some(Token::Name(table)) = tokens.next().cloned() else {
+                    return self.error(format!("`{name}` takes the name of a list or a buffer"));
+                };
+                let table = self.table(&table)?;
+                if name == "len" {
+                    if !tokens.eat(")") {
+                        return self.error("`len(table)` takes one name");
+                    }
+                    return self.emit(Operation::Length(table));
+                }
+                if !tokens.eat(",") {
+                    return self.error("`lookup(table, phase)` takes a name and a phase");
+                }
+                Some(table)
+            }
+            _ => None,
+        };
         let mut arguments = Vec::new();
         if !tokens.eat(")") {
             loop {
@@ -573,14 +873,27 @@ impl Compiler {
             ("noise", []) => Operation::Noise {
                 slot: next(&mut self.code.slots.noises),
             },
-            ("delay", [input, ms]) => {
-                if usize::from(self.code.slots.delays) == MAX_DELAYS {
-                    return self.error(format!("a script has at most {MAX_DELAYS} delays"));
+            ("delay", [input, ms, rest @ ..]) if rest.len() <= 1 => {
+                if self.code.slots.delays.len() == MAX_DELAYS {
+                    return self.error(format!("code has at most {MAX_DELAYS} delays"));
                 }
+                let longest = match rest {
+                    [longest] => match self.code.operations.get(usize::from(*longest)) {
+                        Some(Operation::Constant(ms)) if *ms > 0.0 && *ms <= MAX_DELAY_MS => *ms,
+                        _ => {
+                            return self.error(format!(
+                                "the longest time of a delay is a number of ms up to {MAX_DELAY_MS}"
+                            ));
+                        }
+                    },
+                    _ => MAX_DELAY_MS,
+                };
+                let slot = self.code.slots.delays.len() as u16;
+                self.code.slots.delays.push(longest);
                 Operation::Delay {
                     input: *input,
                     ms: *ms,
-                    slot: next(&mut self.code.slots.delays),
+                    slot,
                 }
             }
             ("lowpass" | "highpass" | "bandpass", [input, hz, rest @ ..]) if rest.len() <= 1 => {
@@ -605,6 +918,34 @@ impl Compiler {
                 input: *input,
                 ms: *ms,
                 slot: next(&mut self.code.slots.smooths),
+            },
+            ("adsr", [gate, attack, decay, sustain, release]) => Operation::Envelope {
+                gate: *gate,
+                attack: *attack,
+                decay: *decay,
+                sustain: *sustain,
+                release: *release,
+                slot: next(&mut self.code.slots.envelopes),
+            },
+            ("hold", [input, when]) => Operation::Hold {
+                input: *input,
+                when: *when,
+                slot: next(&mut self.code.slots.memories),
+            },
+            ("rise", [input]) => Operation::Rise {
+                input: *input,
+                slot: next(&mut self.code.slots.memories),
+            },
+            ("change", [input]) => Operation::Change {
+                input: *input,
+                slot: next(&mut self.code.slots.memories),
+            },
+            ("lookup", [phase]) => match table {
+                Some(table) => Operation::Lookup {
+                    table,
+                    phase: *phase,
+                },
+                None => return wrong(self),
             },
             _ => return wrong(self),
         };
@@ -683,7 +1024,10 @@ mod tests {
         assert!(found.message.contains("lowpass"), "{found}");
 
         let found = error("x = delay(in)");
-        assert!(found.message.contains("`delay(x, ms)`"), "{found}");
+        assert!(
+            found.message.contains("`delay(x, ms[, longest_ms])`"),
+            "{found}"
+        );
 
         let found = error("x = in\nx = 2");
         assert!(found.message.contains("history x"), "{found}");
@@ -694,11 +1038,34 @@ mod tests {
 
         let found = error("param depth = 2 [0, 1]");
         assert!(found.message.contains("outside"), "{found}");
+
+        let found = error("param steps[4] = 0 [0, 1]\nout = steps");
+        assert!(found.message.contains("steps[<index>]"), "{found}");
+
+        let found = error("param steps[4] = 0 [0, 1]\nsteps[0] = 1");
+        assert!(found.message.contains("cannot write"), "{found}");
+
+        let found = error("x = delay(in, 10, in)");
+        assert!(found.message.contains("longest time"), "{found}");
     }
 
     #[test]
     fn a_name_is_read_only_below_the_line_that_sets_it() {
         assert!(compile(&lines("out = x\nx = in")).is_err());
         assert!(compile(&lines("history x\nout = x\nx = in")).is_ok());
+    }
+
+    #[test]
+    fn the_code_says_what_the_record_and_the_interface_give_it() {
+        let code = compile(&lines(
+            "param rate = 4 [0.1, 20]\nparam steps[16] = 0 [0, 1]\nlive x = 0.5 [0, 1]\ntrigger hit\nbuffer loop = 2\nwatch level = abs(in)",
+        ))
+        .unwrap();
+        assert_eq!(code.parameters.len(), 1);
+        assert_eq!(code.arrays[0].length, 16);
+        assert_eq!(code.lives[0].name, "x");
+        assert_eq!(code.triggers, ["hit"]);
+        assert_eq!(code.watches, ["level"]);
+        assert_eq!(code.slots.buffers, [2.0]);
     }
 }

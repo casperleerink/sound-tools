@@ -23,13 +23,39 @@ pub(crate) enum Node {
         text: String,
     },
     Knob(KnobNode),
+    /// A row of steps on a pattern of the record.
+    Steps {
+        path: String,
+        /// What a step that is on holds. 1 when left out.
+        #[serde(default)]
+        max: Option<f32>,
+        /// The watch that says which step plays.
+        #[serde(default)]
+        playing: Option<String>,
+    },
+    /// A bar from 0 to 1 that shows a watch.
+    Meter {
+        watch: String,
+        #[serde(default)]
+        label: Option<String>,
+    },
+    /// A square that plays two live controls with the pointer.
+    Pad {
+        x: String,
+        y: String,
+        #[serde(default)]
+        size: Option<f32>,
+    },
 }
 
-/// A knob on the number at `path` in the record.
+/// A knob on the number at `path` in the record, or on the live control `live`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KnobNode {
-    pub path: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub live: Option<String>,
     pub label: String,
     pub min: f32,
     pub max: f32,
@@ -167,10 +193,14 @@ impl Style {
     }
 }
 
-/// What a card does for the nodes that need the view: a click and a knob.
+/// What a card does for the nodes that need the view: everything that is played or shows what
+/// plays.
 pub(crate) trait Controls {
     fn clickable(&mut self, element: Div, id: ElementId, handler: usize) -> AnyElement;
     fn knob(&mut self, knob: &KnobNode) -> AnyElement;
+    fn steps(&mut self, path: &str, max: f32, playing: Option<&str>) -> AnyElement;
+    fn meter(&mut self, watch: &str, label: Option<&str>) -> AnyElement;
+    fn pad(&mut self, x: &str, y: &str, size: f32) -> AnyElement;
 }
 
 /// `index` tells siblings apart, so every element that needs an id gets its own.
@@ -178,6 +208,11 @@ pub(crate) fn draw(node: &Node, index: &[usize], controls: &mut impl Controls) -
     match node {
         Node::Text { text } => SharedString::from(text.clone()).into_any_element(),
         Node::Knob(knob) => controls.knob(knob),
+        Node::Steps { path, max, playing } => {
+            controls.steps(path, max.unwrap_or(1.0), playing.as_deref())
+        }
+        Node::Meter { watch, label } => controls.meter(watch, label.as_deref()),
+        Node::Pad { x, y, size } => controls.pad(x, y, size.unwrap_or(120.0)),
         Node::Div {
             style,
             on_click,
@@ -202,6 +237,21 @@ pub(crate) fn draw(node: &Node, index: &[usize], controls: &mut impl Controls) -
             }
         }
     }
+}
+
+/// The numbers of the list at a dotted path such as `steps`.
+pub(crate) fn numbers_at(state: &serde_json::Value, path: &str) -> Option<Vec<f32>> {
+    let mut value = state;
+    for key in path.split('.') {
+        value = value.get(key)?;
+    }
+    let items = value.as_array()?;
+    Some(
+        items
+            .iter()
+            .map(|item| item.as_f64().unwrap_or(0.0) as f32)
+            .collect(),
+    )
 }
 
 /// The number at a dotted path such as `values.rate`.

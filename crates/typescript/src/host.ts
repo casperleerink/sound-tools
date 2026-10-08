@@ -1,10 +1,10 @@
-// Runs the project's own tools and cards, in Bun, with the `extensions` folder of the project
-// as its working folder. One JSON message per line: the runtime asks on stdin, this answers on
+// Runs the project's own tools, in Bun, with the `extensions` folder of the project as its
+// working folder. One JSON message per line: the runtime asks on stdin, this answers on
 // stdout. What a tool logs goes to stderr, so it cannot break a message.
 
 import { readdirSync, watch } from "node:fs";
 import { join } from "node:path";
-import type { Child, Fields, Node, ToolSpec } from "./sdk";
+import type { Child, Controls, Fields, Node, ToolSpec } from "./sdk";
 
 const folder = process.cwd();
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
@@ -15,7 +15,13 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 
 type Request =
   | { type: "sound"; id: number; tool: string; choices: Record<string, string | number> }
-  | { type: "render"; card: number; tool: string; state: unknown }
+  | {
+      type: "render";
+      card: number;
+      tool: string;
+      state: unknown;
+      watches: Record<string, number>;
+    }
   | { type: "event"; card: number; handler: number }
   | { type: "drop"; card: number };
 
@@ -23,7 +29,7 @@ type Request =
 type Sent =
   | { type: "div"; style?: unknown; onClick?: number; children: Sent[] }
   | { type: "text"; text: string }
-  | { type: "knob"; path: string; label: string; min: number; max: number; default: number };
+  | Exclude<Node, { type: "div" }>;
 
 /** With `SOUND_TOOLS_TIMING` set, what happens when, for a measurement. */
 const timing = process.env.SOUND_TOOLS_TIMING
@@ -44,7 +50,7 @@ const NAME = /^[a-z0-9_-]+$/;
 const HUM_NAME = /^[a-z_][a-z0-9_]*$/;
 
 /** What is wrong with the definition of a tool, so the agent that wrote it can fix it. */
-function problemsOf(spec: ToolSpec<Fields>): string[] {
+function problemsOf(spec: ToolSpec<Fields, Controls>): string[] {
   const problems: string[] = [];
   if (!NAME.test(spec.name ?? "")) {
     problems.push(`name ${JSON.stringify(spec.name)}: use lowercase letters, digits, - and _`);
@@ -57,15 +63,36 @@ function problemsOf(spec: ToolSpec<Fields>): string[] {
   if (typeof spec.sound !== "function") {
     problems.push("sound: give a function that returns hum`...`");
   }
+  const kind = spec.kind ?? "effect";
+  if (!["effect", "instrument", "source"].includes(kind)) {
+    problems.push(`kind ${JSON.stringify(kind)}: use "effect", "instrument" or "source"`);
+  }
+  if (spec.voices !== undefined && (kind !== "instrument" || !(spec.voices >= 1 && spec.voices <= 8))) {
+    problems.push("voices: only an instrument has voices, from 1 to 8");
+  }
+  const range = (at: string, min: number, max: number, value: number) => {
+    if (!(min < max)) problems.push(`${at}: min must be below max`);
+    if (!(value >= min && value <= max)) {
+      problems.push(`${at}: default ${value} is outside [${min}, ${max}]`);
+    }
+  };
+  const names = [...Object.keys(spec.state ?? {}), ...Object.keys(spec.controls ?? {})];
+  for (const name of names) {
+    if (!HUM_NAME.test(name)) {
+      problems.push(`${name}: a field or control name is a Hum name: lowercase letters, digits and _`);
+    }
+    if (names.indexOf(name) !== names.lastIndexOf(name)) {
+      problems.push(`${name}: a field and a control cannot share a name`);
+    }
+  }
   for (const [name, field] of Object.entries(spec.state ?? {})) {
     const at = `state.${name}`;
-    if (!HUM_NAME.test(name)) {
-      problems.push(`${at}: a field name is a Hum name: lowercase letters, digits and _`);
-    }
     if (field.kind === "knob") {
-      if (!(field.min < field.max)) problems.push(`${at}: min must be below max`);
-      if (!(field.default >= field.min && field.default <= field.max)) {
-        problems.push(`${at}: default ${field.default} is outside [${field.min}, ${field.max}]`);
+      range(at, field.min, field.max, field.default);
+    } else if (field.kind === "pattern") {
+      range(at, field.min, field.max, field.default);
+      if (!(Number.isInteger(field.length) && field.length >= 1 && field.length <= 1024)) {
+        problems.push(`${at}: a pattern is 1 to 1024 long`);
       }
     } else if (field.kind === "choice") {
       if (field.options.length === 0) problems.push(`${at}: give at least one option`);
@@ -73,7 +100,14 @@ function problemsOf(spec: ToolSpec<Fields>): string[] {
         problems.push(`${at}: default ${JSON.stringify(field.default)} is not one of the options`);
       }
     } else if (field.kind !== "toggle") {
-      problems.push(`${at}: make it with knob(), toggle() or choice()`);
+      problems.push(`${at}: make it with knob(), toggle(), choice() or pattern()`);
+    }
+  }
+  for (const [name, control] of Object.entries(spec.controls ?? {})) {
+    if (control.kind === "live") {
+      range(`controls.${name}`, control.min, control.max, control.default);
+    } else if (control.kind !== "trigger") {
+      problems.push(`controls.${name}: make it with live() or trigger()`);
     }
   }
   return problems;
@@ -83,7 +117,6 @@ async function load() {
   timing("loads extensions/");
   version += 1;
   sdk.host.tools.clear();
-  sdk.host.cards.clear();
   files.clear();
   const errors: Array<{ file: string; message: string }> = [];
   for (const file of readdirSync(folder).sort()) {
@@ -116,39 +149,53 @@ async function load() {
       title: spec.title,
       when: spec.when,
       doc: spec.doc,
+      kind: spec.kind ?? "effect",
+      voices: spec.voices,
       fields: spec.state,
+      controls: spec.controls ?? {},
     }));
-  const cards = [...sdk.host.cards.keys(), ...tools.map((tool) => tool.name)];
-  send({ type: "loaded", tools, cards, errors });
+  send({ type: "loaded", tools, errors });
   timing("loaded extensions/");
 }
 
-/** The Hum of a tool for these choices: a `param` line per knob and toggle, then its code. */
+/**
+ * The Hum of a tool for these choices: a line per field and control, which says what the
+ * record and the card give the code, then its code.
+ */
 function sound(tool: string, choices: Record<string, string | number>): string[] {
   const spec = sdk.host.tools.get(tool);
   if (!spec) {
     throw new Error(`no tool ${tool} is loaded`);
   }
   const fields: Record<string, unknown> = {};
-  const params: string[] = [];
+  const lines: string[] = [];
   for (const [name, field] of Object.entries(spec.state)) {
     if (field.kind === "choice") {
       fields[name] = choices[name] ?? field.default;
-    } else {
-      fields[name] = new sdk.Param(name);
-      params.push(
-        field.kind === "knob"
-          ? `param ${name} = ${field.default} [${field.min}, ${field.max}]`
-          : `param ${name} = ${field.default ? 1 : 0} [0, 1]`,
-      );
+      continue;
     }
+    fields[name] = new sdk.Param(name);
+    if (field.kind === "knob") {
+      lines.push(`param ${name} = ${field.default} [${field.min}, ${field.max}]`);
+    } else if (field.kind === "toggle") {
+      lines.push(`param ${name} = ${field.default ? 1 : 0} [0, 1]`);
+    } else {
+      lines.push(`param ${name}[${field.length}] = ${field.default} [${field.min}, ${field.max}]`);
+    }
+  }
+  for (const [name, control] of Object.entries(spec.controls ?? {})) {
+    fields[name] = new sdk.Param(name);
+    lines.push(
+      control.kind === "live"
+        ? `live ${name} = ${control.default} [${control.min}, ${control.max}]`
+        : `trigger ${name}`,
+    );
   }
   const code = spec.sound(fields as never);
   if (!(code instanceof sdk.Hum)) {
     throw new Error("sound must return hum`...`");
   }
-  const lines = code.text.split("\n").map((line) => line.trim());
-  return [...params, ...lines];
+  return [...lines, ...code.text.split("\n").map((line) => line.trim())];
 }
 
 function flatten(child: Child, clicks: Array<() => void>, into: Sent[]) {
@@ -184,20 +231,27 @@ function serialize(node: Node, clicks: Array<() => void>): Sent {
   return { type: "div", style: node.style, onClick, children };
 }
 
-function render(card: number, tool: string, state: unknown) {
+function render(card: number, tool: string, state: unknown, watches: Record<string, number>) {
   const spec = sdk.host.tools.get(tool);
-  const draw = spec ? (spec.card ?? sdk.defaultCard(spec.state)) : sdk.host.cards.get(tool);
-  if (!draw) {
+  if (!spec) {
     return;
   }
+  const draw = spec.card ?? sdk.defaultCard(spec.state, spec.controls);
   try {
     const clicks: Array<() => void> = [];
     const node = (draw as (card: unknown) => Node)({
       state,
+      watches,
       update(label: string, change: (state: unknown) => void) {
         const next = structuredClone(state);
         change(next);
         send({ type: "edit", card, label, state: next });
+      },
+      set(control: string, value: number) {
+        send({ type: "control", card, name: control, value });
+      },
+      fire(control: string) {
+        send({ type: "control", card, name: control });
       },
     });
     const tree = serialize(node, clicks);
@@ -232,7 +286,7 @@ for await (const line of console) {
       }
       break;
     case "render":
-      render(request.card, request.tool, request.state);
+      render(request.card, request.tool, request.state, request.watches);
       break;
     case "event":
       try {
