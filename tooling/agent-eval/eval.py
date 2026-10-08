@@ -13,6 +13,8 @@ Earlier experiments, with their results next to this file:
 - `results-hum-vs-graph.jsonl`: a tool's sound written in Hum with a template against a graph of
   signals built with the SDK's functions. Both passed every task; the graph cost about 10% less
   and needs no doc of its own, so the SDK is the graph alone.
+- `results-experiments.jsonl`: a gravity harp page and a generative source built from scratch,
+  and a composer that edits the pattern of a builder's acid bass. Every run passed.
 """
 
 import argparse
