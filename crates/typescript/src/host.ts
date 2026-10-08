@@ -61,15 +61,15 @@ function fail(tool: string, message: string) {
 }
 let version = 0;
 
-const NAME = /^[a-z0-9_-]+$/;
 const HUM_NAME = /^[a-z][a-z0-9_]*$/;
 
-/** What is wrong with the definition of a tool, so the agent that wrote it can fix it. */
+/**
+ * What is wrong with the definition of a tool, so the agent that wrote it can fix it: what the
+ * runtime cannot see or does not check, its functions and its ranges. The runtime checks the
+ * name and the kinds.
+ */
 function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
   const problems: string[] = [];
-  if (!NAME.test(spec.name ?? "")) {
-    problems.push(`name ${JSON.stringify(spec.name)}: use lowercase letters, digits, - and _`);
-  }
   for (const key of ["tick", "card", "page", "memory"] as const) {
     if (spec[key] !== undefined && typeof spec[key] !== "function") {
       problems.push(`${key}: give a function`);
@@ -85,10 +85,6 @@ function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
   }
   if (typeof spec.state !== "object" || spec.state === null) {
     problems.push("state: give the fields of its record, {} for none");
-  }
-  const kind = spec.kind ?? "effect";
-  if (!["effect", "instrument", "source"].includes(kind)) {
-    problems.push(`kind ${JSON.stringify(kind)}: use "effect", "instrument" or "source"`);
   }
   const range = (at: string, min: number, max: number, value: number) => {
     if (!(min < max)) problems.push(`${at}: min must be below max`);
@@ -119,15 +115,11 @@ function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
       if (!field.options.includes(field.default)) {
         problems.push(`${at}: default ${JSON.stringify(field.default)} is not one of the options`);
       }
-    } else if (field.kind !== "toggle" && field.kind !== "sample") {
-      problems.push(`${at}: make it with knob(), toggle(), choice(), pattern() or sample()`);
     }
   }
   for (const [name, control] of Object.entries(spec.controls ?? {})) {
     if (control.kind === "live") {
       range(`controls.${name}`, control.min, control.max, control.default);
-    } else if (control.kind !== "trigger") {
-      problems.push(`controls.${name}: make it with live() or trigger()`);
     }
   }
   return problems;
