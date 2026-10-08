@@ -75,13 +75,23 @@ pub struct Code {
     /// Of the source lines, so a behaviour tells new code from new values.
     pub hash: u64,
     pub(crate) operations: Vec<Operation>,
-    /// The register of `out`, `None` when the code never sets it and passes its input.
-    pub(crate) output: Option<Register>,
+    pub(crate) output: Output,
     /// What each `history` takes for the next frame: the slot and the register.
     pub(crate) history_writes: Vec<(u16, Register)>,
     /// The register of each watch, in the order of [`Self::watches`].
     pub(crate) watch_registers: Vec<Register>,
     pub(crate) slots: Slots,
+}
+
+/// What leaves the code.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum Output {
+    /// It never sets `out`: the input passes.
+    Through,
+    /// `out`: the code runs on each channel apart.
+    Mono(Register),
+    /// `out_left` and `out_right`: the code runs once for both channels, and hears both.
+    Stereo(Register, Register),
 }
 
 /// How much of each kind of memory the operations use, per channel.
@@ -112,6 +122,8 @@ pub(crate) enum Table {
 pub(crate) enum Operation {
     Constant(f32),
     Input,
+    InputLeft,
+    InputRight,
     Channel,
     SampleRate,
     Beat,
@@ -269,9 +281,12 @@ const FUNCTIONS: &[(&str, &str)] = &[
 
 /// The names code reads but never sets.
 const BUILT_IN: &[&str] = &[
-    "in", "channel", "sr", "pi", "tau", "beat", "bpm", "playing", "freq", "pitch", "gate",
-    "velocity", "onset",
+    "in", "in_left", "in_right", "channel", "sr", "pi", "tau", "beat", "bpm", "playing", "freq",
+    "pitch", "gate", "velocity", "onset",
 ];
+
+/// The names of what leaves the code.
+const OUTPUTS: &[&str] = &["out", "out_left", "out_right"];
 
 /// What a line can start with besides a name.
 const KEYWORDS: &[&str] = &["param", "live", "trigger", "watch", "history", "buffer"];
@@ -291,7 +306,7 @@ pub fn compile(lines: &[String]) -> Result<Code, CompileError> {
             watches: Vec::new(),
             hash: hasher.finish(),
             operations: Vec::new(),
-            output: None,
+            output: Output::Through,
             history_writes: Vec::new(),
             watch_registers: Vec::new(),
             slots: Slots::default(),
@@ -318,9 +333,20 @@ pub fn compile(lines: &[String]) -> Result<Code, CompileError> {
             message: format!("history `{name}` is never set: set it with `{name} = ...`"),
         });
     }
-    compiler.code.output = match compiler.names.get("out") {
+    let set = |name: &str| match compiler.names.get(name) {
         Some(Binding::Value(register)) => Some(*register),
         _ => None,
+    };
+    compiler.code.output = match (set("out"), set("out_left"), set("out_right")) {
+        (None, None, None) => Output::Through,
+        (Some(out), None, None) => Output::Mono(out),
+        (None, Some(left), Some(right)) => Output::Stereo(left, right),
+        _ => {
+            return Err(CompileError {
+                line: lines.len().saturating_sub(1),
+                message: "set `out`, which runs on each channel apart, or both `out_left` and `out_right`, which run once for both".to_string(),
+            });
+        }
     };
     Ok(compiler.code)
 }
@@ -669,7 +695,10 @@ impl Compiler {
         let Some(Token::Name(name)) = tokens.next().cloned() else {
             return self.error("a name must follow");
         };
-        if BUILT_IN.contains(&name.as_str()) || name == "out" || KEYWORDS.contains(&name.as_str()) {
+        let reserved = [BUILT_IN, OUTPUTS, KEYWORDS]
+            .iter()
+            .any(|names| names.contains(&name.as_str()));
+        if reserved {
             return self.error(format!("`{name}` is built in"));
         }
         if self.names.contains_key(&name) {
@@ -784,6 +813,8 @@ impl Compiler {
     fn read(&mut self, name: &str) -> Result<Register, CompileError> {
         let operation = match name {
             "in" => Operation::Input,
+            "in_left" => Operation::InputLeft,
+            "in_right" => Operation::InputRight,
             "channel" => Operation::Channel,
             "sr" => Operation::SampleRate,
             "pi" => Operation::Constant(std::f32::consts::PI),
@@ -1050,6 +1081,12 @@ mod tests {
 
         let found = error("x = delay(in, 10, in)");
         assert!(found.message.contains("longest time"), "{found}");
+
+        let found = error("out_left = in");
+        assert!(
+            found.message.contains("both `out_left` and `out_right`"),
+            "{found}"
+        );
     }
 
     #[test]

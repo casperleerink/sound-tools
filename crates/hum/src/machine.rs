@@ -9,7 +9,7 @@
 use sound_core::{CHANNELS, DelayLine, SVF_MAX_Q, SvfFactors, SvfSection, amplitude, soft_clip};
 
 use crate::language::{
-    Binary, Code, FilterKind, MAX_PARAMETERS, Operation, Register, Table, Unary,
+    Binary, Code, FilterKind, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
 };
 
 /// Where every param stands, in the order of the `param` lines, and every list of the record,
@@ -172,20 +172,39 @@ impl Machine {
     /// One frame of both channels.
     pub(crate) fn frame(&mut self, inputs: &Inputs<'_>) -> [f32; CHANNELS] {
         let mut output = [0.0; CHANNELS];
-        for (channel, sample) in output.iter_mut().enumerate() {
-            *sample = self.run(channel, inputs);
-            if channel == 0 {
-                for (watched, register) in self.watched.iter_mut().zip(&self.code.watch_registers) {
-                    *watched = self
-                        .registers
-                        .get(usize::from(*register))
-                        .copied()
-                        .unwrap_or(0.0);
+        if let Output::Stereo(left, right) = self.code.output {
+            // Once, with the memory of the left channel, for both.
+            self.run(0, inputs);
+            self.keep_watches();
+            output = [left, right].map(|register| held(self.register(register)));
+        } else {
+            for (channel, sample) in output.iter_mut().enumerate() {
+                *sample = self.run(channel, inputs);
+                if channel == 0 {
+                    self.keep_watches();
                 }
             }
         }
         self.position = self.position.wrapping_add(1);
         output
+    }
+
+    fn register(&self, register: Register) -> f32 {
+        self.registers
+            .get(usize::from(register))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// The watches show the left channel.
+    fn keep_watches(&mut self) {
+        for (watched, register) in self.watched.iter_mut().zip(&self.code.watch_registers) {
+            *watched = self
+                .registers
+                .get(usize::from(*register))
+                .copied()
+                .unwrap_or(0.0);
+        }
     }
 
     fn run(&mut self, channel: usize, inputs: &Inputs<'_>) -> f32 {
@@ -209,6 +228,8 @@ impl Machine {
             let value = match *operation {
                 Operation::Constant(value) => value,
                 Operation::Input => input,
+                Operation::InputLeft => inputs.input[0],
+                Operation::InputRight => inputs.input[1],
                 Operation::Channel => channel as f32,
                 Operation::SampleRate => sample_rate,
                 Operation::Beat => inputs.beat as f32,
@@ -368,11 +389,10 @@ impl Machine {
                 *history = finite(value);
             }
         }
-        let output = match code.output {
-            Some(register) => registers.get(usize::from(register)).copied().unwrap_or(0.0),
-            None => input,
-        };
-        finite(output).clamp(-LIMIT, LIMIT)
+        held(match code.output {
+            Output::Mono(register) => registers.get(usize::from(register)).copied().unwrap_or(0.0),
+            Output::Through | Output::Stereo(..) => input,
+        })
     }
 }
 
@@ -539,6 +559,11 @@ fn apply_binary(binary: Binary, a: f32, b: f32) -> f32 {
         Binary::Max => a.max(b),
         Binary::Power => a.powf(b),
     }
+}
+
+/// What leaves the code: held to [`LIMIT`], and 0 where it is not a number.
+fn held(sample: f32) -> f32 {
+    finite(sample).clamp(-LIMIT, LIMIT)
 }
 
 /// A value that is not a number, or infinite, would stay in a memory for good. It is 0.

@@ -45,7 +45,7 @@ Combine signals with methods, which take a signal or a number: `.plus`, `.minus`
 
 | | |
 | --- | --- |
-| What comes in | `input` (an effect), `channel` (0 left, 1 right), `sampleRate` |
+| What comes in | `input` (an effect), `channel` (0 left, 1 right), `sampleRate`; `inputLeft`, `inputRight` for a stereo sound |
 | The note of a voice | `note.freq` (Hz, with bend), `note.pitch` (MIDI, 69 is A4), `note.gate` (1 while held), `note.velocity` (0 to 1), `note.onset` (1 in its first sample) |
 | The piece | `beat` (quarter notes from the start, while playing), `bpm`, `playing` |
 | Math | `sin`, `cos`, `tan`, `tanh`, `abs`, `sqrt`, `exp`, `log`, `floor`, `wrap` (the part after the point), `min`, `max`, `pow`, `clamp`, `mix(a, b, amount)`, `db(decibels)`, `saturate`, `PI`, `TAU` |
@@ -54,6 +54,8 @@ Combine signals with methods, which take a signal or a number: `.plus`, `.minus`
 | Filters | `lowpass`, `highpass`, `bandpass(x, hz, q?)` |
 | Events | `rise(x)`: 1 where `x` goes above 0, a clock: `rise(wrap(beat.times(4)).lt(0.5))` ticks every sixteenth. `change(x)`, `hold(x, when)`: sample and hold |
 | Tables | a `pattern` field and a `buffer`: `.at(index)` (whole part, wrapped), `lookup(table, phase)` (0 to 1 over the table, smooth), `.length` |
+
+A sound that returns one signal runs on each channel apart. One that returns `{ left, right }` runs once for both and hears both through `inputLeft` and `inputRight`: a ping-pong delay, a panner, a widener.
 
 A signal used twice is one: `const lfo = phasor(2)` heard in two places is one oscillator with one memory; call `phasor(2)` twice for two.
 

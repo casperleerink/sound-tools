@@ -217,6 +217,18 @@ function building(): Building {
 
 /** The sample that comes in, in an effect. 0 in an instrument or a source. */
 export const input: Signal = new Named("in");
+/** Both channels of what comes in, for a sound that returns `{ left, right }`. */
+export const inputLeft: Signal = new Named("in_left");
+export const inputRight: Signal = new Named("in_right");
+
+/**
+ * A sound in stereo: it runs once per sample for both channels and hears both, for a ping-pong,
+ * a panner or a widener. A sound that returns one signal runs on each channel apart.
+ */
+export interface Stereo {
+  left: Operand;
+  right: Operand;
+}
 /** 0 on the left channel, 1 on the right. */
 export const channel: Signal = new Named("channel");
 export const sampleRate: Signal = new Named("sr");
@@ -346,7 +358,7 @@ export function watch(name: string, value: Operand): void {
 const INFIX = new Set(["+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!="]);
 
 /** For the host: the Hum of a sound. `build` makes the output; what it declares is kept meanwhile. */
-export function graphToHum(build: () => Operand): string[] {
+export function graphToHum(build: () => Operand | Stereo): string[] {
   current = { feedbacks: [], buffers: [], writes: [], watches: [] };
   try {
     const declared = current;
@@ -372,7 +384,10 @@ export function graphToHum(build: () => Operand): string[] {
       lines.push(`${name} = ${expression}`);
       return name;
     };
-    const out = text(output);
+    const outs =
+      typeof output === "object" && !(output instanceof Signal)
+        ? [`out_left = ${text(output.left)}`, `out_right = ${text(output.right)}`]
+        : [`out = ${text(output)}`];
     for (const [name, value] of declared.watches) lines.push(`watch ${name} = ${text(value)}`);
     for (const [name, index, value] of declared.writes) {
       lines.push(`${name}[${text(index)}] = ${text(value)}`);
@@ -387,7 +402,7 @@ export function graphToHum(build: () => Operand): string[] {
       ...declared.buffers.map(([name, seconds]) => `buffer ${name} = ${humNumber(seconds)}`),
       ...declared.feedbacks.map((feedback) => `history ${feedback.name}`),
       ...lines,
-      `out = ${out}`,
+      ...outs,
     ];
   } finally {
     current = undefined;
@@ -428,8 +443,8 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   state: S;
   /** What its card plays and nothing saves. Names are as field names. */
   controls?: C;
-  /** Its sound: a `Signal` made with the functions of the sound graph. */
-  sound: (fields: SoundOf<S, C>) => Operand;
+  /** Its sound: a `Signal` made with the functions of the sound graph, or a `Stereo` pair. */
+  sound: (fields: SoundOf<S, C>) => Operand | Stereo;
   /**
    * What the control loop and the card of an instance keep, and nothing saves: positions of
    * a simulation, the last thing played. Made new for each instance, and when the code loads.

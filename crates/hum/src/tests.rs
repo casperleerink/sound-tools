@@ -219,3 +219,21 @@ fn rise_fires_once_when_a_value_goes_up_and_hold_keeps_it_until_the_next() {
     // What `hold` kept in frame 4, while `in` was 1, is still there in frame 7.
     assert!((output[7] - 0.001).abs() < 1e-6);
 }
+
+#[test]
+fn stereo_code_hears_both_channels_and_sets_both() {
+    let mut swap = machine(&["out_left = in_right", "out_right = in_left * 0.5"]);
+    let parameters = defaults(&swap);
+    let inputs = Inputs {
+        input: [0.25, 1.0],
+        parameters: &parameters,
+        lives: &[],
+        arrays: &[],
+        triggers: 0,
+        beat: 0.0,
+        bpm: 120.0,
+        playing: false,
+        note: Note::default(),
+    };
+    assert_eq!(swap.frame(&inputs), [1.0, 0.125]);
+}

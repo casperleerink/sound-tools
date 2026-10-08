@@ -217,8 +217,9 @@ function sound(tool: string, choices: Record<string, string | number>): string[]
   }
   const code = sdk.graphToHum(() => {
     const sound = spec.sound(fields as never);
-    if (!(sound instanceof sdk.Signal) && typeof sound !== "number") {
-      throw new Error("sound must return a Signal, made with the functions of the SDK");
+    const stereo = typeof sound === "object" && "left" in sound && "right" in sound;
+    if (!(sound instanceof sdk.Signal) && typeof sound !== "number" && !stereo) {
+      throw new Error("sound must return a Signal, or { left, right }, made with the functions of the SDK");
     }
     return sound;
   });
