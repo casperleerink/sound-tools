@@ -15,6 +15,7 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 
 type Request =
   | { type: "sound"; id: number; tool: string; choices: Record<string, string | number> }
+  | { type: "draw"; id: number; tool: string; page: boolean }
   | {
       type: "render";
       card: number;
@@ -318,6 +319,44 @@ function render(request: Extract<Request, { type: "render" }>) {
   }
 }
 
+/** Answers a question of the runtime with what `make` gives, or why it failed. */
+function answer(id: number, make: () => unknown) {
+  try {
+    send({ type: "answer", id, value: make() });
+  } catch (error) {
+    send({ type: "answer", id, error: String(error) });
+  }
+}
+
+/** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */
+function draw(tool: string, page: boolean): Sent {
+  const spec = sdk.host.tools.get(tool);
+  if (!spec) {
+    throw new Error(`no tool ${tool} is loaded`);
+  }
+  const memory = spec.memory ? spec.memory() : {};
+  const quiet = { set() {}, fire() {} };
+  if (spec.tick) {
+    try {
+      spec.tick({ state: {}, watches: {}, memory, dt: 1 / 30, ...quiet });
+    } catch (error) {
+      throw new Error(`its tick fails: ${error}`);
+    }
+  }
+  const make = page ? spec.page : (spec.card ?? sdk.defaultCard(spec.state, spec.controls));
+  if (!make) {
+    throw new Error("it has no page");
+  }
+  const node = (make as (card: unknown) => Node)({
+    state: {},
+    watches: {},
+    memory,
+    update() {},
+    ...quiet,
+  });
+  return serialize(node, []);
+}
+
 /** One step of the control loop of each instance, then its cards draw again. */
 function frame(request: Extract<Request, { type: "frame" }>) {
   for (const { instance, tool, state, watches } of request.instances) {
@@ -356,11 +395,10 @@ for await (const line of console) {
   timing(`got ${request.type}`);
   switch (request.type) {
     case "sound":
-      try {
-        send({ type: "sound", id: request.id, code: sound(request.tool, request.choices) });
-      } catch (error) {
-        send({ type: "sound", id: request.id, error: String(error) });
-      }
+      answer(request.id, () => sound(request.tool, request.choices));
+      break;
+    case "draw":
+      answer(request.id, () => draw(request.tool, request.page));
       break;
     case "render":
       render(request);

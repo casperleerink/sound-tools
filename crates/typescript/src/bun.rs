@@ -1,6 +1,6 @@
 //! The Bun process that runs `host.ts`, and the two ways to talk to it: a question that waits
-//! for its answer, which a behaviour asks for the Hum of a tool, and messages that come when
-//! they come, which the window reads. One JSON message per line, both ways.
+//! for its answer, such as the Hum of a tool, and messages that come when they come, which the
+//! window reads. One JSON message per line, both ways.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Write};
@@ -22,10 +22,18 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Request<'a> {
+    /// The Hum of a tool with these choices: the answer is its lines.
     Sound {
         id: u64,
         tool: &'a str,
         choices: &'a serde_json::Map<String, serde_json::Value>,
+    },
+    /// The tree of a tool's card, or its page, at its defaults after one tick: a check that
+    /// it draws, without a window.
+    Draw {
+        id: u64,
+        tool: &'a str,
+        page: bool,
     },
     Render {
         card: u64,
@@ -111,14 +119,14 @@ pub(crate) struct LoadError {
     pub message: String,
 }
 
-/// The answer to a question, see [`Bun::sound`].
+/// The answer to a question, see [`Bun::ask`].
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Answer {
-    Sound {
+    Answer {
         id: u64,
         #[serde(default)]
-        code: Option<Vec<String>>,
+        value: Option<serde_json::Value>,
         #[serde(default)]
         error: Option<String>,
     },
@@ -131,7 +139,7 @@ enum Line {
     Event(Event),
 }
 
-type Waiting = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Vec<String>, String>>>>>;
+type Waiting = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>;
 
 pub(crate) struct Bun {
     stdin: Mutex<ChildStdin>,
@@ -142,15 +150,6 @@ pub(crate) struct Bun {
     first_load: Mutex<mpsc::Receiver<Loaded>>,
     /// Ended when the runtime lets go of it, and the process with it.
     child: Mutex<Child>,
-    /// What [`Bun::send`] and [`Bun::sound`] wrote, for a measurement.
-    pub(crate) sent: Sent,
-}
-
-/// Counts of what the runtime sent Bun.
-#[derive(Default)]
-pub(crate) struct Sent {
-    pub sounds: AtomicU64,
-    pub renders: AtomicU64,
 }
 
 impl Bun {
@@ -185,8 +184,8 @@ impl Bun {
                         }
                     };
                     match serde_json::from_str::<Line>(&line) {
-                        Ok(Line::Answer(Answer::Sound { id, code, error })) => {
-                            let answer = code.ok_or_else(|| error.unwrap_or_default());
+                        Ok(Line::Answer(Answer::Answer { id, value, error })) => {
+                            let answer = value.ok_or_else(|| error.unwrap_or_default());
                             let waiter = reader_waiting.lock().ok().and_then(|mut w| w.remove(&id));
                             // The question timed out and nobody waits any more.
                             if let Some(waiter) = waiter {
@@ -220,7 +219,6 @@ impl Bun {
             events: received,
             first_load: Mutex::new(first_load),
             child: Mutex::new(child),
-            sent: Sent::default(),
         })
     }
 
@@ -251,14 +249,27 @@ impl Bun {
         tool: &str,
         choices: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<Vec<String>, String> {
+        let lines = self.ask(|id| Request::Sound { id, tool, choices })?;
+        serde_json::from_value(lines).map_err(|error| error.to_string())
+    }
+
+    /// The tree of the card of `tool`, or of its page, at its defaults. Waits for Bun.
+    pub(crate) fn draw(&self, tool: &str, page: bool) -> Result<serde_json::Value, String> {
+        self.ask(|id| Request::Draw { id, tool, page })
+    }
+
+    /// Asks Bun and waits for the answer, at most [`ANSWER_TIMEOUT`].
+    fn ask<'a>(
+        &self,
+        request: impl FnOnce(u64) -> Request<'a>,
+    ) -> Result<serde_json::Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (answer, wait) = mpsc::channel();
         self.waiting
             .lock()
             .map_err(|_| "the TypeScript host broke".to_string())?
             .insert(id, answer);
-        self.sent.sounds.fetch_add(1, Ordering::Relaxed);
-        self.send(&Request::Sound { id, tool, choices });
+        self.send(&request(id));
         match wait.recv_timeout(ANSWER_TIMEOUT) {
             Ok(answer) => answer,
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -266,7 +277,7 @@ impl Bun {
                     waiting.remove(&id);
                 }
                 Err(format!(
-                    "the sound of {tool} took longer than {ANSWER_TIMEOUT:?}"
+                    "the TypeScript host took longer than {ANSWER_TIMEOUT:?}"
                 ))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -277,9 +288,6 @@ impl Bun {
 
     /// Tells Bun something and does not wait.
     pub(crate) fn send(&self, request: &Request) {
-        if matches!(request, Request::Render { .. }) {
-            self.sent.renders.fetch_add(1, Ordering::Relaxed);
-        }
         let line = match serde_json::to_string(request) {
             Ok(json) => json + "\n",
             Err(error) => return eprintln!("error: {error}"),
