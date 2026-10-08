@@ -84,7 +84,7 @@ fn a_record_that_waited_for_its_tool_loads_when_the_tool_is_defined() {
     let (mut project, _folder) = open(Registry::new());
     assert_eq!(problem_paths(&project), ["state/a.json"]);
 
-    project.define_json_tool(wobble(10.0, 1, &seen)).unwrap();
+    project.define_json_tools([wobble(10.0, 1, &seen)]).unwrap();
 
     assert!(project.problems().is_empty(), "{:?}", project.problems());
     assert_eq!(project.tool_of(&id("a")), Some("wobble"));
@@ -99,7 +99,7 @@ fn a_tool_defined_again_runs_its_new_behaviour_and_its_new_check_refuses_what_it
     let (mut project, _folder) = open(registry);
 
     // New code that sounds different: every instance runs it, from the record it has.
-    project.define_json_tool(wobble(10.0, 2, &seen)).unwrap();
+    project.define_json_tools([wobble(10.0, 2, &seen)]).unwrap();
     assert_eq!(
         seen.borrow().last(),
         Some(&json!({ "version": 2, "state": { "rate": 3 } }))
@@ -108,7 +108,7 @@ fn a_tool_defined_again_runs_its_new_behaviour_and_its_new_check_refuses_what_it
 
     // A check the record fails: the file is a problem that names the field, and what plays
     // stays as it was, so the new behaviour never sees the record its check refuses.
-    project.define_json_tool(wobble(2.0, 3, &seen)).unwrap();
+    project.define_json_tools([wobble(2.0, 3, &seen)]).unwrap();
     let problems = project.problems();
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert_eq!(problems[0].path, "state/a.json");
@@ -119,7 +119,7 @@ fn a_tool_defined_again_runs_its_new_behaviour_and_its_new_check_refuses_what_it
     assert_eq!(seen.borrow().last().unwrap()["version"], 2);
 
     // Back to a check it passes, and the problem goes.
-    project.define_json_tool(wobble(10.0, 4, &seen)).unwrap();
+    project.define_json_tools([wobble(10.0, 4, &seen)]).unwrap();
     assert!(project.problems().is_empty(), "{:?}", project.problems());
 }
 
@@ -161,7 +161,7 @@ fn the_doc_of_a_tool_of_the_project_is_in_the_map_and_follows_the_tool() {
     assert!(project.agent_doc().contains("You want wobble 1"));
     assert!(project.agent_doc().contains("| `wobble` | `<name>.json` |"));
 
-    project.define_json_tool(wobble(10.0, 2, &seen)).unwrap();
+    project.define_json_tools([wobble(10.0, 2, &seen)]).unwrap();
     project.poll().unwrap();
     assert!(
         std::fs::read_to_string(&doc)

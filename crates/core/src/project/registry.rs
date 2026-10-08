@@ -31,7 +31,7 @@ pub enum RegistryError {
 /// A tool whose saved state is JSON checked by a function instead of a Rust type: a tool the
 /// project defines for itself, such as one written in TypeScript. Its records load in every
 /// project, with no extension to enable, and it may be defined again while the project is
-/// open, see [`Project::define_json_tool`]. Its records live anywhere and own no children.
+/// open, see [`Project::define_json_tools`]. Its records live anywhere and own no children.
 pub struct JsonTool {
     /// The `tool` of its records, and the name of its doc.
     pub name: String,

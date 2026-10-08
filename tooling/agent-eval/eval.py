@@ -243,6 +243,40 @@ def check_sweep(folder: Path) -> dict:
     }
 
 
+def setup_texture(folder: Path) -> None:
+    """The piece, and three seconds of a soft chord under `assets/audio/texture.wav`."""
+    import math
+    import struct
+    import wave
+    piece(folder)
+    path = folder / "assets/audio/texture.wav"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as file:
+        file.setnchannels(1)
+        file.setsampwidth(2)
+        file.setframerate(44100)
+        frames = []
+        for frame in range(3 * 44100):
+            t = frame / 44100
+            value = sum(math.sin(math.tau * hz * t) for hz in (220, 277.2, 329.6, 440)) * 0.15
+            frames.append(struct.pack("<h", int(value * 32767 * math.exp(-0.3 * t))))
+        file.writeframes(b"".join(frames))
+
+
+def check_granular(folder: Path) -> dict:
+    tools = project_tools(folder)
+    played = [(track, tool) for track, tool in instruments(folder).items() if tool in tools]
+    text = tools.get(played[0][1], "") if played else ""
+    state = record(folder, f"state/arrangement/{played[0][0]}/instrument.json").get("state", {}) if played else {}
+    return {
+        "a project tool plays a track": bool(played),
+        "with a sample field": "sample(" in text,
+        "on the recording": "texture.wav" in json.dumps(state) or '"texture.wav"' in text,
+        "it sounds": bool(played) and sounds(folder, played[0][0]),
+        "no problems": no_problems(folder),
+    }
+
+
 def check_experiment(folder: Path) -> dict:
     tools = project_tools(folder)
     top = [path for path in (folder / "state").glob("*.json")
@@ -308,6 +342,11 @@ SCENARIOS = {
                            "The acid bass is cool. Make its pattern play every eighth note and "
                            "nothing in between, put an accent on each beat, and make it a bit "
                            "darker and an octave lower."),
+    "granular-builder": (setup_texture, check_granular,
+                         "I put a recording in assets/audio/texture.wav. Make a granular cloud "
+                         "of it on a new track: it sprays tiny grains of the recording by itself, "
+                         "with knobs for grain size, density, where in the file it reads, and how "
+                         "much the grains' pitch spreads."),
     "composer-sweep": (setup_acid_bass, check_sweep,
                        "Over bars 3 and 4, sweep the acid bass filter cutoff up from dark to "
                        "bright."),

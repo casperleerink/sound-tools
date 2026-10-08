@@ -454,17 +454,24 @@ impl Project {
         Ok(true)
     }
 
-    /// Defines a tool of the project while it is open, or defines it again because its code
-    /// changed. Its records are read again, so one that waited for the tool loads and one the
-    /// new check refuses is a problem, and every instance of it runs the new behaviour. Where
-    /// that fails, what plays stays as it is and the record says why, as for a failed file.
-    /// Nothing is written and nothing is an undo step: no record changed.
-    pub fn define_json_tool(&mut self, tool: JsonTool) -> Result<(), ProjectError> {
-        let name = tool.name.clone();
-        self.registry.json_tool(tool)?;
+    /// Defines tools of the project while it is open, or defines them again because their
+    /// code changed. Their records are read again, so one that waited for its tool loads and
+    /// one the new check refuses is a problem, and every instance of them runs the new
+    /// behaviour. Where that fails, what plays stays as it is and the record says why, as for a
+    /// failed file. Nothing is written and nothing is an undo step: no record changed. All the
+    /// tools of one save come in one call, which reads the folder once.
+    pub fn define_json_tools(
+        &mut self,
+        tools: impl IntoIterator<Item = JsonTool>,
+    ) -> Result<(), ProjectError> {
+        let mut names = BTreeSet::new();
+        for tool in tools {
+            names.insert(tool.name.clone());
+            self.registry.json_tool(tool)?;
+        }
         self.generated_are_stale = true;
         let live: Vec<InstanceId> = (self.instances.iter())
-            .filter(|(_, record)| record.tool == name)
+            .filter(|(_, record)| names.contains(record.tool))
             .map(|(id, _)| id.clone())
             .collect();
         // Read again even where the file did not change: the check did.

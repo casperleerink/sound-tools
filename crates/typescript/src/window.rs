@@ -466,12 +466,14 @@ impl Live {
             }
         }
         // Every tool, changed or not: its file was saved, so its `sound` may make other Hum.
-        for info in &loaded.tools {
-            let tool = info.json_tool(&self.bun);
-            session.update(cx, |session, cx| {
-                session.edit(cx, |project| project.define_json_tool(tool));
-            });
-        }
+        let tools: Vec<_> = loaded
+            .tools
+            .iter()
+            .map(|info| info.json_tool(&self.bun))
+            .collect();
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| project.define_json_tools(tools));
+        });
         session.update(cx, |session, cx| {
             session.background(cx, |project| {
                 project.set_problems_in(&format!("{FOLDER}/"), problems);
