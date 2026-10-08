@@ -128,6 +128,18 @@ pub(crate) fn decode_record(
     (definition.decode)(file.state).map_err(Unloadable::Invalid)
 }
 
+/// The tool a record file names, with nothing else checked. `None` when the file does not
+/// read or names no tool.
+pub(crate) fn tool_named_in(path: &Path) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Named {
+        tool: String,
+    }
+    let bytes = fs::read(path).ok()?;
+    let named: Named = serde_json::from_slice(&bytes).ok()?;
+    Some(named.tool)
+}
+
 pub(crate) fn decode_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
