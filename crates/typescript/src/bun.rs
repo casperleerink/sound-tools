@@ -200,13 +200,18 @@ impl Bun {
 
     /// The first [`Event::Loaded`], waiting at most `timeout`.
     pub(crate) fn first_load(&self, timeout: Duration) -> Result<Loaded, String> {
-        let first_load = self.first_load.lock().map_err(|_| "bun broke".to_string())?;
-        first_load.recv_timeout(timeout).map_err(|error| match error {
-            mpsc::RecvTimeoutError::Timeout => {
-                format!("bun did not load extensions/ within {timeout:?}")
-            }
-            mpsc::RecvTimeoutError::Disconnected => "bun stopped before it loaded".to_string(),
-        })
+        let first_load = self
+            .first_load
+            .lock()
+            .map_err(|_| "bun broke".to_string())?;
+        first_load
+            .recv_timeout(timeout)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => {
+                    format!("bun did not load extensions/ within {timeout:?}")
+                }
+                mpsc::RecvTimeoutError::Disconnected => "bun stopped before it loaded".to_string(),
+            })
     }
 
     /// The Hum of `tool` with these choices. Waits for Bun.

@@ -235,7 +235,13 @@ pub(crate) fn set_number(state: &mut serde_json::Value, path: &str, number: f32)
             _ => return,
         };
     }
-    *value = serde_json::Value::from(f64::from(number));
+    // As the shortest decimal that reads back as the same `f32`: a knob at 16.7 writes 16.7,
+    // not the 16.700000762939453 that a widening to `f64` would.
+    let decimal = number
+        .to_string()
+        .parse::<f64>()
+        .unwrap_or(f64::from(number));
+    *value = serde_json::Value::from(decimal);
 }
 
 #[cfg(test)]

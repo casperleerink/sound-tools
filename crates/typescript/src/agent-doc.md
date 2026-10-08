@@ -96,15 +96,17 @@ tool({
 Without one, the card has a knob per knob and a button per option and per toggle. For your own, give `card` in a `.tsx` file. It draws from the record and changes it; it keeps no state.
 
 ```tsx
-import { Knob, h, hum, knob, tool } from "./sdk";
+import { Knob, type Style, h, hum, knob, tool } from "./sdk";
+
+const column: Style = { gap: 8 };
+const button: Style = { paddingX: 8, paddingY: 4, radius: 6, background: "#2a2f3a" };
 
 tool({
   // name, title, when, doc, state and sound as above
   card: ({ state, update }) => (
-    <div style={{ gap: 8 }}>
+    <div style={column}>
       <Knob path="rate" label="Rate" min={0.1} max={20} default={4} unit="hz" />
-      <div style={{ paddingX: 8, paddingY: 4, radius: 6, background: "#2a2f3a" }}
-           onClick={() => update("Slow down", (next) => { next.rate = 1; })}>
+      <div style={button} onClick={() => update("Slow down", (next) => { next.rate = 1; })}>
         Slow
       </div>
     </div>

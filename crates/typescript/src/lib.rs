@@ -52,7 +52,7 @@ const TSCONFIG: &str = r#"{
 /// How an agent writes a tool of the project.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "extensions",
-    when: "No tool does what the composer wants, so you write a new effect for this project in TypeScript and Hum",
+    when: "No tool does what you need: write a new effect for this project",
     markdown: include_str!("agent-doc.md"),
 };
 
