@@ -24,6 +24,7 @@ use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
     ProjectError, Registry, SavedDestination, State, Ticks,
 };
+use sound_typescript::Extensions;
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use window::{LeftPanel, LeftPanelSlot};
 
@@ -153,6 +154,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     utility::register(&mut registry)?;
     wavetable::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
+    registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
@@ -419,14 +421,45 @@ pub fn open_or_create_with(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
+    Ok(open_with_extensions(folder, control, plugins)?.0)
+}
+
+/// [`open_or_create_with`], and the project's own tools in `extensions/` for a window to keep
+/// running: it defines them again when their code is saved. Without the window they play on
+/// as long as the project lives.
+pub fn open_with_extensions(
+    folder: &Path,
+    control: EngineControl,
+    plugins: Plugins,
+) -> Result<(Project, Option<Extensions>)> {
     let is_new = !folder.join(PROJECT_FILE).exists();
-    let mut project = Project::open(folder, registry(plugins)?, control)?;
+    let (registry, mut extensions) = registry_of(folder, plugins)?;
+    let mut project = Project::open(folder, registry, control)?;
+    if let Some(extensions) = &mut extensions {
+        extensions.report(&mut project);
+    }
     // A `state/` folder with content but no project file is someone's work, not a new project.
     if is_new && project.instances().next().is_none() && project.problems().is_empty() {
         arrangement::create_default_project(&mut project)?;
         project.clear_history();
     }
-    Ok(project)
+    Ok((project, extensions))
+}
+
+/// The registry, with the tools of the project in `folder` when it has its own.
+fn registry_of(folder: &Path, plugins: Plugins) -> Result<(Registry, Option<Extensions>)> {
+    let mut registry = registry(plugins)?;
+    let mut extensions = Extensions::start(folder);
+    if let Some(extensions) = &mut extensions {
+        extensions.register(&mut registry);
+        if std::env::var_os("SOUND_TOOLS_TIMING").is_some() {
+            eprintln!(
+                "timing: bun loaded extensions/ in {:?}",
+                extensions.started_in
+            );
+        }
+    }
+    Ok((registry, extensions))
 }
 
 /// Opens the project the way `--inspect` does: without its lock, and with a host that looks a
@@ -442,7 +475,11 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
-    let project = Project::open_read_only(folder, registry(plugins)?, control)?;
+    let (registry, extensions) = registry_of(folder, plugins)?;
+    let mut project = Project::open_read_only(folder, registry, control)?;
+    if let Some(extensions) = &extensions {
+        extensions.report(&mut project);
+    }
     Ok((project, engine))
 }
 

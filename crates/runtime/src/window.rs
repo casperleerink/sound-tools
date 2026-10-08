@@ -43,7 +43,7 @@ use audio_input::OpenInput;
 use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
 pub use transport::TransportPill;
 
-use crate::{open_or_create_with, update, views};
+use crate::{open_with_extensions, update, views};
 
 actions!(
     sound_tools,
@@ -742,6 +742,8 @@ fn init(cx: &mut App) {
 /// A project that is open and plays on the default output, ready for its window.
 struct Opened {
     project: Project,
+    /// The project's own tools, for the window to keep live.
+    extensions: Option<sound_typescript::Extensions>,
     plugins: WeakPlugins,
     stream: OutputStream,
     device_name: String,
@@ -759,7 +761,10 @@ impl Opened {
         // up: the tick below runs its behaviour again.
         let plugins = crate::plugins(false)?;
         plugins.start_scanning();
-        let mut project = open_or_create_with(folder, control, plugins.clone())?;
+        // An experiment: every project the window opens can have tools of its own, written
+        // while it runs, so the folder for them is always there.
+        std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
+        let (mut project, extensions) = open_with_extensions(folder, control, plugins.clone())?;
         project.watch()?;
         // From here only the project holds the plugins, so that dropping the project ends them
         // and saves the state of every one. A handle kept here would outlive the project: the
@@ -774,6 +779,7 @@ impl Opened {
         }
         Ok(Self {
             project,
+            extensions,
             plugins: weak_plugins,
             stream,
             device_name,
@@ -784,6 +790,7 @@ impl Opened {
     fn show(self, cx: &mut App) {
         let Self {
             project,
+            extensions,
             plugins: weak_plugins,
             stream,
             device_name,
@@ -886,9 +893,16 @@ impl Opened {
         };
         let opened = cx.open_window(options, |window, cx| {
             cx.new(|cx| {
-                let (mut views, devices) = views(weak_plugins.clone());
-                // A spike: the cards of the project written in TypeScript.
-                sound_typescript::start(&session, &mut views, cx);
+                let (mut views, mut devices) = views(weak_plugins.clone());
+                if let Some(extensions) = extensions {
+                    sound_typescript::start_window(
+                        extensions,
+                        &session,
+                        &mut views,
+                        &mut devices,
+                        cx,
+                    );
+                }
                 let registries = (views, devices);
                 let name = device_name.into();
                 let input: OpenInput = Arc::new(audio_input::default_input);

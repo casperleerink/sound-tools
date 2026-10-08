@@ -5,6 +5,8 @@
 use gpui::{AnyElement, Div, ElementId, Hsla, SharedString, div, prelude::*, px};
 use serde::Deserialize;
 
+use crate::tools::Unit;
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Node {
@@ -20,13 +22,20 @@ pub(crate) enum Node {
     Text {
         text: String,
     },
-    Knob {
-        path: String,
-        label: String,
-        min: f32,
-        max: f32,
-        default: f32,
-    },
+    Knob(KnobNode),
+}
+
+/// A knob on the number at `path` in the record.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct KnobNode {
+    pub path: String,
+    pub label: String,
+    pub min: f32,
+    pub max: f32,
+    pub default: f32,
+    #[serde(default)]
+    pub unit: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -161,20 +170,14 @@ impl Style {
 /// What a card does for the nodes that need the view: a click and a knob.
 pub(crate) trait Controls {
     fn clickable(&mut self, element: Div, id: ElementId, handler: usize) -> AnyElement;
-    fn knob(&mut self, path: &str, label: &str, min: f32, max: f32, default: f32) -> AnyElement;
+    fn knob(&mut self, knob: &KnobNode) -> AnyElement;
 }
 
 /// `index` tells siblings apart, so every element that needs an id gets its own.
 pub(crate) fn draw(node: &Node, index: &[usize], controls: &mut impl Controls) -> AnyElement {
     match node {
         Node::Text { text } => SharedString::from(text.clone()).into_any_element(),
-        Node::Knob {
-            path,
-            label,
-            min,
-            max,
-            default,
-        } => controls.knob(path, label, *min, *max, *default),
+        Node::Knob(knob) => controls.knob(knob),
         Node::Div {
             style,
             on_click,
