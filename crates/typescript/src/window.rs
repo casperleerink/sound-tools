@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use gpui::{App, AppContext, Context, Entity, Task, WeakEntity};
 use sound_core::{InstanceId, Problem, Project};
 use sound_hum::{Hum, HumUpdate};
-use sound_notes::{NoteEvent, Pitch, Velocity};
+use sound_notes::{Pitch, Velocity};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
 use crate::bun::{Bun, Event, Loaded, Looped, Request};
@@ -310,6 +310,7 @@ impl Live {
         id: &InstanceId,
         name: &str,
         value: Option<f32>,
+        at: Option<f64>,
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.session.upgrade() else {
@@ -322,7 +323,10 @@ impl Live {
         };
         let update = match (info.control(name), value) {
             (Some((index, Control::Live { .. })), Some(value)) => HumUpdate::Live { index, value },
-            (Some((index, Control::Trigger { .. })), None) => HumUpdate::Trigger { index },
+            (Some((index, Control::Trigger { .. })), None) => HumUpdate::Trigger {
+                index,
+                at: at.map(|at| frames_of(at, session.read(cx))),
+            },
             _ => return eprintln!("error: {} has no control {name} that takes that", info.name),
         };
         let processor = info.processor();
@@ -343,8 +347,15 @@ impl Live {
         });
     }
 
-    /// Plays a key of the voices of an instance, as the keyboard would.
-    fn note(&mut self, id: &InstanceId, pitch: u8, velocity: Option<f32>, cx: &mut Context<Self>) {
+    /// Plays a key of the voices of an instance for `seconds`, as the keyboard would.
+    fn note(
+        &mut self,
+        id: &InstanceId,
+        pitch: u8,
+        (velocity, seconds): (f32, f32),
+        at: Option<f64>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
@@ -358,16 +369,13 @@ impl Live {
         }
         let processor = info.processor();
         drop(tools);
-        let pitch = Pitch::nearest(i64::from(pitch));
-        let event = match velocity {
-            Some(velocity) => NoteEvent::On {
-                pitch,
-                velocity: Velocity::nearest((velocity.clamp(0.0, 1.0) * 127.0).round() as i64),
-            },
-            None => NoteEvent::Off { pitch },
+        let update = HumUpdate::Note {
+            pitch: Pitch::nearest(i64::from(pitch)),
+            velocity: Velocity::nearest((velocity.clamp(0.0, 1.0) * 127.0).round() as i64),
+            at: at.map(|at| frames_of(at, session.read(cx))),
+            frames: frames_of(f64::from(seconds), session.read(cx)),
         };
         session.update(cx, |session, cx| {
-            let update = HumUpdate::Note(event);
             let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
             if let Err(error) = sent {
                 session.report(error, cx);
@@ -397,6 +405,11 @@ impl Live {
         };
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
+        let time = session.update(cx, |session, _| {
+            let rate = f64::from(session.project().clock().sample_rate());
+            let frames = session.engine().poll().map_or(0, |status| status.frames);
+            frames as f64 / rate
+        });
         let tools = self.tools.borrow();
         let project = session.read(cx).project();
         let looped: Vec<Looped> = (project.instances())
@@ -413,6 +426,7 @@ impl Live {
         if !looped.is_empty() {
             self.bun.send(&Request::Frame {
                 dt,
+                time,
                 instances: looped,
             });
         }
@@ -479,16 +493,19 @@ impl Live {
                 instance,
                 name,
                 value,
+                at,
             } => match InstanceId::new(&instance) {
-                Ok(id) => self.control(&id, &name, value, cx),
+                Ok(id) => self.control(&id, &name, value, at, cx),
                 Err(error) => eprintln!("error: {error}"),
             },
             Event::Note {
                 instance,
                 pitch,
                 velocity,
+                seconds,
+                at,
             } => match InstanceId::new(&instance) {
-                Ok(id) => self.note(&id, pitch, velocity, cx),
+                Ok(id) => self.note(&id, pitch, (velocity, seconds), at, cx),
                 Err(error) => eprintln!("error: {error}"),
             },
         }
@@ -542,4 +559,10 @@ impl Live {
             self.render(card, cx);
         }
     }
+}
+
+/// The frame of engine time at `seconds` of it.
+fn frames_of(seconds: f64, session: &Session) -> u64 {
+    let rate = f64::from(session.project().clock().sample_rate());
+    (seconds.max(0.0) * rate).round() as u64
 }

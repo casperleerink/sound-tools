@@ -154,14 +154,25 @@ tool({
 | `<Meter watch label?>` | A bar that shows a watch from 0 to 1. |
 | `<Pad x y size?>` | A square for the pointer: across moves the live control `x`, up moves `y`. |
 
-The card gets `state`, the record; `watches`, the last value of each watch, and draws again as they move; `update(label, change)`, which changes the record as one undo step; `set(control, value)`, which moves a live control; `fire(control)`, which fires a trigger; and `play(pitch, seconds?, velocity?)`, which plays a note on the tool's own voices, as a key held for `seconds` (an instrument or a source).
+The card gets `state`, the record; `watches`, the last value of each watch, and draws again as they move; `update(label, change)`, which changes the record as one undo step; `set(control, value)`, which moves a live control; `fire(control)`, which fires a trigger; and `play(pitch, { seconds?, velocity? })`, which plays a note on the tool's own voices, as a key held for `seconds` (an instrument or a source).
 
 ## Experiments: a control loop, a canvas, a page
 
 For more than knobs, such as a simulation that plays notes as balls bounce, a tool keeps a `memory` and runs a control loop:
 
 - `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance. The card and the loop get it, and a click may change it.
-- `tick: ({ state, watches, memory, dt, set, fire }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. It plays the sound as a performer would, with `set`, `fire` and `play`, and moves what is in `memory`; it does not change the record. With `play`, an instrument is a voice per note the loop makes up: a melody of a rule, a chord a collision strikes. Offline, in `--render`, it does not run.
+- `tick: ({ state, watches, memory, dt, time, set, fire, play }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. It plays the sound as a performer would, with `set`, `fire` and `play`, and moves what is in `memory`; it does not change the record. With `play`, an instrument is a voice per note the loop makes up: a melody of a rule, a chord a collision strikes.
+- What the loop plays at once lands up to 30 ms late. For a steady rhythm, play ahead on the clock of the sound: `time` is where it is, in seconds, and `fire(control, { at })` and `play(pitch, { at })` happen on the sample of `at`:
+
+  ```ts
+  tick: ({ memory, time, play }) => {
+    if (memory.next < time) memory.next = time; // after a pause, start from now
+    while (memory.next < time + 0.1) {
+      play(60, { at: memory.next });
+      memory.next += 0.25;
+    }
+  },
+  ``` Offline, in `--render`, it does not run.
 - `<Canvas width height shapes background? onPress? onDrag?>` draws `shapes` (`{ kind: "circle", x, y, radius, color }`, `{ kind: "rect", x, y, width, height, color, radius? }`, `{ kind: "line", from: [x, y], to: [x, y], color, width? }`, in points from its top left) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. The card draws again after every tick.
 - `page: (card) => ...` draws the whole window instead of a card, from the same things a card gets. A project that is one experiment has no arrangement: delete `state/arrangement/`, put one record of the tool at the top, `state/<name>.json`, make the tool a `source` (or an `instrument` when its loop plays notes with `play`), and connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`. The window shows its page.
 

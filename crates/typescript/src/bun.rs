@@ -63,6 +63,8 @@ pub(crate) enum Request<'a> {
     Frame {
         /// Seconds since the last frame.
         dt: f32,
+        /// Engine time in seconds: the clock `at` of an event counts on.
+        time: f64,
         instances: Vec<Looped<'a>>,
     },
     Drop {
@@ -100,20 +102,24 @@ pub(crate) enum Event {
         state: serde_json::Value,
     },
     /// A card or a control loop moved a live control of an instance, or fired a trigger when
-    /// there is no value.
+    /// there is no value: at `at`, engine time in seconds, or at once.
     Control {
         instance: String,
         name: String,
         #[serde(default)]
         value: Option<f32>,
+        #[serde(default)]
+        at: Option<f64>,
     },
-    /// A card or a control loop pressed a key of an instance at a velocity from 0 to 1, or let
-    /// it go when there is none.
+    /// A card or a control loop played a note of an instance: a key held for `seconds` from
+    /// `at`, engine time in seconds, or from now; `velocity` from 0 to 1.
     Note {
         instance: String,
         pitch: u8,
+        velocity: f32,
+        seconds: f32,
         #[serde(default)]
-        velocity: Option<f32>,
+        at: Option<f64>,
     },
 }
 

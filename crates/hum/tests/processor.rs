@@ -205,7 +205,7 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
     for _ in 0..3 {
         played
             .control
-            .update(played.hum, HumUpdate::Trigger { index: 0 })
+            .update(played.hum, HumUpdate::Trigger { index: 0, at: None })
             .unwrap();
         played.render(640);
     }
@@ -213,21 +213,38 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
 }
 
 #[test]
-fn a_note_from_the_interface_plays_a_voice_as_a_key_would() {
+fn a_note_from_the_interface_plays_a_voice_for_its_length() {
     let code = ["out = 0.2 * sin(phasor(freq) * tau) * adsr(gate, 1, 1, 1, 1)"];
     let mut played = play(Kind::Instrument { voices: 8 }, &code, Vec::new());
     assert_eq!(loudest(&played.render(4_800)), 0.0);
-    played
-        .control
-        .update(played.hum, HumUpdate::Note(on(69)))
-        .unwrap();
-    let output = played.render(24_000);
-    assert!((frequency(&output[2_400..]) - 440.0).abs() < 1.0);
-    played
-        .control
-        .update(played.hum, HumUpdate::Note(off(69)))
-        .unwrap();
-    assert_eq!(loudest(&played.render(24_000)[4_800..]), 0.0);
+    let note = HumUpdate::Note {
+        pitch: Pitch::new(69).unwrap(),
+        velocity: Velocity::new(100).unwrap(),
+        at: None,
+        frames: 24_000,
+    };
+    played.control.update(played.hum, note).unwrap();
+    let output = played.render(48_000);
+    assert!((frequency(&output[2_400..24_000]) - 440.0).abs() < 1.0);
+    // Let go after its length, and over 1 ms of release.
+    assert_eq!(loudest(&output[30_000..]), 0.0);
+}
+
+#[test]
+fn a_trigger_with_a_time_fires_on_that_frame_and_one_whose_time_passed_at_once() {
+    let mut played = play(Kind::Source, &["trigger hit", "out = hit"], Vec::new());
+    // Engine time is 640 from here.
+    played.render(640);
+    for at in [1_000, 100] {
+        let hit = HumUpdate::Trigger {
+            index: 0,
+            at: Some(at),
+        };
+        played.control.update(played.hum, hit).unwrap();
+    }
+    let output = played.render(1_280);
+    let fired: Vec<usize> = (0..output.len()).filter(|&at| output[at] == 1.0).collect();
+    assert_eq!(fired, [0, 360]);
 }
 
 #[test]

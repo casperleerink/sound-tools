@@ -12,7 +12,7 @@ use sound_core::{
     AudioInput, AudioOutput, Automation, CHANNELS, EventInput, Ports, PrepareConfig,
     ProcessContext, Processor, Smoothed, Timed, Watch,
 };
-use sound_notes::{NoteEvent, Velocity, Voice, Voices, frequency_hz};
+use sound_notes::{NoteEvent, Pitch, Velocity, Voice, Voices, frequency_hz};
 
 use crate::language::{Code, MAX_LIVES, MAX_PARAMETERS};
 use crate::machine::{Inputs, LIMIT, Machine, Note, Values};
@@ -29,6 +29,8 @@ const BEND_SEMITONES: f32 = 2.0;
 
 /// The most notes an instrument plays at once.
 pub const MAX_VOICES: usize = 8;
+/// The most notes and triggers that wait for their frame: a control loop plays a little ahead.
+const MAX_SCHEDULED: usize = 256;
 
 /// What a Hum tool is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -63,11 +65,24 @@ pub enum HumUpdate {
     },
     /// From the interface: a `live` control moves. Not saved.
     Live { index: usize, value: f32 },
-    /// From the interface: a trigger fires in the next frame. Not saved.
-    Trigger { index: usize },
-    /// From the interface: a note for the voices, as if it came in on [`Hum::NOTES`] at the
-    /// start of the next block. Not saved.
+    /// From the interface: a trigger fires at the frame `at` of engine time, or in the next
+    /// frame when there is none or it has passed. Not saved.
+    Trigger { index: usize, at: Option<u64> },
+    /// From the interface: a key held for `frames` from the frame `at` of engine time, or from
+    /// the next frame, as if it came in on [`Hum::NOTES`]. Not saved.
+    Note {
+        pitch: Pitch,
+        velocity: Velocity,
+        at: Option<u64>,
+        frames: u64,
+    },
+}
+
+/// What the interface plays at a frame.
+#[derive(Copy, Clone)]
+enum Scheduled {
     Note(NoteEvent),
+    Trigger(usize),
 }
 
 pub struct Hum {
@@ -85,8 +100,11 @@ pub struct Hum {
     /// How many of each the code has, so a frame moves only those.
     counts: (usize, usize),
     arrays: Vec<Vec<f32>>,
-    /// Triggers fired since the last block, one bit each.
-    fired: u32,
+    /// What the interface plays at a frame of engine time, the latest first. It never grows
+    /// past what it was made with, so the audio thread does not allocate.
+    scheduled: Vec<(u64, Scheduled)>,
+    /// The engine time of the next frame, where what has no time of its own plays.
+    next_frame: u64,
     watches: Vec<Watch>,
     /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
@@ -178,7 +196,8 @@ impl Hum {
             current_lives: [0.0; MAX_LIVES],
             counts,
             arrays: values.arrays.unwrap_or_default(),
-            fired: 0,
+            scheduled: Vec::with_capacity(MAX_SCHEDULED),
+            next_frame: 0,
             watches,
             beat: 0.0,
             bend: 0.0,
@@ -252,6 +271,17 @@ impl Hum {
                 *aimed = target;
             }
         }
+    }
+
+    /// Keeps `what` for its frame, after what is already there for that frame. A full list
+    /// drops it.
+    fn schedule(&mut self, at: Option<u64>, what: Scheduled) {
+        if self.scheduled.len() == MAX_SCHEDULED {
+            return;
+        }
+        let at = at.unwrap_or(0).max(self.next_frame);
+        let index = self.scheduled.partition_point(|(other, _)| *other > at);
+        self.scheduled.insert(index, (at, what));
     }
 
     fn follow(&mut self, event: NoteEvent) {
@@ -409,12 +439,29 @@ impl Processor for Hum {
                     live.set_target(*value, ramp);
                 }
             }
-            HumUpdate::Trigger { index } => {
+            HumUpdate::Trigger { index, at } => {
                 if *index < MAX_LIVES {
-                    self.fired |= 1 << *index;
+                    self.schedule(*at, Scheduled::Trigger(*index));
                 }
             }
-            HumUpdate::Note(event) => self.follow(*event),
+            HumUpdate::Note {
+                pitch,
+                velocity,
+                at,
+                frames,
+            } => {
+                // Both or neither, so no key stays down.
+                if self.scheduled.len() + 2 <= MAX_SCHEDULED {
+                    let start = at.unwrap_or(0).max(self.next_frame);
+                    let (pitch, velocity) = (*pitch, *velocity);
+                    self.schedule(
+                        Some(start),
+                        Scheduled::Note(NoteEvent::On { pitch, velocity }),
+                    );
+                    let end = start + (*frames).max(1);
+                    self.schedule(Some(end), Scheduled::Note(NoteEvent::Off { pitch }));
+                }
+            }
         }
     }
 
@@ -435,13 +482,24 @@ impl Processor for Hum {
         let bpm = transport.clock.tempo_at(tempo_tick).bpm();
         let beats_per_frame = bpm / 60.0 / f64::from(self.sample_rate);
         let quiet_limit = (QUIET_SECONDS * self.sample_rate) as usize;
-        let mut triggers = std::mem::take(&mut self.fired);
+        self.next_frame = context.start_frame + context.frames as u64;
 
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
         for frame in 0..context.frames {
-            // Each note at its own frame.
+            // Each note at its own frame, and what the interface plays at its own.
             while let Some(timed) = events.next_if(|timed| timed.offset <= frame) {
                 self.follow(timed.event);
+            }
+            let now = context.start_frame + frame as u64;
+            let mut triggers = 0;
+            while let Some(&(at, what)) = self.scheduled.last()
+                && at <= now
+            {
+                self.scheduled.pop();
+                match what {
+                    Scheduled::Note(event) => self.follow(event),
+                    Scheduled::Trigger(index) => triggers |= 1 << index,
+                }
             }
             let (parameters, lives) = self.counts;
             for (current, parameter) in (self.current_parameters.iter_mut())
@@ -496,7 +554,6 @@ impl Processor for Hum {
             if let Some(right) = right_out.get_mut(frame) {
                 *right = output[1].clamp(-LIMIT, LIMIT);
             }
-            triggers = 0;
             if playing {
                 self.beat += beats_per_frame;
             }

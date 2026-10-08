@@ -21,7 +21,7 @@ type Request =
   | { type: "draw"; id: number; tool: string; page: boolean }
   | { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: boolean }
   | { type: "event"; card: number; handler: number; x?: number; y?: number }
-  | { type: "frame"; dt: number; instances: Array<{ instance: string; tool: string; state: State; watches: Watches }> }
+  | { type: "frame"; dt: number; time: number; instances: Array<{ instance: string; tool: string; state: State; watches: Watches }> }
   | { type: "drop"; card: number };
 
 /** What the runtime gets of a node: a handler is its index. */
@@ -271,13 +271,12 @@ function players(instance: string) {
     set(control: string, value: number) {
       send({ type: "control", instance, name: control, value });
     },
-    fire(control: string) {
-      send({ type: "control", instance, name: control });
+    fire(control: string, { at }: { at?: number } = {}) {
+      send({ type: "control", instance, name: control, at });
     },
-    play(pitch: number, seconds = 0.25, velocity = 0.8) {
+    play(pitch: number, { seconds = 0.25, velocity = 0.8, at }: { seconds?: number; velocity?: number; at?: number } = {}) {
       const key = Math.max(0, Math.min(127, Math.round(pitch)));
-      send({ type: "note", instance, pitch: key, velocity });
-      setTimeout(() => send({ type: "note", instance, pitch: key }), seconds * 1000);
+      send({ type: "note", instance, pitch: key, velocity, seconds, at });
     },
   };
 }
@@ -337,7 +336,7 @@ function draw(tool: string, page: boolean): Sent {
   const quiet = { set() {}, fire() {}, play() {} };
   if (spec.tick) {
     try {
-      spec.tick({ state: {}, watches: {}, memory, dt: 1 / 30, ...quiet });
+      spec.tick({ state: {}, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
     } catch (error) {
       throw new Error(`its tick fails: ${error}`);
     }
@@ -364,7 +363,7 @@ function frame(request: Extract<Request, { type: "frame" }>) {
       continue;
     }
     try {
-      spec.tick({ state, watches, memory: memoryOf(instance, spec), dt: request.dt, ...players(instance) });
+      spec.tick({ state, watches, memory: memoryOf(instance, spec), dt: request.dt, time: request.time, ...players(instance) });
     } catch (error) {
       console.error(`the tick of ${tool} failed: ${error}`);
       continue;

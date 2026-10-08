@@ -92,7 +92,7 @@ impl TypeScriptCard {
     fn control(&mut self, name: &str, value: Option<f32>, cx: &mut Context<Self>) {
         let id = self.id.clone();
         self.live
-            .update(cx, |live, cx| live.control(&id, name, value, cx));
+            .update(cx, |live, cx| live.control(&id, name, value, None, cx));
     }
 
     /// A handler of the tree, with where the pointer is on a canvas.

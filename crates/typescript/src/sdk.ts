@@ -498,18 +498,22 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
 }
 
 /** What the control loop of an instance gets each time it runs. */
-/** What plays an instance as a performer would: nothing saves it and no undo takes it back. */
+/**
+ * What plays an instance as a performer would: nothing saves it and no undo takes it back.
+ * `at` is a `time` of the control loop: what has one happens on that sample, or at once when
+ * it has passed.
+ */
 export interface Performer<C extends Controls> {
   /** Moves a live control. */
   set(control: ControlNames<C, "live">, value: number): void;
   /** Fires a trigger. */
-  fire(control: ControlNames<C, "trigger">): void;
+  fire(control: ControlNames<C, "trigger">, options?: { at?: number }): void;
   /**
    * Plays a note on the tool's own voices, as a key held for `seconds` (0.25 when left out):
    * `pitch` is MIDI, 69 is A4, and `velocity` is 0 to 1 (0.8 when left out). An instrument
    * plays each note on a voice of its own; a source follows the newest.
    */
-  play(pitch: number, seconds?: number, velocity?: number): void;
+  play(pitch: number, options?: { seconds?: number; velocity?: number; at?: number }): void;
 }
 
 export interface Tick<State, C extends Controls, M> extends Performer<C> {
@@ -519,6 +523,8 @@ export interface Tick<State, C extends Controls, M> extends Performer<C> {
   memory: M;
   /** Seconds since the last tick. */
   dt: number;
+  /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
+  time: number;
 }
 
 // ---------------------------------------------------------------------------------------------

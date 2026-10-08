@@ -82,7 +82,7 @@ tool({
     }
     const living = memory.cells[column].flatMap((alive, r) => (alive ? [r] : []));
     const velocity = 0.9 / Math.sqrt(Math.max(1, living.length));
-    for (const r of living) play(SCALE[r], 0.3, velocity);
+    for (const r of living) play(SCALE[r], { seconds: 0.3, velocity });
   },
   page: ({ memory }) => {
     const shapes: Shape[] = [];
