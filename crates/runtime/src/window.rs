@@ -886,7 +886,10 @@ impl Opened {
         };
         let opened = cx.open_window(options, |window, cx| {
             cx.new(|cx| {
-                let registries = views(weak_plugins.clone());
+                let (mut views, devices) = views(weak_plugins.clone());
+                // A spike: the cards of the project written in TypeScript.
+                sound_typescript::start(&session, &mut views, cx);
+                let registries = (views, devices);
                 let name = device_name.into();
                 let input: OpenInput = Arc::new(audio_input::default_input);
                 let device = (Some(timing), Some(input));
