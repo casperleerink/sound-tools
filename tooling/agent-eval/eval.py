@@ -308,6 +308,20 @@ def check_life(folder: Path) -> dict:
     return {**checks, "plays from its loop": plays, "on time": plays and "at:" in text}
 
 
+def check_mic(folder: Path) -> dict:
+    checks = check_experiment(folder)
+    # It needs no control loop: a watch draws the circle.
+    checks.pop("with a page, a canvas and a tick")
+    tools = project_tools(folder)
+    text = "".join(tools.values())
+    connections = json.loads((folder / "project.json").read_text()).get("connections", [])
+    return {
+        **checks,
+        "with a page and a canvas": "page" in text and "Canvas" in text,
+        "hears the input": any("device_input" in c.get("from", {}) for c in connections),
+    }
+
+
 def check_generative(folder: Path) -> dict:
     tools = project_tools(folder)
     tool = instruments(folder).get("pad")
@@ -359,6 +373,12 @@ SCENARIOS = {
                      "across it column by column, playing the living cells of its column as a "
                      "chord: lower rows are lower notes of a pentatonic scale. A soft, "
                      "bell-like sound."),
+    "mic-builder": (setup_tape_builder, check_mic,
+                    "Turn this project into a live toy for my voice instead of a song, just one "
+                    "screen and no timeline: I sing into the microphone and it comes out as a "
+                    "shimmering cloud of echoes, and the louder I sing the bigger a glowing "
+                    "circle on the screen gets. Dragging on the screen changes how long the "
+                    "echoes last."),
     "composer-sequencer": (setup_acid_bass, check_acid_bass,
                            "The acid bass is cool. Make its pattern play every eighth note and "
                            "nothing in between, put an accent on each beat, and make it a bit "
