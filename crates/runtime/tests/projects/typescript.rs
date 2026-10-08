@@ -52,6 +52,11 @@ tool({
 /// A project whose `extensions/` holds the first example of the doc, `wobble`, and `COMBS`,
 /// with a pad that plays a held chord through `effects` that are written next to it.
 fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
+    pad_through_with(effects, "")
+}
+
+/// [`pad_through`], with more fields of the track's record, such as automation lanes.
+fn pad_through_with(effects: &[(&str, &str)], track_fields: &str) -> Option<Harness> {
     if !bun_is_installed() {
         eprintln!("skipped: Bun is not installed");
         return None;
@@ -65,7 +70,7 @@ fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
         .map(|(name, _)| format!("{name:?}"))
         .collect();
     let track = format!(
-        r#"{{"tool": "arrangement.track", "state": {{"name": "Pad", "effects": [{}]}}}}"#,
+        r#"{{"tool": "arrangement.track", "state": {{"name": "Pad", "effects": [{}]{track_fields}}}}}"#,
         names.join(", ")
     );
     harness.write("state/arrangement/pad/instance.json", &track);
@@ -127,5 +132,24 @@ fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
             loudness_at(&output, 8.5) > 0.001,
             "{combs} combs do not ring on"
         );
+    }
+}
+
+#[test]
+fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
+    // The record dips to silence; the lane holds the depth at 0 for the whole bar.
+    let lane = r#", "automation": [{"device": "wobble", "parameter": "depth", "points": [{"tick": 0, "value": 0.0}, {"tick": 15360, "value": 0.0}]}]"#;
+    let Some(mut harness) = pad_through_with(&[("wobble", r#"{"rate": 2, "depth": 1}"#)], lane)
+    else {
+        return;
+    };
+    let output = harness.play_from_the_start(BAR);
+    for half_second in 1..4 {
+        let start = half_second as f32 * 0.5;
+        let (dip, top) = (
+            loudness_at(&output, start + 0.125),
+            loudness_at(&output, start + 0.375),
+        );
+        assert!(dip > top * 0.8, "{dip} dips under {top} at {start} s");
     }
 }

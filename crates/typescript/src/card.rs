@@ -9,7 +9,7 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Window, canvas, div, fill, point,
     prelude::*, px, size,
 };
-use sound_core::{InstanceId, ProjectEvent, ValueRange};
+use sound_core::{InstanceId, ProjectEvent};
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::knob::{
     Knob, decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
@@ -138,11 +138,7 @@ impl Controls for Drawing<'_, '_> {
             (None, None) => None,
         }
         .unwrap_or(*default);
-        // A frequency is heard in octaves, so its knob turns on a log scale.
-        let range = match unit {
-            Some(Unit::Hz) if *min > 0.0 => ValueRange::logarithmic(*min, *max),
-            _ => ValueRange::linear(*min, *max),
-        };
+        let range = crate::tools::knob_range(*min, *max, *unit);
         let readout = match unit {
             Some(Unit::Hz) => hertz_readout(value),
             Some(Unit::Ms) => milliseconds_readout(value),

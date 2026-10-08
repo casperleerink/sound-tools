@@ -474,9 +474,14 @@ impl Project {
         let state_folder = self.storage.state_folder();
         self.apply_paths(&[state_folder], Source::Load, std::time::Instant::now())?;
         for id in live {
+            let path = self.storage.record_path(&id, storage::Form::File);
+            let path = self.storage.display_path(&path);
+            // The file did not load, such as because the new check refuses it: it plays on
+            // as it was, under its problem.
+            if self.file_problems.contains_key(&path) {
+                continue;
+            }
             if let Err(error) = self.rebind(&id) {
-                let path = self.storage.record_path(&id, storage::Form::File);
-                let path = self.storage.display_path(&path);
                 self.report_problem(path, format!("its behaviour failed: {error}"));
             }
         }

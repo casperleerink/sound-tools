@@ -211,4 +211,4 @@ tool({
 
 ## Limits
 
-A tool is sound in or out, with notes for an instrument or a source. Its knobs cannot be automated yet, and its control loop runs only while the window is open. For a sound a built-in tool already makes, use the built-in one.
+A tool is sound in or out, with notes for an instrument or a source. Its control loop runs only while the window is open. Its knobs can be automated by the lanes of a track, as the numbers of any device. For a sound a built-in tool already makes, use the built-in one.

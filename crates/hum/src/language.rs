@@ -6,8 +6,7 @@
 //! before it, so one pass in order computes a frame. A `history` reads what it was set to in
 //! the frame before, which is how a value feeds back.
 //!
-//! The reference for writers is `agent-doc.md`. An error names the line of the code, so the
-//! writer finds it.
+//! An error names the line of the code, so whoever reads the code finds it.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -20,7 +19,7 @@ pub const MAX_LIVES: usize = 32;
 /// The most watches.
 pub const MAX_WATCHES: usize = 16;
 /// The longest a `delay` can be.
-pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
+const MAX_DELAY_MS: f32 = 4000.0;
 /// Each delay holds up to [`MAX_DELAY_MS`] per channel and voice, so their number is held too.
 const MAX_DELAYS: usize = 16;
 /// The seconds of all the buffers of one code together, per channel and voice.
@@ -304,16 +303,20 @@ pub fn compile(lines: &[String]) -> Result<Code, CompileError> {
         compiler.line = index;
         compiler.statement(line)?;
     }
-    for (name, binding) in &compiler.names {
-        if let Binding::History {
-            set: false, line, ..
-        } = binding
-        {
-            return Err(CompileError {
-                line: *line,
-                message: format!("history `{name}` is never set: set it with `{name} = ...`"),
-            });
-        }
+    // The first in the code, not the first in the map, so the same code gives the same error.
+    let unset = (compiler.names.iter())
+        .filter_map(|(name, binding)| match binding {
+            Binding::History {
+                set: false, line, ..
+            } => Some((*line, name)),
+            _ => None,
+        })
+        .min();
+    if let Some((line, name)) = unset {
+        return Err(CompileError {
+            line,
+            message: format!("history `{name}` is never set: set it with `{name} = ...`"),
+        });
     }
     compiler.code.output = match compiler.names.get("out") {
         Some(Binding::Value(register)) => Some(*register),

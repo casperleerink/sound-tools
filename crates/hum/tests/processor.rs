@@ -160,6 +160,24 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
 }
 
 #[test]
+fn a_note_that_takes_a_held_voice_starts_its_envelope_again() {
+    let code = [
+        "level = adsr(gate, 10, 10, 0.5, 10)",
+        "watch shown = level",
+        "out = 0.01 * level",
+    ];
+    // Eight voices, all held at their sustain: the ninth note takes the oldest.
+    let mut notes: Vec<(usize, NoteEvent)> = (60..68).map(|pitch| (0, on(pitch))).collect();
+    notes.push((4_800, on(72)));
+    let mut played = play(Kind::Instrument { voices: 8 }, &code, notes);
+    played.render(4_800);
+    assert_eq!(played.watches[0].get(), 0.5);
+    // 5 ms of a 10 ms attack from 0.5 reaches the top.
+    played.render(256);
+    assert!(played.watches[0].get() > 0.9, "{}", played.watches[0].get());
+}
+
+#[test]
 fn a_source_sounds_with_no_note_and_follows_the_newest_held_one() {
     // Before any note `gate` is 0, so this drone plays 110 Hz until a note comes.
     let code = ["out = 0.2 * sin(phasor(mix(110, freq, gate)) * tau)"];
@@ -225,17 +243,22 @@ fn the_beat_counts_quarter_notes_while_the_transport_plays() {
     );
 }
 
+/// The update the behaviour sends when the code of a tool of `kind` is new.
+fn new_code(kind: Kind, line: &str) -> HumUpdate {
+    let code = compile(&[line.to_string()]).unwrap();
+    let made = || Some(Box::new(Machine::new(code.clone(), SAMPLE_RATE as f32)));
+    HumUpdate::Set {
+        machines: (0..kind.machines()).map(|_| made()).collect(),
+        values: Box::default(),
+        watches: Vec::new(),
+    }
+}
+
 #[test]
 fn new_code_fades_in_without_a_jump() {
     let mut played = play(Kind::Source, &["out = 0.5"], Vec::new());
     played.render(640);
-    let code = compile(&["out = -0.5".to_string()]).unwrap();
-    let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
-    let update = HumUpdate::Set {
-        machines: vec![Some(machine)],
-        values: Values::default(),
-        watches: Vec::new(),
-    };
+    let update = new_code(Kind::Source, "out = -0.5");
     played.control.update(played.hum, update).unwrap();
     let output = played.render(1_920);
     let steps = output.windows(2).map(|pair| (pair[1] - pair[0]).abs());
@@ -287,7 +310,7 @@ fn a_lane_moves_a_param_and_the_record_takes_it_back_when_the_lane_stops() {
     values.automated = vec![0];
     let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
     let hum = Hum::new(Kind::Source, machine, values, Vec::new());
-    let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
     let mut edit = control.edit();
     let hum = edit.add_processor("hum", hum).unwrap();
     let lane = edit
@@ -321,4 +344,20 @@ fn a_lane_moves_a_param_and_the_record_takes_it_back_when_the_lane_stops() {
     // Then no lane: back to the record.
     let output = played.render(1_920);
     assert_eq!(output[1_919], 0.25);
+}
+
+#[test]
+fn a_note_after_new_code_plays_only_the_new_code() {
+    let kind = Kind::Instrument { voices: 1 };
+    let notes = vec![(0, on(60)), (64, off(60)), (9_600, on(60))];
+    let mut played = play(kind, &["out = 0.5 * gate"], notes);
+    // Released at frame 64 and silent since, so the voice is idle when the code changes.
+    played.render(4_800);
+    played
+        .control
+        .update(played.hum, new_code(kind, "out = -0.5 * gate"))
+        .unwrap();
+    let output = played.render(9_600);
+    // The note at frame 9600 starts with the new code, not with a fade from the old.
+    assert_eq!(output[4_800], -0.5);
 }
