@@ -18,7 +18,7 @@ mod storage;
 mod watcher;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
@@ -455,19 +455,26 @@ impl Project {
     }
 
     /// Defines tools of the project while it is open, or defines them again because their
-    /// code changed. Their records are read again, so one that waited for its tool loads and
-    /// one the new check refuses is a problem, and every instance of them runs the new
-    /// behaviour. Where that fails, what plays stays as it is and the record says why, as for a
-    /// failed file. Nothing is written and nothing is an undo step: no record changed. All the
-    /// tools of one save come in one call, which reads the folder once.
+    /// code changed. Their records are read again, those of live instances and those that did
+    /// not load, so one that waited for its tool loads and one the new check refuses is a
+    /// problem, and every instance of them runs the new behaviour. Where that fails, what
+    /// plays stays as it is and the record says why, as for a failed file. Nothing is written
+    /// and nothing is an undo step: no record changed. Every other file is left to the
+    /// watcher, so an outside edit of it is applied as one. All the tools of one save come in
+    /// one call, which reads their records once. A tool the registry refuses, such as one
+    /// named as a tool of the runtime, is left out and returned with why.
     pub fn define_json_tools(
         &mut self,
         tools: impl IntoIterator<Item = JsonTool>,
-    ) -> Result<(), ProjectError> {
+    ) -> Result<Vec<(String, RegistryError)>, ProjectError> {
         let mut names = BTreeSet::new();
+        let mut refused = Vec::new();
         for tool in tools {
-            names.insert(tool.name.clone());
-            self.registry.json_tool(tool)?;
+            let name = tool.name.clone();
+            match self.registry.json_tool(tool) {
+                Ok(()) => _ = names.insert(name),
+                Err(error) => refused.push((name, error)),
+            }
         }
         self.generated_are_stale = true;
         let live: Vec<InstanceId> = (self.instances.iter())
@@ -478,10 +485,22 @@ impl Project {
         for id in &live {
             self.storage.forget(id);
         }
+        let mut paths: Vec<PathBuf> = (live.iter())
+            .map(|id| self.storage.record_path(id, Form::File))
+            .collect();
+        // Records of these tools that did not load: one waited for its tool, or the old check
+        // or behaviour refused it. Not the whole folder: an outside edit the watcher has not
+        // delivered yet would apply here with no undo step and no derive, and then look like
+        // no change when it is delivered. A file that does not read keeps its problem.
         let state_folder = self.storage.state_folder();
-        self.apply_paths(&[state_folder], Source::Load, std::time::Instant::now())?;
+        let not_loaded = (self.file_problems.keys())
+            .map(|path| self.storage.root().join(path))
+            .filter(|path| path.starts_with(&state_folder))
+            .filter(|path| storage::tool_named_in(path).is_some_and(|tool| names.contains(&tool)));
+        paths.extend(not_loaded);
+        self.apply_paths(&paths, Source::Load, std::time::Instant::now())?;
         for id in live {
-            let path = self.storage.record_path(&id, storage::Form::File);
+            let path = self.storage.record_path(&id, Form::File);
             let path = self.storage.display_path(&path);
             // The file did not load, such as because the new check refuses it: it plays on
             // as it was, under its problem.
@@ -492,7 +511,7 @@ impl Project {
                 self.report_problem(path, format!("its behaviour failed: {error}"));
             }
         }
-        Ok(())
+        Ok(refused)
     }
 
     /// Says what is wrong with files outside `state/` that the runtime reads, such as the code

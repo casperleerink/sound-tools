@@ -84,7 +84,20 @@ fn a_record_that_waited_for_its_tool_loads_when_the_tool_is_defined() {
     let (mut project, _folder) = open(Registry::new());
     assert_eq!(problem_paths(&project), ["state/a.json"]);
 
-    project.define_json_tools([wobble(10.0, 1, &seen)]).unwrap();
+    // Its tool arrives with a check the record fails: it waits on, now for a check it passes.
+    project.define_json_tools([wobble(2.0, 0, &seen)]).unwrap();
+    assert_eq!(problem_paths(&project), ["state/a.json"]);
+    assert_eq!(project.tool_of(&id("a")), None);
+
+    // A tool the registry refuses does not keep the others of its save out.
+    let mut bad = wobble(10.0, 0, &seen);
+    bad.name = "Not a name".to_string();
+    let refused = (project.define_json_tools([bad, wobble(10.0, 1, &seen)]))
+        .unwrap()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>();
+    assert_eq!(refused, ["Not a name"]);
 
     assert!(project.problems().is_empty(), "{:?}", project.problems());
     assert_eq!(project.tool_of(&id("a")), Some("wobble"));
@@ -121,6 +134,37 @@ fn a_tool_defined_again_runs_its_new_behaviour_and_its_new_check_refuses_what_it
     // Back to a check it passes, and the problem goes.
     project.define_json_tools([wobble(10.0, 4, &seen)]).unwrap();
     assert!(project.problems().is_empty(), "{:?}", project.problems());
+}
+
+#[test]
+fn defining_a_tool_leaves_an_outside_edit_of_another_record_to_the_watcher() {
+    let seen = Seen::default();
+    let mut registry = Registry::new();
+    registry.json_tool(wobble(10.0, 1, &seen)).unwrap();
+    let shake = JsonTool {
+        name: "shake".to_string(),
+        ..wobble(10.0, 1, &seen)
+    };
+    registry.json_tool(shake).unwrap();
+    let (mut project, _folder) = open(registry);
+    let b = project.root().join("state/b.json");
+    let record = |rate: u32| format!(r#"{{"tool": "shake", "state": {{"rate": {rate}}}}}"#);
+    std::fs::write(&b, record(3)).unwrap();
+    project
+        .apply_outside_changes(std::slice::from_ref(&b))
+        .unwrap();
+    project.clear_history();
+
+    // The code of `wobble` and the record `b` are saved at once, and the watcher has not
+    // delivered `b` yet when the tool is defined.
+    std::fs::write(&b, record(5)).unwrap();
+    project.define_json_tools([wobble(10.0, 2, &seen)]).unwrap();
+    assert_eq!(project.state_json(&id("b")).unwrap(), r#"{"rate":3}"#);
+
+    // It arrives as an outside edit: applied, and undoable.
+    assert_eq!(project.apply_outside_changes(&[b]).unwrap(), 1);
+    assert_eq!(project.state_json(&id("b")).unwrap(), r#"{"rate":5}"#);
+    assert_eq!(project.undo_label(), Some("File change"));
 }
 
 #[test]
