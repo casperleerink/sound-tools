@@ -6,7 +6,7 @@ When no tool does what the composer asks, write one: an effect, an instrument or
 
 One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card. Make the folder if it is not there, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
 
-The runtime needs Bun (https://bun.sh). While the app has the project open, a save loads every file of `extensions/` again within a second, every record of the tool plays the new sound, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
+The runtime runs them with Bun, which the app ships and puts on your `PATH`; a build from source uses the one installed from https://bun.sh. While the app has the project open, a save loads every file of `extensions/` again within a second, every record of the tool plays the new sound, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 
 ## A tool
 
@@ -224,7 +224,7 @@ tool({
 
 ## Check your work
 
-1. `bunx tsc -p extensions` checks the types. The first run downloads TypeScript.
+1. `bun x tsc -p extensions` checks the types. The first run downloads TypeScript.
 2. `problems.txt`, or the problems `sound-tools . --inspect` prints, list what is wrong under `extensions/<file>`: a file that does not load, a tool definition that does not hold, a sound that does not build, and, while the window is open, the first tick or click that failed. Fix it and save; the problem goes.
 3. Use the tool as the composer will: write its record in a track (`"state": {}` is its defaults; an effect is also named in the track's `effects`). `--inspect` lists each track's instrument and effects with their tools. Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.
 
