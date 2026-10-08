@@ -29,7 +29,7 @@ pub use generated::{
 };
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
-    AgentDoc, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration, Was,
+    AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration, Was,
 };
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;

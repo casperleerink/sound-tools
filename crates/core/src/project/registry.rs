@@ -1,6 +1,7 @@
 //! Tool registration. Extensions register their tools here before a project opens.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -63,10 +64,41 @@ pub struct AgentDoc {
     pub markdown: &'static str,
 }
 
+/// A doc as a project writes it: a view of a registered [`AgentDoc`], or of the doc of a tool
+/// of the project, whose text changes while the project is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentDocText<'a> {
+    pub name: &'a str,
+    pub when: &'a str,
+    pub markdown: &'a str,
+}
+
 /// An agent doc with the extension it belongs to. `None` is a doc every project gets.
 pub(crate) struct RegisteredDoc {
     pub extension: Option<&'static str>,
-    pub doc: AgentDoc,
+    pub name: &'static str,
+    /// Owned for the doc of a tool of the project, which is replaced at every save of it.
+    pub when: Cow<'static, str>,
+    pub markdown: Cow<'static, str>,
+}
+
+impl RegisteredDoc {
+    fn of(extension: Option<&'static str>, doc: AgentDoc) -> Self {
+        Self {
+            extension,
+            name: doc.name,
+            when: Cow::Borrowed(doc.when),
+            markdown: Cow::Borrowed(doc.markdown),
+        }
+    }
+
+    fn text(&self) -> AgentDocText<'_> {
+        AgentDocText {
+            name: self.name,
+            when: &self.when,
+            markdown: &self.markdown,
+        }
+    }
 }
 
 /// Not `Send`: a behaviour may keep control-side state that belongs to the thread the project
@@ -152,10 +184,7 @@ impl Registry {
         Self {
             tools: BTreeMap::new(),
             // `project.json` is core, not an extension, so the core brings its doc itself.
-            agent_docs: vec![RegisteredDoc {
-                extension: None,
-                doc: super::generated::PROJECT_FILE_DOC,
-            }],
+            agent_docs: vec![RegisteredDoc::of(None, super::generated::PROJECT_FILE_DOC)],
         }
     }
 
@@ -214,14 +243,10 @@ impl Registry {
         }
         // Two docs of one name would write over each other's file. The doc of `project.json`
         // is in the list from the start, so its name is taken like any other.
-        if self
-            .agent_docs
-            .iter()
-            .any(|other| other.doc.name == doc.name)
-        {
+        if self.agent_docs.iter().any(|other| other.name == doc.name) {
             return Err(RegistryError::DuplicateAgentDoc(doc.name));
         }
-        self.agent_docs.push(RegisteredDoc { extension, doc });
+        self.agent_docs.push(RegisteredDoc::of(extension, doc));
         Ok(())
     }
 
@@ -244,24 +269,19 @@ impl Registry {
             // name, so a name is leaked once.
             None => &*Box::leak(name.into_boxed_str()),
         };
-        let same_name = |registered: &RegisteredDoc| registered.doc.name == name;
+        let same_name = |registered: &RegisteredDoc| registered.name == name;
         if let Some(registered) = self.agent_docs.iter().find(|doc| same_name(doc))
             && registered.extension.is_some()
         {
-            return Err(RegistryError::DuplicateAgentDoc(registered.doc.name));
+            return Err(RegistryError::DuplicateAgentDoc(registered.name));
         }
         self.agent_docs.retain(|registered| !same_name(registered));
         if let Some(JsonToolDoc { when, markdown }) = doc {
-            // The text of a doc changes only when its tool's code is saved, so what is leaked
-            // here grows by a few kilobytes per save. A tool that lives long should own it.
-            let doc = AgentDoc {
-                name,
-                when: Box::leak(when.into_boxed_str()),
-                markdown: Box::leak(markdown.into_boxed_str()),
-            };
             self.agent_docs.push(RegisteredDoc {
                 extension: None,
-                doc,
+                name,
+                when: Cow::Owned(when),
+                markdown: Cow::Owned(markdown),
             });
         }
         let decode_check = check.clone();
@@ -297,14 +317,14 @@ impl Registry {
     pub(crate) fn agent_docs<'a>(
         &'a self,
         enabled: &'a [String],
-    ) -> impl Iterator<Item = AgentDoc> + 'a {
+    ) -> impl Iterator<Item = AgentDocText<'a>> + 'a {
         self.agent_docs
             .iter()
             .filter(|registered| match registered.extension {
                 Some(extension) => enabled.iter().any(|enabled| enabled == extension),
                 None => true,
             })
-            .map(|registered| registered.doc)
+            .map(RegisteredDoc::text)
     }
 
     /// Every tool as (name, its definition), in name order.
