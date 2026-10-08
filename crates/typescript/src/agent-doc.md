@@ -4,9 +4,9 @@ When no tool does what the composer asks, write one: an effect that is part of t
 
 ## Where it goes
 
-One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card. The runtime writes `extensions/sdk.ts`, the SDK with every type, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types.
+One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card. Make the folder if it is not there, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type, and `extensions/tsconfig.json` into it. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
 
-The runtime needs Bun (https://bun.sh) to run the tools. When the window is open, a save loads every file of `extensions/` again within a second and every record of the tool plays the new sound. `--inspect` and `--render` load them too.
+The runtime needs Bun (https://bun.sh) to run the tools. While the app has the project open, a save loads every file of `extensions/` again within a second, every record of the tool plays the new sound, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 
 ## A tool
 
@@ -43,7 +43,7 @@ tool({
 | `toggle({ default, label? })` | `true` or `false` | a `Param`, 1 or 0 in Hum | glides at once; runs no code |
 | `choice({ options, default, label? })` | one of `options` | the option itself | runs `sound` again; the new sound fades in over 10 ms |
 
-`unit` is `"hz"`, `"ms"`, `"db"` or `"percent"`: the card shows it, and a knob in `"hz"` turns on a log scale.
+`unit` is `"hz"`, `"ms"`, `"db"` or `"percent"`: the card shows it, and a knob in `"hz"` turns on a log scale. A knob in `"percent"` still holds 0 to 1; the card shows it as 0 to 100 %.
 
 A knob is a `Param`, not a number, on purpose: a turn of a knob must not run code, so `sound` cannot branch on it. TypeScript refuses `if (rate > 5)`. Put a `Param` in the Hum, as `${rate}`, and let Hum do the math. A `choice` decides what the sound is made of, such as how many delays there are, and `sound` can use it as any value.
 
@@ -120,7 +120,7 @@ tool({
 
 1. `bunx tsc -p extensions` checks the types. The first run downloads TypeScript.
 2. `problems.txt` lists what is wrong under `extensions/<file>`: a file that does not load, a tool definition that does not hold, or Hum that does not compile, with the line. Fix it and save; the problem goes.
-3. Use the tool as the composer will: put it in a track with the record from `agent-docs/<name>.md`, then render and listen with `agent-docs/inspect.md`.
+3. Use the tool as the composer will: write its record in a track, `"state": {}` for its defaults, and name it in the track's `effects`. `--inspect` lists each effect of a track with its tool, or says it is not loaded. Then measure it with `agent-docs/inspect.md`.
 
 ## Limits
 

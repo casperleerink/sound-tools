@@ -26,8 +26,22 @@ pub(crate) fn of_arrangement(
         }
         let instrument = track.id().child(INSTRUMENT).ok();
         let instrument = instrument.and_then(|id| project.tool_of(&id));
+        // Each effect with its tool, so an agent sees that a record it wrote loaded.
+        let effects: Vec<String> = (state.effects.iter())
+            .map(|slot| {
+                let tool = track.id().child(&slot.name).ok();
+                match tool.and_then(|id| project.tool_of(&id)) {
+                    Some(tool) => format!("{} ({tool})", slot.name),
+                    None => format!("{} (not loaded)", slot.name),
+                }
+            })
+            .collect();
+        let effects = match effects.is_empty() {
+            true => String::new(),
+            false => format!(", effects {}", effects.join(", ")),
+        };
         lines.push(format!(
-            "  track `{}` {:?}: colour {}, order {}, {}",
+            "  track `{}` {:?}: colour {}, order {}, {}{effects}",
             track.id(),
             state.name,
             state.colour.name(),
