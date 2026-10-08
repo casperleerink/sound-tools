@@ -88,6 +88,12 @@ export interface TriggerControl {
 export type Control = LiveControl | TriggerControl;
 export type Controls = Record<string, Control>;
 
+/** The names of the controls in `C` of kind `K`, so `set` takes no trigger and `fire` no live control. */
+type ControlNames<C extends Controls, K extends Control["kind"]> = {
+  [Name in keyof C]: C[Name] extends infer Each ? (Each extends { kind: K } ? Name : never) : never;
+}[keyof C] &
+  string;
+
 export const live = (control: Omit<LiveControl, "kind">): LiveControl => ({
   kind: "live",
   ...control,
@@ -469,9 +475,9 @@ export interface Tick<State, C extends Controls, M> {
   /** Seconds since the last tick. */
   dt: number;
   /** Moves a live control. */
-  set(control: keyof C & string, value: number): void;
+  set(control: ControlNames<C, "live">, value: number): void;
   /** Fires a trigger. */
-  fire(control: keyof C & string): void;
+  fire(control: ControlNames<C, "trigger">): void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -518,9 +524,9 @@ export interface Card<State, C extends Controls = Controls, M = unknown> {
    */
   update(label: string, change: (state: State) => void): void;
   /** Moves a live control. Not saved, no undo step. */
-  set(control: keyof C & string, value: number): void;
+  set(control: ControlNames<C, "live">, value: number): void;
   /** Fires a trigger. */
-  fire(control: keyof C & string): void;
+  fire(control: ControlNames<C, "trigger">): void;
 }
 
 /**
