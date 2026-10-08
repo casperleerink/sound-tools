@@ -1,8 +1,9 @@
 //! The project's own tools and cards, written in TypeScript in its `extensions/` folder and run
 //! by Bun. An experiment: how far a project can make Sound Tools its own with no build.
 //!
-//! A project with an `extensions/` folder starts Bun on `host.ts` when it opens. Bun loads every
-//! `.ts` and `.tsx` file there and says which tools they define: the fields of a record, a doc
+//! A project whose `extensions/` folder has a tool file starts Bun on `host.ts` when it opens,
+//! or, in the window, when the first one comes. Bun loads every `.ts` and `.tsx` file there and
+//! says which tools they define: the fields of a record, a doc
 //! for agents, and a sound, a graph of signals that the SDK turns into Hum. The runtime
 //! registers each as a [`JsonTool`] before the records load, so a record of one loads like any
 //! other. Its check runs in Rust; only a new combination of choices asks Bun for Hum. In the
@@ -53,9 +54,12 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("agent-doc.md"),
 };
 
-/// The running tools of a project, from its first load.
+/// The tools of a project, from their first load.
 pub struct Extensions {
-    /// Bun and the tools it loaded first. `None` when it did not start or load.
+    /// The `extensions/` folder of the project.
+    folder: PathBuf,
+    /// Bun and the tools it loaded first. `None` when the folder has no tool yet, or Bun did
+    /// not start or load.
     running: Option<(Arc<Bun>, Loaded)>,
     /// What is wrong with `extensions/`, for the problems of the project.
     problems: Vec<Problem>,
@@ -63,37 +67,28 @@ pub struct Extensions {
 
 impl Extensions {
     /// Starts the tools of the project in `folder`. `None` when it has no `extensions/` folder,
-    /// which is every project that has not asked for its own tools.
+    /// which is every project that has not asked for its own tools. Bun starts only when the
+    /// folder has a tool file; the SDK is written either way, for the agent that writes the
+    /// first one.
     pub fn start(folder: &Path) -> Option<Self> {
-        let extensions = folder.join(FOLDER);
-        if !extensions.is_dir() {
+        let folder = folder.join(FOLDER);
+        if !folder.is_dir() {
             return None;
         }
-        // The window makes the folder for every project: an empty one without Bun is no
-        // problem.
-        if bun_program().is_none() && !has_tools(&extensions) {
-            return None;
-        }
-        let started = bun_program()
-            .ok_or_else(|| {
-                "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
-            })
-            .and_then(|program| {
-                let host = write_files(&extensions).map_err(|error| error.to_string())?;
-                Bun::start(&program, &host, &extensions)
+        let started = write_sdk(&folder)
+            .map_err(|error| error.to_string())
+            .and_then(|()| match has_tools(&folder) {
+                true => launch(&folder).map(Some),
+                false => Ok(None),
             });
-        Some(match started {
-            Ok((bun, loaded)) => Self {
-                running: Some((Arc::new(bun), loaded)),
-                problems: Vec::new(),
-            },
-            Err(message) => Self {
-                running: None,
-                problems: vec![Problem {
-                    path: format!("{FOLDER}/"),
-                    message,
-                }],
-            },
+        let (running, problems) = match started {
+            Ok(running) => (running, Vec::new()),
+            Err(message) => (None, vec![folder_problem(message)]),
+        };
+        Some(Self {
+            folder,
+            running,
+            problems,
         })
     }
 
@@ -175,7 +170,7 @@ fn define(
 }
 
 /// Whether `extensions` has a file of a tool: one that is not the runtime's.
-fn has_tools(extensions: &Path) -> bool {
+pub(crate) fn has_tools(extensions: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(extensions) else {
         return false;
     };
@@ -196,18 +191,35 @@ fn drawn(bun: &Bun, tool: &str, page: bool) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-/// Writes what the runtime owns in `extensions/`, only where the text changed, and the host
-/// script, which is no file of the project.
-fn write_files(extensions: &Path) -> std::io::Result<PathBuf> {
+/// Starts Bun on the tools of `extensions` and waits for its first load.
+pub(crate) fn launch(extensions: &Path) -> Result<(Arc<Bun>, Loaded), String> {
+    let program = bun_program().ok_or_else(|| {
+        "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
+    })?;
+    // The host script is no file of the project.
+    let host = std::env::temp_dir().join(format!("sound-tools-host-{}.ts", std::process::id()));
+    std::fs::write(&host, HOST).map_err(|error| error.to_string())?;
+    let (bun, loaded) = Bun::start(&program, &host, extensions)?;
+    Ok((Arc::new(bun), loaded))
+}
+
+/// A problem of the whole `extensions/` folder.
+pub(crate) fn folder_problem(message: String) -> Problem {
+    Problem {
+        path: format!("{FOLDER}/"),
+        message,
+    }
+}
+
+/// Writes what the runtime owns in `extensions/`, only where the text changed.
+fn write_sdk(extensions: &Path) -> std::io::Result<()> {
     for (name, text) in [("sdk.ts", SDK), ("tsconfig.json", TSCONFIG)] {
         let path = extensions.join(name);
         if std::fs::read_to_string(&path).ok().as_deref() != Some(text) {
             std::fs::write(&path, text)?;
         }
     }
-    let host = std::env::temp_dir().join(format!("sound-tools-host-{}.ts", std::process::id()));
-    std::fs::write(&host, HOST)?;
-    Ok(host)
+    Ok(())
 }
 
 /// Bun on the `PATH`, or where its installer puts it. An app opened from the Finder has a
@@ -221,4 +233,21 @@ fn bun_program() -> Option<PathBuf> {
     let installed =
         std::env::var_os("HOME").map(|home| Path::new(&home).join(".bun/bin").join(&bun));
     on_path.chain(installed).find(|path| path.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project.path().join(FOLDER)).unwrap();
+        let extensions = Extensions::start(project.path()).unwrap();
+        assert!(extensions.running.is_none());
+        assert!(extensions.problems.is_empty(), "{:?}", extensions.problems);
+        assert!(project.path().join(FOLDER).join("sdk.ts").is_file());
+        // The runtime's own files are no tool.
+        assert!(!has_tools(&project.path().join(FOLDER)));
+    }
 }

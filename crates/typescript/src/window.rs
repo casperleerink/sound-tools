@@ -4,6 +4,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -65,9 +66,15 @@ struct Card {
     stale: bool,
 }
 
+/// The live part of the tools once Bun runs. Until then the cards and pickers have no tools.
+type Slot = Rc<RefCell<Option<Entity<Live>>>>;
+
+/// How often a window whose project has no tool yet looks for the first one.
+const WAIT_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Starts the live part of `extensions` for the window of `session`: the cards of its tools in
-/// `views`, and its tools in the pickers of `devices`. Nothing when the project has no running
-/// tools.
+/// `views`, and its tools in the pickers of `devices`. A project with no tool yet starts Bun
+/// when the first tool file comes.
 pub fn start_window(
     extensions: Extensions,
     session: &Entity<Session>,
@@ -75,53 +82,31 @@ pub fn start_window(
     devices: &mut Devices,
     cx: &mut App,
 ) {
-    let Some((bun, loaded)) = extensions.running else {
-        return;
-    };
-    let tools = Rc::new(RefCell::new(loaded.tools));
+    let tools = Rc::new(RefCell::new(Vec::new()));
     let generation = Rc::new(Cell::new(0));
-    let live = cx.new(|cx: &mut Context<Live>| {
-        let events = bun.events();
-        let hearing = cx.spawn(async move |live, cx| {
-            while let Ok(event) = events.recv().await {
-                if live.update(cx, |live, cx| live.heard(event, cx)).is_err() {
-                    return;
-                }
-            }
-            // Bun is gone: what plays was built and plays on, but nothing new can be built.
-            live.update(cx, |live, cx| live.stopped(cx)).ok();
-        });
-        let framing = cx.spawn(async move |live, cx| {
-            loop {
-                cx.background_executor().timer(FRAME_INTERVAL).await;
-                if live.update(cx, |live, cx| live.frame(cx)).is_err() {
-                    break;
-                }
-            }
-        });
-        Live {
-            bun: bun.clone(),
-            session: session.downgrade(),
-            tools: tools.clone(),
-            generation: generation.clone(),
-            cards: HashMap::new(),
-            next_card: 0,
-            played: HashMap::new(),
-            last_frame: Instant::now(),
-            problems: Vec::new(),
-            frame_out: None,
-            _tasks: [hearing, framing],
+    let slot = Slot::default();
+    match extensions.running {
+        Some((bun, loaded)) => {
+            *tools.borrow_mut() = loaded.tools;
+            *slot.borrow_mut() = Some(Live::start(bun, session, &tools, &generation, cx));
         }
-    });
+        // Bun did not start for tools that are there: the problems of the project say why.
+        None if crate::has_tools(&extensions.folder) => {}
+        None => {
+            let waiting = (tools.clone(), generation.clone(), slot.clone());
+            wait_for_tools(extensions.folder, session.downgrade(), waiting, cx);
+        }
+    }
 
     views.set_other_cards({
-        let (tools, live) = (tools.clone(), live.clone());
+        let (tools, slot) = (tools.clone(), slot.clone());
         move |session, id, frame, _, cx| {
             let tool = session.read(cx).project().tool_of(id)?;
             if !tools.borrow().iter().any(|info| info.name == tool) {
                 return None;
             }
-            let (live, session, id) = (live.clone(), session.clone(), id.clone());
+            let live = slot.borrow().clone()?;
+            let (session, id) = (session.clone(), id.clone());
             let card = cx.new(|cx| TypeScriptCard::new(live, session, id, Some(frame), cx));
             Some(card.into())
         }
@@ -137,7 +122,8 @@ pub fn start_window(
             }
         },
         move |session, id, _, cx| {
-            let (live, session, id) = (live.clone(), session.clone(), id.clone());
+            let live = slot.borrow().clone()?;
+            let (session, id) = (session.clone(), id.clone());
             let page = cx.new(|cx| TypeScriptCard::new(live, session, id, None, cx));
             Some(page.into())
         },
@@ -160,6 +146,100 @@ pub fn start_window(
             name: info.title.clone().into(),
         })
     });
+}
+
+/// Looks for the first tool file in `folder` while the window is open, then starts Bun on it
+/// and defines its tools, as a save would. An open project with no tool runs no Bun.
+fn wait_for_tools(
+    folder: PathBuf,
+    session: WeakEntity<Session>,
+    (tools, generation, slot): (Rc<RefCell<Vec<ToolInfo>>>, Rc<Cell<u64>>, Slot),
+    cx: &mut App,
+) {
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(WAIT_INTERVAL).await;
+            if session.upgrade().is_none() {
+                return;
+            }
+            let looked = folder.clone();
+            let found = (cx.background_executor())
+                .spawn(async move { crate::has_tools(&looked) })
+                .await;
+            if found {
+                break;
+            }
+        }
+        // Up to the timeout of the first load, so not on the thread that draws.
+        let launched = (cx.background_executor())
+            .spawn(async move { crate::launch(&folder) })
+            .await;
+        cx.update(|cx| {
+            let Some(session) = session.upgrade() else {
+                return;
+            };
+            match launched {
+                Ok((bun, loaded)) => {
+                    let live = Live::start(bun, &session, &tools, &generation, cx);
+                    *slot.borrow_mut() = Some(live.clone());
+                    live.update(cx, |live, cx| live.loaded(loaded, cx));
+                }
+                Err(message) => session.update(cx, |session, cx| {
+                    session.background(cx, |project| {
+                        let problems = vec![crate::folder_problem(message)];
+                        project.set_problems_in(&format!("{FOLDER}/"), problems);
+                    });
+                }),
+            }
+        });
+    })
+    .detach();
+}
+
+impl Live {
+    /// The live part of the tools of `bun` for the window of `session`: it hears Bun and runs
+    /// the control loops.
+    fn start(
+        bun: Arc<Bun>,
+        session: &Entity<Session>,
+        tools: &Rc<RefCell<Vec<ToolInfo>>>,
+        generation: &Rc<Cell<u64>>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx: &mut Context<Live>| {
+            let events = bun.events();
+            let hearing = cx.spawn(async move |live, cx| {
+                while let Ok(event) = events.recv().await {
+                    if live.update(cx, |live, cx| live.heard(event, cx)).is_err() {
+                        return;
+                    }
+                }
+                // Bun is gone: what plays was built and plays on, but nothing new can be built.
+                live.update(cx, |live, cx| live.stopped(cx)).ok();
+            });
+            let framing = cx.spawn(async move |live, cx| {
+                loop {
+                    cx.background_executor().timer(FRAME_INTERVAL).await;
+                    if live.update(cx, |live, cx| live.frame(cx)).is_err() {
+                        break;
+                    }
+                }
+            });
+            Live {
+                bun,
+                session: session.downgrade(),
+                tools: tools.clone(),
+                generation: generation.clone(),
+                cards: HashMap::new(),
+                next_card: 0,
+                played: HashMap::new(),
+                last_frame: Instant::now(),
+                problems: Vec::new(),
+                frame_out: None,
+                _tasks: [hearing, framing],
+            }
+        })
+    }
 }
 
 fn key(tool: &str) -> String {
