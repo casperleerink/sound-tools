@@ -84,7 +84,7 @@ my-piece/
 - What belongs to one machine stays out of the folder: the plugin scan cache and plugin window positions live in the user cache folder (`~/Library/Caches/sound-tools/`, `~/.cache/sound-tools/`, `%LOCALAPPDATA%\Sound Tools\Cache\`). A project in git must not change because it was opened on another laptop. For the same reason the generated agent docs contain nothing of the machine.
 - Assets are bytes the core never reads. `AssetName` is checked so a name from a record can never point outside the project. Assets are created with `create_new` and numbered names, never written over by accident, never deleted by the runtime, and never part of undo. So no recorded performance or imported file can be lost by an edit.
 - Each file is written to a temporary file and renamed into place. No `fsync`: it made undo of a large delete block for most of a second. Power loss is left to git. Parents are written before children, then deletions, then `project.json`. A crash leaves at most one stale record, which loading reports.
-- One runtime per project holds `.sound-tools.lock`. `--inspect` and `--render` open read-only without the lock and write nothing, so they work next to a running window.
+- One runtime per project holds `.sound-tools.lock`. `--inspect` and `--render` open read-only without the lock and write nothing of the project, so they work next to a running window. They do write `extensions/sdk.ts` and `extensions/tsconfig.json`, which the runtime owns, when the project has that folder.
 
 ## The live folder and editing
 
