@@ -14,7 +14,7 @@ use crate::language::{
 
 /// Where every param stands, in the order of the `param` lines, and every list of the record,
 /// in the order of the `param name[length]` lines.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Values {
     pub parameters: [f32; MAX_PARAMETERS],
     pub arrays: Vec<Vec<f32>>,
@@ -23,19 +23,9 @@ pub struct Values {
     pub automated: Vec<u16>,
 }
 
-impl Default for Values {
-    fn default() -> Self {
-        Self {
-            parameters: [0.0; MAX_PARAMETERS],
-            arrays: Vec::new(),
-            automated: Vec::new(),
-        }
-    }
-}
-
-/// What leaves the code is held to this, about 12 dB over full scale, so a feedback that
-/// runs away is loud but not deafening.
-const LIMIT: f32 = 4.0;
+/// What leaves the code, and the processor, is held to this, about 12 dB over full scale, so
+/// a feedback that runs away is loud but not deafening.
+pub(crate) const LIMIT: f32 = 4.0;
 
 /// The note a voice plays. A source follows the newest held note; an effect has none.
 #[derive(Copy, Clone, Debug, Default)]
@@ -301,7 +291,9 @@ impl Machine {
                     Some(envelope) => {
                         let times = [read(attack), read(decay), read(release)]
                             .map(|ms| (ms * 0.001 * sample_rate).max(1.0));
-                        envelope.next(read(gate) > 0.0, times, read(sustain).clamp(0.0, 1.0))
+                        // A sustain that is not a number would stay in the level for good.
+                        let sustain = finite(read(sustain)).clamp(0.0, 1.0);
+                        envelope.next(read(gate) > 0.0, note.onset, times, sustain)
                     }
                     None => 0.0,
                 },
@@ -462,9 +454,17 @@ impl Smooth {
 }
 
 impl Envelope {
-    /// `frames` are of the attack, the decay and the release.
-    fn next(&mut self, gate: bool, [attack, decay, release]: [f32; 3], sustain: f32) -> f32 {
-        if gate && !self.gate {
+    /// `frames` are of the attack, the decay and the release. A note that takes over a voice
+    /// whose gate is still up, as one does under the sustain pedal, starts the attack at its
+    /// `onset`: the gate it sees never fell.
+    fn next(
+        &mut self,
+        gate: bool,
+        onset: bool,
+        [attack, decay, release]: [f32; 3],
+        sustain: f32,
+    ) -> f32 {
+        if gate && (!self.gate || onset) {
             self.stage = Stage::Attack;
         } else if !gate && self.gate {
             self.stage = Stage::Release;

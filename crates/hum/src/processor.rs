@@ -14,8 +14,8 @@ use sound_core::{
 };
 use sound_notes::{NoteEvent, Velocity, Voice, Voices, frequency_hz};
 
-use crate::language::{MAX_LIVES, MAX_PARAMETERS};
-use crate::machine::{Inputs, Machine, Note, Values};
+use crate::language::{Code, MAX_LIVES, MAX_PARAMETERS};
+use crate::machine::{Inputs, LIMIT, Machine, Note, Values};
 
 /// How long the old code fades out while the new one fades in.
 const FADE_SECONDS: f32 = 0.01;
@@ -26,8 +26,6 @@ const QUIET: f32 = 1e-4;
 const QUIET_SECONDS: f32 = 0.05;
 /// How far the bend wheel moves every note, either way.
 const BEND_SEMITONES: f32 = 2.0;
-/// What leaves the processor is held to this, as what leaves one voice is.
-const LIMIT: f32 = 4.0;
 
 /// The most notes an instrument plays at once.
 pub const MAX_VOICES: usize = 8;
@@ -59,7 +57,8 @@ pub enum HumUpdate {
     /// be dropped off the audio thread.
     Set {
         machines: Vec<Option<Box<Machine>>>,
-        values: Values,
+        /// Boxed, so a live control or a trigger is a small update.
+        values: Box<Values>,
         watches: Vec<Watch>,
     },
     /// From the interface: a `live` control moves. Not saved.
@@ -70,13 +69,13 @@ pub enum HumUpdate {
 
 pub struct Hum {
     players: Players,
-    parameters: Vec<Smoothed>,
+    parameters: [Smoothed; MAX_PARAMETERS],
     /// Where each param stands in the record, and where it was last aimed.
     records: [f32; MAX_PARAMETERS],
     aimed: [f32; MAX_PARAMETERS],
     /// The param each automation lane moves, see [`Values::automated`].
     automated: Vec<u16>,
-    lives: Vec<Smoothed>,
+    lives: [Smoothed; MAX_LIVES],
     /// The values of this frame, which every voice reads.
     current_parameters: [f32; MAX_PARAMETERS],
     current_lives: [f32; MAX_LIVES],
@@ -86,8 +85,8 @@ pub struct Hum {
     /// Triggers fired since the last block, one bit each.
     fired: u32,
     watches: Vec<Watch>,
+    /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
-    bpm: f32,
     bend: f32,
     sample_rate: f32,
     fade_frames: usize,
@@ -107,7 +106,8 @@ struct Single {
 #[derive(Clone)]
 struct HumVoice {
     machine: Box<Machine>,
-    /// The machine of the code before, while it fades out.
+    /// The machine of the code before. It fades out, then stays until the next new code takes
+    /// it back off the audio thread.
     fading: Option<Box<Machine>>,
     fade_left: usize,
     note: Note,
@@ -135,10 +135,8 @@ impl Hum {
     /// `machine` is the first voice; an instrument plays copies of it.
     pub fn new(kind: Kind, machine: Box<Machine>, values: Values, watches: Vec<Watch>) -> Self {
         let code = machine.code();
-        let counts = (code.parameters.len(), code.lives.len());
-        let lives: Vec<Smoothed> = (0..MAX_LIVES)
-            .map(|index| Smoothed::new(code.lives.get(index).map_or(0.0, |live| live.default)))
-            .collect();
+        let counts = counts_of(code);
+        let lives = lives_of(code);
         let voice = HumVoice {
             machine,
             fading: None,
@@ -155,7 +153,7 @@ impl Hum {
                     always: false,
                     ..voice
                 };
-                Players::Many(Box::new(Voices::new(idle, voices.clamp(1, MAX_VOICES))))
+                Players::Many(Box::new(Voices::new(idle, voices)))
             }
             Kind::Effect | Kind::Source => Players::One(Box::new(Single {
                 voice,
@@ -165,29 +163,21 @@ impl Hum {
                 },
             })),
         };
-        let mut current_parameters = [0.0; MAX_PARAMETERS];
-        current_parameters.copy_from_slice(&values.parameters);
-        let current_lives =
-            std::array::from_fn(|index| lives.get(index).map_or(0.0, Smoothed::current));
         Self {
             players,
-            parameters: values
-                .parameters
-                .iter()
-                .map(|value| Smoothed::new(*value))
-                .collect(),
+            parameters: values.parameters.map(Smoothed::new),
             records: values.parameters,
             aimed: values.parameters,
             automated: values.automated,
             lives,
-            current_parameters,
-            current_lives,
+            // Every frame moves them before a voice reads them.
+            current_parameters: [0.0; MAX_PARAMETERS],
+            current_lives: [0.0; MAX_LIVES],
             counts,
             arrays: values.arrays,
             fired: 0,
             watches,
             beat: 0.0,
-            bpm: 120.0,
             bend: 0.0,
             sample_rate: 48_000.0,
             fade_frames: 1,
@@ -200,14 +190,29 @@ impl Hum {
         values: &mut Values,
         watches: &mut Vec<Watch>,
     ) {
-        let new_code = machines.first().is_some_and(Option::is_some);
+        if let Some(Some(machine)) = machines.first() {
+            // The params and lives of new code may differ in number and order: they start
+            // where they stand, and the fade covers the jump.
+            let code = machine.code();
+            self.counts = counts_of(code);
+            self.lives = lives_of(code);
+            self.parameters = values.parameters.map(Smoothed::new);
+            self.aimed = values.parameters;
+            std::mem::swap(&mut self.watches, watches);
+        }
+        // Aimed at in the next block, unless a lane moves them.
+        self.records = values.parameters;
+        std::mem::swap(&mut self.arrays, &mut values.arrays);
+        std::mem::swap(&mut self.automated, &mut values.automated);
         let fade_frames = self.fade_frames;
         let swap = |voice: &mut HumVoice, machine: &mut Option<Box<Machine>>| {
             if let Some(new) = machine.take() {
                 let old = std::mem::replace(&mut voice.machine, new);
                 // The one that faded before rides back with this update, to be dropped there.
                 *machine = voice.fading.replace(old);
-                voice.fade_left = fade_frames;
+                // An idle voice is silent, so it has nothing to fade from. It also plays no
+                // frame that would count the fade down before its next note.
+                voice.fade_left = if voice.is_idle() { 0 } else { fade_frames };
             }
         };
         match &mut self.players {
@@ -220,31 +225,6 @@ impl Hum {
                 for (voice, machine) in voices.iter_mut().zip(machines.iter_mut()) {
                     swap(voice, machine);
                 }
-            }
-        }
-        // Aimed at in the next block, unless a lane moves them.
-        self.records = values.parameters;
-        if new_code {
-            // The order of the params may have changed with the code; the fade covers it.
-            for (parameter, value) in self.parameters.iter_mut().zip(&values.parameters) {
-                *parameter = Smoothed::new(*value);
-            }
-            self.aimed = values.parameters;
-        }
-        std::mem::swap(&mut self.arrays, &mut values.arrays);
-        std::mem::swap(&mut self.automated, &mut values.automated);
-        if new_code {
-            std::mem::swap(&mut self.watches, watches);
-            let code = match &self.players {
-                Players::One(single) => single.voice.machine.code(),
-                Players::Many(voices) => match voices.iter().next() {
-                    Some(voice) => voice.machine.code(),
-                    None => return,
-                },
-            };
-            self.counts = (code.parameters.len(), code.lives.len());
-            for (index, live) in self.lives.iter_mut().enumerate() {
-                *live = Smoothed::new(code.lives.get(index).map_or(0.0, |live| live.default));
             }
         }
     }
@@ -310,6 +290,18 @@ impl Keys {
             _ => {}
         }
     }
+}
+
+/// How many params and live controls `code` has, so a frame moves only those.
+fn counts_of(code: &Code) -> (usize, usize) {
+    (code.parameters.len(), code.lives.len())
+}
+
+/// The live controls of `code` at their defaults.
+fn lives_of(code: &Code) -> [Smoothed; MAX_LIVES] {
+    std::array::from_fn(|index| {
+        Smoothed::new(code.lives.get(index).map_or(0.0, |live| live.default))
+    })
 }
 
 fn velocity_of(velocity: Velocity) -> f32 {
@@ -434,8 +426,8 @@ impl Processor for Hum {
         } else {
             transport.heard_tick
         };
-        self.bpm = transport.clock.tempo_at(tempo_tick).bpm() as f32;
-        let beats_per_frame = f64::from(self.bpm) / 60.0 / f64::from(self.sample_rate);
+        let bpm = transport.clock.tempo_at(tempo_tick).bpm();
+        let beats_per_frame = bpm / 60.0 / f64::from(self.sample_rate);
         let quiet_limit = (QUIET_SECONDS * self.sample_rate) as usize;
         let mut triggers = std::mem::take(&mut self.fired);
 
@@ -470,7 +462,7 @@ impl Processor for Hum {
                 arrays: &self.arrays,
                 triggers,
                 beat: self.beat,
-                bpm: self.bpm,
+                bpm: bpm as f32,
                 playing,
                 note: Note::default(),
             };

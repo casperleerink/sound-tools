@@ -242,16 +242,20 @@ impl Registry {
             return Err(RegistryError::InvalidAgentDocName(doc.name));
         }
         // Two docs of one name would write over each other's file. The doc of `project.json`
-        // is in the list from the start, so its name is taken like any other.
-        if self.agent_docs.iter().any(|other| other.name == doc.name) {
+        // is in the list from the start, so its name is taken like any other. A tool of the
+        // project names its doc as itself.
+        let project_tool = self.tools.get(doc.name);
+        if self.agent_docs.iter().any(|other| other.name == doc.name)
+            || project_tool.is_some_and(|tool| tool.extension.is_none())
+        {
             return Err(RegistryError::DuplicateAgentDoc(doc.name));
         }
         self.agent_docs.push(RegisteredDoc::of(extension, doc));
         Ok(())
     }
 
-    /// Registers a tool of the project, or replaces the one of that name. A typed tool of that
-    /// name, or a doc of an extension, is an error: they come with the runtime.
+    /// Registers a tool of the project, or replaces the one of that name. A typed tool or
+    /// another doc of that name is an error: they come with the runtime.
     pub fn json_tool(&mut self, tool: JsonTool) -> Result<(), RegistryError> {
         let JsonTool {
             name,
@@ -265,17 +269,20 @@ impl Registry {
             }
             Some((existing, _)) => *existing,
             None if !is_valid_name(&name) => return Err(RegistryError::InvalidToolName(name)),
-            // Names are few and live as long as the program: a tool defined again keeps its
-            // name, so a name is leaked once.
-            None => &*Box::leak(name.into_boxed_str()),
+            None => {
+                // Its doc is named as the tool, and a doc of the runtime may have the name.
+                let taken = self.agent_docs.iter().find(|other| other.name == name);
+                if let Some(registered) = taken {
+                    return Err(RegistryError::DuplicateAgentDoc(registered.name));
+                }
+                // Names are few and live as long as the program: a tool defined again keeps
+                // its name, so a name is leaked once.
+                &*Box::leak(name.into_boxed_str())
+            }
         };
-        let same_name = |registered: &RegisteredDoc| registered.name == name;
-        if let Some(registered) = self.agent_docs.iter().find(|doc| same_name(doc))
-            && registered.extension.is_some()
-        {
-            return Err(RegistryError::DuplicateAgentDoc(registered.name));
-        }
-        self.agent_docs.retain(|registered| !same_name(registered));
+        // Neither a new tool nor a new doc takes the name of the other, so a doc of this name
+        // is the one this tool had.
+        self.agent_docs.retain(|registered| registered.name != name);
         if let Some(JsonToolDoc { when, markdown }) = doc {
             self.agent_docs.push(RegisteredDoc {
                 extension: None,
