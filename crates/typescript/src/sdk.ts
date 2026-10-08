@@ -524,9 +524,9 @@ export interface Card<State, C extends Controls = Controls, M = unknown> {
 }
 
 /**
- * A knob. With `path`, it turns the number at `path` in the record, such as `rate` or
- * `values.rate`: a drag is smooth and one undo step, and a number the record leaves out shows
- * at `default`. With `live`, it plays a live control instead, which nothing saves.
+ * A knob. With `path`, it turns that field of the record, such as `rate`: a drag is smooth and
+ * one undo step. With `live`, it plays a live control instead, which nothing saves. A double
+ * click puts it at `default`.
  */
 export function Knob(props: {
   path?: string;
@@ -541,9 +541,9 @@ export function Knob(props: {
 }
 
 /**
- * A row of steps on a pattern of the record: a click turns a step on (to the pattern's max)
- * or off (to its min). `playing` names a watch whose value is the step that plays, which
- * lights up.
+ * A row of steps on a pattern of the record: a click turns a step on (to `max`, the pattern's
+ * max when left out) or off (to its min). `playing` names a watch whose value is the step that
+ * plays, which lights up.
  */
 export function Steps(props: { path: string; max?: number; playing?: string }): Node {
   return { type: "steps", ...props };

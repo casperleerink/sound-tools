@@ -3,22 +3,25 @@
 //! canvases.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Window, canvas, div, fill, point,
-    prelude::*, px, size,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, WeakEntity, Window, canvas, div,
+    fill, point, prelude::*, px, size,
 };
-use sound_core::{InstanceId, ProjectEvent, ValueRange};
+use serde_json::Value;
+use sound_core::{InstanceId, ProjectEvent};
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
+use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     Knob, decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
 use sound_ui::{ActiveTheme, ControlEdit, Session, weak_callback};
 
-use crate::tools::Unit;
+use crate::tools::{Field, ToolInfo, Unit};
 use crate::tree::{self, Controls, KnobNode};
-use crate::window::Live;
+use crate::window::{Live, state_of};
 
 pub(crate) struct TypeScriptCard {
     live: Entity<Live>,
@@ -30,10 +33,17 @@ pub(crate) struct TypeScriptCard {
     frame: Option<CardFrame>,
     /// The drag of a knob on the record.
     edit: ControlEdit,
-    /// The live controls of the pad the pointer holds.
-    pad: Option<(String, String)>,
-    /// The drag handler of the canvas the pointer holds.
-    canvas_drag: Option<usize>,
+    /// The pad or the canvas the pointer holds since its press.
+    held: Option<Held>,
+}
+
+/// A surface of a card that follows the pointer from a press until the button comes up.
+#[derive(Clone, PartialEq)]
+enum Held {
+    /// A pad, by the live controls it plays.
+    Pad(String, String),
+    /// A canvas, by its drag handler.
+    Canvas(Option<usize>),
 }
 
 impl TypeScriptCard {
@@ -73,8 +83,7 @@ impl TypeScriptCard {
             card,
             frame,
             edit: ControlEdit::default(),
-            pad: None,
-            canvas_drag: None,
+            held: None,
         }
     }
 
@@ -87,16 +96,17 @@ impl TypeScriptCard {
 
     /// A handler of the tree, with where the pointer is on a canvas.
     fn event(&mut self, handler: usize, at: Option<(f32, f32)>, cx: &mut Context<Self>) {
-        let card = self.card;
-        self.live
-            .update(cx, |live, _| live.event(card, handler, at));
+        self.live.read(cx).event(self.card, handler, at);
     }
 }
 
 /// What one draw of the card reads.
 struct Drawing<'a, 'b> {
     live: Entity<Live>,
-    state: serde_json::Value,
+    /// The tool, as it last loaded.
+    info: Option<ToolInfo>,
+    /// The record, with each field it leaves out at its default.
+    state: Value,
     watches: BTreeMap<String, f32>,
     card: u64,
     cx: &'a mut Context<'b, TypeScriptCard>,
@@ -111,14 +121,10 @@ impl Drawing<'_, '_> {
 
 impl Controls for Drawing<'_, '_> {
     fn clickable(&mut self, element: Div, id: ElementId, handler: usize) -> AnyElement {
-        let card = self.card;
         element
             .id(id)
             .cursor_pointer()
-            .on_click(self.cx.listener(move |view, _, _, cx| {
-                view.live
-                    .update(cx, |live, _| live.event(card, handler, None));
-            }))
+            .on_click((self.cx).listener(move |view, _, _, cx| view.event(handler, None, cx)))
             .into_any_element()
     }
 
@@ -133,16 +139,14 @@ impl Controls for Drawing<'_, '_> {
             unit,
         } = knob;
         let value = match (path, live) {
-            (Some(path), _) => tree::number_at(&self.state, path),
+            (Some(path), _) => (self.state.get(path))
+                .and_then(Value::as_f64)
+                .map(|value| value as f32),
             (None, Some(live)) => self.live_value(live).map(|(value, ..)| value),
             (None, None) => None,
         }
         .unwrap_or(*default);
-        // A frequency is heard in octaves, so its knob turns on a log scale.
-        let range = match unit {
-            Some(Unit::Hz) if *min > 0.0 => ValueRange::logarithmic(*min, *max),
-            _ => ValueRange::linear(*min, *max),
-        };
+        let range = crate::tools::knob_range(*min, *max, *unit);
         let readout = match unit {
             Some(Unit::Hz) => hertz_readout(value),
             Some(Unit::Ms) => milliseconds_readout(value),
@@ -163,12 +167,17 @@ impl Controls for Drawing<'_, '_> {
                 knob.on_change(weak_callback(
                     self.cx,
                     move |view: &mut TypeScriptCard, change, cx| {
-                        let (session, id) = (&view.session, &view.id);
-                        let set = |state: &mut serde_json::Value, value| {
-                            tree::set_number(state, &path, value)
+                        let set = |state: &mut Value, value| {
+                            tree::set_field(state, &path, tree::decimal(value));
                         };
-                        view.edit
-                            .apply_json(session, id, &undo_label, change, set, cx);
+                        (view.edit).apply_json(
+                            &view.session,
+                            &view.id,
+                            &undo_label,
+                            change,
+                            set,
+                            cx,
+                        );
                     },
                 ))
             }
@@ -176,10 +185,7 @@ impl Controls for Drawing<'_, '_> {
                 let live = live.clone();
                 knob.on_change(weak_callback(
                     self.cx,
-                    move |view: &mut TypeScriptCard,
-                          change: sound_ui::components::gesture::ValueChange,
-                          cx| {
-                        use sound_ui::components::gesture::ValueChange;
+                    move |view: &mut TypeScriptCard, change, cx| {
                         if let ValueChange::Drag(value) | ValueChange::Set(value) = change {
                             view.control(&live, Some(value), cx);
                         }
@@ -191,22 +197,32 @@ impl Controls for Drawing<'_, '_> {
         knob.into_any_element()
     }
 
-    fn steps(&mut self, path: &str, max: f32, playing: Option<&str>) -> AnyElement {
-        let values: Vec<f32> = tree::numbers_at(&self.state, path).unwrap_or_default();
+    fn steps(&mut self, path: &str, max: Option<f32>, playing: Option<&str>) -> AnyElement {
+        // A step is off at the pattern's min and on at its max, unless the node says what on is.
+        let pattern = self.info.as_ref().and_then(|info| info.field(path));
+        let (off, on) = match pattern {
+            Some(Field::Pattern { min, max: top, .. }) => (*min, max.unwrap_or(*top)),
+            _ => (0.0, max.unwrap_or(1.0)),
+        };
+        let list = (self.state.get(path))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let list = Rc::new(list);
         let playing = playing
             .and_then(|watch| self.watches.get(watch))
             .map(|step| step.floor() as i64);
         let theme = self.cx.theme();
-        let (on, off, light) = (theme.lavender, theme.gray_300, theme.gray_950);
-        let cells = values.iter().enumerate().map(|(step, value)| {
-            let is_on = *value > 0.0;
-            let path = path.to_string();
+        let (on_color, off_color, light) = (theme.lavender, theme.gray_300, theme.gray_950);
+        let cells = list.iter().enumerate().map(|(step, value)| {
+            let is_on = value.as_f64().is_some_and(|value| value as f32 > off);
             let lit = playing == Some(step as i64);
+            let (path, list) = (path.to_string(), list.clone());
             div()
                 .id(ElementId::Name(format!("{path}-{step}").into()))
                 .size(px(14.))
                 .rounded(px(3.))
-                .bg(if is_on { on } else { off })
+                .bg(if is_on { on_color } else { off_color })
                 .border(px(2.))
                 .border_color(if lit {
                     light
@@ -221,12 +237,17 @@ impl Controls for Drawing<'_, '_> {
                     } else {
                         "Turn a step on"
                     };
-                    let next = if is_on { 0.0 } else { max };
+                    // The whole list as it plays, with this step changed: the record may leave
+                    // the pattern out.
+                    let mut list = (*list).clone();
+                    if let Some(item) = list.get_mut(step) {
+                        *item = tree::decimal(if is_on { off } else { on });
+                    }
                     view.session.update(cx, |session, cx| {
                         session.edit(cx, |project| {
                             let mut edit = project.begin(label);
                             project.update_json(&mut edit, &id, |state| {
-                                tree::set_number(state, &format!("{path}.{step}"), next);
+                                tree::set_field(state, &path, Value::Array(list));
                             })?;
                             project.finish(edit)
                         })
@@ -285,7 +306,12 @@ impl Controls for Drawing<'_, '_> {
                     shape.paint(bounds.origin, window);
                 }
                 if on_press.is_some() || on_drag.is_some() {
-                    Drawing::canvas_listeners(window, bounds, view.clone(), on_press, on_drag);
+                    let held = Held::Canvas(on_drag);
+                    follow_pointer(window, bounds, view, held, move |view, at, pressed, cx| {
+                        if let Some(handler) = if pressed { on_press } else { on_drag } {
+                            view.event(handler, Some(at), cx);
+                        }
+                    });
                 }
             },
         )
@@ -304,8 +330,7 @@ impl Controls for Drawing<'_, '_> {
         let theme = self.cx.theme();
         let (background, mark) = (theme.gray_300, theme.lavender);
         let view = self.cx.entity().downgrade();
-        let names = (x.to_string(), y.to_string());
-        let ranges = ((x_min, x_max), (y_min, y_max));
+        let (x, y) = (x.to_string(), y.to_string());
         canvas(
             |_, _, _| {},
             move |bounds: Bounds<Pixels>, (), window: &mut Window, _: &mut App| {
@@ -320,58 +345,12 @@ impl Controls for Drawing<'_, '_> {
                     size(dot_size, dot_size),
                 );
                 window.paint_quad(fill(dot_bounds, mark).corner_radii(dot_size / 2.));
-                // The pointer at `position` puts both controls where it is in the square.
-                let play = move |position: Point<Pixels>,
-                                 view: &mut TypeScriptCard,
-                                 cx: &mut Context<TypeScriptCard>| {
-                    let across =
-                        ((position.x - bounds.origin.x) / bounds.size.width).clamp(0.0, 1.0);
-                    let up =
-                        1.0 - ((position.y - bounds.origin.y) / bounds.size.height).clamp(0.0, 1.0);
-                    let ((x_min, x_max), (y_min, y_max)) = ranges;
-                    let Some((x, y)) = view.pad.clone() else {
-                        return;
-                    };
+                // Across moves `x` and up moves `y`, each over its range.
+                let held = Held::Pad(x.clone(), y.clone());
+                follow_pointer(window, bounds, view, held, move |view, at, _, cx| {
+                    let (across, down) = at;
                     view.control(&x, Some(x_min + (x_max - x_min) * across), cx);
-                    view.control(&y, Some(y_min + (y_max - y_min) * up), cx);
-                };
-                window.on_mouse_event({
-                    let (view, names) = (view.clone(), names.clone());
-                    move |event: &MouseDownEvent, phase, _, cx| {
-                        if phase != DispatchPhase::Bubble
-                            || event.button != MouseButton::Left
-                            || !bounds.contains(&event.position)
-                        {
-                            return;
-                        }
-                        view.update(cx, |view, cx| {
-                            view.pad = Some(names.clone());
-                            play(event.position, view, cx);
-                        })
-                        .ok();
-                    }
-                });
-                window.on_mouse_event({
-                    let view = view.clone();
-                    move |event: &MouseMoveEvent, phase, _, cx| {
-                        if phase != DispatchPhase::Bubble || !event.dragging() {
-                            return;
-                        }
-                        view.update(cx, |view, cx| {
-                            if view.pad.as_ref().is_some_and(|pad| *pad == names) {
-                                play(event.position, view, cx);
-                            }
-                        })
-                        .ok();
-                    }
-                });
-                window.on_mouse_event({
-                    let view = view.clone();
-                    move |_: &MouseUpEvent, phase, _, cx| {
-                        if phase == DispatchPhase::Bubble {
-                            view.update(cx, |view, _| view.pad = None).ok();
-                        }
-                    }
+                    view.control(&y, Some(y_min + (y_max - y_min) * (1.0 - down)), cx);
                 });
             },
         )
@@ -380,61 +359,60 @@ impl Controls for Drawing<'_, '_> {
     }
 }
 
-impl Drawing<'_, '_> {
-    /// The pointer on a canvas: a press, then drags until the button comes up.
-    fn canvas_listeners(
-        window: &mut Window,
-        bounds: Bounds<Pixels>,
-        view: gpui::WeakEntity<TypeScriptCard>,
-        on_press: Option<usize>,
-        on_drag: Option<usize>,
-    ) {
-        let at = move |position: Point<Pixels>| {
-            let across = ((position.x - bounds.origin.x) / bounds.size.width).clamp(0.0, 1.0);
-            let down = ((position.y - bounds.origin.y) / bounds.size.height).clamp(0.0, 1.0);
-            (across, down)
-        };
-        window.on_mouse_event({
-            let view = view.clone();
-            move |event: &MouseDownEvent, phase, _, cx| {
-                if phase != DispatchPhase::Bubble
-                    || event.button != MouseButton::Left
-                    || !bounds.contains(&event.position)
-                {
-                    return;
+/// Makes the surface at `bounds` follow the pointer: a press in it holds it, and `play` hears
+/// the press and each drag after it until the button comes up, with where the pointer is (see
+/// [`across_and_down`]) and whether it is the press.
+fn follow_pointer(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    view: WeakEntity<TypeScriptCard>,
+    held: Held,
+    play: impl Fn(&mut TypeScriptCard, (f32, f32), bool, &mut Context<TypeScriptCard>) + 'static,
+) {
+    let play = Rc::new(play);
+    window.on_mouse_event({
+        let (view, held, play) = (view.clone(), held.clone(), play.clone());
+        move |event: &MouseDownEvent, phase, _, cx| {
+            if phase != DispatchPhase::Bubble
+                || event.button != MouseButton::Left
+                || !bounds.contains(&event.position)
+            {
+                return;
+            }
+            view.update(cx, |view, cx| {
+                view.held = Some(held.clone());
+                play(view, across_and_down(bounds, event.position), true, cx);
+            })
+            .ok();
+        }
+    });
+    window.on_mouse_event({
+        let view = view.clone();
+        move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase != DispatchPhase::Bubble || !event.dragging() {
+                return;
+            }
+            view.update(cx, |view, cx| {
+                if view.held.as_ref() == Some(&held) {
+                    play(view, across_and_down(bounds, event.position), false, cx);
                 }
-                view.update(cx, |view, cx| {
-                    view.canvas_drag = on_drag;
-                    if let Some(handler) = on_press {
-                        view.event(handler, Some(at(event.position)), cx);
-                    }
-                })
-                .ok();
-            }
-        });
-        window.on_mouse_event({
-            let view = view.clone();
-            move |event: &MouseMoveEvent, phase, _, cx| {
-                if phase != DispatchPhase::Bubble || !event.dragging() {
-                    return;
-                }
-                view.update(cx, |view, cx| {
-                    // Only the canvas that was pressed drags.
-                    if let Some(handler) =
-                        view.canvas_drag.filter(|handler| Some(*handler) == on_drag)
-                    {
-                        view.event(handler, Some(at(event.position)), cx);
-                    }
-                })
-                .ok();
-            }
-        });
-        window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
-            if phase == DispatchPhase::Bubble {
-                view.update(cx, |view, _| view.canvas_drag = None).ok();
-            }
-        });
-    }
+            })
+            .ok();
+        }
+    });
+    window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+        if phase == DispatchPhase::Bubble {
+            view.update(cx, |view, _| view.held = None).ok();
+        }
+    });
+}
+
+/// Where `position` is in `bounds`, from 0 to 1 across and down. Outside, at the nearest edge,
+/// so a drag past the edge holds there.
+fn across_and_down(bounds: Bounds<Pixels>, position: Point<Pixels>) -> (f32, f32) {
+    let across = (position.x - bounds.origin.x) / bounds.size.width;
+    let down = (position.y - bounds.origin.y) / bounds.size.height;
+    (across.clamp(0.0, 1.0), down.clamp(0.0, 1.0))
 }
 
 /// A shape of a canvas, ready to paint.
@@ -523,20 +501,22 @@ impl Drawn {
 
 impl Render for TypeScriptCard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let project = self.session.read(cx).project();
-        let state = project
-            .state_json(&self.id)
-            .and_then(|json| serde_json::from_str(&json).ok());
-        let Some(state) = state else {
+        let Some(state) = state_of(self.session.read(cx).project(), &self.id) else {
             return div().into_any_element();
         };
         let live = self.live.read(cx);
+        let info = live.info(self.card);
+        let state = match &info {
+            Some(info) => info.with_defaults(state),
+            None => state,
+        };
         let tree = live.tree(self.card).cloned();
         let watches = live.watches(self.card).cloned().unwrap_or_default();
         let body = match tree {
             Some(Ok(node)) => {
                 let mut drawing = Drawing {
                     live: self.live.clone(),
+                    info,
                     state,
                     watches,
                     card: self.card,
@@ -570,5 +550,19 @@ impl Render for TypeScriptCard {
                 .child(body)
                 .into_any_element(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_pointer_is_found_across_and_down_and_held_at_the_edges() {
+        let bounds = Bounds::new(point(px(10.), px(20.)), size(px(100.), px(50.)));
+        let at = |x: f32, y: f32| across_and_down(bounds, point(px(x), px(y)));
+        assert_eq!(at(60., 45.), (0.5, 0.5));
+        assert_eq!(at(10., 70.), (0.0, 1.0));
+        assert_eq!(at(500., -5.), (1.0, 0.0));
     }
 }
