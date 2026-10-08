@@ -302,8 +302,10 @@ def check_life(folder: Path) -> dict:
     checks = check_experiment(folder)
     tools = project_tools(folder)
     text = "".join(tools.values())
-    # A note per living cell with `play`, or a trigger per row: either plays the column.
-    return {**checks, "plays from its loop": "play(" in text or "fire(" in text}
+    # A note per living cell with `play`, or a trigger per row: either plays the column, and
+    # on time only ahead, with `at`.
+    plays = "play(" in text or "fire(" in text
+    return {**checks, "plays from its loop": plays, "on time": plays and "at:" in text}
 
 
 def check_generative(folder: Path) -> dict:
