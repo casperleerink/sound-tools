@@ -32,7 +32,7 @@ pub struct AgentSettings {
     unreadable: Option<String>,
     /// Writes the last change. A later change waits for it, so the last one is on disk.
     saving: Option<Task<()>>,
-    /// What the provider offers, from the first agent that started. Empty until then.
+    /// What the provider offers, asked once signed in. Empty until it answers.
     models: Vec<Model>,
 }
 

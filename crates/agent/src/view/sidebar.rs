@@ -814,8 +814,12 @@ impl Sidebar {
         };
         let provider = self.provider;
         self.set_setup(Setup::Checking, cx);
-        let asking = cx.background_spawn(async move { provider.account(&installed).await });
+        let asking = cx.background_spawn({
+            let installed = installed.clone();
+            async move { provider.account(&installed).await }
+        });
         let timeout = cx.background_executor().timer(CHECK_TIMEOUT);
+        let folder = self.session.read(cx).project().root().to_path_buf();
         self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
             // The question that loses the race is dropped, which ends its process.
             let answer = future::or(async { Some(asking.await) }, async {
@@ -833,11 +837,42 @@ impl Sidebar {
                     message: "it did not answer within 30 seconds.".to_string(),
                 },
             };
+            let ready = matches!(setup, Setup::Ready { .. });
             // A sidebar that went in the meantime has nobody to tell.
-            sidebar
+            if sidebar
                 .update(cx, |sidebar, cx| sidebar.set_setup(setup, cx))
+                .is_err()
+                || !ready
+            {
+                return;
+            }
+            // The menu shows the models before the first message starts an agent. Asked after
+            // every check, as another account may offer others.
+            let listing =
+                cx.background_spawn(async move { provider.models(installed, folder).await });
+            let timeout = cx.background_executor().timer(CHECK_TIMEOUT);
+            let listed = future::or(async { Some(listing.await) }, async {
+                timeout.await;
+                None
+            })
+            .await;
+            sidebar
+                .update(cx, |sidebar, cx| match listed {
+                    Some(Ok(models)) => sidebar
+                        .settings
+                        .update(cx, |settings, cx| settings.set_models(models, cx)),
+                    Some(Err(error)) => sidebar.models_not_listed(&error.to_string(), cx),
+                    None => sidebar.models_not_listed("it did not answer within 30 seconds", cx),
+                })
                 .ok();
         }));
+    }
+
+    fn models_not_listed(&mut self, error: &str, cx: &mut Context<Self>) {
+        let name = self.provider.name();
+        self.conversation
+            .notice(format!("{name} did not list its models: {error}"));
+        self.show(None, cx);
     }
 
     /// Downloads the pinned program, from where an earlier try stopped.

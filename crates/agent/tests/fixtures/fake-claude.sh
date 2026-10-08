@@ -47,6 +47,18 @@ replay)
     sed -n 's/^{"received": \(.*\)}$/\1/p' "$FAKE_FIXTURE"
     cat >/dev/null
     ;;
+models)
+    # Answers the request to start, and nothing more: no message comes.
+    read -r request
+    sed -n 's/^{"received": \({"type": "control_response".*\)}$/\1/p' "$FAKE_FIXTURE"
+    cat >/dev/null
+    ;;
+models_refused)
+    # Refuses the request to start, then waits for stdin to close.
+    read -r request
+    echo '{"type": "control_response", "response": {"subtype": "error", "request_id": "request-1", "error": "not now"}}'
+    cat >/dev/null
+    ;;
 malformed)
     # A request and a result of known types that do not parse. Keeps the answer to the
     # request in FAKE_OUTPUT.
