@@ -41,6 +41,10 @@ pub(crate) struct ToolInfo {
     pub fields: Named<Field>,
     /// What its interface plays and nothing saves.
     pub controls: Named<Control>,
+    /// It has a control loop, which runs while the window is open.
+    pub tick: bool,
+    /// It has a page: a view of the whole window, for an instance at the top of the project.
+    pub page: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -433,7 +437,7 @@ impl Sounds {
             compile(&lines).map(Rc::new).map_err(|error| {
                 let line = lines.get(error.line).map_or("", String::as_str);
                 format!(
-                    "the Hum of extensions/{file}, line `{line}`: {}",
+                    "the sound of extensions/{file} does not build: {} (in the Hum it makes: `{line}`)",
                     error.message
                 )
             })
@@ -559,7 +563,9 @@ mod tests {
                 "x": { "kind": "live", "min": 0, "max": 1, "default": 0 },
                 "hit": { "kind": "trigger" },
                 "y": { "kind": "live", "min": 0, "max": 1, "default": 0 }
-            }
+            },
+            "tick": false,
+            "page": false
         }))
         .unwrap()
     }

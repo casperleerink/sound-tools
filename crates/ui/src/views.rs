@@ -32,6 +32,8 @@ pub struct Views {
     by_tool: BTreeMap<&'static str, CreateView>,
     cards: BTreeMap<&'static str, CreateCard>,
     other_cards: Option<CardHost>,
+    /// See [`Views::set_other_views`].
+    other_views: Option<(Rc<dyn Fn(&str) -> bool>, CreateView)>,
 }
 
 impl Global for Views {}
@@ -97,6 +99,17 @@ impl Views {
         self.other_cards = Some(Rc::new(create));
     }
 
+    /// What makes the main view of a tool that registered none, such as a tool the project
+    /// wrote, and which tools have one. They come and go while the project is open.
+    pub fn set_other_views(
+        &mut self,
+        has_view: impl Fn(&str) -> bool + 'static,
+        create: impl Fn(&Entity<Session>, &InstanceId, &mut Window, &mut App) -> Option<AnyView>
+        + 'static,
+    ) {
+        self.other_views = Some((Rc::new(has_view), Rc::new(create)));
+    }
+
     /// A new card of the instance in a slot of a rack, from the installed registry. `None`
     /// when the instance is gone or nothing gives its tool a card.
     pub fn card_of(
@@ -126,7 +139,9 @@ impl Views {
         cx: &mut App,
     ) -> Option<AnyView> {
         let tool = session.read(cx).project().tool_of(id)?;
-        let create = cx.try_global::<Self>()?.by_tool.get(tool)?.clone();
+        let views = cx.try_global::<Self>()?;
+        let other = views.other_views.as_ref().map(|(_, create)| create);
+        let create = views.by_tool.get(tool).or(other)?.clone();
         create(session, id, window, cx)
     }
 
@@ -136,8 +151,11 @@ impl Views {
         let views = cx.try_global::<Self>()?;
         let project = session.read(cx).project();
         let mut instances = project.instances();
+        let other = |tool: &str| views.other_views.as_ref().is_some_and(|(has, _)| has(tool));
         instances
-            .find(|(id, tool)| id.parent().is_none() && views.by_tool.contains_key(tool))
+            .find(|(id, tool)| {
+                id.parent().is_none() && (views.by_tool.contains_key(tool) || other(tool))
+            })
             .map(|(id, _)| id.clone())
     }
 }
