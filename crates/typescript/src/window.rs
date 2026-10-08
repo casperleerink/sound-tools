@@ -14,7 +14,7 @@ use sound_hum::{Hum, HumUpdate};
 use sound_notes::{Pitch, Velocity};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
-use crate::bun::{Bun, Event, Loaded, Looped, Request};
+use crate::bun::{ANSWER_TIMEOUT, Bun, Event, Loaded, Looped, Request};
 use crate::card::TypeScriptCard;
 use crate::tools::{Control, ToolInfo, ToolKind};
 use crate::tree::Node;
@@ -39,6 +39,11 @@ pub(crate) struct Live {
     played: HashMap<InstanceId, BTreeMap<String, f32>>,
     /// When the control loops last ran.
     last_frame: Instant,
+    /// What is wrong with `extensions/`: the last load, and what failed since.
+    problems: Vec<Problem>,
+    /// When the frame Bun has not finished yet was sent. One at a time, so a slow loop does
+    /// not pile frames up.
+    frame_out: Option<Instant>,
     _tasks: [Task<()>; 2],
 }
 
@@ -50,6 +55,8 @@ struct Card {
     page: bool,
     /// The last tree, or why there is none. `None` until the first one arrives.
     tree: Option<Result<Rc<Node>, String>>,
+    /// The version of the last tree, which a click on it names.
+    version: u64,
     /// The watches the last tree was drawn with, which native elements read too.
     watches: BTreeMap<String, f32>,
     /// A render was asked for and its tree has not come yet.
@@ -101,6 +108,8 @@ pub fn start_window(
             next_card: 0,
             played: HashMap::new(),
             last_frame: Instant::now(),
+            problems: Vec::new(),
+            frame_out: None,
             _tasks: [hearing, framing],
         }
     });
@@ -127,21 +136,10 @@ pub fn start_window(
                     .any(|info| info.name == tool && info.page)
             }
         },
-        {
-            let tools = tools.clone();
-            move |session, id, _, cx| {
-                let tool = session.read(cx).project().tool_of(id)?;
-                if !tools
-                    .borrow()
-                    .iter()
-                    .any(|info| info.name == tool && info.page)
-                {
-                    return None;
-                }
-                let (live, session, id) = (live.clone(), session.clone(), id.clone());
-                let page = cx.new(|cx| TypeScriptCard::new(live, session, id, None, cx));
-                Some(page.into())
-            }
+        move |session, id, _, cx| {
+            let (live, session, id) = (live.clone(), session.clone(), id.clone());
+            let page = cx.new(|cx| TypeScriptCard::new(live, session, id, None, cx));
+            Some(page.into())
         },
     );
     devices.effects({
@@ -247,6 +245,7 @@ impl Live {
             tool,
             page,
             tree: None,
+            version: 0,
             watches: BTreeMap::new(),
             asked: false,
             stale: false,
@@ -294,9 +293,13 @@ impl Live {
     /// A click on an element of the card, or a press or a drag on a canvas at `x` and `y`
     /// across and down, 0 to 1.
     pub(crate) fn event(&self, card: u64, handler: usize, at: Option<(f32, f32)>) {
+        let Some(entry) = self.cards.get(&card) else {
+            return;
+        };
         let (x, y) = (at.map(|at| at.0), at.map(|at| at.1));
         self.bun.send(&Request::Event {
             card,
+            version: entry.version,
             handler,
             x,
             y,
@@ -403,6 +406,13 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
+        if let Some(sent) = self.frame_out {
+            if sent.elapsed() > ANSWER_TIMEOUT {
+                let message = format!("ran a control loop for longer than {ANSWER_TIMEOUT:?}");
+                self.bun.stop(&message);
+            }
+            return;
+        }
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
         let time = session.update(cx, |session, _| {
@@ -412,6 +422,8 @@ impl Live {
         });
         let tools = self.tools.borrow();
         let project = session.read(cx).project();
+        // An instance that is gone, which an undo may bring back at its defaults.
+        self.played.retain(|id, _| project.tool_of(id).is_some());
         let looped: Vec<Looped> = (project.instances())
             .filter(|(_, tool)| tools.iter().any(|info| info.name == *tool && info.tick))
             .map(|(id, tool)| Looped {
@@ -429,6 +441,7 @@ impl Live {
                 time,
                 instances: looped,
             });
+            self.frame_out = Some(Instant::now());
         }
     }
 
@@ -438,6 +451,7 @@ impl Live {
             return;
         };
         let mut moved = Vec::new();
+        let tools = self.tools.borrow();
         for (card, entry) in &mut self.cards {
             let watches = session.read(cx).project().watches(&entry.id);
             let watches: BTreeMap<String, f32> = watches
@@ -446,9 +460,16 @@ impl Live {
                 .collect();
             if watches != entry.watches {
                 entry.watches = watches;
-                moved.push(*card);
+                // The control loop draws the card of its tool after every step anyway.
+                let ticks = tools
+                    .iter()
+                    .any(|info| info.name == entry.tool && info.tick);
+                if !ticks {
+                    moved.push(*card);
+                }
             }
         }
+        drop(tools);
         for card in &moved {
             self.render(*card, cx);
         }
@@ -460,11 +481,30 @@ impl Live {
     fn heard(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
             Event::Loaded(loaded) => self.loaded(loaded, cx),
-            Event::Tree { card, tree, error } => {
+            Event::Framed => self.frame_out = None,
+            Event::Failed { tool, message } => {
+                let file = (self.tools.borrow().iter())
+                    .find(|info| info.name == tool)
+                    .map(|info| info.file.clone());
+                if let Some(file) = file {
+                    self.problems.push(Problem {
+                        path: format!("{FOLDER}/{file}"),
+                        message: format!("tool {tool}: {message}"),
+                    });
+                    self.report(cx);
+                }
+            }
+            Event::Tree {
+                card,
+                tree,
+                version,
+                error,
+            } => {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
                 entry.asked = false;
+                entry.version = version;
                 entry.tree = Some(match (tree, error) {
                     (Some(tree), _) => serde_json::from_value(tree)
                         .map(Rc::new)
@@ -547,17 +587,27 @@ impl Live {
                 ),
             });
         }
-        session.update(cx, |session, cx| {
-            session.background(cx, |project| {
-                project.set_problems_in(&format!("{FOLDER}/"), problems);
-            });
-        });
+        self.problems = problems;
+        self.report(cx);
         *self.tools.borrow_mut() = gone.into_iter().chain(loaded.tools).collect();
         self.generation.set(self.generation.get() + 1);
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
             self.render(card, cx);
         }
+    }
+
+    /// Lists what is wrong with `extensions/` among the problems of the project.
+    fn report(&self, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let problems = self.problems.clone();
+        session.update(cx, |session, cx| {
+            session.background(cx, |project| {
+                project.set_problems_in(&format!("{FOLDER}/"), problems);
+            });
+        });
     }
 }
 

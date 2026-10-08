@@ -363,20 +363,24 @@ export const mtof = (pitch: Operand): Signal =>
 
 /** A value that feeds back, see `Feedback`. Inside `sound` only. */
 export function feedback(): Feedback {
-  const made = new Feedback(`feedback_${building().feedbacks.length}`);
+  // A name of the SDK starts with _, which no name of a tool does.
+  const made = new Feedback(`_feedback_${building().feedbacks.length}`);
   building().feedbacks.push(made);
   return made;
 }
 
 /** Memory of `seconds`, see `Buffer`. Inside `sound` only. */
 export function buffer(seconds: number): Buffer {
-  const name = `buffer_${building().buffers.length}`;
+  const name = `_buffer_${building().buffers.length}`;
   building().buffers.push([name, seconds]);
   return new Buffer(name);
 }
 
 /** Shows `value` to the card as `watches[name]`. Inside `sound` only. */
 export function watch(name: string, value: Operand): void {
+  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+    throw new Error(`watch ${JSON.stringify(name)}: a watch name is lowercase letters, digits and _, starting with a letter`);
+  }
   building().watches.push([name, value]);
 }
 
@@ -404,7 +408,7 @@ export function graphToHum(build: () => Operand | Stereo): string[] {
           : operation === "at"
             ? `${parts[0]}[${parts[1]}]`
             : `${operation}(${parts.join(", ")})`;
-      const name = `v${names.size}`;
+      const name = `_v${names.size}`;
       names.set(operand, name);
       lines.push(`${name} = ${expression}`);
       return name;
@@ -462,8 +466,6 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * the device in `project.json`, it is an experiment of its own.
    */
   kind?: "effect" | "instrument" | "source";
-  /** How many notes an instrument plays at once, 1 to 8. 8 when left out. */
-  voices?: number;
   /** The fields of its record. Field names are lowercase letters, digits and `_`. */
   state: S;
   /** What its card plays and nothing saves. Names are as field names. */

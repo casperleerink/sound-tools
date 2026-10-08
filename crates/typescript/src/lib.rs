@@ -69,6 +69,11 @@ impl Extensions {
         if !extensions.is_dir() {
             return None;
         }
+        // The window makes the folder for every project: an empty one without Bun is no
+        // problem.
+        if bun_program().is_none() && !has_tools(&extensions) {
+            return None;
+        }
         let started = bun_program()
             .ok_or_else(|| {
                 "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
@@ -167,6 +172,20 @@ fn define(
         }
     }
     problems
+}
+
+/// Whether `extensions` has a file of a tool: one that is not the runtime's.
+fn has_tools(extensions: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(extensions) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        (name.ends_with(".ts") || name.ends_with(".tsx"))
+            && name != "sdk.ts"
+            && !name.ends_with(".d.ts")
+    })
 }
 
 /// Whether the card or the page of `tool` draws a tree the window can show.

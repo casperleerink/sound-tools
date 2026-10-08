@@ -97,8 +97,9 @@ impl Views {
         self.other_cards = Some(Rc::new(create));
     }
 
-    /// What makes the main view of a tool that registered none, such as a tool the project
-    /// wrote, and which tools have one. They come and go while the project is open.
+    /// Which tools that registered no view have one, such as a tool the project wrote, and
+    /// what makes it: `create` is asked only for those. They come and go while the project is
+    /// open.
     pub fn set_other_views(
         &mut self,
         has_view: impl Fn(&str) -> bool + 'static,
@@ -138,7 +139,9 @@ impl Views {
     ) -> Option<AnyView> {
         let tool = session.read(cx).project().tool_of(id)?;
         let views = cx.try_global::<Self>()?;
-        let other = views.other_views.as_ref().map(|(_, create)| create);
+        let other = (views.other_views.as_ref())
+            .filter(|(has, _)| has(tool))
+            .map(|(_, create)| create);
         let create = views.by_tool.get(tool).or(other)?.clone();
         create(session, id, window, cx)
     }

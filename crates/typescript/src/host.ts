@@ -20,7 +20,7 @@ type Request =
   | { type: "sound"; id: number; tool: string; choices: Record<string, string | number> }
   | { type: "draw"; id: number; tool: string; page: boolean }
   | { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: boolean }
-  | { type: "event"; card: number; handler: number; x?: number; y?: number }
+  | { type: "event"; card: number; version: number; handler: number; x?: number; y?: number }
   | { type: "frame"; dt: number; time: number; instances: Array<{ instance: string; tool: string; state: State; watches: Watches }> }
   | { type: "drop"; card: number };
 
@@ -38,16 +38,31 @@ function send(message: object) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
 
-/** The handlers of the last tree of each card. */
-const handlers = new Map<number, Handler[]>();
+/** The handlers of the last trees of each card, by the version of the tree. */
+const handlers = new Map<number, Map<number, Handler[]>>();
+/** The version of the last tree drawn: a click names the tree it was on. */
+let treeVersion = 0;
+/** The trees of a card whose clicks still count: the window may still show an older one. */
+const KEPT_TREES = 8;
 /** What each card was last drawn from, so it draws again after a tick or a click. */
 const drawn = new Map<number, Extract<Request, { type: "render" }>>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
+/** The tools whose tick or a click on whose card failed since the last load. */
+const failed = new Set<string>();
+
+/** Tells the runtime the first failure of a tool since the last load: it lists it as a problem. */
+function fail(tool: string, message: string) {
+  if (!failed.has(tool)) {
+    failed.add(tool);
+    console.error(`${tool}: ${message}`);
+    send({ type: "failed", tool, message });
+  }
+}
 let version = 0;
 
 const NAME = /^[a-z0-9_-]+$/;
-const HUM_NAME = /^[a-z_][a-z0-9_]*$/;
+const HUM_NAME = /^[a-z][a-z0-9_]*$/;
 
 /** What is wrong with the definition of a tool, so the agent that wrote it can fix it. */
 function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
@@ -74,9 +89,6 @@ function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
   const kind = spec.kind ?? "effect";
   if (!["effect", "instrument", "source"].includes(kind)) {
     problems.push(`kind ${JSON.stringify(kind)}: use "effect", "instrument" or "source"`);
-  }
-  if (spec.voices !== undefined && (kind !== "instrument" || !(spec.voices >= 1 && spec.voices <= 8))) {
-    problems.push("voices: only an instrument has voices, from 1 to 8");
   }
   const range = (at: string, min: number, max: number, value: number) => {
     if (!(min < max)) problems.push(`${at}: min must be below max`);
@@ -124,9 +136,10 @@ function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
 async function load() {
   version += 1;
   sdk.host.tools.clear();
-  // New code starts its memory again.
+  // New code starts its memory again, and has failed in nothing yet.
   memories.clear();
-  /** The file each tool comes from. */
+  failed.clear();
+  /** The file each tool that holds comes from. */
   const files = new Map<string, string>();
   const errors: Array<{ file: string; message: string }> = [];
   for (const file of readdirSync(folder).sort()) {
@@ -145,14 +158,17 @@ async function load() {
       if (before.has(name)) {
         continue;
       }
-      files.set(name, file);
-      for (const problem of problemsOf(spec)) {
+      const problems = problemsOf(spec);
+      for (const problem of problems) {
         errors.push({ file, message: `tool ${name}: ${problem}` });
+      }
+      if (problems.length === 0) {
+        files.set(name, file);
       }
     }
   }
   const tools = [...sdk.host.tools.values()]
-    .filter((spec) => problemsOf(spec).length === 0)
+    .filter((spec) => files.has(spec.name))
     .map((spec) => ({
       name: spec.name,
       file: files.get(spec.name),
@@ -160,7 +176,6 @@ async function load() {
       when: spec.when,
       doc: spec.doc,
       kind: spec.kind ?? "effect",
-      voices: spec.voices,
       fields: spec.state,
       controls: spec.controls ?? {},
       tick: typeof spec.tick === "function",
@@ -259,10 +274,24 @@ function serialize(node: Node, handlers: Handler[]): Sent {
 
 /** The memory of an instance, made when it is first needed. */
 function memoryOf(instance: string, spec: ToolSpec<Fields, Controls, unknown>): unknown {
-  if (!memories.has(instance)) {
-    memories.set(instance, spec.memory ? spec.memory() : {});
+  // A record that becomes another tool's starts its memory again.
+  const key = `${instance} ${spec.name}`;
+  if (!memories.has(key)) {
+    memories.set(key, spec.memory ? spec.memory() : {});
   }
-  return memories.get(instance);
+  return memories.get(key);
+}
+
+/** The `time` of the last frame. */
+let now = 0;
+/** How far ahead `at` may be: more is a mistake, such as milliseconds, that would hold the list of what is to come. */
+const AHEAD = 10;
+
+/** Throws when `at` is too far ahead to be meant. */
+function checkAt(at: number | undefined) {
+  if (at !== undefined && at > now + AHEAD) {
+    throw new RangeError(`at is ${at}, ${(at - now).toFixed(1)} s after time: give a time of the loop in seconds, at most ${AHEAD} s ahead`);
+  }
 }
 
 /** What a card, a page and the control loop use to play an instance. */
@@ -272,9 +301,11 @@ function players(instance: string) {
       send({ type: "control", instance, name: control, value });
     },
     fire(control: string, { at }: { at?: number } = {}) {
+      checkAt(at);
       send({ type: "control", instance, name: control, at });
     },
     play(pitch: number, { seconds = 0.25, velocity = 0.8, at }: { seconds?: number; velocity?: number; at?: number } = {}) {
+      checkAt(at);
       const key = Math.max(0, Math.min(127, Math.round(pitch)));
       send({ type: "note", instance, pitch: key, velocity, seconds, at });
     },
@@ -310,8 +341,17 @@ function render(request: Extract<Request, { type: "render" }>) {
       ...players(instance),
     });
     const tree = serialize(node, kept);
-    handlers.set(card, kept);
-    send({ type: "tree", card, tree });
+    treeVersion += 1;
+    const trees = handlers.get(card) ?? new Map<number, Handler[]>();
+    trees.set(treeVersion, kept);
+    for (const old of trees.keys()) {
+      if (trees.size <= KEPT_TREES) {
+        break;
+      }
+      trees.delete(old);
+    }
+    handlers.set(card, trees);
+    send({ type: "tree", card, tree, version: treeVersion });
   } catch (error) {
     send({ type: "tree", card, error: String(error) });
   }
@@ -357,6 +397,7 @@ function draw(tool: string, page: boolean): Sent {
 
 /** One step of the control loop of each instance, then its cards draw again. */
 function frame(request: Extract<Request, { type: "frame" }>) {
+  now = request.time;
   for (const { instance, tool, state, watches } of request.instances) {
     const spec = sdk.host.tools.get(tool);
     if (!spec?.tick) {
@@ -365,7 +406,7 @@ function frame(request: Extract<Request, { type: "frame" }>) {
     try {
       spec.tick({ state, watches, memory: memoryOf(instance, spec), dt: request.dt, time: request.time, ...players(instance) });
     } catch (error) {
-      console.error(`the tick of ${tool} failed: ${error}`);
+      fail(tool, `its tick failed: ${error}`);
       continue;
     }
     for (const last of drawn.values()) {
@@ -374,6 +415,7 @@ function frame(request: Extract<Request, { type: "frame" }>) {
       }
     }
   }
+  send({ type: "framed" });
 }
 
 /** The load that runs, so that a request waits for its tools instead of seeing half of them. */
@@ -409,9 +451,12 @@ for await (const line of console) {
       break;
     case "event": {
       try {
-        handlers.get(request.card)?.[request.handler]?.(request.x ?? 0, request.y ?? 0);
+        handlers.get(request.card)?.get(request.version)?.[request.handler]?.(request.x ?? 0, request.y ?? 0);
       } catch (error) {
-        console.error(`a click failed: ${error}`);
+        const tool = drawn.get(request.card)?.tool;
+        if (tool) {
+          fail(tool, `a click on its card failed: ${error}`);
+        }
       }
       // It may have changed the memory.
       const last = drawn.get(request.card);

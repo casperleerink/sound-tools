@@ -118,6 +118,16 @@ enum Players {
     Many(Box<Voices<HumVoice, MAX_VOICES>>),
 }
 
+impl Players {
+    /// The code the voices play.
+    fn code(&self) -> Option<&Code> {
+        match self {
+            Self::One(single) => Some(single.voice.machine.code()),
+            Self::Many(voices) => voices.iter().next().map(|voice| voice.machine.code()),
+        }
+    }
+}
+
 /// The one voice of an effect or a source, and the keys a source follows.
 struct Single {
     voice: HumVoice,
@@ -217,7 +227,15 @@ impl Hum {
             // where they stand, and the fade covers the jump.
             let code = machine.code();
             self.counts = counts_of(code);
-            self.lives = lives_of(code);
+            // A live control the new code has too stays where the interface put it.
+            let mut was = std::mem::replace(&mut self.lives, lives_of(code));
+            if let Some(old) = self.players.code() {
+                for (live, spec) in self.lives.iter_mut().zip(&code.lives) {
+                    if let Some(index) = old.lives.iter().position(|old| old.name == spec.name) {
+                        std::mem::swap(live, &mut was[index]);
+                    }
+                }
+            }
             self.parameters = values.parameters.map(Smoothed::new);
             self.aimed = values.parameters;
             std::mem::swap(&mut self.watches, watches);
@@ -458,7 +476,7 @@ impl Processor for Hum {
                         Some(start),
                         Scheduled::Note(NoteEvent::On { pitch, velocity }),
                     );
-                    let end = start + (*frames).max(1);
+                    let end = start.saturating_add((*frames).max(1));
                     self.schedule(Some(end), Scheduled::Note(NoteEvent::Off { pitch }));
                 }
             }

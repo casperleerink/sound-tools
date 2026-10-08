@@ -51,7 +51,6 @@ tool({
     "A Game of Life grid of 16 columns and 8 rows that plays itself. A cursor sweeps across it column by column and strikes the living cells of its column as one chord of soft bells: the bottom row is the lowest note, each row up is the next note of a C major pentatonic scale (C4 at the bottom, up to E5). The grid wraps at its edges and evolves on its own as the cursor moves. A click on a cell brings it to life or kills it; the page also has Pause, Clear and Random.\n\n" +
     "`speed` is how many columns the cursor sweeps a second. `evolve_every` is how many columns it sweeps between two generations: 16 is one generation a sweep, 1 a generation on every column. `ring` is how long a bell rings, `brightness` how much metallic shimmer it has at the strike, 0 a pure sine. `gain` is the level of each bell.",
   kind: "instrument",
-  voices: 8,
   state: {
     speed: knob({ min: 0.5, max: 16, default: 4, unit: "hz", label: "Columns / s" }),
     evolve_every: knob({ min: 1, max: 32, default: 8, label: "Evolve every" }),

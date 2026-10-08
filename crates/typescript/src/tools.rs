@@ -36,9 +36,6 @@ pub(crate) struct ToolInfo {
     pub when: String,
     pub doc: String,
     pub kind: ToolKind,
-    /// How many notes an instrument plays at once.
-    #[serde(default)]
-    pub voices: Option<usize>,
     /// The saved fields of its record, in the order the code gives them, which is the order
     /// of the knobs on the card.
     pub fields: Named<Field>,
@@ -210,7 +207,7 @@ impl ToolInfo {
         match self.kind {
             ToolKind::Effect => Kind::Effect,
             ToolKind::Instrument => Kind::Instrument {
-                voices: self.voices.unwrap_or(sound_hum::MAX_VOICES),
+                voices: sound_hum::MAX_VOICES,
             },
             ToolKind::Source => Kind::Source,
         }
@@ -614,27 +611,26 @@ impl Sounds {
         let hum = context.processor(self.info.processor(), || {
             created = true;
             let first = machines.first_mut().and_then(Option::take);
-            let lists = values.arrays.clone();
-            let lists = lists.unwrap_or_else(|| self.lists(&code, state, &assets, rate));
+            let lists =
+                (values.arrays.take()).unwrap_or_else(|| self.lists(&code, state, &assets, rate));
             let values = Values {
                 arrays: Some(lists),
                 ..values.clone()
             };
             Hum::new(kind, first.unwrap_or_else(made), values, watches.clone())
         })?;
-        if created {
-            // The new processor already plays this code.
-            machines.clear();
+        // A new processor already plays this code with these values.
+        if !created {
+            let watches = if new_code { watches } else { Vec::new() };
+            context.update(
+                hum,
+                HumUpdate::Set {
+                    machines,
+                    values: Box::new(values),
+                    watches,
+                },
+            )?;
         }
-        let watches = if new_code { watches } else { Vec::new() };
-        context.update(
-            hum,
-            HumUpdate::Set {
-                machines,
-                values: Box::new(values),
-                watches,
-            },
-        )?;
         match kind {
             Kind::Effect => {
                 context.input(AUDIO_INPUT, InputEndpoint::new(hum, Hum::INPUT));

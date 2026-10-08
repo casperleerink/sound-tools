@@ -5,8 +5,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -14,9 +14,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::tools::ToolInfo;
 
-/// How long a question may take before the behaviour that asked fails. Bun answers in well
-/// under a millisecond; a tool whose `sound` hangs must not hang the window for good.
-const ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a question, or a step of the control loops, may take before Bun counts as hung
+/// and is stopped. Bun answers in well under a millisecond; a tool whose code hangs must not
+/// hang the window.
+pub(crate) const ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The lines that may wait for Bun to read them. More, and Bun has stopped reading.
+const QUEUED_LINES: usize = 1024;
 
 /// How long the first load may take. Bun starts in a few tens of milliseconds.
 const FIRST_LOAD_TIMEOUT: Duration = Duration::from_secs(10);
@@ -53,6 +57,8 @@ pub(crate) enum Request<'a> {
     /// A click, or a press or a drag on a canvas at `x` and `y` across and down, 0 to 1.
     Event {
         card: u64,
+        /// The version of the tree that was clicked.
+        version: u64,
         handler: usize,
         #[serde(skip_serializing_if = "Option::is_none")]
         x: Option<f32>,
@@ -87,11 +93,18 @@ pub(crate) struct Looped<'a> {
 pub(crate) enum Event {
     /// The files of `extensions/` loaded, at the start and after every save.
     Loaded(Loaded),
+    /// The control loops ran the last frame.
+    Framed,
+    /// The tick of a tool, or a click on its card, failed: the first time since the last load.
+    Failed { tool: String, message: String },
     /// A card drew, or failed to.
     Tree {
         card: u64,
         #[serde(default)]
         tree: Option<serde_json::Value>,
+        /// What a click on it names, so it runs a handler of this tree and not of a newer one.
+        #[serde(default)]
+        version: u64,
         #[serde(default)]
         error: Option<String>,
     },
@@ -193,12 +206,16 @@ enum Line {
 type Waiting = Arc<Mutex<Option<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>>;
 
 pub(crate) struct Bun {
-    stdin: Mutex<ChildStdin>,
+    /// Lines on their way to Bun, which a thread of their own writes: a Bun that stops reading
+    /// does not block the window.
+    lines: mpsc::SyncSender<String>,
     waiting: Waiting,
     next_id: AtomicU64,
     events: smol::channel::Receiver<Event>,
-    /// Ended when the runtime lets go of it, and the process with it.
-    child: Child,
+    /// Ended when it hangs, or when the runtime lets go of it.
+    child: Mutex<Child>,
+    /// It hung and was stopped: once is enough.
+    stopped: AtomicBool,
 }
 
 impl Bun {
@@ -225,21 +242,36 @@ impl Bun {
         let waiting: Waiting = Arc::new(Mutex::new(Some(HashMap::new())));
         let (events, received) = smol::channel::unbounded();
         let (first, first_load) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("bun".into())
-            .spawn({
-                let waiting = waiting.clone();
-                move || read(stdout, &waiting, first, &events)
-            })
-            .map_err(|error| error.to_string())?;
+        let (lines, to_write) = mpsc::sync_channel::<String>(QUEUED_LINES);
         // From here a failure drops it, which ends the process.
         let bun = Self {
-            stdin: Mutex::new(stdin),
-            waiting,
+            lines,
+            waiting: waiting.clone(),
             next_id: AtomicU64::new(0),
             events: received,
-            child,
+            child: Mutex::new(child),
+            stopped: AtomicBool::new(false),
         };
+        std::thread::Builder::new()
+            .name("bun".into())
+            .spawn(move || read(stdout, &waiting, first, &events))
+            .map_err(|error| error.to_string())?;
+        std::thread::Builder::new()
+            .name("bun-input".into())
+            .spawn(move || {
+                let mut stdin = stdin;
+                // Until Bun or the runtime is gone.
+                for line in to_write {
+                    if stdin
+                        .write_all(line.as_bytes())
+                        .and_then(|()| stdin.flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| error.to_string())?;
         let loaded = first_load
             .recv_timeout(FIRST_LOAD_TIMEOUT)
             .map_err(|error| match error {
@@ -287,14 +319,9 @@ impl Bun {
         match wait.recv_timeout(ANSWER_TIMEOUT) {
             Ok(answer) => answer,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Ok(mut waiting) = self.waiting.lock()
-                    && let Some(waiting) = waiting.as_mut()
-                {
-                    waiting.remove(&id);
-                }
-                Err(format!(
-                    "the TypeScript host took longer than {ANSWER_TIMEOUT:?}"
-                ))
+                let message = format!("took longer than {ANSWER_TIMEOUT:?} to answer");
+                self.stop(&message);
+                Err(format!("the TypeScript host {message}"))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(STOPPED.to_string()),
         }
@@ -306,15 +333,21 @@ impl Bun {
             Ok(json) => json + "\n",
             Err(error) => return eprintln!("error: {error}"),
         };
-        // A pipe of a stopped host fails. Its stop was reported by the reader.
-        let Ok(mut stdin) = self.stdin.lock() else {
+        // A stopped host reads nothing: its stop was reported by the reader.
+        if let Err(mpsc::TrySendError::Full(_)) = self.lines.try_send(line) {
+            self.stop("stopped reading");
+        }
+    }
+
+    /// Stops a Bun that hangs. The reader then hears it end, every question fails at once,
+    /// and the window says the tools stopped.
+    pub(crate) fn stop(&self, why: &str) {
+        if self.stopped.swap(true, Ordering::Relaxed) {
             return;
-        };
-        if let Err(error) = stdin
-            .write_all(line.as_bytes())
-            .and_then(|()| stdin.flush())
-        {
-            eprintln!("error: could not reach the TypeScript host: {error}");
+        }
+        eprintln!("error: the TypeScript host {why}, so it is stopped");
+        if let Ok(mut child) = self.child.lock() {
+            child.kill().ok();
         }
     }
 }
@@ -370,8 +403,10 @@ fn read(
 impl Drop for Bun {
     fn drop(&mut self) {
         // Already ended, or never to be waited for: nothing to report on the way out.
-        self.child.kill().ok();
-        self.child.wait().ok();
+        if let Ok(child) = self.child.get_mut() {
+            child.kill().ok();
+            child.wait().ok();
+        }
     }
 }
 

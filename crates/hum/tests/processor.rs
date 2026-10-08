@@ -278,6 +278,27 @@ fn the_beat_counts_quarter_notes_while_the_transport_plays() {
     );
 }
 
+#[test]
+fn a_live_control_stays_where_it_is_when_the_code_is_new() {
+    let mut played = play(Kind::Source, &["live x = 0 [0, 1]", "out = x"], Vec::new());
+    let live = HumUpdate::Live {
+        index: 0,
+        value: 1.0,
+    };
+    played.control.update(played.hum, live).unwrap();
+    played.render(1_920);
+    // New code, with another live control first: `x` keeps its value under its name.
+    let lines = ["live y = 0.5 [0, 1]", "live x = 0 [0, 1]", "out = x + y"];
+    let code = compile(&lines.map(String::from)).unwrap();
+    let new = HumUpdate::Set {
+        machines: vec![Some(Box::new(Machine::new(code, SAMPLE_RATE as f32)))],
+        values: Box::default(),
+        watches: Vec::new(),
+    };
+    played.control.update(played.hum, new).unwrap();
+    assert_eq!(played.render(1_920)[1_919], 1.5);
+}
+
 /// The update the behaviour sends when the code of a tool of `kind` is new.
 fn new_code(kind: Kind, line: &str) -> HumUpdate {
     let code = compile(&[line.to_string()]).unwrap();
