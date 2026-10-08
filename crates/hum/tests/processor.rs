@@ -160,6 +160,24 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
 }
 
 #[test]
+fn a_note_that_takes_a_held_voice_starts_its_envelope_again() {
+    let code = [
+        "level = adsr(gate, 10, 10, 0.5, 10)",
+        "watch shown = level",
+        "out = 0.01 * level",
+    ];
+    // Eight voices, all held at their sustain: the ninth note takes the oldest.
+    let mut notes: Vec<(usize, NoteEvent)> = (60..68).map(|pitch| (0, on(pitch))).collect();
+    notes.push((4_800, on(72)));
+    let mut played = play(Kind::Instrument { voices: 8 }, &code, notes);
+    played.render(4_800);
+    assert_eq!(played.watches[0].get(), 0.5);
+    // 5 ms of a 10 ms attack from 0.5 reaches the top.
+    played.render(256);
+    assert!(played.watches[0].get() > 0.9, "{}", played.watches[0].get());
+}
+
+#[test]
 fn a_source_sounds_with_no_note_and_follows_the_newest_held_one() {
     // Before any note `gate` is 0, so this drone plays 110 Hz until a note comes.
     let code = ["out = 0.2 * sin(phasor(mix(110, freq, gate)) * tau)"];
