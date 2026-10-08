@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Task, WeakEntity};
-use sound_core::{InstanceId, Problem};
+use sound_core::{InstanceId, Problem, Project};
 use sound_hum::{Hum, HumUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
@@ -167,13 +167,18 @@ fn key(tool: &str) -> String {
     format!("{FOLDER}/{tool}")
 }
 
+/// The `state` of the record of `id`.
+pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json::Value> {
+    serde_json::from_str(&project.state_json(id)?).ok()
+}
+
 /// What a picker offers of the tools of `kind`: each one's record at its defaults.
 fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
     let tools = tools.iter().filter(|info| kind(info.kind));
     tools
         .map(|info| {
             let tool = info.name.clone();
-            let write = move |project: &sound_core::Project, slot: &InstanceId, changes: &mut _| {
+            let write = move |project: &Project, slot: &InstanceId, changes: &mut _| {
                 project.set_json(changes, slot.clone(), &tool, serde_json::json!({}))
             };
             DeviceOffer::new(
@@ -195,6 +200,13 @@ impl Live {
     /// The watches a card last drew with.
     pub(crate) fn watches(&self, card: u64) -> Option<&BTreeMap<String, f32>> {
         self.cards.get(&card).map(|card| &card.watches)
+    }
+
+    /// The tool of a card, as it last loaded.
+    pub(crate) fn info(&self, card: u64) -> Option<ToolInfo> {
+        let tool = &self.cards.get(&card)?.tool;
+        let tools = self.tools.borrow();
+        tools.iter().find(|info| info.name == *tool).cloned()
     }
 
     /// Where the live control `name` of the card's instance is, and its range: where it was
@@ -263,13 +275,10 @@ impl Live {
             return;
         }
         let project = session.read(cx).project();
-        let Some(tool) = project.tool_of(&entry.id) else {
+        let (Some(tool), Some(state)) = (project.tool_of(&entry.id), state_of(project, &entry.id))
+        else {
             return;
         };
-        let state = project
-            .state_json(&entry.id)
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default();
         entry.asked = true;
         self.bun.send(&Request::Render {
             card,
@@ -283,7 +292,7 @@ impl Live {
 
     /// A click on an element of the card, or a press or a drag on a canvas at `x` and `y`
     /// across and down, 0 to 1.
-    pub(crate) fn event(&mut self, card: u64, handler: usize, at: Option<(f32, f32)>) {
+    pub(crate) fn event(&self, card: u64, handler: usize, at: Option<(f32, f32)>) {
         let (x, y) = (at.map(|at| at.0), at.map(|at| at.1));
         self.bun.send(&Request::Event {
             card,
@@ -300,7 +309,7 @@ impl Live {
         id: &InstanceId,
         name: &str,
         value: Option<f32>,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) {
         let Some(session) = self.session.upgrade() else {
             return;
@@ -322,6 +331,8 @@ impl Live {
                 .entry(id.clone())
                 .or_default()
                 .insert(name.to_string(), value);
+            // A pad or a knob of the card shows where it is, also while nothing else redraws.
+            cx.notify();
         }
         session.update(cx, |session, cx| {
             let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
@@ -360,9 +371,7 @@ impl Live {
             .map(|(id, tool)| Looped {
                 instance: id.as_str(),
                 tool,
-                state: (project.state_json(id))
-                    .and_then(|json| serde_json::from_str(&json).ok())
-                    .unwrap_or_default(),
+                state: state_of(project, id).unwrap_or_default(),
                 watches: (project.watches(id).into_iter())
                     .map(|(name, watch)| (name, watch.get()))
                     .collect(),

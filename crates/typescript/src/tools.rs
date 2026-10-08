@@ -303,11 +303,23 @@ impl ToolInfo {
         Ok(())
     }
 
-    fn field(&self, name: &str) -> Option<&Field> {
+    pub(crate) fn field(&self, name: &str) -> Option<&Field> {
         let mut fields = self.fields.0.iter();
         fields
             .find(|(field, _)| field == name)
             .map(|(_, field)| field)
+    }
+
+    /// `state` with each field it leaves out at its default: the record as it plays.
+    pub(crate) fn with_defaults(&self, mut state: Value) -> Value {
+        if let Value::Object(object) = &mut state {
+            for (name, field) in &self.fields.0 {
+                if !object.contains_key(name) {
+                    object.insert(name.clone(), field.default_value());
+                }
+            }
+        }
+        state
     }
 
     /// The choices of a record, each at its default when the record leaves it out: what the
@@ -640,6 +652,15 @@ mod tests {
         for (state, message) in refused {
             assert_eq!(wobble.check(&state), Err(message.to_string()));
         }
+    }
+
+    #[test]
+    fn a_record_that_leaves_fields_out_plays_them_at_their_defaults() {
+        let played = wobble().with_defaults(json!({ "rate": 6 }));
+        let expected = json!({
+            "rate": 6, "shape": "sine", "bypass": false, "accents": [0.0, 0.0, 0.0, 0.0]
+        });
+        assert_eq!(played, expected);
     }
 
     #[test]

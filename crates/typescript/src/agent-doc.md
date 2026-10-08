@@ -145,8 +145,8 @@ tool({
 | Element | Does |
 | --- | --- |
 | `<div style onClick>` | A box; `Style` in `sdk.ts` lists every style. Text goes inside. |
-| `<Knob path label min max default unit?>` | Turns the number at `path` in the record: a drag is one undo step. With `live="name"` instead of `path` it plays a live control. |
-| `<Steps path max? playing?>` | A row of steps on a pattern: a click turns a step on (to `max`, 1 by default) or off. `playing` names a watch whose value is the step that lights up. |
+| `<Knob path label min max default unit?>` | Turns the field `path` of the record: a drag is one undo step. With `live="name"` instead of `path` it plays a live control. |
+| `<Steps path max? playing?>` | A row of steps on a pattern: a click turns a step on (to `max`, the pattern's max by default) or off (to its min). `playing` names a watch whose value is the step that lights up. |
 | `<Meter watch label?>` | A bar that shows a watch from 0 to 1. |
 | `<Pad x y size?>` | A square for the pointer: across moves the live control `x`, up moves `y`. |
 
