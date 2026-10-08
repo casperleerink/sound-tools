@@ -102,6 +102,12 @@ export interface TriggerControl {
 export type Control = LiveControl | TriggerControl;
 export type Controls = Record<string, Control>;
 
+/** The names of the controls in `C` of kind `K`, so `set` takes no trigger and `fire` no live control. */
+type ControlNames<C extends Controls, K extends Control["kind"]> = {
+  [Name in keyof C]: C[Name] extends infer Each ? (Each extends { kind: K } ? Name : never) : never;
+}[keyof C] &
+  string;
+
 export const live = (control: Omit<LiveControl, "kind">): LiveControl => ({
   kind: "live",
   ...control,
@@ -123,8 +129,11 @@ type ValueOf<F> = F extends KnobField
           ? string
           : never;
 
-/** The `state` of a record of a tool with these fields. A field left out is at its default. */
-export type StateOf<S extends Fields> = { [Name in keyof S]?: ValueOf<S[Name]> };
+/**
+ * The `state` of a record of a tool with these fields. A field left out is at its default.
+ * Not readonly as the fields of a tool are, so `update` can change it.
+ */
+export type StateOf<S extends Fields> = { -readonly [Name in keyof S]?: ValueOf<S[Name]> };
 
 /**
  * What `sound` gets: a choice as its value, a pattern as a `Table`, anything else as a `Param`,
@@ -497,9 +506,9 @@ export interface Tick<State, C extends Controls, M> {
   /** Seconds since the last tick. */
   dt: number;
   /** Moves a live control. */
-  set(control: keyof C & string, value: number): void;
+  set(control: ControlNames<C, "live">, value: number): void;
   /** Fires a trigger. */
-  fire(control: keyof C & string): void;
+  fire(control: ControlNames<C, "trigger">): void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -546,15 +555,15 @@ export interface Card<State, C extends Controls = Controls, M = unknown> {
    */
   update(label: string, change: (state: State) => void): void;
   /** Moves a live control. Not saved, no undo step. */
-  set(control: keyof C & string, value: number): void;
+  set(control: ControlNames<C, "live">, value: number): void;
   /** Fires a trigger. */
-  fire(control: keyof C & string): void;
+  fire(control: ControlNames<C, "trigger">): void;
 }
 
 /**
- * A knob. With `path`, it turns the number at `path` in the record, such as `rate` or
- * `values.rate`: a drag is smooth and one undo step, and a number the record leaves out shows
- * at `default`. With `live`, it plays a live control instead, which nothing saves.
+ * A knob. With `path`, it turns that field of the record, such as `rate`: a drag is smooth and
+ * one undo step. With `live`, it plays a live control instead, which nothing saves. A double
+ * click puts it at `default`.
  */
 export function Knob(props: {
   path?: string;
@@ -569,9 +578,9 @@ export function Knob(props: {
 }
 
 /**
- * A row of steps on a pattern of the record: a click turns a step on (to the pattern's max)
- * or off (to its min). `playing` names a watch whose value is the step that plays, which
- * lights up.
+ * A row of steps on a pattern of the record: a click turns a step on (to `max`, the pattern's
+ * max when left out) or off (to its min). `playing` names a watch whose value is the step that
+ * plays, which lights up.
  */
 export function Steps(props: { path: string; max?: number; playing?: string }): Node {
   return { type: "steps", ...props };

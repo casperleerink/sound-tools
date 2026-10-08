@@ -8,7 +8,7 @@ use serde::Deserialize;
 use crate::tools::Unit;
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Node {
     Div {
         #[serde(default)]
@@ -26,7 +26,7 @@ pub(crate) enum Node {
     /// A row of steps on a pattern of the record.
     Steps {
         path: String,
-        /// What a step that is on holds. 1 when left out.
+        /// What a step that is on holds. The pattern's max when left out.
         #[serde(default)]
         max: Option<f32>,
         /// The watch that says which step plays.
@@ -99,7 +99,7 @@ pub(crate) enum Shape {
     },
 }
 
-/// A knob on the number at `path` in the record, or on the live control `live`.
+/// A knob on the field `path` of the record, or on the live control `live`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KnobNode {
@@ -249,7 +249,7 @@ impl Style {
 pub(crate) trait Controls {
     fn clickable(&mut self, element: Div, id: ElementId, handler: usize) -> AnyElement;
     fn knob(&mut self, knob: &KnobNode) -> AnyElement;
-    fn steps(&mut self, path: &str, max: f32, playing: Option<&str>) -> AnyElement;
+    fn steps(&mut self, path: &str, max: Option<f32>, playing: Option<&str>) -> AnyElement;
     fn meter(&mut self, watch: &str, label: Option<&str>) -> AnyElement;
     fn sample(&mut self, path: &str, label: Option<&str>) -> AnyElement;
     fn pad(&mut self, x: &str, y: &str, size: f32) -> AnyElement;
@@ -261,9 +261,7 @@ pub(crate) fn draw(node: &Node, index: &[usize], controls: &mut impl Controls) -
     match node {
         Node::Text { text } => SharedString::from(text.clone()).into_any_element(),
         Node::Knob(knob) => controls.knob(knob),
-        Node::Steps { path, max, playing } => {
-            controls.steps(path, max.unwrap_or(1.0), playing.as_deref())
-        }
+        Node::Steps { path, max, playing } => controls.steps(path, *max, playing.as_deref()),
         Node::Meter { watch, label } => controls.meter(watch, label.as_deref()),
         Node::Sample { path, label } => controls.sample(path, label.as_deref()),
         Node::Pad { x, y, size } => controls.pad(x, y, size.unwrap_or(120.0)),
@@ -294,59 +292,18 @@ pub(crate) fn draw(node: &Node, index: &[usize], controls: &mut impl Controls) -
     }
 }
 
-/// The numbers of the list at a dotted path such as `steps`.
-pub(crate) fn numbers_at(state: &serde_json::Value, path: &str) -> Option<Vec<f32>> {
-    let mut value = state;
-    for key in path.split('.') {
-        value = value.get(key)?;
+/// Sets the field `name` of a record.
+pub(crate) fn set_field(state: &mut serde_json::Value, name: &str, value: serde_json::Value) {
+    if let Some(fields) = state.as_object_mut() {
+        fields.insert(name.to_string(), value);
     }
-    let items = value.as_array()?;
-    Some(
-        items
-            .iter()
-            .map(|item| item.as_f64().unwrap_or(0.0) as f32)
-            .collect(),
-    )
 }
 
-/// The number at a dotted path such as `values.rate`.
-pub(crate) fn number_at(state: &serde_json::Value, path: &str) -> Option<f32> {
-    let mut value = state;
-    for key in path.split('.') {
-        value = match value {
-            serde_json::Value::Array(items) => items.get(key.parse::<usize>().ok()?)?,
-            other => other.get(key)?,
-        };
-    }
-    value.as_f64().map(|number| number as f32)
-}
-
-/// Sets the number at a dotted path, making the objects on the way that are missing.
-pub(crate) fn set_number(state: &mut serde_json::Value, path: &str, number: f32) {
-    let mut value = state;
-    for key in path.split('.') {
-        if value.is_null() {
-            *value = serde_json::Value::Object(serde_json::Map::new());
-        }
-        value = match value {
-            serde_json::Value::Object(map) => map.entry(key).or_insert(serde_json::Value::Null),
-            serde_json::Value::Array(items) => {
-                match key.parse::<usize>().ok().and_then(|i| items.get_mut(i)) {
-                    Some(item) => item,
-                    // Not a place for a number. The record is left as it is.
-                    None => return,
-                }
-            }
-            _ => return,
-        };
-    }
-    // As the shortest decimal that reads back as the same `f32`: a knob at 16.7 writes 16.7,
-    // not the 16.700000762939453 that a widening to `f64` would.
-    let decimal = number
-        .to_string()
-        .parse::<f64>()
-        .unwrap_or(f64::from(number));
-    *value = serde_json::Value::from(decimal);
+/// A number as a record writes it: the shortest decimal that reads back as the same `f32`. A
+/// knob at 16.7 writes 16.7, not the 16.700000762939453 that a widening to `f64` would.
+pub(crate) fn decimal(number: f32) -> serde_json::Value {
+    let decimal = number.to_string().parse::<f64>();
+    serde_json::Value::from(decimal.unwrap_or(f64::from(number)))
 }
 
 #[cfg(test)]
@@ -354,22 +311,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_number_is_set_at_a_path_whose_objects_are_missing() {
-        let mut state = serde_json::json!({ "code": [] });
-        set_number(&mut state, "values.rate", 6.0);
-        assert_eq!(
-            state,
-            serde_json::json!({ "code": [], "values": { "rate": 6.0 } })
-        );
-        assert_eq!(number_at(&state, "values.rate"), Some(6.0));
+    fn a_number_is_written_as_the_decimal_it_shows() {
+        assert_eq!(decimal(16.7).to_string(), "16.7");
+        assert_eq!(decimal(0.1).to_string(), "0.1");
     }
 
     #[test]
-    fn a_style_field_the_runtime_does_not_know_is_an_error() {
-        let tree = serde_json::json!({ "type": "div", "style": { "margin": 4 }, "children": [] });
-        let error = serde_json::from_value::<Node>(tree)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("unknown field `margin`"), "{error}");
+    fn a_field_the_runtime_does_not_know_is_an_error() {
+        let trees = [
+            (
+                serde_json::json!({ "type": "div", "style": { "margin": 4 }, "children": [] }),
+                "margin",
+            ),
+            (
+                serde_json::json!({ "type": "steps", "path": "steps", "length": 8 }),
+                "length",
+            ),
+        ];
+        for (tree, field) in trees {
+            let error = serde_json::from_value::<Node>(tree)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(&format!("unknown field `{field}`")),
+                "{error}"
+            );
+        }
     }
 }

@@ -136,6 +136,17 @@ fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
 }
 
 #[test]
+fn a_knob_the_record_leaves_out_is_automated_from_its_default() {
+    let Some(harness) = pad_through(&[("wobble", r#"{"rate": 2}"#)]) else {
+        return;
+    };
+    let wobble = sound_core::InstanceId::new("arrangement/pad/wobble").unwrap();
+    let depth = harness.project.automation(&wobble, "depth").unwrap();
+    // A lane added for it starts where it plays: at the default of the doc's `depth`.
+    assert_eq!(depth.record, Some(0.5));
+}
+
+#[test]
 fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
     // The record dips to silence; the lane holds the depth at 0 for the whole bar.
     let lane = r#", "automation": [{"device": "wobble", "parameter": "depth", "points": [{"tick": 0, "value": 0.0}, {"tick": 15360, "value": 0.0}]}]"#;

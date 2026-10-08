@@ -4,7 +4,7 @@
 
 import { readdirSync, watch } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Node, ToolSpec } from "./sdk";
+import type { Child, Controls, Fields, Node, StateOf, ToolSpec } from "./sdk";
 
 const folder = process.cwd();
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
@@ -13,24 +13,15 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
   console[name] = (...values: unknown[]) => console.error(...values);
 }
 
+type State = StateOf<Fields>;
+type Watches = Record<string, number>;
+
 type Request =
   | { type: "sound"; id: number; tool: string; choices: Record<string, string | number> }
   | { type: "draw"; id: number; tool: string; page: boolean }
-  | {
-      type: "render";
-      card: number;
-      instance: string;
-      tool: string;
-      state: unknown;
-      watches: Record<string, number>;
-      page: boolean;
-    }
+  | { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: boolean }
   | { type: "event"; card: number; handler: number; x?: number; y?: number }
-  | {
-      type: "frame";
-      dt: number;
-      instances: Array<{ instance: string; tool: string; state: unknown; watches: Record<string, number> }>;
-    }
+  | { type: "frame"; dt: number; instances: Array<{ instance: string; tool: string; state: State; watches: Watches }> }
   | { type: "drop"; card: number };
 
 /** What the runtime gets of a node: a handler is its index. */
@@ -40,12 +31,8 @@ type Sent =
   | { type: "canvas"; width: number; height: number; shapes: unknown[]; background?: string; onPress?: number; onDrag?: number }
   | Exclude<Node, { type: "div" | "canvas" }>;
 
-type Handler = (x?: number, y?: number) => void;
-
-/** With `SOUND_TOOLS_TIMING` set, what happens when, for a measurement. */
-const timing = process.env.SOUND_TOOLS_TIMING
-  ? (what: string) => console.error(`timing: bun ${what} at ${Date.now()}`)
-  : () => {};
+/** A click, which hears nothing, or a press or a drag on a canvas, which hears where. */
+type Handler = (x: number, y: number) => void;
 
 function send(message: object) {
   process.stdout.write(JSON.stringify(message) + "\n");
@@ -57,8 +44,6 @@ const handlers = new Map<number, Handler[]>();
 const drawn = new Map<number, Extract<Request, { type: "render" }>>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
-/** The file each tool comes from. */
-const files = new Map<string, string>();
 let version = 0;
 
 const NAME = /^[a-z0-9_-]+$/;
@@ -82,6 +67,9 @@ function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
   }
   if (typeof spec.sound !== "function") {
     problems.push("sound: give a function that returns a Signal");
+  }
+  if (typeof spec.state !== "object" || spec.state === null) {
+    problems.push("state: give the fields of its record, {} for none");
   }
   const kind = spec.kind ?? "effect";
   if (!["effect", "instrument", "source"].includes(kind)) {
@@ -134,12 +122,12 @@ function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
 }
 
 async function load() {
-  timing("loads extensions/");
   version += 1;
   sdk.host.tools.clear();
-  files.clear();
   // New code starts its memory again.
   memories.clear();
+  /** The file each tool comes from. */
+  const files = new Map<string, string>();
   const errors: Array<{ file: string; message: string }> = [];
   for (const file of readdirSync(folder).sort()) {
     if (!/\.tsx?$/.test(file) || file === "sdk.ts" || file.endsWith(".d.ts")) {
@@ -150,8 +138,8 @@ async function load() {
       // A new query is a new module, so the file is read again.
       await import(`${join(folder, file)}?v=${version}`);
     } catch (error) {
+      // The tools it defined before it failed are its tools too.
       errors.push({ file, message: String(error) });
-      continue;
     }
     for (const [name, spec] of sdk.host.tools) {
       if (before.has(name)) {
@@ -179,7 +167,6 @@ async function load() {
       page: typeof spec.page === "function",
     }));
   send({ type: "loaded", tools, errors });
-  timing("loaded extensions/");
 }
 
 /**
@@ -290,11 +277,14 @@ function players(instance: string) {
   };
 }
 
+/** Draws a card and sends its tree, or why there is none: the window waits for one or the other. */
 function render(request: Extract<Request, { type: "render" }>) {
   const { card, instance, tool, state, watches, page } = request;
   drawn.set(card, request);
   const spec = sdk.host.tools.get(tool);
+  // Such as a tool whose file does not load since a save.
   if (!spec) {
+    send({ type: "tree", card, error: `no tool ${tool} is loaded` });
     return;
   }
   const draw = page ? spec.page : (spec.card ?? sdk.defaultCard(spec.state, spec.controls));
@@ -376,27 +366,33 @@ function frame(request: Extract<Request, { type: "frame" }>) {
     }
     for (const last of drawn.values()) {
       if (last.instance === instance) {
-        render(last);
+        render({ ...last, state, watches });
       }
     }
   }
 }
 
+/** The load that runs, so that a request waits for its tools instead of seeing half of them. */
+let loading = load();
 let reload: ReturnType<typeof setTimeout> | undefined;
 watch(folder, (_, file) => {
   if (file === "sdk.ts" || file === "tsconfig.json") {
     return;
   }
-  timing(`heard a change of ${file}`);
   // An editor saves in several writes.
   clearTimeout(reload);
-  reload = setTimeout(load, 50);
+  reload = setTimeout(() => {
+    loading = loading.then(load);
+  }, 50);
 });
-await load();
 
 for await (const line of console) {
+  // Bun gives the end of the input after the last newline as one more, empty, line.
+  if (line === "") {
+    continue;
+  }
+  await loading;
   const request = JSON.parse(line) as Request;
-  timing(`got ${request.type}`);
   switch (request.type) {
     case "sound":
       answer(request.id, () => sound(request.tool, request.choices));
@@ -409,7 +405,7 @@ for await (const line of console) {
       break;
     case "event": {
       try {
-        handlers.get(request.card)?.[request.handler]?.(request.x, request.y);
+        handlers.get(request.card)?.[request.handler]?.(request.x ?? 0, request.y ?? 0);
       } catch (error) {
         console.error(`a click failed: ${error}`);
       }

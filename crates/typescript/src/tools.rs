@@ -322,11 +322,23 @@ impl ToolInfo {
         Ok(())
     }
 
-    fn field(&self, name: &str) -> Option<&Field> {
+    pub(crate) fn field(&self, name: &str) -> Option<&Field> {
         let mut fields = self.fields.0.iter();
         fields
             .find(|(field, _)| field == name)
             .map(|(_, field)| field)
+    }
+
+    /// `state` with each field it leaves out at its default: the record as it plays.
+    pub(crate) fn with_defaults(&self, mut state: Value) -> Value {
+        if let Value::Object(object) = &mut state {
+            for (name, field) in &self.fields.0 {
+                if !object.contains_key(name) {
+                    object.insert(name.clone(), field.default_value());
+                }
+            }
+        }
+        state
     }
 
     /// The choices of a record, each at its default when the record leaves it out: what the
@@ -416,12 +428,11 @@ impl ToolInfo {
 
     /// The tool for the core. `bun` makes its Hum.
     pub(crate) fn json_tool(&self, bun: &Arc<Bun>) -> JsonTool {
-        let info = Arc::new(self.clone());
-        let check = Arc::new(move |state: &Value| info.check(state));
         let sounds = Sounds::new(self, bun);
+        let info = sounds.info.clone();
         JsonTool {
             name: self.name.clone(),
-            check,
+            check: Arc::new(move |state: &Value| info.check(state)),
             behaviour: Box::new(move |state, context| sounds.apply(state, context)),
             doc: Some(JsonToolDoc {
                 when: self.when.clone(),
@@ -439,7 +450,7 @@ pub(crate) struct Sounds {
     bun: Arc<Bun>,
     /// By the choices as JSON. A failure is kept too, so a record that cannot play does not
     /// ask again on every turn of a knob. A tool defined again starts empty.
-    compiled: Rc<RefCell<HashMap<String, Result<Rc<Code>, String>>>>,
+    compiled: RefCell<HashMap<String, Result<Rc<Code>, String>>>,
     /// The sounds of its `sample` fields, read once.
     samples: Samples,
 }
@@ -449,23 +460,25 @@ impl Sounds {
         Self {
             info: Arc::new(info.clone()),
             bun: bun.clone(),
-            compiled: Rc::default(),
+            compiled: RefCell::default(),
             samples: Samples::default(),
         }
     }
 
-    /// The knobs of the tool, in order, with the range a lane moves each one over.
-    fn knobs(&self) -> impl Iterator<Item = (&str, ValueRange)> {
-        self.info
-            .fields
-            .0
-            .iter()
-            .filter_map(|(name, field)| match field {
-                Field::Knob { min, max, unit, .. } => {
-                    Some((name.as_str(), knob_range(*min, *max, *unit)))
-                }
-                _ => None,
-            })
+    /// The knobs of the tool, in order, with the range a lane moves each one over and their
+    /// default.
+    fn knobs(&self) -> impl Iterator<Item = (&str, ValueRange, f32)> {
+        let fields = self.info.fields.0.iter();
+        fields.filter_map(|(name, field)| match field {
+            Field::Knob {
+                min,
+                max,
+                unit,
+                default,
+                ..
+            } => Some((name.as_str(), knob_range(*min, *max, *unit), *default)),
+            _ => None,
+        })
     }
 
     /// The compiled Hum for the choices of `state`.
@@ -475,7 +488,6 @@ impl Sounds {
         if let Some(code) = self.compiled.borrow().get(&key) {
             return code.clone();
         }
-        let asked = std::time::Instant::now();
         let code = self.bun.sound(&self.info.name, &choices).and_then(|lines| {
             let file = &self.info.file;
             compile(&lines).map(Rc::new).map_err(|error| {
@@ -486,13 +498,6 @@ impl Sounds {
                 )
             })
         });
-        if std::env::var_os("SOUND_TOOLS_TIMING").is_some() {
-            let name = &self.info.name;
-            eprintln!(
-                "timing: the Hum of {name} {key} came and compiled in {:?}",
-                asked.elapsed()
-            );
-        }
         self.compiled.borrow_mut().insert(key, code.clone());
         code
     }
@@ -503,7 +508,7 @@ impl Sounds {
         let mut values = Values::default();
         // The knobs, in the order of `automated`: each one's param.
         values.automated = (self.knobs())
-            .filter_map(|(name, _)| code.parameters.iter().position(|p| p.name == name))
+            .filter_map(|(name, ..)| code.parameters.iter().position(|p| p.name == name))
             .map(|index| index as u16)
             .collect();
         for (value, parameter) in values.parameters.iter_mut().zip(&code.parameters) {
@@ -642,13 +647,13 @@ impl Sounds {
         // Every knob can be automated, as a number of any device. A toggle or a pattern is no
         // straight line, and a lane cannot move it.
         let numbers: Vec<(ParameterInfo, f32)> = (self.knobs())
-            .map(|(name, range)| {
+            .map(|(name, range, default)| {
                 let record = state.get(name).and_then(Value::as_f64);
                 let info = ParameterInfo {
                     field: name.into(),
                     range,
                 };
-                (info, record.map_or(range.min, |value| value as f32))
+                (info, record.map_or(default, |value| value as f32))
             })
             .collect();
         if !numbers.is_empty() {
@@ -729,6 +734,15 @@ mod tests {
         for (state, message) in refused {
             assert_eq!(wobble.check(&state), Err(message.to_string()));
         }
+    }
+
+    #[test]
+    fn a_record_that_leaves_fields_out_plays_them_at_their_defaults() {
+        let played = wobble().with_defaults(json!({ "rate": 6 }));
+        let expected = json!({
+            "rate": 6, "shape": "sine", "bypass": false, "accents": [0.0, 0.0, 0.0, 0.0]
+        });
+        assert_eq!(played, expected);
     }
 
     #[test]

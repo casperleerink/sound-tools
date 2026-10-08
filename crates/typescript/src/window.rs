@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Task, WeakEntity};
-use sound_core::{InstanceId, Problem};
+use sound_core::{InstanceId, Problem, Project};
 use sound_hum::{Hum, HumUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
@@ -17,7 +17,7 @@ use crate::bun::{Bun, Event, Loaded, Looped, Request};
 use crate::card::TypeScriptCard;
 use crate::tools::{Control, ToolInfo, ToolKind};
 use crate::tree::Node;
-use crate::{Extensions, FOLDER, problems_of};
+use crate::{Extensions, FOLDER};
 
 /// How often the cards look at their watches and the control loops run: often enough for a
 /// step light, a meter or a moving drawing.
@@ -67,7 +67,7 @@ pub fn start_window(
     devices: &mut Devices,
     cx: &mut App,
 ) {
-    let (Some(bun), Some(loaded)) = (extensions.bun, extensions.loaded) else {
+    let Some((bun, loaded)) = extensions.running else {
         return;
     };
     let tools = Rc::new(RefCell::new(loaded.tools));
@@ -167,13 +167,18 @@ fn key(tool: &str) -> String {
     format!("{FOLDER}/{tool}")
 }
 
+/// The `state` of the record of `id`.
+pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json::Value> {
+    serde_json::from_str(&project.state_json(id)?).ok()
+}
+
 /// What a picker offers of the tools of `kind`: each one's record at its defaults.
 fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
     let tools = tools.iter().filter(|info| kind(info.kind));
     tools
         .map(|info| {
             let tool = info.name.clone();
-            let write = move |project: &sound_core::Project, slot: &InstanceId, changes: &mut _| {
+            let write = move |project: &Project, slot: &InstanceId, changes: &mut _| {
                 project.set_json(changes, slot.clone(), &tool, serde_json::json!({}))
             };
             DeviceOffer::new(
@@ -195,6 +200,13 @@ impl Live {
     /// The watches a card last drew with.
     pub(crate) fn watches(&self, card: u64) -> Option<&BTreeMap<String, f32>> {
         self.cards.get(&card).map(|card| &card.watches)
+    }
+
+    /// The tool of a card, as it last loaded.
+    pub(crate) fn info(&self, card: u64) -> Option<ToolInfo> {
+        let tool = &self.cards.get(&card)?.tool;
+        let tools = self.tools.borrow();
+        tools.iter().find(|info| info.name == *tool).cloned()
     }
 
     /// Where the live control `name` of the card's instance is, and its range: where it was
@@ -263,13 +275,10 @@ impl Live {
             return;
         }
         let project = session.read(cx).project();
-        let Some(tool) = project.tool_of(&entry.id) else {
+        let (Some(tool), Some(state)) = (project.tool_of(&entry.id), state_of(project, &entry.id))
+        else {
             return;
         };
-        let state = project
-            .state_json(&entry.id)
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default();
         entry.asked = true;
         self.bun.send(&Request::Render {
             card,
@@ -283,7 +292,7 @@ impl Live {
 
     /// A click on an element of the card, or a press or a drag on a canvas at `x` and `y`
     /// across and down, 0 to 1.
-    pub(crate) fn event(&mut self, card: u64, handler: usize, at: Option<(f32, f32)>) {
+    pub(crate) fn event(&self, card: u64, handler: usize, at: Option<(f32, f32)>) {
         let (x, y) = (at.map(|at| at.0), at.map(|at| at.1));
         self.bun.send(&Request::Event {
             card,
@@ -300,7 +309,7 @@ impl Live {
         id: &InstanceId,
         name: &str,
         value: Option<f32>,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) {
         let Some(session) = self.session.upgrade() else {
             return;
@@ -322,6 +331,8 @@ impl Live {
                 .entry(id.clone())
                 .or_default()
                 .insert(name.to_string(), value);
+            // A pad or a knob of the card shows where it is, also while nothing else redraws.
+            cx.notify();
         }
         session.update(cx, |session, cx| {
             let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
@@ -360,9 +371,7 @@ impl Live {
             .map(|(id, tool)| Looped {
                 instance: id.as_str(),
                 tool,
-                state: (project.state_json(id))
-                    .and_then(|json| serde_json::from_str(&json).ok())
-                    .unwrap_or_default(),
+                state: state_of(project, id).unwrap_or_default(),
                 watches: (project.watches(id).into_iter())
                     .map(|(name, watch)| (name, watch.get()))
                     .collect(),
@@ -447,55 +456,49 @@ impl Live {
 
     /// A file of `extensions/` was saved: every tool is defined again, and every card draws
     /// again.
-    fn loaded(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
+    fn loaded(&mut self, mut loaded: Loaded, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let started = Instant::now();
-        let before = self.tools.borrow().clone();
-        let mut problems = problems_of(&self.bun, &loaded);
-        for info in &before {
-            if !loaded.tools.iter().any(|tool| tool.name == info.name) {
-                problems.push(Problem {
-                    path: format!("{FOLDER}/{}", info.file),
-                    message: format!(
-                        "the tool {} is gone from the code; its records play as they did until the project opens again",
-                        info.name
-                    ),
-                });
-            }
-        }
         // Every tool, changed or not: its file was saved, so its `sound` may make other Hum.
-        let tools: Vec<_> = loaded
-            .tools
-            .iter()
-            .map(|info| info.json_tool(&self.bun))
-            .collect();
-        session.update(cx, |session, cx| {
-            session.edit(cx, |project| project.define_json_tools(tools));
+        let mut problems = crate::define(&self.bun, &mut loaded, |tools| {
+            let names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
+            let defined = session.update(cx, |session, cx| {
+                session.background(cx, |project| project.define_json_tools(tools))
+            });
+            match defined {
+                Ok(refused) => (refused.into_iter())
+                    .map(|(name, error)| (name, error.to_string()))
+                    .collect(),
+                // The folder did not read: no tool of the save plays.
+                Err(error) => (names.into_iter())
+                    .map(|name| (name, error.to_string()))
+                    .collect(),
+            }
         });
+        let gone: Vec<ToolInfo> = (self.tools.borrow().iter())
+            .filter(|info| !loaded.tools.iter().any(|tool| tool.name == info.name))
+            .cloned()
+            .collect();
+        for info in &gone {
+            problems.push(Problem {
+                path: format!("{FOLDER}/{}", info.file),
+                message: format!(
+                    "the tool {} is gone from the code; its records play as they did until the project opens again",
+                    info.name
+                ),
+            });
+        }
         session.update(cx, |session, cx| {
             session.background(cx, |project| {
                 project.set_problems_in(&format!("{FOLDER}/"), problems);
             });
         });
-        let kept: Vec<ToolInfo> = (before.into_iter())
-            .filter(|info| !loaded.tools.iter().any(|tool| tool.name == info.name))
-            .chain(loaded.tools.iter().cloned())
-            .collect();
-        *self.tools.borrow_mut() = kept;
+        *self.tools.borrow_mut() = gone.into_iter().chain(loaded.tools).collect();
         self.generation.set(self.generation.get() + 1);
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
             self.render(card, cx);
-        }
-        if std::env::var_os("SOUND_TOOLS_TIMING").is_some() {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-            let at = now.map_or(0, |now| now.as_millis());
-            eprintln!(
-                "timing: runtime defined the tools again in {:?}, done at {at}",
-                started.elapsed()
-            );
         }
     }
 }
