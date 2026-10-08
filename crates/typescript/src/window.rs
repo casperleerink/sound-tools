@@ -77,9 +77,11 @@ pub fn start_window(
         let hearing = cx.spawn(async move |live, cx| {
             while let Ok(event) = events.recv().await {
                 if live.update(cx, |live, cx| live.heard(event, cx)).is_err() {
-                    break;
+                    return;
                 }
             }
+            // Bun is gone: what plays was built and plays on, but nothing new can be built.
+            live.update(cx, |live, cx| live.stopped(cx)).ok();
         });
         let framing = cx.spawn(async move |live, cx| {
             loop {
@@ -327,6 +329,14 @@ impl Live {
                 session.report(error, cx);
             }
         });
+    }
+
+    fn stopped(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let message = "The tools of extensions/ stopped running: what plays goes on as it is, but cards, control loops and new sounds wait until the project opens again";
+        session.update(cx, |session, cx| session.report(message, cx));
     }
 
     /// One frame of the window: the control loops run, and a card whose watches moved draws

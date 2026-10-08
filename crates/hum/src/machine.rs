@@ -18,6 +18,9 @@ use crate::language::{
 pub struct Values {
     pub parameters: [f32; MAX_PARAMETERS],
     pub arrays: Vec<Vec<f32>>,
+    /// For each number an automation lane can move, in the order of its index, the param it
+    /// moves.
+    pub automated: Vec<u16>,
 }
 
 impl Default for Values {
@@ -25,6 +28,7 @@ impl Default for Values {
         Self {
             parameters: [0.0; MAX_PARAMETERS],
             arrays: Vec::new(),
+            automated: Vec::new(),
         }
     }
 }

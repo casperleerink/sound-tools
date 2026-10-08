@@ -2,12 +2,15 @@
 //! over a few milliseconds, so an edit of the code while it plays does not click.
 //!
 //! What every voice shares lives here and is worked out once per frame: the values of the
-//! record, glided; the `live` controls and triggers the interface sends, which nothing saves;
-//! the transport; and the note of each voice.
+//! record, or of an automation lane, glided; the `live` controls and triggers the interface
+//! sends, which nothing saves; the transport; and the note of each voice.
+//!
+//! Every kind has every port, as a hosted plugin does: what a kind does not use is connected to
+//! nothing, and is silent.
 
 use sound_core::{
-    AudioInput, AudioOutput, CHANNELS, EventInput, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed, Watch,
+    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Timed, Watch,
 };
 use sound_notes::{NoteEvent, Velocity, Voice, Voices, frequency_hz};
 
@@ -66,9 +69,13 @@ pub enum HumUpdate {
 }
 
 pub struct Hum {
-    kind: Kind,
     players: Players,
     parameters: Vec<Smoothed>,
+    /// Where each param stands in the record, and where it was last aimed.
+    records: [f32; MAX_PARAMETERS],
+    aimed: [f32; MAX_PARAMETERS],
+    /// The param each automation lane moves, see [`Values::automated`].
+    automated: Vec<u16>,
     lives: Vec<Smoothed>,
     /// The values of this frame, which every voice reads.
     current_parameters: [f32; MAX_PARAMETERS],
@@ -123,6 +130,7 @@ impl Hum {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
+    pub const AUTOMATION: EventInput<Automation> = EventInput::new(1);
 
     /// `machine` is the first voice; an instrument plays copies of it.
     pub fn new(kind: Kind, machine: Box<Machine>, values: Values, watches: Vec<Watch>) -> Self {
@@ -162,13 +170,15 @@ impl Hum {
         let current_lives =
             std::array::from_fn(|index| lives.get(index).map_or(0.0, Smoothed::current));
         Self {
-            kind,
             players,
             parameters: values
                 .parameters
                 .iter()
                 .map(|value| Smoothed::new(*value))
                 .collect(),
+            records: values.parameters,
+            aimed: values.parameters,
+            automated: values.automated,
             lives,
             current_parameters,
             current_lives,
@@ -212,16 +222,17 @@ impl Hum {
                 }
             }
         }
-        let ramp = RAMP_SECONDS * self.sample_rate;
-        for (parameter, value) in self.parameters.iter_mut().zip(&values.parameters) {
-            if new_code {
-                // The order of the params may have changed with the code; the fade covers it.
+        // Aimed at in the next block, unless a lane moves them.
+        self.records = values.parameters;
+        if new_code {
+            // The order of the params may have changed with the code; the fade covers it.
+            for (parameter, value) in self.parameters.iter_mut().zip(&values.parameters) {
                 *parameter = Smoothed::new(*value);
-            } else {
-                parameter.set_target(*value, ramp);
             }
+            self.aimed = values.parameters;
         }
         std::mem::swap(&mut self.arrays, &mut values.arrays);
+        std::mem::swap(&mut self.automated, &mut values.automated);
         if new_code {
             std::mem::swap(&mut self.watches, watches);
             let code = match &self.players {
@@ -234,6 +245,26 @@ impl Hum {
             self.counts = (code.parameters.len(), code.lives.len());
             for (index, live) in self.lives.iter_mut().enumerate() {
                 *live = Smoothed::new(code.lives.get(index).map_or(0.0, |live| live.default));
+            }
+        }
+    }
+
+    /// Aims every param at its lane in this block, or at its record when no lane moves it.
+    fn aim(&mut self, lanes: &[Timed<Automation>]) {
+        let mut targets = self.records;
+        for lane in lanes {
+            let param = self.automated.get(usize::from(lane.event.parameter));
+            if let Some(target) = param.and_then(|param| targets.get_mut(usize::from(*param))) {
+                *target = lane.event.value;
+            }
+        }
+        let ramp = RAMP_SECONDS * self.sample_rate;
+        let count = self.counts.0;
+        let moving = (self.parameters.iter_mut().zip(&mut self.aimed).zip(targets)).take(count);
+        for ((parameter, aimed), target) in moving {
+            if *aimed != target {
+                parameter.set_target(target, ramp);
+                *aimed = target;
             }
         }
     }
@@ -356,14 +387,11 @@ impl Processor for Hum {
     type Update = HumUpdate;
 
     fn ports(&self) -> Ports {
-        match self.kind {
-            Kind::Effect => Ports::new()
-                .audio_input(Self::INPUT)
-                .audio_output(Self::OUTPUT),
-            Kind::Instrument { .. } | Kind::Source => Ports::new()
-                .event_input(Self::NOTES)
-                .audio_output(Self::OUTPUT),
-        }
+        Ports::new()
+            .audio_input(Self::INPUT)
+            .audio_output(Self::OUTPUT)
+            .event_input(Self::NOTES)
+            .event_input(Self::AUTOMATION)
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -393,13 +421,9 @@ impl Processor for Hum {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        // Only the ports of its kind: reading another would be a misuse of the engine.
-        let (inputs, notes) = match self.kind {
-            Kind::Effect => (Some(context.audio_inputs.get(Self::INPUT)), &[][..]),
-            Kind::Instrument { .. } | Kind::Source => (None, context.event_inputs.get(Self::NOTES)),
-        };
-        let [left_in, right_in] = inputs.unwrap_or([&[], &[]]);
-        let mut events = notes.iter().peekable();
+        self.aim(context.event_inputs.get(Self::AUTOMATION));
+        let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
+        let mut events = context.event_inputs.get(Self::NOTES).iter().peekable();
         let transport = &context.transport;
         let playing = transport.playing;
         if let Some(quarters) = transport.quarters() {

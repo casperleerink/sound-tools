@@ -310,6 +310,20 @@ export const hold: (x: Operand, when: Operand) => Signal = call("hold");
 export const lookup = (table: Table, phase: Operand): Signal =>
   new Signal("lookup", [new Named(table.name), phase]);
 
+/** A sine at `hz`, from -1 to 1. */
+export const sine = (hz: Operand): Signal => sin(phasor(hz).times(TAU));
+/** A saw at `hz`, from -1 to 1. */
+export const saw = (hz: Operand): Signal => phasor(hz).times(2).minus(1);
+/** A square at `hz`, from -1 to 1, up for `width` of each cycle (0.5 when left out). */
+export const square = (hz: Operand, width: Operand = 0.5): Signal =>
+  phasor(hz).lt(width).times(2).minus(1);
+/** A triangle at `hz`, from -1 to 1. */
+export const triangle = (hz: Operand): Signal =>
+  abs(phasor(hz).times(4).minus(2)).minus(1);
+/** The frequency of a MIDI pitch: `mtof(69)` is 440 Hz. */
+export const mtof = (pitch: Operand): Signal =>
+  pow(2, new Signal("-", [pitch, 69]).over(12)).times(440);
+
 /** A value that feeds back, see `Feedback`. Inside `sound` only. */
 export function feedback(): Feedback {
   const made = new Feedback(`feedback_${building().feedbacks.length}`);

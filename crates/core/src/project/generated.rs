@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use super::registry::AgentDoc;
+use super::registry::{AgentDoc, AgentDocText};
 use super::storage::layout;
 use super::{Project, ProjectError};
 
@@ -70,12 +70,12 @@ impl Project {
     }
 
     /// Every doc this project writes under `agent-docs/`, in the order of the map.
-    pub fn agent_docs(&self) -> impl Iterator<Item = AgentDoc> {
+    pub fn agent_docs(&self) -> impl Iterator<Item = AgentDocText<'_>> {
         self.registry.agent_docs(&self.project_file.extensions)
     }
 
     /// The text of one doc, with the generated note in front of it.
-    fn agent_doc_text(&self, doc: &AgentDoc) -> String {
+    fn agent_doc_text(&self, doc: &AgentDocText<'_>) -> String {
         format!("{GENERATED_NOTE}{}", self.fill(doc.markdown.trim_end()))
     }
 

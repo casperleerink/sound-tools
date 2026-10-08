@@ -4,8 +4,8 @@
 //! control from the interface, a watch back to it, and the beat of the transport.
 
 use sound_core::{
-    Connection, Engine, EngineConfig, EngineControl, EventOutput, Node, Ports, PrepareConfig,
-    ProcessContext, Processor, Watch,
+    Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput, Node, Ports,
+    PrepareConfig, ProcessContext, Processor, Watch,
 };
 use sound_hum::{Hum, HumUpdate, Kind, Machine, Values, compile};
 use sound_notes::{NoteEvent, Pitch, Velocity};
@@ -242,4 +242,83 @@ fn new_code_fades_in_without_a_jump() {
     // From 0.5 to -0.5 over 10 ms, 480 frames.
     assert!(steps.fold(0.0_f32, f32::max) < 0.003);
     assert_eq!(output[1_919], -0.5);
+}
+
+/// Sends one lane of automation, as an arrangement does, for its first `blocks` blocks.
+struct Lane {
+    value: f32,
+    blocks: usize,
+}
+
+const LANE_OUT: EventOutput<Automation> = EventOutput::new(0);
+
+impl Processor for Lane {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new().event_output(LANE_OUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, (): &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if self.blocks > 0 {
+            self.blocks -= 1;
+            let lane = Automation {
+                parameter: 0,
+                value: self.value,
+            };
+            context.event_outputs.push(LANE_OUT, 0, lane);
+        }
+    }
+}
+
+#[test]
+fn a_lane_moves_a_param_and_the_record_takes_it_back_when_the_lane_stops() {
+    let lines = [
+        "param tone = 0.25 [0, 1]".to_string(),
+        "out = tone".to_string(),
+    ];
+    let code = compile(&lines).unwrap();
+    let mut values = Values::default();
+    values.parameters[0] = 0.25;
+    values.automated = vec![0];
+    let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
+    let hum = Hum::new(Kind::Source, machine, values, Vec::new());
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let mut edit = control.edit();
+    let hum = edit.add_processor("hum", hum).unwrap();
+    let lane = edit
+        .add_processor(
+            "lane",
+            Lane {
+                value: 1.0,
+                blocks: 100,
+            },
+        )
+        .unwrap();
+    edit.connect(Connection::to_device(hum.id(), Hum::OUTPUT, 0))
+        .unwrap();
+    edit.connect(Connection::new(
+        lane.id(),
+        LANE_OUT,
+        hum.id(),
+        Hum::AUTOMATION,
+    ))
+    .unwrap();
+    edit.commit().unwrap();
+    let mut played = Played {
+        control,
+        engine,
+        hum,
+        watches: Vec::new(),
+    };
+    // 100 blocks of 64 frames: the lane holds it at 1 after its 20 ms glide.
+    let output = played.render(6_400);
+    assert_eq!(output[6_399], 1.0);
+    // Then no lane: back to the record.
+    let output = played.render(1_920);
+    assert_eq!(output[1_919], 0.25);
 }

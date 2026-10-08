@@ -49,7 +49,7 @@ Combine signals with methods, which take a signal or a number: `.plus`, `.minus`
 | The note of a voice | `note.freq` (Hz, with bend), `note.pitch` (MIDI, 69 is A4), `note.gate` (1 while held), `note.velocity` (0 to 1), `note.onset` (1 in its first sample) |
 | The piece | `beat` (quarter notes from the start, while playing), `bpm`, `playing` |
 | Math | `sin`, `cos`, `tan`, `tanh`, `abs`, `sqrt`, `exp`, `log`, `floor`, `wrap` (the part after the point), `min`, `max`, `pow`, `clamp`, `mix(a, b, amount)`, `db(decibels)`, `saturate`, `PI`, `TAU` |
-| Oscillators | `phasor(hz)`: a ramp 0 to 1; `sin(phasor(hz).times(TAU))` is a sine, `phasor(hz).times(2).minus(1)` a saw. `noise()`: white noise |
+| Oscillators | `sine(hz)`, `saw(hz)`, `square(hz, width?)`, `triangle(hz)`, from -1 to 1. `phasor(hz)`: a ramp 0 to 1 to build others. `noise()`: white noise. `mtof(pitch)`: the Hz of a MIDI pitch |
 | Time | `delay(x, ms, longest?)` up to 4000 ms, smooth when `ms` moves (chorus, tape wobble); give `longest` in an instrument. `smooth(x, ms)`. `adsr(gate, attack, decay, sustain, release)` in ms |
 | Filters | `lowpass`, `highpass`, `bandpass(x, hz, q?)` |
 | Events | `rise(x)`: 1 where `x` goes above 0, a clock: `rise(wrap(beat.times(4)).lt(0.5))` ticks every sixteenth. `change(x)`, `hold(x, when)`: sample and hold |
