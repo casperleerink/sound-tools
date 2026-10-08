@@ -105,7 +105,8 @@ fn a_tool_defined_again_runs_its_new_behaviour_and_its_new_check_refuses_what_it
     );
     assert!(project.problems().is_empty());
 
-    // A check the record fails: the file is a problem that names the field.
+    // A check the record fails: the file is a problem that names the field, and what plays
+    // stays as it was, so the new behaviour never sees the record its check refuses.
     project.define_json_tool(wobble(2.0, 3, &seen)).unwrap();
     let problems = project.problems();
     assert_eq!(problems.len(), 1, "{problems:?}");
@@ -114,6 +115,7 @@ fn a_tool_defined_again_runs_its_new_behaviour_and_its_new_check_refuses_what_it
         problems[0].message.contains("state.rate: 3 is above 2"),
         "{problems:?}"
     );
+    assert_eq!(seen.borrow().last().unwrap()["version"], 2);
 
     // Back to a check it passes, and the problem goes.
     project.define_json_tool(wobble(10.0, 4, &seen)).unwrap();
@@ -169,11 +171,16 @@ fn the_doc_of_a_tool_of_the_project_is_in_the_map_and_follows_the_tool() {
 }
 
 #[test]
-fn a_tool_of_the_project_cannot_take_the_name_of_a_built_in_tool() {
+fn a_tool_of_the_project_cannot_take_the_name_of_a_built_in_tool_or_doc() {
     let mut registry = crate::tools::registry();
     let seen = Seen::default();
-    let mut tool = wobble(10.0, 1, &seen);
-    tool.name = "test.dc".to_string();
-    let error = registry.json_tool(tool).unwrap_err();
+    let named = |name: &str| JsonTool {
+        name: name.to_string(),
+        ..wobble(10.0, 1, &seen)
+    };
+    let error = registry.json_tool(named("test.dc")).unwrap_err();
     assert_eq!(error, RegistryError::DuplicateTool("test.dc"));
+    // Its doc would take the place of the runtime's.
+    let error = registry.json_tool(named("project-json")).unwrap_err();
+    assert_eq!(error, RegistryError::DuplicateAgentDoc("project-json"));
 }
