@@ -12,7 +12,7 @@ use sound_core::{
 use sound_notes::{NoteEvent, Velocity, Voice, Voices, frequency_hz};
 
 use crate::language::{Code, MAX_LIVES, MAX_PARAMETERS};
-use crate::machine::{Inputs, Machine, Note, Values};
+use crate::machine::{Inputs, LIMIT, Machine, Note, Values};
 
 /// How long the old code fades out while the new one fades in.
 const FADE_SECONDS: f32 = 0.01;
@@ -23,8 +23,6 @@ const QUIET: f32 = 1e-4;
 const QUIET_SECONDS: f32 = 0.05;
 /// How far the bend wheel moves every note, either way.
 const BEND_SEMITONES: f32 = 2.0;
-/// What leaves the processor is held to this, as what leaves one voice is.
-const LIMIT: f32 = 4.0;
 
 /// The most notes an instrument plays at once.
 pub const MAX_VOICES: usize = 8;
@@ -79,8 +77,8 @@ pub struct Hum {
     /// Triggers fired since the last block, one bit each.
     fired: u32,
     watches: Vec<Watch>,
+    /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
-    bpm: f32,
     bend: f32,
     sample_rate: f32,
     fade_frames: usize,
@@ -168,7 +166,6 @@ impl Hum {
             fired: 0,
             watches,
             beat: 0.0,
-            bpm: 120.0,
             bend: 0.0,
             sample_rate: 48_000.0,
             fade_frames: 1,
@@ -405,8 +402,8 @@ impl Processor for Hum {
         } else {
             transport.heard_tick
         };
-        self.bpm = transport.clock.tempo_at(tempo_tick).bpm() as f32;
-        let beats_per_frame = f64::from(self.bpm) / 60.0 / f64::from(self.sample_rate);
+        let bpm = transport.clock.tempo_at(tempo_tick).bpm();
+        let beats_per_frame = bpm / 60.0 / f64::from(self.sample_rate);
         let quiet_limit = (QUIET_SECONDS * self.sample_rate) as usize;
         let mut triggers = std::mem::take(&mut self.fired);
 
@@ -441,7 +438,7 @@ impl Processor for Hum {
                 arrays: &self.arrays,
                 triggers,
                 beat: self.beat,
-                bpm: self.bpm,
+                bpm: bpm as f32,
                 playing,
                 note: Note::default(),
             };

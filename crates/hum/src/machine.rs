@@ -14,24 +14,15 @@ use crate::language::{
 
 /// Where every param stands, in the order of the `param` lines, and every list of the record,
 /// in the order of the `param name[length]` lines.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Values {
     pub parameters: [f32; MAX_PARAMETERS],
     pub arrays: Vec<Vec<f32>>,
 }
 
-impl Default for Values {
-    fn default() -> Self {
-        Self {
-            parameters: [0.0; MAX_PARAMETERS],
-            arrays: Vec::new(),
-        }
-    }
-}
-
-/// What leaves the code is held to this, about 12 dB over full scale, so a feedback that
-/// runs away is loud but not deafening.
-const LIMIT: f32 = 4.0;
+/// What leaves the code, and the processor, is held to this, about 12 dB over full scale, so
+/// a feedback that runs away is loud but not deafening.
+pub(crate) const LIMIT: f32 = 4.0;
 
 /// The note a voice plays. A source follows the newest held note; an effect has none.
 #[derive(Copy, Clone, Debug, Default)]
