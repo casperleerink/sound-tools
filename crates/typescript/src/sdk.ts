@@ -107,8 +107,11 @@ type ValueOf<F> = F extends KnobField
         ? number[]
         : never;
 
-/** The `state` of a record of a tool with these fields. A field left out is at its default. */
-export type StateOf<S extends Fields> = { [Name in keyof S]?: ValueOf<S[Name]> };
+/**
+ * The `state` of a record of a tool with these fields. A field left out is at its default.
+ * Not readonly as the fields of a tool are, so `update` can change it.
+ */
+export type StateOf<S extends Fields> = { -readonly [Name in keyof S]?: ValueOf<S[Name]> };
 
 /**
  * What `sound` gets: a choice as its value, a pattern as a `Table`, anything else as a `Param`,
