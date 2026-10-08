@@ -3,7 +3,7 @@
 
 use sound_core::{Clock, Frames, Ticks, TimeSignatures};
 
-use super::{BANDS, Measures};
+use super::{BANDS, MeasuredPitch, Measures};
 
 /// At most this many rows: enough to see the shape of a piece, few enough to read at once.
 const MOST_ROWS: u64 = 32;
@@ -204,7 +204,7 @@ fn shortest<Name>(sizes: impl Iterator<Item = (u64, Name)>, span: u64) -> Option
 pub fn report(timeline: &Timeline, measures: &Measures) -> String {
     let value = |value: Option<f64>| value.map_or("-".to_string(), |value| format!("{value:.1}"));
     let mut lines = vec![format!(
-        "loudness {} LUFS, loudest 400 ms {} LUFS, true peak {} dBTP{}",
+        "loudness {} LUFS, loudest 400 ms {} LUFS, true peak {} dBTP{}, {}",
         value(measures.integrated),
         value(measures.max_momentary),
         value(measures.true_peak.map(|(peak, _)| peak)),
@@ -213,6 +213,13 @@ pub fn report(timeline: &Timeline, measures: &Measures) -> String {
             .map_or(String::new(), |(_, frame)| format!(
                 " at {}",
                 timeline.place(frame)
+            )),
+        measures
+            .pitch
+            .map_or("no single pitch".to_string(), |pitch| format!(
+                "pitch {}, drift {}",
+                note_name(pitch),
+                drift(pitch)
             )),
     )];
     if let Some(frame) = measures.not_a_number {
@@ -227,7 +234,7 @@ pub fn report(timeline: &Timeline, measures: &Measures) -> String {
     let mut headings = timeline.headings();
     headings.extend(["LUFS", "max", "peak"]);
     headings.extend(BANDS.map(|(name, _)| name));
-    headings.push("width");
+    headings.extend(["width", "pitch", "drift"]);
     let mut table = vec![headings.into_iter().map(String::from).collect::<Vec<_>>()];
     for (row, measured) in rows.into_iter().zip(&measures.rows) {
         let mut cells = row.at;
@@ -242,10 +249,25 @@ pub fn report(timeline: &Timeline, measures: &Measures) -> String {
                 .width
                 .map_or("-".to_string(), |width| format!("{width:.0}%")),
         );
+        cells.push(measured.pitch.map_or("-".to_string(), note_name));
+        cells.push(measured.pitch.map_or("-".to_string(), drift));
         table.push(cells);
     }
     lines.push(aligned(&table));
     lines.join("\n")
+}
+
+/// The nearest note and how far off it the pitch is, in cents: `A4+3c`.
+fn note_name(pitch: MeasuredPitch) -> String {
+    let nearest = pitch.note.round();
+    let cents = ((pitch.note - nearest) * 100.0).round() as i64;
+    // The pitch finder looks from 40 Hz to 4 kHz, well inside the notes MIDI has.
+    let name = sound_notes::Pitch::nearest(nearest as i64).name();
+    format!("{name}{cents:+}c")
+}
+
+fn drift(pitch: MeasuredPitch) -> String {
+    format!("{:.0}c", pitch.drift)
 }
 
 /// The cells as columns, each as wide as its widest cell, numbers to the right.
