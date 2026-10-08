@@ -23,15 +23,13 @@ type CreateView =
     Rc<dyn Fn(&Entity<Session>, &InstanceId, &mut Window, &mut App) -> Option<AnyView>>;
 type CreateCard =
     Rc<dyn Fn(&Entity<Session>, &InstanceId, CardFrame, &mut Window, &mut App) -> Option<AnyView>>;
-/// See [`Views::set_other_cards`].
-type CardHost =
-    Rc<dyn Fn(&Entity<Session>, &InstanceId, CardFrame, &mut Window, &mut App) -> Option<AnyView>>;
 
 #[derive(Default)]
 pub struct Views {
     by_tool: BTreeMap<&'static str, CreateView>,
     cards: BTreeMap<&'static str, CreateCard>,
-    other_cards: Option<CardHost>,
+    /// See [`Views::set_other_cards`].
+    other_cards: Option<CreateCard>,
     /// See [`Views::set_other_views`].
     other_views: Option<(Rc<dyn Fn(&str) -> bool>, CreateView)>,
 }
