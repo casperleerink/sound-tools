@@ -47,9 +47,15 @@ pub fn notes_input(project: &Project, track: &Instance<TrackState>) -> Option<In
 
 /// Where the live input goes now. Read it after every change: the port moves when the
 /// instrument is built again.
+///
+/// A project with no track that plays notes, such as one experiment at its top, gives the
+/// keyboard to the first instance at the top that takes notes.
 pub fn live_notes_input(project: &Project, selected: Option<&InstanceId>) -> Option<InputEndpoint> {
-    let track = target_track(project, selected)?;
-    notes_input(project, &track)
+    if let Some(track) = target_track(project, selected) {
+        return notes_input(project, &track);
+    }
+    let mut top = project.instances().filter(|(id, _)| id.parent().is_none());
+    top.find_map(|(id, _)| project.input_port(id, NOTES_INPUT))
 }
 
 /// Adds the clip of a finished MIDI take to its track, to a group of changes. `take_name` is

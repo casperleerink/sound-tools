@@ -441,3 +441,29 @@ fn a_recording_goes_on_in_a_project_with_latency(cx: &mut gpui::TestAppContext) 
     assert_eq!(clip.notes.len(), 1);
     assert!(opened.path("assets/takes/take-1.json").exists());
 }
+
+/// A project with no arrangement, such as one experiment at its top: the keyboard plays the
+/// first instance at the top that takes notes.
+#[gpui::test]
+fn with_no_arrangement_the_keyboard_plays_what_is_at_the_top(cx: &mut gpui::TestAppContext) {
+    let mut opened = open_with(cx, |_| {});
+    opened.settle();
+    opened.edit(|project| {
+        let synth = InstanceId::new("synth")?;
+        let mut changes = Changes::new();
+        changes.delete(&InstanceId::new("arrangement")?);
+        changes.create(synth.clone(), instrument::SynthState::default());
+        let output = sound_core::PortReference::new(&synth, sound_notes::AUDIO_OUTPUT);
+        changes.connect(sound_core::SavedConnection::to_device(output, 0));
+        project.commit("Make an experiment", changes)
+    });
+    // The keyboard takes a new destination at the poll after the one that sees it.
+    opened.settle();
+    opened.settle();
+    let silent = opened.render(4_800);
+    assert!(silent.iter().all(|sample| *sample == 0.0));
+
+    opened.play_midi(on(60, 100));
+    let played = opened.render(4_800);
+    assert!(played.iter().any(|sample| sample.abs() > 0.01));
+}
