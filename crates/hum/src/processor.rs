@@ -98,7 +98,8 @@ struct Single {
 #[derive(Clone)]
 struct HumVoice {
     machine: Box<Machine>,
-    /// The machine of the code before, while it fades out.
+    /// The machine of the code before. It fades out, then stays until the next new code takes
+    /// it back off the audio thread.
     fading: Option<Box<Machine>>,
     fade_left: usize,
     note: Note,
