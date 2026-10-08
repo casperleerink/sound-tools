@@ -450,6 +450,40 @@ impl Project {
         self.publish(edit, changes)
     }
 
+    /// [`Self::update`] for code that knows the record only as JSON, such as a view written in
+    /// TypeScript. `change` gets the `state` of the record; what it leaves is decoded and
+    /// validated as a file of the tool would be, and an error names the field.
+    pub fn update_json(
+        &mut self,
+        edit: &mut Edit,
+        id: &InstanceId,
+        change: impl FnOnce(&mut serde_json::Value),
+    ) -> Result<(), ProjectError> {
+        let record = self
+            .instances
+            .get(id)
+            .ok_or_else(|| ProjectError::MissingInstance(id.clone()))?;
+        let invalid = |message: String| ProjectError::InvalidState {
+            id: id.clone(),
+            message,
+        };
+        let json = record
+            .state
+            .to_json()
+            .map_err(|error| invalid(error.to_string()))?;
+        let mut state = serde_json::from_str(&json).map_err(|error| invalid(error.to_string()))?;
+        change(&mut state);
+        let definition = self
+            .registry
+            .definition(record.tool)
+            .ok_or(ProjectError::UnknownTool(record.tool))?;
+        let record = (definition.decode)(state).map_err(invalid)?;
+        let changes = Changes {
+            changes: vec![Change::Set(id.clone(), record)],
+        };
+        self.publish(edit, changes)
+    }
+
     /// Ends the edit as one undo step and writes every record it touched, once. The step runs
     /// from the committed state before it to the state now, whoever wrote last. That is the
     /// state before the edit, or what a file change, an undo or a redo wrote during it.

@@ -5481,6 +5481,7 @@ dependencies = [
  "sound-core",
  "sound-media",
  "sound-notes",
+ "sound-typescript",
  "sound-ui",
  "tempfile",
  "test-clap-plugin",
@@ -6113,11 +6114,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sound-typescript"
+version = "0.6.0"
+dependencies = [
+ "gpui",
+ "serde",
+ "serde_json",
+ "smol",
+ "sound-core",
+ "sound-ui",
+]
+
+[[package]]
 name = "sound-ui"
 version = "0.6.0"
 dependencies = [
  "gpui",
  "serde",
+ "serde_json",
  "sound-core",
  "sound-media",
  "sound-notes",
