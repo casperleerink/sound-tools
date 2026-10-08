@@ -35,6 +35,7 @@ fn wobble(max: f64, version: u32, seen: &Seen) -> JsonTool {
             when: format!("You want wobble {version}"),
             markdown: format!("# Wobble {version}\n"),
         }),
+        asset_folders: Vec::new(),
     }
 }
 

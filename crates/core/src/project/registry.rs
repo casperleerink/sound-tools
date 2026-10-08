@@ -43,6 +43,9 @@ pub struct JsonTool {
         Box<dyn Fn(&serde_json::Value, &mut BehaviourContext<'_>) -> Result<(), BehaviourError>>,
     /// Its doc for agents, named as the tool.
     pub doc: Option<JsonToolDoc>,
+    /// Folders under `assets/` whose changes run its behaviour again where it had a problem,
+    /// as [`ToolRegistration::rebinds_on_assets`] does for a typed tool.
+    pub asset_folders: Vec<&'static str>,
 }
 
 /// See [`AgentDoc`], whose name is the tool's.
@@ -262,6 +265,7 @@ impl Registry {
             check,
             behaviour,
             doc,
+            asset_folders,
         } = tool;
         let name = match self.tools.get_key_value(name.as_str()) {
             Some((existing, definition)) if definition.extension.is_some() => {
@@ -314,7 +318,7 @@ impl Registry {
                 summary: None,
                 end: None,
                 owns_children: false,
-                asset_folders: Vec::new(),
+                asset_folders,
             },
         );
         Ok(())

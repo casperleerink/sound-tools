@@ -6117,6 +6117,7 @@ dependencies = [
  "smol",
  "sound-core",
  "sound-hum",
+ "sound-media",
  "sound-notes",
  "sound-ui",
 ]

@@ -402,6 +402,8 @@ impl ToolInfo {
                 when: self.when.clone(),
                 markdown: self.doc(),
             }),
+            // A sample its record names may come after the record, as an audio clip's may.
+            asset_folders: vec![sound_media::AUDIO_FOLDER],
         }
     }
 }
