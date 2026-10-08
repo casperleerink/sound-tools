@@ -250,8 +250,9 @@ impl ToolInfo {
         format!(
             "# {title}\n\n{doc}\n\n\
              `{name}` is an effect of this project, defined in `extensions/{file}`. It goes in a \
-             track's `effects` like any effect. Here the pad plays through one named `{name}`, \
-             at its defaults:\n\n\
+             track's `effects` like any effect: the record sits in the track's folder and its \
+             file name is in `effects` of the track's `instance.json`. Here the pad plays through \
+             one named `{name}`, at its defaults:\n\n\
              ```json state/arrangement/pad/{name}.json\n{{\n  \"tool\": \"{name}\",\n  \"state\": {{{}}}\n}}\n```\n\n\
              {rows}\n\
              A field left out is at its default, so `\"state\": {{}}` is the tool at its defaults. \

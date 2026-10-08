@@ -25,6 +25,11 @@ type Sent =
   | { type: "text"; text: string }
   | { type: "knob"; path: string; label: string; min: number; max: number; default: number };
 
+/** With `SOUND_TOOLS_TIMING` set, what happens when, for a measurement. */
+const timing = process.env.SOUND_TOOLS_TIMING
+  ? (what: string) => console.error(`timing: bun ${what} at ${Date.now()}`)
+  : () => {};
+
 function send(message: object) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
@@ -75,6 +80,7 @@ function problemsOf(spec: ToolSpec<Fields>): string[] {
 }
 
 async function load() {
+  timing("loads extensions/");
   version += 1;
   sdk.host.tools.clear();
   sdk.host.cards.clear();
@@ -114,6 +120,7 @@ async function load() {
     }));
   const cards = [...sdk.host.cards.keys(), ...tools.map((tool) => tool.name)];
   send({ type: "loaded", tools, cards, errors });
+  timing("loaded extensions/");
 }
 
 /** The Hum of a tool for these choices: a `param` line per knob and toggle, then its code. */
@@ -206,6 +213,7 @@ watch(folder, (_, file) => {
   if (file === "sdk.ts" || file === "tsconfig.json") {
     return;
   }
+  timing(`heard a change of ${file}`);
   // An editor saves in several writes.
   clearTimeout(reload);
   reload = setTimeout(load, 50);
@@ -214,6 +222,7 @@ await load();
 
 for await (const line of console) {
   const request = JSON.parse(line) as Request;
+  timing(`got ${request.type}`);
   switch (request.type) {
     case "sound":
       try {

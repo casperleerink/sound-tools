@@ -260,7 +260,12 @@ impl Live {
             self.render(card, cx);
         }
         if std::env::var_os("SOUND_TOOLS_TIMING").is_some() {
-            eprintln!("timing: tools defined again in {:?}", started.elapsed());
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+            let at = now.map_or(0, |now| now.as_millis());
+            eprintln!(
+                "timing: runtime defined the tools again in {:?}, done at {at}",
+                started.elapsed()
+            );
         }
     }
 }

@@ -359,11 +359,12 @@ fn is_within(part: &serde_json::Value, whole: &serde_json::Value) -> bool {
 /// with the Drum pad about 1200, with the Saturator about 1230, with the Limiter about 1255,
 /// with the Utility about 1280, with the Modulation about 1300, with the Delay about 1320,
 /// with the Wavetable about 1340, with the doc of SFZ files about 1350, with the library
-/// about 1365, and with the Script about 1390.
+/// about 1365, with the Script about 1390, and with the doc of writing a tool for the project
+/// about 1410.
 #[test]
 fn the_map_stays_short() {
     let harness = Harness::new();
     let map = std::fs::read_to_string(harness.path(AGENT_DOC_FILE)).unwrap();
     let words = map.split_whitespace().count();
-    assert!(words < 1400, "the map has {words} words");
+    assert!(words < 1420, "the map has {words} words");
 }
