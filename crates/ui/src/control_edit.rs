@@ -2,7 +2,7 @@
 //! a handle on a record does with its [`ValueChange`]s.
 
 use gpui::{App, Context, Entity, Window};
-use sound_core::{Changes, Instance, Project, ProjectEdit, ProjectError, State};
+use sound_core::{Instance, InstanceId, Project, ProjectEdit, ProjectError, State};
 
 use crate::components::gesture::ValueChange;
 use crate::session::Session;
@@ -87,10 +87,42 @@ impl ControlEdit {
         set: impl FnOnce(&mut S, V),
         cx: &mut App,
     ) {
+        let update = |project: &mut Project, edit: &mut ProjectEdit, value| {
+            project.update(edit, instance, |state| set(state, value))
+        };
+        self.apply_with(session, instance.id(), label, change, update, cx);
+    }
+
+    /// [`Self::apply`] for a view that knows the record only as JSON, such as one written in
+    /// TypeScript. `set` gets the `state` of the record.
+    pub fn apply_json<V>(
+        &mut self,
+        session: &Entity<Session>,
+        id: &InstanceId,
+        label: &str,
+        change: ValueChange<V>,
+        set: impl FnOnce(&mut serde_json::Value, V),
+        cx: &mut App,
+    ) {
+        let update = |project: &mut Project, edit: &mut ProjectEdit, value| {
+            project.update_json(edit, id, |state| set(state, value))
+        };
+        self.apply_with(session, id, label, change, update, cx);
+    }
+
+    fn apply_with<V>(
+        &mut self,
+        session: &Entity<Session>,
+        id: &InstanceId,
+        label: &str,
+        change: ValueChange<V>,
+        update: impl FnOnce(&mut Project, &mut ProjectEdit, V) -> Result<(), ProjectError>,
+        cx: &mut App,
+    ) {
         match change {
             ValueChange::Drag(value) => {
                 // A move may still arrive in the frame that lost the record.
-                if session.read(cx).project().state(instance).is_none() {
+                if session.read(cx).project().tool_of(id).is_none() {
                     return;
                 }
                 // The gesture is gone: a control that went away during its drag sent no end,
@@ -99,7 +131,7 @@ impl ControlEdit {
                     self.drag = DragEdit::default();
                 }
                 self.drag.publish(session, label, cx, |project, edit| {
-                    project.update(edit, instance, |state| set(state, value))
+                    update(project, edit, value)
                 });
             }
             ValueChange::DragEnd => self.finish(session, cx),
@@ -107,14 +139,13 @@ impl ControlEdit {
                 self.drag.cancel(session, cx);
             }
             ValueChange::Set(value) => session.update(cx, |session, cx| {
-                let Some(mut state) = session.project().state(instance).cloned() else {
+                if session.project().tool_of(id).is_none() {
                     return;
-                };
-                set(&mut state, value);
+                }
                 session.edit(cx, |project| {
-                    let mut changes = Changes::new();
-                    changes.set(instance, state);
-                    project.commit(label, changes)
+                    let mut edit = project.begin(label);
+                    update(project, &mut edit, value)?;
+                    project.finish(edit)
                 });
             }),
         }

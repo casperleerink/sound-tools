@@ -23,11 +23,23 @@ type CreateView =
     Rc<dyn Fn(&Entity<Session>, &InstanceId, &mut Window, &mut App) -> Option<AnyView>>;
 type CreateCard =
     Rc<dyn Fn(&Entity<Session>, &InstanceId, CardFrame, &mut Window, &mut App) -> Option<AnyView>>;
+/// See [`Views::set_card_host`].
+type CardHost = Rc<
+    dyn Fn(
+        &Entity<Session>,
+        &InstanceId,
+        CardFrame,
+        Option<AnyView>,
+        &mut Window,
+        &mut App,
+    ) -> Option<AnyView>,
+>;
 
 #[derive(Default)]
 pub struct Views {
     by_tool: BTreeMap<&'static str, CreateView>,
     cards: BTreeMap<&'static str, CreateCard>,
+    card_host: Option<CardHost>,
 }
 
 impl Global for Views {}
@@ -77,8 +89,26 @@ impl Views {
         );
     }
 
+    /// What makes every card from now on, from the card the tool registered, if any: cards
+    /// written in TypeScript, which come and go while the project is open, so a host stands
+    /// in for every card and shows the registered one when the project has none.
+    pub fn set_card_host(
+        &mut self,
+        host: impl Fn(
+            &Entity<Session>,
+            &InstanceId,
+            CardFrame,
+            Option<AnyView>,
+            &mut Window,
+            &mut App,
+        ) -> Option<AnyView>
+        + 'static,
+    ) {
+        self.card_host = Some(Rc::new(host));
+    }
+
     /// A new card of the instance in a slot of a rack, from the installed registry. `None`
-    /// when the instance is gone or its tool has no card.
+    /// when the instance is gone or nothing gives its tool a card.
     pub fn card_of(
         session: &Entity<Session>,
         id: &InstanceId,
@@ -87,8 +117,13 @@ impl Views {
         cx: &mut App,
     ) -> Option<AnyView> {
         let tool = session.read(cx).project().tool_of(id)?;
-        let create = cx.try_global::<Self>()?.cards.get(tool)?.clone();
-        create(session, id, frame, window, cx)
+        let views = cx.try_global::<Self>()?;
+        let (create, host) = (views.cards.get(tool).cloned(), views.card_host.clone());
+        let Some(host) = host else {
+            return create?(session, id, frame, window, cx);
+        };
+        let card = create.and_then(|create| create(session, id, frame.clone(), window, cx));
+        host(session, id, frame, card, window, cx)
     }
 
     /// A new view of the instance, from the installed registry. `None` when the instance is
