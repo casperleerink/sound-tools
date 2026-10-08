@@ -17,7 +17,7 @@ use crate::bun::{Bun, Event, Loaded, Looped, Request};
 use crate::card::TypeScriptCard;
 use crate::tools::{Control, ToolInfo, ToolKind};
 use crate::tree::Node;
-use crate::{Extensions, FOLDER, problems_of};
+use crate::{Extensions, FOLDER};
 
 /// How often the cards look at their watches and the control loops run: often enough for a
 /// step light, a meter or a moving drawing.
@@ -67,7 +67,7 @@ pub fn start_window(
     devices: &mut Devices,
     cx: &mut App,
 ) {
-    let (Some(bun), Some(loaded)) = (extensions.bun, extensions.loaded) else {
+    let Some((bun, loaded)) = extensions.running else {
         return;
     };
     let tools = Rc::new(RefCell::new(loaded.tools));
@@ -447,29 +447,29 @@ impl Live {
 
     /// A file of `extensions/` was saved: every tool is defined again, and every card draws
     /// again.
-    fn loaded(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
+    fn loaded(&mut self, mut loaded: Loaded, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let started = Instant::now();
-        let before = self.tools.borrow().clone();
-        let mut problems = problems_of(&self.bun, &loaded);
-        for info in &before {
-            if !loaded.tools.iter().any(|tool| tool.name == info.name) {
-                problems.push(Problem {
-                    path: format!("{FOLDER}/{}", info.file),
-                    message: format!(
-                        "the tool {} is gone from the code; its records play as they did until the project opens again",
-                        info.name
-                    ),
-                });
-            }
-        }
         // Every tool, changed or not: its file was saved, so its `sound` may make other Hum.
-        for info in &loaded.tools {
-            let tool = info.json_tool(&self.bun);
-            session.update(cx, |session, cx| {
-                session.edit(cx, |project| project.define_json_tool(tool));
+        let mut problems = crate::define(&self.bun, &mut loaded, |tool| {
+            session
+                .update(cx, |session, cx| {
+                    session.background(cx, |project| project.define_json_tool(tool))
+                })
+                .map_err(|error| error.to_string())
+        });
+        let gone: Vec<ToolInfo> = (self.tools.borrow().iter())
+            .filter(|info| !loaded.tools.iter().any(|tool| tool.name == info.name))
+            .cloned()
+            .collect();
+        for info in &gone {
+            problems.push(Problem {
+                path: format!("{FOLDER}/{}", info.file),
+                message: format!(
+                    "the tool {} is gone from the code; its records play as they did until the project opens again",
+                    info.name
+                ),
             });
         }
         session.update(cx, |session, cx| {
@@ -477,23 +477,11 @@ impl Live {
                 project.set_problems_in(&format!("{FOLDER}/"), problems);
             });
         });
-        let kept: Vec<ToolInfo> = (before.into_iter())
-            .filter(|info| !loaded.tools.iter().any(|tool| tool.name == info.name))
-            .chain(loaded.tools.iter().cloned())
-            .collect();
-        *self.tools.borrow_mut() = kept;
+        *self.tools.borrow_mut() = gone.into_iter().chain(loaded.tools).collect();
         self.generation.set(self.generation.get() + 1);
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
             self.render(card, cx);
-        }
-        if std::env::var_os("SOUND_TOOLS_TIMING").is_some() {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-            let at = now.map_or(0, |now| now.as_millis());
-            eprintln!(
-                "timing: runtime defined the tools again in {:?}, done at {at}",
-                started.elapsed()
-            );
         }
     }
 }

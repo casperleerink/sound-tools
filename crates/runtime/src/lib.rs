@@ -431,9 +431,9 @@ pub fn open_with_extensions(
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
     let is_new = !folder.join(PROJECT_FILE).exists();
-    let (registry, mut extensions) = registry_of(folder, plugins)?;
+    let (registry, extensions) = registry_of(folder, plugins)?;
     let mut project = Project::open(folder, registry, control)?;
-    if let Some(extensions) = &mut extensions {
+    if let Some(extensions) = &extensions {
         extensions.report(&mut project);
     }
     // A `state/` folder with content but no project file is someone's work, not a new project.
@@ -450,12 +450,6 @@ fn registry_of(folder: &Path, plugins: Plugins) -> Result<(Registry, Option<Exte
     let mut extensions = Extensions::start(folder);
     if let Some(extensions) = &mut extensions {
         extensions.register(&mut registry);
-        if std::env::var_os("SOUND_TOOLS_TIMING").is_some() {
-            eprintln!(
-                "timing: bun loaded extensions/ in {:?}",
-                extensions.started_in
-            );
-        }
     }
     Ok((registry, extensions))
 }
