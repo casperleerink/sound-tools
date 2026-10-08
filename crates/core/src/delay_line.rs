@@ -5,6 +5,7 @@
 /// A delay line whose length is a power of two, so a position wraps with a mask and a read can
 /// never be out of it. The caller keeps the position where the next frame is written, so lines
 /// of one processor can share one.
+#[derive(Clone)]
 pub struct DelayLine {
     buffer: Vec<f32>,
     mask: usize,

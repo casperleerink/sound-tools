@@ -1,10 +1,10 @@
 //! A tool of the project, as `extensions/*.ts` defines it, made into a [`JsonTool`] of the core:
 //! the check of its records from its fields, its doc for agents, and a behaviour that plays
-//! the Hum its code generates.
+//! the Hum its code generates as an effect, an instrument or a source.
 //!
 //! The check runs in Rust, from the fields Bun sent once, so a record loads, and an agent
 //! hears what is wrong with it, without asking Bun. Only a new combination of choices asks Bun
-//! for Hum; a knob or a toggle only moves a value of the Hum that plays.
+//! for Hum; a knob, a toggle or a pattern only moves a value of the Hum that plays.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -15,10 +15,10 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
-    BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint,
+    BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint, Watch,
 };
-use sound_hum::{Code, Hum, HumUpdate, MAX_PARAMETERS, Machine, compile};
-use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
+use sound_hum::{Code, Hum, HumUpdate, Kind, Machine, Values, compile};
+use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
 use crate::bun::Bun;
 
@@ -32,24 +32,39 @@ pub(crate) struct ToolInfo {
     pub title: String,
     pub when: String,
     pub doc: String,
-    /// In the order the code gives them, which is the order of the knobs on the card.
-    pub fields: Fields,
+    pub kind: ToolKind,
+    /// How many notes an instrument plays at once.
+    #[serde(default)]
+    pub voices: Option<usize>,
+    /// The saved fields of its record, in the order the code gives them, which is the order
+    /// of the knobs on the card.
+    pub fields: Named<Field>,
+    /// What its interface plays and nothing saves.
+    pub controls: Named<Control>,
 }
 
-/// The fields of a record, in order.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Fields(pub Vec<(String, Field)>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ToolKind {
+    Effect,
+    Instrument,
+    Source,
+}
 
-impl<'de> Deserialize<'de> for Fields {
+/// Named things in the order the code gives them.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Named<T>(pub Vec<(String, T)>);
+
+impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Named<T> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // `serde_json` keeps the order of an object, which a map type of ours would not.
         let object = Map::<String, Value>::deserialize(deserializer)?;
-        let fields = object
+        let named = object
             .into_iter()
-            .map(|(name, field)| Ok((name, Field::deserialize(field)?)))
+            .map(|(name, value)| Ok((name, T::deserialize(value)?)))
             .collect::<Result<_, serde_json::Error>>()
             .map_err(serde::de::Error::custom)?;
-        Ok(Self(fields))
+        Ok(Self(named))
     }
 }
 
@@ -73,6 +88,31 @@ pub(crate) enum Field {
     Choice {
         options: Vec<Choice>,
         default: Choice,
+        #[serde(default)]
+        label: Option<String>,
+    },
+    /// A list of numbers, such as the steps of a sequence.
+    Pattern {
+        length: usize,
+        min: f32,
+        max: f32,
+        default: f32,
+        #[serde(default)]
+        label: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Control {
+    Live {
+        min: f32,
+        max: f32,
+        default: f32,
+        #[serde(default)]
+        label: Option<String>,
+    },
+    Trigger {
         #[serde(default)]
         label: Option<String>,
     },
@@ -137,7 +177,55 @@ impl Unit {
     }
 }
 
+impl Field {
+    /// The value a record that leaves the field out has.
+    fn default_value(&self) -> Value {
+        match self {
+            Self::Knob { default, .. } => Value::from(*default),
+            Self::Toggle { default, .. } => Value::from(*default),
+            Self::Choice { default, .. } => default.to_value(),
+            Self::Pattern {
+                length, default, ..
+            } => Value::from(vec![*default; *length]),
+        }
+    }
+}
+
 impl ToolInfo {
+    /// What the Hum processor of this tool is.
+    pub(crate) fn kind(&self) -> Kind {
+        match self.kind {
+            ToolKind::Effect => Kind::Effect,
+            ToolKind::Instrument => Kind::Instrument {
+                voices: self.voices.unwrap_or(sound_hum::MAX_VOICES),
+            },
+            ToolKind::Source => Kind::Source,
+        }
+    }
+
+    /// The name of its processor. Another kind is another processor, with other ports.
+    pub(crate) fn processor(&self) -> &'static str {
+        match self.kind {
+            ToolKind::Effect => "hum-effect",
+            ToolKind::Instrument => "hum-instrument",
+            ToolKind::Source => "hum-source",
+        }
+    }
+
+    /// The index of the live control or the trigger `name` among those of its kind, which is
+    /// its index in the Hum the tool generates.
+    pub(crate) fn control(&self, name: &str) -> Option<(usize, &Control)> {
+        let same_kind = |control: &Control, other: &Control| {
+            std::mem::discriminant(control) == std::mem::discriminant(other)
+        };
+        let (position, (_, control)) =
+            (self.controls.0.iter().enumerate()).find(|(_, (control, _))| control == name)?;
+        let index = (self.controls.0[..position].iter())
+            .filter(|(_, other)| same_kind(control, other))
+            .count();
+        Some((index, control))
+    }
+
     /// Whether `state` is a record this tool takes. The message names the field.
     pub(crate) fn check(&self, state: &Value) -> Result<(), String> {
         let Value::Object(object) = state else {
@@ -158,12 +246,15 @@ impl ToolInfo {
                 ));
             };
             let at = format!("state.{name}");
+            let in_range = |number: f64, min: f32, max: f32| {
+                number >= f64::from(min) && number <= f64::from(max)
+            };
             match field {
                 Field::Knob { min, max, .. } => {
                     let Some(number) = value.as_f64() else {
                         return Err(format!("{at}: must be a number from {min} to {max}"));
                     };
-                    if number < f64::from(*min) || number > f64::from(*max) {
+                    if !in_range(number, *min, *max) {
                         return Err(format!("{at}: {number} is outside [{min}, {max}]"));
                     }
                 }
@@ -176,6 +267,30 @@ impl ToolInfo {
                     if !Choice::of(value).is_some_and(|choice| options.contains(&choice)) {
                         let options: Vec<String> = options.iter().map(Choice::to_string).collect();
                         return Err(format!("{at}: must be one of {}", options.join(", ")));
+                    }
+                }
+                Field::Pattern {
+                    length, min, max, ..
+                } => {
+                    let numbers = value.as_array().map(|items| {
+                        items
+                            .iter()
+                            .map(Value::as_f64)
+                            .collect::<Option<Vec<f64>>>()
+                    });
+                    let Some(Some(numbers)) = numbers else {
+                        return Err(format!("{at}: must be a list of {length} numbers"));
+                    };
+                    if numbers.len() != *length {
+                        return Err(format!(
+                            "{at}: must be a list of {length} numbers, not {}",
+                            numbers.len()
+                        ));
+                    }
+                    if let Some((index, number)) = (numbers.iter().enumerate())
+                        .find(|(_, number)| !in_range(**number, *min, *max))
+                    {
+                        return Err(format!("{at}[{index}]: {number} is outside [{min}, {max}]"));
                     }
                 }
             }
@@ -220,49 +335,51 @@ impl ToolInfo {
         let mut rows =
             String::from("| Field | Kind | Values | Default |\n| --- | --- | --- | --- |\n");
         for (field_name, field) in &self.fields.0 {
-            let (kind, values, default) = match field {
-                Field::Knob {
-                    min,
-                    max,
-                    default,
-                    unit,
-                    ..
-                } => {
-                    let unit = unit.map_or("", Unit::word);
-                    (
-                        "knob",
-                        format!("{min} to {max}{unit}"),
-                        Value::from(*default),
-                    )
-                }
-                Field::Toggle { default, .. } => (
-                    "toggle",
-                    "`true` or `false`".to_string(),
-                    Value::from(*default),
+            let (kind, values) = match field {
+                Field::Knob { min, max, unit, .. } => (
+                    "knob",
+                    format!("{min} to {max}{}", unit.map_or("", Unit::word)),
                 ),
-                Field::Choice {
-                    options, default, ..
-                } => {
+                Field::Toggle { .. } => ("toggle", "`true` or `false`".to_string()),
+                Field::Choice { options, .. } => {
                     let options: Vec<String> = options.iter().map(|o| format!("`{o}`")).collect();
-                    ("choice", options.join(", "), default.to_value())
+                    ("choice", options.join(", "))
                 }
+                Field::Pattern {
+                    length, min, max, ..
+                } => (
+                    "pattern",
+                    format!("a list of {length} numbers from {min} to {max}"),
+                ),
             };
+            let default = field.default_value();
             rows.push_str(&format!(
                 "| `{field_name}` | {kind} | {values} | `{default}` |\n"
             ));
             defaults.push(format!("{field_name:?}: {default}"));
         }
+        let (place, path) = match self.kind {
+            ToolKind::Effect => (
+                "an effect of this project. It goes in a track's `effects` like any effect: the \
+                 record sits in the track's folder and its file name is in `effects` of the \
+                 track's `instance.json`",
+                format!("state/arrangement/pad/{name}.json"),
+            ),
+            ToolKind::Instrument | ToolKind::Source => (
+                "an instrument of this project. It is what a track plays, like any instrument: \
+                 its record is the track's `instrument.json`",
+                "state/arrangement/pad/instrument.json".to_string(),
+            ),
+        };
         format!(
             "# {title}\n\n{doc}\n\n\
-             `{name}` is an effect of this project, defined in `extensions/{file}`. It goes in a \
-             track's `effects` like any effect: the record sits in the track's folder and its \
-             file name is in `effects` of the track's `instance.json`. It needs no entry in \
-             `project.json`. An example, not a record of this project: a track `pad` that plays \
-             through one named `{name}`, at its defaults:\n\n\
-             ```json state/arrangement/pad/{name}.json\n{{\n  \"tool\": \"{name}\",\n  \"state\": {{{}}}\n}}\n```\n\n\
+             `{name}` is {place}. It needs no entry in `project.json`, and is defined in \
+             `extensions/{file}`. An example, not a record of this project: a track `pad` \
+             with one, at its defaults:\n\n\
+             ```json {path}\n{{\n  \"tool\": \"{name}\",\n  \"state\": {{{}}}\n}}\n```\n\n\
              {rows}\n\
              A field left out is at its default, so `\"state\": {{}}` is the tool at its defaults. \
-             A knob or a toggle changes the sound at once and glides. A choice changes what the \
+             A knob, a toggle or a pattern changes the sound at once. A choice changes what the \
              sound is made of: the new sound fades in over 10 ms.\n",
             defaults.join(", "),
         )
@@ -332,6 +449,32 @@ impl Sounds {
         code
     }
 
+    /// Where the params and lists of `code` stand in `state`: a knob or a toggle by the name of
+    /// its `param` line, a pattern by the name of its list.
+    fn values(code: &Code, state: &Value) -> Values {
+        let mut values = Values::default();
+        for (value, parameter) in values.parameters.iter_mut().zip(&code.parameters) {
+            *value = match state.get(&parameter.name) {
+                Some(Value::Bool(on)) => f32::from(u8::from(*on)),
+                Some(number) => number.as_f64().map_or(parameter.default, |n| n as f32),
+                None => parameter.default,
+            };
+        }
+        values.arrays = (code.arrays.iter())
+            .map(|array| {
+                let list = state.get(&array.name).and_then(Value::as_array);
+                let numbers = list.map(|list| {
+                    list.iter()
+                        .map(|item| item.as_f64().map_or(array.default, |n| n as f32))
+                });
+                let mut numbers: Vec<f32> = numbers.map(Iterator::collect).unwrap_or_default();
+                numbers.resize(array.length, array.default);
+                numbers
+            })
+            .collect();
+        values
+    }
+
     fn apply(
         &self,
         state: &Value,
@@ -341,24 +484,53 @@ impl Sounds {
         // changed since: the new one decides what plays.
         self.info.check(state).map_err(BehaviourError::Other)?;
         let code = self.code(state).map_err(BehaviourError::Other)?;
-        let mut values = [0.0; MAX_PARAMETERS];
-        for (value, parameter) in values.iter_mut().zip(&code.parameters) {
-            // A knob or a toggle of the record, by the name of its `param` line.
-            *value = match state.get(&parameter.name) {
-                Some(Value::Bool(on)) => f32::from(u8::from(*on)),
-                Some(number) => number.as_f64().map_or(parameter.default, |n| n as f32),
-                None => parameter.default,
-            };
-        }
+        let kind = self.info.kind();
+        let values = Self::values(&code, state);
+        // Declared every run, so they stay the same while the code keeps them.
+        let watches: Vec<Watch> = code
+            .watches
+            .iter()
+            .map(|name| context.watch(name))
+            .collect();
         let sample_rate = context.prepare_config().sample_rate as f32;
         let new_code = context.changed("code", code.hash);
-        let made = |code: &Code| Box::new(Machine::new(code.clone(), &values, sample_rate));
-        let mut machine = new_code.then(|| made(&code));
-        let hum = context.processor("hum", || {
-            Hum::new(machine.take().unwrap_or_else(|| made(&code)))
+        let made = || Box::new(Machine::new(code.as_ref().clone(), sample_rate));
+        let mut machines: Vec<Option<Box<Machine>>> = match new_code {
+            true => (0..kind.machines()).map(|_| Some(made())).collect(),
+            false => Vec::new(),
+        };
+        let mut created = false;
+        let hum = context.processor(self.info.processor(), || {
+            created = true;
+            let first = machines.first_mut().and_then(Option::take);
+            Hum::new(
+                kind,
+                first.unwrap_or_else(made),
+                values.clone(),
+                watches.clone(),
+            )
         })?;
-        context.update(hum, HumUpdate { machine, values })?;
-        context.input(AUDIO_INPUT, InputEndpoint::new(hum, Hum::INPUT));
+        if created {
+            // The new processor already plays this code.
+            machines.clear();
+        }
+        let watches = if new_code { watches } else { Vec::new() };
+        context.update(
+            hum,
+            HumUpdate::Set {
+                machines,
+                values,
+                watches,
+            },
+        )?;
+        match kind {
+            Kind::Effect => {
+                context.input(AUDIO_INPUT, InputEndpoint::new(hum, Hum::INPUT));
+            }
+            Kind::Instrument { .. } | Kind::Source => {
+                context.input(NOTES_INPUT, InputEndpoint::new(hum, Hum::NOTES));
+            }
+        }
         context.output(AUDIO_OUTPUT, OutputEndpoint::new(hum, Hum::OUTPUT));
         Ok(())
     }
@@ -376,10 +548,17 @@ mod tests {
             "title": "Wobble",
             "when": "You want the volume to move",
             "doc": "A tremolo.",
+            "kind": "effect",
             "fields": {
                 "rate": { "kind": "knob", "min": 0.1, "max": 20, "default": 4, "unit": "hz" },
                 "shape": { "kind": "choice", "options": ["sine", "square"], "default": "sine" },
-                "bypass": { "kind": "toggle", "default": false }
+                "bypass": { "kind": "toggle", "default": false },
+                "accents": { "kind": "pattern", "length": 4, "min": 0, "max": 1, "default": 0 }
+            },
+            "controls": {
+                "x": { "kind": "live", "min": 0, "max": 1, "default": 0 },
+                "hit": { "kind": "trigger" },
+                "y": { "kind": "live", "min": 0, "max": 1, "default": 0 }
             }
         }))
         .unwrap()
@@ -389,10 +568,8 @@ mod tests {
     fn a_record_is_checked_against_the_fields_and_the_message_names_the_field() {
         let wobble = wobble();
         assert_eq!(wobble.check(&json!({})), Ok(()));
-        assert_eq!(
-            wobble.check(&json!({ "rate": 6, "shape": "square", "bypass": true })),
-            Ok(())
-        );
+        let all = json!({ "rate": 6, "shape": "square", "bypass": true, "accents": [1, 0, 0, 1] });
+        assert_eq!(wobble.check(&all), Ok(()));
         let refused = [
             (json!({ "rate": 25 }), "state.rate: 25 is outside [0.1, 20]"),
             (
@@ -404,13 +581,39 @@ mod tests {
                 "state.bypass: must be true or false",
             ),
             (
+                json!({ "accents": [1, 0] }),
+                "state.accents: must be a list of 4 numbers, not 2",
+            ),
+            (
+                json!({ "accents": [1, 0, 2, 0] }),
+                "state.accents[2]: 2 is outside [0, 1]",
+            ),
+            (
                 json!({ "speed": 1 }),
-                "state.speed: wobble has no field speed; its fields are rate, shape, bypass",
+                "state.speed: wobble has no field speed; its fields are rate, shape, bypass, accents",
             ),
         ];
         for (state, message) in refused {
             assert_eq!(wobble.check(&state), Err(message.to_string()));
         }
+    }
+
+    #[test]
+    fn a_control_is_found_by_its_place_among_those_of_its_kind() {
+        let wobble = wobble();
+        assert!(matches!(
+            wobble.control("x"),
+            Some((0, Control::Live { .. }))
+        ));
+        assert!(matches!(
+            wobble.control("hit"),
+            Some((0, Control::Trigger { .. }))
+        ));
+        assert!(matches!(
+            wobble.control("y"),
+            Some((1, Control::Live { .. }))
+        ));
+        assert!(wobble.control("z").is_none());
     }
 
     #[test]

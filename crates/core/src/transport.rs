@@ -70,7 +70,7 @@ impl Transport<'_> {
     /// While the device catches up after a play or a seek, the block starts before playback
     /// does: counted back from where playback starts at the tempo there, so the project frames
     /// of the block are in the right place. It may be below zero.
-    pub(crate) fn quarters(&self) -> Option<f64> {
+    pub fn quarters(&self) -> Option<f64> {
         if !self.playing {
             return None;
         }

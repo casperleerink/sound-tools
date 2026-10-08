@@ -1,11 +1,11 @@
-// The SDK of the project's own tools and cards. Sound Tools writes this file when the project
-// opens, so an edit here is lost. Read `agent-docs/extensions.md` first.
+// The SDK of the project's own tools. Sound Tools writes this file when the project opens, so
+// an edit here is lost. Read `agent-docs/extensions.md` first, and `agent-docs/hum.md` for Hum.
 //
-// A tool is a `.ts` file next to this one that calls `tool`: the fields of its record, its doc
-// for agents, and its sound in Hum. A card for a built-in tool calls `card`.
+// A tool is a `.ts` or `.tsx` file next to this one that calls `tool`: the fields of its
+// record, the controls its card plays, its doc for agents, its sound in Hum and its card.
 
 // ---------------------------------------------------------------------------------------------
-// Fields of a record
+// Fields of a record: saved, undoable, and what an agent writes.
 
 /** What a readout shows after the number. */
 export type Unit = "hz" | "ms" | "db" | "percent";
@@ -39,7 +39,17 @@ export interface ChoiceField<Option extends string | number = string | number> {
   label?: string;
 }
 
-export type Field = KnobField | ToggleField | ChoiceField;
+/** A list of numbers, such as the steps of a sequence. It plays live, as a list in Hum. */
+export interface PatternField {
+  kind: "pattern";
+  length: number;
+  min: number;
+  max: number;
+  default: number;
+  label?: string;
+}
+
+export type Field = KnobField | ToggleField | ChoiceField | PatternField;
 export type Fields = Record<string, Field>;
 
 export const knob = (field: Omit<KnobField, "kind">): KnobField => ({ kind: "knob", ...field });
@@ -52,6 +62,40 @@ export const choice = <const Option extends string | number>(field: {
   default: Option;
   label?: string;
 }): ChoiceField<Option> => ({ kind: "choice", ...field });
+export const pattern = (field: Omit<PatternField, "kind">): PatternField => ({
+  kind: "pattern",
+  ...field,
+});
+
+// ---------------------------------------------------------------------------------------------
+// Controls: what the card plays and nothing saves, as a performer plays an instrument.
+
+/** A number the card sets as it is played, such as an XY pad. Not saved; starts at `default`. */
+export interface LiveControl {
+  kind: "live";
+  min: number;
+  max: number;
+  default: number;
+  label?: string;
+}
+
+/** A bang: 1 in Hum for the one sample after the card fires it. */
+export interface TriggerControl {
+  kind: "trigger";
+  label?: string;
+}
+
+export type Control = LiveControl | TriggerControl;
+export type Controls = Record<string, Control>;
+
+export const live = (control: Omit<LiveControl, "kind">): LiveControl => ({
+  kind: "live",
+  ...control,
+});
+export const trigger = (control: Omit<TriggerControl, "kind"> = {}): TriggerControl => ({
+  kind: "trigger",
+  ...control,
+});
 
 type ValueOf<F> = F extends KnobField
   ? number
@@ -59,22 +103,24 @@ type ValueOf<F> = F extends KnobField
     ? boolean
     : F extends ChoiceField<infer Option>
       ? Option
-      : never;
+      : F extends PatternField
+        ? number[]
+        : never;
 
 /** The `state` of a record of a tool with these fields. A field left out is at its default. */
 export type StateOf<S extends Fields> = { [Name in keyof S]?: ValueOf<S[Name]> };
 
-/** What `sound` gets: a choice as its value, a knob or a toggle as a `Param`. */
-export type SoundOf<S extends Fields> = {
+/** What `sound` gets: a choice as its value, anything else as a `Param` to put in the Hum. */
+export type SoundOf<S extends Fields, C extends Controls> = {
   [Name in keyof S]: S[Name] extends ChoiceField<infer Option> ? Option : Param;
-};
+} & { [Name in keyof C]: Param };
 
 // ---------------------------------------------------------------------------------------------
 // Hum
 
 /**
- * A knob or a toggle in Hum code. Put it in the code as `${rate}`; it is no number, so code
- * cannot branch on it: a turn must not run `sound` again.
+ * A field or a control in Hum code. Put it in the code as `${rate}`, or `${steps}[i]` for a
+ * pattern. It is no number, so code cannot branch on it: a turn must not run `sound` again.
  */
 export class Param {
   constructor(readonly name: string) {}
@@ -119,29 +165,41 @@ function humNumber(value: number): string {
 // ---------------------------------------------------------------------------------------------
 // Tools
 
-export interface ToolSpec<S extends Fields> {
+export interface ToolSpec<S extends Fields, C extends Controls> {
   /** The `tool` of its records and the name of its doc: lowercase letters, digits, `-`, `_`. */
   name: string;
-  /** What the rack and the effect picker call it. */
+  /** What the card and the picker call it. */
   title: string;
   /** One line for the map of docs: when an agent should read the doc. */
   when: string;
   /** What it does and how its fields change the sound, in Markdown. Goes into its doc. */
   doc: string;
+  /**
+   * `effect` (the default) goes in a track's effects and reads `in`. `instrument` is what a
+   * track plays: the code runs once per note. `source` is what a track plays too, one voice
+   * that runs all the time and follows the newest note.
+   */
+  kind?: "effect" | "instrument" | "source";
+  /** How many notes an instrument plays at once, 1 to 8. 8 when left out. */
+  voices?: number;
   /** The fields of its record. Field names are Hum names: `rate`, `tone_hz`. */
   state: S;
-  /** Its sound in Hum, an effect from `in` to `out`. */
-  sound: (fields: SoundOf<S>) => Hum;
-  /** Its card. Without one it gets a knob per knob and a button per option. */
-  card?: (card: Card<StateOf<S>>) => Node;
+  /** What its card plays and nothing saves. Names are Hum names too. */
+  controls?: C;
+  /** Its sound in Hum. */
+  sound: (fields: SoundOf<S, C>) => Hum;
+  /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
+  card?: (card: Card<StateOf<S>, C>) => Node;
 }
 
-/** Makes a tool of the project: an effect that goes in a track's `effects`. */
-export function tool<const S extends Fields>(spec: ToolSpec<S>): void {
+/** Makes a tool of the project. */
+export function tool<const S extends Fields, const C extends Controls = {}>(
+  spec: ToolSpec<S, C>,
+): void {
   if (host.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
-  host.tools.set(spec.name, spec as unknown as ToolSpec<Fields>);
+  host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls>);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -174,41 +232,31 @@ export interface Style {
   borderWidth?: number;
 }
 
-/** The saved state of each built-in tool a card can be written for. */
-export interface Tools {
-  script: {
-    name?: string;
-    code: string[];
-    values?: Record<string, number>;
-  };
-}
-
 /** What a card gets each time it draws. */
-export interface Card<State> {
+export interface Card<State, C extends Controls = Controls> {
   /** The record as it is now. */
   state: State;
+  /** The last value of each `watch` of the Hum, by name. The card draws again as they move. */
+  watches: Record<string, number>;
   /**
    * Changes the record as one undo step called `label`. `change` gets a copy to edit. A record
    * the tool does not accept is refused, and the window says why.
    */
   update(label: string, change: (state: State) => void): void;
-}
-
-/** Gives the cards of a built-in tool this look. */
-export function card<Tool extends keyof Tools>(
-  tool: Tool,
-  draw: (card: Card<Tools[Tool]>) => Node,
-): void {
-  host.cards.set(tool, draw as (card: Card<unknown>) => Node);
+  /** Moves a live control. Not saved, no undo step. */
+  set(control: keyof C & string, value: number): void;
+  /** Fires a trigger. */
+  fire(control: keyof C & string): void;
 }
 
 /**
- * A knob on a number of the record, at `path` such as `values.rate`. It turns the record
- * directly, so a drag is smooth and one undo step. A number the record leaves out shows at
- * `default`.
+ * A knob. With `path`, it turns the number at `path` in the record, such as `rate` or
+ * `values.rate`: a drag is smooth and one undo step, and a number the record leaves out shows
+ * at `default`. With `live`, it plays a live control instead, which nothing saves.
  */
 export function Knob(props: {
-  path: string;
+  path?: string;
+  live?: string;
   label: string;
   min: number;
   max: number;
@@ -218,19 +266,42 @@ export function Knob(props: {
   return { type: "knob", ...props };
 }
 
+/**
+ * A row of steps on a pattern of the record: a click turns a step on (to the pattern's max)
+ * or off (to its min). `playing` names a watch whose value is the step that plays, which
+ * lights up.
+ */
+export function Steps(props: { path: string; max?: number; playing?: string }): Node {
+  return { type: "steps", ...props };
+}
+
+/** A bar that shows a watch from 0 to 1, such as a level. */
+export function Meter(props: { watch: string; label?: string }): Node {
+  return { type: "meter", ...props };
+}
+
+/** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
+export function Pad(props: { x: string; y: string; size?: number }): Node {
+  return { type: "pad", ...props };
+}
+
 export type Child = Node | string | number | boolean | null | undefined | Child[];
 
 export type Node =
   | { type: "div"; style?: Style; onClick?: () => void; children: Child[] }
   | {
       type: "knob";
-      path: string;
+      path?: string;
+      live?: string;
       label: string;
       min: number;
       max: number;
       default: number;
       unit?: Unit;
-    };
+    }
+  | { type: "steps"; path: string; max?: number; playing?: string }
+  | { type: "meter"; watch: string; label?: string }
+  | { type: "pad"; x: string; y: string; size?: number };
 
 interface DivProps {
   style?: Style;
@@ -270,29 +341,35 @@ export function words(name: string): string {
 const BUTTON: Style = { paddingX: 8, paddingY: 4, radius: 6, background: "#2a2f3a" };
 const CHOSEN: Style = { ...BUTTON, background: "#7c3aed", color: "#ffffff" };
 
-/** The card of a tool that has none: a knob per knob, a button per option and per toggle. */
-export function defaultCard<S extends Fields>(fields: S) {
-  return ({ state, update }: Card<StateOf<S>>): Node => {
+/**
+ * The card of a tool that has none: a knob per knob and per live control, a row of steps per
+ * pattern, a button per option, toggle and trigger.
+ */
+export function defaultCard(fields: Fields, controls: Controls = {}) {
+  return ({ state, update, fire }: Card<Record<string, unknown>, Controls>): Node => {
     const knobs: Node[] = [];
     const rows: Node[] = [];
+    const record = state as Record<string, unknown>;
     for (const [name, field] of Object.entries(fields)) {
       const label = field.label ?? words(name);
       if (field.kind === "knob") {
         knobs.push(
           Knob({ path: name, label, min: field.min, max: field.max, default: field.default, unit: field.unit }),
         );
+      } else if (field.kind === "pattern") {
+        rows.push(Steps({ path: name, max: field.max }));
       } else if (field.kind === "toggle") {
-        const on = (state[name] as boolean | undefined) ?? field.default;
+        const on = (record[name] as boolean | undefined) ?? field.default;
         rows.push(
           h("div", {
             style: on ? CHOSEN : BUTTON,
             onClick: () => update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, (next) => {
-              (next as Record<string, unknown>)[name] = !on;
+              next[name] = !on;
             }),
           }, label),
         );
       } else {
-        const chosen = (state[name] as string | number | undefined) ?? field.default;
+        const chosen = (record[name] as string | number | undefined) ?? field.default;
         rows.push(
           h("div", { style: { direction: "row", gap: 4, align: "center" } },
             h("div", { style: { color: "#9ca3af" } }, label),
@@ -300,7 +377,7 @@ export function defaultCard<S extends Fields>(fields: S) {
               h("div", {
                 style: option === chosen ? CHOSEN : BUTTON,
                 onClick: () => update(`Set ${label.toLowerCase()} to ${option}`, (next) => {
-                  (next as Record<string, unknown>)[name] = option;
+                  next[name] = option;
                 }),
               }, String(option)),
             ),
@@ -308,12 +385,19 @@ export function defaultCard<S extends Fields>(fields: S) {
         );
       }
     }
+    for (const [name, control] of Object.entries(controls)) {
+      const label = control.label ?? words(name);
+      if (control.kind === "live") {
+        knobs.push(Knob({ live: name, label, min: control.min, max: control.max, default: control.default }));
+      } else {
+        rows.push(h("div", { style: BUTTON, onClick: () => fire(name) }, label));
+      }
+    }
     return h("div", { style: { gap: 8 } }, h("div", { style: { direction: "row", gap: 8 } }, knobs), rows);
   };
 }
 
-/** What the host reads. Not for tools or cards. */
+/** What the host reads. Not for tools. */
 export const host = {
-  tools: new Map<string, ToolSpec<Fields>>(),
-  cards: new Map<string, (card: Card<unknown>) => Node>(),
+  tools: new Map<string, ToolSpec<Fields, Controls>>(),
 };

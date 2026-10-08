@@ -23,23 +23,15 @@ type CreateView =
     Rc<dyn Fn(&Entity<Session>, &InstanceId, &mut Window, &mut App) -> Option<AnyView>>;
 type CreateCard =
     Rc<dyn Fn(&Entity<Session>, &InstanceId, CardFrame, &mut Window, &mut App) -> Option<AnyView>>;
-/// See [`Views::set_card_host`].
-type CardHost = Rc<
-    dyn Fn(
-        &Entity<Session>,
-        &InstanceId,
-        CardFrame,
-        Option<AnyView>,
-        &mut Window,
-        &mut App,
-    ) -> Option<AnyView>,
->;
+/// See [`Views::set_other_cards`].
+type CardHost =
+    Rc<dyn Fn(&Entity<Session>, &InstanceId, CardFrame, &mut Window, &mut App) -> Option<AnyView>>;
 
 #[derive(Default)]
 pub struct Views {
     by_tool: BTreeMap<&'static str, CreateView>,
     cards: BTreeMap<&'static str, CreateCard>,
-    card_host: Option<CardHost>,
+    other_cards: Option<CardHost>,
 }
 
 impl Global for Views {}
@@ -89,22 +81,20 @@ impl Views {
         );
     }
 
-    /// What makes every card from now on, from the card the tool registered, if any: cards
-    /// written in TypeScript, which come and go while the project is open, so a host stands
-    /// in for every card and shows the registered one when the project has none.
-    pub fn set_card_host(
+    /// What makes the card of a tool that registered none: a tool the project wrote, which
+    /// comes and goes while the project is open. It says `None` for a tool it does not know.
+    pub fn set_other_cards(
         &mut self,
-        host: impl Fn(
+        create: impl Fn(
             &Entity<Session>,
             &InstanceId,
             CardFrame,
-            Option<AnyView>,
             &mut Window,
             &mut App,
         ) -> Option<AnyView>
         + 'static,
     ) {
-        self.card_host = Some(Rc::new(host));
+        self.other_cards = Some(Rc::new(create));
     }
 
     /// A new card of the instance in a slot of a rack, from the installed registry. `None`
@@ -118,12 +108,12 @@ impl Views {
     ) -> Option<AnyView> {
         let tool = session.read(cx).project().tool_of(id)?;
         let views = cx.try_global::<Self>()?;
-        let (create, host) = (views.cards.get(tool).cloned(), views.card_host.clone());
-        let Some(host) = host else {
-            return create?(session, id, frame, window, cx);
-        };
-        let card = create.and_then(|create| create(session, id, frame.clone(), window, cx));
-        host(session, id, frame, card, window, cx)
+        let create = views
+            .cards
+            .get(tool)
+            .or(views.other_cards.as_ref())
+            .cloned();
+        create?(session, id, frame, window, cx)
     }
 
     /// A new view of the instance, from the installed registry. `None` when the instance is

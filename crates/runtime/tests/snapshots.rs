@@ -86,7 +86,6 @@
 //! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
 //! - `drums-*.png`: the Drum pad, see `snapshots/drums.rs`.
 //! - `track-panel-utility*.png`: the Utility, see `snapshots/utility.rs`.
-//! - `track-panel-script.png`: a Script, see `snapshots/script.rs`.
 //! - `modulation-*.png`: the Modulation, see `snapshots/modulation.rs`.
 //! - `wavetable*.png`: the Wavetable, collapsed, expanded and scrolled, see
 //!   `snapshots/wavetable.rs`.
@@ -168,8 +167,6 @@ mod plugin;
 mod plugin_hosts;
 #[path = "snapshots/sampler.rs"]
 mod sampler;
-#[path = "snapshots/script.rs"]
-mod script;
 #[path = "snapshots/utility.rs"]
 mod utility;
 #[path = "snapshots/wavetable.rs"]
@@ -1025,7 +1022,7 @@ fn main() -> Result<()> {
 
     // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
     // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=agent`, `=audio`,
-    // `=sampler`, `=drums`, `=utility`, `=script`, `=saturator`, `=modulation`, `=lanes`, `=automation`,
+    // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes`, `=automation`,
     // `=automated`, `=plugin` or `=wavetable` renders the default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
     let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
@@ -1052,9 +1049,6 @@ fn main() -> Result<()> {
     }
     if runs("utility") {
         utility::snapshots(&mut cx, &save)?;
-    }
-    if runs("script") {
-        script::snapshots(&mut cx, &save)?;
     }
     if runs("modulation") {
         modulation::snapshots(&mut cx, &save)?;
