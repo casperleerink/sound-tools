@@ -110,6 +110,8 @@ pub enum OfferGroup {
     Dynamics,
     Space,
     Mix,
+    /// The tools a project wrote for itself.
+    Project,
     Plugins,
 }
 
@@ -121,6 +123,7 @@ impl OfferGroup {
             Self::Dynamics => "Dynamics",
             Self::Space => "Space",
             Self::Mix => "Mix",
+            Self::Project => "This project",
             Self::Plugins => "Plugins",
         }
     }
@@ -248,6 +251,8 @@ pub struct Devices {
     notes: Vec<ListNotes>,
     generations: Vec<Generation>,
     describe: BTreeMap<&'static str, DescribeInstance>,
+    /// See [`Self::describe_others`].
+    describe_others: Option<DescribeInstance>,
     numbers: BTreeMap<&'static str, Rc<dyn ToolNumbers>>,
 }
 
@@ -297,6 +302,15 @@ impl Devices {
                 Some(describe(project.state(&instance)?))
             }),
         );
+    }
+
+    /// Registers what a rack says about an instance of a tool that registered nothing itself,
+    /// such as a tool the project wrote, which comes and goes while the project is open.
+    pub fn describe_others(
+        &mut self,
+        describe: impl Fn(&Project, &InstanceId) -> Option<DeviceLabel> + 'static,
+    ) {
+        self.describe_others = Some(Rc::new(describe));
     }
 
     /// Registers what the lanes of a track need to know of the numbers of an instance of the
@@ -375,8 +389,12 @@ impl Devices {
     pub fn label_of(session: &Entity<Session>, id: &InstanceId, cx: &App) -> Option<DeviceLabel> {
         let project = session.read(cx).project();
         let tool = project.tool_of(id)?;
-        let describe = cx.try_global::<Self>()?.describe.get(tool)?.clone();
-        describe(project, id)
+        let devices = cx.try_global::<Self>()?;
+        let describe = devices
+            .describe
+            .get(tool)
+            .or(devices.describe_others.as_ref());
+        describe?.clone()(project, id)
     }
 
     /// The [`Numbers`] of the tool of `id`, when it registered them.

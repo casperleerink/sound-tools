@@ -6130,6 +6130,8 @@ dependencies = [
  "serde_json",
  "smol",
  "sound-core",
+ "sound-hum",
+ "sound-notes",
  "sound-ui",
 ]
 

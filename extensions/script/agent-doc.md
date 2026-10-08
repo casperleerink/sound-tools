@@ -28,9 +28,9 @@ Here the pad plays through a tremolo named `tremolo`:
 | `code` | The script, one line per string. |
 | `values` | Where each param stands, by name. A param left out is at the default of its line. Leave it out to use every default. |
 
-## The language
+## Hum, the language
 
-The script runs once for every sample, on each channel apart. It reads the sample that comes in as `in` and sets `out` to the sample that leaves. A script that never sets `out` passes the sound through.
+The code is Hum. It runs once for every sample, on each channel apart. It reads the sample that comes in as `in` and sets `out` to the sample that leaves. A script that never sets `out` passes the sound through.
 
 - `name = expression` sets a name. A name is set once and read on the lines below it.
 - `param name = default [min, max]` is a number the composer turns: a knob on the card, labelled by its name, and a field of `values`. A change of it glides over 20 ms, so it does not click.
