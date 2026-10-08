@@ -123,10 +123,7 @@ pub(crate) fn decode_record(
     let file: RecordFile = decode_json(bytes).map_err(Unloadable::Invalid)?;
     let definition = registry
         .definition(&file.tool)
-        .filter(|definition| {
-            let enabled = |extension: &String| extension == definition.extension;
-            project_file.extensions.iter().any(enabled)
-        })
+        .filter(|definition| definition.is_enabled_in(&project_file.extensions))
         .ok_or_else(|| Unloadable::UnknownTool(file.tool.clone()))?;
     (definition.decode)(file.state).map_err(Unloadable::Invalid)
 }

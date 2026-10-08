@@ -1,4 +1,4 @@
-//! The script processor: runs the [`Machine`] of the code that plays, and fades from the old
+//! The Hum processor: runs the [`Machine`] of the code that plays, and fades from the old
 //! code to new code over a few milliseconds, so an edit of the code while it plays does not
 //! click.
 
@@ -11,12 +11,12 @@ const FADE_SECONDS: f32 = 0.01;
 
 /// What the behaviour sends on every run: a machine when the code is new, and where every
 /// param stands.
-pub struct ScriptUpdate {
+pub struct HumUpdate {
     pub machine: Option<Box<Machine>>,
     pub values: Values,
 }
 
-pub struct Script {
+pub struct Hum {
     current: Box<Machine>,
     /// The machine of the code before, while it fades out. It goes back to the control thread
     /// with the next update.
@@ -25,7 +25,7 @@ pub struct Script {
     fade_left: usize,
 }
 
-impl Script {
+impl Hum {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
 
@@ -39,8 +39,8 @@ impl Script {
     }
 }
 
-impl Processor for Script {
-    type Update = ScriptUpdate;
+impl Processor for Hum {
+    type Update = HumUpdate;
 
     fn ports(&self) -> Ports {
         Ports::new()
@@ -52,7 +52,7 @@ impl Processor for Script {
         self.fade_frames = ((FADE_SECONDS * config.sample_rate as f32) as usize).max(1);
     }
 
-    fn update(&mut self, update: &mut ScriptUpdate) {
+    fn update(&mut self, update: &mut HumUpdate) {
         if let Some(machine) = update.machine.take() {
             let old = std::mem::replace(&mut self.current, machine);
             // The one that faded before rides back with this update, to be dropped there.

@@ -28,7 +28,9 @@ pub use generated::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, INSTRUCTIONS_FILE, NO_PROBLEMS, PROBLEMS_FILE,
 };
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
-pub use registry::{AgentDoc, Registry, RegistryError, ToolRegistration, Was};
+pub use registry::{
+    AgentDoc, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration, Was,
+};
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
 
@@ -97,6 +99,8 @@ pub enum ProjectError {
     Storage(#[from] StorageError),
     #[error("the file watcher failed: {0}")]
     Watcher(#[from] notify::Error),
+    #[error(transparent)]
+    Registry(#[from] RegistryError),
 }
 
 impl From<BindError> for ProjectError {
@@ -442,6 +446,52 @@ impl Project {
             self.push_event(ProjectEvent::ProblemsChanged);
         }
         Ok(true)
+    }
+
+    /// Defines a tool of the project while it is open, or defines it again because its code
+    /// changed. Its records are read again, so one that waited for the tool loads and one the
+    /// new check refuses is a problem, and every instance of it runs the new behaviour. Where
+    /// that fails, what plays stays as it is and the record says why, as for a failed file.
+    /// Nothing is written and nothing is an undo step: no record changed.
+    pub fn define_json_tool(&mut self, tool: JsonTool) -> Result<(), ProjectError> {
+        let name = tool.name.clone();
+        self.registry.json_tool(tool)?;
+        self.generated_are_stale = true;
+        let live: Vec<InstanceId> = (self.instances.iter())
+            .filter(|(_, record)| record.tool == name)
+            .map(|(id, _)| id.clone())
+            .collect();
+        // Read again even where the file did not change: the check did.
+        for id in &live {
+            self.storage.forget(id);
+        }
+        let state_folder = self.storage.state_folder();
+        self.apply_paths(&[state_folder], Source::Load, std::time::Instant::now())?;
+        for id in live {
+            if let Err(error) = self.rebind(&id) {
+                let path = self.storage.record_path(&id, storage::Form::File);
+                let path = self.storage.display_path(&path);
+                self.report_problem(path, format!("its behaviour failed: {error}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Says what is wrong with files outside `state/` that the runtime reads, such as the code
+    /// of the project's own tools under `extensions/`. It replaces every problem whose path
+    /// starts with `folder`, so a fixed file drops off the list.
+    pub fn set_problems_in(&mut self, folder: &str, problems: Vec<Problem>) {
+        let before = self.file_problems.len();
+        self.file_problems
+            .retain(|path, _| !path.starts_with(folder));
+        let cleared = self.file_problems.len() != before;
+        for problem in &problems {
+            self.file_problems
+                .insert(problem.path.clone(), problem.message.clone());
+        }
+        if cleared || !problems.is_empty() {
+            self.push_event(ProjectEvent::ProblemsChanged);
+        }
     }
 
     /// Takes the events since the last call.
@@ -791,10 +841,10 @@ impl Project {
     }
 
     fn check_tool(&self, tool: &'static str) -> Result<(), ProjectError> {
-        let enabled = self.registry.definition(tool).is_some_and(|definition| {
-            let extensions = &self.project_file.extensions;
-            extensions.iter().any(|it| it == definition.extension)
-        });
+        let enabled = self
+            .registry
+            .definition(tool)
+            .is_some_and(|definition| definition.is_enabled_in(&self.project_file.extensions));
         if enabled {
             Ok(())
         } else {

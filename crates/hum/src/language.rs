@@ -15,7 +15,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 /// The most params a script can have: the update carries their values in a fixed array.
 pub const MAX_PARAMETERS: usize = 32;
 /// The longest a `delay` can be.
-pub const MAX_DELAY_MS: f32 = 4000.0;
+pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
 /// Each delay holds [`MAX_DELAY_MS`] per channel, so their number is held too.
 const MAX_DELAYS: usize = 16;
 const MAX_OPERATIONS: usize = 4096;
@@ -46,7 +46,7 @@ pub struct ParameterSpec {
 pub struct Code {
     pub parameters: Vec<ParameterSpec>,
     /// Of the source lines, so a behaviour tells new code from new values.
-    pub(crate) hash: u64,
+    pub hash: u64,
     pub(crate) operations: Vec<Operation>,
     /// The register of `out`, `None` when the script never sets it and passes its input.
     pub(crate) output: Option<Register>,

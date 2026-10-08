@@ -11,7 +11,9 @@ use sound_ui::components::device_card::{CardFrame, Column, PLAIN_CARD_WIDTH};
 use sound_ui::components::knob::{Knob, short};
 use sound_ui::{ActiveTheme, ControlEdit, DeviceLabel, Devices, Session, Views, weak_callback};
 
-use crate::{ParameterSpec, ScriptState};
+use sound_hum::ParameterSpec;
+
+use crate::ScriptState;
 
 /// What the rack calls a script that has no `name`.
 pub const NAME: &str = "Script";

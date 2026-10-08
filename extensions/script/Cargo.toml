@@ -11,9 +11,9 @@ workspace = true
 gpui.workspace = true
 serde.workspace = true
 sound-core.workspace = true
+sound-hum.workspace = true
 sound-notes.workspace = true
 sound-ui.workspace = true
-thiserror.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

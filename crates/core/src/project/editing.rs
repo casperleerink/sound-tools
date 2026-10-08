@@ -463,25 +463,42 @@ impl Project {
             .instances
             .get(id)
             .ok_or_else(|| ProjectError::MissingInstance(id.clone()))?;
+        let tool = record.tool;
         let invalid = |message: String| ProjectError::InvalidState {
             id: id.clone(),
             message,
         };
-        let json = record
-            .state
-            .to_json()
-            .map_err(|error| invalid(error.to_string()))?;
+        let json = (record.state.to_json()).map_err(|error| invalid(error.to_string()))?;
         let mut state = serde_json::from_str(&json).map_err(|error| invalid(error.to_string()))?;
         change(&mut state);
-        let definition = self
-            .registry
-            .definition(record.tool)
-            .ok_or(ProjectError::UnknownTool(record.tool))?;
-        let record = (definition.decode)(state).map_err(invalid)?;
-        let changes = Changes {
-            changes: vec![Change::Set(id.clone(), record)],
-        };
+        let mut changes = Changes::new();
+        self.set_json(&mut changes, id.clone(), tool, state)?;
         self.publish(edit, changes)
+    }
+
+    /// Puts a record of `tool` with this `state` at `id` into `changes`, for code that knows the
+    /// tool only by name, such as an offer of a tool the project wrote. The state is decoded
+    /// and checked here, as a file of the tool would be.
+    pub fn set_json(
+        &self,
+        changes: &mut Changes,
+        id: InstanceId,
+        tool: &str,
+        state: serde_json::Value,
+    ) -> Result<(), ProjectError> {
+        let definition =
+            self.registry
+                .definition(tool)
+                .ok_or_else(|| ProjectError::InvalidState {
+                    id: id.clone(),
+                    message: format!("tool {tool:?} is not registered"),
+                })?;
+        let record = (definition.decode)(state).map_err(|message| ProjectError::InvalidState {
+            id: id.clone(),
+            message,
+        })?;
+        changes.changes.push(Change::Set(id, record));
+        Ok(())
     }
 
     /// Ends the edit as one undo step and writes every record it touched, once. The step runs

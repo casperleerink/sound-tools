@@ -20,17 +20,13 @@
 //! }
 //! ```
 //!
-//! The language is in [`language`], what runs it in [`Machine`]. Its reference for writers is
-//! `agent-doc.md`.
+//! The code is Hum, see the crate `sound-hum`. Its reference for writers is `agent-doc.md`.
 //!
 //! Known gaps of this first version: a script is an effect only, the same code runs on each
 //! channel apart, nothing knows the tempo, and a param cannot be automated.
 //!
 //! [`view`] is the card, and the only module here that uses GPUI.
 
-pub mod language;
-mod machine;
-mod processor;
 pub mod view;
 
 use std::collections::BTreeMap;
@@ -42,9 +38,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
-pub use language::{Code, CompileError, MAX_PARAMETERS, ParameterSpec, compile};
-pub use machine::{Machine, Values};
-pub use processor::{Script, ScriptUpdate};
+use sound_hum::{Code, Hum, HumUpdate, MAX_PARAMETERS, Machine, Values, compile};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "script";
@@ -125,10 +119,10 @@ fn apply(state: &ScriptState, context: &mut BehaviourContext<'_>) -> Result<(), 
     let mut machine = new_code.then(|| Box::new(Machine::new(code.clone(), &values, sample_rate)));
     let script = context.processor("script", || {
         let machine = machine.take();
-        Script::new(machine.unwrap_or_else(|| Box::new(Machine::new(code, &values, sample_rate))))
+        Hum::new(machine.unwrap_or_else(|| Box::new(Machine::new(code, &values, sample_rate))))
     })?;
-    context.update(script, ScriptUpdate { machine, values })?;
-    context.input(AUDIO_INPUT, InputEndpoint::new(script, Script::INPUT));
-    context.output(AUDIO_OUTPUT, OutputEndpoint::new(script, Script::OUTPUT));
+    context.update(script, HumUpdate { machine, values })?;
+    context.input(AUDIO_INPUT, InputEndpoint::new(script, Hum::INPUT));
+    context.output(AUDIO_OUTPUT, OutputEndpoint::new(script, Hum::OUTPUT));
     Ok(())
 }

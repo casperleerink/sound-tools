@@ -8,6 +8,7 @@ mod binding;
 mod composite;
 mod editing;
 mod generated;
+mod json_tools;
 mod outside;
 mod places;
 mod properties;

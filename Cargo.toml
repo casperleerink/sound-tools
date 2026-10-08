@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core","crates/media", "crates/notes", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/script", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/hum","crates/media", "crates/notes", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/script", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -34,6 +34,7 @@ test-plugin-support = { path = "tooling/test-plugin-support" }
 test-vst3-plugin = { path = "tooling/test-vst3-plugin" }
 sound-agent = { path = "crates/agent" }
 sound-core = { path = "crates/core" }
+sound-hum = { path = "crates/hum" }
 sound-media = { path = "crates/media" }
 sound-notes = { path = "crates/notes" }
 sound-typescript = { path = "crates/typescript" }
@@ -164,6 +165,7 @@ runtime = { opt-level = 3 }
 sampler = { opt-level = 3 }
 saturator = { opt-level = 3 }
 script = { opt-level = 3 }
+sound-hum = { opt-level = 3 }
 sound-core = { opt-level = 3 }
 sound-media = { opt-level = 3 }
 sound-notes = { opt-level = 3 }

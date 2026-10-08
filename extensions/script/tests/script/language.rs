@@ -2,7 +2,8 @@
 
 //! What a script sounds like, run frame by frame without an engine.
 
-use script::{Machine, ScriptState};
+use script::ScriptState;
+use sound_hum::Machine;
 
 const SAMPLE_RATE: f32 = 48_000.0;
 
