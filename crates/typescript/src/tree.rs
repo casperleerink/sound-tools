@@ -46,6 +46,51 @@ pub(crate) enum Node {
         #[serde(default)]
         size: Option<f32>,
     },
+    Canvas(CanvasNode),
+}
+
+/// A surface the code draws shapes on, which hears the pointer.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub(crate) struct CanvasNode {
+    pub width: f32,
+    pub height: f32,
+    pub shapes: Vec<Shape>,
+    #[serde(default)]
+    pub background: Option<Color>,
+    /// The index of the handler of a press, and of a drag.
+    #[serde(default)]
+    pub on_press: Option<usize>,
+    #[serde(default)]
+    pub on_drag: Option<usize>,
+}
+
+/// A shape of a canvas, in points from its top left.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Shape {
+    Circle {
+        x: f32,
+        y: f32,
+        radius: f32,
+        color: Color,
+    },
+    Rect {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+        #[serde(default)]
+        radius: Option<f32>,
+    },
+    Line {
+        from: [f32; 2],
+        to: [f32; 2],
+        color: Color,
+        #[serde(default)]
+        width: Option<f32>,
+    },
 }
 
 /// A knob on the number at `path` in the record, or on the live control `live`.
@@ -112,7 +157,7 @@ enum Justify {
 /// `#rrggbb` or `#rrggbbaa`.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(try_from = "String")]
-struct Color(Hsla);
+pub(crate) struct Color(pub(crate) Hsla);
 
 impl TryFrom<String> for Color {
     type Error = String;
@@ -201,6 +246,7 @@ pub(crate) trait Controls {
     fn steps(&mut self, path: &str, max: f32, playing: Option<&str>) -> AnyElement;
     fn meter(&mut self, watch: &str, label: Option<&str>) -> AnyElement;
     fn pad(&mut self, x: &str, y: &str, size: f32) -> AnyElement;
+    fn canvas(&mut self, canvas: &CanvasNode) -> AnyElement;
 }
 
 /// `index` tells siblings apart, so every element that needs an id gets its own.
@@ -213,6 +259,7 @@ pub(crate) fn draw(node: &Node, index: &[usize], controls: &mut impl Controls) -
         }
         Node::Meter { watch, label } => controls.meter(watch, label.as_deref()),
         Node::Pad { x, y, size } => controls.pad(x, y, size.unwrap_or(120.0)),
+        Node::Canvas(canvas) => controls.canvas(canvas),
         Node::Div {
             style,
             on_click,

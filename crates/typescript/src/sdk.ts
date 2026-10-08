@@ -1,8 +1,8 @@
 // The SDK of the project's own tools. Sound Tools writes this file when the project opens, so
-// an edit here is lost. Read `agent-docs/extensions.md` first, and `agent-docs/hum.md` for Hum.
+// an edit here is lost. Read `agent-docs/extensions.md` first.
 //
 // A tool is a `.ts` or `.tsx` file next to this one that calls `tool`: the fields of its
-// record, the controls its card plays, its doc for agents, its sound in Hum and its card.
+// record, the controls its card plays, its doc for agents, its sound and its card.
 
 // ---------------------------------------------------------------------------------------------
 // Fields of a record: saved, undoable, and what an agent writes.
@@ -21,7 +21,7 @@ export interface KnobField {
   label?: string;
 }
 
-/** On or off. It plays live, as 1 or 0 in Hum. */
+/** On or off. It plays live, as a signal of 1 or 0. */
 export interface ToggleField {
   kind: "toggle";
   default: boolean;
@@ -39,7 +39,7 @@ export interface ChoiceField<Option extends string | number = string | number> {
   label?: string;
 }
 
-/** A list of numbers, such as the steps of a sequence. It plays live, as a list in Hum. */
+/** A list of numbers, such as the steps of a sequence. It plays live, as a `Table`. */
 export interface PatternField {
   kind: "pattern";
   length: number;
@@ -79,7 +79,7 @@ export interface LiveControl {
   label?: string;
 }
 
-/** A bang: 1 in Hum for the one sample after the card fires it. */
+/** A bang: a signal that is 1 for the one sample after the card fires it. */
 export interface TriggerControl {
   kind: "trigger";
   label?: string;
@@ -124,7 +124,8 @@ export type SoundOf<S extends Fields, C extends Controls> = {
 
 // ---------------------------------------------------------------------------------------------
 // The sound graph: a sound is a `Signal`, built from the functions below. The SDK turns it into
-// Hum, which the runtime compiles and plays.
+// Hum, the small language the runtime compiles and plays sample by sample; a tool never writes
+// Hum itself.
 
 /** A signal, or a plain number. */
 export type Operand = Signal | number;
@@ -330,7 +331,7 @@ export function watch(name: string, value: Operand): void {
 
 const INFIX = new Set(["+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!="]);
 
-/** The Hum of a sound: `build` makes the output, and what it declares is kept meanwhile. */
+/** For the host: the Hum of a sound. `build` makes the output; what it declares is kept meanwhile. */
 export function graphToHum(build: () => Operand): string[] {
   current = { feedbacks: [], buffers: [], writes: [], watches: [] };
   try {
@@ -379,36 +380,6 @@ export function graphToHum(build: () => Operand): string[] {
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Hum, written by hand
-
-/** Lines of Hum. Make them with the `hum` tag. */
-export class Hum {
-  constructor(readonly text: string) {}
-}
-
-export type Piece = Param | Table | Hum | number | string | readonly Piece[];
-
-/**
- * Hum code. `${...}` takes a `Param`, a number, a name, other Hum, or a list of those, which
- * goes in one after the other. Lines are trimmed, so indent freely.
- */
-export function hum(strings: TemplateStringsArray, ...pieces: Piece[]): Hum {
-  let text = strings[0] ?? "";
-  pieces.forEach((piece, index) => {
-    text += humText(piece) + (strings[index + 1] ?? "");
-  });
-  return new Hum(text);
-}
-
-function humText(piece: Piece): string {
-  if (piece instanceof Param || piece instanceof Table) return piece.name;
-  if (piece instanceof Hum) return piece.text;
-  if (typeof piece === "number") return humNumber(piece);
-  if (typeof piece === "string") return piece;
-  return piece.map(humText).join("\n");
-}
-
 /** Hum reads digits and a point, so a number is written without an exponent. */
 function humNumber(value: number): string {
   if (!Number.isFinite(value)) {
@@ -421,7 +392,7 @@ function humNumber(value: number): string {
 // ---------------------------------------------------------------------------------------------
 // Tools
 
-export interface ToolSpec<S extends Fields, C extends Controls> {
+export interface ToolSpec<S extends Fields, C extends Controls, M> {
   /** The `tool` of its records and the name of its doc: lowercase letters, digits, `-`, `_`. */
   name: string;
   /** What the card and the picker call it. */
@@ -431,31 +402,59 @@ export interface ToolSpec<S extends Fields, C extends Controls> {
   /** What it does and how its fields change the sound, in Markdown. Goes into its doc. */
   doc: string;
   /**
-   * `effect` (the default) goes in a track's effects and reads `in`. `instrument` is what a
-   * track plays: the code runs once per note. `source` is what a track plays too, one voice
-   * that runs all the time and follows the newest note.
+   * `effect` (the default) goes in a track's effects and reads `input`. `instrument` is what a
+   * track plays: the sound runs once per note. `source` is what a track plays too, one voice
+   * that runs all the time and follows the newest note; at the top of a project, connected to
+   * the device in `project.json`, it is an experiment of its own.
    */
   kind?: "effect" | "instrument" | "source";
   /** How many notes an instrument plays at once, 1 to 8. 8 when left out. */
   voices?: number;
-  /** The fields of its record. Field names are Hum names: `rate`, `tone_hz`. */
+  /** The fields of its record. Field names are lowercase letters, digits and `_`. */
   state: S;
-  /** What its card plays and nothing saves. Names are Hum names too. */
+  /** What its card plays and nothing saves. Names are as field names. */
   controls?: C;
-  /** Its sound: a `Signal` made with the functions of the sound graph, or `hum` code. */
-  sound: (fields: SoundOf<S, C>) => Signal | Hum;
+  /** Its sound: a `Signal` made with the functions of the sound graph. */
+  sound: (fields: SoundOf<S, C>) => Operand;
+  /**
+   * What the control loop and the card of an instance keep, and nothing saves: positions of
+   * a simulation, the last thing played. Made new for each instance, and when the code loads.
+   */
+  memory?: () => M;
+  /**
+   * The control loop: about 30 times a second while the window is open, for each instance. It
+   * plays the sound with `set` and `fire`, as a performer would, and keeps what it needs in
+   * `memory`. It does not change the record: that is the composer's.
+   */
+  tick?: (tool: Tick<StateOf<S>, C, M>) => void;
   /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
-  card?: (card: Card<StateOf<S>, C>) => Node;
+  card?: (card: Card<StateOf<S>, C, M>) => Node;
+  /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
+  page?: (card: Card<StateOf<S>, C, M>) => Node;
 }
 
 /** Makes a tool of the project. */
-export function tool<const S extends Fields, const C extends Controls = {}>(
-  spec: ToolSpec<S, C>,
+export function tool<const S extends Fields, const C extends Controls = {}, M = {}>(
+  spec: ToolSpec<S, C, M>,
 ): void {
   if (host.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
-  host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls>);
+  host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls, unknown>);
+}
+
+/** What the control loop of an instance gets each time it runs. */
+export interface Tick<State, C extends Controls, M> {
+  state: State;
+  /** The last value of each `watch`, by name. */
+  watches: Record<string, number>;
+  memory: M;
+  /** Seconds since the last tick. */
+  dt: number;
+  /** Moves a live control. */
+  set(control: keyof C & string, value: number): void;
+  /** Fires a trigger. */
+  fire(control: keyof C & string): void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -488,10 +487,12 @@ export interface Style {
   borderWidth?: number;
 }
 
-/** What a card gets each time it draws. */
-export interface Card<State, C extends Controls = Controls> {
+/** What a card or a page gets each time it draws. */
+export interface Card<State, C extends Controls = Controls, M = unknown> {
   /** The record as it is now. */
   state: State;
+  /** What the control loop keeps. A click may change it too; the card draws again after. */
+  memory: M;
   /** The last value of each `watch` of the Hum, by name. The card draws again as they move. */
   watches: Record<string, number>;
   /**
@@ -536,6 +537,27 @@ export function Meter(props: { watch: string; label?: string }): Node {
   return { type: "meter", ...props };
 }
 
+/** A shape of a `Canvas`, in points from its top left. */
+export type Shape =
+  | { kind: "circle"; x: number; y: number; radius: number; color: Color }
+  | { kind: "rect"; x: number; y: number; width: number; height: number; color: Color; radius?: number }
+  | { kind: "line"; from: [number, number]; to: [number, number]; color: Color; width?: number };
+
+/**
+ * A surface to draw on and play: `shapes` are drawn in order. `onPress` and `onDrag` hear the
+ * pointer, at `x` across and `y` down, from 0 to 1.
+ */
+export function Canvas(props: {
+  width: number;
+  height: number;
+  shapes: Shape[];
+  background?: Color;
+  onPress?: (x: number, y: number) => void;
+  onDrag?: (x: number, y: number) => void;
+}): Node {
+  return { type: "canvas", ...props };
+}
+
 /** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
 export function Pad(props: { x: string; y: string; size?: number }): Node {
   return { type: "pad", ...props };
@@ -557,7 +579,16 @@ export type Node =
     }
   | { type: "steps"; path: string; max?: number; playing?: string }
   | { type: "meter"; watch: string; label?: string }
-  | { type: "pad"; x: string; y: string; size?: number };
+  | { type: "pad"; x: string; y: string; size?: number }
+  | {
+      type: "canvas";
+      width: number;
+      height: number;
+      shapes: Shape[];
+      background?: Color;
+      onPress?: (x: number, y: number) => void;
+      onDrag?: (x: number, y: number) => void;
+    };
 
 interface DivProps {
   style?: Style;
@@ -574,7 +605,8 @@ export function h<Props>(
   ...children: Child[]
 ): Node {
   if (typeof type === "function") {
-    return type({ ...(props as Props), children });
+    // A component such as `Knob` takes no children: an empty list would be one more field.
+    return type((children.length > 0 ? { ...props, children } : { ...props }) as Props);
   }
   return { type, style: props?.style, onClick: props?.onClick, children };
 }
@@ -602,7 +634,7 @@ const CHOSEN: Style = { ...BUTTON, background: "#7c3aed", color: "#ffffff" };
  * pattern, a button per option, toggle and trigger.
  */
 export function defaultCard(fields: Fields, controls: Controls = {}) {
-  return ({ state, update, fire }: Card<Record<string, unknown>, Controls>): Node => {
+  return ({ state, update, fire }: Card<Record<string, unknown>, Controls, unknown>): Node => {
     const knobs: Node[] = [];
     const rows: Node[] = [];
     const record = state as Record<string, unknown>;
@@ -655,5 +687,5 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
 
 /** What the host reads. Not for tools. */
 export const host = {
-  tools: new Map<string, ToolSpec<Fields, Controls>>(),
+  tools: new Map<string, ToolSpec<Fields, Controls, unknown>>(),
 };

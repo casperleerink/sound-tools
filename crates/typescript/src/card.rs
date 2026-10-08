@@ -1,5 +1,6 @@
-//! The card of an instance of a tool of the project, in a rack: the tree its code draws, with
-//! the controls that need the view drawn here: knobs, steps, meters and pads.
+//! The card of an instance of a tool of the project, in a rack, or its page, the whole window:
+//! the tree its code draws, with what needs the view drawn here: knobs, steps, meters, pads and
+//! canvases.
 
 use std::collections::BTreeMap;
 
@@ -25,11 +26,14 @@ pub(crate) struct TypeScriptCard {
     id: InstanceId,
     /// The number the live host knows this card by.
     card: u64,
-    frame: CardFrame,
+    /// The frame of its card in a rack; `None` for a page.
+    frame: Option<CardFrame>,
     /// The drag of a knob on the record.
     edit: ControlEdit,
     /// The live controls of the pad the pointer holds.
     pad: Option<(String, String)>,
+    /// The drag handler of the canvas the pointer holds.
+    canvas_drag: Option<usize>,
 }
 
 impl TypeScriptCard {
@@ -37,7 +41,7 @@ impl TypeScriptCard {
         live: Entity<Live>,
         session: Entity<Session>,
         id: InstanceId,
-        frame: CardFrame,
+        frame: Option<CardFrame>,
         cx: &mut Context<Self>,
     ) -> Self {
         let tool = session
@@ -46,7 +50,8 @@ impl TypeScriptCard {
             .tool_of(&id)
             .unwrap_or_default()
             .to_string();
-        let card = live.update(cx, |live, cx| live.add(id.clone(), tool, cx));
+        let page = frame.is_none();
+        let card = live.update(cx, |live, cx| live.add(id.clone(), tool, page, cx));
         cx.subscribe(&session, |view, _, event, cx| match event {
             ProjectEvent::Changed(id) if *id == view.id => {
                 view.live.update(cx, |live, cx| live.render(view.card, cx));
@@ -69,14 +74,22 @@ impl TypeScriptCard {
             frame,
             edit: ControlEdit::default(),
             pad: None,
+            canvas_drag: None,
         }
     }
 
     /// Moves a live control, or fires a trigger with no value.
     fn control(&mut self, name: &str, value: Option<f32>, cx: &mut Context<Self>) {
+        let id = self.id.clone();
+        self.live
+            .update(cx, |live, cx| live.control(&id, name, value, cx));
+    }
+
+    /// A handler of the tree, with where the pointer is on a canvas.
+    fn event(&mut self, handler: usize, at: Option<(f32, f32)>, cx: &mut Context<Self>) {
         let card = self.card;
         self.live
-            .update(cx, |live, cx| live.control(card, name, value, cx));
+            .update(cx, |live, _| live.event(card, handler, at));
     }
 }
 
@@ -103,7 +116,8 @@ impl Controls for Drawing<'_, '_> {
             .id(id)
             .cursor_pointer()
             .on_click(self.cx.listener(move |view, _, _, cx| {
-                view.live.update(cx, |live, _| live.click(card, handler));
+                view.live
+                    .update(cx, |live, _| live.event(card, handler, None));
             }))
             .into_any_element()
     }
@@ -257,6 +271,29 @@ impl Controls for Drawing<'_, '_> {
         meter.into_any_element()
     }
 
+    fn canvas(&mut self, node: &tree::CanvasNode) -> AnyElement {
+        let theme = self.cx.theme();
+        let background = node.background.map_or(theme.gray_200, |color| color.0);
+        let drawn: Vec<Drawn> = node.shapes.iter().map(Drawn::of).collect();
+        let view = self.cx.entity().downgrade();
+        let (on_press, on_drag) = (node.on_press, node.on_drag);
+        canvas(
+            |_, _, _| {},
+            move |bounds: Bounds<Pixels>, (), window: &mut Window, _: &mut App| {
+                window.paint_quad(fill(bounds, background).corner_radii(px(6.)));
+                for shape in &drawn {
+                    shape.paint(bounds.origin, window);
+                }
+                if on_press.is_some() || on_drag.is_some() {
+                    Drawing::canvas_listeners(window, bounds, view.clone(), on_press, on_drag);
+                }
+            },
+        )
+        .w(px(node.width))
+        .h(px(node.height))
+        .into_any_element()
+    }
+
     fn pad(&mut self, x: &str, y: &str, size_points: f32) -> AnyElement {
         let at = |name: &str| self.live_value(name).unwrap_or((0.0, 0.0, 1.0));
         let (x_now, x_min, x_max) = at(x);
@@ -343,6 +380,147 @@ impl Controls for Drawing<'_, '_> {
     }
 }
 
+impl Drawing<'_, '_> {
+    /// The pointer on a canvas: a press, then drags until the button comes up.
+    fn canvas_listeners(
+        window: &mut Window,
+        bounds: Bounds<Pixels>,
+        view: gpui::WeakEntity<TypeScriptCard>,
+        on_press: Option<usize>,
+        on_drag: Option<usize>,
+    ) {
+        let at = move |position: Point<Pixels>| {
+            let across = ((position.x - bounds.origin.x) / bounds.size.width).clamp(0.0, 1.0);
+            let down = ((position.y - bounds.origin.y) / bounds.size.height).clamp(0.0, 1.0);
+            (across, down)
+        };
+        window.on_mouse_event({
+            let view = view.clone();
+            move |event: &MouseDownEvent, phase, _, cx| {
+                if phase != DispatchPhase::Bubble
+                    || event.button != MouseButton::Left
+                    || !bounds.contains(&event.position)
+                {
+                    return;
+                }
+                view.update(cx, |view, cx| {
+                    view.canvas_drag = on_drag;
+                    if let Some(handler) = on_press {
+                        view.event(handler, Some(at(event.position)), cx);
+                    }
+                })
+                .ok();
+            }
+        });
+        window.on_mouse_event({
+            let view = view.clone();
+            move |event: &MouseMoveEvent, phase, _, cx| {
+                if phase != DispatchPhase::Bubble || !event.dragging() {
+                    return;
+                }
+                view.update(cx, |view, cx| {
+                    // Only the canvas that was pressed drags.
+                    if let Some(handler) =
+                        view.canvas_drag.filter(|handler| Some(*handler) == on_drag)
+                    {
+                        view.event(handler, Some(at(event.position)), cx);
+                    }
+                })
+                .ok();
+            }
+        });
+        window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble {
+                view.update(cx, |view, _| view.canvas_drag = None).ok();
+            }
+        });
+    }
+}
+
+/// A shape of a canvas, ready to paint.
+enum Drawn {
+    Quad {
+        bounds: Bounds<Pixels>,
+        radius: Pixels,
+        color: gpui::Hsla,
+    },
+    Line {
+        from: Point<Pixels>,
+        to: Point<Pixels>,
+        width: Pixels,
+        color: gpui::Hsla,
+    },
+}
+
+impl Drawn {
+    fn of(shape: &tree::Shape) -> Self {
+        match shape {
+            tree::Shape::Circle {
+                x,
+                y,
+                radius,
+                color,
+            } => Self::Quad {
+                bounds: Bounds::new(
+                    point(px(x - radius), px(y - radius)),
+                    size(px(radius * 2.), px(radius * 2.)),
+                ),
+                radius: px(*radius),
+                color: color.0,
+            },
+            tree::Shape::Rect {
+                x,
+                y,
+                width,
+                height,
+                color,
+                radius,
+            } => Self::Quad {
+                bounds: Bounds::new(point(px(*x), px(*y)), size(px(*width), px(*height))),
+                radius: px(radius.unwrap_or(0.0)),
+                color: color.0,
+            },
+            tree::Shape::Line {
+                from,
+                to,
+                color,
+                width,
+            } => Self::Line {
+                from: point(px(from[0]), px(from[1])),
+                to: point(px(to[0]), px(to[1])),
+                width: px(width.unwrap_or(1.0)),
+                color: color.0,
+            },
+        }
+    }
+
+    fn paint(&self, origin: Point<Pixels>, window: &mut Window) {
+        match self {
+            Self::Quad {
+                bounds,
+                radius,
+                color,
+            } => {
+                let bounds = Bounds::new(origin + bounds.origin, bounds.size);
+                window.paint_quad(fill(bounds, *color).corner_radii(*radius));
+            }
+            Self::Line {
+                from,
+                to,
+                width,
+                color,
+            } => {
+                let mut line = gpui::PathBuilder::stroke(*width);
+                line.move_to(origin + *from);
+                line.line_to(origin + *to);
+                if let Ok(path) = line.build() {
+                    window.paint_path(path, *color);
+                }
+            }
+        }
+    }
+}
+
 impl Render for TypeScriptCard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.session.read(cx).project();
@@ -378,11 +556,19 @@ impl Render for TypeScriptCard {
             .text_size(px(12.))
             .text_color(theme.gray_950)
             .child(body);
-        // At least as wide as a plain card, so the title fits.
-        self.frame
-            .card()
-            .min_w(px(PLAIN_CARD_WIDTH))
-            .child(body)
-            .into_any_element()
+        match &self.frame {
+            // At least as wide as a plain card, so the title fits.
+            Some(frame) => frame
+                .card()
+                .min_w(px(PLAIN_CARD_WIDTH))
+                .child(body)
+                .into_any_element(),
+            None => div()
+                .size_full()
+                .p(px(24.))
+                .bg(theme.gray_100)
+                .child(body)
+                .into_any_element(),
+        }
     }
 }

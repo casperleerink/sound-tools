@@ -5478,7 +5478,6 @@ dependencies = [
  "smol",
  "sound-agent",
  "sound-core",
- "sound-hum",
  "sound-media",
  "sound-notes",
  "sound-typescript",

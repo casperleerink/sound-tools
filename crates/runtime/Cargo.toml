@@ -35,7 +35,6 @@ serde_json.workspace = true
 smol.workspace = true
 sound-agent.workspace = true
 sound-core.workspace = true
-sound-hum.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
 sound-typescript.workspace = true

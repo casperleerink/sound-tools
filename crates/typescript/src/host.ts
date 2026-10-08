@@ -4,7 +4,7 @@
 
 import { readdirSync, watch } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Hum, Node, ToolSpec } from "./sdk";
+import type { Child, Controls, Fields, Node, ToolSpec } from "./sdk";
 
 const folder = process.cwd();
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
@@ -18,18 +18,28 @@ type Request =
   | {
       type: "render";
       card: number;
+      instance: string;
       tool: string;
       state: unknown;
       watches: Record<string, number>;
+      page: boolean;
     }
-  | { type: "event"; card: number; handler: number }
+  | { type: "event"; card: number; handler: number; x?: number; y?: number }
+  | {
+      type: "frame";
+      dt: number;
+      instances: Array<{ instance: string; tool: string; state: unknown; watches: Record<string, number> }>;
+    }
   | { type: "drop"; card: number };
 
-/** What the runtime gets of a node: a click is the index of its handler. */
+/** What the runtime gets of a node: a handler is its index. */
 type Sent =
   | { type: "div"; style?: unknown; onClick?: number; children: Sent[] }
   | { type: "text"; text: string }
-  | Exclude<Node, { type: "div" }>;
+  | { type: "canvas"; width: number; height: number; shapes: unknown[]; background?: string; onPress?: number; onDrag?: number }
+  | Exclude<Node, { type: "div" | "canvas" }>;
+
+type Handler = (x?: number, y?: number) => void;
 
 /** With `SOUND_TOOLS_TIMING` set, what happens when, for a measurement. */
 const timing = process.env.SOUND_TOOLS_TIMING
@@ -40,8 +50,12 @@ function send(message: object) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
 
-/** The click handlers of the last tree of each card. */
-const handlers = new Map<number, Array<() => void>>();
+/** The handlers of the last tree of each card. */
+const handlers = new Map<number, Handler[]>();
+/** What each card was last drawn from, so it draws again after a tick or a click. */
+const drawn = new Map<number, Extract<Request, { type: "render" }>>();
+/** What the control loop and the cards of each instance keep. */
+const memories = new Map<string, unknown>();
 /** The file each tool comes from. */
 const files = new Map<string, string>();
 let version = 0;
@@ -50,10 +64,15 @@ const NAME = /^[a-z0-9_-]+$/;
 const HUM_NAME = /^[a-z_][a-z0-9_]*$/;
 
 /** What is wrong with the definition of a tool, so the agent that wrote it can fix it. */
-function problemsOf(spec: ToolSpec<Fields, Controls>): string[] {
+function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
   const problems: string[] = [];
   if (!NAME.test(spec.name ?? "")) {
     problems.push(`name ${JSON.stringify(spec.name)}: use lowercase letters, digits, - and _`);
+  }
+  for (const key of ["tick", "card", "page", "memory"] as const) {
+    if (spec[key] !== undefined && typeof spec[key] !== "function") {
+      problems.push(`${key}: give a function`);
+    }
   }
   for (const key of ["title", "when", "doc"] as const) {
     if (typeof spec[key] !== "string" || spec[key].trim() === "") {
@@ -61,7 +80,7 @@ function problemsOf(spec: ToolSpec<Fields, Controls>): string[] {
     }
   }
   if (typeof spec.sound !== "function") {
-    problems.push("sound: give a function that returns hum`...`");
+    problems.push("sound: give a function that returns a Signal");
   }
   const kind = spec.kind ?? "effect";
   if (!["effect", "instrument", "source"].includes(kind)) {
@@ -79,7 +98,7 @@ function problemsOf(spec: ToolSpec<Fields, Controls>): string[] {
   const names = [...Object.keys(spec.state ?? {}), ...Object.keys(spec.controls ?? {})];
   for (const name of names) {
     if (!HUM_NAME.test(name)) {
-      problems.push(`${name}: a field or control name is a Hum name: lowercase letters, digits and _`);
+      problems.push(`${name}: a field or control name is lowercase letters, digits and _, starting with a letter`);
     }
     if (names.indexOf(name) !== names.lastIndexOf(name)) {
       problems.push(`${name}: a field and a control cannot share a name`);
@@ -118,6 +137,8 @@ async function load() {
   version += 1;
   sdk.host.tools.clear();
   files.clear();
+  // New code starts its memory again.
+  memories.clear();
   const errors: Array<{ file: string; message: string }> = [];
   for (const file of readdirSync(folder).sort()) {
     if (!/\.tsx?$/.test(file) || file === "sdk.ts" || file.endsWith(".d.ts")) {
@@ -153,6 +174,8 @@ async function load() {
       voices: spec.voices,
       fields: spec.state,
       controls: spec.controls ?? {},
+      tick: typeof spec.tick === "function",
+      page: typeof spec.page === "function",
     }));
   send({ type: "loaded", tools, errors });
   timing("loaded extensions/");
@@ -191,29 +214,23 @@ function sound(tool: string, choices: Record<string, string | number>): string[]
         : `trigger ${name}`,
     );
   }
-  let hum: Hum | undefined;
-  const graph = sdk.graphToHum(() => {
+  const code = sdk.graphToHum(() => {
     const sound = spec.sound(fields as never);
-    if (sound instanceof sdk.Hum) {
-      hum = sound;
-      return 0;
-    }
     if (!(sound instanceof sdk.Signal) && typeof sound !== "number") {
       throw new Error("sound must return a Signal, made with the functions of the SDK");
     }
     return sound;
   });
-  const code = hum ? hum.text.split("\n").map((line) => line.trim()) : graph;
   return [...lines, ...code];
 }
 
-function flatten(child: Child, clicks: Array<() => void>, into: Sent[]) {
+function flatten(child: Child, handlers: Handler[], into: Sent[]) {
   if (child === null || child === undefined || typeof child === "boolean") {
     return;
   }
   if (Array.isArray(child)) {
     for (const each of child) {
-      flatten(each, clicks, into);
+      flatten(each, handlers, into);
     }
   } else if (typeof child === "string" || typeof child === "number") {
     // `{count} lines` is three children in JSX and one line of text on screen.
@@ -224,50 +241,101 @@ function flatten(child: Child, clicks: Array<() => void>, into: Sent[]) {
       into.push({ type: "text", text: String(child) });
     }
   } else if (typeof child === "object" && "type" in child) {
-    into.push(serialize(child, clicks));
+    into.push(serialize(child, handlers));
   } else {
     throw new Error(`a child is a ${typeof child}, not a node or text`);
   }
 }
 
-function serialize(node: Node, clicks: Array<() => void>): Sent {
+/** The index of a handler, kept for its card. */
+function keep(handler: Handler | undefined, handlers: Handler[]): number | undefined {
+  return handler && handlers.push(handler) - 1;
+}
+
+function serialize(node: Node, handlers: Handler[]): Sent {
+  if (node.type === "canvas") {
+    const { onPress, onDrag, ...rest } = node;
+    return { ...rest, onPress: keep(onPress, handlers), onDrag: keep(onDrag, handlers) };
+  }
   if (node.type !== "div") {
     return node;
   }
   const children: Sent[] = [];
-  flatten(node.children, clicks, children);
-  const onClick = node.onClick && clicks.push(node.onClick) - 1;
-  return { type: "div", style: node.style, onClick, children };
+  flatten(node.children, handlers, children);
+  return { type: "div", style: node.style, onClick: keep(node.onClick, handlers), children };
 }
 
-function render(card: number, tool: string, state: unknown, watches: Record<string, number>) {
+/** The memory of an instance, made when it is first needed. */
+function memoryOf(instance: string, spec: ToolSpec<Fields, Controls, unknown>): unknown {
+  if (!memories.has(instance)) {
+    memories.set(instance, spec.memory ? spec.memory() : {});
+  }
+  return memories.get(instance);
+}
+
+/** What a card, a page and the control loop use to play an instance. */
+function players(instance: string) {
+  return {
+    set(control: string, value: number) {
+      send({ type: "control", instance, name: control, value });
+    },
+    fire(control: string) {
+      send({ type: "control", instance, name: control });
+    },
+  };
+}
+
+function render(request: Extract<Request, { type: "render" }>) {
+  const { card, instance, tool, state, watches, page } = request;
+  drawn.set(card, request);
   const spec = sdk.host.tools.get(tool);
   if (!spec) {
     return;
   }
-  const draw = spec.card ?? sdk.defaultCard(spec.state, spec.controls);
+  const draw = page ? spec.page : (spec.card ?? sdk.defaultCard(spec.state, spec.controls));
+  if (!draw) {
+    send({ type: "tree", card, error: `${tool} has no page` });
+    return;
+  }
   try {
-    const clicks: Array<() => void> = [];
+    const kept: Handler[] = [];
     const node = (draw as (card: unknown) => Node)({
       state,
       watches,
+      memory: memoryOf(instance, spec),
       update(label: string, change: (state: unknown) => void) {
         const next = structuredClone(state);
         change(next);
         send({ type: "edit", card, label, state: next });
       },
-      set(control: string, value: number) {
-        send({ type: "control", card, name: control, value });
-      },
-      fire(control: string) {
-        send({ type: "control", card, name: control });
-      },
+      ...players(instance),
     });
-    const tree = serialize(node, clicks);
-    handlers.set(card, clicks);
+    const tree = serialize(node, kept);
+    handlers.set(card, kept);
     send({ type: "tree", card, tree });
   } catch (error) {
     send({ type: "tree", card, error: String(error) });
+  }
+}
+
+/** One step of the control loop of each instance, then its cards draw again. */
+function frame(request: Extract<Request, { type: "frame" }>) {
+  for (const { instance, tool, state, watches } of request.instances) {
+    const spec = sdk.host.tools.get(tool);
+    if (!spec?.tick) {
+      continue;
+    }
+    try {
+      spec.tick({ state, watches, memory: memoryOf(instance, spec), dt: request.dt, ...players(instance) });
+    } catch (error) {
+      console.error(`the tick of ${tool} failed: ${error}`);
+      continue;
+    }
+    for (const last of drawn.values()) {
+      if (last.instance === instance) {
+        render(last);
+      }
+    }
   }
 }
 
@@ -295,17 +363,27 @@ for await (const line of console) {
       }
       break;
     case "render":
-      render(request.card, request.tool, request.state, request.watches);
+      render(request);
       break;
-    case "event":
+    case "event": {
       try {
-        handlers.get(request.card)?.[request.handler]?.();
+        handlers.get(request.card)?.[request.handler]?.(request.x, request.y);
       } catch (error) {
         console.error(`a click failed: ${error}`);
       }
+      // It may have changed the memory.
+      const last = drawn.get(request.card);
+      if (last) {
+        render(last);
+      }
+      break;
+    }
+    case "frame":
+      frame(request);
       break;
     case "drop":
       handlers.delete(request.card);
+      drawn.delete(request.card);
       break;
   }
 }

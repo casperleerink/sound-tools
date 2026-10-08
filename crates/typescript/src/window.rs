@@ -13,14 +13,15 @@ use sound_core::{InstanceId, Problem};
 use sound_hum::{Hum, HumUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
-use crate::bun::{Bun, Event, Loaded, Request};
+use crate::bun::{Bun, Event, Loaded, Looped, Request};
 use crate::card::TypeScriptCard;
 use crate::tools::{Control, ToolInfo, ToolKind};
 use crate::tree::Node;
 use crate::{Extensions, FOLDER, problems_of};
 
-/// How often the cards look at their watches: often enough for a step light or a meter.
-const WATCH_INTERVAL: Duration = Duration::from_millis(33);
+/// How often the cards look at their watches and the control loops run: often enough for a
+/// step light, a meter or a moving drawing.
+const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 /// The tools and cards of the project in the window. One per window.
 pub(crate) struct Live {
@@ -35,6 +36,8 @@ pub(crate) struct Live {
     /// Where each live control was put last, by instance: the processor keeps it on the audio
     /// side, and a control on the card shows it.
     played: HashMap<InstanceId, BTreeMap<String, f32>>,
+    /// When the control loops last ran.
+    last_frame: Instant,
     _tasks: [Task<()>; 2],
 }
 
@@ -42,6 +45,8 @@ struct Card {
     id: InstanceId,
     /// The name of its tool, which a card keeps for its life.
     tool: String,
+    /// Drawn as a page, the whole window, and not as a card.
+    page: bool,
     /// The last tree, or why there is none. `None` until the first one arrives.
     tree: Option<Result<Rc<Node>, String>>,
     /// The watches the last tree was drawn with, which native elements read too.
@@ -76,13 +81,10 @@ pub fn start_window(
                 }
             }
         });
-        let watching = cx.spawn(async move |live, cx| {
+        let framing = cx.spawn(async move |live, cx| {
             loop {
-                cx.background_executor().timer(WATCH_INTERVAL).await;
-                if live
-                    .update(cx, |live, cx| live.look_at_watches(cx))
-                    .is_err()
-                {
+                cx.background_executor().timer(FRAME_INTERVAL).await;
+                if live.update(cx, |live, cx| live.frame(cx)).is_err() {
                     break;
                 }
             }
@@ -95,22 +97,50 @@ pub fn start_window(
             cards: HashMap::new(),
             next_card: 0,
             played: HashMap::new(),
-            _tasks: [hearing, watching],
+            last_frame: Instant::now(),
+            _tasks: [hearing, framing],
         }
     });
 
     views.set_other_cards({
-        let tools = tools.clone();
+        let (tools, live) = (tools.clone(), live.clone());
         move |session, id, frame, _, cx| {
             let tool = session.read(cx).project().tool_of(id)?;
             if !tools.borrow().iter().any(|info| info.name == tool) {
                 return None;
             }
             let (live, session, id) = (live.clone(), session.clone(), id.clone());
-            let card = cx.new(|cx| TypeScriptCard::new(live, session, id, frame, cx));
+            let card = cx.new(|cx| TypeScriptCard::new(live, session, id, Some(frame), cx));
             Some(card.into())
         }
     });
+    views.set_other_views(
+        {
+            let tools = tools.clone();
+            move |tool| {
+                tools
+                    .borrow()
+                    .iter()
+                    .any(|info| info.name == tool && info.page)
+            }
+        },
+        {
+            let tools = tools.clone();
+            move |session, id, _, cx| {
+                let tool = session.read(cx).project().tool_of(id)?;
+                if !tools
+                    .borrow()
+                    .iter()
+                    .any(|info| info.name == tool && info.page)
+                {
+                    return None;
+                }
+                let (live, session, id) = (live.clone(), session.clone(), id.clone());
+                let page = cx.new(|cx| TypeScriptCard::new(live, session, id, None, cx));
+                Some(page.into())
+            }
+        },
+    );
     devices.effects({
         let tools = tools.clone();
         move || offers(&tools.borrow(), |kind| kind == ToolKind::Effect)
@@ -188,12 +218,19 @@ impl Live {
     }
 
     /// A new card of the instance, which draws at once.
-    pub(crate) fn add(&mut self, id: InstanceId, tool: String, cx: &mut Context<Self>) -> u64 {
+    pub(crate) fn add(
+        &mut self,
+        id: InstanceId,
+        tool: String,
+        page: bool,
+        cx: &mut Context<Self>,
+    ) -> u64 {
         let card = self.next_card;
         self.next_card += 1;
         let entry = Card {
             id,
             tool,
+            page,
             tree: None,
             watches: BTreeMap::new(),
             asked: false,
@@ -232,28 +269,43 @@ impl Live {
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
         entry.asked = true;
-        let watches = &entry.watches;
         self.bun.send(&Request::Render {
             card,
+            instance: entry.id.as_str(),
             tool,
             state,
-            watches,
+            watches: &entry.watches,
+            page: entry.page,
         });
     }
 
-    pub(crate) fn click(&mut self, card: u64, handler: usize) {
-        self.bun.send(&Request::Event { card, handler });
+    /// A click on an element of the card, or a press or a drag on a canvas at `x` and `y`
+    /// across and down, 0 to 1.
+    pub(crate) fn event(&mut self, card: u64, handler: usize, at: Option<(f32, f32)>) {
+        let (x, y) = (at.map(|at| at.0), at.map(|at| at.1));
+        self.bun.send(&Request::Event {
+            card,
+            handler,
+            x,
+            y,
+        });
     }
 
-    /// Moves the live control `name` of the card's instance to `value`, or fires the trigger
-    /// `name` when `value` is `None`. Not an edit: nothing is saved.
-    pub(crate) fn control(&mut self, card: u64, name: &str, value: Option<f32>, cx: &mut App) {
-        let (Some(entry), Some(session)) = (self.cards.get(&card), self.session.upgrade()) else {
+    /// Moves the live control `name` of instance `id` to `value`, or fires the trigger `name`
+    /// when `value` is `None`. Not an edit: nothing is saved.
+    pub(crate) fn control(
+        &mut self,
+        id: &InstanceId,
+        name: &str,
+        value: Option<f32>,
+        cx: &mut App,
+    ) {
+        let Some(session) = self.session.upgrade() else {
             return;
         };
-        let id = entry.id.clone();
         let tools = self.tools.borrow();
-        let Some(info) = tools.iter().find(|info| info.name == entry.tool) else {
+        let tool = session.read(cx).project().tool_of(id);
+        let Some(info) = tools.iter().find(|info| Some(info.name.as_str()) == tool) else {
             return;
         };
         let update = match (info.control(name), value) {
@@ -262,20 +314,56 @@ impl Live {
             _ => return eprintln!("error: {} has no control {name} that takes that", info.name),
         };
         let processor = info.processor();
-        if let (HumUpdate::Live { .. }, Some(value)) = (&update, value) {
+        drop(tools);
+        if let Some(value) = value {
             self.played
                 .entry(id.clone())
                 .or_default()
                 .insert(name.to_string(), value);
         }
-        drop(tools);
         session.update(cx, |session, cx| {
-            let sent =
-                session.background(cx, |project| project.send::<Hum>(&id, processor, update));
+            let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
             if let Err(error) = sent {
                 session.report(error, cx);
             }
         });
+    }
+
+    /// One frame of the window: the control loops run, and a card whose watches moved draws
+    /// again.
+    fn frame(&mut self, cx: &mut Context<Self>) {
+        self.run_loops(cx);
+        self.look_at_watches(cx);
+    }
+
+    /// Runs the control loop of every instance whose tool has one, cards or not.
+    fn run_loops(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let dt = self.last_frame.elapsed().as_secs_f32();
+        self.last_frame = Instant::now();
+        let tools = self.tools.borrow();
+        let project = session.read(cx).project();
+        let looped: Vec<Looped> = (project.instances())
+            .filter(|(_, tool)| tools.iter().any(|info| info.name == *tool && info.tick))
+            .map(|(id, tool)| Looped {
+                instance: id.as_str(),
+                tool,
+                state: (project.state_json(id))
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default(),
+                watches: (project.watches(id).into_iter())
+                    .map(|(name, watch)| (name, watch.get()))
+                    .collect(),
+            })
+            .collect();
+        if !looped.is_empty() {
+            self.bun.send(&Request::Frame {
+                dt,
+                instances: looped,
+            });
+        }
     }
 
     /// Reads the watches of every card; a card whose watches moved draws again.
@@ -335,7 +423,14 @@ impl Live {
                     })
                 });
             }
-            Event::Control { card, name, value } => self.control(card, &name, value, cx),
+            Event::Control {
+                instance,
+                name,
+                value,
+            } => match InstanceId::new(&instance) {
+                Ok(id) => self.control(&id, &name, value, cx),
+                Err(error) => eprintln!("error: {error}"),
+            },
         }
         cx.notify();
     }

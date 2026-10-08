@@ -1,20 +1,18 @@
 """Gives the app's agent a task in a fresh project and checks what it did.
 
-    python3 tooling/agent-eval/eval.py <scenario> [--variant docs|graph] [--runs n]
+    python3 tooling/agent-eval/eval.py <scenario> [--runs n]
 
 Each run starts from a new project made by the runtime (as the app makes one), with the files of
 the scenario, then runs Claude Code with the app's flags (`claude_run.py`), then checks the
 project. It prints one JSON line per run: whether the check passed, what it cost, how many
 turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
 
-Variants:
-- `docs`: the docs as the runtime writes them: a tool's sound is Hum, written with the `hum` tag.
-- `graph`: a tool's sound is a graph of signals built with the SDK's functions; the doc of
-  writing a tool is `variants/extensions-graph.md` and the Hum doc is gone.
-
-An earlier experiment compared the docs map with the docs as Claude Code skills; its results are
-in `results-docs-vs-skills.jsonl`: the map did as well or better, without the settings skills
-need.
+Earlier experiments, with their results next to this file:
+- `results-docs-vs-skills.jsonl`: the docs map against the docs as Claude Code skills. The map
+  did as well or better, without the settings skills need.
+- `results-hum-vs-graph.jsonl`: a tool's sound written in Hum with a template against a graph of
+  signals built with the SDK's functions. Both passed every task; the graph cost about 10% less
+  and needs no doc of its own, so the SDK is the graph alone.
 """
 
 import argparse
@@ -234,21 +232,9 @@ SCENARIOS = {
 }
 
 
-def as_graph(folder: Path) -> None:
-    """The doc of writing a tool teaches the sound graph, and the Hum doc is gone."""
-    docs = folder / "agent-docs"
-    generated = (docs / "extensions.md").read_text().split("\n\n", 1)[0]
-    graph = (HERE / "variants" / "extensions-graph.md").read_text()
-    (docs / "extensions.md").write_text(f"{generated}\n\n{graph}")
-    (docs / "hum.md").unlink()
-    agents = folder / "AGENTS.md"
-    lines = agents.read_text().splitlines(keepends=True)
-    agents.write_text("".join(line for line in lines if "agent-docs/hum.md" not in line))
-
-
-def evaluate(scenario: str, variant: str, number: int) -> dict:
+def evaluate(scenario: str, number: int) -> dict:
     setup, check, prompt = SCENARIOS[scenario]
-    folder = LOGS / f"{scenario}-{variant}-{number}"
+    folder = LOGS / f"{scenario}-{number}"
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     # As the app makes a project, and writes its docs while it has it open.
@@ -257,23 +243,20 @@ def evaluate(scenario: str, variant: str, number: int) -> dict:
     # The window makes this folder for every project it opens.
     (folder / "extensions").mkdir(exist_ok=True)
     runtime(folder, "--headless", stdin="quit\n")
-    if variant == "graph":
-        as_graph(folder)
     run = claude_run.run(folder, prompt, log=LOGS / f"{folder.name}.log")
     checks = check(folder)
-    return {"scenario": scenario, "variant": variant, "run": number,
+    return {"scenario": scenario, "run": number,
             "passed": all(checks.values()), "checks": checks, **run.summary()}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", choices=SCENARIOS)
-    parser.add_argument("--variant", choices=["docs", "graph"], default="docs")
     parser.add_argument("--runs", type=int, default=1)
     arguments = parser.parse_args()
     LOGS.mkdir(exist_ok=True)
     for number in range(1, arguments.runs + 1):
-        result = evaluate(arguments.scenario, arguments.variant, number)
+        result = evaluate(arguments.scenario, number)
         print(json.dumps(result), flush=True)
         with open(LOGS / "results.jsonl", "a") as results:
             results.write(json.dumps(result) + "\n")

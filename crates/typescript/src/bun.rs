@@ -29,18 +29,41 @@ pub(crate) enum Request<'a> {
     },
     Render {
         card: u64,
+        instance: &'a str,
         tool: &'a str,
         state: serde_json::Value,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
+        /// Whether it is drawn as a page, the whole window, and not as a card.
+        page: bool,
     },
+    /// A click, or a press or a drag on a canvas at `x` and `y` across and down, 0 to 1.
     Event {
         card: u64,
         handler: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        x: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        y: Option<f32>,
+    },
+    /// One step of the control loop of every instance whose tool has one.
+    Frame {
+        /// Seconds since the last frame.
+        dt: f32,
+        instances: Vec<Looped<'a>>,
     },
     Drop {
         card: u64,
     },
+}
+
+/// An instance whose tool has a control loop, as it is now.
+#[derive(Serialize)]
+pub(crate) struct Looped<'a> {
+    pub instance: &'a str,
+    pub tool: &'a str,
+    pub state: serde_json::Value,
+    pub watches: BTreeMap<String, f32>,
 }
 
 /// What Bun says without being asked, or as the answer to a render or a click.
@@ -63,9 +86,10 @@ pub(crate) enum Event {
         label: String,
         state: serde_json::Value,
     },
-    /// A card moved a live control, or fired a trigger when there is no value.
+    /// A card or a control loop moved a live control of an instance, or fired a trigger when
+    /// there is no value.
     Control {
-        card: u64,
+        instance: String,
         name: String,
         #[serde(default)]
         value: Option<f32>,
