@@ -7,6 +7,7 @@ sources, no MCP, no slash commands, and the project as an added folder so its CL
 
 import json
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -39,11 +40,14 @@ class Run:
     # Every tool call as (tool, short input), in order.
     calls: list = field(default_factory=list)
 
-    def files_read(self) -> list:
-        return [path for tool, path in self.calls if tool == "Read"]
-
-    def skills_used(self) -> list:
-        return [name for tool, name in self.calls if tool == "Skill"]
+    def docs_opened(self) -> list:
+        """The docs the agent read, by the Read tool or by a command such as `cat`."""
+        found = []
+        for _, argument in self.calls:
+            for name in re.findall(r"agent-docs/([a-z0-9_-]+)\.md", argument):
+                if name not in found:
+                    found.append(name)
+        return found
 
     def summary(self) -> dict:
         return {
@@ -53,20 +57,18 @@ class Run:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "error": self.is_error,
-            "read": self.files_read(),
-            "skills": self.skills_used(),
+            "docs": self.docs_opened(),
         }
 
 
 def short(tool: str, arguments: dict) -> str:
-    for key in ("file_path", "skill", "command", "pattern", "path"):
+    for key in ("file_path", "command", "pattern", "path"):
         if key in arguments:
-            return str(arguments[key])[:160]
-    return json.dumps(arguments)[:160]
+            return str(arguments[key])[:400]
+    return json.dumps(arguments)[:400]
 
 
-def run(folder: Path, prompt: str, tools: str = APP_TOOLS, setting_sources: str = "",
-        timeout: int = 1800, log: Path | None = None, slash_commands: bool = False) -> Run:
+def run(folder: Path, prompt: str, timeout: int = 1800, log: Path | None = None) -> Run:
     """One headless run of Claude Code in `folder`, with the app's flags."""
     environment = {
         key: value
@@ -78,14 +80,12 @@ def run(folder: Path, prompt: str, tools: str = APP_TOOLS, setting_sources: str 
         "claude", "-p", prompt,
         "--output-format", "stream-json", "--verbose",
         "--permission-mode", "bypassPermissions",
-        "--tools", tools,
+        "--tools", APP_TOOLS,
         "--strict-mcp-config",
-        "--setting-sources", setting_sources,
+        "--setting-sources", "",
+        "--disable-slash-commands",
         "--add-dir", str(folder),
     ]
-    if not slash_commands:
-        # The app's flag. It also turns skills off.
-        arguments.append("--disable-slash-commands")
     started = time.monotonic()
     process = subprocess.run(arguments, cwd=folder, env=environment, capture_output=True,
                              text=True, timeout=timeout)

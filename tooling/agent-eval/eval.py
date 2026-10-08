@@ -1,17 +1,20 @@
 """Gives the app's agent a task in a fresh project and checks what it did.
 
-    python3 tooling/agent-eval/eval.py <scenario> [--variant docs|skills] [--runs n]
+    python3 tooling/agent-eval/eval.py <scenario> [--variant docs|graph] [--runs n]
 
 Each run starts from a new project made by the runtime (as the app makes one), with the files of
 the scenario, then runs Claude Code with the app's flags (`claude_run.py`), then checks the
 project. It prints one JSON line per run: whether the check passed, what it cost, how many
-turns, and which docs or skills the agent opened. Logs go to /tmp/sound-tools-eval/.
+turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
 
-Variants of how the agent finds its docs:
-- `docs`: the generated `AGENTS.md` map and `agent-docs/`, as the runtime writes them.
-- `skills`: every doc as a Claude Code skill, `.claude/skills/<name>/SKILL.md`, described by its
-  line of the map, and the map without its list of docs. Needs the Skill tool, slash commands
-  and the project's settings, which the app does not turn on today.
+Variants:
+- `docs`: the docs as the runtime writes them: a tool's sound is Hum, written with the `hum` tag.
+- `graph`: a tool's sound is a graph of signals built with the SDK's functions; the doc of
+  writing a tool is `variants/extensions-graph.md` and the Hum doc is gone.
+
+An earlier experiment compared the docs map with the docs as Claude Code skills; its results are
+in `results-docs-vs-skills.jsonl`: the map did as well or better, without the settings skills
+need.
 """
 
 import argparse
@@ -126,6 +129,68 @@ def setup_tape_builder(folder: Path) -> None:
     piece(folder)
 
 
+def setup_with_bass(folder: Path) -> None:
+    piece(folder)
+    write(folder, "state/arrangement/bass/instance.json",
+          {"tool": "arrangement.track", "state": {"name": "Bass", "colour": "red", "order": 2}})
+    write(folder, "state/arrangement/bass/instrument.json",
+          {"tool": "instrument.synth", "state": {}})
+
+
+def project_tools(folder: Path) -> dict:
+    """Each tool the project defines, by name, with the text of its file."""
+    tools = {}
+    for path in (folder / "extensions").glob("*.ts*"):
+        if path.name == "sdk.ts":
+            continue
+        text = path.read_text()
+        for name in re.findall(r'name:\s*"([a-z0-9_-]+)"', text):
+            tools[name] = text
+    return tools
+
+
+def instruments(folder: Path) -> dict:
+    """The tool of the instrument of each track, by track folder."""
+    found = {}
+    for track in (folder / "state/arrangement").iterdir():
+        if track.is_dir():
+            found[track.name] = record(folder, f"state/arrangement/{track.name}/instrument.json").get("tool")
+    return found
+
+
+def sounds(folder: Path, track: str) -> bool:
+    """Whether the track plays anything in the first eight seconds."""
+    report = runtime(folder, "--analyze", "--seconds", "8", "--solo", track)
+    match = re.search(r"loudness (-?[0-9.]+) LUFS", report)
+    return bool(match) and float(match.group(1)) > -60
+
+
+def check_sequencer(folder: Path) -> dict:
+    tools = project_tools(folder)
+    tool = instruments(folder).get("bass")
+    text = tools.get(tool, "")
+    return {
+        "a project tool plays the bass": tool in tools,
+        "with a pattern": "pattern(" in text,
+        "a step light": "watch" in text and "Steps" in text,
+        "it sounds": sounds(folder, "bass"),
+        "no problems": no_problems(folder),
+    }
+
+
+def check_toy(folder: Path) -> dict:
+    tools = project_tools(folder)
+    played = [(track, tool) for track, tool in instruments(folder).items() if tool in tools]
+    text = tools.get(played[0][1], "") if played else ""
+    return {
+        "a project tool plays a track": bool(played),
+        "live controls and a trigger": "live(" in text and "trigger(" in text,
+        "an XY pad": "Pad" in text,
+        "it sounds": bool(played) and sounds(folder, played[0][0]),
+        "no problems": no_problems(folder),
+    }
+
+
 BUILT_IN = {"delay", "eq", "filter", "reverb", "compressor", "limiter", "saturator", "utility",
             "modulation", "script", None}
 
@@ -155,27 +220,30 @@ SCENARIOS = {
                      "hiss under it. Give me a knob for how worn the tape is, and let me pick "
                      "between a 'cassette' and a 'reel' character; reel should be gentler and a "
                      "bit brighter. Put it on the pad."),
+    "sequencer-builder": (setup_with_bass, check_sequencer,
+                          "On the bass track I want a 16-step acid bass sequencer as its "
+                          "instrument: I click steps on and off on its card and the step that "
+                          "is playing lights up, it plays along with the tempo of the piece, "
+                          "and it has knobs for the filter cutoff, the resonance and the note "
+                          "it plays. Make a pattern that grooves to start with."),
+    "toy-builder": (setup_tape_builder, check_toy,
+                    "Make me a 'storm' on a new track: a windy, noisy drone I play live with an "
+                    "XY pad, across is how dark or bright, up is how wild, plus a 'thunder' "
+                    "button that sets off a deep rumble. It should run by itself, no notes "
+                    "needed."),
 }
 
 
-def as_skills(folder: Path) -> None:
-    """Every doc becomes a skill described by its line of the map; the map loses its list."""
-    agents = (folder / "AGENTS.md").read_text()
-    for name, when in re.findall(r"\| `agent-docs/([^`]+)\.md` \| (.+?) \|\n", agents):
-        text = (folder / "agent-docs" / f"{name}.md").read_text()
-        text = re.sub(r"^<!--.*?-->\n\n", "", text, flags=re.S)
-        skill = folder / ".claude" / "skills" / name / "SKILL.md"
-        skill.parent.mkdir(parents=True, exist_ok=True)
-        skill.write_text(f"---\nname: {name}\ndescription: {when}\n---\n\n{text}")
-    shutil.rmtree(folder / "agent-docs")
-    agents = re.sub(r"## Docs\n\n.*?\n\n(?=## )",
-                    "## Docs\n\nThe docs are skills: use the one your task needs, by its "
-                    "description, and no other.\n\n", agents, flags=re.S)
-    agents = agents.replace("This file is the map. It holds what you need on every task. The "
-                            "docs below hold the rest, one file each. Open the one your task "
-                            "needs and leave the others closed.",
-                            "This file holds what you need on every task. Skills hold the rest.")
-    (folder / "AGENTS.md").write_text(agents)
+def as_graph(folder: Path) -> None:
+    """The doc of writing a tool teaches the sound graph, and the Hum doc is gone."""
+    docs = folder / "agent-docs"
+    generated = (docs / "extensions.md").read_text().split("\n\n", 1)[0]
+    graph = (HERE / "variants" / "extensions-graph.md").read_text()
+    (docs / "extensions.md").write_text(f"{generated}\n\n{graph}")
+    (docs / "hum.md").unlink()
+    agents = folder / "AGENTS.md"
+    lines = agents.read_text().splitlines(keepends=True)
+    agents.write_text("".join(line for line in lines if "agent-docs/hum.md" not in line))
 
 
 def evaluate(scenario: str, variant: str, number: int) -> dict:
@@ -189,13 +257,9 @@ def evaluate(scenario: str, variant: str, number: int) -> dict:
     # The window makes this folder for every project it opens.
     (folder / "extensions").mkdir(exist_ok=True)
     runtime(folder, "--headless", stdin="quit\n")
-    if variant == "skills":
-        as_skills(folder)
-        run = claude_run.run(folder, prompt, tools=claude_run.APP_TOOLS + ",Skill",
-                             setting_sources="project", slash_commands=True,
-                             log=LOGS / f"{folder.name}.log")
-    else:
-        run = claude_run.run(folder, prompt, log=LOGS / f"{folder.name}.log")
+    if variant == "graph":
+        as_graph(folder)
+    run = claude_run.run(folder, prompt, log=LOGS / f"{folder.name}.log")
     checks = check(folder)
     return {"scenario": scenario, "variant": variant, "run": number,
             "passed": all(checks.values()), "checks": checks, **run.summary()}
@@ -204,7 +268,7 @@ def evaluate(scenario: str, variant: str, number: int) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", choices=SCENARIOS)
-    parser.add_argument("--variant", choices=["docs", "skills"], default="docs")
+    parser.add_argument("--variant", choices=["docs", "graph"], default="docs")
     parser.add_argument("--runs", type=int, default=1)
     arguments = parser.parse_args()
     LOGS.mkdir(exist_ok=True)

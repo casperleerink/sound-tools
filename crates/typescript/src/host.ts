@@ -4,7 +4,7 @@
 
 import { readdirSync, watch } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Node, ToolSpec } from "./sdk";
+import type { Child, Controls, Fields, Hum, Node, ToolSpec } from "./sdk";
 
 const folder = process.cwd();
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
@@ -174,7 +174,7 @@ function sound(tool: string, choices: Record<string, string | number>): string[]
       fields[name] = choices[name] ?? field.default;
       continue;
     }
-    fields[name] = new sdk.Param(name);
+    fields[name] = field.kind === "pattern" ? new sdk.Table(name) : new sdk.Param(name);
     if (field.kind === "knob") {
       lines.push(`param ${name} = ${field.default} [${field.min}, ${field.max}]`);
     } else if (field.kind === "toggle") {
@@ -191,11 +191,20 @@ function sound(tool: string, choices: Record<string, string | number>): string[]
         : `trigger ${name}`,
     );
   }
-  const code = spec.sound(fields as never);
-  if (!(code instanceof sdk.Hum)) {
-    throw new Error("sound must return hum`...`");
-  }
-  return [...lines, ...code.text.split("\n").map((line) => line.trim())];
+  let hum: Hum | undefined;
+  const graph = sdk.graphToHum(() => {
+    const sound = spec.sound(fields as never);
+    if (sound instanceof sdk.Hum) {
+      hum = sound;
+      return 0;
+    }
+    if (!(sound instanceof sdk.Signal) && typeof sound !== "number") {
+      throw new Error("sound must return a Signal, made with the functions of the SDK");
+    }
+    return sound;
+  });
+  const code = hum ? hum.text.split("\n").map((line) => line.trim()) : graph;
+  return [...lines, ...code];
 }
 
 function flatten(child: Child, clicks: Array<() => void>, into: Sent[]) {

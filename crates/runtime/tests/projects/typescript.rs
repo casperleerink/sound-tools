@@ -1,6 +1,7 @@
-//! Tools a project writes in TypeScript in its `extensions/` folder, run by Bun: the examples of
-//! their agent doc load as they are written and play. Bun is not part of the build, so where it
-//! is not installed, as in CI, these tests say so and pass.
+//! Tools a project writes in TypeScript in its `extensions/` folder, run by Bun: the first
+//! example of their agent doc loads as it is written and plays, and a bank of combs whose shape
+//! is a choice plays with every choice. Bun is not part of the build, so where it is not
+//! installed, as in CI, these tests say so and pass.
 
 use std::path::Path;
 
@@ -14,16 +15,41 @@ fn bun_is_installed() -> bool {
     on_path || home.is_some_and(|path| path.is_file())
 }
 
-/// The TypeScript examples of the doc for agents that write tools, in order.
-fn doc_examples() -> Vec<String> {
+/// The first TypeScript example of the doc for agents that write tools: a whole tool.
+fn doc_example() -> String {
     let doc = sound_typescript::AGENT_DOC.markdown;
-    doc.split("```ts\n")
-        .skip(1)
-        .map(|block| block.split("```").next().unwrap().to_string())
-        .collect()
+    let block = doc.split("```ts\n").nth(1).unwrap();
+    block.split("```").next().unwrap().to_string()
 }
 
-/// A project whose `extensions/` holds the first two examples of the doc, `wobble` and `combs`,
+/// Combs whose number is a choice: `sound` builds a different Hum for each.
+const COMBS: &str = r#"import { choice, delay, feedback, input, knob, lowpass, mix, tool } from "./sdk";
+
+const TIMES = [29.7, 37.1, 41.1, 43.7, 31.3, 39.9, 45.1, 33.5];
+
+tool({
+  name: "combs",
+  title: "Combs",
+  when: "You want a ringing room",
+  doc: "Feedback combs.",
+  state: {
+    size: knob({ min: 0, max: 0.95, default: 0.8 }),
+    combs: choice({ options: [2, 4, 8], default: 4 }),
+    blend: knob({ min: 0, max: 1, default: 0.3 }),
+  },
+  sound: ({ size, combs, blend }) => {
+    const rings = TIMES.slice(0, combs).map((ms) => {
+      const comb = feedback();
+      comb.set(lowpass(delay(input.plus(comb.times(size)), ms), 5000));
+      return comb;
+    });
+    const wet = rings.reduce((sum, ring) => sum.plus(ring)).over(combs);
+    return mix(input, wet, blend);
+  },
+});
+"#;
+
+/// A project whose `extensions/` holds the first example of the doc, `wobble`, and `COMBS`,
 /// with a pad that plays a held chord through `effects` that are written next to it.
 fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
     if !bun_is_installed() {
@@ -31,9 +57,8 @@ fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
         return None;
     }
     let folder = tempfile::tempdir().unwrap();
-    let examples = doc_examples();
-    crate::support::write(folder.path(), "extensions/wobble.ts", &examples[0]);
-    crate::support::write(folder.path(), "extensions/combs.ts", &examples[1]);
+    crate::support::write(folder.path(), "extensions/wobble.ts", &doc_example());
+    crate::support::write(folder.path(), "extensions/combs.ts", COMBS);
     let mut harness = Harness::open(folder);
     let names: Vec<String> = effects
         .iter()
@@ -86,7 +111,7 @@ fn the_tremolo_of_the_doc_dips_to_silence_at_its_rate() {
 }
 
 #[test]
-fn the_combs_of_the_doc_play_with_every_choice_and_ring_on_after_the_sound() {
+fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
     for combs in [2, 4, 8] {
         let state = format!(r#"{{"combs": {combs}, "size": 0.9, "blend": 1}}"#);
         let Some(mut harness) = pad_through(&[("combs", &state)]) else {
