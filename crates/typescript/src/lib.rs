@@ -144,7 +144,18 @@ fn problems_of(bun: &Arc<Bun>, loaded: &Loaded) -> Vec<Problem> {
         })
         .collect();
     for info in &loaded.tools {
-        if let Err(message) = tools::Sounds::new(info, bun).code(&serde_json::json!({})) {
+        let sound = tools::Sounds::new(info, bun).code(&serde_json::json!({}));
+        let card = drawn(bun, &info.name, false)
+            .map_err(|error| format!("its card does not draw: {error}"));
+        let page = match info.page {
+            true => drawn(bun, &info.name, true)
+                .map_err(|error| format!("its page does not draw: {error}")),
+            false => Ok(()),
+        };
+        for message in [sound.map(|_| ()), card, page]
+            .into_iter()
+            .filter_map(Result::err)
+        {
             problems.push(Problem {
                 path: format!("{FOLDER}/{}", info.file),
                 message: format!("tool {}: {message}", info.name),
@@ -152,6 +163,14 @@ fn problems_of(bun: &Arc<Bun>, loaded: &Loaded) -> Vec<Problem> {
         }
     }
     problems
+}
+
+/// Whether the card or the page of `tool` draws a tree the window can show.
+fn drawn(bun: &Bun, tool: &str, page: bool) -> Result<(), String> {
+    let tree = bun.draw(tool, page)?;
+    serde_json::from_value::<tree::Node>(tree)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// Writes what the runtime owns in `extensions/`, only where the text changed, and the host
