@@ -8,7 +8,7 @@ project. It prints one JSON line per run: whether the check passed, what it cost
 turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
 
 `examples/` holds tools agents built in these runs, from one prompt each: a gravity harp page,
-a storm drone played with an XY pad, and a generative part in D dorian. Copy one into the
+a storm drone played with an XY pad, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
 `extensions/` folder of a project to try it.
 
 Earlier experiments, with their results next to this file:
@@ -17,7 +17,7 @@ Earlier experiments, with their results next to this file:
 - `results-hum-vs-graph.jsonl`: a tool's sound written in Hum with a template against a graph of
   signals built with the SDK's functions. Both passed every task; the graph cost about 10% less
   and needs no doc of its own, so the SDK is the graph alone.
-- `results-experiments.jsonl`: a gravity harp page and a generative source built from scratch,
+- `results-experiments.jsonl`: a gravity harp page, a generative source and a grain cloud built from scratch,
   and a composer that edits the pattern of a builder's acid bass. Every run passed.
 """
 
