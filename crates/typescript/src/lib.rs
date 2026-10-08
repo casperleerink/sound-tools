@@ -13,6 +13,7 @@
 
 mod bun;
 mod card;
+mod samples;
 mod tools;
 mod tree;
 mod window;

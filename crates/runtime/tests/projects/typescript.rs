@@ -52,6 +52,11 @@ tool({
 /// A project whose `extensions/` holds the first example of the doc, `wobble`, and `COMBS`,
 /// with a pad that plays a held chord through `effects` that are written next to it.
 fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
+    pad_through_with(effects, "")
+}
+
+/// [`pad_through`], with more fields of the track's record, such as automation lanes.
+fn pad_through_with(effects: &[(&str, &str)], track_fields: &str) -> Option<Harness> {
     if !bun_is_installed() {
         eprintln!("skipped: Bun is not installed");
         return None;
@@ -65,7 +70,7 @@ fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
         .map(|(name, _)| format!("{name:?}"))
         .collect();
     let track = format!(
-        r#"{{"tool": "arrangement.track", "state": {{"name": "Pad", "effects": [{}]}}}}"#,
+        r#"{{"tool": "arrangement.track", "state": {{"name": "Pad", "effects": [{}]{track_fields}}}}}"#,
         names.join(", ")
     );
     harness.write("state/arrangement/pad/instance.json", &track);
@@ -128,4 +133,94 @@ fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
             "{combs} combs do not ring on"
         );
     }
+}
+
+#[test]
+fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
+    // The record dips to silence; the lane holds the depth at 0 for the whole bar.
+    let lane = r#", "automation": [{"device": "wobble", "parameter": "depth", "points": [{"tick": 0, "value": 0.0}, {"tick": 15360, "value": 0.0}]}]"#;
+    let Some(mut harness) = pad_through_with(&[("wobble", r#"{"rate": 2, "depth": 1}"#)], lane)
+    else {
+        return;
+    };
+    let output = harness.play_from_the_start(BAR);
+    for half_second in 1..4 {
+        let start = half_second as f32 * 0.5;
+        let (dip, top) = (
+            loudness_at(&output, start + 0.125),
+            loudness_at(&output, start + 0.375),
+        );
+        assert!(dip > top * 0.8, "{dip} dips under {top} at {start} s");
+    }
+}
+
+/// A player of a sample: its sound, from the start, at its own speed.
+const PLAYER: &str = r#"import { phasor, sample, tool } from "./sdk";
+
+tool({
+  name: "player",
+  title: "Player",
+  when: "You want a sound file to play",
+  doc: "Plays a sound file over and over.",
+  kind: "source",
+  state: { sound: sample() },
+  sound: ({ sound }) => sound.at(phasor(1).times(sound.length)),
+});
+"#;
+
+/// A second of a 441 Hz sine at 44.1 kHz.
+fn write_sine(root: &Path) {
+    let audio = root.join("assets/audio");
+    std::fs::create_dir_all(&audio).unwrap();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 44_100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(audio.join("sine.wav"), spec).unwrap();
+    for frame in 0..44_100 {
+        let sample = (frame as f32 * 441.0 / 44_100.0 * std::f32::consts::TAU).sin() * 0.5;
+        writer
+            .write_sample((sample * f32::from(i16::MAX)) as i16)
+            .unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
+#[test]
+fn a_sample_plays_once_its_file_is_there() {
+    if !bun_is_installed() {
+        return eprintln!("skipped: Bun is not installed");
+    }
+    let folder = tempfile::tempdir().unwrap();
+    crate::support::write(folder.path(), "extensions/player.ts", PLAYER);
+    let mut harness = Harness::open(folder);
+    let track = r#"{"tool": "arrangement.track", "state": {"name": "Player"}}"#;
+    harness.write("state/arrangement/player/instance.json", track);
+    let player = r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#;
+    harness.write("state/arrangement/player/instrument.json", player);
+    let folder = harness.path("state/arrangement/player");
+    harness.apply(&[folder]);
+    // The file is not there yet: a problem that names it, and silence.
+    let problems = harness.project.problems();
+    assert!(
+        problems.iter().any(|p| p.message.contains("sine.wav")),
+        "{problems:?}"
+    );
+    let silent = harness.play_from_the_start(4_800);
+    assert!(silent.iter().all(|sample| *sample == 0.0));
+
+    write_sine(harness.project.root());
+    let audio = harness.path("assets/audio/sine.wav");
+    harness.apply(&[audio]);
+    assert_eq!(harness.project.problems(), []);
+    let played = harness.play_from_the_start(48_000);
+    let left: Vec<f32> = played.iter().step_by(2).copied().collect();
+    let rises = left
+        .windows(2)
+        .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+        .count();
+    // 441 Hz for a second, give or take the edges.
+    assert!((rises as i64 - 441).abs() <= 2, "{rises} rises");
 }

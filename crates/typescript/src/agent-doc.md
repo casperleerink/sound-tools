@@ -53,7 +53,7 @@ Combine signals with methods, which take a signal or a number: `.plus`, `.minus`
 | Time | `delay(x, ms, longest?)` up to 4000 ms, smooth when `ms` moves (chorus, tape wobble); give `longest` in an instrument. `smooth(x, ms)`. `adsr(gate, attack, decay, sustain, release)` in ms |
 | Filters | `lowpass`, `highpass`, `bandpass(x, hz, q?)` |
 | Events | `rise(x)`: 1 where `x` goes above 0, a clock: `rise(wrap(beat.times(4)).lt(0.5))` ticks every sixteenth. `change(x)`, `hold(x, when)`: sample and hold |
-| Tables | a `pattern` field and a `buffer`: `.at(index)` (whole part, wrapped), `lookup(table, phase)` (0 to 1 over the table, smooth), `.length` |
+| Tables | a `pattern` field, a `sample` field and a `buffer`: `.at(index)` (whole part, wrapped), `lookup(table, phase)` (0 to 1 over the table, smooth), `.length`. A sample plays at its own speed with `lookup(sound, phasor(sampleRate.over(sound.length)))`; grains read short stretches of it |
 
 A sound that returns one signal runs on each channel apart. One that returns `{ left, right }` runs once for both and hears both through `inputLeft` and `inputRight`: a ping-pong delay, a panner, a widener.
 
@@ -107,6 +107,7 @@ const wet = combs.reduce((sum, comb) => sum.plus(comb)).over(combs.length);
 | `toggle({ default, label? })` | `true` or `false` | a `Signal`, 1 or 0 | glides at once |
 | `choice({ options, default, label? })` | one of `options` | the option itself | builds the sound again; it fades in over 10 ms |
 | `pattern({ length, min, max, default, label? })` | a list of `length` numbers | a table: `.at(index)` | at once |
+| `sample({ label? })` | the name of a file under `assets/audio/`, such as `"voice.wav"`, or `""` | a table of its sound: one channel at the engine's rate, up to 60 s | at once, once the file is there |
 
 `unit` is `"hz"`, `"ms"`, `"db"` or `"percent"`: the card shows it, a knob in `"hz"` turns on a log scale, and one in `"percent"` still holds 0 to 1. At most 32 knobs and toggles.
 
@@ -149,6 +150,7 @@ tool({
 | `<div style onClick>` | A box; `Style` in `sdk.ts` lists every style. Text goes inside. |
 | `<Knob path label min max default unit?>` | Turns the number at `path` in the record: a drag is one undo step. With `live="name"` instead of `path` it plays a live control. |
 | `<Steps path max? playing?>` | A row of steps on a pattern: a click turns a step on (to `max`, 1 by default) or off. `playing` names a watch whose value is the step that lights up. |
+| `<SampleChooser path label?>` | The file of a sample field, and a button that opens one and copies it into `assets/audio/`. |
 | `<Meter watch label?>` | A bar that shows a watch from 0 to 1. |
 | `<Pad x y size?>` | A square for the pointer: across moves the live control `x`, up moves `y`. |
 

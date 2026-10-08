@@ -33,6 +33,12 @@ pub(crate) enum Node {
         #[serde(default)]
         playing: Option<String>,
     },
+    /// The file of a sample field, and a button that chooses one.
+    Sample {
+        path: String,
+        #[serde(default)]
+        label: Option<String>,
+    },
     /// A bar from 0 to 1 that shows a watch.
     Meter {
         watch: String,
@@ -245,6 +251,7 @@ pub(crate) trait Controls {
     fn knob(&mut self, knob: &KnobNode) -> AnyElement;
     fn steps(&mut self, path: &str, max: f32, playing: Option<&str>) -> AnyElement;
     fn meter(&mut self, watch: &str, label: Option<&str>) -> AnyElement;
+    fn sample(&mut self, path: &str, label: Option<&str>) -> AnyElement;
     fn pad(&mut self, x: &str, y: &str, size: f32) -> AnyElement;
     fn canvas(&mut self, canvas: &CanvasNode) -> AnyElement;
 }
@@ -258,6 +265,7 @@ pub(crate) fn draw(node: &Node, index: &[usize], controls: &mut impl Controls) -
             controls.steps(path, max.unwrap_or(1.0), playing.as_deref())
         }
         Node::Meter { watch, label } => controls.meter(watch, label.as_deref()),
+        Node::Sample { path, label } => controls.sample(path, label.as_deref()),
         Node::Pad { x, y, size } => controls.pad(x, y, size.unwrap_or(120.0)),
         Node::Canvas(canvas) => controls.canvas(canvas),
         Node::Div {

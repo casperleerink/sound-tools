@@ -119,8 +119,8 @@ function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
       if (!field.options.includes(field.default)) {
         problems.push(`${at}: default ${JSON.stringify(field.default)} is not one of the options`);
       }
-    } else if (field.kind !== "toggle") {
-      problems.push(`${at}: make it with knob(), toggle(), choice() or pattern()`);
+    } else if (field.kind !== "toggle" && field.kind !== "sample") {
+      problems.push(`${at}: make it with knob(), toggle(), choice(), pattern() or sample()`);
     }
   }
   for (const [name, control] of Object.entries(spec.controls ?? {})) {
@@ -198,8 +198,11 @@ function sound(tool: string, choices: Record<string, string | number>): string[]
       fields[name] = choices[name] ?? field.default;
       continue;
     }
-    fields[name] = field.kind === "pattern" ? new sdk.Table(name) : new sdk.Param(name);
-    if (field.kind === "knob") {
+    const list = field.kind === "pattern" || field.kind === "sample";
+    fields[name] = list ? new sdk.Table(name) : new sdk.Param(name);
+    if (field.kind === "sample") {
+      lines.push(`sample ${name}`);
+    } else if (field.kind === "knob") {
       lines.push(`param ${name} = ${field.default} [${field.min}, ${field.max}]`);
     } else if (field.kind === "toggle") {
       lines.push(`param ${name} = ${field.default ? 1 : 0} [0, 1]`);

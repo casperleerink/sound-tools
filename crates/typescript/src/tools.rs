@@ -9,18 +9,21 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
-    BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint, Watch,
+    Assets, BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint,
+    ParameterInfo, ValueRange, Watch,
 };
-use sound_hum::{Code, Hum, HumUpdate, Kind, Machine, Values, compile};
+use sound_hum::{ArraySpec, Code, Hum, HumUpdate, Kind, Machine, Values, compile};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
 use crate::bun::Bun;
+use crate::samples::Samples;
 
 /// A tool as `host.ts` sends it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -92,6 +95,11 @@ pub(crate) enum Field {
     Choice {
         options: Vec<Choice>,
         default: Choice,
+        #[serde(default)]
+        label: Option<String>,
+    },
+    /// A sound under `assets/audio/`, by its file name, which the Hum reads as a list.
+    Sample {
         #[serde(default)]
         label: Option<String>,
     },
@@ -191,6 +199,7 @@ impl Field {
             Self::Pattern {
                 length, default, ..
             } => Value::from(vec![*default; *length]),
+            Self::Sample { .. } => Value::from(""),
         }
     }
 }
@@ -271,6 +280,17 @@ impl ToolInfo {
                     if !Choice::of(value).is_some_and(|choice| options.contains(&choice)) {
                         let options: Vec<String> = options.iter().map(Choice::to_string).collect();
                         return Err(format!("{at}: must be one of {}", options.join(", ")));
+                    }
+                }
+                Field::Sample { .. } => {
+                    let Some(file) = value.as_str() else {
+                        return Err(format!(
+                            "{at}: must be the name of a file under assets/audio/, such as \"voice.wav\", or \"\" for none"
+                        ));
+                    };
+                    if !file.is_empty() {
+                        sound_media::AudioAsset::new(file)
+                            .map_err(|error| format!("{at}: {error}"))?;
                     }
                 }
                 Field::Pattern {
@@ -355,6 +375,10 @@ impl ToolInfo {
                     "pattern",
                     format!("a list of {length} numbers from {min} to {max}"),
                 ),
+                Field::Sample { .. } => (
+                    "sample",
+                    "the name of a file under `assets/audio/`, such as `voice.wav`".to_string(),
+                ),
             };
             let default = field.default_value();
             rows.push_str(&format!(
@@ -384,7 +408,8 @@ impl ToolInfo {
              {rows}\n\
              A field left out is at its default, so `\"state\": {{}}` is the tool at its defaults. \
              A knob, a toggle or a pattern changes the sound at once. A choice changes what the \
-             sound is made of: the new sound fades in over 10 ms.\n",
+             sound is made of: the new sound fades in over 10 ms. A knob can be automated by a \
+             lane of its track, as the numbers of any device (`agent-docs/arrangement.md`).\n",
             defaults.join(", "),
         )
     }
@@ -415,6 +440,8 @@ pub(crate) struct Sounds {
     /// By the choices as JSON. A failure is kept too, so a record that cannot play does not
     /// ask again on every turn of a knob. A tool defined again starts empty.
     compiled: Rc<RefCell<HashMap<String, Result<Rc<Code>, String>>>>,
+    /// The sounds of its `sample` fields, read once.
+    samples: Samples,
 }
 
 impl Sounds {
@@ -423,7 +450,22 @@ impl Sounds {
             info: Arc::new(info.clone()),
             bun: bun.clone(),
             compiled: Rc::default(),
+            samples: Samples::default(),
         }
+    }
+
+    /// The knobs of the tool, in order, with the range a lane moves each one over.
+    fn knobs(&self) -> impl Iterator<Item = (&str, ValueRange)> {
+        self.info
+            .fields
+            .0
+            .iter()
+            .filter_map(|(name, field)| match field {
+                Field::Knob { min, max, unit, .. } => {
+                    Some((name.as_str(), knob_range(*min, *max, *unit)))
+                }
+                _ => None,
+            })
     }
 
     /// The compiled Hum for the choices of `state`.
@@ -457,8 +499,13 @@ impl Sounds {
 
     /// Where the params and lists of `code` stand in `state`: a knob or a toggle by the name of
     /// its `param` line, a pattern by the name of its list.
-    fn values(code: &Code, state: &Value) -> Values {
+    fn values(&self, code: &Code, state: &Value) -> Values {
         let mut values = Values::default();
+        // The knobs, in the order of `automated`: each one's param.
+        values.automated = (self.knobs())
+            .filter_map(|(name, _)| code.parameters.iter().position(|p| p.name == name))
+            .map(|index| index as u16)
+            .collect();
         for (value, parameter) in values.parameters.iter_mut().zip(&code.parameters) {
             *value = match state.get(&parameter.name) {
                 Some(Value::Bool(on)) => f32::from(u8::from(*on)),
@@ -466,22 +513,59 @@ impl Sounds {
                 None => parameter.default,
             };
         }
-        let arrays = (code.arrays.iter())
-            .map(|array| {
-                let list = state.get(&array.name).and_then(Value::as_array);
-                let numbers = list.map(|list| {
-                    list.iter()
-                        .map(|item| item.as_f64().map_or(array.default, |n| n as f32))
-                });
-                let mut numbers: Vec<f32> = numbers.map(Iterator::collect).unwrap_or_default();
-                if let Some(length) = array.length {
-                    numbers.resize(length, array.default);
-                }
-                numbers
-            })
-            .collect();
-        values.arrays = Some(arrays);
         values
+    }
+
+    /// The lists of `code` from `state`: a pattern as the record holds it, a sample as its
+    /// sound, which is silence while it cannot be read.
+    fn lists(&self, code: &Code, state: &Value, assets: &Assets, rate: u32) -> Vec<Vec<f32>> {
+        let list = |array: &ArraySpec| {
+            let Some(length) = array.length else {
+                let file = state
+                    .get(&array.name)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let sound = self.samples.get(assets, file, rate);
+                return sound.map(|sound| sound.to_vec()).unwrap_or_default();
+            };
+            let items = state.get(&array.name).and_then(Value::as_array);
+            let numbers = items.into_iter().flatten();
+            let numbers = numbers.map(|item| item.as_f64().map_or(array.default, |n| n as f32));
+            let mut numbers: Vec<f32> = numbers.collect();
+            numbers.resize(length, array.default);
+            numbers
+        };
+        code.arrays.iter().map(list).collect()
+    }
+
+    /// What the lists of `state` are made of: the patterns, and the files of the samples with
+    /// whether each could be read, so a sample that arrives after its record is sent then. With
+    /// a problem for each sample that cannot be read.
+    fn lists_key(
+        &self,
+        code: &Code,
+        state: &Value,
+        assets: &Assets,
+        rate: u32,
+    ) -> (u64, Vec<String>) {
+        let mut hasher = DefaultHasher::new();
+        let mut problems = Vec::new();
+        for array in &code.arrays {
+            let value = state.get(&array.name);
+            value.map(Value::to_string).hash(&mut hasher);
+            let file = value.and_then(Value::as_str).unwrap_or_default();
+            if array.length.is_none() && !file.is_empty() {
+                let read = self.samples.get(assets, file, rate);
+                read.as_ref()
+                    .map(|sound| sound.len())
+                    .ok()
+                    .hash(&mut hasher);
+                if let Err(problem) = read {
+                    problems.push(format!("state.{}: {problem}", array.name));
+                }
+            }
+        }
+        (hasher.finish(), problems)
     }
 
     fn apply(
@@ -494,7 +578,17 @@ impl Sounds {
         self.info.check(state).map_err(BehaviourError::Other)?;
         let code = self.code(state).map_err(BehaviourError::Other)?;
         let kind = self.info.kind();
-        let values = Self::values(&code, state);
+        let mut values = self.values(&code, state);
+        let (assets, rate) = (
+            context.assets().clone(),
+            context.prepare_config().sample_rate,
+        );
+        // A list, a sample most of all, is sent only when it changed: not at every knob turn.
+        let (lists_key, problems) = self.lists_key(&code, state, &assets, rate);
+        for problem in problems {
+            context.problem(problem);
+        }
+        let new_lists = context.changed("lists", lists_key);
         // Declared every run, so they stay the same while the code keeps them.
         let watches: Vec<Watch> = code
             .watches
@@ -503,6 +597,9 @@ impl Sounds {
             .collect();
         let sample_rate = context.prepare_config().sample_rate as f32;
         let new_code = context.changed("code", code.hash);
+        if new_code || new_lists {
+            values.arrays = Some(self.lists(&code, state, &assets, rate));
+        }
         let made = || Box::new(Machine::new(code.as_ref().clone(), sample_rate));
         let mut machines: Vec<Option<Box<Machine>>> = match new_code {
             true => (0..kind.machines()).map(|_| Some(made())).collect(),
@@ -512,12 +609,13 @@ impl Sounds {
         let hum = context.processor(self.info.processor(), || {
             created = true;
             let first = machines.first_mut().and_then(Option::take);
-            Hum::new(
-                kind,
-                first.unwrap_or_else(made),
-                values.clone(),
-                watches.clone(),
-            )
+            let lists = values.arrays.clone();
+            let lists = lists.unwrap_or_else(|| self.lists(&code, state, &assets, rate));
+            let values = Values {
+                arrays: Some(lists),
+                ..values.clone()
+            };
+            Hum::new(kind, first.unwrap_or_else(made), values, watches.clone())
         })?;
         if created {
             // The new processor already plays this code.
@@ -528,7 +626,7 @@ impl Sounds {
             hum,
             HumUpdate::Set {
                 machines,
-                values,
+                values: Box::new(values),
                 watches,
             },
         )?;
@@ -541,7 +639,31 @@ impl Sounds {
             }
         }
         context.output(AUDIO_OUTPUT, OutputEndpoint::new(hum, Hum::OUTPUT));
+        // Every knob can be automated, as a number of any device. A toggle or a pattern is no
+        // straight line, and a lane cannot move it.
+        let numbers: Vec<(ParameterInfo, f32)> = (self.knobs())
+            .map(|(name, range)| {
+                let record = state.get(name).and_then(Value::as_f64);
+                let info = ParameterInfo {
+                    field: name.into(),
+                    range,
+                };
+                (info, record.map_or(range.min, |value| value as f32))
+            })
+            .collect();
+        if !numbers.is_empty() {
+            let input = InputEndpoint::new(hum, Hum::AUTOMATION);
+            context.runtime_automation(input, numbers)?;
+        }
         Ok(())
+    }
+}
+
+/// How a knob turns: a frequency on a log scale, as it is heard, anything else straight.
+pub(crate) fn knob_range(min: f32, max: f32, unit: Option<Unit>) -> ValueRange {
+    match unit {
+        Some(Unit::Hz) if min > 0.0 => ValueRange::logarithmic(min, max),
+        _ => ValueRange::linear(min, max),
     }
 }
 

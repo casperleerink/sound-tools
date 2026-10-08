@@ -49,7 +49,17 @@ export interface PatternField {
   label?: string;
 }
 
-export type Field = KnobField | ToggleField | ChoiceField | PatternField;
+/**
+ * A sound to play from, such as a recording: the record holds the name of a file under
+ * `assets/audio/`, or "" for none. A `Table` in `sound`, at the rate of the engine, mixed to
+ * one channel, up to 60 seconds.
+ */
+export interface SampleField {
+  kind: "sample";
+  label?: string;
+}
+
+export type Field = KnobField | ToggleField | ChoiceField | PatternField | SampleField;
 export type Fields = Record<string, Field>;
 
 export const knob = (field: Omit<KnobField, "kind">): KnobField => ({ kind: "knob", ...field });
@@ -64,6 +74,10 @@ export const choice = <const Option extends string | number>(field: {
 }): ChoiceField<Option> => ({ kind: "choice", ...field });
 export const pattern = (field: Omit<PatternField, "kind">): PatternField => ({
   kind: "pattern",
+  ...field,
+});
+export const sample = (field: Omit<SampleField, "kind"> = {}): SampleField => ({
+  kind: "sample",
   ...field,
 });
 
@@ -105,7 +119,9 @@ type ValueOf<F> = F extends KnobField
       ? Option
       : F extends PatternField
         ? number[]
-        : never;
+        : F extends SampleField
+          ? string
+          : never;
 
 /** The `state` of a record of a tool with these fields. A field left out is at its default. */
 export type StateOf<S extends Fields> = { [Name in keyof S]?: ValueOf<S[Name]> };
@@ -117,7 +133,7 @@ export type StateOf<S extends Fields> = { [Name in keyof S]?: ValueOf<S[Name]> }
 export type SoundOf<S extends Fields, C extends Controls> = {
   [Name in keyof S]: S[Name] extends ChoiceField<infer Option>
     ? Option
-    : S[Name] extends PatternField
+    : S[Name] extends PatternField | SampleField
       ? Table
       : Param;
 } & { [Name in keyof C]: Param };
@@ -561,6 +577,11 @@ export function Steps(props: { path: string; max?: number; playing?: string }): 
   return { type: "steps", ...props };
 }
 
+/** The file of a sample field at `path`, and a button that opens a file to put there. */
+export function SampleChooser(props: { path: string; label?: string }): Node {
+  return { type: "sample", ...props };
+}
+
 /** A bar that shows a watch from 0 to 1, such as a level. */
 export function Meter(props: { watch: string; label?: string }): Node {
   return { type: "meter", ...props };
@@ -608,6 +629,7 @@ export type Node =
     }
   | { type: "steps"; path: string; max?: number; playing?: string }
   | { type: "meter"; watch: string; label?: string }
+  | { type: "sample"; path: string; label?: string }
   | { type: "pad"; x: string; y: string; size?: number }
   | {
       type: "canvas";
@@ -675,6 +697,8 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
         );
       } else if (field.kind === "pattern") {
         rows.push(Steps({ path: name, max: field.max }));
+      } else if (field.kind === "sample") {
+        rows.push(SampleChooser({ path: name, label }));
       } else if (field.kind === "toggle") {
         const on = (record[name] as boolean | undefined) ?? field.default;
         rows.push(

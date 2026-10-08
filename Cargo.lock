@@ -6112,6 +6112,7 @@ name = "sound-typescript"
 version = "0.7.0"
 dependencies = [
  "gpui",
+ "hound",
  "serde",
  "serde_json",
  "smol",
@@ -6120,6 +6121,7 @@ dependencies = [
  "sound-media",
  "sound-notes",
  "sound-ui",
+ "tempfile",
 ]
 
 [[package]]

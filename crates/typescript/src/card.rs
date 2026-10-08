@@ -14,6 +14,7 @@ use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::knob::{
     Knob, decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
+use sound_ui::import::{choose_file, import_file};
 use sound_ui::{ActiveTheme, ControlEdit, Session, weak_callback};
 
 use crate::tools::Unit;
@@ -238,6 +239,53 @@ impl Controls for Drawing<'_, '_> {
             .flex_row()
             .gap(px(3.))
             .children(cells)
+            .into_any_element()
+    }
+
+    fn sample(&mut self, path: &str, label: Option<&str>) -> AnyElement {
+        let file = self.state.get(path).and_then(serde_json::Value::as_str);
+        let shown = match file {
+            Some(file) if !file.is_empty() => file.to_string(),
+            _ => "No sound".to_string(),
+        };
+        let theme = self.cx.theme();
+        let (quiet, button) = (theme.gray_700, theme.gray_300);
+        let path = path.to_string();
+        let choose = div()
+            .id(ElementId::Name(format!("{path}-choose").into()))
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(6.))
+            .bg(button)
+            .cursor_pointer()
+            .child("Choose…")
+            .on_click(self.cx.listener(move |view, _, _, cx| {
+                let path = path.clone();
+                let session = view.session.clone();
+                choose_file(&session, "Choose a sound", cx, move |view, file, cx| {
+                    let session = view.session.clone();
+                    import_file(&session, file, cx, move |view, imported, cx| {
+                        let (id, name) = (view.id.clone(), imported.asset.to_string());
+                        view.session.update(cx, |session, cx| {
+                            session.edit(cx, |project| {
+                                let mut edit = project.begin("Choose a sound");
+                                project.update_json(&mut edit, &id, |state| {
+                                    if let Some(fields) = state.as_object_mut() {
+                                        fields.insert(path, name.into());
+                                    }
+                                })?;
+                                project.finish(edit)
+                            })
+                        });
+                    });
+                });
+            }));
+        let mut row = div().flex().flex_row().items_center().gap(px(8.));
+        if let Some(label) = label {
+            row = row.child(label.to_string());
+        }
+        row.child(div().text_color(quiet).child(shown))
+            .child(choose)
             .into_any_element()
     }
 
