@@ -47,6 +47,12 @@ replay)
     sed -n 's/^{"received": \(.*\)}$/\1/p' "$FAKE_FIXTURE"
     cat >/dev/null
     ;;
+models)
+    # Answers the request to start, and nothing more: no message comes.
+    read -r request
+    sed -n 's/^{"received": \({"type": "control_response".*\)}$/\1/p' "$FAKE_FIXTURE"
+    cat >/dev/null
+    ;;
 malformed)
     # A request and a result of known types that do not parse. Keeps the answer to the
     # request in FAKE_OUTPUT.

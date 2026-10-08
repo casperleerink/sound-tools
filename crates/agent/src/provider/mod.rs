@@ -82,6 +82,31 @@ impl Provider {
         }
     }
 
+    /// What the composer can pick, the default first, before any thread has started: starts
+    /// an agent in `folder` that is never sent a message, and ends it once it is ready.
+    pub async fn models(self, installed: Installed, folder: PathBuf) -> io::Result<Vec<Model>> {
+        // Held to the end: dropping every handle closes the agent before it answers.
+        let (_thread, mut events) = Thread::start(ThreadOptions {
+            provider: self,
+            installed,
+            folder,
+            model: None,
+            approval_mode: ApprovalMode::default(),
+            resume: None,
+            instructions: None,
+        })?;
+        while let Some(event) = events.next().await {
+            match event {
+                AgentEvent::Started { models, .. } => return Ok(models),
+                AgentEvent::Exited {
+                    reason: ExitReason::Failed { message },
+                } => return Err(io::Error::other(message)),
+                _ => {}
+            }
+        }
+        Err(io::Error::other("it ended before it was ready"))
+    }
+
     pub async fn sign_out(self, installed: &Installed) -> io::Result<()> {
         match self {
             Provider::Claude => claude::sign_out(installed).await,

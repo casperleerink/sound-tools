@@ -814,8 +814,12 @@ impl Sidebar {
         };
         let provider = self.provider;
         self.set_setup(Setup::Checking, cx);
-        let asking = cx.background_spawn(async move { provider.account(&installed).await });
+        let asking = cx.background_spawn({
+            let installed = installed.clone();
+            async move { provider.account(&installed).await }
+        });
         let timeout = cx.background_executor().timer(CHECK_TIMEOUT);
+        let folder = self.session.read(cx).project().root().to_path_buf();
         self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
             // The question that loses the race is dropped, which ends its process.
             let answer = future::or(async { Some(asking.await) }, async {
@@ -833,10 +837,31 @@ impl Sidebar {
                     message: "it did not answer within 30 seconds.".to_string(),
                 },
             };
+            let ready = matches!(setup, Setup::Ready { .. });
             // A sidebar that went in the meantime has nobody to tell.
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.set_setup(setup, cx))
-                .ok();
+            let Ok(listed) = sidebar.update(cx, |sidebar, cx| {
+                sidebar.set_setup(setup, cx);
+                !sidebar.settings.read(cx).models().is_empty()
+            }) else {
+                return;
+            };
+            if !ready || listed {
+                return;
+            }
+            // The menu shows the models before the first message starts an agent.
+            let listing =
+                cx.background_spawn(async move { provider.models(installed, folder).await });
+            // On failure the menu keeps "Default": the first message starts an agent, which
+            // says what went wrong.
+            if let Ok(models) = listing.await {
+                sidebar
+                    .update(cx, |sidebar, cx| {
+                        sidebar
+                            .settings
+                            .update(cx, |settings, cx| settings.set_models(models, cx));
+                    })
+                    .ok();
+            }
         }));
     }
 

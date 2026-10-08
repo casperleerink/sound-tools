@@ -207,6 +207,26 @@ fn installed(scenario: &str, account: &Path, output: &Path) -> Installed {
 }
 
 #[test]
+fn the_models_come_with_no_message() {
+    let folder = tempfile::tempdir().unwrap();
+    let account = folder.path().join("account");
+    let mut installed = installed("models", &account, &folder.path().join("output"));
+    let fixture = fixtures().join("claude/plain.jsonl");
+    installed
+        .environment
+        .insert("FAKE_FIXTURE".into(), fixture.into());
+    let models = within(
+        "the models",
+        Provider::Claude.models(installed, std::env::temp_dir()),
+    );
+    let models = models.unwrap();
+    assert_eq!(
+        models.first().map(|model| model.id.as_str()),
+        Some("default")
+    );
+}
+
+#[test]
 fn signs_in_with_the_choice_then_out() {
     let folder = tempfile::tempdir().unwrap();
     let account = folder.path().join("account");

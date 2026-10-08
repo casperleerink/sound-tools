@@ -181,7 +181,7 @@ pub(super) fn label(settings: &Settings, models: &[Model]) -> String {
 }
 
 /// The provider's models under its name, then the account and **Sign out**. `models` are the
-/// provider's, its default first, or none while no agent has started yet.
+/// provider's, its default first, or none until it listed them.
 pub(super) fn model_entries(
     provider: Provider,
     account: &Account,
@@ -190,7 +190,7 @@ pub(super) fn model_entries(
 ) -> Vec<MenuEntry> {
     let picked = settings.model.as_deref();
     let models: Vec<MenuItem> = if models.is_empty() {
-        // The provider lists its models when the agent starts. Until then only the pick shows.
+        // The provider lists its models once signed in. Until then only the pick shows.
         vec![row(
             Choice::Model(picked.map(str::to_string)),
             picked.unwrap_or("Default"),
