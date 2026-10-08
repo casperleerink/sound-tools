@@ -290,7 +290,7 @@ impl Machine {
                             .map(|ms| (ms * 0.001 * sample_rate).max(1.0));
                         // A sustain that is not a number would stay in the level for good.
                         let sustain = finite(read(sustain)).clamp(0.0, 1.0);
-                        envelope.next(read(gate) > 0.0, times, sustain)
+                        envelope.next(read(gate) > 0.0, note.onset, times, sustain)
                     }
                     None => 0.0,
                 },
@@ -451,9 +451,17 @@ impl Smooth {
 }
 
 impl Envelope {
-    /// `frames` are of the attack, the decay and the release.
-    fn next(&mut self, gate: bool, [attack, decay, release]: [f32; 3], sustain: f32) -> f32 {
-        if gate && !self.gate {
+    /// `frames` are of the attack, the decay and the release. A note that takes over a voice
+    /// whose gate is still up, as one does under the sustain pedal, starts the attack at its
+    /// `onset`: the gate it sees never fell.
+    fn next(
+        &mut self,
+        gate: bool,
+        onset: bool,
+        [attack, decay, release]: [f32; 3],
+        sustain: f32,
+    ) -> f32 {
+        if gate && (!self.gate || onset) {
             self.stage = Stage::Attack;
         } else if !gate && self.gate {
             self.stage = Stage::Release;
