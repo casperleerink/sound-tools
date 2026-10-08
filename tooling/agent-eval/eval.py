@@ -230,6 +230,19 @@ def check_acid_bass(folder: Path) -> dict:
     }
 
 
+def check_sweep(folder: Path) -> dict:
+    lanes = record(folder, "state/arrangement/bass/instance.json").get("state", {}).get("automation", [])
+    cutoff = [lane for lane in lanes if lane.get("parameter") == "cutoff"]
+    points = cutoff[0].get("points", []) if cutoff else []
+    # Bars 3 and 4 are ticks 7680 to 15360; a lane may hold a value before them.
+    inside = [point["value"] for point in points if 7680 <= point.get("tick", -1) <= 15360]
+    return {
+        "a lane on the cutoff": bool(cutoff),
+        "it rises over bars 3 and 4": len(inside) >= 2 and inside[-1] > inside[0],
+        "no problems": no_problems(folder),
+    }
+
+
 def check_experiment(folder: Path) -> dict:
     tools = project_tools(folder)
     top = [path for path in (folder / "state").glob("*.json")
@@ -295,6 +308,9 @@ SCENARIOS = {
                            "The acid bass is cool. Make its pattern play every eighth note and "
                            "nothing in between, put an accent on each beat, and make it a bit "
                            "darker and an octave lower."),
+    "composer-sweep": (setup_acid_bass, check_sweep,
+                       "Over bars 3 and 4, sweep the acid bass filter cutoff up from dark to "
+                       "bright."),
     "toy-builder": (setup_tape_builder, check_toy,
                     "Make me a 'storm' on a new track: a windy, noisy drone I play live with an "
                     "XY pad, across is how dark or bright, up is how wild, plus a 'thunder' "
