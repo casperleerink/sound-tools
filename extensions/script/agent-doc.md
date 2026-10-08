@@ -51,11 +51,11 @@ Operators: `+ - * / %`, and `< > <= >= == !=`, which give 1 for true and 0 for f
 | `saturate(x)` | Clean up to full scale, then bends softly; never above 1.5. |
 | `phasor(hz)` | A ramp from 0 to 1, `hz` times a second. `sin(phasor(hz) * tau)` is a sine. |
 | `noise()` | White noise from -1 to 1. |
-| `delay(x, ms)` | `x` as it was `ms` milliseconds ago, up to 4000. |
+| `delay(x, ms)` | `x` as it was `ms` milliseconds ago, up to 4000. `ms` may move every sample, and reads between samples are smooth, so a moving delay bends the pitch without clicks, as a chorus or a tape wobble does. |
 | `lowpass(x, hz, q)`, `highpass(x, hz, q)`, `bandpass(x, hz, q)` | A filter. `q` may be left out: 0.707, no peak. Higher rings at `hz`, up to 20. |
 | `smooth(x, ms)` | `x` that follows changes slowly, in about `ms` milliseconds. |
 
-Every call of `phasor`, `noise`, `delay`, a filter or `smooth` has a memory of its own. Call it once and use the name, for one oscillator heard in two places.
+Every call of `phasor`, `noise`, `delay`, a filter or `smooth` has a memory of its own. Call it once and use the name, for one oscillator heard in two places. Each channel has its own memories too, but they start together, so a `phasor` moves the same on the left and the right; `noise()` differs between them.
 
 A sound that leaves the script is held to 4, about 12 dB over full scale, and a value that is not a number is 0. A feedback that runs away is loud, not dangerous; keep feedback gains under 1.
 

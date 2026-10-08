@@ -326,7 +326,7 @@ pub fn solo(
     };
     let tracks = arrangement::tracks(project, arrangement.id());
     let called = |(track, state): &(Instance<TrackState>, &TrackState), name: &String| {
-        state.name == *name || track.id().as_str() == name
+        state.name == *name || track.id().as_str() == name || track.id().name() == name
     };
     if let Some(missing) = names
         .iter()
