@@ -1,7 +1,7 @@
 //! The pitch of a short window of sound, by YIN (de Cheveigné and Kawahara, 2002): the period
 //! is the shortest lag at which the sound clearly repeats itself. It finds the fundamental even
-//! when a harmonic is louder, as in most synth tones, and it says when nothing repeats, as in
-//! noise or most chords.
+//! when its octave is up to four times as loud, and it says when nothing repeats, as in noise or
+//! most chords.
 //!
 //! A chord can repeat too: C, E and G together repeat at the period of a C two octaves under
 //! them, a note nobody plays. So a period counts only when the sound has power at its
@@ -14,11 +14,11 @@ use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
 /// The lowest fundamental looked for, in Hz: about E1, the lowest string of a bass.
 const LOWEST: f64 = 40.0;
-/// The highest, in Hz: about B7. Above it a tone reads an octave or more low.
+/// The highest, in Hz: about B7. Above it a tone reads as no pitch.
 const HIGHEST: f64 = 4_000.0;
-/// A lag whose normalized difference is under this repeats clearly enough to be a period, as
-/// in the paper.
-const THRESHOLD: f64 = 0.15;
+/// A lag whose normalized difference is under this repeats clearly enough to be a period. At
+/// 0.15 a tone whose octave is four times as loud reads an octave high.
+const THRESHOLD: f64 = 0.1;
 /// Under this mean square, -60 dB, a window is too quiet to tell a pitch in.
 const QUIET: f64 = 1e-6;
 /// The least share of the power of a window at the frequency of its period. A sawtooth has 61%
@@ -26,7 +26,7 @@ const QUIET: f64 = 1e-6;
 const FUNDAMENTAL: f64 = 0.02;
 
 /// What one window sounds like.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy)]
 pub(super) enum Pitch {
     Quiet,
     /// Sound with no clear period: noise, drums, a chord.
@@ -105,9 +105,11 @@ pub(super) struct PitchFinder {
 }
 
 impl PitchFinder {
-    /// A finder for a sound at `rate` whose windows are at most `most` frames long.
-    pub(super) fn new(rate: f64, most: usize) -> Self {
-        let longest = ((rate / LOWEST).ceil() as usize).min(most / 2);
+    /// A finder for a sound at `rate` that looks at no more than `window` frames. When two
+    /// periods of [`LOWEST`] do not fit, the lowest note found is higher: 47 Hz at 96 kHz in
+    /// 4096 frames.
+    pub(super) fn new(rate: f64, window: usize) -> Self {
+        let longest = ((rate / LOWEST).ceil() as usize).min(window / 2);
         let shortest = ((rate / HIGHEST).floor() as usize).max(2);
         let mut planner = RealFftPlanner::<f64>::new();
         let forward = planner.plan_fft_forward(2 * longest);
@@ -233,11 +235,13 @@ impl PitchFinder {
         {
             lag += 1;
         }
+        // A dip still falling at the longest lag has its bottom past it: a note under the
+        // lowest, which would read as the lowest.
         let difference = |lag: usize| self.difference.get(lag).copied();
         let (Some(before), Some(here), Some(after)) =
             (difference(lag - 1), difference(lag), difference(lag + 1))
         else {
-            return Some(lag as f64);
+            return None;
         };
         let curve = before - 2.0 * here + after;
         let offset = match curve > 0.0 {

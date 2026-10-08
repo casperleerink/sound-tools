@@ -76,7 +76,7 @@ The first line is the whole: its loudness (integrated, gated as streaming servic
 - `sub` under 60 Hz, `bass` 60 to 250, `lowmid` 250 to 500, `mid` 500 to 2k, `highmid` 2k to 6k, `high` above 6k: the level of each band in dB.
 - `width`: the share of the sound in the side. 0% is mono, 50% as wide as two unrelated channels; above 50% the channels cancel when summed to mono.
 - `pitch`: the middle pitch heard, as the nearest note and how far off it in cents, 100 to a semitone: `A4+3c` is 3 cents sharp. `drift`: how far the pitch moves, low to high, in cents. A steady note in tune reads `+0c` and `0c`; a vibrato of 20 cents either way about `40c`; two notes in one row their interval, `200c` for a whole tone.
-- `-` is silence. A track that should play and measures `-` alone did not load or plays nothing. Under `pitch`, `-` is also sound with no single pitch: noise, drums, a chord or a mix.
+- `-` is silence. A track that should play and measures `-` alone did not load or plays nothing. Under `pitch`, `-` is also sound with no single pitch: noise, drums, a chord, a mix, or a note under E1 or above B7.
 
 To check a vibrato, a wobble or the tuning, solo the track and measure one held note with `--from` and `--to`: the first line gives the drift of the whole note. A row shorter than one cycle of a slow wobble shows only part of it.
 

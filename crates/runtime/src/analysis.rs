@@ -546,11 +546,14 @@ impl Spectrum {
             return None;
         }
         self.since = 0;
-        let pitch = self.pitch();
-        Some(Heard {
+        let heard = Heard {
             bands: self.bands(),
-            pitch,
-        })
+            pitch: self.pitch(),
+        };
+        for history in &mut self.history {
+            history.copy_within(HOP.., 0);
+        }
+        Some(heard)
     }
 
     /// The pitch of the middle of the window, as long as the pitch finder looks at: shorter
@@ -565,7 +568,7 @@ impl Spectrum {
         }
     }
 
-    /// The bands of the last window. Then the window moves on by [`HOP`].
+    /// The bands of the last window.
     fn bands(&mut self) -> [f64; BANDS.len()] {
         let mut bands = [0.0; BANDS.len()];
         for history in &self.history {
@@ -582,9 +585,6 @@ impl Spectrum {
                     bands[*band] += mirrored * f64::from(value.norm_sqr()) / scale;
                 }
             }
-        }
-        for history in &mut self.history {
-            history.copy_within(HOP.., 0);
         }
         bands
     }
@@ -805,10 +805,15 @@ mod tests {
 
     #[test]
     fn a_steady_tone_reads_its_note_and_no_drift() {
-        // E1, the lowest string of a bass, A4, and 30 cents above C6.
+        // E1, the lowest string of a bass, A4, and 30 cents above C6. Each with its octave
+        // louder than itself, as in a bright synth: the note is still the lower one.
         for note in [28.0, 69.0, 84.3] {
             let hz = 440.0 * 2_f64.powf((note - 69.0) / 12.0);
-            let measures = measure(&sine(hz, 0.5, 0.0, 1.0, 1.0), vec![0, 24_000]);
+            let mut tone = sine(hz, 0.1, 0.0, 1.0, 1.0);
+            for (sample, octave) in tone.iter_mut().zip(sine(2.0 * hz, 0.4, 0.0, 1.0, 1.0)) {
+                *sample += octave;
+            }
+            let measures = measure(&tone, vec![0, 24_000]);
             for row in &measures.rows {
                 let pitch = row.pitch.unwrap();
                 assert!((pitch.note - note).abs() < 0.01, "{hz} Hz: {pitch:?}");
@@ -838,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn silence_noise_and_a_chord_have_no_pitch() {
+    fn silence_noise_a_chord_and_a_note_too_low_have_no_pitch() {
         let silence = measure(&vec![0.0; 2 * 48_000], vec![]);
         assert_eq!(silence.rows[0].pitch, None);
         // White noise from a fixed seed, by xorshift.
@@ -860,6 +865,9 @@ mod tests {
             }
         }
         assert_eq!(measure(&chord, vec![]).rows[0].pitch, None);
+        // 38 Hz repeats just past the longest lag looked at: no pitch, not the lowest one.
+        let too_low = measure(&sine(38.0, 0.5, 0.0, 1.0, 1.0), vec![]);
+        assert_eq!(too_low.rows[0].pitch, None);
     }
 
     #[test]
