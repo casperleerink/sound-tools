@@ -106,6 +106,11 @@ impl Choice {
 
     fn to_value(&self) -> Value {
         match self {
+            // As a record writes it: `4`, not `4.0`. The two are one option, and one key of
+            // the Hum that is kept per choice.
+            Self::Number(number) if number.fract() == 0.0 && number.abs() < 1e15 => {
+                Value::from(*number as i64)
+            }
             Self::Number(number) => Value::from(*number),
             Self::Word(word) => Value::from(word.clone()),
         }
@@ -304,6 +309,7 @@ impl Sounds {
         if let Some(code) = self.compiled.borrow().get(&key) {
             return code.clone();
         }
+        let asked = std::time::Instant::now();
         let code = self.bun.sound(&self.info.name, &choices).and_then(|lines| {
             let file = &self.info.file;
             compile(&lines).map(Rc::new).map_err(|error| {
@@ -314,6 +320,13 @@ impl Sounds {
                 )
             })
         });
+        if std::env::var_os("SOUND_TOOLS_TIMING").is_some() {
+            let name = &self.info.name;
+            eprintln!(
+                "timing: the Hum of {name} {key} came and compiled in {:?}",
+                asked.elapsed()
+            );
+        }
         self.compiled.borrow_mut().insert(key, code.clone());
         code
     }
