@@ -1,4 +1,4 @@
-import { choice, hum, knob, tool } from "./sdk";
+import { choice, db, delay, highpass, input, knob, lowpass, mix, noise, type Signal, sine, tool } from "./sdk";
 
 // Each wobble is [rate in hz, peak pitch change as a ratio], at full wear.
 // Two slow ones for wow and two fast ones for flutter, at rates that never line up,
@@ -41,13 +41,14 @@ tool({
     // A delay moving by `ms` * sin(2 pi f t) changes the pitch by up to 2 pi f ms / 1000.
     const depths = c.wobbles.map(([hz, ratio]) => [hz, (ratio / (2 * Math.PI * hz)) * 1000] as const);
     const base_ms = depths.reduce((sum, [, ms]) => sum + ms, 0) + 1;
-    return hum`
-      ${depths.map(([hz, ms], i) => hum`w${i} = ${ms} * sin(phasor(${hz}) * tau)`)}
-      wobble = ${depths.map((_, i) => `w${i}`).join(" + ")}
-      played = delay(in, ${base_ms} + ${wear} * wobble)
-      dull = lowpass(played, mix(${c.top_hz[0]}, ${c.top_hz[1]}, ${wear}))
-      hiss = lowpass(highpass(noise(), 800), ${c.hiss_top_hz}) * db(mix(${c.hiss_db[0]}, ${c.hiss_db[1]}, ${wear}))
-      out = dull + hiss
-    `;
+    const wobble = depths
+      .map(([hz, ms]): Signal => sine(hz).times(ms))
+      .reduce((sum, wave) => sum.plus(wave));
+    const played = delay(input, wobble.times(wear).plus(base_ms));
+    const dull = lowpass(played, mix(c.top_hz[0], c.top_hz[1], wear));
+    const hiss = lowpass(highpass(noise(), 800), c.hiss_top_hz).times(
+      db(mix(c.hiss_db[0], c.hiss_db[1], wear)),
+    );
+    return dull.plus(hiss);
   },
 });

@@ -7,6 +7,10 @@ the scenario, then runs Claude Code with the app's flags (`claude_run.py`), then
 project. It prints one JSON line per run: whether the check passed, what it cost, how many
 turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
 
+`examples/` holds tools agents built in these runs, from one prompt each: a gravity harp page,
+a storm drone played with an XY pad, and a generative part in D dorian. Copy one into the
+`extensions/` folder of a project to try it.
+
 Earlier experiments, with their results next to this file:
 - `results-docs-vs-skills.jsonl`: the docs map against the docs as Claude Code skills. The map
   did as well or better, without the settings skills need.
