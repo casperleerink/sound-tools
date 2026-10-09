@@ -318,7 +318,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 
 /// What the state plays, read on this thread the first time something names it, or a line for
 /// `problems.txt` that says why it plays nothing. An empty line is an empty Sampler.
-/// `None` while it loads in the background, see [`instrument::load_in_background`].
+/// `None` while it loads in the background, see [`sound_media::load_in_background`].
 fn instrument(
     state: &SamplerState,
     context: &mut BehaviourContext<'_>,

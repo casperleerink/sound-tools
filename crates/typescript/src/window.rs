@@ -591,10 +591,13 @@ impl Live {
     /// Runs the behaviour of every instance whose sample was read on its thread again, so it
     /// plays it.
     fn take_samples(&mut self, cx: &mut Context<Self>) {
-        let read = crate::samples::take_read();
-        let Some(session) = self.session.upgrade().filter(|_| !read.is_empty()) else {
+        let Some(session) = self.session.upgrade() else {
             return;
         };
+        let read = crate::samples::take_read(session.read(cx).project().assets());
+        if read.is_empty() {
+            return;
+        }
         session.update(cx, |session, cx| {
             let failed = session.background(cx, |project| {
                 // One deleted while its sample was read has nothing to play it.

@@ -4,20 +4,20 @@
 //!
 //! An SFZ instrument is read on the control side and kept while anything plays it: a second
 //! Sampler with the same file, or the same Sampler after a knob moved, gets the same one and
-//! reads nothing. It is read again when the SFZ file or a file it includes changed, or when it
-//! missed samples, which may have arrived since.
+//! reads nothing. It is read again when the SFZ file, a file it includes or a sample it missed
+//! changed, such as a missing sample that arrived. One that failed is kept as its failure until
+//! then.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::cell::RefCell;
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, PoisonError, Weak};
-use std::time::SystemTime;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 use sound_core::{AssetName, Assets, InstanceId};
-use sound_media::{Audio, MediaError};
+use sound_media::{Audio, Keep, Loader, MediaError, Read, Stamp};
 
 use crate::library::{self, Entry};
 use crate::sfz::{self, LoopMode, Region};
@@ -207,20 +207,9 @@ impl Instrument {
     }
 }
 
-/// A file the instrument was read from, with its size and time then.
-type Stamp = (PathBuf, u64, Option<SystemTime>);
-
-fn stamp(path: &Path) -> Option<Stamp> {
-    let metadata = fs::metadata(path).ok()?;
-    Some((path.to_path_buf(), metadata.len(), metadata.modified().ok()))
-}
-
-struct Known {
-    files: Vec<Stamp>,
-    instrument: Weak<Instrument>,
-}
-
-static KNOWN: LazyLock<Mutex<HashMap<PathBuf, Known>>> = LazyLock::new(Mutex::default);
+/// The instruments read so far, by their SFZ file.
+static INSTRUMENTS: Loader<PathBuf, Instrument> =
+    Loader::new("sampler instrument", Keep::WhileUsed);
 
 /// The SFZ instrument a record names, from memory when it was read before and nothing changed.
 /// An error says why it plays nothing; an instrument that plays may still have a problem.
@@ -279,181 +268,70 @@ pub fn is_loading(state: &crate::SamplerState, assets: &Assets) -> bool {
         },
         (None, None) => return false,
     };
-    background().running.contains(&file)
-}
-
-static IN_BACKGROUND: AtomicBool = AtomicBool::new(false);
-
-/// Loads an instrument that is not in memory on a thread of its own, so the window does not
-/// wait for hundreds of samples: until it is there, the Sampler plays what it played, and its
-/// card says it loads. Without this, as in a render, an inspect or a test, it loads at once.
-pub fn load_in_background() {
-    IN_BACKGROUND.store(true, Ordering::Relaxed);
-}
-
-/// The instruments that load in the background and the Samplers that wait for them.
-#[derive(Default)]
-struct Loading {
-    running: BTreeSet<PathBuf>,
-    /// Why one did not load, with the size and time of its file then.
-    failed: HashMap<PathBuf, (Option<Stamp>, String)>,
-    waiting: BTreeMap<PathBuf, BTreeSet<(PathBuf, InstanceId)>>,
-    /// Samplers whose instrument is done, for [`take_loaded`].
-    done: Vec<(PathBuf, InstanceId)>,
-    /// What was loaded, held until the Samplers that wait for it took it: from when it is
-    /// loaded to the call of [`take_loaded`] after the one that named them.
-    held: Vec<Arc<Instrument>>,
-    taken: Vec<Arc<Instrument>>,
-}
-
-static LOADING: LazyLock<(Mutex<Loading>, Condvar)> = LazyLock::new(Default::default);
-
-fn background() -> MutexGuard<'static, Loading> {
-    LOADING.0.lock().unwrap_or_else(PoisonError::into_inner)
+    INSTRUMENTS.is_loading(&file)
 }
 
 /// The Samplers of the project of `assets` whose instrument loaded since the last call, to run
-/// their behaviour again. What they load is held until the next call, so it is still there
-/// when they take it.
+/// their behaviour again.
 pub(crate) fn take_loaded(assets: &Assets) -> Vec<InstanceId> {
-    let project = instruments_folder(assets);
-    let mut loading = background();
-    // Their Samplers took what was held at the last call, so it is let go of here.
-    let held = std::mem::take(&mut loading.held);
-    loading.taken = held;
-    let (ours, others): (Vec<_>, Vec<_>) = std::mem::take(&mut loading.done)
-        .into_iter()
-        .partition(|(folder, _)| *folder == project);
-    loading.done = others;
-    ours.into_iter().map(|(_, instance)| instance).collect()
+    INSTRUMENTS.take_done(assets)
 }
 
 /// Waits until no instrument loads. For tests.
 pub fn wait_for_loading() {
-    let (lock, done) = &*LOADING;
-    let mut loading = lock.lock().unwrap_or_else(PoisonError::into_inner);
-    while !loading.running.is_empty() {
-        loading = done.wait(loading).unwrap_or_else(PoisonError::into_inner);
-    }
+    INSTRUMENTS.wait();
 }
 
 /// The SFZ instrument at `file`, whose files stay under `root`, from memory when it was read
 /// before and nothing changed. `None` while it loads in the background for the Sampler
-/// `waiter`. `missing` says why when the file is not there.
+/// `waiter`: until it is there, the Sampler plays what it played, and its card says it loads.
+/// `missing` says why when the file is not there.
 fn load(
     (file, root, streamed): (&Path, &Path, bool),
     shown: &str,
     missing: impl Fn() -> String,
-    (assets, instance): (&Assets, &InstanceId),
+    waiter: (&Assets, &InstanceId),
 ) -> Result<Option<Arc<Instrument>>, String> {
-    if let Some(instrument) = known(file) {
-        return Ok(Some(instrument));
-    }
     if !file.exists() {
         return Err(missing());
     }
-    if !IN_BACKGROUND.load(Ordering::Relaxed) {
-        return read(file, root, shown, streamed).map(Some);
-    }
-    let mut loading = background();
-    if let Some((stamped, error)) = loading.failed.get(file)
-        && *stamped == stamp(file)
-    {
-        return Err(error.clone());
-    }
-    let waiter = (instruments_folder(assets), instance.clone());
-    loading
-        .waiting
-        .entry(file.to_path_buf())
-        .or_default()
-        .insert(waiter);
-    if loading.running.insert(file.to_path_buf()) {
-        let spawned = std::thread::Builder::new()
-            .name("sampler instrument".into())
-            .spawn({
-                let (file, root, shown) =
-                    (file.to_path_buf(), root.to_path_buf(), shown.to_string());
-                move || {
-                    let read = read(&file, &root, &shown, streamed);
-                    let mut loading = background();
-                    loading.running.remove(&file);
-                    match read {
-                        Ok(instrument) => {
-                            loading.failed.remove(&file);
-                            loading.held.push(instrument);
-                        }
-                        Err(error) => {
-                            loading.failed.insert(file.clone(), (stamp(&file), error));
-                        }
-                    }
-                    let waiting = loading.waiting.remove(&file).unwrap_or_default();
-                    loading.done.extend(waiting);
-                    LOADING.1.notify_all();
-                }
-            });
-        if let Err(error) = spawned {
-            loading.running.remove(file);
-            return Err(format!(
-                "the Sampler is silent: {shown} did not start to load: {error}"
-            ));
-        }
-    }
-    Ok(None)
+    let (file, root, shown) = (file.to_path_buf(), root.to_path_buf(), shown.to_string());
+    INSTRUMENTS.get(file.clone(), waiter, move || {
+        read(&file, &root, &shown, streamed)
+    })
 }
 
-/// The instrument at `file` when it is in memory and its files did not change.
-fn known(file: &Path) -> Option<Arc<Instrument>> {
-    let known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
-    let entry = known.get(file)?;
-    let instrument = entry.instrument.upgrade()?;
-    let same = entry
-        .files
-        .iter()
-        .all(|saved| stamp(&saved.0).as_ref() == Some(saved));
-    (instrument.problem.is_none() && same).then_some(instrument)
+/// Reads the instrument at `file`, with the files it read: its own, those it includes, and the
+/// samples it missed, which may arrive.
+fn read(file: &Path, root: &Path, shown: &str, streamed: bool) -> Read<Instrument> {
+    let mut files = vec![Stamp::of(file)];
+    let instrument = fs::read_to_string(file)
+        .map_err(|error| format!("the Sampler is silent: {shown} cannot be read: {error}"))
+        .and_then(|text| read_sfz(root, file, &text, (shown, streamed), &mut files));
+    (instrument, files)
 }
 
-/// Reads the instrument at `file` and keeps it in memory for the next ask.
-fn read(file: &Path, root: &Path, shown: &str, streamed: bool) -> Result<Arc<Instrument>, String> {
-    let text = fs::read_to_string(file)
-        .map_err(|error| format!("the Sampler is silent: {shown} cannot be read: {error}"))?;
-    let (instrument, files) = read_sfz(root, file, &text, (shown, streamed))?;
-    let instrument = Arc::new(instrument);
-    let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
-    known.retain(|_, entry| entry.instrument.strong_count() > 0);
-    known.insert(
-        file.to_path_buf(),
-        Known {
-            files,
-            instrument: Arc::downgrade(&instrument),
-        },
-    );
-    Ok(instrument)
-}
-
-/// Reads the SFZ file at `file`, whose text is `text`, and the files it names, which must be under `root`. Gives the
-/// text files it read, to know when to read it again.
+/// Reads the SFZ file at `file`, whose text is `text`, and the files it names, which must be
+/// under `root`. Adds to `files` the files it includes and the samples that do not play, to
+/// know when to read it again.
 fn read_sfz(
     root: &Path,
     file: &Path,
     text: &str,
     (shown, streamed): (&str, bool),
-) -> Result<(Instrument, Vec<Stamp>), String> {
+    files: &mut Vec<Stamp>,
+) -> Result<Instrument, String> {
     let folder = file.parent().unwrap_or(root).to_path_buf();
-    let read = Mutex::new(vec![stamp(file)].into_iter().flatten().collect::<Vec<_>>());
+    let included = RefCell::new(Vec::new());
     let include = |name: &str| {
         let path = inside(root, &folder, name).ok_or("it is outside its folder")?;
-        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        if let Some(stamp) = stamp(&path) {
-            read.lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(stamp);
-        }
-        Ok(text)
+        included.borrow_mut().push(Stamp::of(&path));
+        fs::read_to_string(&path).map_err(|error| error.to_string())
     };
-    let sfz = sfz::parse(text, &include)
-        .map_err(|error| format!("the Sampler is silent: {shown} cannot be read: {error}"))?;
-    let files = read.into_inner().unwrap_or_else(PoisonError::into_inner);
+    let sfz = sfz::parse(text, &include);
+    files.extend(included.take());
+    let sfz =
+        sfz.map_err(|error| format!("the Sampler is silent: {shown} cannot be read: {error}"))?;
 
     let paths: Vec<Option<PathBuf>> = sfz
         .regions
@@ -464,11 +342,14 @@ fn read_sfz(
     let mut zones = Vec::with_capacity(sfz.regions.len());
     let mut missing = Vec::new();
     let mut unreadable = Vec::new();
-    for (region, loaded) in sfz.regions.into_iter().zip(loaded.drain(..)) {
+    for ((region, loaded), path) in sfz.regions.into_iter().zip(loaded.drain(..)).zip(&paths) {
         let Some(loaded) = loaded else {
             unreadable.push(format!("{} is outside its folder", region.sample));
             continue;
         };
+        if loaded.is_err() {
+            files.extend(path.as_deref().map(Stamp::of));
+        }
         match loaded {
             Ok(audio) => {
                 let looping = looping(&region, &audio);
@@ -522,7 +403,7 @@ fn read_sfz(
         from_record: false,
         problem,
     };
-    Ok((instrument, files))
+    Ok(instrument)
 }
 
 /// The file of each region, `None` for one with no path. Read on every core at once: a piano

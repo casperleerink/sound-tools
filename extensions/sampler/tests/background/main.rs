@@ -43,7 +43,7 @@ fn take_ready(harness: &mut Harness) {
 
 #[test]
 fn a_new_instrument_plays_once_it_is_loaded_and_the_old_one_until_then() {
-    sampler::instrument::load_in_background();
+    sound_media::load_in_background();
     let mut harness = Harness::with_samples(&[]);
     let first = write_pack(&harness, "first", 0.1);
     let second = write_pack(&harness, "second", 0.2);
