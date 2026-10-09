@@ -181,6 +181,17 @@ For more than knobs, such as a simulation that plays notes as balls bounce, a to
   ```
 
   `at` is for the loop: a card has no `time`.
+- `play(pitch, { hold: true })` holds a note until `release(pitch)`.
+- `onKey: (tool, { key, down }) => { ... }` hears the computer keyboard: each key going down and up again, by name (`"a"`, `"1"`, `"space"`, `"left"`). It hears while the tool's page shows, or after a click on its card; plain keys are then the tool's, so space does not play. `onMidi: (tool, message) => { ... }` hears the MIDI keyboard while the tool is on the track it plays or at the top of the project: `{ type: "noteOn", pitch, velocity }`, `{ type: "noteOff", pitch }`, `{ type: "cc", controller, value }` (the pedal is 64) and `{ type: "bend", value }`, values 0 to 1, the bend -1 to 1. An instrument plays the notes by itself as well. Both get what `tick` gets, and `update`, which changes the record as a card does:
+
+  ```ts
+  onKey: ({ play, release }, { key, down }) => {
+    const step = "awsedftgyhuj".indexOf(key); // a row of the keyboard as piano keys
+    if (step < 0) return;
+    if (down) play(60 + step, { hold: true });
+    else release(60 + step);
+  },
+  ```
 - `<Canvas width height shapes background? onPress? onDrag?>` draws `shapes` (`{ kind: "circle", x, y, radius, color }`, `{ kind: "rect", x, y, width, height, color, radius? }`, `{ kind: "line", from: [x, y], to: [x, y], color, width? }`, in points from its top left) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. The card draws again after every tick.
 - `page: (card) => ...` draws the whole window instead of a card, from the same things a card gets. A project that is one experiment has no arrangement: delete `state/arrangement/`, put one record of the tool at the top, `state/<name>.json`, make the tool a `source` (or an `instrument` when its loop plays notes with `play`), and connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`. The window shows its page. An `effect` at the top with `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well hears the microphone live as `input`; tell the composer to use headphones, as speakers feed back into it.
 
@@ -234,4 +245,4 @@ tool({
 
 ## Limits
 
-A tool is sound in or out, with notes for an instrument or a source. Its control loop runs only while the window is open. Its knobs can be automated by the lanes of a track, as the numbers of any device. For a sound a built-in tool already makes, use the built-in one.
+A tool is sound in or out, with notes for an instrument or a source. Its control loop, `onKey` and `onMidi` run only while the window is open. Its knobs can be automated by the lanes of a track, as the numbers of any device. For a sound a built-in tool already makes, use the built-in one.

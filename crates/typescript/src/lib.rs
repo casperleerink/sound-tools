@@ -22,15 +22,31 @@ mod window;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde::Serialize;
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 
 pub use samples::read_in_background;
-pub use window::start_window;
+pub use window::{hear_midi, start_window};
 
 use crate::bun::{Bun, Loaded};
 
 /// The folder of a project that holds its own tools and cards.
 pub const FOLDER: &str = "extensions";
+
+/// The key context of a card or a page whose tool hears the computer keyboard while it has the
+/// focus. The plain keys of the window, such as space, leave it alone.
+pub const KEY_CONTEXT: &str = "ToolKeys";
+
+/// A message of the MIDI keyboard as a tool hears it, see `Midi` in `sdk.ts`: a velocity or a
+/// value from 0 to 1, the bend from -1 to 1.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Midi {
+    NoteOn { pitch: u8, velocity: f32 },
+    NoteOff { pitch: u8 },
+    Cc { controller: u8, value: f32 },
+    Bend { value: f32 },
+}
 
 const SDK: &str = include_str!("sdk.ts");
 const HOST: &str = include_str!("host.ts");
@@ -221,6 +237,12 @@ fn write_sdk(extensions: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Whether this machine has a Bun to run the tools with. Tests that need one pass without it,
+/// as in CI.
+pub fn has_bun() -> bool {
+    bun_program().is_some()
 }
 
 /// The Bun the app ships, else Bun on the `PATH`, else where its installer puts it. An app

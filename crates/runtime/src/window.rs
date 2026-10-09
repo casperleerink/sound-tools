@@ -605,12 +605,16 @@ impl Render for Shell {
 const KEY_CONTEXT: &str = "Shell";
 
 /// The keys of the window. Space, record and undo belong to a focused text field first: there
-/// they are characters and cmd-z is not an undo of the project. Tab moves the focus everywhere.
+/// they are characters and cmd-z is not an undo of the project. Space and record also belong
+/// to a tool of the project that has the keys, which plays them. Tab moves the focus
+/// everywhere.
 pub fn bind_keys(cx: &mut App) {
     let outside_text = Some("Shell && !TextInput");
+    let plain = format!("Shell && !TextInput && !{}", sound_typescript::KEY_CONTEXT);
+    let plain = Some(plain.as_str());
     cx.bind_keys([
-        KeyBinding::new("space", TogglePlayback, outside_text),
-        KeyBinding::new("r", ToggleRecording, outside_text),
+        KeyBinding::new("space", TogglePlayback, plain),
+        KeyBinding::new("r", ToggleRecording, plain),
         KeyBinding::new("cmd-z", Undo, outside_text),
         KeyBinding::new("shift-cmd-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),

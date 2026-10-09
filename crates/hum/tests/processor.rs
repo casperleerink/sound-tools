@@ -221,13 +221,31 @@ fn a_note_from_the_interface_plays_a_voice_for_its_length() {
         pitch: Pitch::new(69).unwrap(),
         velocity: Velocity::new(100).unwrap(),
         at: None,
-        frames: 24_000,
+        frames: Some(24_000),
     };
     played.control.update(played.hum, note).unwrap();
     let output = played.render(48_000);
     assert!((frequency(&output[2_400..24_000]) - 440.0).abs() < 1.0);
     // Let go after its length, and over 1 ms of release.
     assert_eq!(loudest(&output[30_000..]), 0.0);
+}
+
+#[test]
+fn a_note_with_no_length_plays_until_it_is_released() {
+    let code = ["out = 0.2 * sin(phasor(freq) * tau) * adsr(gate, 1, 1, 1, 1)"];
+    let mut played = play(Kind::Instrument { voices: 8 }, &code, Vec::new());
+    let pitch = Pitch::new(69).unwrap();
+    let note = HumUpdate::Note {
+        pitch,
+        velocity: Velocity::new(100).unwrap(),
+        at: None,
+        frames: None,
+    };
+    played.control.update(played.hum, note).unwrap();
+    assert!(loudest(&played.render(96_000)[48_000..]) > 0.1);
+    let release = HumUpdate::Release { pitch, at: None };
+    played.control.update(played.hum, release).unwrap();
+    assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
 }
 
 #[test]

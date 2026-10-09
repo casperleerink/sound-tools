@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::Midi;
 use crate::tools::ToolInfo;
 
 /// How long a question, or a step of the control loops, may take before Bun counts as hung
@@ -73,6 +74,19 @@ pub(crate) enum Request<'a> {
         time: f64,
         instances: Vec<Looped<'a>>,
     },
+    /// A key of the computer keyboard went down or up on a card or a page that has the keys.
+    Key {
+        time: f64,
+        instance: Looped<'a>,
+        key: &'a str,
+        down: bool,
+    },
+    /// What the MIDI keyboard played, for the instances that hear it.
+    Midi {
+        time: f64,
+        instances: Vec<Looped<'a>>,
+        messages: &'a [Midi],
+    },
     Drop {
         card: u64,
     },
@@ -108,9 +122,9 @@ pub(crate) enum Event {
         #[serde(default)]
         error: Option<String>,
     },
-    /// A click changed the record of a card.
+    /// A card, a key or the MIDI keyboard changed the record of an instance.
     Edit {
-        card: u64,
+        instance: String,
         label: String,
         state: serde_json::Value,
     },
@@ -125,12 +139,21 @@ pub(crate) enum Event {
         at: Option<f64>,
     },
     /// A card or a control loop played a note of an instance: a key held for `seconds` from
-    /// `at`, engine time in seconds, or from now; `velocity` from 0 to 1.
+    /// `at`, engine time in seconds, or from now; `velocity` from 0 to 1. With no `seconds` it
+    /// is held until its release.
     Note {
         instance: String,
         pitch: u8,
         velocity: f32,
-        seconds: f32,
+        #[serde(default)]
+        seconds: Option<f32>,
+        #[serde(default)]
+        at: Option<f64>,
+    },
+    /// Lets go of a held note of an instance, at `at` or now.
+    Release {
+        instance: String,
+        pitch: u8,
         #[serde(default)]
         at: Option<f64>,
     },
@@ -419,7 +442,8 @@ mod tests {
         let tool = |name: &str, unit: &str| {
             serde_json::json!({
                 "name": name, "file": format!("{name}.ts"), "title": name, "when": "w", "doc": "d",
-                "kind": "effect", "tick": false, "page": false, "controls": {},
+                "kind": "effect", "tick": false, "page": false, "keys": false, "midi": false,
+                "controls": {},
                 "fields": { "rate": { "kind": "knob", "min": 0, "max": 1, "default": 0, "unit": unit } }
             })
         };

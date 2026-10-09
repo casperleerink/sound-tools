@@ -25,8 +25,8 @@ use gpui::{
 use metronome::Click;
 use midi::{Input, Keyboard, Latency, Lost};
 use sound_core::{
-    Changes, Clock, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange,
-    Ticks,
+    Changes, Clock, InputEndpoint, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo,
+    TempoChange, Ticks,
 };
 use sound_media::Imported;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -122,6 +122,12 @@ pub struct TransportPill {
     click: Option<Click>,
     /// The MIDI input in the engine. `None` only when the engine refused it, which is reported.
     keyboard: Option<Keyboard>,
+    /// The track whose tools of the project hear the MIDI input: the one it played into when
+    /// what they hear sounded. It moves with the keyboard, only after what was held is let go,
+    /// so a tool hears the end of each note it heard begin.
+    hearing: Option<InstanceId>,
+    /// Where the keyboard was last asked to play, and the track of that.
+    asked: (Option<InputEndpoint>, Option<InstanceId>),
     /// When the sound of an engine frame reaches the device, for the latency. `None` without a
     /// device, so an offline window measures nothing instead of guessing.
     timing: Option<Arc<StreamTiming>>,
@@ -280,6 +286,8 @@ impl TransportPill {
             scrubbing: false,
             click,
             keyboard,
+            hearing: None,
+            asked: (None, None),
             timing,
             tempo_drag: None,
             steadiness_drag: DragEdit::default(),
@@ -304,6 +312,8 @@ impl TransportPill {
         let selected = session.read(cx).selected().cloned();
         let project = session.read(cx).project();
         let destination = recording::live_notes_input(project, selected.as_ref());
+        let track = recording::target_track(project, selected.as_ref());
+        let track = track.map(|track| track.id().clone());
         let timing = self.timing.clone();
         let recording_track = self.take.as_ref().map(|take| take.midi_track.clone());
         self.poll_audio(cx);
@@ -315,17 +325,29 @@ impl TransportPill {
         let polled = session.update(cx, |session, _| {
             keyboard.poll(session.engine(), timing.as_deref())
         });
+        // What sounded since the last poll went where the keyboard played until now, and the
+        // tools of that track hear it.
+        let heard = keyboard.take_heard().into_iter();
+        let heard: Vec<_> = heard.filter_map(recording::tool_message).collect();
+        let hearing = self.hearing.clone();
+        if keyboard.destination() == self.asked.0 {
+            self.hearing = self.asked.1.clone();
+        }
         // A take goes to the track it began on, so the live input stays there too while it
         // runs. Selecting another track during a take would otherwise split the two.
         let wired = match recording_track.is_some() {
             true => Ok(()),
-            false => session.update(cx, |session, _| {
-                keyboard.play_into(session.engine(), destination)
-            }),
+            false => {
+                self.asked = (destination, track);
+                session.update(cx, |session, _| {
+                    keyboard.play_into(session.engine(), destination)
+                })
+            }
         };
         if let Err(error) = polled.and(wired) {
             session.update(cx, |session, cx| session.report(error, cx));
         }
+        sound_typescript::hear_midi(hearing.as_ref(), &heard, cx);
         self.show_notes(cx);
     }
 

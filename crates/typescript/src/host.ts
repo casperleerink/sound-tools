@@ -4,7 +4,7 @@
 
 import { readdirSync, watch } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Node, StateOf, ToolSpec } from "./sdk";
+import type { Child, Controls, Fields, Handler as Heard, Midi, Node, StateOf, ToolSpec } from "./sdk";
 
 const folder = process.cwd();
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
@@ -15,13 +15,17 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 
 type State = StateOf<Fields>;
 type Watches = Record<string, number>;
+/** An instance as it is now, for its control loop or what it hears. */
+type Looped = { instance: string; tool: string; state: State; watches: Watches };
 
 type Request =
   | { type: "sound"; id: number; tool: string; choices: Record<string, string | number> }
   | { type: "draw"; id: number; tool: string; page: boolean }
   | { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: boolean }
   | { type: "event"; card: number; version: number; handler: number; x?: number; y?: number }
-  | { type: "frame"; dt: number; time: number; instances: Array<{ instance: string; tool: string; state: State; watches: Watches }> }
+  | { type: "frame"; dt: number; time: number; instances: Looped[] }
+  | { type: "key"; time: number; instance: Looped; key: string; down: boolean }
+  | { type: "midi"; time: number; instances: Looped[]; messages: Midi[] }
   | { type: "drop"; card: number };
 
 /** What the runtime gets of a node: a handler is its index. */
@@ -70,7 +74,7 @@ const HUM_NAME = /^[a-z][a-z0-9_]*$/;
  */
 function problemsOf(spec: ToolSpec<Fields, Controls, unknown>): string[] {
   const problems: string[] = [];
-  for (const key of ["tick", "card", "page", "memory"] as const) {
+  for (const key of ["tick", "card", "page", "memory", "onKey", "onMidi"] as const) {
     if (spec[key] !== undefined && typeof spec[key] !== "function") {
       problems.push(`${key}: give a function`);
     }
@@ -172,6 +176,8 @@ async function load() {
       controls: spec.controls ?? {},
       tick: typeof spec.tick === "function",
       page: typeof spec.page === "function",
+      keys: typeof spec.onKey === "function",
+      midi: typeof spec.onMidi === "function",
     }));
   send({ type: "loaded", tools, errors });
 }
@@ -296,11 +302,34 @@ function players(instance: string) {
       checkAt(at);
       send({ type: "control", instance, name: control, at });
     },
-    play(pitch: number, { seconds = 0.25, velocity = 0.8, at }: { seconds?: number; velocity?: number; at?: number } = {}) {
+    play(
+      pitch: number,
+      { seconds = 0.25, hold = false, velocity = 0.8, at }: { seconds?: number; hold?: boolean; velocity?: number; at?: number } = {},
+    ) {
       checkAt(at);
-      const key = Math.max(0, Math.min(127, Math.round(pitch)));
-      send({ type: "note", instance, pitch: key, velocity, seconds, at });
+      // A held note has no length: it ends at its release.
+      send({ type: "note", instance, pitch: keyOf(pitch), velocity, seconds: hold ? undefined : seconds, at });
     },
+    release(pitch: number, { at }: { at?: number } = {}) {
+      checkAt(at);
+      send({ type: "release", instance, pitch: keyOf(pitch), at });
+    },
+  };
+}
+
+/** The MIDI key of a pitch. */
+function keyOf(pitch: number): number {
+  return Math.max(0, Math.min(127, Math.round(pitch)));
+}
+
+/** What changes the record of an instance from `state`, each change after the one before. */
+function updater(instance: string, state: State) {
+  let current = state;
+  return (label: string, change: (state: State) => void) => {
+    const next = structuredClone(current);
+    change(next);
+    current = next;
+    send({ type: "edit", instance, label, state: next });
   };
 }
 
@@ -325,11 +354,7 @@ function render(request: Extract<Request, { type: "render" }>) {
       state,
       watches,
       memory: memoryOf(instance, spec),
-      update(label: string, change: (state: unknown) => void) {
-        const next = structuredClone(state);
-        change(next);
-        send({ type: "edit", card, label, state: next });
-      },
+      update: updater(instance, state),
       ...players(instance),
     });
     const tree = serialize(node, kept);
@@ -365,7 +390,7 @@ function draw(tool: string, page: boolean): Sent {
     throw new Error(`no tool ${tool} is loaded`);
   }
   const memory = spec.memory ? spec.memory() : {};
-  const quiet = { set() {}, fire() {}, play() {} };
+  const quiet = { set() {}, fire() {}, play() {}, release() {} };
   if (spec.tick) {
     try {
       spec.tick({ state: {}, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
@@ -401,13 +426,44 @@ function frame(request: Extract<Request, { type: "frame" }>) {
       fail(tool, `its tick failed: ${error}`);
       continue;
     }
-    for (const last of drawn.values()) {
-      if (last.instance === instance) {
-        render({ ...last, state, watches });
-      }
-    }
+    redraw(instance, state, watches);
   }
   send({ type: "framed" });
+}
+
+/** Draws the cards of an instance again, after its code ran. */
+function redraw(instance: string, state: State, watches: Watches) {
+  for (const last of drawn.values()) {
+    if (last.instance === instance) {
+      render({ ...last, state, watches });
+    }
+  }
+}
+
+/**
+ * Runs `onKey` or `onMidi`, as `run` says, for each instance that hears it, with what a tick
+ * gets and `update`; then its cards draw again.
+ */
+function hear(
+  time: number,
+  instances: Looped[],
+  what: string,
+  run: (spec: ToolSpec<Fields, Controls, unknown>, tool: Heard<State, Controls, unknown>) => void,
+) {
+  now = time;
+  for (const { instance, tool, state, watches } of instances) {
+    const spec = sdk.host.tools.get(tool);
+    if (!spec) {
+      continue;
+    }
+    try {
+      run(spec, { state, watches, memory: memoryOf(instance, spec), time, update: updater(instance, state), ...players(instance) });
+    } catch (error) {
+      fail(tool, `its ${what} failed: ${error}`);
+      continue;
+    }
+    redraw(instance, state, watches);
+  }
 }
 
 /** The load that runs, so that a request waits for its tools instead of seeing half of them. */
@@ -459,6 +515,18 @@ for await (const line of console) {
     }
     case "frame":
       frame(request);
+      break;
+    case "key": {
+      const key = { key: request.key, down: request.down };
+      hear(request.time, [request.instance], "onKey", (spec, tool) => spec.onKey?.(tool, key));
+      break;
+    }
+    case "midi":
+      hear(request.time, request.instances, "onMidi", (spec, tool) => {
+        for (const message of request.messages) {
+          spec.onMidi?.(tool, message);
+        }
+      });
       break;
     case "drop":
       handlers.delete(request.card);

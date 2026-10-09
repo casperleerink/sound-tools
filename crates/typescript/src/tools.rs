@@ -45,6 +45,10 @@ pub(crate) struct ToolInfo {
     pub tick: bool,
     /// It has a page: a view of the whole window, for an instance at the top of the project.
     pub page: bool,
+    /// It hears the computer keyboard, `onKey`.
+    pub keys: bool,
+    /// It hears the MIDI keyboard, `onMidi`.
+    pub midi: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -698,7 +702,9 @@ mod tests {
                 "y": { "kind": "live", "min": 0, "max": 1, "default": 0 }
             },
             "tick": false,
-            "page": false
+            "page": false,
+            "keys": false,
+            "midi": false
         }))
         .unwrap()
     }

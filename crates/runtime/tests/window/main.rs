@@ -28,6 +28,8 @@
 //! - `recording_audio`: arming audio tracks, the input select and recording them from a
 //!   simulated input.
 //! - `agent`: the agent sidebar in the left panel, with events fed by hand and no process.
+//! - `tools`: tools of the project, run by Bun, hearing a key on their page and the MIDI
+//!   keyboard.
 
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
 // it does not know `#[gpui::test]`.
@@ -65,6 +67,7 @@ mod saturator;
 mod several_notes;
 mod shell;
 mod support;
+mod tools;
 mod track_order;
 mod track_panel;
 mod transport;
