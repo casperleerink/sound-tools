@@ -20,7 +20,10 @@ Earlier experiments, with their results next to this file:
 - `results-experiments.jsonl`: a gravity harp page, a generative source and a grain cloud built from scratch,
   and a composer that edits the pattern of a builder's acid bass. Every run passed.
 - `results-ui.jsonl`: the `ui-*` scenarios, cards and pages from short prompts, with the doc
-  commit each ran on. How they look is judged from screenshots.
+  commit each ran on. How they look is judged from screenshots (`cargo run -p runtime --example
+  screenshot`); `fill` is the share of its page a page uses (`fill.py`). Before a page got its
+  `size`, pages drew a fixed 640 by 420 canvas and used 0.17 to 0.22 of the window; after, 0.60
+  to 0.87, at every window size.
 """
 
 import argparse
