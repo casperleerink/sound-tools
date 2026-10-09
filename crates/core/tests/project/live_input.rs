@@ -114,7 +114,12 @@ fn an_app_connection_plays_the_sound_of_the_app_beside_the_device_input() {
     harness.level();
     device.write(&[0.2; 480]);
     assert!((harness.level() - 0.1).abs() < 1e-6);
-    assert_eq!(messages(&harness.project), [] as [String; 0]);
+    let problems: &[&str] = if cfg!(target_os = "macos") {
+        &[]
+    } else {
+        &["connections[1]: not heard, because hearing other apps works only on macOS"]
+    };
+    assert_eq!(messages(&harness.project), problems);
 }
 
 #[cfg(target_os = "macos")]
