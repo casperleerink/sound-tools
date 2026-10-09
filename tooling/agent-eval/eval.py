@@ -355,6 +355,12 @@ SCENARIOS = {
                           "is playing lights up, it plays along with the tempo of the piece, "
                           "and it has knobs for the filter cutoff, the resonance and the note "
                           "it plays. Make a pattern that grooves to start with."),
+    # Many controls: the card must fit 144 points, which the check cannot see. Look at it.
+    "drums-builder": (setup_with_bass, check_sequencer,
+                      "On the bass track I want a drum machine as its instrument instead: "
+                      "kick, snare, closed hat and clap, each with its own row of 16 steps I "
+                      "click on and off, the playing step lit; a level and a tune knob for each "
+                      "drum, and a swing knob. Make a groove to start with."),
     "experiment-builder": (setup_tape_builder, check_experiment,
                            "Turn this project into an interactive sound toy instead of a song, "
                            "just one screen and no timeline: a 'gravity harp'. I drop balls "

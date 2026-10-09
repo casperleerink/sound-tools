@@ -124,6 +124,8 @@ What the card plays as a performer plays, which nothing saves and no undo takes 
 
 Without `card`, the card has a knob per knob and live control, a row of steps per pattern, and a button per option, toggle and trigger. For your own, give `card` in a `.tsx` file. It draws from the record and the watches and plays what it needs; it keeps no state of its own.
 
+A card sits in the row of cards under the tracks. What it draws is 144 points tall at most: more is cut off. It is as wide as it needs, at least 200, and the row scrolls sideways. So put things side by side rather than stacked: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16. A `page` has the whole window.
+
 ```tsx
 import { Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
 
@@ -137,11 +139,13 @@ tool({
     <div style={column}>
       <div style={row}>
         <Knob path="cutoff" label="Cutoff" min={100} max={8000} default={1200} unit="hz" />
-        <Pad x="bend" y="drive" />
+        <Pad x="bend" y="drive" size={72} />
         <Meter watch="level" />
       </div>
-      <Steps path="steps" playing="step" />
-      <div style={button} onClick={() => fire("hit")}>Hit</div>
+      <div style={row}>
+        <Steps path="steps" playing="step" />
+        <div style={button} onClick={() => fire("hit")}>Hit</div>
+      </div>
     </div>
   ),
 });
