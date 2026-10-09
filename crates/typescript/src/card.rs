@@ -7,8 +7,9 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, FocusHandle,
-    KeyDownEvent, KeyUpEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, WeakEntity, Window, canvas, div, fill, point, prelude::*, px, size,
+    KeyDownEvent, KeyUpEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, WeakEntity, Window, canvas, div, fill, point,
+    prelude::*, px, size,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -40,8 +41,8 @@ pub(crate) struct TypeScriptCard {
     /// It has the keys while it, or a control in it, has the focus: a click on it gives it
     /// them, and a page takes them when it opens.
     focus: FocusHandle,
-    /// The keys that went down and not up yet. They go up when it loses the keys, so a note
-    /// a key holds is not held for ever.
+    /// The keys that went down and not up yet. They go up when it loses the keys, when cmd
+    /// goes down and when it closes, so a note a key holds is not held for ever.
     keys_down: BTreeSet<String>,
 }
 
@@ -94,6 +95,8 @@ impl TypeScriptCard {
         cx.observe(&live, |_, _, cx| cx.notify()).detach();
         cx.on_release(|view, cx| {
             view.edit.finish(&view.session, cx);
+            // A card that is gone hears no focus out.
+            view.let_go_of_keys(cx);
             view.live.update(cx, |live, _| live.remove(view.card));
         })
         .detach();
@@ -110,11 +113,13 @@ impl TypeScriptCard {
         }
     }
 
-    /// A key went down or up while the card has the keys. Not a key with cmd, ctrl, alt or
-    /// fn, which stays the window's, as cmd-z does, and not the repeats of a held key.
+    /// A key went down or up while the card has the keys. Not a key that goes down with cmd,
+    /// ctrl, alt or fn, which stays the window's, as cmd-z does, and not the repeats of a held
+    /// key. A key that went down here comes up here, whatever is held by then.
     fn key(&mut self, keystroke: &Keystroke, down: bool, cx: &mut Context<Self>) {
         let modifiers = keystroke.modifiers;
-        if modifiers.platform || modifiers.control || modifiers.alt || modifiers.function {
+        if down && (modifiers.platform || modifiers.control || modifiers.alt || modifiers.function)
+        {
             return;
         }
         let key = keystroke.key.clone();
@@ -131,8 +136,8 @@ impl TypeScriptCard {
         cx.stop_propagation();
     }
 
-    /// The card lost the keys: every key it holds goes up.
-    fn let_go_of_keys(&mut self, cx: &mut Context<Self>) {
+    /// Every key the card holds goes up.
+    fn let_go_of_keys(&mut self, cx: &mut App) {
         let card = self.card;
         for key in std::mem::take(&mut self.keys_down) {
             self.live
@@ -646,6 +651,14 @@ impl Render for TypeScriptCard {
                     .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
                         view.key(&event.keystroke, false, cx)
                     }))
+                    // macOS sends no key up while cmd is held.
+                    .on_modifiers_changed(cx.listener(
+                        |view, event: &ModifiersChangedEvent, _, cx| {
+                            if event.modifiers.platform {
+                                view.let_go_of_keys(cx);
+                            }
+                        },
+                    ))
             })
         };
         let body = div().text_size(px(12.)).text_color(text).child(body);

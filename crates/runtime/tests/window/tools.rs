@@ -6,7 +6,9 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use gpui::{AppContext, Entity, KeyUpEvent, Keystroke, TestAppContext, VisualTestContext};
+use gpui::{
+    AppContext, Entity, KeyUpEvent, Keystroke, Modifiers, TestAppContext, VisualTestContext,
+};
 use midi::Played;
 use plugin_host::{Plugins, ScanCache};
 use runtime::window::{DeviceAccess, Shell, bind_keys};
@@ -261,6 +263,30 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
     assert!(!window.playing());
 
     let keystroke = Keystroke::parse("a").unwrap();
+    window.cx.simulate_event(KeyUpEvent { keystroke });
+    window.until("the release of the key", |window| {
+        window.loudest(480) == 0.0
+    });
+}
+
+#[gpui::test]
+fn a_held_key_comes_up_with_ctrl_held_and_when_cmd_goes_down(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    // macOS sends no key up while cmd is held.
+    window.cx.simulate_keystrokes("a");
+    window.until("the note of the key", |window| window.loudest(480) > 0.1);
+    window.cx.simulate_modifiers_change(Modifiers::command());
+    window.until("the release as cmd goes down", |window| {
+        window.loudest(480) == 0.0
+    });
+    window.cx.simulate_modifiers_change(Modifiers::none());
+
+    window.cx.simulate_keystrokes("a");
+    window.until("the note of the key", |window| window.loudest(480) > 0.1);
+    // Ctrl went down while the key was held.
+    let keystroke = Keystroke::parse("ctrl-a").unwrap();
     window.cx.simulate_event(KeyUpEvent { keystroke });
     window.until("the release of the key", |window| {
         window.loudest(480) == 0.0
