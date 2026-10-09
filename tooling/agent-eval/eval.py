@@ -20,7 +20,11 @@ Earlier experiments, with their results next to this file:
 - `results-experiments.jsonl`: a gravity harp page, a generative source and a grain cloud built from scratch,
   and a composer that edits the pattern of a builder's acid bass; later a keyboard toy (`onKey`,
   notes held while a key is down), a MIDI arpeggiator (`onMidi`, played ahead with `at`) and a
-  stutter of the music another app plays (`{"app": "Spotify"}`). Every run passed.
+  stutter of the music another app plays (`{"app": "Spotify"}`). Every run passed. Probes of
+  what a composer asks without building: playing a track from the computer keys went from
+  rebuilding the synth (0/2) to pointing at cmd-K (2/2); sending the sound to Zoom points at the
+  output device (2/2); a MIDI controller's knobs on the pad's filter builds a filter of its own
+  (0/2), as no knob of the app can learn a controller.
 - `results-ui.jsonl`: the `ui-*` scenarios, cards and pages from short prompts, with the doc
   commit each ran on. How they look is judged from screenshots (`cargo run -p runtime --example
   screenshot`); `fill` is the share of its page a page uses (`fill.py`). Before a page got its
@@ -375,6 +379,13 @@ def check_keys_composer(folder: Path) -> dict:
             "no project tool": not project_tools(folder), "no problems": no_problems(folder)}
 
 
+def check_untouched(folder: Path) -> dict:
+    # A question the app answers by itself: the agent says how, and builds nothing.
+    return {"no project tool": not project_tools(folder),
+            "pad keeps the synth": instruments(folder).get("pad") == "instrument.synth",
+            "no problems": no_problems(folder)}
+
+
 def check_generative(folder: Path) -> dict:
     tools = project_tools(folder)
     tool = instruments(folder).get("pad")
@@ -446,6 +457,11 @@ SCENARIOS = {
                      "and stutters it; the mouse sets how fast and how much."),
     "keys-composer": (setup_tape_builder, check_keys_composer,
                       "I want to play the pad from my computer keyboard."),
+    # Probes: what an agent does with what the app has no feature for, or one it has.
+    "cc-composer": (setup_tape_builder, check_untouched,
+                    "I want the knobs of my MIDI controller to move the pad's filter."),
+    "zoom-composer": (setup_tape_builder, check_untouched,
+                      "I want to send the sound of this project into a Zoom call."),
     "experiment-builder": (setup_tape_builder, check_experiment,
                            "Turn this project into an interactive sound toy instead of a song, "
                            "just one screen and no timeline: a 'gravity harp'. I drop balls "
