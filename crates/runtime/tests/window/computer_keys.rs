@@ -40,7 +40,7 @@ fn a_key_holds_a_note_of_the_track_until_it_comes_up_and_does_nothing_else(
     cx: &mut gpui::TestAppContext,
 ) {
     let mut opened = opened(cx);
-    opened.keys("cmd-k");
+    opened.keys("secondary-k");
     assert!(keys_are_on(&mut opened));
     opened.settle();
     assert_eq!(peak(&opened.render(4_800)), 0.0);
@@ -67,7 +67,7 @@ fn a_key_holds_a_note_of_the_track_until_it_comes_up_and_does_nothing_else(
     );
 
     // Off again, `a` is the arrangement's.
-    opened.keys("cmd-k");
+    opened.keys("secondary-k");
     assert!(!keys_are_on(&mut opened));
     opened.keys("a");
     assert!(shows_lanes(&mut opened));
@@ -77,7 +77,7 @@ fn a_key_holds_a_note_of_the_track_until_it_comes_up_and_does_nothing_else(
 #[gpui::test]
 fn a_held_key_ends_when_cmd_goes_down(cx: &mut gpui::TestAppContext) {
     let mut opened = opened(cx);
-    opened.keys("cmd-k");
+    opened.keys("secondary-k");
     opened.settle();
     opened.keys("a");
     opened.settle();
@@ -93,7 +93,7 @@ fn a_held_key_ends_when_cmd_goes_down(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn a_take_records_the_keys_and_space_and_r_stay_the_window_s(cx: &mut gpui::TestAppContext) {
     let mut opened = opened(cx);
-    opened.keys("cmd-k");
+    opened.keys("secondary-k");
     opened.keys("space");
     opened.settle();
     assert!(opened.playhead().playing);

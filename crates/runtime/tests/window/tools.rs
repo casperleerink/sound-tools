@@ -286,7 +286,7 @@ fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestA
     let Some(mut window) = open(cx, &EXPERIMENT) else {
         return;
     };
-    window.cx.simulate_keystrokes("cmd-k");
+    window.cx.simulate_keystrokes("secondary-k");
     window.cx.simulate_keystrokes("a");
     window.until("the key on the page", |window| {
         window.record("keys")["count"] == 1
@@ -405,7 +405,7 @@ fn a_tool_on_the_track_hears_the_computer_keys(cx: &mut TestAppContext) {
     let Some(mut window) = open(cx, &TWO_TRACKS) else {
         return;
     };
-    window.cx.simulate_keystrokes("cmd-k");
+    window.cx.simulate_keystrokes("secondary-k");
     window.poll();
     window.poll();
     window.cx.simulate_keystrokes("a");
