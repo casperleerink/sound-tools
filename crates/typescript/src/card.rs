@@ -8,8 +8,8 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, FocusHandle,
     KeyDownEvent, KeyUpEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, WeakEntity, Window, canvas, div, fill, point,
-    prelude::*, px, size,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, WeakEntity, Window, canvas, div,
+    fill, point, prelude::*, px, size,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -23,8 +23,8 @@ use sound_ui::{ActiveTheme, ControlEdit, Session, weak_callback};
 
 use crate::bun::PageSize;
 use crate::tools::{Field, ToolInfo, Unit};
-use crate::tree::{self, Controls, KnobNode};
-use crate::window::{Live, Surface, state_of};
+use crate::tree::{self, CanvasNode, KnobNode, Node, Shape};
+use crate::window::{Live, Surface, edit_record, state_of};
 
 pub(crate) struct TypeScriptCard {
     live: Entity<Live>,
@@ -172,19 +172,44 @@ struct Drawing<'a, 'b> {
 }
 
 impl Drawing<'_, '_> {
+    /// Draws `node`. `index` tells siblings apart, so every element that needs an id gets its
+    /// own.
+    fn draw(&mut self, node: &Node, index: &[usize]) -> AnyElement {
+        match node {
+            Node::Text { text } => SharedString::from(text.clone()).into_any_element(),
+            Node::Knob(knob) => self.knob(knob),
+            Node::Steps { path, max, playing } => self.steps(path, *max, playing.as_deref()),
+            Node::Meter { watch, label } => self.meter(watch, label.as_deref()),
+            Node::Sample { path, label } => self.sample(path, label.as_deref()),
+            Node::Pad { x, y, size } => self.pad(x, y, size.unwrap_or(120.0)),
+            Node::Canvas(canvas) => self.canvas(canvas),
+            Node::Div {
+                style,
+                on_click,
+                children,
+            } => {
+                let children: Vec<AnyElement> = (children.iter().enumerate())
+                    .map(|(position, child)| self.draw(child, &[index, &[position]].concat()))
+                    .collect();
+                let element = style.apply(div()).children(children);
+                let Some(handler) = *on_click else {
+                    return element.into_any_element();
+                };
+                let path: Vec<String> = index.iter().map(usize::to_string).collect();
+                element
+                    .id(ElementId::Name(format!("div-{}", path.join("-")).into()))
+                    .cursor_pointer()
+                    .on_click(
+                        (self.cx).listener(move |view, _, _, cx| view.event(handler, None, cx)),
+                    )
+                    .into_any_element()
+            }
+        }
+    }
+
     /// Where the live control `name` was put last, and its range.
     fn live_value(&self, name: &str) -> Option<(f32, f32, f32)> {
         self.live.read(self.cx).live_value(self.card, name)
-    }
-}
-
-impl Controls for Drawing<'_, '_> {
-    fn clickable(&mut self, element: Div, id: ElementId, handler: usize) -> AnyElement {
-        element
-            .id(id)
-            .cursor_pointer()
-            .on_click((self.cx).listener(move |view, _, _, cx| view.event(handler, None, cx)))
-            .into_any_element()
     }
 
     fn knob(&mut self, knob: &KnobNode) -> AnyElement {
@@ -290,7 +315,6 @@ impl Controls for Drawing<'_, '_> {
                 })
                 .cursor_pointer()
                 .on_click(self.cx.listener(move |view, _, _, cx| {
-                    let id = view.id.clone();
                     let label = if is_on {
                         "Turn a step off"
                     } else {
@@ -302,15 +326,15 @@ impl Controls for Drawing<'_, '_> {
                     if let Some(item) = list.get_mut(step) {
                         *item = tree::decimal(if is_on { off } else { on });
                     }
-                    view.session.update(cx, |session, cx| {
-                        session.edit(cx, |project| {
-                            let mut edit = project.begin(label);
-                            project.update_json(&mut edit, &id, |state| {
-                                tree::set_field(state, &path, Value::Array(list));
-                            })?;
-                            project.finish(edit)
-                        })
-                    });
+                    edit_record(
+                        &view.session,
+                        &view.id,
+                        label,
+                        |state| {
+                            tree::set_field(state, &path, Value::Array(list));
+                        },
+                        cx,
+                    );
                 }))
         });
         div()
@@ -344,18 +368,16 @@ impl Controls for Drawing<'_, '_> {
                 choose_file(&session, "Choose a sound", cx, move |view, file, cx| {
                     let session = view.session.clone();
                     import_file(&session, file, cx, move |view, imported, cx| {
-                        let (id, name) = (view.id.clone(), imported.asset.to_string());
-                        view.session.update(cx, |session, cx| {
-                            session.edit(cx, |project| {
-                                let mut edit = project.begin("Choose a sound");
-                                project.update_json(&mut edit, &id, |state| {
-                                    if let Some(fields) = state.as_object_mut() {
-                                        fields.insert(path, name.into());
-                                    }
-                                })?;
-                                project.finish(edit)
-                            })
-                        });
+                        let name = imported.asset.to_string();
+                        edit_record(
+                            &view.session,
+                            &view.id,
+                            "Choose a sound",
+                            |state| {
+                                tree::set_field(state, &path, name.into());
+                            },
+                            cx,
+                        );
                     });
                 });
             }));
@@ -398,18 +420,18 @@ impl Controls for Drawing<'_, '_> {
         meter.into_any_element()
     }
 
-    fn canvas(&mut self, node: &tree::CanvasNode) -> AnyElement {
+    fn canvas(&mut self, node: &CanvasNode) -> AnyElement {
         let theme = self.cx.theme();
         let background = node.background.map_or(theme.gray_200, |color| color.0);
-        let drawn: Vec<Drawn> = node.shapes.iter().map(Drawn::of).collect();
+        let shapes = node.shapes.clone();
         let view = self.cx.entity().downgrade();
         let (on_press, on_drag) = (node.on_press, node.on_drag);
         canvas(
             |_, _, _| {},
             move |bounds: Bounds<Pixels>, (), window: &mut Window, _: &mut App| {
                 window.paint_quad(fill(bounds, background).corner_radii(px(6.)));
-                for shape in &drawn {
-                    shape.paint(bounds.origin, window);
+                for shape in &shapes {
+                    paint(shape, bounds.origin, window);
                 }
                 if on_press.is_some() || on_drag.is_some() {
                     let held = Held::Canvas(on_drag);
@@ -521,85 +543,45 @@ fn across_and_down(bounds: Bounds<Pixels>, position: Point<Pixels>) -> (f32, f32
     (across.clamp(0.0, 1.0), down.clamp(0.0, 1.0))
 }
 
-/// A shape of a canvas, ready to paint.
-enum Drawn {
-    Quad {
-        bounds: Bounds<Pixels>,
-        radius: Pixels,
-        color: gpui::Hsla,
-    },
-    Line {
-        from: Point<Pixels>,
-        to: Point<Pixels>,
-        width: Pixels,
-        color: gpui::Hsla,
-    },
-}
-
-impl Drawn {
-    fn of(shape: &tree::Shape) -> Self {
-        match shape {
-            tree::Shape::Circle {
-                x,
-                y,
-                radius,
-                color,
-            } => Self::Quad {
-                bounds: Bounds::new(
-                    point(px(x - radius), px(y - radius)),
-                    size(px(radius * 2.), px(radius * 2.)),
-                ),
-                radius: px(*radius),
-                color: color.0,
-            },
-            tree::Shape::Rect {
-                x,
-                y,
-                width,
-                height,
-                color,
-                radius,
-            } => Self::Quad {
-                bounds: Bounds::new(point(px(*x), px(*y)), size(px(*width), px(*height))),
-                radius: px(radius.unwrap_or(0.0)),
-                color: color.0,
-            },
-            tree::Shape::Line {
-                from,
-                to,
-                color,
-                width,
-            } => Self::Line {
-                from: point(px(from[0]), px(from[1])),
-                to: point(px(to[0]), px(to[1])),
-                width: px(width.unwrap_or(1.0)),
-                color: color.0,
-            },
-        }
-    }
-
-    fn paint(&self, origin: Point<Pixels>, window: &mut Window) {
-        match self {
-            Self::Quad {
-                bounds,
-                radius,
-                color,
-            } => {
-                let bounds = Bounds::new(origin + bounds.origin, bounds.size);
-                window.paint_quad(fill(bounds, *color).corner_radii(*radius));
-            }
-            Self::Line {
-                from,
-                to,
-                width,
-                color,
-            } => {
-                let mut line = gpui::PathBuilder::stroke(*width);
-                line.move_to(origin + *from);
-                line.line_to(origin + *to);
-                if let Ok(path) = line.build() {
-                    window.paint_path(path, *color);
-                }
+/// Paints a shape of a canvas whose top left is at `origin`.
+fn paint(shape: &Shape, origin: Point<Pixels>, window: &mut Window) {
+    let mut quad = |x: f32, y: f32, width: f32, height: f32, radius: f32, color: tree::Color| {
+        let bounds = Bounds::new(origin + point(px(x), px(y)), size(px(width), px(height)));
+        window.paint_quad(fill(bounds, color.0).corner_radii(px(radius)));
+    };
+    match *shape {
+        Shape::Circle {
+            x,
+            y,
+            radius,
+            color,
+        } => quad(
+            x - radius,
+            y - radius,
+            radius * 2.,
+            radius * 2.,
+            radius,
+            color,
+        ),
+        Shape::Rect {
+            x,
+            y,
+            width,
+            height,
+            color,
+            radius,
+        } => quad(x, y, width, height, radius.unwrap_or(0.0), color),
+        Shape::Line {
+            from,
+            to,
+            color,
+            width,
+        } => {
+            let mut line = gpui::PathBuilder::stroke(px(width.unwrap_or(1.0)));
+            line.move_to(origin + point(px(from[0]), px(from[1])));
+            line.line_to(origin + point(px(to[0]), px(to[1])));
+            if let Ok(path) = line.build() {
+                window.paint_path(path, color.0);
             }
         }
     }
@@ -629,7 +611,7 @@ impl Render for TypeScriptCard {
                     card: self.card,
                     cx,
                 };
-                tree::draw(&node, &[], &mut drawing)
+                drawing.draw(&node, &[])
             }
             Some(Err(error)) => div()
                 .text_color(cx.theme().red)

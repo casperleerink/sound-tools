@@ -34,7 +34,7 @@ export interface ToggleField {
  */
 export interface ChoiceField<Option extends string | number = string | number> {
   kind: "choice";
-  options: readonly Option[];
+  options: readonly [Option, ...Option[]];
   default: Option;
   label?: string;
 }
@@ -63,23 +63,15 @@ export type Field = KnobField | ToggleField | ChoiceField | PatternField | Sampl
 export type Fields = Record<string, Field>;
 
 export const knob = (field: Omit<KnobField, "kind">): KnobField => ({ kind: "knob", ...field });
-export const toggle = (field: Omit<ToggleField, "kind">): ToggleField => ({
-  kind: "toggle",
-  ...field,
-});
+export const toggle = (field: Omit<ToggleField, "kind">): ToggleField => ({ kind: "toggle", ...field });
+/** `default` is one of `options`, which are at least one. */
 export const choice = <const Option extends string | number>(field: {
-  options: readonly Option[];
-  default: Option;
+  options: readonly [Option, ...Option[]];
+  default: NoInfer<Option>;
   label?: string;
 }): ChoiceField<Option> => ({ kind: "choice", ...field });
-export const pattern = (field: Omit<PatternField, "kind">): PatternField => ({
-  kind: "pattern",
-  ...field,
-});
-export const sample = (field: Omit<SampleField, "kind"> = {}): SampleField => ({
-  kind: "sample",
-  ...field,
-});
+export const pattern = (field: Omit<PatternField, "kind">): PatternField => ({ kind: "pattern", ...field });
+export const sample = (field: Omit<SampleField, "kind"> = {}): SampleField => ({ kind: "sample", ...field });
 
 // ---------------------------------------------------------------------------------------------
 // Controls: what the card plays and nothing saves, as a performer plays an instrument.
@@ -108,10 +100,7 @@ type ControlNames<C extends Controls, K extends Control["kind"]> = {
 }[keyof C] &
   string;
 
-export const live = (control: Omit<LiveControl, "kind">): LiveControl => ({
-  kind: "live",
-  ...control,
-});
+export const live = (control: Omit<LiveControl, "kind">): LiveControl => ({ kind: "live", ...control });
 export const trigger = (control: Omit<TriggerControl, "kind"> = {}): TriggerControl => ({
   kind: "trigger",
   ...control,
@@ -320,13 +309,14 @@ export const noise: () => Signal = call("noise");
  */
 export const delay = (x: Operand, ms: Operand, longest?: number): Signal =>
   new Signal("delay", longest === undefined ? [x, ms] : [x, ms, longest]);
+const filter =
+  (name: string) =>
+  (x: Operand, hz: Operand, q: Operand = Math.SQRT1_2): Signal =>
+    new Signal(name, [x, hz, q]);
 /** Filters. `q` is 0.707 when left out: no peak; higher rings at `hz`, up to 20. */
-export const lowpass = (x: Operand, hz: Operand, q: Operand = Math.SQRT1_2): Signal =>
-  new Signal("lowpass", [x, hz, q]);
-export const highpass = (x: Operand, hz: Operand, q: Operand = Math.SQRT1_2): Signal =>
-  new Signal("highpass", [x, hz, q]);
-export const bandpass = (x: Operand, hz: Operand, q: Operand = Math.SQRT1_2): Signal =>
-  new Signal("bandpass", [x, hz, q]);
+export const lowpass = filter("lowpass");
+export const highpass = filter("highpass");
+export const bandpass = filter("bandpass");
 /** `x` that follows changes slowly, in about `ms` milliseconds. */
 export const smooth: (x: Operand, ms: Operand) => Signal = call("smooth");
 /** An envelope from 0 to 1 that follows `gate`; times in ms, `sustain` 0 to 1. */
@@ -550,23 +540,28 @@ export interface Performer<C extends Controls> {
   release(pitch: number, options?: { at?: number }): void;
 }
 
-/** What the control loop of an instance gets each time it runs. */
-export interface Tick<State, C extends Controls, M> extends Performer<C> {
+/** What the control loop, the cards and the handlers of an instance get. */
+interface Instance<State, C extends Controls, M> extends Performer<C> {
+  /** The record as it is now. */
   state: State;
-  /** The last value of each `watch`, by name. */
-  watches: Record<string, number>;
+  /** What the control loop and the cards keep. A click may change it too; the card draws again after. */
   memory: M;
+  /** The last value of each `watch` of the sound, by name. A card draws again as they move. */
+  watches: Record<string, number>;
+}
+
+/** What the control loop of an instance gets each time it runs. */
+export interface Tick<State, C extends Controls, M> extends Instance<State, C, M> {
   /** Seconds since the last tick. */
   dt: number;
   /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
   time: number;
 }
 
-/** What `onKey` and `onMidi` get: what a tick gets, and `update`, as the composer plays them. */
-export interface Handler<State, C extends Controls, M> extends Omit<Tick<State, C, M>, "dt"> {
-  /** Changes the record as one undo step called `label`, as a card does. */
-  update(label: string, change: (state: State) => void): void;
-}
+/** What `onKey` and `onMidi` get: what a card gets, and the `time` of a tick. */
+export interface Handler<State, C extends Controls, M>
+  extends Card<State, C, M>,
+    Pick<Tick<State, C, M>, "time"> {}
 
 // ---------------------------------------------------------------------------------------------
 // Cards
@@ -599,13 +594,7 @@ export interface Style {
 }
 
 /** What a card or a page gets each time it draws. */
-export interface Card<State, C extends Controls = Controls, M = unknown> extends Performer<C> {
-  /** The record as it is now. */
-  state: State;
-  /** What the control loop keeps. A click may change it too; the card draws again after. */
-  memory: M;
-  /** The last value of each `watch` of the Hum, by name. The card draws again as they move. */
-  watches: Record<string, number>;
+export interface Card<State, C extends Controls = Controls, M = unknown> extends Instance<State, C, M> {
   /**
    * Changes the record as one undo step called `label`. `change` gets a copy to edit. A record
    * the tool does not accept is refused, and the window says why.
@@ -619,95 +608,62 @@ export interface Page<State, C extends Controls = Controls, M = unknown> extends
   size: { width: number; height: number };
 }
 
-/**
- * A knob. With `path`, it turns that field of the record, such as `rate`: a drag is smooth and
- * one undo step. With `live`, it plays a live control instead, which nothing saves. A double
- * click puts it at `default`.
- */
-export function Knob(props: {
-  path?: string;
-  live?: string;
-  label: string;
-  min: number;
-  max: number;
-  default: number;
-  unit?: Unit;
-}): Node {
-  return { type: "knob", ...props };
-}
-
-/**
- * A row of steps on a pattern of the record: a click turns a step on (to `max`, the pattern's
- * max when left out) or off (to its min). `playing` names a watch whose value is the step that
- * plays, which lights up.
- */
-export function Steps(props: { path: string; max?: number; playing?: string }): Node {
-  return { type: "steps", ...props };
-}
-
-/** The file of a sample field at `path`, and a button that opens a file to put there. */
-export function SampleChooser(props: { path: string; label?: string }): Node {
-  return { type: "sample", ...props };
-}
-
-/** A bar that shows a watch from 0 to 1, such as a level. */
-export function Meter(props: { watch: string; label?: string }): Node {
-  return { type: "meter", ...props };
-}
-
 /** A shape of a `Canvas`, in points from its top left. */
 export type Shape =
   | { kind: "circle"; x: number; y: number; radius: number; color: Color }
   | { kind: "rect"; x: number; y: number; width: number; height: number; color: Color; radius?: number }
   | { kind: "line"; from: [number, number]; to: [number, number]; color: Color; width?: number };
 
-/**
- * A surface to draw on and play: `shapes` are drawn in order. `onPress` and `onDrag` hear the
- * pointer, at `x` across and `y` down, from 0 to 1.
- */
-export function Canvas(props: {
-  width: number;
-  height: number;
-  shapes: Shape[];
-  background?: Color;
-  onPress?: (x: number, y: number) => void;
-  onDrag?: (x: number, y: number) => void;
-}): Node {
-  return { type: "canvas", ...props };
-}
-
-/** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
-export function Pad(props: { x: string; y: string; size?: number }): Node {
-  return { type: "pad", ...props };
+/** The props of each element of a card but `div`, by its type. */
+interface Elements {
+  knob: { path?: string; live?: string; label: string; min: number; max: number; default: number; unit?: Unit };
+  steps: { path: string; max?: number; playing?: string };
+  sample: { path: string; label?: string };
+  meter: { watch: string; label?: string };
+  pad: { x: string; y: string; size?: number };
+  canvas: {
+    width: number;
+    height: number;
+    shapes: Shape[];
+    background?: Color;
+    onPress?: (x: number, y: number) => void;
+    onDrag?: (x: number, y: number) => void;
+  };
 }
 
 export type Child = Node | string | number | boolean | null | undefined | Child[];
 
 export type Node =
   | { type: "div"; style?: Style; onClick?: () => void; children: Child[] }
-  | {
-      type: "knob";
-      path?: string;
-      live?: string;
-      label: string;
-      min: number;
-      max: number;
-      default: number;
-      unit?: Unit;
-    }
-  | { type: "steps"; path: string; max?: number; playing?: string }
-  | { type: "meter"; watch: string; label?: string }
-  | { type: "sample"; path: string; label?: string }
-  | { type: "pad"; x: string; y: string; size?: number }
-  | {
-      type: "canvas";
-      width: number;
-      height: number;
-      shapes: Shape[];
-      background?: Color;
-      onPress?: (x: number, y: number) => void;
-      onDrag?: (x: number, y: number) => void;
-    };
+  | { [Type in keyof Elements]: { type: Type } & Elements[Type] }[keyof Elements];
+
+const element =
+  <Type extends keyof Elements>(type: Type) =>
+  (props: Elements[Type]) => ({ type, ...props });
+
+/**
+ * A knob. With `path`, it turns that field of the record, such as `rate`: a drag is smooth and
+ * one undo step. With `live`, it plays a live control instead, which nothing saves. A double
+ * click puts it at `default`.
+ */
+export const Knob = element("knob");
+/**
+ * A row of steps on a pattern of the record: a click turns a step on (to `max`, the pattern's
+ * max when left out) or off (to its min). `playing` names a watch whose value is the step that
+ * plays, which lights up.
+ */
+export const Steps = element("steps");
+/** The file of a sample field at `path`, and a button that opens a file to put there. */
+export const SampleChooser = element("sample");
+/** A bar that shows a watch from 0 to 1, such as a level. */
+export const Meter = element("meter");
+/**
+ * A surface to draw on and play: `shapes` are drawn in order. `onPress` and `onDrag` hear the
+ * pointer, at `x` across and `y` down, from 0 to 1.
+ */
+export const Canvas = element("canvas");
+/** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
+export const Pad = element("pad");
 
 interface DivProps {
   style?: Style;
@@ -758,7 +714,6 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
     const rows: Node[] = [];
     // Toggles and triggers share one row, so a card fits its 144 points.
     const buttons: Node[] = [];
-    const record = state as Record<string, unknown>;
     for (const [name, field] of Object.entries(fields)) {
       const label = field.label ?? words(name);
       if (field.kind === "knob") {
@@ -770,7 +725,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
       } else if (field.kind === "sample") {
         rows.push(SampleChooser({ path: name, label }));
       } else if (field.kind === "toggle") {
-        const on = (record[name] as boolean | undefined) ?? field.default;
+        const on = (state[name] as boolean | undefined) ?? field.default;
         buttons.push(
           h("div", {
             style: on ? CHOSEN : BUTTON,
@@ -780,7 +735,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
           }, label),
         );
       } else {
-        const chosen = (record[name] as string | number | undefined) ?? field.default;
+        const chosen = (state[name] as string | number | undefined) ?? field.default;
         rows.push(
           h("div", { style: { direction: "row", gap: 4, align: "center" } },
             h("div", { style: { color: "#9ca3af" } }, label),

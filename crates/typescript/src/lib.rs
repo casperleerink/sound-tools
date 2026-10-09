@@ -139,12 +139,11 @@ fn define(
     loaded: &mut Loaded,
     define: impl FnOnce(Vec<JsonTool>) -> Vec<(String, String)>,
 ) -> Vec<Problem> {
-    let of_file = |file: &str, message: String| Problem {
-        path: format!("{FOLDER}/{file}"),
-        message,
-    };
     let mut problems: Vec<Problem> = (loaded.errors.iter())
-        .map(|error| of_file(&error.file, error.message.clone()))
+        .map(|error| Problem {
+            path: format!("{FOLDER}/{}", error.file),
+            message: error.message.clone(),
+        })
         .collect();
     let refused = define(
         loaded
@@ -157,10 +156,7 @@ fn define(
         let Some((_, message)) = refused.iter().find(|(name, _)| *name == info.name) else {
             return true;
         };
-        problems.push(of_file(
-            &info.file,
-            format!("tool {}: {message}", info.name),
-        ));
+        problems.push(info.problem(message));
         false
     });
     for info in &loaded.tools {
@@ -172,15 +168,10 @@ fn define(
                 .map_err(|error| format!("its page does not draw: {error}")),
             false => Ok(()),
         };
-        for message in [sound.map(|_| ()), card, page]
+        let failed = [sound.map(|_| ()), card, page]
             .into_iter()
-            .filter_map(Result::err)
-        {
-            problems.push(of_file(
-                &info.file,
-                format!("tool {}: {message}", info.name),
-            ));
-        }
+            .filter_map(Result::err);
+        problems.extend(failed.map(|message| info.problem(message)));
     }
     problems
 }

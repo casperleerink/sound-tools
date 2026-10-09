@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use sound_core::InstanceId;
+
 use crate::Midi;
 use crate::tools::ToolInfo;
 
@@ -47,7 +49,7 @@ pub(crate) enum Request<'a> {
     },
     Render {
         card: u64,
-        instance: &'a str,
+        instance: &'a InstanceId,
         tool: &'a str,
         state: serde_json::Value,
         /// The last value of each watch of the instance, by name.
@@ -55,16 +57,13 @@ pub(crate) enum Request<'a> {
         /// The size of the page, the whole window; `None` for a card.
         page: Option<PageSize>,
     },
-    /// A click, or a press or a drag on a canvas at `x` and `y` across and down, 0 to 1.
+    /// A click, or a press or a drag on a canvas `at` across and down, 0 to 1.
     Event {
         card: u64,
         /// The version of the tree that was clicked.
         version: u64,
         handler: usize,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        x: Option<f32>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        y: Option<f32>,
+        at: Option<(f32, f32)>,
     },
     /// One step of the control loop of every instance whose tool has one.
     Frame {
@@ -102,7 +101,7 @@ pub(crate) struct PageSize {
 /// An instance whose tool has a control loop, as it is now.
 #[derive(Serialize)]
 pub(crate) struct Looped<'a> {
-    pub instance: &'a str,
+    pub instance: &'a InstanceId,
     pub tool: &'a str,
     pub state: serde_json::Value,
     pub watches: BTreeMap<String, f32>,
@@ -124,47 +123,40 @@ pub(crate) enum Event {
     /// A card drew, or failed to.
     Tree {
         card: u64,
-        #[serde(default)]
         tree: Option<serde_json::Value>,
         /// What a click on it names, so it runs a handler of this tree and not of a newer one.
         #[serde(default)]
         version: u64,
-        #[serde(default)]
         error: Option<String>,
     },
     /// A card, a key or the MIDI keyboard changed the record of an instance.
     Edit {
-        instance: String,
+        instance: InstanceId,
         label: String,
         state: serde_json::Value,
     },
     /// A card or a control loop moved a live control of an instance, or fired a trigger when
     /// there is no value: at `at`, engine time in seconds, or at once.
     Control {
-        instance: String,
+        instance: InstanceId,
         name: String,
-        #[serde(default)]
         value: Option<f32>,
-        #[serde(default)]
         at: Option<f64>,
     },
     /// A card or a control loop played a note of an instance: a key held for `seconds` from
     /// `at`, engine time in seconds, or from now; `velocity` from 0 to 1. With no `seconds` it
     /// is held until its release.
     Note {
-        instance: String,
+        instance: InstanceId,
         pitch: u8,
         velocity: f32,
-        #[serde(default)]
         seconds: Option<f32>,
-        #[serde(default)]
         at: Option<f64>,
     },
     /// Lets go of a held note of an instance, at `at` or now.
     Release {
-        instance: String,
+        instance: InstanceId,
         pitch: u8,
-        #[serde(default)]
         at: Option<f64>,
     },
 }
@@ -214,23 +206,16 @@ pub(crate) struct LoadError {
     pub message: String,
 }
 
-/// The answer to a question, see [`Bun::ask`].
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum Answer {
+enum Line {
+    /// The answer to a question, see [`Bun::ask`].
     Answer {
         id: u64,
-        #[serde(default)]
         value: Option<serde_json::Value>,
-        #[serde(default)]
         error: Option<String>,
     },
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum Line {
-    Answer(Answer),
+    #[serde(untagged)]
     Event(Event),
 }
 
@@ -403,7 +388,7 @@ fn read(
             }
         };
         match serde_json::from_str::<Line>(&line) {
-            Ok(Line::Answer(Answer::Answer { id, value, error })) => {
+            Ok(Line::Answer { id, value, error }) => {
                 let answer = value.ok_or_else(|| error.unwrap_or_default());
                 let waiter =
                     (waiting.lock().ok()).and_then(|mut waiting| waiting.as_mut()?.remove(&id));

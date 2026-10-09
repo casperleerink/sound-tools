@@ -132,9 +132,7 @@ pub fn start_window(
         let (tools, slot) = (tools.clone(), slot.clone());
         move |session, id, frame, window, cx| {
             let tool = session.read(cx).project().tool_of(id)?;
-            if !tools.borrow().iter().any(|info| info.name == tool) {
-                return None;
-            }
+            find(&tools.borrow(), tool)?;
             let live = slot.borrow().clone()?;
             let (session, id) = (session.clone(), id.clone());
             let card = cx.new(|cx| TypeScriptCard::new(live, session, id, Some(frame), window, cx));
@@ -144,12 +142,7 @@ pub fn start_window(
     views.set_other_views(
         {
             let tools = tools.clone();
-            move |tool| {
-                tools
-                    .borrow()
-                    .iter()
-                    .any(|info| info.name == tool && info.page)
-            }
+            move |tool| find(&tools.borrow(), tool).is_some_and(|info| info.page)
         },
         move |session, id, window, cx| {
             let live = slot.borrow().clone()?;
@@ -168,9 +161,8 @@ pub fn start_window(
     });
     devices.offers_change(move || generation.get());
     devices.describe_others(move |project, id| {
-        let tool = project.tool_of(id)?;
         let tools = tools.borrow();
-        let info = tools.iter().find(|info| info.name == tool)?;
+        let info = find(&tools, project.tool_of(id)?)?;
         Some(DeviceLabel {
             key: key(&info.name).into(),
             name: info.title.clone().into(),
@@ -273,6 +265,11 @@ impl Live {
     }
 }
 
+/// The tool named `name`, as it last loaded.
+fn find<'a>(tools: &'a [ToolInfo], name: &str) -> Option<&'a ToolInfo> {
+    tools.iter().find(|info| info.name == name)
+}
+
 fn key(tool: &str) -> String {
     format!("{FOLDER}/{tool}")
 }
@@ -280,6 +277,23 @@ fn key(tool: &str) -> String {
 /// The `state` of the record of `id`.
 pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json::Value> {
     serde_json::from_str(&project.state_json(id)?).ok()
+}
+
+/// Changes the record of `id` as one undo step called `label`.
+pub(crate) fn edit_record(
+    session: &Entity<Session>,
+    id: &InstanceId,
+    label: &str,
+    change: impl FnOnce(&mut serde_json::Value),
+    cx: &mut App,
+) {
+    session.update(cx, |session, cx| {
+        session.edit(cx, |project| {
+            let mut edit = project.begin(label);
+            project.update_json(&mut edit, id, change)?;
+            project.finish(edit)
+        })
+    });
 }
 
 /// An instance of `tool` as its code gets it: its record and its watches as they are now, and
@@ -291,7 +305,7 @@ fn looped<'a>(
     tool: &'a str,
 ) -> Looped<'a> {
     Looped {
-        instance: id.as_str(),
+        instance: id,
         tool,
         state: state_of(project, id).unwrap_or_default(),
         watches: (project.watches(id).into_iter())
@@ -342,9 +356,7 @@ impl Live {
 
     /// The tool of a card, as it last loaded.
     pub(crate) fn info(&self, card: u64) -> Option<ToolInfo> {
-        let tool = &self.cards.get(&card)?.tool;
-        let tools = self.tools.borrow();
-        tools.iter().find(|info| info.name == *tool).cloned()
+        find(&self.tools.borrow(), &self.cards.get(&card)?.tool).cloned()
     }
 
     /// Where the live control `name` of the card's instance is, and its range: where it was
@@ -352,20 +364,16 @@ impl Live {
     pub(crate) fn live_value(&self, card: u64, name: &str) -> Option<(f32, f32, f32)> {
         let entry = self.cards.get(&card)?;
         let tools = self.tools.borrow();
-        let info = tools.iter().find(|info| info.name == entry.tool)?;
         let Some((
             _,
             Control::Live {
                 min, max, default, ..
             },
-        )) = info.control(name)
+        )) = find(&tools, &entry.tool)?.control(name)
         else {
             return None;
         };
-        let played = self
-            .played
-            .get(&entry.id)
-            .and_then(|played| played.get(name));
+        let played = (self.played.get(&entry.id)).and_then(|played| played.get(name));
         Some((played.copied().unwrap_or(*default), *min, *max))
     }
 
@@ -427,7 +435,7 @@ impl Live {
         entry.asked = true;
         self.bun.send(&Request::Render {
             card,
-            instance: entry.id.as_str(),
+            instance: &entry.id,
             tool,
             state,
             watches: &entry.watches,
@@ -447,20 +455,52 @@ impl Live {
         self.render(card, cx);
     }
 
-    /// A click on an element of the card, or a press or a drag on a canvas at `x` and `y`
-    /// across and down, 0 to 1.
+    /// A click on an element of the card, or a press or a drag on a canvas `at` across and
+    /// down, 0 to 1.
     pub(crate) fn event(&self, card: u64, handler: usize, at: Option<(f32, f32)>) {
         let Some(entry) = self.cards.get(&card) else {
             return;
         };
-        let (x, y) = (at.map(|at| at.0), at.map(|at| at.1));
         self.bun.send(&Request::Event {
             card,
             version: entry.version,
             handler,
-            x,
-            y,
+            at,
         });
+    }
+
+    /// Sends what `update` makes for the tool of instance `id` to its processor, as the
+    /// keyboard or a knob of a built-in tool would. Whether it was sent.
+    fn send_update(
+        &self,
+        id: &InstanceId,
+        update: impl FnOnce(&ToolInfo, &Session) -> Result<HumUpdate, String>,
+        cx: &mut App,
+    ) -> bool {
+        let Some(session) = self.session.upgrade() else {
+            return false;
+        };
+        let tools = self.tools.borrow();
+        let tool = session.read(cx).project().tool_of(id);
+        let Some(info) = tool.and_then(|tool| find(&tools, tool)) else {
+            return false;
+        };
+        let update = match update(info, session.read(cx)) {
+            Ok(update) => update,
+            Err(error) => {
+                eprintln!("error: {error}");
+                return false;
+            }
+        };
+        let processor = info.processor();
+        drop(tools);
+        session.update(cx, |session, cx| {
+            let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
+            if let Err(error) = sent {
+                session.report(error, cx);
+            }
+        });
+        true
     }
 
     /// Moves the live control `name` of instance `id` to `value`, or fires the trigger `name`
@@ -473,25 +513,20 @@ impl Live {
         at: Option<f64>,
         cx: &mut Context<Self>,
     ) {
-        let Some(session) = self.session.upgrade() else {
-            return;
-        };
-        let tools = self.tools.borrow();
-        let tool = session.read(cx).project().tool_of(id);
-        let Some(info) = tools.iter().find(|info| Some(info.name.as_str()) == tool) else {
-            return;
-        };
-        let update = match (info.control(name), value) {
-            (Some((index, Control::Live { .. })), Some(value)) => HumUpdate::Live { index, value },
-            (Some((index, Control::Trigger { .. })), None) => HumUpdate::Trigger {
+        let update = |info: &ToolInfo, session: &Session| match (info.control(name), value) {
+            (Some((index, Control::Live { .. })), Some(value)) => {
+                Ok(HumUpdate::Live { index, value })
+            }
+            (Some((index, Control::Trigger { .. })), None) => Ok(HumUpdate::Trigger {
                 index,
-                at: at.map(|at| frames_of(at, session.read(cx))),
-            },
-            _ => return eprintln!("error: {} has no control {name} that takes that", info.name),
+                at: at.map(|at| frames_of(at, session)),
+            }),
+            _ => Err(format!(
+                "{} has no control {name} that takes that",
+                info.name
+            )),
         };
-        let processor = info.processor();
-        drop(tools);
-        if let Some(value) = value {
+        if let (true, Some(value)) = (self.send_update(id, update, cx), value) {
             self.played
                 .entry(id.clone())
                 .or_default()
@@ -499,42 +534,21 @@ impl Live {
             // A pad or a knob of the card shows where it is, also while nothing else redraws.
             cx.notify();
         }
-        session.update(cx, |session, cx| {
-            let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
-            if let Err(error) = sent {
-                session.report(error, cx);
-            }
-        });
     }
 
     /// Plays a key of the voices of an instance, or lets go of one, as the keyboard would:
     /// `update` makes what the processor gets.
-    fn note(
-        &mut self,
-        id: &InstanceId,
-        update: impl FnOnce(&Session) -> HumUpdate,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(session) = self.session.upgrade() else {
-            return;
-        };
-        let tools = self.tools.borrow();
-        let tool = session.read(cx).project().tool_of(id);
-        let Some(info) = tools.iter().find(|info| Some(info.name.as_str()) == tool) else {
-            return;
-        };
-        if info.kind == ToolKind::Effect {
-            return eprintln!("error: {} is an effect, which plays no notes", info.name);
-        }
-        let processor = info.processor();
-        drop(tools);
-        let update = update(session.read(cx));
-        session.update(cx, |session, cx| {
-            let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
-            if let Err(error) = sent {
-                session.report(error, cx);
-            }
-        });
+    fn note(&self, id: &InstanceId, update: impl FnOnce(&Session) -> HumUpdate, cx: &mut App) {
+        self.send_update(
+            id,
+            |info, session| match info.kind {
+                ToolKind::Effect => {
+                    Err(format!("{} is an effect, which plays no notes", info.name))
+                }
+                ToolKind::Instrument | ToolKind::Source => Ok(update(session)),
+            },
+            cx,
+        );
     }
 
     /// A key of the computer keyboard went down or up on a card that has the keys.
@@ -542,15 +556,14 @@ impl Live {
         let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
             return;
         };
-        let id = entry.id.clone();
         let time = engine_time(&session, cx);
         let project = session.read(cx).project();
-        let Some(tool) = project.tool_of(&id) else {
+        let Some(tool) = project.tool_of(&entry.id) else {
             return;
         };
         self.bun.send(&Request::Key {
             time,
-            instance: looped(project, &self.edits, &id, tool),
+            instance: looped(project, &self.edits, &entry.id, tool),
             key,
             down,
         });
@@ -569,9 +582,7 @@ impl Live {
         let tools = self.tools.borrow();
         let project = session.read(cx).project();
         let instances: Vec<Looped> = (project.instances())
-            .filter(|(id, tool)| {
-                hears(id) && tools.iter().any(|info| info.name == *tool && info.midi)
-            })
+            .filter(|(id, tool)| hears(id) && find(&tools, tool).is_some_and(|info| info.midi))
             .map(|(id, tool)| looped(project, &self.edits, id, tool))
             .collect();
         if !instances.is_empty() {
@@ -591,38 +602,19 @@ impl Live {
         session.update(cx, |session, cx| session.report(message, cx));
     }
 
-    /// One frame of the window: the control loops run, and a card whose watches moved draws
-    /// again.
+    /// One frame of the window: the control loops run, a card whose watches moved draws
+    /// again, and every instance whose sample was read on its thread runs again, so it plays
+    /// it.
     fn frame(&mut self, cx: &mut Context<Self>) {
         self.run_loops(cx);
         self.look_at_watches(cx);
-        self.take_samples(cx);
-    }
-
-    /// Runs the behaviour of every instance whose sample was read on its thread again, so it
-    /// plays it.
-    fn take_samples(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
         let read = crate::samples::take_read(session.read(cx).project().assets());
-        if read.is_empty() {
-            return;
+        if !read.is_empty() {
+            session.update(cx, |session, cx| session.rebind(&read, cx));
         }
-        session.update(cx, |session, cx| {
-            let failed = session.background(cx, |project| {
-                // One deleted while its sample was read has nothing to play it.
-                (read.iter())
-                    .filter_map(|id| {
-                        project.tool_of(id)?;
-                        project.rebind(id).err()
-                    })
-                    .collect::<Vec<_>>()
-            });
-            for error in failed {
-                session.report(error, cx);
-            }
-        });
     }
 
     /// Runs the control loop of every instance whose tool has one, cards or not.
@@ -645,7 +637,7 @@ impl Live {
         // An instance that is gone, which an undo may bring back at its defaults.
         self.played.retain(|id, _| project.tool_of(id).is_some());
         let looped: Vec<Looped> = (project.instances())
-            .filter(|(_, tool)| tools.iter().any(|info| info.name == *tool && info.tick))
+            .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.tick))
             .map(|(id, tool)| looped(project, &self.edits, id, tool))
             .collect();
         if !looped.is_empty() {
@@ -674,10 +666,7 @@ impl Live {
             if watches != entry.watches {
                 entry.watches = watches;
                 // The control loop draws the card of its tool after every step anyway.
-                let ticks = tools
-                    .iter()
-                    .any(|info| info.name == entry.tool && info.tick);
-                if !ticks {
+                if !find(&tools, &entry.tool).is_some_and(|info| info.tick) {
                     moved.push(*card);
                 }
             }
@@ -696,14 +685,9 @@ impl Live {
             Event::Loaded(loaded) => self.loaded(loaded, cx),
             Event::Framed => self.frame_out = None,
             Event::Failed { tool, message } => {
-                let file = (self.tools.borrow().iter())
-                    .find(|info| info.name == tool)
-                    .map(|info| info.file.clone());
-                if let Some(file) = file {
-                    self.problems.push(Problem {
-                        path: format!("{FOLDER}/{file}"),
-                        message: format!("tool {tool}: {message}"),
-                    });
+                let problem = find(&self.tools.borrow(), &tool).map(|info| info.problem(message));
+                if let Some(problem) = problem {
+                    self.problems.push(problem);
                     self.report(cx);
                 }
             }
@@ -736,65 +720,44 @@ impl Live {
                 let Some(session) = self.session.upgrade() else {
                     return;
                 };
-                let id = match InstanceId::new(&instance) {
-                    Ok(id) => id,
-                    Err(error) => return eprintln!("error: {error}"),
-                };
                 // Heard, applied or not: Bun starts from the record here again.
-                *self.edits.entry(id.clone()).or_default() += 1;
-                session.update(cx, |session, cx| {
-                    session.edit(cx, |project| {
-                        let mut edit = project.begin(&label);
-                        project.update_json(&mut edit, &id, |old| *old = state)?;
-                        project.finish(edit)
-                    })
-                });
+                *self.edits.entry(instance.clone()).or_default() += 1;
+                edit_record(&session, &instance, &label, |old| *old = state, cx);
             }
             Event::Control {
                 instance,
                 name,
                 value,
                 at,
-            } => match InstanceId::new(&instance) {
-                Ok(id) => self.control(&id, &name, value, at, cx),
-                Err(error) => eprintln!("error: {error}"),
-            },
+            } => self.control(&instance, &name, value, at, cx),
             Event::Note {
                 instance,
                 pitch,
                 velocity,
                 seconds,
                 at,
-            } => match InstanceId::new(&instance) {
-                Ok(id) => self.note(
-                    &id,
-                    |session| HumUpdate::Note {
-                        pitch: Pitch::nearest(i64::from(pitch)),
-                        velocity: Velocity::nearest(
-                            (velocity.clamp(0.0, 1.0) * 127.0).round() as i64
-                        ),
-                        at: at.map(|at| frames_of(at, session)),
-                        frames: seconds.map(|seconds| frames_of(f64::from(seconds), session)),
-                    },
-                    cx,
-                ),
-                Err(error) => eprintln!("error: {error}"),
-            },
+            } => self.note(
+                &instance,
+                |session| HumUpdate::Note {
+                    pitch: Pitch::nearest(i64::from(pitch)),
+                    velocity: Velocity::nearest((velocity.clamp(0.0, 1.0) * 127.0).round() as i64),
+                    at: at.map(|at| frames_of(at, session)),
+                    frames: seconds.map(|seconds| frames_of(f64::from(seconds), session)),
+                },
+                cx,
+            ),
             Event::Release {
                 instance,
                 pitch,
                 at,
-            } => match InstanceId::new(&instance) {
-                Ok(id) => self.note(
-                    &id,
-                    |session| HumUpdate::Release {
-                        pitch: Pitch::nearest(i64::from(pitch)),
-                        at: at.map(|at| frames_of(at, session)),
-                    },
-                    cx,
-                ),
-                Err(error) => eprintln!("error: {error}"),
-            },
+            } => self.note(
+                &instance,
+                |session| HumUpdate::Release {
+                    pitch: Pitch::nearest(i64::from(pitch)),
+                    at: at.map(|at| frames_of(at, session)),
+                },
+                cx,
+            ),
         }
         cx.notify();
     }
@@ -822,18 +785,12 @@ impl Live {
             }
         });
         let gone: Vec<ToolInfo> = (self.tools.borrow().iter())
-            .filter(|info| !loaded.tools.iter().any(|tool| tool.name == info.name))
+            .filter(|info| find(&loaded.tools, &info.name).is_none())
             .cloned()
             .collect();
-        for info in &gone {
-            problems.push(Problem {
-                path: format!("{FOLDER}/{}", info.file),
-                message: format!(
-                    "the tool {} is gone from the code; its records play as they did until the project opens again",
-                    info.name
-                ),
-            });
-        }
+        problems.extend(gone.iter().map(|info| {
+            info.problem("it is gone from the code; its records play as they did until the project opens again")
+        }));
         self.problems = problems;
         self.report(cx);
         *self.tools.borrow_mut() = gone.into_iter().chain(loaded.tools).collect();

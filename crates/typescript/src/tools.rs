@@ -17,13 +17,13 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
     Assets, BehaviourContext, BehaviourError, InputEndpoint, InstanceId, JsonTool, JsonToolDoc,
-    OutputEndpoint, ParameterInfo, ValueRange, Watch,
+    OutputEndpoint, ParameterInfo, Problem, ValueRange, Watch,
 };
 use sound_hum::{ArraySpec, Code, Hum, HumUpdate, Kind, Machine, Values, compile};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
 use crate::bun::Bun;
-use crate::samples;
+use crate::{FOLDER, samples};
 
 /// A tool as `host.ts` sends it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -83,34 +83,26 @@ pub(crate) enum Field {
         min: f32,
         max: f32,
         default: f32,
-        #[serde(default)]
         unit: Option<Unit>,
-        #[serde(default)]
         label: Option<String>,
     },
     Toggle {
         default: bool,
-        #[serde(default)]
         label: Option<String>,
     },
     Choice {
         options: Vec<Choice>,
         default: Choice,
-        #[serde(default)]
         label: Option<String>,
     },
     /// A sound under `assets/audio/`, by its file name, which the Hum reads as a list.
-    Sample {
-        #[serde(default)]
-        label: Option<String>,
-    },
+    Sample { label: Option<String> },
     /// A list of numbers, such as the steps of a sequence.
     Pattern {
         length: usize,
         min: f32,
         max: f32,
         default: f32,
-        #[serde(default)]
         label: Option<String>,
     },
 }
@@ -122,11 +114,9 @@ pub(crate) enum Control {
         min: f32,
         max: f32,
         default: f32,
-        #[serde(default)]
         label: Option<String>,
     },
     Trigger {
-        #[serde(default)]
         label: Option<String>,
     },
 }
@@ -214,6 +204,14 @@ impl ToolInfo {
                 voices: sound_hum::MAX_VOICES,
             },
             ToolKind::Source => Kind::Source,
+        }
+    }
+
+    /// A problem of the tool, listed under its file.
+    pub(crate) fn problem(&self, message: impl fmt::Display) -> Problem {
+        Problem {
+            path: format!("{FOLDER}/{}", self.file),
+            message: format!("tool {}: {message}", self.name),
         }
     }
 
