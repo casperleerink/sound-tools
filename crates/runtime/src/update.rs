@@ -181,12 +181,12 @@ pub struct Updater {
 }
 
 impl Updater {
-    /// The updater of this program, or `None` when it does not update: a dev build, a build
-    /// with `SOUND_TOOLS_NO_UPDATES` set (`tooling/install-lab.sh`), a release build that is
-    /// not the app (`cargo build --release` names the program `runtime`), and on macOS a
-    /// program outside a `.app`.
+    /// The updater of this program, or `None` when it does not update: a dev build, a program
+    /// started with `SOUND_TOOLS_NO_UPDATES` set (the lab app of `tooling/install-lab.sh`), a
+    /// release build that is not the app (`cargo build --release` names the program `runtime`),
+    /// and on macOS a program outside a `.app`.
     fn of_this_app(support: &Path) -> Option<Self> {
-        if cfg!(debug_assertions) || option_env!("SOUND_TOOLS_NO_UPDATES").is_some() {
+        if cfg!(debug_assertions) || std::env::var_os("SOUND_TOOLS_NO_UPDATES").is_some() {
             return None;
         }
         let program = dunce::canonicalize(std::env::current_exe().ok()?).ok()?;

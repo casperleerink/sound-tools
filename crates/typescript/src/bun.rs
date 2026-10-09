@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -258,7 +258,7 @@ impl Bun {
         // Before the project opens and before any window: its tools are registered from what
         // Bun loads first, so there is nothing to draw while it starts.
         #[allow(clippy::disallowed_methods)]
-        let mut child = Command::new(program)
+        let mut child = sound_core::process::background_command(program)
             .arg(host_script)
             .current_dir(folder)
             .stdin(Stdio::piped())
