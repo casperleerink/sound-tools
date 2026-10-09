@@ -75,6 +75,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      # The tests of project tools run their TypeScript in Bun: the version tooling/fetch-bun.sh
+      # pins for the app. Without it they pass without running.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       # Before the tests: they load the repository's own CLAP and VST 3 plugins, which are
       # dynamic libraries that `cargo test` does not build.
       - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
@@ -108,6 +113,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      # The tests of project tools run their TypeScript in Bun: the version tooling/fetch-bun.sh
+      # pins for the app. Without it they pass without running.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
       - run: cargo nextest run --workspace --locked
 
@@ -135,6 +145,10 @@ jobs:
         with:
           tool: cargo-nextest
       - run: cargo clippy --workspace --all-targets --locked
+      - if: github.event_name == 'push'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       - if: github.event_name == 'push'
         run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
       - if: github.event_name == 'push'
