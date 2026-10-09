@@ -29,7 +29,7 @@ const REPORT_CAPACITY: usize = 4096;
 
 /// One message from a keyboard, as far as this application cares.
 ///
-/// Everything else is left out on purpose: no other controller, no pressure per key, no
+/// Everything else is left out on purpose: no pressure per key, no program change, no
 /// channel. All inputs and all channels are merged.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Played {
@@ -48,7 +48,16 @@ pub enum Played {
     ModWheel(Amount),
     /// Channel pressure, also called aftertouch.
     Pressure(Amount),
+    /// Any other controller, such as a knob of a MIDI controller. No instrument plays it and
+    /// no take keeps it; a tool of the project hears it.
+    Control {
+        controller: u8,
+        value: u8,
+    },
 }
+
+/// Controllers from here on are channel mode messages, such as all notes off, not controls.
+const CHANNEL_MODE: u8 = 120;
 
 impl Played {
     /// Reads one MIDI message. `None` for anything this application does not use, and for
@@ -84,19 +93,39 @@ impl Played {
             MidiMessage::ChannelPressure(_, pressure) => {
                 Some(Self::Pressure(Amount::new(u8::from(pressure)).ok()?))
             }
+            MidiMessage::ControlChange(_, controller, value)
+                if u8::from(controller) < CHANNEL_MODE =>
+            {
+                Some(Self::Control {
+                    controller: u8::from(controller),
+                    value: u8::from(value),
+                })
+            }
             _ => None,
         }
     }
 
-    /// What goes to the instrument.
-    pub fn event(self) -> NoteEvent {
-        match self {
+    /// What goes to the instrument. `None` for a controller the note contract has no room for.
+    pub fn event(self) -> Option<NoteEvent> {
+        Some(match self {
             Self::On { pitch, velocity } => NoteEvent::On { pitch, velocity },
             Self::Off { pitch, .. } => NoteEvent::Off { pitch },
             Self::Pedal(value) => NoteEvent::Pedal(value),
             Self::Bend(bend) => NoteEvent::Bend(bend),
             Self::ModWheel(amount) => NoteEvent::ModWheel(amount),
             Self::Pressure(amount) => NoteEvent::Pressure(amount),
+            Self::Control { .. } => return None,
+        })
+    }
+
+    /// The message of a wheel or the pedal the note contract sends. `None` for a key.
+    pub(crate) fn of_event(event: NoteEvent) -> Option<Self> {
+        match event {
+            NoteEvent::Pedal(value) => Some(Self::Pedal(value)),
+            NoteEvent::Bend(bend) => Some(Self::Bend(bend)),
+            NoteEvent::ModWheel(amount) => Some(Self::ModWheel(amount)),
+            NoteEvent::Pressure(amount) => Some(Self::Pressure(amount)),
+            _ => None,
         }
     }
 }
@@ -325,8 +354,13 @@ impl Keys {
             Played::On { pitch, .. } => self.held[usize::from(pitch.number())] = true,
             Played::Off { pitch, .. } => self.held[usize::from(pitch.number())] = false,
             Played::Pedal(value) => self.pedal_is_down = value.is_down(),
-            Played::Bend(_) | Played::ModWheel(_) | Played::Pressure(_) => {
-                self.expression.follow(played.event());
+            Played::Bend(_)
+            | Played::ModWheel(_)
+            | Played::Pressure(_)
+            | Played::Control { .. } => {
+                if let Some(event) = played.event() {
+                    self.expression.follow(event);
+                }
             }
         }
     }
@@ -382,7 +416,9 @@ impl Processor for Keys {
         while let Ok(arrived) = self.input.peek().copied() {
             // The event buffer is full: the message waits in the ring for the next block, so
             // nothing a keyboard sent is ever lost on the way to the instrument.
-            if !event_outputs.push(Self::NOTES, 0, arrived.played.event()) {
+            if let Some(event) = arrived.played.event()
+                && !event_outputs.push(Self::NOTES, 0, event)
+            {
                 break;
             }
             if self.input.pop().is_err() {
