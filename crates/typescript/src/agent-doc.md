@@ -95,7 +95,7 @@ tool({
 TypeScript builds what a hand would repeat: a bank of combs is a `map`.
 
 ```ts
-const combs = [29.7, 37.1, 41.1, 43.7].map((ms) => {
+const combs: Signal[] = [29.7, 37.1, 41.1, 43.7].map((ms) => {
   const comb = feedback();
   comb.set(lowpass(delay(input.plus(comb.times(size)), ms), 5000));
   return comb;

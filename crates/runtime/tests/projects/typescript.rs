@@ -15,7 +15,7 @@ fn doc_example() -> String {
 }
 
 /// Combs whose number is a choice: `sound` builds a different Hum for each.
-const COMBS: &str = r#"import { choice, delay, feedback, input, knob, lowpass, mix, tool } from "./sdk";
+const COMBS: &str = r#"import { choice, delay, feedback, input, knob, lowpass, mix, tool, type Signal } from "./sdk";
 
 const TIMES = [29.7, 37.1, 41.1, 43.7, 31.3, 39.9, 45.1, 33.5];
 
@@ -30,7 +30,7 @@ tool({
     blend: knob({ min: 0, max: 1, default: 0.3 }),
   },
   sound: ({ size, combs, blend }) => {
-    const rings = TIMES.slice(0, combs).map((ms) => {
+    const rings: Signal[] = TIMES.slice(0, combs).map((ms) => {
       const comb = feedback();
       comb.set(lowpass(delay(input.plus(comb.times(size)), ms), 5000));
       return comb;
