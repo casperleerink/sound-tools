@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::instance::InstanceId;
+use crate::apps::AppSound;
 use crate::clock::TempoMap;
 
 /// The only project format this runtime reads and writes.
@@ -63,7 +64,8 @@ impl PortReference {
 }
 
 /// Where a saved connection starts: an output of an instance, `{"instance": "drone", "port":
-/// "audio"}`, or the device input, `{"device_input": 0}`.
+/// "audio"}`, the device input, `{"device_input": 0}`, or the sound of other apps, `{"app":
+/// "Music"}`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "SourceFields", into = "SourceFields")]
 pub enum SavedSource {
@@ -71,6 +73,8 @@ pub enum SavedSource {
     /// A channel of the device input, counted from 0: the first of a stereo port, as for
     /// [`SavedDestination::DeviceOutput`].
     DeviceInput(usize),
+    /// The sound of other apps, in stereo.
+    App(AppSound),
 }
 
 impl From<PortReference> for SavedSource {
@@ -90,6 +94,8 @@ struct SourceFields {
     port: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     device_input: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app: Option<AppSound>,
 }
 
 impl TryFrom<SourceFields> for SavedSource {
@@ -101,14 +107,22 @@ impl TryFrom<SourceFields> for SavedSource {
                 instance: Some(instance),
                 port: Some(port),
                 device_input: None,
+                app: None,
             } => Ok(Self::Output(PortReference { instance, port })),
             SourceFields {
                 instance: None,
                 port: None,
                 device_input: Some(channel),
+                app: None,
             } => Ok(Self::DeviceInput(channel)),
+            SourceFields {
+                instance: None,
+                port: None,
+                device_input: None,
+                app: Some(app),
+            } => Ok(Self::App(app)),
             _ => Err(
-                r#"a connection starts at an output, {"instance": ..., "port": ...}, or at the device input, {"device_input": 0}"#,
+                r#"a connection starts at an output, {"instance": ..., "port": ...}, at the device input, {"device_input": 0}, or at the sound of other apps, {"app": "Music"} or {"app": "all"}"#,
             ),
         }
     }
@@ -121,11 +135,19 @@ impl From<SavedSource> for SourceFields {
                 instance: Some(instance),
                 port: Some(port),
                 device_input: None,
+                app: None,
             },
             SavedSource::DeviceInput(channel) => Self {
                 instance: None,
                 port: None,
                 device_input: Some(channel),
+                app: None,
+            },
+            SavedSource::App(app) => Self {
+                instance: None,
+                port: None,
+                device_input: None,
+                app: Some(app),
             },
         }
     }
@@ -163,13 +185,5 @@ impl SavedConnection {
         let names = |port: &PortReference| &port.instance == id || port.instance.is_inside(id);
         matches!(&self.from, SavedSource::Output(output) if names(output))
             || matches!(&self.to, SavedDestination::Input(input) if names(input))
-    }
-}
-
-impl ProjectFile {
-    /// Whether a connection starts at the device input, so the input has to be open.
-    pub fn hears_device_input(&self) -> bool {
-        (self.connections.iter())
-            .any(|connection| matches!(connection.from, SavedSource::DeviceInput(_)))
     }
 }

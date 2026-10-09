@@ -1,12 +1,12 @@
-//! Audio input: the default input device of the system, and what it captured, on its way from
-//! the device's thread to whoever records it and to the engine.
+//! Audio input: an input device of the system, or a tap of the sound of other apps, and what it
+//! captured, on its way from the device's thread to whoever records it and to the engine.
 //!
 //! The device callback writes each buffer into two lock-free rings. The capture ring goes to a
 //! reader on an ordinary thread that writes takes to files. Each captured frame keeps the moment
 //! it was captured, on the clock of [`monotonic_nanos`], so a recorder can tell what the
 //! composer heard while it was played (see [`StreamTiming::frame_sounding_at`]). The live ring
-//! goes to the engine, which plays it into the `device_input` connections of a project, see
-//! [`LiveInput`].
+//! goes to the engine, which plays it into the `device_input` and `app` connections of a
+//! project, see [`LiveInput`].
 //!
 //! [`StreamTiming::frame_sounding_at`]: crate::StreamTiming::frame_sounding_at
 
@@ -16,9 +16,20 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtsan_standalone::nonblocking;
 
-use crate::device::{DeviceError, monotonic_nanos, nanos_of};
+use crate::apps::Tap;
+use crate::device::{DeviceError, chosen_or, monotonic_nanos, nanos_of};
 use crate::peaks::{keep_largest, loudest, take};
 use crate::processor::{AudioBuffer, MAX_BLOCK};
+
+/// Which live input a connection hears: the input device, or the sound of other apps, one
+/// input per app, see [`AppSound`](crate::AppSound).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InputId(pub(crate) u64);
+
+impl InputId {
+    /// The audio input of the system: a microphone or an interface.
+    pub const DEVICE: Self = Self(0);
+}
 
 /// How much input the ring holds for a reader that fell behind. A reader that is late by more
 /// than this loses frames, which [`CaptureReader::lost_frames`] counts and reads as silence.
@@ -35,19 +46,25 @@ struct Gap {
     frames: u64,
 }
 
-/// The default input device of the system and its default configuration.
+/// An input device and its default configuration.
 pub struct InputDevice {
     device: cpal::Device,
     config: cpal::StreamConfig,
+    /// What the sound of other apps is read through. It goes with the stream.
+    tap: Option<Tap>,
 }
 
 impl InputDevice {
-    /// The input device macOS has as its default, as set in the system settings. There is no
-    /// choice of device in the application.
-    pub fn default_input() -> Result<Self, DeviceError> {
-        let device = cpal::default_host()
-            .default_input_device()
+    /// The input device with the id `choice` keeps, see
+    /// [`DeviceChoice`](crate::DeviceChoice), or the default input of the system, as set in
+    /// its settings, when there is no choice or that device is not there.
+    pub fn open(choice: Option<&str>) -> Result<Self, DeviceError> {
+        let device = chosen_or(choice, |host| host.default_input_device())
             .ok_or(DeviceError::NoInputDevice)?;
+        Self::new(device, None)
+    }
+
+    pub(crate) fn new(device: cpal::Device, tap: Option<Tap>) -> Result<Self, DeviceError> {
         let supported = device.default_input_config()?;
         if supported.sample_format() != cpal::SampleFormat::F32 {
             return Err(DeviceError::UnsupportedSampleFormat(
@@ -57,6 +74,7 @@ impl InputDevice {
         Ok(Self {
             device,
             config: supported.config(),
+            tap,
         })
     }
 
@@ -77,41 +95,64 @@ impl InputDevice {
     /// stamped with when it was captured, and into the live input for the engine. Dropping the
     /// stream stops the device.
     pub fn start(self) -> Result<(InputStream, CaptureReader, LiveInput), DeviceError> {
-        let (mut writer, reader) = capture(self.sample_rate(), self.channels());
-        let (mut live_writer, live) = live_input(self.sample_rate(), self.channels());
+        let (writer, reader) = capture(self.sample_rate(), self.channels());
         let gone = reader.status();
+        let (stream, live) = self.start_with(Some((writer, gone)))?;
+        Ok((stream, reader, live))
+    }
+
+    /// Starts it for the engine alone, as the sound of other apps is: nothing records it.
+    pub fn start_live(self) -> Result<(InputStream, LiveInput), DeviceError> {
+        self.start_with(None)
+    }
+
+    fn start_with(
+        self,
+        capture: Option<(CaptureWriter, CaptureStatus)>,
+    ) -> Result<(InputStream, LiveInput), DeviceError> {
+        let (mut live_writer, live) = live_input(self.sample_rate(), self.channels());
+        let (mut writer, gone) = capture.unzip();
         // Sets the clock up here, not in the first callback.
         monotonic_nanos();
         let stream = self.device.build_input_stream(
             self.config,
             move |samples: &[f32], info: &cpal::InputCallbackInfo| {
-                let timestamp = info.timestamp();
-                let latency = timestamp
-                    .callback
-                    .saturating_duration_since(timestamp.capture);
-                let latency = u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX);
-                writer.write(samples, monotonic_nanos(), latency);
+                if let Some(writer) = &mut writer {
+                    let timestamp = info.timestamp();
+                    let latency = timestamp
+                        .callback
+                        .saturating_duration_since(timestamp.capture);
+                    let latency = u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX);
+                    writer.write(samples, monotonic_nanos(), latency);
+                }
                 live_writer.write(samples);
             },
             // cpal calls this from a thread of its own, not from the data callback.
             move |error: cpal::Error| {
-                if matches!(
-                    error.kind(),
-                    cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::StreamInvalidated
-                ) {
+                if let Some(gone) = &gone
+                    && matches!(
+                        error.kind(),
+                        cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::StreamInvalidated
+                    )
+                {
                     gone.0.gone.store(true, Ordering::Relaxed);
                 }
             },
             None,
         )?;
         stream.play()?;
-        Ok((InputStream { _stream: stream }, reader, live))
+        let stream = InputStream {
+            _stream: stream,
+            _tap: self.tap,
+        };
+        Ok((stream, live))
     }
 }
 
-/// A running input device. Dropping it stops the device.
+/// A running input device. Dropping it stops the device, and then removes the tap it read.
 pub struct InputStream {
     _stream: cpal::Stream,
+    _tap: Option<Tap>,
 }
 
 /// What both ends of a capture share: when its frames were captured, and how it goes.
@@ -394,9 +435,14 @@ impl LiveWriter {
             Err(_) => {}
         }
     }
+
+    /// Whether the engine let go of the live input at the other end.
+    pub fn is_abandoned(&self) -> bool {
+        self.producer.is_abandoned()
+    }
 }
 
-/// The end of the live ring in the engine: the input that plays into `device_input`
+/// The end of the live ring in the engine: the input that plays into `device_input` or `app`
 /// connections, at the sample rate of the engine. Give it to
 /// [`EngineControl::set_live_input`](crate::EngineControl::set_live_input).
 ///

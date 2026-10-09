@@ -197,8 +197,12 @@ impl TransportPill {
                 }
             }
             // An agent may connect the device input in `project.json`, or take it away, while
-            // the window runs.
-            if matches!(event, ProjectEvent::ProjectFileChanged) {
+            // the window runs. A connection that comes into the graph or leaves it, as its
+            // instance comes or goes, changes the problems.
+            if matches!(
+                event,
+                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged
+            ) {
                 pill.follow_input(cx);
             }
             // A deleted track is no longer armed.
@@ -654,13 +658,23 @@ impl TransportPill {
         match self.audio.opened(generation, opened, &assets) {
             None => {}
             Some(Ok((channels, live))) => {
-                self.recording.update(cx, |recording, cx| {
-                    recording.set_input_channels(Some(channels), cx)
-                });
+                let plays = live.sample_rate() == self.session.read(cx).project().sample_rate();
                 // The engine reads it while the input is open, whether a connection hears it
                 // or not, so it never falls behind.
                 self.session.update(cx, |session, cx| {
                     session.background(cx, |project| project.set_live_input(Some(live)))
+                });
+                // Opened for a connection alone, an input at another rate plays nothing. The
+                // problem of the connection says why, and the device closes. A track records
+                // at any rate.
+                let armed = self.recording.read(cx).armed().next().is_some();
+                let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
+                if !plays && !armed && !records {
+                    self.audio.give_up();
+                    return;
+                }
+                self.recording.update(cx, |recording, cx| {
+                    recording.set_input_channels(Some(channels), cx)
                 });
             }
             Some(Err(error)) => {
@@ -683,15 +697,16 @@ impl TransportPill {
         }
     }
 
-    /// The input is open while a track is armed, audio records or `project.json` connects the
-    /// device input, and closed otherwise, so the device is not held and macOS shows no
-    /// microphone in use. One that went away is closed and not opened again here: the next
-    /// arming or change of `project.json` opens the default input there is then.
+    /// The input is open while a track is armed, audio records or a `project.json` connection
+    /// in the graph hears the device input, and closed otherwise, so the device is not held and
+    /// macOS shows no microphone in use. One that failed or went away is closed and not opened
+    /// again here until something new wants it: the next arming, or a connection that comes,
+    /// opens the input there is then.
     fn follow_input(&mut self, cx: &mut Context<Self>) {
-        let armed = self.recording.read(cx).armed().next().is_some();
+        let armed: Vec<InstanceId> = self.recording.read(cx).armed().cloned().collect();
         let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
-        let heard = (self.session.read(cx).project().project_file()).hears_device_input();
-        if (armed || heard) && !self.audio.is_gone() {
+        let heard = self.session.read(cx).project().hears_device_input();
+        if self.audio.wants(armed, heard) && !self.audio.is_gone() {
             self.open_input(cx);
         } else if !records && self.audio.is_open_or_opening() {
             self.audio.close();

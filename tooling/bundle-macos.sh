@@ -81,8 +81,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<string>11.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Sound Tools hears other apps when a project connects their sound.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Sound Tools records audio from the default input of macOS onto the tracks you arm.</string>
+	<string>Sound Tools records audio from the input you choose onto the tracks you arm.</string>
 </dict>
 </plist>
 PLIST

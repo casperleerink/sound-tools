@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use sound_core::{
     AudioInput, AudioOutput, Connection, Engine, EngineConfig, EngineControl, EventInput,
-    EventOutput, GraphError, LiveInput, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor,
-    live_input,
+    EventOutput, GraphError, InputId, LiveInput, MAX_BLOCK, Ports, PrepareConfig, ProcessContext,
+    Processor, live_input,
 };
 
 const OUTPUT: AudioOutput = AudioOutput::new(0);
@@ -914,7 +914,7 @@ fn live_through(first: usize, input: LiveInput) -> (EngineControl, Engine) {
     edit.connect(Connection::to_device(through.id(), OUTPUT, 0))
         .unwrap();
     edit.commit().unwrap();
-    control.set_live_input(Some(input));
+    control.set_live_input(InputId::DEVICE, Some(input));
     engine.process_block(&mut [0.0; 2 * 64]);
     (control, engine)
 }

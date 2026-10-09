@@ -20,6 +20,13 @@ serde_path_to_error.workspace = true
 thiserror.workspace = true
 triple_buffer.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+objc2.workspace = true
+objc2-core-audio = { workspace = true, features = ["std", "AudioHardware", "objc2", "objc2-foundation"] }
+objc2-core-foundation = { workspace = true, features = ["std", "CFDictionary"] }
+objc2-foundation = { workspace = true, features = ["std", "NSArray", "NSDictionary", "NSObject", "NSString", "NSUUID", "NSValue"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",

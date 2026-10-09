@@ -15,7 +15,8 @@ use gpui::{
 };
 use plugin_host::WeakPlugins;
 use runtime::window::audio_input::{OpenInput, OpenedInput};
-use runtime::window::{Shell, TransportPill, bind_keys};
+use runtime::window::other_apps::AppSounds;
+use runtime::window::{DeviceAccess, Shell, TransportPill, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
@@ -231,7 +232,14 @@ pub(crate) fn open_project(
     engine: Engine,
     plugins: WeakPlugins,
 ) -> Opened<'_> {
-    open_project_with_input(cx, folder, project, engine, plugins, None)
+    open_project_with_device(
+        cx,
+        folder,
+        project,
+        engine,
+        plugins,
+        DeviceAccess::default(),
+    )
 }
 
 /// An audio input the window opens as its default input, with no device: two channels at
@@ -247,19 +255,28 @@ pub(crate) struct SimulatedInput {
     written: Arc<AtomicU64>,
     /// Times the window opened it.
     pub openings: Arc<AtomicU32>,
+    /// Times the window tried to, the ones that failed too.
+    attempts: Arc<AtomicU32>,
     /// Whether opening it fails, as a device that is in use or not allowed.
     pub fails: Arc<AtomicBool>,
+    /// Its sample rate, when not 48 kHz.
+    pub rate: Arc<AtomicU32>,
 }
 
 impl SimulatedInput {
     pub(crate) fn opener(&self) -> OpenInput {
         let input = self.clone();
         Arc::new(move || {
+            input.attempts.fetch_add(1, Ordering::Relaxed);
             if input.fails.load(Ordering::Relaxed) {
                 return Err(sound_core::DeviceError::NoInputDevice);
             }
-            let (writer, reader) = sound_core::capture(48_000, 2);
-            let (live_writer, live) = sound_core::live_input(48_000, 2);
+            let rate = match input.rate.load(Ordering::Relaxed) {
+                0 => 48_000,
+                rate => rate,
+            };
+            let (writer, reader) = sound_core::capture(rate, 2);
+            let (live_writer, live) = sound_core::live_input(rate, 2);
             *input.writer.lock().unwrap() = Some(writer);
             *input.live.lock().unwrap() = Some(live_writer);
             input.written.store(0, Ordering::Relaxed);
@@ -274,6 +291,10 @@ impl SimulatedInput {
 
     pub(crate) fn openings(&self) -> u32 {
         self.openings.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn attempts(&self) -> u32 {
+        self.attempts.load(Ordering::Relaxed)
     }
 
     /// Writes the input up to engine frame `until`: each frame from `sample(frame)`, left and
@@ -314,18 +335,81 @@ pub(crate) fn open_with_input(
     add_first_track(&mut project);
     fill(&mut project);
     let input = SimulatedInput::default();
-    let opener = Some(input.opener());
-    let opened = open_project_with_input(cx, folder, project, engine, plugins.downgrade(), opener);
+    let device = DeviceAccess {
+        open_input: Some(input.opener()),
+        ..DeviceAccess::default()
+    };
+    let plugins = plugins.downgrade();
+    let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
     (opened, input)
 }
 
-fn open_project_with_input(
+/// The sound of one app that runs or not, with no tap: two channels at 48 kHz, into which the
+/// test writes what the app would play.
+#[derive(Clone, Default)]
+pub(crate) struct SimulatedApp {
+    /// Its processes; none while it is not running.
+    processes: Arc<Mutex<Vec<u32>>>,
+    live: Arc<Mutex<Option<LiveWriter>>>,
+}
+
+impl SimulatedApp {
+    pub(crate) fn sounds(&self) -> AppSounds {
+        let (app, processes) = (self.clone(), self.processes.clone());
+        AppSounds {
+            open: Arc::new(move |name| {
+                if app.processes.lock().unwrap().is_empty() {
+                    return Err(sound_core::DeviceError::NoApp(name.clone().into()));
+                }
+                let (writer, live) = sound_core::live_input(48_000, 2);
+                *app.live.lock().unwrap() = Some(writer);
+                Ok((None, live))
+            }),
+            processes: Arc::new(move |_| processes.lock().unwrap().clone()),
+        }
+    }
+
+    /// The app starts, or quits with no processes.
+    pub(crate) fn set_processes(&self, processes: Vec<u32>) {
+        *self.processes.lock().unwrap() = processes;
+    }
+
+    /// Plays one stereo frame, `frames` times.
+    pub(crate) fn play(&self, frame: [f32; 2], frames: usize) {
+        if let Some(writer) = self.live.lock().unwrap().as_mut() {
+            writer.write(&frame.repeat(frames));
+        }
+    }
+
+    /// Whether the engine has the live input of its tap.
+    pub(crate) fn is_heard(&self) -> bool {
+        (self.live.lock().unwrap().as_ref()).is_some_and(|writer| !writer.is_abandoned())
+    }
+}
+
+/// A new project with one track, in a window that hears a simulated app.
+pub(crate) fn open_with_app(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedApp) {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, engine) = Engine::new(OFFLINE);
+    let (mut project, plugins) = open_or_create(folder.path(), control);
+    add_first_track(&mut project);
+    let app = SimulatedApp::default();
+    let device = DeviceAccess {
+        app_sounds: Some(app.sounds()),
+        ..DeviceAccess::default()
+    };
+    let plugins = plugins.downgrade();
+    let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
+    (opened, app)
+}
+
+fn open_project_with_device(
     cx: &mut TestAppContext,
     folder: TempDir,
     project: Project,
     engine: Engine,
     plugins: WeakPlugins,
-    input: Option<OpenInput>,
+    device: DeviceAccess,
 ) -> Opened<'_> {
     cx.update(sound_ui::init);
     let session = cx.new(|cx| Session::new(project, cx));
@@ -334,7 +418,7 @@ fn open_project_with_input(
         let (session, plugins) = (session.clone(), plugins.clone());
         move |window, cx| {
             let name = "Test device".into();
-            Shell::with_device(session, views(plugins), name, (None, input), window, cx)
+            Shell::with_device(session, views(plugins), name, device, window, cx)
         }
     });
     cx.run_until_parked();

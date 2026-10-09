@@ -573,6 +573,83 @@ fn a_take_ended_before_its_input_failed_to_open_lets_the_next_one_start(cx: &mut
     assert!(opened.is_recording(), "the record control did nothing");
 }
 
+/// The device input opens for a connection only once the connection is in the graph. One that
+/// fails to open is tried once, and again only when something new wants it, such as an arming.
+#[gpui::test]
+fn a_connection_opens_the_input_once_it_binds_and_a_failure_once(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    let utility = id("utility");
+    let port = PortReference::new(&utility, "audio");
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.connect(SavedConnection {
+            from: SavedSource::DeviceInput(0),
+            to: SavedDestination::Input(port.clone()),
+        });
+        project.commit("Hear the input", changes)
+    });
+    opened.settle();
+    assert_eq!(input.attempts(), 0, "the utility is not there yet");
+
+    input
+        .fails
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.create(utility.clone(), UtilityState::default());
+        changes.connect(SavedConnection::to_device(port.clone(), 0));
+        project.commit("Add a utility", changes)
+    });
+    for _ in 0..5 {
+        opened.settle();
+    }
+    assert_eq!(input.attempts(), 1);
+    assert!(opened.notice().is_some(), "the failure is told");
+
+    input
+        .fails
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    arm(&mut opened, "voice");
+    assert_eq!((input.attempts(), input.openings()), (2, 1));
+}
+
+/// An input at another rate than the output plays nothing for a connection: it closes, the
+/// problem of the connection says why, and it is not opened again.
+#[gpui::test]
+fn an_input_at_another_rate_closes_when_only_a_connection_hears_it(cx: &mut TestAppContext) {
+    let (mut opened, input) = open(cx);
+    input
+        .rate
+        .store(44_100, std::sync::atomic::Ordering::Relaxed);
+    let utility = id("utility");
+    let port = PortReference::new(&utility, "audio");
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.create(utility.clone(), UtilityState::default());
+        changes.connect(SavedConnection::to_device(port.clone(), 0));
+        changes.connect(SavedConnection {
+            from: SavedSource::DeviceInput(0),
+            to: SavedDestination::Input(port.clone()),
+        });
+        project.commit("Hear the input", changes)
+    });
+    for _ in 0..5 {
+        opened.settle();
+    }
+    assert_eq!(input.attempts(), 1);
+    let recording = recording(&mut opened);
+    let channels = opened.cx.read(|cx| recording.read(cx).input_channels());
+    assert_eq!(channels, None, "the input is closed");
+    let problems = opened.project(|project| project.problems());
+    let expected = "connections[1]: not heard, because the audio input runs at 44100 Hz";
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.message.starts_with(expected)),
+        "{problems:?}"
+    );
+}
+
 /// `project.json` connects the device input into a Utility at the top that plays on the device:
 /// the window opens the input with no track armed and the engine plays it live. A take records
 /// from the same open input as before, and the input closes only once nothing needs it.

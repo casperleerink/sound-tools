@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use crate::input::InputId;
 use crate::processor::{
     AudioBuffer, CHANNELS, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
 };
@@ -22,10 +23,10 @@ pub struct NodeId(pub(crate) u64);
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Source {
     Node(NodeId, OutputPort),
-    /// The first device input channel of an audio port. Its left side hears this channel and
-    /// its right side the next one, or this one again on an input that has no next one. See
-    /// [`LiveInput`](crate::LiveInput).
-    DeviceInput(usize),
+    /// A live input, from the channel of it that goes to the left side of an audio port. The
+    /// right side hears the next channel, or this one again on an input that has no next one.
+    /// See [`LiveInput`](crate::LiveInput).
+    Input(InputId, usize),
 }
 
 /// Where a connection ends.
@@ -65,7 +66,7 @@ impl Connection {
 
     pub fn from_device(channel: usize, destination: NodeId, input: impl Into<InputPort>) -> Self {
         Self {
-            source: Source::DeviceInput(channel),
+            source: Source::Input(InputId::DEVICE, channel),
             destination: Destination::Node(destination, input.into()),
         }
     }
@@ -74,7 +75,7 @@ impl Connection {
     pub(crate) fn source_node(&self) -> Option<NodeId> {
         match self.source {
             Source::Node(node, _) => Some(node),
-            Source::DeviceInput(_) => None,
+            Source::Input(..) => None,
         }
     }
 }
@@ -203,7 +204,7 @@ impl Graph {
         let output = match connection.source {
             // How many channels the input has is known only once it opens. A channel it does
             // not have is silence.
-            Source::DeviceInput(_) => Carries::Audio,
+            Source::Input(..) => Carries::Audio,
             Source::Node(id, port) => {
                 let source = self.node(id)?;
                 let unknown_output = || GraphError::UnknownOutput {
@@ -308,7 +309,8 @@ impl Graph {
     pub(crate) fn describe(&self, connection: &Connection) -> String {
         let source = match connection.source {
             Source::Node(id, output) => format!("{} {output:?}", self.name(id)),
-            Source::DeviceInput(channel) => format!("device input {channel}"),
+            Source::Input(InputId::DEVICE, channel) => format!("device input {channel}"),
+            Source::Input(..) => "the sound of other apps".to_string(),
         };
         match connection.destination {
             Destination::Node(id, input) => format!("{source} -> {} {input:?}", self.name(id)),
@@ -465,17 +467,17 @@ impl Graph {
             });
         }
 
-        // One buffer for each device input channel that is heard, after those of the steps.
+        // One buffer for each channel of a live input that is heard, after those of the steps.
         // The engine fills it at the start of every sub-block.
-        let heard: BTreeSet<usize> = (self.connections.iter())
+        let heard: BTreeSet<(InputId, usize)> = (self.connections.iter())
             .filter_map(|connection| match connection.source {
-                Source::DeviceInput(channel) => Some(channel),
+                Source::Input(input, channel) => Some((input, channel)),
                 Source::Node(..) => None,
             })
             .collect();
-        for channel in heard {
+        for (input, channel) in heard {
             let buffer = schedule.audio_outputs.len();
-            schedule.device_inputs.push((channel, buffer));
+            schedule.live_inputs.push((input, channel, buffer));
             schedule.audio_outputs.push(SILENT);
         }
 
@@ -493,10 +495,13 @@ impl Graph {
                         OutputPort::Events(index) => source.event_outputs.start + index,
                     }
                 }
-                Source::DeviceInput(channel) => {
-                    let mut inputs = schedule.device_inputs.iter();
+                Source::Input(input, channel) => {
+                    let mut inputs = schedule.live_inputs.iter();
                     // Every channel heard has its buffer, made above.
-                    let Some((_, buffer)) = inputs.find(|(heard, _)| *heard == channel) else {
+                    let heard = |(id, heard, _): &&(InputId, usize, usize)| {
+                        (*id, *heard) == (input, channel)
+                    };
+                    let Some((.., buffer)) = inputs.find(heard) else {
                         continue;
                     };
                     *buffer
@@ -543,7 +548,7 @@ impl Graph {
 
         // Which step writes each buffer, so the audio thread can walk from a step back to the
         // steps that feed it when it works out the leads, see `Engine::find_leads`. No step
-        // writes a buffer of the device input, so its entry names none.
+        // writes a buffer of a live input, so its entry names none.
         schedule.audio_producers = vec![usize::MAX; schedule.audio_outputs.len()];
         schedule.event_producers = vec![0; schedule.event_outputs.len()];
         for (index, step) in schedule.steps.iter().enumerate() {
@@ -589,9 +594,9 @@ pub(crate) struct Schedule {
     pub event_inputs: Vec<Box<dyn ErasedEventBuffer>>,
     /// Per device channel: the output buffers summed into it.
     pub device_sources: Vec<Vec<usize>>,
-    /// Each device input channel that is heard, with the buffer the engine fills with its
+    /// Each channel of a live input that is heard, with the buffer the engine fills with its
     /// stereo pair.
-    pub device_inputs: Vec<(usize, usize)>,
+    pub live_inputs: Vec<(InputId, usize, usize)>,
     /// Per audio output buffer and per event output buffer: the step that writes it.
     pub audio_producers: Vec<usize>,
     pub event_producers: Vec<usize>,

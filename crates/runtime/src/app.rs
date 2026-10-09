@@ -1,6 +1,6 @@
 //! The app on this machine, apart from its window: the projects it had open last, whether its
-//! left panel was open, a start of the app again on another project, and the command line tool
-//! for agents.
+//! left panel was open, the audio devices chosen, a start of the app again on another project,
+//! and the command line tool for agents.
 //!
 //! Only the window uses these. `--inspect`, `--render`, `--headless` and the tests never
 //! write the last project, so a test cannot change what the app opens next.
@@ -28,6 +28,10 @@ const MAX_RECENT_PROJECTS: usize = 8;
 
 /// One word, `open` or `closed`: the left panel of the window, for every project.
 const LEFT_PANEL_FILE: &str = "left-panel";
+
+/// The audio devices the composer chose, for every project. Never in a project, which must not
+/// change because it was opened on another computer.
+const AUDIO_DEVICES_FILE: &str = "audio-devices.json";
 
 /// The agent programs the sidebar downloads, such as `claude/2.1.286/claude`.
 const AGENTS_FOLDER: &str = "agents";
@@ -164,6 +168,34 @@ fn remember_project_in(support: &Path, folder: &Path) -> Result<()> {
     let mut text = lines.join(&b'\n');
     text.push(b'\n');
     std::fs::write(&file, text).with_context(|| format!("could not write {}", file.display()))
+}
+
+/// The output and the input device the composer chose on this machine, by their ids, see
+/// [`sound_core::DeviceChoice`]. `None` is the default device of the system.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ChosenDevices {
+    pub output: Option<String>,
+    pub input: Option<String>,
+}
+
+impl ChosenDevices {
+    /// What was chosen, or the defaults when nothing was or the file does not read.
+    pub fn read() -> Self {
+        let file = support_folder().map(|support| support.join(AUDIO_DEVICES_FILE));
+        let bytes = file.ok().and_then(|file| std::fs::read(file).ok());
+        bytes
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn remember(&self) -> Result<()> {
+        let support = support_folder()?;
+        std::fs::create_dir_all(&support)
+            .with_context(|| format!("could not make {}", support.display()))?;
+        let file = support.join(AUDIO_DEVICES_FILE);
+        std::fs::write(&file, serde_json::to_vec_pretty(self)?)
+            .with_context(|| format!("could not write {}", file.display()))
+    }
 }
 
 /// The file that remembers whether the left panel is open.

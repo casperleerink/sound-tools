@@ -27,6 +27,7 @@
 //!   Clip card, files dropped from the Finder, and adding an audio track.
 //! - `recording_audio`: arming audio tracks, the input select and recording them from a
 //!   simulated input.
+//! - `other_apps`: hearing another app that `project.json` connects.
 //! - `agent`: the agent sidebar in the left panel, with events fed by hand and no process.
 
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
@@ -52,6 +53,7 @@ mod lanes;
 mod limiter;
 mod modulation;
 mod notes;
+mod other_apps;
 mod piece;
 mod plugin_card;
 #[path = "../shared/plugin_hosts.rs"]

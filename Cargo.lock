@@ -6058,8 +6058,13 @@ version = "0.7.0"
 dependencies = [
  "cpal",
  "dunce",
+ "libc",
  "no_denormals",
  "notify",
+ "objc2 0.6.4",
+ "objc2-core-audio",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
  "proptest 1.11.0",
  "rtrb",
  "rtsan-standalone",
