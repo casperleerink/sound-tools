@@ -23,9 +23,10 @@ use std::time::Duration;
 use anyhow::Result;
 use arrangement::view::layout::RULER_HEIGHT;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding, MouseButton,
-    MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
-    WindowBounds, WindowOptions, actions, div, point, prelude::*, px, size,
+    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
+    KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, SharedString,
+    Subscription, Task, TitlebarOptions, WeakFocusHandle, Window, WindowBounds, WindowOptions,
+    actions, div, point, prelude::*, px, size,
 };
 use midi::{Latency, Lost};
 use plugin_host::{Plugins, WeakPlugins};
@@ -54,6 +55,7 @@ actions!(
     [
         TogglePlayback,
         ToggleRecording,
+        ToggleComputerKeys,
         Undo,
         Redo,
         FocusNext,
@@ -239,6 +241,15 @@ impl Shell {
         // leave it nowhere.
         cx.on_focus_lost(window, |shell, window, cx| {
             window.focus(&shell.focus_handle, cx)
+        })
+        .detach();
+        // A key the computer keys hold comes up in the app that has the keys now.
+        cx.observe_window_activation(window, |shell, window, cx| {
+            if !window.is_window_active() {
+                shell
+                    .transport
+                    .update(cx, TransportPill::let_go_of_computer_keys);
+            }
         })
         .detach();
         let slot = cx.try_global::<LeftPanelSlot>().cloned();
@@ -575,6 +586,40 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &ToggleRecording, _, cx| {
                 shell.transport.update(cx, TransportPill::toggle_recording)
             }))
+            .on_action(cx.listener(|shell, _: &ToggleComputerKeys, _, cx| {
+                shell
+                    .transport
+                    .update(cx, TransportPill::toggle_computer_keys)
+            }))
+            // Before the focused view hears it, so a key that plays does nothing else, such as
+            // `a` in the arrangement.
+            .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+                let keystroke = &event.keystroke;
+                let transport = &shell.transport;
+                if keys_are_free(window)
+                    && transport.update(cx, |pill, _| pill.computer_key_down(keystroke))
+                {
+                    cx.stop_propagation();
+                }
+            }))
+            // Wherever the focus went since its key went down.
+            .capture_key_up(cx.listener(|shell, event: &KeyUpEvent, _, cx| {
+                let key = &event.keystroke.key;
+                if shell
+                    .transport
+                    .update(cx, |pill, _| pill.computer_key_up(key))
+                {
+                    cx.stop_propagation();
+                }
+            }))
+            // macOS sends no key up while cmd is held.
+            .on_modifiers_changed(cx.listener(|shell, event: &ModifiersChangedEvent, _, cx| {
+                if event.modifiers.platform {
+                    shell
+                        .transport
+                        .update(cx, TransportPill::let_go_of_computer_keys);
+                }
+            }))
             .on_action(
                 cx.listener(|shell, _: &Undo, _, cx| shell.session.update(cx, Session::undo)),
             )
@@ -636,18 +681,31 @@ impl Render for Shell {
 
 /// The key context of the window root. Every binding of the window names it.
 const KEY_CONTEXT: &str = "Shell";
+/// The key context of a text field, which keeps the plain keys.
+const TEXT_INPUT: &str = "TextInput";
+
+/// Whether the plain keys are the window's: not while a text field or a tool of the project
+/// that hears keys has the focus. The same as the bindings of space and `r` say.
+fn keys_are_free(window: &Window) -> bool {
+    let keeps = |context: &gpui::KeyContext| {
+        context.contains(TEXT_INPUT) || context.contains(sound_typescript::KEY_CONTEXT)
+    };
+    !window.context_stack().iter().any(keeps)
+}
 
 /// The keys of the window. Space, record and undo belong to a focused text field first: there
 /// they are characters and cmd-z is not an undo of the project. Space and record also belong
 /// to a tool of the project that has the keys, which plays them. Tab moves the focus
-/// everywhere.
+/// everywhere. The computer keys are no bindings: they need the key going up as well, see the
+/// key listeners of [`Shell`].
 pub fn bind_keys(cx: &mut App) {
-    let outside_text = Some("Shell && !TextInput");
-    let plain = format!("Shell && !TextInput && !{}", sound_typescript::KEY_CONTEXT);
-    let plain = Some(plain.as_str());
+    let outside_text = format!("{KEY_CONTEXT} && !{TEXT_INPUT}");
+    let plain = format!("{outside_text} && !{}", sound_typescript::KEY_CONTEXT);
+    let (outside_text, plain) = (Some(outside_text.as_str()), Some(plain.as_str()));
     cx.bind_keys([
         KeyBinding::new("space", TogglePlayback, plain),
         KeyBinding::new("r", ToggleRecording, plain),
+        KeyBinding::new("cmd-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-z", Undo, outside_text),
         KeyBinding::new("shift-cmd-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),

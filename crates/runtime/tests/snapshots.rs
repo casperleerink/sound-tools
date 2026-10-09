@@ -7,6 +7,7 @@
 //! - `piece.png`: three tracks with several clips, playing, one clip selected.
 //! - `transport-click-off.png`: the same with the transport in focus, the click off.
 //! - `transport-click-on.png`: the same with the click on.
+//! - `transport-keys-on.png`: the same with the computer keys on as well.
 //! - `transport-recording.png`: the same while it records, a few keys played so far.
 //! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
 //!   top-right.
@@ -1097,6 +1098,14 @@ fn main() -> Result<()> {
         "the click did not come on"
     );
     save(&mut cx, &opened, "transport-click-on")?;
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_computer_keys(cx)));
+    cx.run_until_parked();
+    anyhow::ensure!(
+        cx.update(|cx| transport.read(cx).computer_keys_are_on()),
+        "the computer keys did not come on"
+    );
+    save(&mut cx, &opened, "transport-keys-on")?;
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_computer_keys(cx)));
 
     // Recording: the record control in red, next to play and stop, and the take on the
     // selected track growing to the playhead with what was played so far, the last key held.

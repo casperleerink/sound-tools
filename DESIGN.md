@@ -71,7 +71,8 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Anywhere | cmd-B | Open or close the agent sidebar, like its icon. The focus stays where it is |
 | Anywhere | cmd-q | Quit. There is no save: every finished edit is already in the folder |
 | A MIDI keyboard | any key, the sustain pedal, the bend and mod wheels, key pressure | Play the instrument of the selected track, whether the project plays or not. The synth, the Wavetable and the Sampler bend two semitones and add a vibrato with the mod wheel; the Wavetable can also route the mod wheel and the key pressure in its matrix. A plugin gets them as MIDI (CLAP) or on the parameters it maps them to (VST 3). A take records the wheels too. A tool of the project on that track, or at the top of the project, hears them, and the other controllers of the keyboard too |
-| A tool of the project | keys, while its page shows or after a click on its card | Go to the tool when its code hears keys. Plain keys are then the tool's, so space and `r` do not play or record; keys with cmd and tab stay the window's |
+| The computer keys | cmd-K or the keyboard button in the transport, then the letter rows | Play the instrument of the selected track as a MIDI keyboard does, and record into a take. `a` is C, then `w` C#, `s` D, `e` D#, `d` E, `f` F, `t` F#, `g` G, `y` G#, `h` A, `u` A#, `j` B, `k` C, up to `'` F; `z` and `x` go an octave down and up. Those keys then do nothing else; space, `r` and keys with cmd stay the window's. A text field, and a tool of the project that hears keys, keep their keys. cmd-K again turns them off. Not saved, no undo step |
+| A tool of the project | keys, while its page shows or after a click on its card | Go to the tool when its code hears keys. Plain keys are then the tool's, so space and `r` do not play or record and the computer keys do not play; keys with cmd and tab stay the window's |
 | Title row | the sidebar icon, right of the traffic lights | Open or close the agent sidebar. It stays as it is at the next start. While it is closed and the agent works or asks, the icon carries a lavender dot |
 | Agent sidebar | **Set up**, at the first use | Download the pinned Claude Code (215 MB), then sign in. **Cancel** stops; **Try again** resumes |
 | Agent sidebar | Sign in with your Claude plan, Use an Anthropic Console account (API) | Run Claude Code's own sign-in in the browser. **Open the page again** starts it again, **Cancel** stops it |
@@ -98,6 +99,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Transport | arrows on the focused tempo | One bpm, with shift a tenth |
 | Transport | drag the steadiness up or down | Only with a fit: 0 is as played, 100 is one steady tempo. One percent per pixel, with shift tenths |
 | Transport | arrows on the focused steadiness | Five percent, with shift one |
+| Transport | the keyboard button | The computer keys on or off, as cmd-K |
 | Transport | the metronome button | The click on or off. Not an undo step, changes no file, never in a render |
 | Ruler | click | Move the playhead there, on the snap |
 | Ruler | double click, or `t` in the arrangement | Add a tempo change there, or at the playhead. It keeps the tempo that played there |

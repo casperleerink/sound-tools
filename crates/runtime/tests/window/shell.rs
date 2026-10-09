@@ -355,12 +355,12 @@ fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
         .update(|_, cx| session.update(cx, |session, cx| session.report("the device is gone", cx)));
     opened.cx.run_until_parked();
 
-    // The menu, play, stop, record, the seek strip, the tempo, the click, the arrangement,
-    // the snap setting, the two halves of the add track button, the master row, then the
-    // notice.
+    // The menu, play, stop, record, the seek strip, the tempo, the computer keys, the click,
+    // the arrangement, the snap setting, the two halves of the add track button, the master
+    // row, then the notice.
     opened
         .cx
-        .simulate_keystrokes("tab tab tab tab tab tab tab tab tab tab tab tab tab");
+        .simulate_keystrokes("tab tab tab tab tab tab tab tab tab tab tab tab tab tab");
     opened.press_enter();
     opened
         .cx

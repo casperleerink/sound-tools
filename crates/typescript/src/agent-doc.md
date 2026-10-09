@@ -2,6 +2,8 @@
 
 When no tool does what the composer asks, write one: an effect, an instrument or a sound source that is part of this project, in TypeScript. It plays as soon as you save the file, with no build, and it is a tool like any other: its records go in a track, the window gives it a card and offers it under "This project", and the runtime writes a doc for it so the next agent can use it.
 
+To play a track from the computer keyboard, write nothing: tell the composer to turn on the computer keys (cmd-K, or the keyboard button in the transport). The letter rows then play the selected track as a MIDI keyboard does, with any instrument, and record into a take.
+
 ## Where it goes
 
 One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card. Make the folder if it is not there, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
