@@ -594,11 +594,8 @@ impl Render for Shell {
             // Before the focused view hears it, so a key that plays does nothing else, such as
             // `a` in the arrangement.
             .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
-                let keystroke = &event.keystroke;
-                let transport = &shell.transport;
-                if keys_are_free(window)
-                    && transport.update(cx, |pill, _| pill.computer_key_down(keystroke))
-                {
+                let free = keys_are_free(window);
+                if (shell.transport).update(cx, |pill, _| pill.computer_key_down(event, free)) {
                     cx.stop_propagation();
                 }
             }))
