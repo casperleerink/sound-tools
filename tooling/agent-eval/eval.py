@@ -19,6 +19,8 @@ Earlier experiments, with their results next to this file:
   and needs no doc of its own, so the SDK is the graph alone.
 - `results-experiments.jsonl`: a gravity harp page, a generative source and a grain cloud built from scratch,
   and a composer that edits the pattern of a builder's acid bass. Every run passed.
+- `results-ui.jsonl`: the `ui-*` scenarios, cards and pages from short prompts, with the doc
+  commit each ran on. How they look is judged from screenshots.
 """
 
 import argparse
@@ -322,6 +324,26 @@ def check_mic(folder: Path) -> dict:
     }
 
 
+def check_card(track: str, own_card: bool = True):
+    """A project tool on `track`, with a card of its own or the plain one of its knobs. How
+    the card looks is in the screenshots."""
+    def check(folder: Path) -> dict:
+        tools = project_tools(folder)
+        used = [tool for tool in [instruments(folder).get(track), *track_effects(folder, track)]
+                if tool in tools]
+        text = tools.get(used[0], "") if used else ""
+        return {"a project tool on the track": bool(used),
+                "its own card" if own_card else "the plain card": ("card:" in text) == own_card,
+                "no problems": no_problems(folder)}
+    return check
+
+
+def check_page(folder: Path) -> dict:
+    checks = check_experiment(folder)
+    checks.pop("with a page, a canvas and a tick")
+    return {**checks, "with a page": "page:" in "".join(project_tools(folder).values())}
+
+
 def check_generative(folder: Path) -> dict:
     tools = project_tools(folder)
     tool = instruments(folder).get("pad")
@@ -361,6 +383,18 @@ SCENARIOS = {
                       "kick, snare, closed hat and clap, each with its own row of 16 steps I "
                       "click on and off, the playing step lit; a level and a tune knob for each "
                       "drum, and a swing knob. Make a groove to start with."),
+    # How cards and pages look: short prompts, the screenshots say the rest.
+    "ui-scope": (setup_tape_builder, check_card("lead"),
+                 "Put an effect on the lead that shows its sound as a moving waveform on its "
+                 "card."),
+    "ui-chords": (setup_tape_builder, check_card("pad"),
+                  "Make the pad a chord player: I pick a progression on its card, and it shows "
+                  "the chord it is on."),
+    "ui-tremolo": (setup_tape_builder, check_card("pad", own_card=False),
+                   "Put a tremolo on the pad with a rate and a depth knob."),
+    "ui-drones": (setup_tape_builder, check_page,
+                  "Turn this project into a drone machine on one screen: four drones, each with "
+                  "a pitch and a volume control and a visual of its sound."),
     "experiment-builder": (setup_tape_builder, check_experiment,
                            "Turn this project into an interactive sound toy instead of a song, "
                            "just one screen and no timeline: a 'gravity harp'. I drop balls "
