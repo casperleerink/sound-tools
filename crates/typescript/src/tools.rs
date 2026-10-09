@@ -566,8 +566,10 @@ impl Sounds {
             let file = value.and_then(Value::as_str).unwrap_or_default();
             if array.length.is_none() && !file.is_empty() {
                 let read = samples::sample(assets, file, rate, id);
+                // Which read it is, not its length: a file read again at the same length is a
+                // new sound too.
                 read.as_ref()
-                    .map(|sound| sound.as_ref().map(|sound| sound.len()))
+                    .map(|sound| sound.as_ref().map(|sound| Arc::as_ptr(sound).addr()))
                     .ok()
                     .hash(&mut hasher);
                 if let Err(problem) = read {
