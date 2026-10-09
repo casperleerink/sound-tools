@@ -22,7 +22,8 @@ use sound_ui::{ActiveTheme, ControlEdit, Session, weak_callback};
 
 use crate::tools::{Field, ToolInfo, Unit};
 use crate::tree::{self, Controls, KnobNode};
-use crate::window::{Live, state_of};
+use crate::bun::PageSize;
+use crate::window::{Live, Surface, state_of};
 
 pub(crate) struct TypeScriptCard {
     live: Entity<Live>,
@@ -61,8 +62,11 @@ impl TypeScriptCard {
             .tool_of(&id)
             .unwrap_or_default()
             .to_string();
-        let page = frame.is_none();
-        let card = live.update(cx, |live, cx| live.add(id.clone(), tool, page, cx));
+        let surface = match frame {
+            Some(_) => Surface::Card,
+            None => Surface::Page(None),
+        };
+        let card = live.update(cx, |live, cx| live.add(id.clone(), tool, surface, cx));
         cx.subscribe(&session, |view, _, event, cx| match event {
             ProjectEvent::Changed(id) if *id == view.id => {
                 view.live.update(cx, |live, cx| live.render(view.card, cx));
@@ -591,12 +595,28 @@ impl Render for TypeScriptCard {
                 .min_w(px(PLAIN_CARD_WIDTH))
                 .child(body)
                 .into_any_element(),
-            None => div()
-                .size_full()
-                .p(px(24.))
-                .bg(theme.gray_100)
-                .child(body)
-                .into_any_element(),
+            None => {
+                // The room inside the padding, which the page draws from.
+                let (live, card) = (self.live.clone(), self.card);
+                let measure = canvas(
+                    move |bounds, _, cx| {
+                        let size = PageSize {
+                            width: f32::from(bounds.size.width).round() as u32,
+                            height: f32::from(bounds.size.height).round() as u32,
+                        };
+                        cx.defer(move |cx| live.update(cx, |live, cx| live.resize(card, size, cx)));
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full();
+                div()
+                    .size_full()
+                    .p(px(24.))
+                    .bg(theme.gray_100)
+                    .child(div().relative().size_full().child(measure).child(body))
+                    .into_any_element()
+            }
         }
     }
 }

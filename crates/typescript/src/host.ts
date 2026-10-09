@@ -15,11 +15,14 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 
 type State = StateOf<Fields>;
 type Watches = Record<string, number>;
+type Size = { width: number; height: number };
+/** The room of a page in the check without a window: the default window's. */
+const CHECKED_PAGE: Size = { width: 1422, height: 824 };
 
 type Request =
   | { type: "sound"; id: number; tool: string; choices: Record<string, string | number> }
   | { type: "draw"; id: number; tool: string; page: boolean }
-  | { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: boolean }
+  | { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: Size | null }
   | { type: "event"; card: number; version: number; handler: number; x?: number; y?: number }
   | { type: "frame"; dt: number; time: number; instances: Array<{ instance: string; tool: string; state: State; watches: Watches }> }
   | { type: "drop"; card: number };
@@ -324,6 +327,7 @@ function render(request: Extract<Request, { type: "render" }>) {
     const node = (draw as (card: unknown) => Node)({
       state,
       watches,
+      ...(page && { size: page }),
       memory: memoryOf(instance, spec),
       update(label: string, change: (state: unknown) => void) {
         const next = structuredClone(state);
@@ -380,6 +384,7 @@ function draw(tool: string, page: boolean): Sent {
   const node = (make as (card: unknown) => Node)({
     state: {},
     watches: {},
+    ...(page && { size: CHECKED_PAGE }),
     memory,
     update() {},
     ...quiet,

@@ -486,7 +486,7 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
   card?: (card: Card<StateOf<S>, C, M>) => Node;
   /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
-  page?: (card: Card<StateOf<S>, C, M>) => Node;
+  page?: (page: Page<StateOf<S>, C, M>) => Node;
 }
 
 /** Makes a tool of the project. */
@@ -572,6 +572,12 @@ export interface Card<State, C extends Controls = Controls, M = unknown> extends
    * the tool does not accept is refused, and the window says why.
    */
   update(label: string, change: (state: State) => void): void;
+}
+
+/** What a page gets: what a card gets, and the room it has. */
+export interface Page<State, C extends Controls = Controls, M = unknown> extends Card<State, C, M> {
+  /** Its width and height in points. It draws again when the window changes. */
+  size: { width: number; height: number };
 }
 
 /**

@@ -51,8 +51,8 @@ pub(crate) enum Request<'a> {
         state: serde_json::Value,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
-        /// Whether it is drawn as a page, the whole window, and not as a card.
-        page: bool,
+        /// The size of the page, the whole window; `None` for a card.
+        page: Option<PageSize>,
     },
     /// A click, or a press or a drag on a canvas at `x` and `y` across and down, 0 to 1.
     Event {
@@ -76,6 +76,13 @@ pub(crate) enum Request<'a> {
     Drop {
         card: u64,
     },
+}
+
+/// The room a page has, in whole points.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
+pub(crate) struct PageSize {
+    pub width: u32,
+    pub height: u32,
 }
 
 /// An instance whose tool has a control loop, as it is now.

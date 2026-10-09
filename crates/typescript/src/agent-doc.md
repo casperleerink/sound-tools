@@ -182,7 +182,7 @@ For more than knobs, such as a simulation that plays notes as balls bounce, a to
 
   `at` is for the loop: a card has no `time`.
 - `<Canvas width height shapes background? onPress? onDrag?>` draws `shapes` (`{ kind: "circle", x, y, radius, color }`, `{ kind: "rect", x, y, width, height, color, radius? }`, `{ kind: "line", from: [x, y], to: [x, y], color, width? }`, in points from its top left) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. The card draws again after every tick.
-- `page: (card) => ...` draws the whole window instead of a card, from the same things a card gets. A project that is one experiment has no arrangement: delete `state/arrangement/`, put one record of the tool at the top, `state/<name>.json`, make the tool a `source` (or an `instrument` when its loop plays notes with `play`), and connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`. The window shows its page. An `effect` at the top with `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well hears the microphone live as `input`; tell the composer to use headphones, as speakers feed back into it.
+- `page: (page) => ...` draws the whole window instead of a card, from what a card gets and `size`, its width and height in points. Fill it: the window may be any size, and the page draws again when it changes. Keep positions from 0 to 1 and scale them by `size` as it draws. A project that is one experiment has no arrangement: delete `state/arrangement/`, put one record of the tool at the top, `state/<name>.json`, make the tool a `source` (or an `instrument` when its loop plays notes with `play`), and connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`. The window shows its page. An `effect` at the top with `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well hears the microphone live as `input`; tell the composer to use headphones, as speakers feed back into it.
 
 ```tsx
 import { Canvas, feedback, h, live, lowpass, max, noise, tool, trigger, type Shape } from "./sdk";
@@ -206,21 +206,21 @@ tool({
   },
   tick: ({ memory, dt, fire }) => {
     for (const ball of memory.balls) {
-      ball.speed += 400 * dt;
+      ball.speed += 2 * dt;
       ball.y += ball.speed * dt;
-      if (ball.y > 180) {
-        ball.y = 180;
+      if (ball.y > 1) {
+        ball.y = 1;
         ball.speed *= -0.5;
         fire("drop");
       }
     }
   },
-  page: ({ memory }) => (
+  page: ({ memory, size }) => (
     <Canvas
-      width={300}
-      height={190}
-      shapes={memory.balls.map((ball): Shape => ({ kind: "circle", x: ball.x, y: ball.y, radius: 5, color: "#60a5fa" }))}
-      onPress={(x, y) => memory.balls.push({ x: x * 300, y: y * 190, speed: 0 })}
+      width={size.width}
+      height={size.height}
+      shapes={memory.balls.map((ball): Shape => ({ kind: "circle", x: ball.x * size.width, y: ball.y * size.height, radius: 5, color: "#60a5fa" }))}
+      onPress={(x, y) => memory.balls.push({ x, y, speed: 0 })}
     />
   ),
 });

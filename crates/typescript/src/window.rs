@@ -15,7 +15,7 @@ use sound_hum::{Hum, HumUpdate};
 use sound_notes::{Pitch, Velocity};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
-use crate::bun::{ANSWER_TIMEOUT, Bun, Event, Loaded, Looped, Request};
+use crate::bun::{ANSWER_TIMEOUT, Bun, Event, Loaded, Looped, PageSize, Request};
 use crate::card::TypeScriptCard;
 use crate::tools::{Control, ToolInfo, ToolKind};
 use crate::tree::Node;
@@ -52,8 +52,7 @@ struct Card {
     id: InstanceId,
     /// The name of its tool, which a card keeps for its life.
     tool: String,
-    /// Drawn as a page, the whole window, and not as a card.
-    page: bool,
+    surface: Surface,
     /// The last tree, or why there is none. `None` until the first one arrives.
     tree: Option<Result<Rc<Node>, String>>,
     /// The version of the last tree, which a click on it names.
@@ -64,6 +63,15 @@ struct Card {
     asked: bool,
     /// The record or a watch changed while a render was out, so one more is due when it comes.
     stale: bool,
+}
+
+/// What a tree is drawn on.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Surface {
+    /// A card in a rack.
+    Card,
+    /// The whole window: its size once laid out, which the page draws from.
+    Page(Option<PageSize>),
 }
 
 /// The live part of the tools once Bun runs. Until then the cards and pickers have no tools.
@@ -315,7 +323,7 @@ impl Live {
         &mut self,
         id: InstanceId,
         tool: String,
-        page: bool,
+        surface: Surface,
         cx: &mut Context<Self>,
     ) -> u64 {
         let card = self.next_card;
@@ -323,7 +331,7 @@ impl Live {
         let entry = Card {
             id,
             tool,
-            page,
+            surface,
             tree: None,
             version: 0,
             watches: BTreeMap::new(),
@@ -354,6 +362,12 @@ impl Live {
             entry.stale = true;
             return;
         }
+        let page = match entry.surface {
+            Surface::Card => None,
+            Surface::Page(Some(size)) => Some(size),
+            // It draws once it is laid out and has a size.
+            Surface::Page(None) => return,
+        };
         let project = session.read(cx).project();
         let (Some(tool), Some(state)) = (project.tool_of(&entry.id), state_of(project, &entry.id))
         else {
@@ -366,8 +380,20 @@ impl Live {
             tool,
             state,
             watches: &entry.watches,
-            page: entry.page,
+            page,
         });
+    }
+
+    /// The page was laid out at `size`: it draws again when that is new.
+    pub(crate) fn resize(&mut self, card: u64, size: PageSize, cx: &mut Context<Self>) {
+        let Some(entry) = self.cards.get_mut(&card) else {
+            return;
+        };
+        if entry.surface == Surface::Page(Some(size)) {
+            return;
+        }
+        entry.surface = Surface::Page(Some(size));
+        self.render(card, cx);
     }
 
     /// A click on an element of the card, or a press or a drag on a canvas at `x` and `y`
