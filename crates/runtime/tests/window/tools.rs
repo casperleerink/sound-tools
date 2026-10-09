@@ -7,7 +7,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AppContext, Entity, KeyUpEvent, Keystroke, Modifiers, TestAppContext, VisualTestContext,
+    AppContext, Entity, FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    TestAppContext, VisualTestContext,
 };
 use midi::Played;
 use plugin_host::{Plugins, ScanCache};
@@ -227,6 +228,36 @@ impl Window<'_> {
         panic!("{what} did not happen within 5 s");
     }
 
+    /// Polls for as long as Bun takes to answer, for a test that nothing happens.
+    fn wait_for_bun(&mut self) {
+        for _ in 0..10 {
+            self.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn focused(&mut self) -> FocusHandle {
+        self.cx.update(|window, cx| window.focused(cx)).unwrap()
+    }
+
+    /// Gives the focus to the window itself, out of a page or a card.
+    fn focus_the_window(&mut self) {
+        let shell = self.shell.clone();
+        self.cx.update(|window, cx| {
+            let handle = shell.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+    }
+
+    /// A key going down, or repeating as the system marks it with `is_held`.
+    fn key_down(&mut self, key: &str, is_held: bool) {
+        self.cx.simulate_event(KeyDownEvent {
+            keystroke: Keystroke::parse(key).unwrap(),
+            is_held,
+            prefer_character_input: false,
+        });
+    }
+
     fn playing(&mut self) -> bool {
         let session = self.session.clone();
         self.cx
@@ -286,16 +317,51 @@ fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestA
     let Some(mut window) = open(cx, &EXPERIMENT) else {
         return;
     };
-    window.cx.simulate_keystrokes("cmd-k");
+    window.cx.simulate_keystrokes("secondary-k");
     window.cx.simulate_keystrokes("a");
     window.until("the key on the page", |window| {
         window.record("keys")["count"] == 1
     });
-    // Bun would have answered a note of the computer keys by now.
-    for _ in 0..10 {
-        window.poll();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    window.wait_for_bun();
+    assert_eq!(window.record("keys")["last"], serde_json::Value::Null);
+}
+
+/// A key that went down before the page had the keys starts nothing there as it repeats. A key
+/// the computer keys hold stays theirs, also where the system does not mark a repeat (X11).
+#[gpui::test]
+fn a_key_that_went_down_elsewhere_repeats_into_nothing_on_the_page(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    let page = window.focused();
+    window.cx.simulate_keystrokes("secondary-k");
+    window.focus_the_window();
+    window.cx.simulate_keystrokes("a");
+    window.until("the note of the computer keys", |window| {
+        window.record("keys")["last"] == 60
+    });
+    window.cx.update(|window, cx| window.focus(&page, cx));
+    window.key_down("a", false);
+    window.key_down("q", true);
+    window.wait_for_bun();
+    assert_eq!(window.record("keys")["count"], serde_json::Value::Null);
+}
+
+/// A key the page held repeats on once the focus left it, and starts no note of the computer
+/// keys.
+#[gpui::test]
+fn a_key_the_page_held_repeats_into_nothing_on_the_computer_keys(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    window.cx.simulate_keystrokes("secondary-k");
+    window.cx.simulate_keystrokes("a");
+    window.until("the key on the page", |window| {
+        window.record("keys")["count"] == 1
+    });
+    window.focus_the_window();
+    window.key_down("a", true);
+    window.wait_for_bun();
     assert_eq!(window.record("keys")["last"], serde_json::Value::Null);
 }
 
@@ -405,7 +471,7 @@ fn a_tool_on_the_track_hears_the_computer_keys(cx: &mut TestAppContext) {
     let Some(mut window) = open(cx, &TWO_TRACKS) else {
         return;
     };
-    window.cx.simulate_keystrokes("cmd-k");
+    window.cx.simulate_keystrokes("secondary-k");
     window.poll();
     window.poll();
     window.cx.simulate_keystrokes("a");

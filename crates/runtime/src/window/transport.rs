@@ -20,8 +20,8 @@ use arrangement::{TrackKind, TrackState};
 use fit_tempo::FitState;
 use gpui::{
     App, BorderStyle, Bounds, Context, DispatchPhase, Entity, FocusHandle, Hitbox, HitboxBehavior,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Task, Window, canvas, div, fill, point, prelude::*, px, quad, size,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Task, Window,
+    canvas, div, fill, point, prelude::*, px, quad, size,
 };
 use metronome::Click;
 use midi::{ComputerKeys, Input, Keyboard, Latency, Lost};
@@ -959,38 +959,46 @@ impl TransportPill {
         cx.notify();
     }
 
-    /// A key went down. Gives whether the computer keys took it: one of theirs, with no cmd,
-    /// ctrl, alt or fn, while they play. Then nothing else may hear it, also not its repeats.
-    pub fn computer_key_down(&mut self, keystroke: &Keystroke) -> bool {
-        let modifiers = keystroke.modifiers;
-        if modifiers.platform || modifiers.control || modifiers.alt || modifiers.function {
-            return false;
-        }
-        let key = keystroke.key.as_str();
+    /// A key went down. Gives whether the computer keys took it, and then nothing else may
+    /// hear it. A key they hold stays theirs wherever the focus went since, so its repeats
+    /// reach nothing else. Another key is theirs while they play, when it is one of theirs
+    /// with no cmd, ctrl, alt or fn and the plain keys are `free`.
+    pub fn computer_key_down(&mut self, event: &KeyDownEvent, free: bool) -> bool {
         let (Some(keys), Some(keyboard)) = (&mut self.computer_keys, &self.keyboard) else {
             return false;
         };
-        if !ComputerKeys::plays(key) {
+        let keystroke = &event.keystroke;
+        let key = keystroke.key.as_str();
+        if keys.holds(key) {
+            return true;
+        }
+        let modifiers = keystroke.modifiers;
+        let plain =
+            !(modifiers.platform || modifiers.control || modifiers.alt || modifiers.function);
+        if !(free && plain && ComputerKeys::plays(key)) {
             return false;
         }
-        // It goes where a MIDI keyboard's messages go, so the instrument, a take and the tools
-        // hear it as they hear those.
-        if let Some(played) = keys.down(key) {
+        // A repeat of a key that went down where they did not hear it, such as on a tool's
+        // card, starts nothing. Else it goes where a MIDI keyboard's messages go, so the
+        // instrument, a take and the tools hear it as they hear those.
+        if !event.is_held
+            && let Some(played) = keys.down(key)
+        {
             keyboard.input().send(played);
         }
         true
     }
 
-    /// A key came up. Gives whether it ended a note of the computer keys.
+    /// A key came up. Gives whether it was the computer keys', and ends its note.
     pub fn computer_key_up(&mut self, key: &str) -> bool {
         let (Some(keys), Some(keyboard)) = (&mut self.computer_keys, &self.keyboard) else {
             return false;
         };
-        let Some(played) = keys.up(key) else {
-            return false;
-        };
-        keyboard.input().send(played);
-        true
+        let held = keys.holds(key);
+        if let Some(played) = keys.up(key) {
+            keyboard.input().send(played);
+        }
+        held
     }
 
     /// Ends every note the computer keys hold, for when their key ups will not come: cmd is

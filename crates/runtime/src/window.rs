@@ -24,9 +24,9 @@ use anyhow::Result;
 use arrangement::view::layout::RULER_HEIGHT;
 use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
-    KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, SharedString,
-    Subscription, Task, TitlebarOptions, WeakFocusHandle, Window, WindowBounds, WindowOptions,
-    actions, div, point, prelude::*, px, size,
+    KeyBindingContextPredicate, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
+    WindowBounds, WindowOptions, actions, div, point, prelude::*, px, size,
 };
 use midi::{Latency, Lost};
 use plugin_host::{Plugins, WeakPlugins};
@@ -39,7 +39,7 @@ use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::text_input;
-use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
+use sound_ui::{ActiveTheme, Assets, Devices, Session, SpareKey, SpareKeys, Views, typography};
 
 use audio_input::OpenInput;
 use other_apps::{AppSounds, OtherApps};
@@ -289,6 +289,23 @@ impl Shell {
             remembering: Task::ready(()),
             _other_apps: other_apps,
         };
+        // A plugin's window passes on the keys its plugin does not use, to play the computer
+        // keys. The plain keys are always free there: it has no text field and no tool.
+        let transport = shell.transport.downgrade();
+        let pass = move |key: SpareKey<'_>, cx: &mut App| {
+            // Fails only when the window is gone.
+            (transport.update(cx, |pill, cx| match key {
+                SpareKey::Down(event) => {
+                    pill.computer_key_down(event, true);
+                }
+                SpareKey::Up(event) => {
+                    pill.computer_key_up(&event.keystroke.key);
+                }
+                SpareKey::LetGo => pill.let_go_of_computer_keys(cx),
+            }))
+            .ok();
+        };
+        SpareKeys::install(pass, cx);
         shell.show_main_instance(window, cx);
         // After the main view, which may take the focus: a page that hears keys does.
         if window.focused(cx).is_none() {
@@ -594,11 +611,8 @@ impl Render for Shell {
             // Before the focused view hears it, so a key that plays does nothing else, such as
             // `a` in the arrangement.
             .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
-                let keystroke = &event.keystroke;
-                let transport = &shell.transport;
-                if keys_are_free(window)
-                    && transport.update(cx, |pill, _| pill.computer_key_down(keystroke))
-                {
+                let free = keys_are_free(window);
+                if (shell.transport).update(cx, |pill, _| pill.computer_key_down(event, free)) {
                     cx.stop_propagation();
                 }
             }))
@@ -681,31 +695,36 @@ impl Render for Shell {
 
 /// The key context of the window root. Every binding of the window names it.
 const KEY_CONTEXT: &str = "Shell";
-/// The key context of a text field, which keeps the plain keys.
-const TEXT_INPUT: &str = "TextInput";
 
-/// Whether the plain keys are the window's: not while a text field or a tool of the project
-/// that hears keys has the focus. The same as the bindings of space and `r` say.
-fn keys_are_free(window: &Window) -> bool {
-    let keeps = |context: &gpui::KeyContext| {
-        context.contains(TEXT_INPUT) || context.contains(sound_typescript::KEY_CONTEXT)
-    };
-    !window.context_stack().iter().any(keeps)
+/// Outside a text field, where keys are characters and cmd-z is not an undo of the project.
+fn outside_text() -> String {
+    format!("{KEY_CONTEXT} && !{}", text_input::KEY_CONTEXT)
 }
 
-/// The keys of the window. Space, record and undo belong to a focused text field first: there
-/// they are characters and cmd-z is not an undo of the project. Space and record also belong
-/// to a tool of the project that has the keys, which plays them. Tab moves the focus
-/// everywhere. The computer keys are no bindings: they need the key going up as well, see the
-/// key listeners of [`Shell`].
+/// Where the plain keys are the window's: outside a text field, and outside a tool of the
+/// project that has the keys, which plays them.
+fn plain_keys() -> String {
+    format!("{} && !{}", outside_text(), sound_typescript::KEY_CONTEXT)
+}
+
+/// Whether the plain keys are the window's where the focus is, as the bindings of space and
+/// `r` match them.
+fn keys_are_free(window: &Window) -> bool {
+    KeyBindingContextPredicate::parse(&plain_keys())
+        .is_ok_and(|plain| plain.depth_of(&window.context_stack()).is_some())
+}
+
+/// The keys of the window. Space and record are [`plain_keys`], undo works outside a text
+/// field. Tab moves the focus everywhere. The computer keys are no bindings: they need the key
+/// going up as well, see the key listeners of [`Shell`].
 pub fn bind_keys(cx: &mut App) {
-    let outside_text = format!("{KEY_CONTEXT} && !{TEXT_INPUT}");
-    let plain = format!("{outside_text} && !{}", sound_typescript::KEY_CONTEXT);
+    let (outside_text, plain) = (outside_text(), plain_keys());
     let (outside_text, plain) = (Some(outside_text.as_str()), Some(plain.as_str()));
     cx.bind_keys([
         KeyBinding::new("space", TogglePlayback, plain),
         KeyBinding::new("r", ToggleRecording, plain),
-        KeyBinding::new("cmd-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
+        // Not cmd-K on Windows, where Win+K is the system's.
+        KeyBinding::new("secondary-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-z", Undo, outside_text),
         KeyBinding::new("shift-cmd-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),

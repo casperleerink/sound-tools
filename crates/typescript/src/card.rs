@@ -115,9 +115,10 @@ impl TypeScriptCard {
     }
 
     /// A key went down or up while the card has the keys. Not a key that goes down with cmd,
-    /// ctrl, alt or fn, which stays the window's, as cmd-z does, and not the repeats of a held
-    /// key. A key that went down here comes up here, whatever is held by then.
-    fn key(&mut self, keystroke: &Keystroke, down: bool, cx: &mut Context<Self>) {
+    /// ctrl, alt or fn, which stays the window's, as cmd-z does, and not a `repeat`: of a key
+    /// held here, or of one that went down while something else had the keys, such as the
+    /// computer keys. A key that went down here comes up here, whatever is held by then.
+    fn key(&mut self, keystroke: &Keystroke, down: bool, repeat: bool, cx: &mut Context<Self>) {
         let modifiers = keystroke.modifiers;
         if down && (modifiers.platform || modifiers.control || modifiers.alt || modifiers.function)
         {
@@ -126,7 +127,7 @@ impl TypeScriptCard {
         let key = keystroke.key.clone();
         // A key that went down before the card had the keys has no up here.
         let changed = match down {
-            true => self.keys_down.insert(key.clone()),
+            true => !repeat && self.keys_down.insert(key.clone()),
             false => self.keys_down.remove(&key),
         };
         if changed {
@@ -629,10 +630,10 @@ impl Render for TypeScriptCard {
                     .track_focus(&self.focus)
                     .key_context(crate::KEY_CONTEXT)
                     .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
-                        view.key(&event.keystroke, true, cx)
+                        view.key(&event.keystroke, true, event.is_held, cx)
                     }))
                     .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
-                        view.key(&event.keystroke, false, cx)
+                        view.key(&event.keystroke, false, false, cx)
                     }))
                     // macOS sends no key up while cmd is held.
                     .on_modifiers_changed(cx.listener(
