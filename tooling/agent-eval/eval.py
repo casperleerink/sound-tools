@@ -19,8 +19,8 @@ Earlier experiments, with their results next to this file:
   and needs no doc of its own, so the SDK is the graph alone.
 - `results-experiments.jsonl`: a gravity harp page, a generative source and a grain cloud built from scratch,
   and a composer that edits the pattern of a builder's acid bass; later a keyboard toy (`onKey`,
-  notes held while a key is down) and a MIDI arpeggiator (`onMidi`, played ahead with `at`).
-  Every run passed.
+  notes held while a key is down), a MIDI arpeggiator (`onMidi`, played ahead with `at`) and a
+  stutter of the music another app plays (`{"app": "Spotify"}`). Every run passed.
 - `results-ui.jsonl`: the `ui-*` scenarios, cards and pages from short prompts, with the doc
   commit each ran on. How they look is judged from screenshots (`cargo run -p runtime --example
   screenshot`); `fill` is the share of its page a page uses (`fill.py`). Before a page got its
@@ -363,6 +363,12 @@ def check_midi(folder: Path) -> dict:
             "no problems": no_problems(folder)}
 
 
+def check_apps(folder: Path) -> dict:
+    checks = check_page(folder)
+    connections = json.loads((folder / "project.json").read_text()).get("connections", [])
+    return {**checks, "hears an app": any("app" in c.get("from", {}) for c in connections)}
+
+
 def check_generative(folder: Path) -> dict:
     tools = project_tools(folder)
     tool = instruments(folder).get("pad")
@@ -429,6 +435,9 @@ SCENARIOS = {
     "midi-builder": (setup_tape_builder, check_midi,
                      "Make the lead an arpeggiator I play from my MIDI keyboard: I hold a chord "
                      "and it plays its notes up and down."),
+    "apps-builder": (setup_tape_builder, check_apps,
+                     "Turn this project into one screen that takes the music playing in Spotify "
+                     "and stutters it; the mouse sets how fast and how much."),
     "experiment-builder": (setup_tape_builder, check_experiment,
                            "Turn this project into an interactive sound toy instead of a song, "
                            "just one screen and no timeline: a 'gravity harp'. I drop balls "
