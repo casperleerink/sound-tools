@@ -18,8 +18,8 @@ type Watches = Record<string, number>;
 type Size = { width: number; height: number };
 /** The room of a page in the check without a window: the default window's. */
 const CHECKED_PAGE: Size = { width: 1422, height: 824 };
-/** An instance as it is now, for its control loop or what it hears. */
-type Looped = { instance: string; tool: string; state: State; watches: Watches };
+/** An instance as it is now, for its control loop or what it hears: `edits` counts the edits from here its `state` has. */
+type Looped = { instance: string; tool: string; state: State; watches: Watches; edits: number };
 
 type Request =
   | { type: "sound"; id: number; tool: string; choices: Record<string, string | number> }
@@ -325,6 +325,12 @@ function keyOf(pitch: number): number {
   return Math.max(0, Math.min(127, Math.round(pitch)));
 }
 
+/**
+ * The last record sent of each instance, and how many were sent. The runtime may ask again
+ * before an edit reaches it: code that started from the record it sends would undo that edit.
+ */
+const sent = new Map<string, { edits: number; state: State }>();
+
 /** What changes the record of an instance from `state`, each change after the one before. */
 function updater(instance: string, state: State) {
   let current = state;
@@ -332,8 +338,15 @@ function updater(instance: string, state: State) {
     const next = structuredClone(current);
     change(next);
     current = next;
+    sent.set(instance, { edits: (sent.get(instance)?.edits ?? 0) + 1, state: next });
     send({ type: "edit", instance, label, state: next });
   };
+}
+
+/** The record of an instance as its code last left it: the runtime's once that has every edit sent. */
+function latest({ instance, state, edits }: Looped): State {
+  const last = sent.get(instance);
+  return last && last.edits > edits ? last.state : state;
 }
 
 /** Draws a card and sends its tree, or why there is none: the window waits for one or the other. */
@@ -456,11 +469,13 @@ function hear(
   run: (spec: ToolSpec<Fields, Controls, unknown>, tool: Heard<State, Controls, unknown>) => void,
 ) {
   now = time;
-  for (const { instance, tool, state, watches } of instances) {
+  for (const looped of instances) {
+    const { instance, tool, watches } = looped;
     const spec = sdk.host.tools.get(tool);
     if (!spec) {
       continue;
     }
+    const state = latest(looped);
     try {
       run(spec, { state, watches, memory: memoryOf(instance, spec), time, update: updater(instance, state), ...players(instance) });
     } catch (error) {

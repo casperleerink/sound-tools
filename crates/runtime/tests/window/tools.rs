@@ -19,8 +19,8 @@ use tempfile::TempDir;
 use crate::plugin_hosts::scanner;
 use crate::support::{id, peak};
 
-/// A sine an octave and a fifth up from what is played, held while the key `a` is down, and
-/// the last note of the MIDI keyboard kept in the record.
+/// A sine held while the key `a` is down, the keys that went down counted in the record, and
+/// the last note of the MIDI keyboard kept there.
 const KEYS: &str = r#"import { adsr, h, knob, note, sine, tool } from "./sdk";
 
 tool({
@@ -29,9 +29,14 @@ tool({
   when: "You want to play a sine from the computer keyboard",
   doc: "The key a holds A4.",
   kind: "instrument",
-  state: { last: knob({ min: 0, max: 127, default: 0 }) },
+  state: { last: knob({ min: 0, max: 127, default: 0 }), count: knob({ min: 0, max: 100, default: 0 }) },
   sound: () => sine(note.freq).times(adsr(note.gate, 1, 1, 1, 1)).times(0.2),
-  onKey: ({ play, release }, { key, down }) => {
+  onKey: ({ play, release, update }, { key, down }) => {
+    if (down) {
+      update("Count the key", (state) => {
+        state.count = (state.count ?? 0) + 1;
+      });
+    }
     if (key !== "a") return;
     if (down) play(69, { hold: true });
     else release(69);
@@ -259,6 +264,18 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
     window.cx.simulate_event(KeyUpEvent { keystroke });
     window.until("the release of the key", |window| {
         window.loudest(480) == 0.0
+    });
+}
+
+#[gpui::test]
+fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    // All six go to Bun before the edit of the first comes back.
+    window.cx.simulate_keystrokes("q w e r t y");
+    window.until("six keys in the record", |window| {
+        window.record("keys")["count"] == 6
     });
 }
 

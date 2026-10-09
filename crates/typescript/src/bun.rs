@@ -106,6 +106,9 @@ pub(crate) struct Looped<'a> {
     pub tool: &'a str,
     pub state: serde_json::Value,
     pub watches: BTreeMap<String, f32>,
+    /// How many edits of its record from Bun `state` has: fewer than Bun sent, and Bun starts
+    /// from the last record it sent instead.
+    pub edits: u64,
 }
 
 /// What Bun says without being asked, or as the answer to a render or a click.
