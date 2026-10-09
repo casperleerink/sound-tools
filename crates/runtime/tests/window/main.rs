@@ -1,7 +1,8 @@
 //! The window driven by simulated keys and mouse events, on a project with an offline engine.
 //! No display and no device.
 //!
-//! - `shell`: the keys of the window, the focus, the transport and the read-only timeline.
+//! - `shell`: the keys of the window, the focus, the transport, the read-only timeline and
+//!   when the project menu lists the audio devices.
 //! - `clips`: adding, moving, resizing, deleting and nudging clips in the arrangement.
 //! - `clip_automation`: the automation under a clip going along when it moves or is copied.
 //! - `automation_lanes`: the automation lanes under a track: shown, added, drawn, erased,

@@ -2,6 +2,9 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use arrangement::view::layout::{
     ADD_ROW_HEIGHT, HEADER_WIDTH, LEAD_IN, RULER_HEIGHT, TRACK_HEIGHT, Viewport,
@@ -12,9 +15,9 @@ use gpui::{
     ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext, Window, div, point,
     prelude::*, px,
 };
-use runtime::window::{Shell, bind_keys};
+use runtime::window::{DeviceMenu, ListDevices, Shell, bind_keys};
 use runtime::{OFFLINE, main_arrangement};
-use sound_core::{Changes, Engine, Instance, InstanceId, Ticks};
+use sound_core::{Changes, DeviceChoice, Engine, Instance, InstanceId, Ticks};
 use sound_notes::Clip;
 use sound_ui::components::text_input::TextInput;
 use sound_ui::{Devices, POLL_INTERVAL, Session, Views};
@@ -406,6 +409,55 @@ fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
     let notice = opened.bounds("notice-error").unwrap();
     assert!(notice.size.width < px(200.), "{notice:?}");
     assert!(notice.size.height < px(40.), "{notice:?}");
+}
+
+/// The device menus list the devices of the machine when the window opens and each time the
+/// project menu opens, so an interface plugged in since is offered. Never on a timer: listing
+/// can take a while, and on Linux it opens each device.
+#[gpui::test]
+fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext) {
+    let device = |id: &str, name: &str| DeviceChoice {
+        id: id.to_string(),
+        name: name.to_string(),
+    };
+    let outputs = Arc::new(Mutex::new(vec![device("coreaudio:speakers", "Speakers")]));
+    let listed = Arc::new(AtomicUsize::new(0));
+    let list: ListDevices = Arc::new({
+        let (outputs, listed) = (outputs.clone(), listed.clone());
+        move || {
+            listed.fetch_add(1, Ordering::Relaxed);
+            let outputs = outputs.lock().unwrap().clone();
+            DeviceMenu {
+                outputs,
+                ..DeviceMenu::default()
+            }
+        }
+    });
+    let mut opened = support::open_with_devices(cx, list);
+    let menu = opened.cx.read(|cx| {
+        let shell = opened.shell.read(cx);
+        shell.project_menu().read(cx).menu().clone()
+    });
+    let offers = |opened: &mut Opened<'_>, id: &str| {
+        let value = format!("output-device:{id}");
+        opened.cx.read(|cx| menu.read(cx).item(&value).is_some())
+    };
+    assert_eq!(listed.load(Ordering::Relaxed), 1);
+    assert!(offers(&mut opened, "coreaudio:speakers"));
+
+    outputs
+        .lock()
+        .unwrap()
+        .push(device("coreaudio:interface", "Interface"));
+    opened.cx.executor().advance_clock(Duration::from_secs(10));
+    opened.cx.run_until_parked();
+    assert_eq!(listed.load(Ordering::Relaxed), 1);
+    assert!(!offers(&mut opened, "coreaudio:interface"));
+
+    let trigger = opened.control("project-menu");
+    opened.click(trigger);
+    assert_eq!(listed.load(Ordering::Relaxed), 2);
+    assert!(offers(&mut opened, "coreaudio:interface"));
 }
 
 /// The transport is in the middle of the room right of the project menu, and a narrow window

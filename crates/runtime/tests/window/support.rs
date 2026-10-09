@@ -9,14 +9,14 @@ use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
-    AppContext, Bounds, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
-    TestAppContext, VisualTestContext, point, px,
+    AppContext, BackgroundExecutor, Bounds, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta,
+    ScrollWheelEvent, TestAppContext, VisualTestContext, point, px,
 };
 use plugin_host::WeakPlugins;
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use runtime::window::other_apps::AppSounds;
-use runtime::window::{DeviceAccess, Shell, TransportPill, bind_keys};
+use runtime::window::{DeviceAccess, ListDevices, Shell, TransportPill, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
@@ -351,10 +351,13 @@ pub(crate) struct SimulatedApp {
     /// Its processes; none while it is not running.
     processes: Arc<Mutex<Vec<u32>>>,
     live: Arc<Mutex<Option<LiveWriter>>>,
+    /// For each tap that closed, whether it closed on the thread that draws.
+    closed: Arc<Mutex<Vec<bool>>>,
 }
 
 impl SimulatedApp {
-    pub(crate) fn sounds(&self) -> AppSounds {
+    /// `executor` is what a tap that closes asks whether it is on the thread that draws.
+    pub(crate) fn sounds(&self, executor: BackgroundExecutor) -> AppSounds {
         let (app, processes) = (self.clone(), self.processes.clone());
         AppSounds {
             open: Arc::new(move |name| {
@@ -363,7 +366,11 @@ impl SimulatedApp {
                 }
                 let (writer, live) = sound_core::live_input(48_000, 2);
                 *app.live.lock().unwrap() = Some(writer);
-                Ok((None, live))
+                let stream = SimulatedStream {
+                    closed: app.closed.clone(),
+                    executor: executor.clone(),
+                };
+                Ok((Box::new(stream), live))
             }),
             processes: Arc::new(move |_| processes.lock().unwrap().clone()),
         }
@@ -385,6 +392,24 @@ impl SimulatedApp {
     pub(crate) fn is_heard(&self) -> bool {
         (self.live.lock().unwrap().as_ref()).is_some_and(|writer| !writer.is_abandoned())
     }
+
+    /// For each tap that closed, whether it closed on the thread that draws.
+    pub(crate) fn closed_on_ui_thread(&self) -> Vec<bool> {
+        self.closed.lock().unwrap().clone()
+    }
+}
+
+/// The stream of a simulated tap, which tells where it was dropped.
+struct SimulatedStream {
+    closed: Arc<Mutex<Vec<bool>>>,
+    executor: BackgroundExecutor,
+}
+
+impl Drop for SimulatedStream {
+    fn drop(&mut self) {
+        let on_ui_thread = self.executor.is_main_thread();
+        self.closed.lock().unwrap().push(on_ui_thread);
+    }
 }
 
 /// A new project with one track, in a window that hears a simulated app.
@@ -395,12 +420,26 @@ pub(crate) fn open_with_app(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedAp
     add_first_track(&mut project);
     let app = SimulatedApp::default();
     let device = DeviceAccess {
-        app_sounds: Some(app.sounds()),
+        app_sounds: Some(app.sounds(cx.executor())),
         ..DeviceAccess::default()
     };
     let plugins = plugins.downgrade();
     let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
     (opened, app)
+}
+
+/// A new project with one track, in a window that lists the audio devices with `list`.
+pub(crate) fn open_with_devices(cx: &mut TestAppContext, list: ListDevices) -> Opened<'_> {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, engine) = Engine::new(OFFLINE);
+    let (mut project, plugins) = open_or_create(folder.path(), control);
+    add_first_track(&mut project);
+    let device = DeviceAccess {
+        list_devices: Some(list),
+        ..DeviceAccess::default()
+    };
+    let plugins = plugins.downgrade();
+    open_project_with_device(cx, folder, project, engine, plugins, device)
 }
 
 fn open_project_with_device(
