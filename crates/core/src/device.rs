@@ -11,6 +11,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crate::apps::TAP_NAME;
 use crate::clock::MIN_EXACT_SAMPLE_RATE;
 use crate::engine::Engine;
+use crate::input::InputDevice;
 
 /// Monotonic nanoseconds since the first call in this process.
 ///
@@ -67,38 +68,74 @@ pub struct DeviceChoice {
     pub name: String,
 }
 
-/// The output devices of this computer, such as the speakers, an interface or BlackHole.
-/// Asking can take a while: never on the thread that draws.
+/// The output devices of this computer that open, such as the speakers, an interface or
+/// BlackHole. Asking can take a while: never on the thread that draws.
 pub fn output_devices() -> Result<Vec<DeviceChoice>, DeviceError> {
-    Ok(choices(cpal::default_host().output_devices()?))
+    let devices = cpal::default_host().output_devices()?;
+    Ok(choices(devices, |device| OutputDevice::new(device).is_ok()))
 }
 
-/// The input devices of this computer, as [`output_devices`].
+/// The input devices of this computer that open, as [`output_devices`].
 pub fn input_devices() -> Result<Vec<DeviceChoice>, DeviceError> {
-    Ok(choices(cpal::default_host().input_devices()?))
+    let devices = cpal::default_host().input_devices()?;
+    Ok(choices(devices, |device| {
+        InputDevice::new(device, None).is_ok()
+    }))
 }
 
-/// The devices a menu offers. The devices of the taps of this process are left out.
-fn choices(devices: impl Iterator<Item = cpal::Device>) -> Vec<DeviceChoice> {
-    devices
-        .filter_map(|device| {
-            let id = device.id().ok()?.to_string();
-            let name = device.description().ok()?.name().to_string();
-            (!name.starts_with(TAP_NAME)).then_some(DeviceChoice { id, name })
-        })
-        .collect()
+fn choices(
+    devices: impl Iterator<Item = cpal::Device>,
+    opens: impl Fn(cpal::Device) -> bool,
+) -> Vec<DeviceChoice> {
+    let named = devices.filter_map(|device| {
+        let id = device.id().ok()?.to_string();
+        let name = device.description().ok()?.name().to_string();
+        Some((DeviceChoice { id, name }, device))
+    });
+    distinct_that_open(named, opens)
 }
 
-/// The device a choice of [`DeviceChoice::id`] keeps, or the default one `default` gives when
-/// there is no choice or its device is not there.
-pub(crate) fn chosen_or(
+/// The devices a menu offers: per name the first that `opens`, since ALSA lists each card many
+/// times under one name, once per way to reach it, and many of those do not open as f32. The
+/// devices of the taps of this process are left out.
+fn distinct_that_open<Device>(
+    devices: impl Iterator<Item = (DeviceChoice, Device)>,
+    opens: impl Fn(Device) -> bool,
+) -> Vec<DeviceChoice> {
+    let mut offered: Vec<DeviceChoice> = Vec::new();
+    for (choice, device) in devices {
+        let named = |other: &DeviceChoice| other.name == choice.name;
+        if choice.name.starts_with(TAP_NAME) || offered.iter().any(named) {
+            continue;
+        }
+        if opens(device) {
+            offered.push(choice);
+        }
+    }
+    offered
+}
+
+/// The device a choice of [`DeviceChoice::id`] keeps, made by `open`, or else the default one
+/// `default` gives: when there is no choice, its device is not there, or it does not open. A
+/// choice must never keep a project from sounding. `None` when there is no default device.
+pub(crate) fn open_chosen<T>(
     choice: Option<&str>,
+    open: impl Fn(cpal::Device) -> Result<T, DeviceError>,
     default: impl FnOnce(&cpal::Host) -> Option<cpal::Device>,
-) -> Option<cpal::Device> {
+) -> Option<Result<T, DeviceError>> {
     let host = cpal::default_host();
     let id = choice.and_then(|id| id.parse::<cpal::DeviceId>().ok());
-    id.and_then(|id| host.device_by_id(&id))
-        .or_else(|| default(&host))
+    if let Some(device) = id.and_then(|id| host.device_by_id(&id)) {
+        match open(device) {
+            Ok(opened) => return Some(Ok(opened)),
+            Err(error) => {
+                eprintln!(
+                    "error: the chosen device did not open, so the default one is used: {error}"
+                )
+            }
+        }
+    }
+    default(&host).map(open)
 }
 
 /// An output device and its default configuration.
@@ -113,10 +150,14 @@ impl OutputDevice {
     }
 
     /// The output device with the id `choice` keeps, see [`DeviceChoice`], or the default
-    /// output of the system when there is no choice or that device is not there.
+    /// output of the system when there is no choice, or that device is not there or does not
+    /// open.
     pub fn open(choice: Option<&str>) -> Result<Self, DeviceError> {
-        let device = chosen_or(choice, |host| host.default_output_device())
-            .ok_or(DeviceError::NoOutputDevice)?;
+        open_chosen(choice, Self::new, |host| host.default_output_device())
+            .unwrap_or(Err(DeviceError::NoOutputDevice))
+    }
+
+    fn new(device: cpal::Device) -> Result<Self, DeviceError> {
         let supported = device.default_output_config()?;
         if supported.sample_format() != cpal::SampleFormat::F32 {
             return Err(DeviceError::UnsupportedSampleFormat(
@@ -361,6 +402,42 @@ impl OutputStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One card as ALSA lists it, behind each way to reach it: the menu offers the first that
+    /// opens, once.
+    #[test]
+    fn a_menu_offers_one_device_per_name_and_only_one_that_opens() {
+        let choice = |id: &str, name: &str| DeviceChoice {
+            id: id.to_string(),
+            name: name.to_string(),
+        };
+        let card = "Scarlett 2i2 USB, USB Audio";
+        let devices = [
+            (choice("alsa:hw:CARD=USB,DEV=0", card), false),
+            (choice("alsa:plughw:CARD=USB,DEV=0", card), true),
+            (choice("alsa:sysdefault:CARD=USB", card), true),
+            (choice("alsa:pipewire", "PipeWire Sound Server"), true),
+            (choice("alsa:surround51:CARD=USB,DEV=0", card), true),
+            (
+                choice("coreaudio:tap", &format!("{TAP_NAME}every app")),
+                true,
+            ),
+        ];
+        let tried = std::cell::Cell::new(0);
+        let offered = distinct_that_open(devices.into_iter(), |opens| {
+            tried.set(tried.get() + 1);
+            opens
+        });
+        assert_eq!(
+            offered,
+            [
+                choice("alsa:plughw:CARD=USB,DEV=0", card),
+                choice("alsa:pipewire", "PipeWire Sound Server"),
+            ]
+        );
+        // A name already offered is not opened again.
+        assert_eq!(tried.get(), 3);
+    }
 
     #[test]
     fn the_frame_sounding_at_a_moment_is_the_inverse_of_when_a_frame_sounds() {

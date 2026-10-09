@@ -11,11 +11,12 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use gpui::{
-    App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, WeakEntity,
-    Window, prelude::*,
+    App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Task,
+    WeakEntity, Window, prelude::*,
 };
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use smol::stream::StreamExt;
@@ -59,14 +60,25 @@ pub struct DeviceMenu {
     pub chosen: ChosenDevices,
 }
 
+/// How the window lists the audio devices of this machine, or simulated ones. It is called on a
+/// background thread: asking can take a while.
+pub type ListDevices = Arc<dyn Fn() -> DeviceMenu + Send + Sync>;
+
 pub struct ProjectMenu {
     session: Entity<Session>,
     device_name: SharedString,
     menu: Entity<DropdownMenu>,
     /// The other projects the window had open, the last one first.
     recent: Vec<PathBuf>,
-    /// The devices to pick from, once the app has them. A test window has none.
+    /// The devices to pick from, once they are listed. A test window has none.
     devices: Option<DeviceMenu>,
+    /// Lists them when the window opens and each time the menu opens, so a device plugged in
+    /// since is offered.
+    list_devices: Option<ListDevices>,
+    /// The listing on its way. A newer one replaces it.
+    listing: Task<()>,
+    /// Whether the menu was open at its last change, to see it open.
+    menu_open: bool,
     /// What the items were made from. They are made again only when this changes.
     shown: Shown,
     /// The file an export writes and how far it is, in percent. One at a time: the export
@@ -120,6 +132,7 @@ impl ProjectMenu {
     pub fn new(
         session: Entity<Session>,
         device_name: SharedString,
+        list_devices: Option<ListDevices>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -140,15 +153,42 @@ impl ProjectMenu {
         cx.observe(&session, |this, _, cx| this.refresh(cx))
             .detach();
         cx.subscribe_in(&menu, window, Self::on_picked).detach();
-        Self {
+        cx.observe(&menu, |this, menu, cx| {
+            let open = menu.read(cx).is_open();
+            if open && !this.menu_open {
+                this.refresh_devices(cx);
+            }
+            this.menu_open = open;
+        })
+        .detach();
+        let mut this = Self {
             session,
             device_name,
             menu,
             recent: Vec::new(),
             devices: None,
+            list_devices,
+            listing: Task::ready(()),
+            menu_open: false,
             shown,
             exporting: None,
-        }
+        };
+        this.refresh_devices(cx);
+        this
+    }
+
+    /// Lists the devices again, off the UI thread.
+    fn refresh_devices(&mut self, cx: &mut Context<Self>) {
+        let Some(list) = self.list_devices.clone() else {
+            return;
+        };
+        let listed = cx.background_spawn(async move { list() });
+        self.listing = cx.spawn(async move |this, cx| {
+            let devices = listed.await;
+            // Fails only when the window is gone.
+            this.update(cx, |this, cx| this.set_devices(devices, cx))
+                .ok();
+        });
     }
 
     /// Set by the app, after the window opens: a test window shows none, whatever this machine
@@ -159,7 +199,7 @@ impl ProjectMenu {
         self.set_entries(cx);
     }
 
-    /// Set by the app, after the window opens and whenever the devices change.
+    /// The devices to pick from, as listed, or as a snapshot shows them.
     pub fn set_devices(&mut self, devices: DeviceMenu, cx: &mut Context<Self>) {
         if self.devices.as_ref() != Some(&devices) {
             self.devices = Some(devices);

@@ -7,13 +7,16 @@
 //! A tap of an app by name holds the processes the app had when it opened. Every two seconds
 //! they are looked at again, and the tap opens again when they changed: the app started or
 //! quit, or a helper came to play its sound, as a browser starts one.
+//!
+//! A tap closes on the background executor too: Core Audio can take a while to stop its stream
+//! and remove it.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{AppContext, Context, Entity, Task};
-use sound_core::{AppSound, DeviceError, InputDevice, InputStream, LiveInput, ProjectEvent};
+use sound_core::{AppSound, DeviceError, InputDevice, LiveInput, ProjectEvent};
 use sound_ui::Session;
 
 /// How often the processes of the apps are looked at again.
@@ -23,11 +26,9 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(2);
 /// called on a background thread.
 #[derive(Clone)]
 pub struct AppSounds {
-    /// Opens a tap of the app: its stream, which stops when it is dropped (`None` when
-    /// simulated), and the live input for the engine.
-    pub open: Arc<
-        dyn Fn(&AppSound) -> Result<(Option<InputStream>, LiveInput), DeviceError> + Send + Sync,
-    >,
+    /// Opens a tap of the app: its stream, which stops and removes the tap when it is dropped,
+    /// and the live input for the engine.
+    pub open: Arc<dyn Fn(&AppSound) -> Result<OpenedTap, DeviceError> + Send + Sync>,
     /// What a tap of the app would hear now, see [`sound_core::app_processes`].
     pub processes: Arc<dyn Fn(&AppSound) -> Vec<u32> + Send + Sync>,
 }
@@ -39,17 +40,26 @@ impl AppSounds {
             open: Arc::new(|app| {
                 let (stream, live) = InputDevice::of_apps(app)?.start_live()?;
                 println!("app sound: {app}, {} Hz", live.sample_rate());
-                Ok((Some(stream), live))
+                Ok((Box::new(stream), live))
             }),
             processes: Arc::new(sound_core::app_processes),
         }
     }
 }
 
+/// A tap that opened: its stream, see [`AppSounds::open`], and the live input for the engine.
+pub type OpenedTap = (Box<dyn Send>, LiveInput);
+
 struct Tapped {
     /// What it was opened with: when they change, it opens again.
     processes: Vec<u32>,
-    _stream: Option<InputStream>,
+    /// `None` for a tap at another rate than the output, which closed.
+    _stream: Option<Box<dyn Send>>,
+}
+
+/// Drops a tap or its stream on the background executor, see the module doc.
+fn close(tap: impl Send + 'static, cx: &mut Context<OtherApps>) {
+    cx.background_spawn(async move { drop(tap) }).detach();
 }
 
 pub struct OtherApps {
@@ -115,16 +125,15 @@ impl OtherApps {
     /// apps it no longer hears.
     fn follow(&mut self, cx: &mut Context<Self>) {
         let heard = self.session.read(cx).project().app_sounds();
-        let gone: Vec<AppSound> = (self.taps.keys())
-            .filter(|app| !heard.contains(*app))
-            .cloned()
+        let gone: Vec<(AppSound, Tapped)> = (self.taps)
+            .extract_if(.., |app, _| !heard.contains(app))
             .collect();
-        for app in gone {
-            self.taps.remove(&app);
+        for (app, _) in &gone {
             self.session.update(cx, |session, cx| {
-                session.background(cx, |project| project.set_app_sound(&app, None))
+                session.background(cx, |project| project.set_app_sound(app, None))
             });
         }
+        close(gone, cx);
         self.opening.retain(|app, _| heard.contains(app));
         for app in heard {
             if !self.taps.contains_key(&app) && !self.opening.contains_key(&app) {
@@ -161,23 +170,32 @@ impl OtherApps {
         app: AppSound,
         opening: u64,
         processes: Vec<u32>,
-        opened: Result<(Option<InputStream>, LiveInput), DeviceError>,
+        opened: Result<OpenedTap, DeviceError>,
         cx: &mut Context<Self>,
     ) {
         if self.opening.get(&app) != Some(&opening) {
+            if let Ok((stream, _)) = opened {
+                close(stream, cx);
+            }
             return;
         }
         self.opening.remove(&app);
         let rate = self.session.read(cx).project().sample_rate();
         let (stream, sound) = match opened {
-            Ok((stream, live)) => (stream.filter(|_| live.sample_rate() == rate), Ok(live)),
+            Ok((stream, live)) if live.sample_rate() == rate => (Some(stream), Ok(live)),
+            Ok((stream, live)) => {
+                close(stream, cx);
+                (None, Ok(live))
+            }
             Err(error) => (None, Err(error.to_string())),
         };
         let tapped = Tapped {
             processes,
             _stream: stream,
         };
-        self.taps.insert(app.clone(), tapped);
+        if let Some(before) = self.taps.insert(app.clone(), tapped) {
+            close(before, cx);
+        }
         self.session.update(cx, |session, cx| {
             session.background(cx, |project| project.set_app_sound(&app, Some(sound)))
         });

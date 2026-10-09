@@ -185,8 +185,12 @@ mod tap {
     }
 
     /// A property of `object` that holds one `T`, asked with a process id when `pid` is given.
-    /// `T` is a plain value or a pointer, all of whose bit patterns are valid.
-    fn read<T: Default>(
+    ///
+    /// # Safety
+    ///
+    /// Every bit pattern of `T` is a valid `T`, as of a number or a nullable pointer: Core Audio
+    /// writes whatever bits the property holds into it.
+    unsafe fn read<T: Default>(
         object: AudioObjectID,
         selector: AudioObjectPropertySelector,
         pid: Option<&i32>,
@@ -198,8 +202,9 @@ mod tap {
             Some(pid) => (size_of::<i32>() as u32, pid as *const i32 as *const c_void),
             None => (0, null()),
         };
-        // SAFETY: `size` is the room of `value`, which Core Audio fills with one `T`, and the
-        // qualifier, when there is one, is the `i32` this selector takes.
+        // SAFETY: `size` is the room of `value`, which Core Audio fills with one `T`, any bits
+        // of which are a `T` as the caller promises, and the qualifier, when there is one, is
+        // the `i32` this selector takes.
         let status = unsafe {
             AudioObjectGetPropertyData(
                 object,
@@ -272,8 +277,9 @@ mod tap {
     }
 
     fn bundle_id(process: AudioObjectID) -> Option<String> {
+        // SAFETY: any bits are a nullable pointer.
         let id: Option<NonNull<NSString>> =
-            read(process, kAudioProcessPropertyBundleID, None).ok()?;
+            unsafe { read(process, kAudioProcessPropertyBundleID, None) }.ok()?;
         // SAFETY: Core Audio gives the string under the create rule, so it is ours to release.
         let id = unsafe { Retained::from_raw(id?.as_ptr()) }?;
         Some(id.to_string())
@@ -287,7 +293,8 @@ mod tap {
         let mut found = Vec::new();
         for process in process_objects()? {
             // A process that ended since the list was made has nothing to read.
-            let Ok(pid) = read::<i32>(process, kAudioProcessPropertyPID, None) else {
+            // SAFETY: any bits are an `i32`.
+            let Ok(pid) = (unsafe { read::<i32>(process, kAudioProcessPropertyPID, None) }) else {
                 continue;
             };
             if pid == own {
@@ -308,7 +315,8 @@ mod tap {
         let pid = std::process::id() as i32;
         let system = kAudioObjectSystemObject as AudioObjectID;
         let selector = kAudioHardwarePropertyTranslatePIDToProcessObject;
-        read::<AudioObjectID>(system, selector, Some(&pid))
+        // SAFETY: any bits are an object id, a `u32`.
+        unsafe { read::<AudioObjectID>(system, selector, Some(&pid)) }
             .ok()
             .filter(|object| *object != 0)
     }
@@ -354,13 +362,15 @@ mod tap {
             // The app goes on playing on its own device as well.
             description.setMuteBehavior(CATapMuteBehavior::Unmuted);
         }
+        let mut id = 0;
+        // SAFETY: a valid description, and room for the id of the tap.
+        let status = unsafe { AudioHardwareCreateProcessTap(Some(&description), &mut id) };
+        check(status, "make a tap of other apps")?;
+        // Only now: dropping a `Tap` removes what it names.
         let mut tap = Tap {
-            tap: 0,
+            tap: id,
             aggregate: 0,
         };
-        // SAFETY: a valid description, and room for the id of the tap.
-        let status = unsafe { AudioHardwareCreateProcessTap(Some(&description), &mut tap.tap) };
-        check(status, "make a tap of other apps")?;
 
         // SAFETY: a getter of the description.
         let tap_uid = unsafe { description.UUID().UUIDString() };
@@ -393,11 +403,13 @@ mod tap {
         );
         // SAFETY: an NSDictionary is a CFDictionary: the two types are toll-free bridged.
         let dictionary = unsafe { &*(Retained::as_ptr(&description) as *const CFDictionary) };
+        let mut aggregate = 0;
         // SAFETY: the keys Core Audio documents for an aggregate device, and room for its id.
         let status = unsafe {
-            AudioHardwareCreateAggregateDevice(dictionary, NonNull::from(&mut tap.aggregate))
+            AudioHardwareCreateAggregateDevice(dictionary, NonNull::from(&mut aggregate))
         };
         check(status, "make a device to read a tap through")?;
+        tap.aggregate = aggregate;
 
         // The device may take a moment to be listed.
         let id = cpal::DeviceId::new(cpal::HostId::CoreAudio, uid.to_string());
