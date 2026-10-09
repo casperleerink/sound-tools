@@ -17,7 +17,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtsan_standalone::nonblocking;
 
 use crate::apps::Tap;
-use crate::device::{DeviceError, chosen_or, monotonic_nanos, nanos_of};
+use crate::device::{DeviceError, monotonic_nanos, nanos_of, open_chosen};
 use crate::peaks::{keep_largest, loudest, take};
 use crate::processor::{AudioBuffer, MAX_BLOCK};
 
@@ -57,11 +57,11 @@ pub struct InputDevice {
 impl InputDevice {
     /// The input device with the id `choice` keeps, see
     /// [`DeviceChoice`](crate::DeviceChoice), or the default input of the system, as set in
-    /// its settings, when there is no choice or that device is not there.
+    /// its settings, when there is no choice, or that device is not there or does not open.
     pub fn open(choice: Option<&str>) -> Result<Self, DeviceError> {
-        let device = chosen_or(choice, |host| host.default_input_device())
-            .ok_or(DeviceError::NoInputDevice)?;
-        Self::new(device, None)
+        let open = |device| Self::new(device, None);
+        open_chosen(choice, open, |host| host.default_input_device())
+            .unwrap_or(Err(DeviceError::NoInputDevice))
     }
 
     pub(crate) fn new(device: cpal::Device, tap: Option<Tap>) -> Result<Self, DeviceError> {
