@@ -6,9 +6,10 @@
 
 use anyhow::Result;
 use arrangement::{AudioClip, TrackKind, TrackState};
-use midi::Take;
+use midi::{Played, Take};
 use sound_core::{Changes, Clock, InputEndpoint, Instance, InstanceId, Project, ProjectError};
 use sound_notes::NOTES_INPUT;
+use sound_typescript::Midi;
 
 use crate::main_arrangement;
 
@@ -57,6 +58,41 @@ pub fn live_notes_input(project: &Project, selected: Option<&InstanceId>) -> Opt
     let mut top = project.instances().filter(|(id, _)| id.parent().is_none());
     top.find_map(|(id, _)| project.input_port(id, NOTES_INPUT))
 }
+
+/// What a tool of the project hears of a message of the MIDI keyboard. The pedal and the mod
+/// wheel are the controllers they are; the key pressure is left out.
+pub fn tool_message(played: Played) -> Option<Midi> {
+    let fraction = |value: u8| f32::from(value) / 127.0;
+    Some(match played {
+        Played::On { pitch, velocity } => Midi::NoteOn {
+            pitch: pitch.number(),
+            velocity: fraction(velocity.value()),
+        },
+        Played::Off { pitch, .. } => Midi::NoteOff {
+            pitch: pitch.number(),
+        },
+        Played::Pedal(pedal) => Midi::Cc {
+            controller: SUSTAIN_PEDAL,
+            value: fraction(pedal.value()),
+        },
+        Played::ModWheel(amount) => Midi::Cc {
+            controller: MOD_WHEEL,
+            value: amount.fraction(),
+        },
+        Played::Control { controller, value } => Midi::Cc {
+            controller,
+            value: fraction(value),
+        },
+        Played::Bend(bend) => Midi::Bend {
+            value: bend.fraction(),
+        },
+        Played::Pressure(_) => return None,
+    })
+}
+
+/// The MIDI controllers of the sustain pedal and the mod wheel.
+const SUSTAIN_PEDAL: u8 = 64;
+const MOD_WHEEL: u8 = 1;
 
 /// Adds the clip of a finished MIDI take to its track, to a group of changes. `take_name` is
 /// the raw take the clip came from, which is already on disk, or `None` when writing it failed.

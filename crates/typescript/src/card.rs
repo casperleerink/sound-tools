@@ -2,13 +2,13 @@
 //! the tree its code draws, with what needs the view drawn here: knobs, steps, meters, pads and
 //! canvases.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, WeakEntity, Window, canvas, div,
-    fill, point, prelude::*, px, size,
+    AnyElement, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, FocusHandle,
+    KeyDownEvent, KeyUpEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, WeakEntity, Window, canvas, div, fill, point, prelude::*, px, size,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -37,6 +37,12 @@ pub(crate) struct TypeScriptCard {
     edit: ControlEdit,
     /// The pad or the canvas the pointer holds since its press.
     held: Option<Held>,
+    /// It has the keys while it, or a control in it, has the focus: a click on it gives it
+    /// them, and a page takes them when it opens.
+    focus: FocusHandle,
+    /// The keys that went down and not up yet. They go up when it loses the keys, so a note
+    /// a key holds is not held for ever.
+    keys_down: BTreeSet<String>,
 }
 
 /// A surface of a card that follows the pointer from a press until the button comes up.
@@ -54,6 +60,7 @@ impl TypeScriptCard {
         session: Entity<Session>,
         id: InstanceId,
         frame: Option<CardFrame>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let tool = session
@@ -62,11 +69,20 @@ impl TypeScriptCard {
             .tool_of(&id)
             .unwrap_or_default()
             .to_string();
-        let surface = match frame {
-            Some(_) => Surface::Card,
-            None => Surface::Page(None),
+        let page = frame.is_none();
+        let surface = if page {
+            Surface::Page(None)
+        } else {
+            Surface::Card
         };
         let card = live.update(cx, |live, cx| live.add(id.clone(), tool, surface, cx));
+        let focus = cx.focus_handle();
+        let hears_keys = live.read(cx).info(card).is_some_and(|info| info.keys);
+        if page && hears_keys {
+            window.focus(&focus, cx);
+        }
+        cx.on_focus_out(&focus, window, |view, _, _, cx| view.let_go_of_keys(cx))
+            .detach();
         cx.subscribe(&session, |view, _, event, cx| match event {
             ProjectEvent::Changed(id) if *id == view.id => {
                 view.live.update(cx, |live, cx| live.render(view.card, cx));
@@ -89,6 +105,38 @@ impl TypeScriptCard {
             frame,
             edit: ControlEdit::default(),
             held: None,
+            focus,
+            keys_down: BTreeSet::new(),
+        }
+    }
+
+    /// A key went down or up while the card has the keys. Not a key with cmd, ctrl, alt or
+    /// fn, which stays the window's, as cmd-z does, and not the repeats of a held key.
+    fn key(&mut self, keystroke: &Keystroke, down: bool, cx: &mut Context<Self>) {
+        let modifiers = keystroke.modifiers;
+        if modifiers.platform || modifiers.control || modifiers.alt || modifiers.function {
+            return;
+        }
+        let key = keystroke.key.clone();
+        // A key that went down before the card had the keys has no up here.
+        let changed = match down {
+            true => self.keys_down.insert(key.clone()),
+            false => self.keys_down.remove(&key),
+        };
+        if changed {
+            let card = self.card;
+            self.live
+                .update(cx, |live, cx| live.key(card, &key, down, cx));
+        }
+        cx.stop_propagation();
+    }
+
+    /// The card lost the keys: every key it holds goes up.
+    fn let_go_of_keys(&mut self, cx: &mut Context<Self>) {
+        let card = self.card;
+        for key in std::mem::take(&mut self.keys_down) {
+            self.live
+                .update(cx, |live, cx| live.key(card, &key, false, cx));
         }
     }
 
@@ -558,6 +606,7 @@ impl Render for TypeScriptCard {
         };
         let live = self.live.read(cx);
         let info = live.info(self.card);
+        let hears_keys = info.as_ref().is_some_and(|info| info.keys);
         let state = match &info {
             Some(info) => info.with_defaults(state),
             None => state,
@@ -584,16 +633,28 @@ impl Render for TypeScriptCard {
             None => div().into_any_element(),
         };
         let theme = cx.theme();
-        let body = div()
-            .text_size(px(12.))
-            .text_color(theme.gray_950)
-            .child(body);
+        let (text, background) = (theme.gray_950, theme.gray_100);
+        // A click in what takes the keys gives them: the body of a card, a whole page.
+        let takes_keys = |element: Div| {
+            element.when(hears_keys, |element| {
+                element
+                    .track_focus(&self.focus)
+                    .key_context(crate::KEY_CONTEXT)
+                    .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
+                        view.key(&event.keystroke, true, cx)
+                    }))
+                    .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
+                        view.key(&event.keystroke, false, cx)
+                    }))
+            })
+        };
+        let body = div().text_size(px(12.)).text_color(text).child(body);
         match &self.frame {
             // At least as wide as a plain card, so the title fits.
             Some(frame) => frame
                 .card()
                 .min_w(px(PLAIN_CARD_WIDTH))
-                .child(body)
+                .child(takes_keys(body))
                 .into_any_element(),
             None => {
                 // The room inside the padding, which the page draws from.
@@ -610,11 +671,8 @@ impl Render for TypeScriptCard {
                 )
                 .absolute()
                 .size_full();
-                div()
-                    .size_full()
-                    .p(px(24.))
-                    .bg(theme.gray_100)
-                    .child(div().relative().size_full().child(measure).child(body))
+                let room = div().relative().size_full().child(measure).child(body);
+                takes_keys(div().size_full().p(px(24.)).bg(background).child(room))
                     .into_any_element()
             }
         }

@@ -69,13 +69,17 @@ pub enum HumUpdate {
     /// frame when there is none or it has passed. Not saved.
     Trigger { index: usize, at: Option<u64> },
     /// From the interface: a key held for `frames` from the frame `at` of engine time, or from
-    /// the next frame, as if it came in on [`Hum::NOTES`]. Not saved.
+    /// the next frame, as if it came in on [`Hum::NOTES`]; with no `frames`, until a
+    /// [`HumUpdate::Release`] of its pitch. Not saved.
     Note {
         pitch: Pitch,
         velocity: Velocity,
         at: Option<u64>,
-        frames: u64,
+        frames: Option<u64>,
     },
+    /// From the interface: lets go of a key at the frame `at` of engine time, or in the next
+    /// frame.
+    Release { pitch: Pitch, at: Option<u64> },
 }
 
 /// What the interface plays at a frame.
@@ -476,9 +480,15 @@ impl Processor for Hum {
                         Some(start),
                         Scheduled::Note(NoteEvent::On { pitch, velocity }),
                     );
-                    let end = start.saturating_add((*frames).max(1));
-                    self.schedule(Some(end), Scheduled::Note(NoteEvent::Off { pitch }));
+                    if let Some(frames) = frames {
+                        let end = start.saturating_add((*frames).max(1));
+                        self.schedule(Some(end), Scheduled::Note(NoteEvent::Off { pitch }));
+                    }
                 }
+            }
+            HumUpdate::Release { pitch, at } => {
+                let pitch = *pitch;
+                self.schedule(*at, Scheduled::Note(NoteEvent::Off { pitch }));
             }
         }
     }

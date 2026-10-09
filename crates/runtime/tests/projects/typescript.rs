@@ -7,14 +7,6 @@ use std::path::Path;
 
 use crate::support::{BAR, Harness, clip, synth};
 
-fn bun_is_installed() -> bool {
-    let home = std::env::var_os("HOME").map(|home| Path::new(&home).join(".bun/bin/bun"));
-    let on_path = std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|folder| folder.join("bun").is_file())
-    });
-    on_path || home.is_some_and(|path| path.is_file())
-}
-
 /// The first TypeScript example of the doc for agents that write tools: a whole tool.
 fn doc_example() -> String {
     let doc = sound_typescript::AGENT_DOC.markdown;
@@ -57,7 +49,7 @@ fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
 
 /// [`pad_through`], with more fields of the track's record, such as automation lanes.
 fn pad_through_with(effects: &[(&str, &str)], track_fields: &str) -> Option<Harness> {
-    if !bun_is_installed() {
+    if !sound_typescript::has_bun() {
         eprintln!("skipped: Bun is not installed");
         return None;
     }
@@ -201,7 +193,7 @@ fn write_sine(root: &Path) {
 
 #[test]
 fn a_sample_plays_once_its_file_is_there() {
-    if !bun_is_installed() {
+    if !sound_typescript::has_bun() {
         return eprintln!("skipped: Bun is not installed");
     }
     let folder = tempfile::tempdir().unwrap();

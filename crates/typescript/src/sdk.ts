@@ -487,7 +487,34 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   card?: (card: Card<StateOf<S>, C, M>) => Node;
   /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
   page?: (page: Page<StateOf<S>, C, M>) => Node;
+  /**
+   * A key of the computer keyboard goes down or up, while its page shows or after a click on
+   * its card. Plain keys are then the tool's: space and `r` do not play or record.
+   */
+  onKey?: (tool: Handler<StateOf<S>, C, M>, key: Key) => void;
+  /**
+   * The MIDI keyboard plays, while the tool is on the track it plays or at the top of the
+   * project. An instrument plays the notes by itself as well.
+   */
+  onMidi?: (tool: Handler<StateOf<S>, C, M>, message: Midi) => void;
 }
+
+/** A key of the computer keyboard: its name, such as `"a"`, `"1"`, `"space"` or `"left"`. */
+export interface Key {
+  key: string;
+  /** Pressed; `false` when it comes up. */
+  down: boolean;
+}
+
+/**
+ * A message of the MIDI keyboard. `pitch` is MIDI, 69 is A4; a velocity or a value is 0 to 1;
+ * the bend is -1 to 1. The sustain pedal is controller 64, the mod wheel 1.
+ */
+export type Midi =
+  | { type: "noteOn"; pitch: number; velocity: number }
+  | { type: "noteOff"; pitch: number }
+  | { type: "cc"; controller: number; value: number }
+  | { type: "bend"; value: number };
 
 /** Makes a tool of the project. */
 export function tool<const S extends Fields, const C extends Controls = {}, M = {}>(
@@ -499,7 +526,6 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
   host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls, unknown>);
 }
 
-/** What the control loop of an instance gets each time it runs. */
 /**
  * What plays an instance as a performer would: nothing saves it and no undo takes it back.
  * `at` is a `time` of the control loop: what has one happens on that sample, or at once when
@@ -511,13 +537,20 @@ export interface Performer<C extends Controls> {
   /** Fires a trigger. */
   fire(control: ControlNames<C, "trigger">, options?: { at?: number }): void;
   /**
-   * Plays a note on the tool's own voices, as a key held for `seconds` (0.25 when left out):
-   * `pitch` is MIDI, 69 is A4, and `velocity` is 0 to 1 (0.8 when left out). An instrument
-   * plays each note on a voice of its own; a source follows the newest.
+   * Plays a note on the tool's own voices, as a key held for `seconds` (0.25 when left out),
+   * or with `hold` until `release`: `pitch` is MIDI, 69 is A4, and `velocity` is 0 to 1 (0.8
+   * when left out). An instrument plays each note on a voice of its own; a source follows the
+   * newest.
    */
-  play(pitch: number, options?: { seconds?: number; velocity?: number; at?: number }): void;
+  play(
+    pitch: number,
+    options?: { seconds?: number; hold?: boolean; velocity?: number; at?: number },
+  ): void;
+  /** Lets go of a note `play` holds. */
+  release(pitch: number, options?: { at?: number }): void;
 }
 
+/** What the control loop of an instance gets each time it runs. */
 export interface Tick<State, C extends Controls, M> extends Performer<C> {
   state: State;
   /** The last value of each `watch`, by name. */
@@ -527,6 +560,12 @@ export interface Tick<State, C extends Controls, M> extends Performer<C> {
   dt: number;
   /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
   time: number;
+}
+
+/** What `onKey` and `onMidi` get: what a tick gets, and `update`, as the composer plays them. */
+export interface Handler<State, C extends Controls, M> extends Omit<Tick<State, C, M>, "dt"> {
+  /** Changes the record as one undo step called `label`, as a card does. */
+  update(label: string, change: (state: State) => void): void;
 }
 
 // ---------------------------------------------------------------------------------------------
