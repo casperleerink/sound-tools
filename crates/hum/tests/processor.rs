@@ -249,6 +249,33 @@ fn a_note_with_no_length_plays_until_it_is_released() {
 }
 
 #[test]
+fn a_release_lets_go_of_its_note_when_the_list_of_what_waits_for_its_frame_is_full() {
+    let code = ["out = 0.2 * sin(phasor(freq) * tau) * adsr(gate, 1, 1, 1, 1)"];
+    let mut played = play(Kind::Instrument { voices: 8 }, &code, Vec::new());
+    let pitch = Pitch::new(69).unwrap();
+    let note = HumUpdate::Note {
+        pitch,
+        velocity: Velocity::new(100).unwrap(),
+        at: None,
+        frames: None,
+    };
+    played.control.update(played.hum, note).unwrap();
+    // A trigger far ahead waits in the list, which holds 256.
+    for _ in 0..256 {
+        let hit = HumUpdate::Trigger {
+            index: 0,
+            at: Some(u64::MAX),
+        };
+        played.control.update(played.hum, hit).unwrap();
+        played.render(64);
+    }
+    assert!(loudest(&played.render(4_800)) > 0.1);
+    let release = HumUpdate::Release { pitch, at: None };
+    played.control.update(played.hum, release).unwrap();
+    assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
+}
+
+#[test]
 fn a_trigger_with_a_time_fires_on_that_frame_and_one_whose_time_passed_at_once() {
     let mut played = play(Kind::Source, &["trigger hit", "out = hit"], Vec::new());
     // Engine time is 640 from here.

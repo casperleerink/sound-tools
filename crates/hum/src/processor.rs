@@ -296,14 +296,15 @@ impl Hum {
     }
 
     /// Keeps `what` for its frame, after what is already there for that frame. A full list
-    /// drops it.
-    fn schedule(&mut self, at: Option<u64>, what: Scheduled) {
+    /// drops it, and says so.
+    fn schedule(&mut self, at: Option<u64>, what: Scheduled) -> bool {
         if self.scheduled.len() == MAX_SCHEDULED {
-            return;
+            return false;
         }
         let at = at.unwrap_or(0).max(self.next_frame);
         let index = self.scheduled.partition_point(|(other, _)| *other > at);
         self.scheduled.insert(index, (at, what));
+        true
     }
 
     fn follow(&mut self, event: NoteEvent) {
@@ -487,8 +488,11 @@ impl Processor for Hum {
                 }
             }
             HumUpdate::Release { pitch, at } => {
-                let pitch = *pitch;
-                self.schedule(*at, Scheduled::Note(NoteEvent::Off { pitch }));
+                let off = NoteEvent::Off { pitch: *pitch };
+                // A full list lets go at once: a dropped release would hold the note for ever.
+                if !self.schedule(*at, Scheduled::Note(off)) {
+                    self.follow(off);
+                }
             }
         }
     }
