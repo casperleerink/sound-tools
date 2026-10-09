@@ -4,6 +4,7 @@
 //! Those belong to extensions. See ARCHITECTURE.md and ENGINEERING.md section 3.
 //! `README.md` in this crate is the guide for extension authors: processors and tools.
 
+mod apps;
 mod automation;
 mod clock;
 mod control;
@@ -28,6 +29,7 @@ mod svf;
 mod transport;
 mod watch;
 
+pub use apps::{AppSound, app_processes};
 pub use automation::{Automated, Automation, AutomationInput, MAX_AUTOMATED, PlayedLanes, Targets};
 pub use clock::{
     Bar, BarBeat, Clock, ClockError, Frames, MIN_EXACT_SAMPLE_RATE, SignatureRun,
@@ -36,7 +38,8 @@ pub use clock::{
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
 pub use delay_line::DelayLine;
 pub use device::{
-    DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming, monotonic_nanos,
+    DeviceChoice, DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming,
+    input_devices, monotonic_nanos, output_devices,
 };
 pub use dsp::{HIGHEST_PHASE_STEP, OnePole, Taps, held, poly_blep};
 pub use engine::{Engine, EngineStatus};
@@ -44,8 +47,8 @@ pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, Enve
 pub use gain::{amplitude, pan_gains};
 pub use graph::{Connection, Destination, GraphError, NodeId, Source};
 pub use input::{
-    CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputStream,
-    LiveInput, LiveWriter, capture, live_input,
+    CAPTURE_SECONDS, CaptureReader, CaptureStatus, CaptureWriter, InputDevice, InputId,
+    InputStream, LiveInput, LiveWriter, capture, live_input,
 };
 pub use lfo::{Lfo, LfoShape};
 pub use limiter::PeakLimiter;

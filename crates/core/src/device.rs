@@ -1,4 +1,5 @@
-//! Device output through cpal. A thin wrapper: open the default output, hand it an engine.
+//! Device output through cpal. A thin wrapper: open the chosen or the default output, hand it
+//! an engine.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -7,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use crate::apps::TAP_NAME;
 use crate::clock::MIN_EXACT_SAMPLE_RATE;
 use crate::engine::Engine;
 
@@ -43,11 +45,63 @@ pub enum DeviceError {
     ChannelMismatch { engine: usize, device: usize },
     #[error("the engine runs at {engine} Hz, the device at {device} Hz")]
     SampleRateMismatch { engine: u32, device: u32 },
+    #[error("{0:?} is not running, or has played no sound yet")]
+    NoApp(String),
+    #[error("hearing other apps works only on macOS")]
+    AppsOnlyOnMacos,
+    #[error("hearing other apps needs macOS 14.2 or later")]
+    AppsNeedNewerMacos,
+    #[error("could not {what} (Core Audio error {status})")]
+    CoreAudio { what: &'static str, status: i32 },
+    #[error("the device of a tap of other apps did not appear")]
+    TapNotListed,
     #[error(transparent)]
     Backend(#[from] cpal::Error),
 }
 
-/// The default output device and its default configuration.
+/// An audio device of this computer as a menu lists it: its id, which a choice of it keeps,
+/// and its name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceChoice {
+    pub id: String,
+    pub name: String,
+}
+
+/// The output devices of this computer, such as the speakers, an interface or BlackHole.
+/// Asking can take a while: never on the thread that draws.
+pub fn output_devices() -> Result<Vec<DeviceChoice>, DeviceError> {
+    Ok(choices(cpal::default_host().output_devices()?))
+}
+
+/// The input devices of this computer, as [`output_devices`].
+pub fn input_devices() -> Result<Vec<DeviceChoice>, DeviceError> {
+    Ok(choices(cpal::default_host().input_devices()?))
+}
+
+/// The devices a menu offers. The devices of the taps of this process are left out.
+fn choices(devices: impl Iterator<Item = cpal::Device>) -> Vec<DeviceChoice> {
+    devices
+        .filter_map(|device| {
+            let id = device.id().ok()?.to_string();
+            let name = device.description().ok()?.name().to_string();
+            (!name.starts_with(TAP_NAME)).then_some(DeviceChoice { id, name })
+        })
+        .collect()
+}
+
+/// The device a choice of [`DeviceChoice::id`] keeps, or the default one `default` gives when
+/// there is no choice or its device is not there.
+pub(crate) fn chosen_or(
+    choice: Option<&str>,
+    default: impl FnOnce(&cpal::Host) -> Option<cpal::Device>,
+) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+    let id = choice.and_then(|id| id.parse::<cpal::DeviceId>().ok());
+    id.and_then(|id| host.device_by_id(&id))
+        .or_else(|| default(&host))
+}
+
+/// An output device and its default configuration.
 pub struct OutputDevice {
     device: cpal::Device,
     config: cpal::StreamConfig,
@@ -55,8 +109,13 @@ pub struct OutputDevice {
 
 impl OutputDevice {
     pub fn default_output() -> Result<Self, DeviceError> {
-        let device = cpal::default_host()
-            .default_output_device()
+        Self::open(None)
+    }
+
+    /// The output device with the id `choice` keeps, see [`DeviceChoice`], or the default
+    /// output of the system when there is no choice or that device is not there.
+    pub fn open(choice: Option<&str>) -> Result<Self, DeviceError> {
+        let device = chosen_or(choice, |host| host.default_output_device())
             .ok_or(DeviceError::NoOutputDevice)?;
         let supported = device.default_output_config()?;
         if supported.sample_format() != cpal::SampleFormat::F32 {

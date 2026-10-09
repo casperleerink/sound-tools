@@ -87,7 +87,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Agent sidebar | N files are not live, under an answer | Show the problems that turn left, as `path: message` lines |
 | Project menu | Fit tempo to take | Fit the tempo map to the take of the selected clip, so bar lines land on the beats as played |
 | Project menu | Undo, Redo | Named after the step they undo or redo |
-| Project menu | Output device | Shows the device the app plays on |
+| Project menu | Output device, Input device | Show the devices in use and open the devices of the machine, with System default. A pick is kept for this machine and the app reopens on it |
 | Project menu | Open project… | Pick another project folder, or make a new one. The app reopens on it. A folder with other files and no `project.json` is refused |
 | Project menu | Reveal project folder | Show the folder in the Finder |
 | Project menu | Open terminal in project folder | A terminal in the folder, to start a coding agent there |
@@ -144,7 +144,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Track panel | the close icon | Close the panel |
 | Track panel | the volume under the track name | Drag the thumb or the meter; double click for 0 dB; arrows 0.5 dB, with shift 0.1 dB |
 | Track panel | Pan, M, S | Pan the track; mute it; solo it (with other soloed tracks) |
-| Track panel | the input select of an audio track | Which channels of the default input it records: one, or a pair for stereo |
+| Track panel | the input select of an audio track | Which channels of the input device it records: one, or a pair for stereo |
 | Track panel | drag a knob up or down | Change the value. With shift ten times finer |
 | Track panel | arrows on a focused knob | A fiftieth of the travel, with shift a five-hundredth |
 | Track panel | double click a knob, or backspace on it | Set its default |

@@ -534,6 +534,7 @@ pub fn summary(project: &Project) -> String {
     for connection in &project_file.connections {
         let from = match &connection.from {
             SavedSource::DeviceInput(channel) => format!("device input {channel}"),
+            SavedSource::App(app) => format!("the sound of {app}"),
             SavedSource::Output(output) => format!("{}:{}", output.instance, output.port),
         };
         let to = match &connection.to {

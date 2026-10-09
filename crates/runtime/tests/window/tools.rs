@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use gpui::{AppContext, Entity, KeyUpEvent, Keystroke, TestAppContext, VisualTestContext};
 use midi::Played;
 use plugin_host::{Plugins, ScanCache};
-use runtime::window::{Shell, bind_keys};
+use runtime::window::{DeviceAccess, Shell, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::Engine;
 use sound_notes::{Pitch, Velocity};
@@ -147,7 +147,7 @@ fn open<'a>(cx: &'a mut TestAppContext, files: &[(&str, &str)]) -> Option<Window
             let (mut views, mut devices) = views(plugins.downgrade());
             let extensions = extensions.unwrap();
             sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
-            let device = (None, None);
+            let device = DeviceAccess::default();
             Shell::with_device(session, (views, devices), "Test".into(), device, window, cx)
         }
     });

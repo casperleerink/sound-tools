@@ -7,6 +7,7 @@
 //! it name the agent: the left panel is whatever the installed [`LeftPanelSlot`] makes.
 
 pub mod audio_input;
+pub mod other_apps;
 mod project_menu;
 pub mod recording;
 mod start;
@@ -40,9 +41,12 @@ use sound_ui::components::text_input;
 use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
 
 use audio_input::OpenInput;
+use other_apps::{AppSounds, OtherApps};
+pub use project_menu::DeviceMenu;
 use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
 pub use transport::TransportPill;
 
+use crate::app::ChosenDevices;
 use crate::{open_with_extensions, update, views};
 
 actions!(
@@ -149,6 +153,16 @@ impl LeftPanel {
     }
 }
 
+/// What the window of the real runtime has of the device: its timing, for the latency and for
+/// where a take lands, how it opens the audio input, and how it hears other apps. A test window
+/// has none of it, or simulated ones.
+#[derive(Default)]
+pub struct DeviceAccess {
+    pub timing: Option<Arc<StreamTiming>>,
+    pub open_input: Option<OpenInput>,
+    pub app_sounds: Option<AppSounds>,
+}
+
 /// The root view of the window.
 pub struct Shell {
     session: Entity<Session>,
@@ -170,6 +184,8 @@ pub struct Shell {
     /// The last write of whether the panel is open. Each waits for the one before, so the
     /// file ends with the last.
     remembering: Task<()>,
+    /// The taps of the other apps `project.json` hears, in a window that can open them.
+    _other_apps: Option<Entity<OtherApps>>,
 }
 
 impl Shell {
@@ -182,20 +198,26 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::with_device(session, registries, device_name, (None, None), window, cx)
+        let device = DeviceAccess::default();
+        Self::with_device(session, registries, device_name, device, window, cx)
     }
 
-    /// The window of the real runtime, which has a device: its timing, for the latency and for
-    /// where a take lands, and how it opens the audio input. A window without them measures no
-    /// latency and cannot record audio; a test gives a simulated input.
+    /// The window of the real runtime, which has a device, see [`DeviceAccess`]. A window
+    /// without it measures no latency, cannot record audio and hears no other app; a test gives
+    /// simulated ones.
     pub fn with_device(
         session: Entity<Session>,
         registries: (Views, Devices),
         device_name: SharedString,
-        (timing, open_input): (Option<Arc<StreamTiming>>, Option<OpenInput>),
+        device: DeviceAccess,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let DeviceAccess {
+            timing,
+            open_input,
+            app_sounds,
+        } = device;
         let (views, devices) = registries;
         views.install(cx);
         devices.install(cx);
@@ -233,6 +255,10 @@ impl Shell {
         cx.observe(&project_menu, |_, _, cx| cx.notify()).detach();
         cx.observe_global::<update::Ready>(|_, cx| cx.notify())
             .detach();
+        let other_apps = app_sounds.map(|sounds| {
+            let session = session.clone();
+            cx.new(|cx| OtherApps::new(session, sounds, cx))
+        });
         let mut shell = Self {
             project_menu,
             transport: cx
@@ -248,6 +274,7 @@ impl Shell {
             left_panel_icon_focus: cx.focus_handle().tab_stop(true),
             return_focus: None,
             remembering: Task::ready(()),
+            _other_apps: other_apps,
         };
         shell.show_main_instance(window, cx);
         shell
@@ -664,6 +691,41 @@ fn show_recent_projects(window: gpui::WindowHandle<Shell>, cx: &mut App) {
     .detach();
 }
 
+/// How often the device menus look at the devices of the machine again, so a device plugged in
+/// later is offered.
+const DEVICES_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Gives the project menu of the app's window the audio devices of this machine, and again
+/// whenever they change. Off the UI thread: asking for them can take a while. A test window
+/// never gets them, so a snapshot does not show this machine's devices.
+fn show_devices(window: gpui::WindowHandle<Shell>, chosen: ChosenDevices, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        loop {
+            let chosen = chosen.clone();
+            let devices = cx
+                .background_spawn(async move {
+                    DeviceMenu {
+                        // A failure leaves a list empty, and the menu offers the default.
+                        outputs: sound_core::output_devices().unwrap_or_default(),
+                        inputs: sound_core::input_devices().unwrap_or_default(),
+                        chosen,
+                    }
+                })
+                .await;
+            let shown = window.update(cx, |shell, _, cx| {
+                let menu = shell.project_menu().clone();
+                menu.update(cx, |menu, cx| menu.set_devices(devices, cx));
+            });
+            // The window is gone.
+            if shown.is_err() {
+                break;
+            }
+            cx.background_executor().timer(DEVICES_INTERVAL).await;
+        }
+    })
+    .detach();
+}
+
 /// What the headless runtime prints at the end too, so a session in the window can be judged
 /// the same way.
 fn print_device_report(stream: &OutputStream) {
@@ -745,7 +807,7 @@ fn init(cx: &mut App) {
     crate::agent_panel(support, cx).install(cx);
 }
 
-/// A project that is open and plays on the default output, ready for its window.
+/// A project that is open and plays on the chosen output, ready for its window.
 struct Opened {
     project: Project,
     /// The project's own tools, for the window to keep live.
@@ -753,11 +815,26 @@ struct Opened {
     plugins: WeakPlugins,
     stream: OutputStream,
     device_name: String,
+    chosen: ChosenDevices,
+}
+
+/// The output device the composer chose, or the default output when there is no choice, or
+/// when the one chosen does not open: a choice must never keep every project from opening.
+fn open_output(chosen: &ChosenDevices) -> Result<OutputDevice> {
+    match OutputDevice::open(chosen.output.as_deref()) {
+        Ok(device) => Ok(device),
+        Err(error) if chosen.output.is_some() => {
+            eprintln!("error: the chosen output device did not open: {error}");
+            Ok(OutputDevice::default_output()?)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 impl Opened {
     fn open(folder: &Path) -> Result<Self> {
-        let device = OutputDevice::default_output()?;
+        let chosen = ChosenDevices::read();
+        let device = open_output(&chosen)?;
         let device_name = device.name()?;
         let config = EngineConfig::new(device.sample_rate(), device.channels());
         let (control, engine) = Engine::new(config);
@@ -789,6 +866,7 @@ impl Opened {
             plugins: weak_plugins,
             stream,
             device_name,
+            chosen,
         })
     }
 
@@ -800,6 +878,7 @@ impl Opened {
             plugins: weak_plugins,
             stream,
             device_name,
+            chosen,
         } = self;
         let title = project
             .root()
@@ -911,8 +990,13 @@ impl Opened {
                 }
                 let registries = (views, devices);
                 let name = device_name.into();
-                let input: OpenInput = Arc::new(audio_input::default_input);
-                let device = (Some(timing), Some(input));
+                let device = DeviceAccess {
+                    timing: Some(timing),
+                    open_input: Some(audio_input::system_input(chosen.input.clone())),
+                    // Only macOS has taps. Elsewhere every connection from an app is a
+                    // problem that says so, and nothing is opened.
+                    app_sounds: cfg!(target_os = "macos").then(AppSounds::system),
+                };
                 Shell::with_device(session.clone(), registries, name, device, window, cx)
             })
         });
@@ -932,6 +1016,7 @@ impl Opened {
             Ok(window) => {
                 cx.activate(true);
                 show_recent_projects(window, cx);
+                show_devices(window, chosen, cx);
                 window
             }
             Err(error) => {

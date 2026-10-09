@@ -17,6 +17,7 @@ use crate::clock::TempoMap;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
 use crate::graph::{Connection, Destination, GraphError, NodeId, Source};
+use crate::input::InputId;
 use crate::parameter::{AutomatedNumber, ParameterInfo};
 use crate::peaks::Peaks;
 use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
@@ -929,6 +930,11 @@ impl Bindings {
         self.saved.contains(connection) || self.by_instance.values().any(declared)
     }
 
+    /// Whether this `project.json` connection is in the graph.
+    pub(super) fn is_bound(&self, connection: &SavedConnection) -> bool {
+        (self.resolve(connection)).is_ok_and(|resolved| self.saved.contains(&resolved))
+    }
+
     fn resolve(&self, connection: &SavedConnection) -> Result<Connection, String> {
         let binding = |port: &PortReference| {
             self.by_instance.get(&port.instance).ok_or_else(|| {
@@ -939,7 +945,8 @@ impl Bindings {
             })
         };
         let source = match &connection.from {
-            SavedSource::DeviceInput(channel) => Source::DeviceInput(*channel),
+            SavedSource::DeviceInput(channel) => Source::Input(InputId::DEVICE, *channel),
+            SavedSource::App(app) => Source::Input(app.input(), 0),
             SavedSource::Output(from) => {
                 let output = binding(from)?.outputs.get(&from.port).ok_or_else(|| {
                     format!(

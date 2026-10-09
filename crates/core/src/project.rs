@@ -43,11 +43,13 @@ use registry::DerivedFrom;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
+use crate::apps::AppSound;
 use crate::automation::PlayedLanes;
 use crate::clock::{Clock, Ticks, TimeSignatures};
 use crate::control::EngineControl;
+use crate::device::DeviceError;
 use crate::graph::GraphError;
-use crate::input::LiveInput;
+use crate::input::{InputId, LiveInput};
 use crate::parameter::AutomatedNumber;
 use crate::peaks::Peaks;
 use crate::processor::Processor;
@@ -175,6 +177,9 @@ pub struct Project {
     /// The sample rate and channels of the live input, while one is given. See
     /// [`Self::set_live_input`].
     live_input: Option<(u32, usize)>,
+    /// The sample rate of the sound of each app that was given, or why it is not heard. See
+    /// [`Self::set_app_sound`].
+    app_sounds: BTreeMap<AppSound, Result<u32, String>>,
 }
 
 impl Project {
@@ -232,6 +237,7 @@ impl Project {
             generated_are_stale: true,
             watcher: None,
             live_input: None,
+            app_sounds: BTreeMap::new(),
         };
         let mut changes = Vec::new();
         match project.storage.read_project_file()? {
@@ -298,47 +304,114 @@ impl Project {
         Ok(self.engine.update(node, update)?)
     }
 
+    /// The sample rate of the engine, which is that of the output device.
+    pub fn sample_rate(&self) -> u32 {
+        self.engine.config().sample_rate
+    }
+
+    /// Whether a `project.json` connection from the device input is in the graph, so the input
+    /// has to be open. One whose instance or port is missing needs no input.
+    pub fn hears_device_input(&self) -> bool {
+        let connections = self.project_file.connections.iter();
+        connections
+            .filter(|connection| matches!(connection.from, SavedSource::DeviceInput(_)))
+            .any(|connection| self.bindings.is_bound(connection))
+    }
+
+    /// The apps whose sound a `project.json` connection in the graph starts at, so each has to
+    /// be tapped.
+    pub fn app_sounds(&self) -> BTreeSet<AppSound> {
+        let connections = self.project_file.connections.iter();
+        let bound = connections.filter(|connection| self.bindings.is_bound(connection));
+        (bound.filter_map(|connection| match &connection.from {
+            SavedSource::App(app) => Some(app.clone()),
+            _ => None,
+        }))
+        .collect()
+    }
+
     /// Plays the input of a device into the `device_input` connections of `project.json`, or
     /// silence with `None`, which is what they hear until an input is given. An input at another
     /// sample rate than the engine stays silent, and each of those connections is a problem that
-    /// says why, as is one from a channel the input does not have.
+    /// says why, as is one from a channel the input does not have. That stays so until the next
+    /// call, also when the device itself was closed, as it is when it plays nothing.
     pub fn set_live_input(&mut self, input: Option<LiveInput>) {
         let before = self.live_input_problems();
         self.live_input = (input.as_ref()).map(|input| (input.sample_rate(), input.channels()));
-        self.engine.set_live_input(input);
+        self.engine.set_live_input(InputId::DEVICE, input);
         if before != self.live_input_problems() {
             self.push_event(ProjectEvent::ProblemsChanged);
         }
     }
 
-    /// Why a `device_input` connection is silent with the input that was given.
-    fn live_input_problems(&self) -> Vec<String> {
-        let Some((input_rate, channels)) = self.live_input else {
-            return Vec::new();
+    /// Plays the sound of `app` into the `app` connections of `project.json` that name it, or
+    /// silence with `None`. `Err` says why it is not heard, and each of those connections then
+    /// says so as a problem, as does one when the sound comes at another rate than the output.
+    pub fn set_app_sound(&mut self, app: &AppSound, sound: Option<Result<LiveInput, String>>) {
+        let before = self.live_input_problems();
+        let live = match sound {
+            None => {
+                self.app_sounds.remove(app);
+                None
+            }
+            Some(Ok(live)) => {
+                self.app_sounds.insert(app.clone(), Ok(live.sample_rate()));
+                Some(live)
+            }
+            Some(Err(why)) => {
+                self.app_sounds.insert(app.clone(), Err(why));
+                None
+            }
         };
-        let output_rate = self.engine.config().sample_rate;
+        self.engine.set_live_input(app.input(), live);
+        if before != self.live_input_problems() {
+            self.push_event(ProjectEvent::ProblemsChanged);
+        }
+    }
+
+    /// Why a `device_input` or `app` connection is silent with what was given.
+    fn live_input_problems(&self) -> Vec<String> {
         let connections = self.project_file.connections.iter().enumerate();
         connections
             .filter_map(|(index, connection)| {
-                let SavedSource::DeviceInput(channel) = connection.from else {
-                    return None;
+                let why = match &connection.from {
+                    SavedSource::DeviceInput(channel) => self.device_input_problem(*channel)?,
+                    SavedSource::App(app) => self.app_sound_problem(app)?,
+                    SavedSource::Output(_) => return None,
                 };
-                if input_rate != output_rate {
-                    return Some(format!(
-                        "connections[{index}]: not heard, because the audio input runs at {input_rate} Hz and the output at {output_rate} Hz. Live input needs both at one rate: set them to the same rate in the sound settings of the system (Audio MIDI Setup on macOS)"
-                    ));
-                }
-                let has = match channels {
-                    1 => "one channel".to_string(),
-                    channels => format!("{channels} channels"),
-                };
-                (channel >= channels).then(|| {
-                    format!(
-                        "connections[{index}]: not heard, because the audio input has {has}, counted from 0, and no channel {channel}"
-                    )
-                })
+                Some(format!("connections[{index}]: not heard, because {why}"))
             })
             .collect()
+    }
+
+    fn app_sound_problem(&self, app: &AppSound) -> Option<String> {
+        if !cfg!(target_os = "macos") {
+            return Some(DeviceError::AppsOnlyOnMacos.to_string());
+        }
+        let output_rate = self.engine.config().sample_rate;
+        match self.app_sounds.get(app)? {
+            Err(why) => Some(why.clone()),
+            Ok(rate) if *rate != output_rate => Some(format!(
+                "the sound of other apps comes at {rate} Hz and the output runs at {output_rate} Hz. Set the output device to {rate} Hz in Audio MIDI Setup"
+            )),
+            Ok(_) => None,
+        }
+    }
+
+    fn device_input_problem(&self, channel: usize) -> Option<String> {
+        let (input_rate, channels) = self.live_input?;
+        let output_rate = self.engine.config().sample_rate;
+        if input_rate != output_rate {
+            return Some(format!(
+                "the audio input runs at {input_rate} Hz and the output at {output_rate} Hz. Live input needs both at one rate: set them to the same rate in the sound settings of the system (Audio MIDI Setup on macOS)"
+            ));
+        }
+        let has = match channels {
+            1 => "one channel".to_string(),
+            channels => format!("{channels} channels"),
+        };
+        (channel >= channels)
+            .then(|| format!("the audio input has {has}, counted from 0, and no channel {channel}"))
     }
 
     /// The input port that the behaviour of `instance` named, for code below the tools that
