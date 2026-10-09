@@ -398,6 +398,15 @@ SCENARIOS = {
     "ui-drones": (setup_tape_builder, check_page,
                   "Turn this project into a drone machine on one screen: four drones, each with "
                   "a pitch and a volume control and a visual of its sound."),
+    "ui-piano": (setup_tape_builder, check_card("lead"),
+                 "Give the lead an instrument with a small piano keyboard on its card that I "
+                 "click to play."),
+    "ui-bands": (setup_tape_builder, check_card("pad"),
+                 "Put an effect on the pad that shows the level of 8 frequency bands as bars on "
+                 "its card."),
+    "ui-paint": (setup_tape_builder, check_page,
+                 "Turn this project into one screen I paint on with the mouse; a line sweeps "
+                 "across and plays what I painted, higher up is higher pitch."),
     "experiment-builder": (setup_tape_builder, check_experiment,
                            "Turn this project into an interactive sound toy instead of a song, "
                            "just one screen and no timeline: a 'gravity harp'. I drop balls "
