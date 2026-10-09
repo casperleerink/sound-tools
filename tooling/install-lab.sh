@@ -4,9 +4,10 @@
 #   tooling/install-lab.sh
 #
 # Run it again to update the lab. It is its own app to macOS: its own name, bundle id and
-# microphone permission. Its program is not called sound-tools, so it never updates itself
-# from a release, nor installs an update Sound Tools downloaded. The two share the support
-# folder: recent projects, agents and their threads.
+# microphone permission. It is built with SOUND_TOOLS_NO_UPDATES, so it never updates itself
+# from a release, nor installs an update Sound Tools downloaded. Its agent runs its own
+# `sound-tools`, which is first on the agent's PATH. The two share the support folder:
+# recent projects, agents and their threads.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,13 +15,11 @@ cd "$root"
 
 build="$(mktemp -d)"
 trap 'rm -rf "$build"' EXIT
-tooling/bundle-macos.sh "$build"
+SOUND_TOOLS_NO_UPDATES=1 tooling/bundle-macos.sh "$build"
 
 app="$build/Sound Tools Lab.app"
 mv "$build/Sound Tools.app" "$app"
-mv "$app/Contents/MacOS/sound-tools" "$app/Contents/MacOS/sound-tools-lab"
 plist="$app/Contents/Info.plist"
-plutil -replace CFBundleExecutable -string sound-tools-lab "$plist"
 plutil -replace CFBundleName -string "Sound Tools Lab" "$plist"
 plutil -replace CFBundleDisplayName -string "Sound Tools Lab" "$plist"
 plutil -replace CFBundleIdentifier -string com.casperleerink.sound-tools-lab "$plist"
@@ -32,6 +31,6 @@ installed="/Applications/Sound Tools Lab.app"
 rm -rf "$installed"
 ditto "$app" "$installed"
 echo "installed $installed ($(git rev-parse --short HEAD))"
-if pgrep -qf "$installed/Contents/MacOS/sound-tools-lab"; then
+if pgrep -qf "$installed/Contents/MacOS/"; then
   echo "Sound Tools Lab is open: quit and open it again to use this build."
 fi
