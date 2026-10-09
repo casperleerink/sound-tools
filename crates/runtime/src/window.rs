@@ -39,7 +39,7 @@ use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::text_input;
-use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
+use sound_ui::{ActiveTheme, Assets, Devices, Session, SpareKey, SpareKeys, Views, typography};
 
 use audio_input::OpenInput;
 use other_apps::{AppSounds, OtherApps};
@@ -289,6 +289,23 @@ impl Shell {
             remembering: Task::ready(()),
             _other_apps: other_apps,
         };
+        // A plugin's window passes on the keys its plugin does not use, to play the computer
+        // keys. The plain keys are always free there: it has no text field and no tool.
+        let transport = shell.transport.downgrade();
+        let pass = move |key: SpareKey<'_>, cx: &mut App| {
+            // Fails only when the window is gone.
+            (transport.update(cx, |pill, cx| match key {
+                SpareKey::Down(event) => {
+                    pill.computer_key_down(event, true);
+                }
+                SpareKey::Up(event) => {
+                    pill.computer_key_up(&event.keystroke.key);
+                }
+                SpareKey::LetGo => pill.let_go_of_computer_keys(cx),
+            }))
+            .ok();
+        };
+        SpareKeys::install(pass, cx);
         shell.show_main_instance(window, cx);
         // After the main view, which may take the focus: a page that hears keys does.
         if window.focused(cx).is_none() {

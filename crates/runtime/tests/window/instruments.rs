@@ -405,6 +405,41 @@ fn deleting_the_track_closes_the_window(format: PluginFormat, cx: &mut TestAppCo
     assert!(support::peak(&playing(&mut opened)) > 0.0);
 }
 
+/// While a plugin's window has the keyboard, a key the plugin does not use plays the computer
+/// keys. A CLAP plugin takes no key from the window, only in its own view.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[gpui::test]
+fn a_key_the_plugins_window_does_not_use_plays_the_computer_keys(cx: &mut TestAppContext) {
+    let mut opened = open_panel(cx);
+    pick(&mut opened, &plugin_item(PluginFormat::Clap));
+    opened.keys("secondary-k");
+    let button = opened.control("plugin-window");
+    opened.click(button);
+    assert!(window_is_open(&mut opened));
+    // The keyboard plays into the plugin from the second poll after it came.
+    opened.settle();
+    opened.settle();
+    let main = opened.cx.update(|window, _| window.window_handle());
+    let plugin_window = (opened.cx.windows().into_iter())
+        .find(|handle| *handle != main)
+        .unwrap();
+
+    opened.cx.cx.simulate_keystrokes(plugin_window, "a");
+    opened.settle();
+    assert!(support::peak(&left(&opened.render(4_800))) > 0.0);
+
+    let up = gpui::PlatformInput::KeyUp(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("a").unwrap(),
+    });
+    let window_update = plugin_window.update(&mut opened.cx.cx, |_, window, cx| {
+        window.dispatch_event(up, cx);
+    });
+    window_update.unwrap();
+    opened.settle();
+    opened.render(4_800);
+    assert_eq!(support::peak(&left(&opened.render(4_800))), 0.0);
+}
+
 #[gpui::test]
 fn a_clap_plugin_written_by_hand_gets_the_same_card_and_the_track_can_go_back_to_the_synth(
     cx: &mut TestAppContext,

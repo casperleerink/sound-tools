@@ -26,13 +26,14 @@ use std::ptr::NonNull;
 
 use gpui::{
     App, Bounds, Context, DisplayId, FocusHandle, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke,
-    Pixels, Render, Size, Subscription, TitlebarOptions, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowHandle, WindowId, WindowKind, WindowOptions, div, point, prelude::*, px,
-    size,
+    ModifiersChangedEvent, Pixels, Render, Size, Subscription, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowId, WindowKind, WindowOptions,
+    div, point, prelude::*, px, size,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
 use sound_core::InstanceId;
+use sound_ui::{SpareKey, SpareKeys};
 
 use crate::PluginProblem;
 use crate::backend::{KeyDirection, PluginGui};
@@ -88,7 +89,7 @@ pub(crate) struct PluginFrame {
     /// The window's own focus, which nothing else in it takes. GPUI gives a key to what has
     /// the focus and to what is around it, so this is what makes the frame hear keys.
     focus: FocusHandle,
-    _bounds: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 impl PluginFrame {
@@ -103,12 +104,18 @@ impl PluginFrame {
             let id = Window::window_handle(window).window_id();
             plugins.window_bounds_changed(&frame.owner.instance, id, placement, content);
         });
+        // A key held here comes up in the app that has the keys now.
+        let activation = cx.observe_window_activation(window, |_, window, cx| {
+            if !window.is_window_active() {
+                SpareKeys::pass(SpareKey::LetGo, cx);
+            }
+        });
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         Self {
             owner,
             focus,
-            _bounds: bounds,
+            _subscriptions: [bounds, activation],
         }
     }
 
@@ -125,19 +132,30 @@ impl PluginFrame {
 
 impl Render for PluginFrame {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A key the plugin has no use for plays the computer keys, as in the main window.
         div()
             .size_full()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|frame, event: &KeyDownEvent, window, cx| {
-                if frame.key(window, &event.keystroke, KeyDirection::Down) {
-                    cx.stop_propagation();
+                match frame.key(window, &event.keystroke, KeyDirection::Down) {
+                    true => cx.stop_propagation(),
+                    false => SpareKeys::pass(SpareKey::Down(event), cx),
                 }
             }))
+            // Every key up, also of a key the plugin took: the computer keys end only a note
+            // they started.
             .on_key_up(cx.listener(|frame, event: &KeyUpEvent, window, cx| {
+                SpareKeys::pass(SpareKey::Up(event), cx);
                 if frame.key(window, &event.keystroke, KeyDirection::Up) {
                     cx.stop_propagation();
                 }
             }))
+            // macOS sends no key up while cmd is held.
+            .on_modifiers_changed(|event: &ModifiersChangedEvent, _, cx| {
+                if event.modifiers.platform {
+                    SpareKeys::pass(SpareKey::LetGo, cx);
+                }
+            })
     }
 }
 
