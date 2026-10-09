@@ -369,6 +369,12 @@ def check_apps(folder: Path) -> dict:
     return {**checks, "hears an app": any("app" in c.get("from", {}) for c in connections)}
 
 
+def check_keys_composer(folder: Path) -> dict:
+    # The keys play any track as a MIDI keyboard does: nothing to build or replace.
+    return {"keeps the built-in synth": instruments(folder).get("pad") == "instrument.synth",
+            "no project tool": not project_tools(folder), "no problems": no_problems(folder)}
+
+
 def check_generative(folder: Path) -> dict:
     tools = project_tools(folder)
     tool = instruments(folder).get("pad")
@@ -438,6 +444,8 @@ SCENARIOS = {
     "apps-builder": (setup_tape_builder, check_apps,
                      "Turn this project into one screen that takes the music playing in Spotify "
                      "and stutters it; the mouse sets how fast and how much."),
+    "keys-composer": (setup_tape_builder, check_keys_composer,
+                      "I want to play the pad from my computer keyboard."),
     "experiment-builder": (setup_tape_builder, check_experiment,
                            "Turn this project into an interactive sound toy instead of a song, "
                            "just one screen and no timeline: a 'gravity harp'. I drop balls "
