@@ -29,6 +29,7 @@ use sound_core::{
     TempoChange, Ticks,
 };
 use sound_media::Imported;
+use sound_typescript::Midi;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
@@ -126,6 +127,8 @@ pub struct TransportPill {
     /// what they hear sounded. It moves with the keyboard, only after what was held is let go,
     /// so a tool hears the end of each note it heard begin.
     hearing: Option<InstanceId>,
+    /// The keys the tools of `hearing` heard go down and not up yet, one bit each.
+    hearing_held: u128,
     /// Where the keyboard was last asked to play, and the track of that.
     asked: (Option<InputEndpoint>, Option<InstanceId>),
     /// When the sound of an engine frame reaches the device, for the latency. `None` without a
@@ -291,6 +294,7 @@ impl TransportPill {
             click,
             keyboard,
             hearing: None,
+            hearing_held: 0,
             asked: (None, None),
             timing,
             tempo_drag: None,
@@ -332,10 +336,24 @@ impl TransportPill {
         // What sounded since the last poll went where the keyboard played until now, and the
         // tools of that track hear it.
         let heard = keyboard.take_heard().into_iter();
-        let heard: Vec<_> = heard.filter_map(recording::tool_message).collect();
+        let mut heard: Vec<_> = heard.filter_map(recording::tool_message).collect();
+        for message in &heard {
+            match *message {
+                Midi::NoteOn { pitch, .. } => self.hearing_held |= 1 << pitch,
+                Midi::NoteOff { pitch } => self.hearing_held &= !(1 << pitch),
+                Midi::Cc { .. } | Midi::Bend { .. } => {}
+            }
+        }
         let hearing = self.hearing.clone();
         if keyboard.destination() == self.asked.0 {
             self.hearing = self.asked.1.clone();
+        }
+        // The keyboard lets go of nothing when it plays into the same port, such as nowhere
+        // on two tracks with no instrument: the tools of the old track hear the ends here.
+        if self.hearing != hearing {
+            let held = std::mem::take(&mut self.hearing_held);
+            let offs = (0..128_u8).filter(|pitch| held & (1 << pitch) != 0);
+            heard.extend(offs.map(|pitch| Midi::NoteOff { pitch }));
         }
         // A take goes to the track it began on, so the live input stays there too while it
         // runs. Selecting another track during a take would otherwise split the two.

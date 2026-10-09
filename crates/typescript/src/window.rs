@@ -38,6 +38,9 @@ pub(crate) struct Live {
     /// Where each live control was put last, by instance: the processor keeps it on the audio
     /// side, and a control on the card shows it.
     played: HashMap<InstanceId, BTreeMap<String, f32>>,
+    /// How many edits of each record Bun sent and the window heard, so Bun knows when a record
+    /// it gets misses its last edit. Never counted down: Bun counts on.
+    edits: HashMap<InstanceId, u64>,
     /// When the control loops last ran.
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
@@ -260,6 +263,7 @@ impl Live {
                 cards: HashMap::new(),
                 next_card: 0,
                 played: HashMap::new(),
+                edits: HashMap::new(),
                 last_frame: Instant::now(),
                 problems: Vec::new(),
                 frame_out: None,
@@ -278,8 +282,14 @@ pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json:
     serde_json::from_str(&project.state_json(id)?).ok()
 }
 
-/// An instance of `tool` as its code gets it: its record and its watches as they are now.
-fn looped<'a>(project: &Project, id: &'a InstanceId, tool: &'a str) -> Looped<'a> {
+/// An instance of `tool` as its code gets it: its record and its watches as they are now, and
+/// how many of the `edits` Bun sent the record has.
+fn looped<'a>(
+    project: &Project,
+    edits: &HashMap<InstanceId, u64>,
+    id: &'a InstanceId,
+    tool: &'a str,
+) -> Looped<'a> {
     Looped {
         instance: id.as_str(),
         tool,
@@ -287,6 +297,7 @@ fn looped<'a>(project: &Project, id: &'a InstanceId, tool: &'a str) -> Looped<'a
         watches: (project.watches(id).into_iter())
             .map(|(name, watch)| (name, watch.get()))
             .collect(),
+        edits: edits.get(id).copied().unwrap_or(0),
     }
 }
 
@@ -539,7 +550,7 @@ impl Live {
         };
         self.bun.send(&Request::Key {
             time,
-            instance: looped(project, &id, tool),
+            instance: looped(project, &self.edits, &id, tool),
             key,
             down,
         });
@@ -561,7 +572,7 @@ impl Live {
             .filter(|(id, tool)| {
                 hears(id) && tools.iter().any(|info| info.name == *tool && info.midi)
             })
-            .map(|(id, tool)| looped(project, id, tool))
+            .map(|(id, tool)| looped(project, &self.edits, id, tool))
             .collect();
         if !instances.is_empty() {
             self.bun.send(&Request::Midi {
@@ -635,7 +646,7 @@ impl Live {
         self.played.retain(|id, _| project.tool_of(id).is_some());
         let looped: Vec<Looped> = (project.instances())
             .filter(|(_, tool)| tools.iter().any(|info| info.name == *tool && info.tick))
-            .map(|(id, tool)| looped(project, id, tool))
+            .map(|(id, tool)| looped(project, &self.edits, id, tool))
             .collect();
         if !looped.is_empty() {
             self.bun.send(&Request::Frame {
@@ -729,6 +740,8 @@ impl Live {
                     Ok(id) => id,
                     Err(error) => return eprintln!("error: {error}"),
                 };
+                // Heard, applied or not: Bun starts from the record here again.
+                *self.edits.entry(id.clone()).or_default() += 1;
                 session.update(cx, |session, cx| {
                     session.edit(cx, |project| {
                         let mut edit = project.begin(&label);

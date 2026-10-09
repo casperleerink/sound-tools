@@ -234,7 +234,6 @@ impl Shell {
         .detach();
 
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle, cx);
         // The keys of the window work from its key context, so the focus must stay inside it.
         // A control that goes away while it has the focus, such as a dismissed notice, would
         // leave it nowhere.
@@ -280,6 +279,10 @@ impl Shell {
             _other_apps: other_apps,
         };
         shell.show_main_instance(window, cx);
+        // After the main view, which may take the focus: a page that hears keys does.
+        if window.focused(cx).is_none() {
+            window.focus(&shell.focus_handle, cx);
+        }
         shell
     }
 

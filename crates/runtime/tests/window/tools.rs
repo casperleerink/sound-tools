@@ -6,12 +6,14 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use gpui::{AppContext, Entity, KeyUpEvent, Keystroke, TestAppContext, VisualTestContext};
+use gpui::{
+    AppContext, Entity, KeyUpEvent, Keystroke, Modifiers, TestAppContext, VisualTestContext,
+};
 use midi::Played;
 use plugin_host::{Plugins, ScanCache};
 use runtime::window::{DeviceAccess, Shell, bind_keys};
 use runtime::{OFFLINE, views};
-use sound_core::Engine;
+use sound_core::{Changes, Engine};
 use sound_notes::{Pitch, Velocity};
 use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
@@ -19,8 +21,8 @@ use tempfile::TempDir;
 use crate::plugin_hosts::scanner;
 use crate::support::{id, peak};
 
-/// A sine an octave and a fifth up from what is played, held while the key `a` is down, and
-/// the last note of the MIDI keyboard kept in the record.
+/// A sine held while the key `a` is down, the keys that went down counted in the record, and
+/// the last note of the MIDI keyboard kept there.
 const KEYS: &str = r#"import { adsr, h, knob, note, sine, tool } from "./sdk";
 
 tool({
@@ -29,9 +31,14 @@ tool({
   when: "You want to play a sine from the computer keyboard",
   doc: "The key a holds A4.",
   kind: "instrument",
-  state: { last: knob({ min: 0, max: 127, default: 0 }) },
+  state: { last: knob({ min: 0, max: 127, default: 0 }), count: knob({ min: 0, max: 100, default: 0 }) },
   sound: () => sine(note.freq).times(adsr(note.gate, 1, 1, 1, 1)).times(0.2),
-  onKey: ({ play, release }, { key, down }) => {
+  onKey: ({ play, release, update }, { key, down }) => {
+    if (down) {
+      update("Count the key", (state) => {
+        state.count = (state.count ?? 0) + 1;
+      });
+    }
     if (key !== "a") return;
     if (down) play(69, { hold: true });
     else release(69);
@@ -58,21 +65,39 @@ const EXPERIMENT: [(&str, &str); 3] = [
     ("extensions/keys.ts", KEYS),
 ];
 
-/// An effect that keeps the last note of the MIDI keyboard in its record.
+/// The tool `keys`, and no record of it yet.
+const ONLY_THE_TOOL: [(&str, &str); 2] = [
+    (
+        "project.json",
+        r#"{"format": 1, "extensions": [],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": []}"#,
+    ),
+    ("extensions/keys.ts", KEYS),
+];
+
+/// An effect that keeps the last note of the MIDI keyboard in its record, and how many it
+/// holds.
 const LISTENER: &str = r#"import { input, knob, tool } from "./sdk";
 
 tool({
   name: "listener",
   title: "Listener",
   when: "You want to know the last note played",
-  doc: "Passes the sound and keeps the last note.",
-  state: { last: knob({ min: 0, max: 127, default: 0 }) },
+  doc: "Passes the sound and keeps the last note and how many are held.",
+  state: { last: knob({ min: 0, max: 127, default: 0 }), held: knob({ min: 0, max: 128, default: 0 }) },
   sound: () => input,
   onMidi: ({ update }, message) => {
-    if (message.type !== "noteOn") return;
-    update("Keep the note", (state) => {
-      state.last = message.pitch;
-    });
+    if (message.type === "noteOn") {
+      update("Keep the note", (state) => {
+        state.last = message.pitch;
+        state.held = (state.held ?? 0) + 1;
+      });
+    } else if (message.type === "noteOff") {
+      update("Let go of the note", (state) => {
+        state.held = (state.held ?? 0) - 1;
+      });
+    }
   },
 });
 "#;
@@ -220,13 +245,13 @@ impl Window<'_> {
         assert!(input.send(Played::On { pitch, velocity }));
     }
 
-    /// The `last` note of the record of `instance`.
-    fn last(&mut self, instance: &str) -> serde_json::Value {
+    /// The record of `instance`.
+    fn record(&mut self, instance: &str) -> serde_json::Value {
         let session = self.session.clone();
         let state = (self.cx)
             .read(|cx| session.read(cx).project().state_json(&id(instance)))
             .unwrap();
-        serde_json::from_str::<serde_json::Value>(&state).unwrap()["last"].clone()
+        serde_json::from_str(&state).unwrap()
     }
 }
 
@@ -256,13 +281,79 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 }
 
 #[gpui::test]
+fn a_held_key_comes_up_with_ctrl_held_and_when_cmd_goes_down(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    // macOS sends no key up while cmd is held.
+    window.cx.simulate_keystrokes("a");
+    window.until("the note of the key", |window| window.loudest(480) > 0.1);
+    window.cx.simulate_modifiers_change(Modifiers::command());
+    window.until("the release as cmd goes down", |window| {
+        window.loudest(480) == 0.0
+    });
+    window.cx.simulate_modifiers_change(Modifiers::none());
+
+    window.cx.simulate_keystrokes("a");
+    window.until("the note of the key", |window| window.loudest(480) > 0.1);
+    // Ctrl went down while the key was held.
+    let keystroke = Keystroke::parse("ctrl-a").unwrap();
+    window.cx.simulate_event(KeyUpEvent { keystroke });
+    window.until("the release of the key", |window| {
+        window.loudest(480) == 0.0
+    });
+}
+
+#[gpui::test]
+fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    // All six go to Bun before the edit of the first comes back.
+    window.cx.simulate_keystrokes("q w e r t y");
+    window.until("six keys in the record", |window| {
+        window.record("keys")["count"] == 6
+    });
+}
+
+#[gpui::test]
+fn a_page_that_opens_leaves_the_focus_where_it_is(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &ONLY_THE_TOOL) else {
+        return;
+    };
+    // A control has the focus, as the composer of the agent does while it is typed in.
+    let window_focus = window.cx.update(|window, cx| window.focused(cx));
+    window.cx.simulate_keystrokes("tab");
+    let focused = window.cx.update(|window, cx| window.focused(cx));
+    assert!(focused.is_some() && focused != window_focus);
+
+    // The agent adds the tool at the top, and its page opens.
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                project.set_json(&mut changes, id("keys"), "keys", serde_json::json!({}))?;
+                project.commit("Add keys", changes)
+            })
+        })
+    });
+    window.poll();
+    let shell = window.shell.clone();
+    assert!(window.cx.read(|cx| shell.read(cx).main_view().is_some()));
+    assert_eq!(window.cx.update(|window, cx| window.focused(cx)), focused);
+}
+
+#[gpui::test]
 fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &mut TestAppContext) {
     let Some(mut window) = open(cx, &EXPERIMENT) else {
         return;
     };
     // The keyboard plays into `keys`, the one instance at the top that takes notes.
     window.play_midi(64);
-    window.until("the note in the record", |window| window.last("keys") == 64);
+    window.until("the note in the record", |window| {
+        window.record("keys")["last"] == 64
+    });
     // The instrument played it as well, as a keyboard plays any instrument.
     assert!(window.loudest(480) > 0.1);
 }
@@ -277,7 +368,7 @@ fn a_tool_on_the_track_the_keyboard_plays_hears_it_and_one_on_another_does_not(
     // Nothing is selected, so the keyboard plays the first track.
     window.play_midi(60);
     window.until("the note on the first track", |window| {
-        window.last("arrangement/one/listener") == 60
+        window.record("arrangement/one/listener")["last"] == 60
     });
     // Bun would have answered for both tracks at once.
     for _ in 0..10 {
@@ -285,9 +376,36 @@ fn a_tool_on_the_track_the_keyboard_plays_hears_it_and_one_on_another_does_not(
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(
-        window.last("arrangement/two/listener"),
+        window.record("arrangement/two/listener")["last"],
         serde_json::Value::Null
     );
+}
+
+#[gpui::test]
+fn a_tool_on_the_track_the_keyboard_leaves_hears_the_end_of_the_note_it_held(
+    cx: &mut TestAppContext,
+) {
+    // With no instrument on either track the keyboard plays into nothing before and after, so
+    // it has nothing to let go of itself.
+    let files: Vec<_> = (TWO_TRACKS.into_iter())
+        .filter(|(path, _)| !path.ends_with("instrument.json"))
+        .collect();
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.play_midi(60);
+    window.until("the note held on the first track", |window| {
+        window.record("arrangement/one/listener")["held"] == 1
+    });
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.select(Some(id("arrangement/two")), cx)
+        })
+    });
+    window.until("the end of the note on the first track", |window| {
+        window.record("arrangement/one/listener")["held"] == 0
+    });
 }
 
 /// A player of `sine.wav` at `level`, over and over.

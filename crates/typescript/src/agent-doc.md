@@ -182,7 +182,7 @@ For more than knobs, such as a simulation that plays notes as balls bounce, a to
 
   `at` is for the loop: a card has no `time`.
 - `play(pitch, { hold: true })` holds a note until `release(pitch)`.
-- `onKey: (tool, { key, down }) => { ... }` hears the computer keyboard: each key going down and up again, by name (`"a"`, `"1"`, `"space"`, `"left"`). It hears while the tool's page shows, or after a click on its card; plain keys are then the tool's, so space does not play. `onMidi: (tool, message) => { ... }` hears the MIDI keyboard while the tool is on the track it plays or at the top of the project: `{ type: "noteOn", pitch, velocity }`, `{ type: "noteOff", pitch }`, `{ type: "cc", controller, value }` (the pedal is 64) and `{ type: "bend", value }`, values 0 to 1, the bend -1 to 1. An instrument plays the notes by itself as well. Both get what `tick` gets, and `update`, which changes the record as a card does:
+- `onKey: (tool, { key, down }) => { ... }` hears the computer keyboard: each key going down and up again, by name (`"a"`, `"1"`, `"space"`, `"left"`). It hears after a click on the tool's page or card, and a page that opens with the window hears at once; plain keys are then the tool's, so space does not play. `onMidi: (tool, message) => { ... }` hears the MIDI keyboard while the tool is on the track it plays or at the top of the project: `{ type: "noteOn", pitch, velocity }`, `{ type: "noteOff", pitch }`, `{ type: "cc", controller, value }` (the pedal is 64) and `{ type: "bend", value }`, values 0 to 1, the bend -1 to 1. An instrument plays the notes by itself as well. Both get what `tick` gets, and `update`, which changes the record as a card does:
 
   ```ts
   onKey: ({ play, release }, { key, down }) => {
