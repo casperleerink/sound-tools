@@ -1,127 +1,53 @@
 //! The sounds a `sample` field of a tool names, as Hum reads them: a file under
-//! `assets/audio/`, mixed to one channel at the rate of the engine. Each is read once and kept,
-//! so a turn of a knob of the tool does not read it again. In the window a file is read on a
-//! thread of its own, as a minute of sound takes about half a second: the tool plays without
-//! it until it is there, then its behaviour runs again.
+//! `assets/audio/`, mixed to one channel at the rate of the engine. One cache for the process,
+//! by file and rate: a file is read once while it stays the same, a failure too, so a turn of a
+//! knob or a save of the tool reads nothing again. In the window a file is read on a thread of
+//! its own, as a minute of sound takes about half a second: the tool plays without it until it
+//! is there, then its behaviour runs again.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use sound_core::{Assets, InstanceId};
-use sound_media::{AudioAsset, SCRATCH_FRAMES, engine_frames, load, resampler};
+use sound_media::{
+    AudioAsset, Keep, Loader, SCRATCH_FRAMES, Stamp, engine_frames, load, resampler,
+};
 
 /// The longest sample a tool holds: a list of the record is held in memory whole.
 const MAX_SECONDS: f64 = 60.0;
 
-static IN_BACKGROUND: AtomicBool = AtomicBool::new(false);
+/// What a list of a record holds, so only copies of it play: kept for the process.
+static SAMPLES: Loader<(PathBuf, u32), Vec<f32>> = Loader::new("sample", Keep::Always);
 
-/// The instances whose sample was read since the last [`take_read`].
-static READ: Mutex<Vec<InstanceId>> = Mutex::new(Vec::new());
-
-/// Reads every sample from here on on a thread of its own. The window calls it before the
-/// project opens; a render, an inspect and the tests read at once.
-pub fn read_in_background() {
-    IN_BACKGROUND.store(true, Ordering::Relaxed);
+/// The instances of the project of `assets` whose sample was read since the last call, to run
+/// their behaviour again.
+pub(crate) fn take_read(assets: &Assets) -> Vec<InstanceId> {
+    SAMPLES.take_done(assets)
 }
 
-/// The instances whose sample was read since the last call, to run their behaviour again.
-pub(crate) fn take_read() -> Vec<InstanceId> {
-    std::mem::take(&mut *READ.lock().unwrap_or_else(PoisonError::into_inner))
-}
-
-/// A sample on its way from its thread, and the instances that wait for it.
-#[derive(Default)]
-struct Reading {
-    read: Option<Result<Vec<f32>, String>>,
-    waiting: Vec<InstanceId>,
-}
-
-enum Sample {
-    Read(Rc<Vec<f32>>),
-    Reading(Arc<Mutex<Reading>>),
-}
-
-/// The samples read so far, by file and rate.
-#[derive(Default, Clone)]
-pub(crate) struct Samples(Rc<RefCell<HashMap<(String, u32), Sample>>>);
-
-impl Samples {
-    /// The sound of `file`, a file name under `assets/audio/` such as `voice.wav`, at
-    /// `sample_rate`, one channel. `None` while it is read on its thread for `waiter`. The
-    /// message says what to do when it cannot be read.
-    pub(crate) fn get(
-        &self,
-        assets: &Assets,
-        file: &str,
-        sample_rate: u32,
-        waiter: &InstanceId,
-    ) -> Result<Option<Rc<Vec<f32>>>, String> {
-        let key = (file.to_string(), sample_rate);
-        let mut samples = self.0.borrow_mut();
-        let reading = match samples.get(&key) {
-            Some(Sample::Read(sound)) => return Ok(Some(sound.clone())),
-            Some(Sample::Reading(reading)) => reading.clone(),
-            None if !IN_BACKGROUND.load(Ordering::Relaxed) => {
-                let sound = Rc::new(read(assets, file, sample_rate)?);
-                samples.insert(key, Sample::Read(sound.clone()));
-                return Ok(Some(sound));
-            }
-            None => {
-                let reading = Arc::new(Mutex::new(Reading::default()));
-                start_reading(&reading, assets.clone(), file.to_string(), sample_rate)?;
-                samples.insert(key.clone(), Sample::Reading(reading.clone()));
-                reading
-            }
-        };
-        let mut reading = reading.lock().unwrap_or_else(PoisonError::into_inner);
-        match reading.read.take() {
-            None => {
-                reading.waiting.push(waiter.clone());
-                Ok(None)
-            }
-            Some(Ok(sound)) => {
-                let sound = Rc::new(sound);
-                samples.insert(key, Sample::Read(sound.clone()));
-                Ok(Some(sound))
-            }
-            // Not kept: the file may come or change, and is read again then.
-            Some(Err(error)) => {
-                samples.remove(&key);
-                Err(error)
-            }
-        }
-    }
-}
-
-/// Reads a sample on a thread of its own into `reading`, then tells its waiters.
-fn start_reading(
-    reading: &Arc<Mutex<Reading>>,
-    assets: Assets,
-    file: String,
+/// The sound of `file`, a file name under `assets/audio/` such as `voice.wav`, at
+/// `sample_rate`, one channel. `None` while it is read on its thread for `waiter`. The message
+/// says what to do when it cannot be read.
+pub(crate) fn sample(
+    assets: &Assets,
+    file: &str,
     sample_rate: u32,
-) -> Result<(), String> {
-    let reading = reading.clone();
-    std::thread::Builder::new()
-        .name("sample".into())
-        .spawn(move || {
-            let read = read(&assets, &file, sample_rate);
-            let mut reading = reading.lock().unwrap_or_else(PoisonError::into_inner);
-            reading.read = Some(read);
-            let waiting = std::mem::take(&mut reading.waiting);
-            READ.lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend(waiting);
-        })
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    waiter: &InstanceId,
+) -> Result<Option<Arc<Vec<f32>>>, String> {
+    let asset = AudioAsset::new(file).map_err(|error| format!("{file:?}: {error}"))?;
+    let path = assets.path(asset.asset_name());
+    let read = {
+        let (assets, path) = (assets.clone(), path.clone());
+        move || {
+            let files = vec![Stamp::of(&path)];
+            (read(&assets, &asset, sample_rate), files)
+        }
+    };
+    SAMPLES.get((path, sample_rate), (assets, waiter), read)
 }
 
-fn read(assets: &Assets, file: &str, sample_rate: u32) -> Result<Vec<f32>, String> {
-    let asset = AudioAsset::new(file).map_err(|error| format!("{file:?}: {error}"))?;
-    let audio = load(assets, &asset).map_err(|error| error.to_string())?;
+fn read(assets: &Assets, asset: &AudioAsset, sample_rate: u32) -> Result<Vec<f32>, String> {
+    let audio = load(assets, asset).map_err(|error| error.to_string())?;
     if audio.seconds() > MAX_SECONDS {
         return Err(format!(
             "{} is {:.0} s long; a sample holds up to {MAX_SECONDS:.0} s",
@@ -169,12 +95,8 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         write_sine(folder.path());
         let assets = Assets::new(folder.path());
-        let samples = Samples::default();
         let id = InstanceId::new("sine").unwrap();
-        let sound = samples
-            .get(&assets, "sine.wav", 48_000, &id)
-            .unwrap()
-            .unwrap();
+        let sound = sample(&assets, "sine.wav", 48_000, &id).unwrap().unwrap();
         // A second at 48 kHz, with its level.
         assert!((sound.len() as i64 - 48_000).abs() <= 1, "{}", sound.len());
         let loudest = sound[1_000..47_000]
@@ -182,13 +104,10 @@ mod tests {
             .fold(0.0_f32, |peak, s| peak.max(s.abs()));
         assert!((loudest - 0.5).abs() < 0.01, "{loudest}");
         // Kept: the same list, not read again.
-        let again = samples
-            .get(&assets, "sine.wav", 48_000, &id)
-            .unwrap()
-            .unwrap();
-        assert!(Rc::ptr_eq(&sound, &again));
+        let again = sample(&assets, "sine.wav", 48_000, &id).unwrap().unwrap();
+        assert!(Arc::ptr_eq(&sound, &again));
         // A file that is not there says where it looked.
-        let missing = samples.get(&assets, "gone.wav", 48_000, &id).unwrap_err();
+        let missing = sample(&assets, "gone.wav", 48_000, &id).unwrap_err();
         assert!(missing.contains("gone.wav"), "{missing}");
     }
 }

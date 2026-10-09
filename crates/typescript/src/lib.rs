@@ -25,7 +25,6 @@ use std::sync::Arc;
 use serde::Serialize;
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 
-pub use samples::read_in_background;
 pub use window::{hear_midi, start_window};
 
 use crate::bun::{Bun, Loaded};

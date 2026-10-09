@@ -23,7 +23,7 @@ use sound_hum::{ArraySpec, Code, Hum, HumUpdate, Kind, Machine, Values, compile}
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
 use crate::bun::Bun;
-use crate::samples::Samples;
+use crate::samples;
 
 /// A tool as `host.ts` sends it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -456,8 +456,6 @@ pub(crate) struct Sounds {
     /// By the choices as JSON. A failure is kept too, so a record that cannot play does not
     /// ask again on every turn of a knob. A tool defined again starts empty.
     compiled: RefCell<HashMap<String, Result<Rc<Code>, String>>>,
-    /// The sounds of its `sample` fields, read once.
-    samples: Samples,
 }
 
 impl Sounds {
@@ -466,7 +464,6 @@ impl Sounds {
             info: Arc::new(info.clone()),
             bun: bun.clone(),
             compiled: RefCell::default(),
-            samples: Samples::default(),
         }
     }
 
@@ -535,7 +532,10 @@ impl Sounds {
                     .get(&array.name)
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let sound = self.samples.get(assets, file, rate, id);
+                if file.is_empty() {
+                    return Vec::new();
+                }
+                let sound = samples::sample(assets, file, rate, id);
                 // Silent while it is read, or when it cannot be.
                 return (sound.ok().flatten()).map_or_else(Vec::new, |sound| sound.to_vec());
             };
@@ -565,7 +565,7 @@ impl Sounds {
             value.map(Value::to_string).hash(&mut hasher);
             let file = value.and_then(Value::as_str).unwrap_or_default();
             if array.length.is_none() && !file.is_empty() {
-                let read = self.samples.get(assets, file, rate, id);
+                let read = samples::sample(assets, file, rate, id);
                 read.as_ref()
                     .map(|sound| sound.as_ref().map(|sound| sound.len()))
                     .ok()

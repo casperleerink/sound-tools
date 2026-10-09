@@ -1,7 +1,9 @@
 //! Tools of the project in the window, run by Bun: a key on a page and a note of the MIDI
-//! keyboard reach the code of a tool, and what it plays or changes comes back. Bun is not part
+//! keyboard reach the code of a tool, and what it plays or changes comes back; a save of a tool
+//! keeps the sample it plays. Bun is not part
 //! of the build, so where it is not installed, as in CI, these tests say so and pass.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{AppContext, Entity, KeyUpEvent, Keystroke, TestAppContext, VisualTestContext};
@@ -121,18 +123,27 @@ struct Window<'a> {
 /// Opens the window, as the application does, on a project of these files and its tools.
 /// `None` without Bun.
 fn open<'a>(cx: &'a mut TestAppContext, files: &[(&str, &str)]) -> Option<Window<'a>> {
+    let folder = tempfile::tempdir().unwrap();
+    for (path, contents) in files {
+        write(folder.path(), path, contents);
+    }
+    open_folder(cx, folder)
+}
+
+fn write(folder: &Path, path: &str, contents: &str) {
+    let path = folder.join(path);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, contents).unwrap();
+}
+
+/// [`open`] on a project folder that is written already.
+fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
     if !sound_typescript::has_bun() {
         eprintln!("skipped: Bun is not installed");
         return None;
     }
     // Bun's answers wake the window's tasks from a thread of their own.
     cx.executor().allow_parking();
-    let folder = tempfile::tempdir().unwrap();
-    for (path, contents) in files {
-        let path = folder.path().join(path);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, contents).unwrap();
-    }
     let (control, engine) = Engine::new(OFFLINE);
     let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
     let (project, extensions) =
@@ -277,4 +288,74 @@ fn a_tool_on_the_track_the_keyboard_plays_hears_it_and_one_on_another_does_not(
         window.last("arrangement/two/listener"),
         serde_json::Value::Null
     );
+}
+
+/// A player of `sine.wav` at `level`, over and over.
+fn player(level: f32) -> String {
+    format!(
+        r#"import {{ phasor, sample, tool }} from "./sdk";
+
+tool({{
+  name: "player",
+  title: "Player",
+  when: "You want a sound file to play",
+  doc: "Plays a sound file over and over.",
+  kind: "source",
+  state: {{ sound: sample() }},
+  sound: ({{ sound }}) => sound.at(phasor(1).times(sound.length)).times({level}),
+}});
+"#
+    )
+}
+
+/// Writes a second of a 441 Hz sine at `level` to `assets/audio/sine.wav`.
+fn write_sine(folder: &Path, level: f32) {
+    let path = folder.join("assets/audio/sine.wav");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 44_100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    for frame in 0..44_100 {
+        let sample = (frame as f32 * 441.0 / 44_100.0 * std::f32::consts::TAU).sin() * level;
+        writer
+            .write_sample((sample * f32::from(i16::MAX)) as i16)
+            .unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
+#[gpui::test]
+fn a_save_of_a_tool_keeps_its_sample_playing_and_does_not_read_it_again(cx: &mut TestAppContext) {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path().to_path_buf();
+    let project = r#"{"format": 1, "extensions": [],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": [{"from": {"instance": "player", "port": "audio"}, "to": {"device_output": 0}}]}"#;
+    write(&root, "project.json", project);
+    let record = r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#;
+    write(&root, "state/player.json", record);
+    write(&root, "extensions/player.ts", &player(1.0));
+    write_sine(&root, 0.5);
+    let Some(mut window) = open_folder(cx, folder) else {
+        return;
+    };
+    let level = window.loudest(4_800);
+    assert!((level - 0.5).abs() < 0.02, "{level}");
+
+    // The file turns silent with the same size and time: only a new read would hear that.
+    let sine = root.join("assets/audio/sine.wav");
+    let modified = std::fs::metadata(&sine).unwrap().modified().unwrap();
+    write_sine(&root, 0.0);
+    let file = std::fs::File::options().write(true).open(&sine).unwrap();
+    file.set_modified(modified).unwrap();
+
+    // The save plays the new sound, still with the sine it read at the start.
+    write(&root, "extensions/player.ts", &player(0.5));
+    window.until("the saved tool at half the level", |window| {
+        (window.loudest(4_800) - 0.25).abs() < 0.02
+    });
 }

@@ -700,8 +700,7 @@ fn print_midi_report(latency: Latency, lost: Lost) {
 /// back before any window, for the terminal that started it.
 pub fn run(folder: &Path) -> Result<()> {
     // A window must not wait while a Sampler reads hundreds of samples, also not to open.
-    sampler::instrument::load_in_background();
-    sound_typescript::read_in_background();
+    sound_media::load_in_background();
     let opened = Opened::open(folder)?;
     gpui_platform::application()
         .with_assets(Assets)
@@ -715,8 +714,7 @@ pub fn run(folder: &Path) -> Result<()> {
 /// The app with no folder, as the Finder starts it: the last project, or the folder panel
 /// when there is none. See [`start`].
 pub fn run_app() {
-    sampler::instrument::load_in_background();
-    sound_typescript::read_in_background();
+    sound_media::load_in_background();
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {
