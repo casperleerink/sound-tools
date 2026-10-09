@@ -756,6 +756,8 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
   return ({ state, update, fire }: Card<Record<string, unknown>, Controls, unknown>): Node => {
     const knobs: Node[] = [];
     const rows: Node[] = [];
+    // Toggles and triggers share one row, so a card fits its 144 points.
+    const buttons: Node[] = [];
     const record = state as Record<string, unknown>;
     for (const [name, field] of Object.entries(fields)) {
       const label = field.label ?? words(name);
@@ -769,7 +771,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
         rows.push(SampleChooser({ path: name, label }));
       } else if (field.kind === "toggle") {
         const on = (record[name] as boolean | undefined) ?? field.default;
-        rows.push(
+        buttons.push(
           h("div", {
             style: on ? CHOSEN : BUTTON,
             onClick: () => update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, (next) => {
@@ -799,10 +801,19 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
       if (control.kind === "live") {
         knobs.push(Knob({ live: name, label, min: control.min, max: control.max, default: control.default }));
       } else {
-        rows.push(h("div", { style: BUTTON, onClick: () => fire(name) }, label));
+        buttons.push(h("div", { style: BUTTON, onClick: () => fire(name) }, label));
       }
     }
-    return h("div", { style: { gap: 8 } }, h("div", { style: { direction: "row", gap: 8 } }, knobs), rows);
+    if (buttons.length > 0) {
+      rows.push(h("div", { style: { direction: "row", gap: 4 } }, buttons));
+    }
+    // The rest goes beside the knobs, not under them: a card is 144 points tall.
+    return h(
+      "div",
+      { style: { direction: "row", gap: 16 } },
+      h("div", { style: { direction: "row", gap: 8 } }, knobs),
+      h("div", { style: { gap: 8 } }, rows),
+    );
   };
 }
 
