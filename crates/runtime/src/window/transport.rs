@@ -1,7 +1,7 @@
 //! The transport: a pill in the middle of the title row. Play or pause, stop, record, the
 //! position as bar and beat and as time, a hairline seek strip with the duration when the
-//! project has an end, the tempo at the playhead, the steadiness of a fit, the click and the
-//! master meter.
+//! project has an end, the tempo at the playhead, the steadiness of a fit, the computer keys,
+//! the click and the master meter.
 //!
 //! It follows the playhead, so it renders every frame while the project plays. It therefore
 //! reads the end of the project, which walks every clip, only after a project event, and
@@ -11,7 +11,8 @@
 //! so a `project.json` written from outside shows at once, also during a drag. A drag is one
 //! gesture of the session and one undo step. The click is not project state at all: it is a
 //! processor in the engine with a switch, see [`metronome`]. Neither is the MIDI input, see
-//! [`midi`]: a finished recording is an edit, and nothing before it is.
+//! [`midi`]: a finished recording is an edit, and nothing before it is. The computer keys play
+//! into that input as one more keyboard.
 
 use std::sync::Arc;
 
@@ -19,11 +20,11 @@ use arrangement::{TrackKind, TrackState};
 use fit_tempo::FitState;
 use gpui::{
     App, BorderStyle, Bounds, Context, DispatchPhase, Entity, FocusHandle, Hitbox, HitboxBehavior,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Task, Window,
-    canvas, div, fill, point, prelude::*, px, quad, size,
+    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Task, Window, canvas, div, fill, point, prelude::*, px, quad, size,
 };
 use metronome::Click;
-use midi::{Input, Keyboard, Latency, Lost};
+use midi::{ComputerKeys, Input, Keyboard, Latency, Lost};
 use sound_core::{
     Changes, Clock, InputEndpoint, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo,
     TempoChange, Ticks,
@@ -131,6 +132,8 @@ pub struct TransportPill {
     hearing_held: u128,
     /// Where the keyboard was last asked to play, and the track of that.
     asked: (Option<InputEndpoint>, Option<InstanceId>),
+    /// The computer keys while they play as a MIDI keyboard. Not project state, like the click.
+    computer_keys: Option<ComputerKeys>,
     /// When the sound of an engine frame reaches the device, for the latency. `None` without a
     /// device, so an offline window measures nothing instead of guessing.
     timing: Option<Arc<StreamTiming>>,
@@ -149,6 +152,7 @@ pub struct TransportPill {
     stop_focus: FocusHandle,
     record_focus: FocusHandle,
     strip_focus: FocusHandle,
+    keys_focus: FocusHandle,
     click_focus: FocusHandle,
     /// What the device plays, taken once per poll: the master meter at the right end.
     output: Peaks,
@@ -296,6 +300,7 @@ impl TransportPill {
             hearing: None,
             hearing_held: 0,
             asked: (None, None),
+            computer_keys: None,
             timing,
             tempo_drag: None,
             steadiness_drag: DragEdit::default(),
@@ -303,6 +308,7 @@ impl TransportPill {
             stop_focus: cx.focus_handle().tab_stop(true),
             record_focus: cx.focus_handle().tab_stop(true),
             strip_focus: cx.focus_handle().tab_stop(true),
+            keys_focus: cx.focus_handle().tab_stop(true),
             click_focus: cx.focus_handle().tab_stop(true),
             output,
             metering: Metering::default(),
@@ -933,6 +939,72 @@ impl TransportPill {
         cx.notify();
     }
 
+    /// Whether the computer keys play. For tests and for the button.
+    pub fn computer_keys_are_on(&self) -> bool {
+        self.computer_keys.is_some()
+    }
+
+    /// Turns the computer keys on or off. Not an edit, like the click. Off ends what they hold.
+    pub fn toggle_computer_keys(&mut self, cx: &mut Context<Self>) {
+        if self.keyboard.is_none() {
+            return;
+        }
+        match self.computer_keys.is_some() {
+            true => {
+                self.let_go_of_computer_keys(cx);
+                self.computer_keys = None;
+            }
+            false => self.computer_keys = Some(ComputerKeys::default()),
+        }
+        cx.notify();
+    }
+
+    /// A key went down. Gives whether the computer keys took it: one of theirs, with no cmd,
+    /// ctrl, alt or fn, while they play. Then nothing else may hear it, also not its repeats.
+    pub fn computer_key_down(&mut self, keystroke: &Keystroke) -> bool {
+        let modifiers = keystroke.modifiers;
+        if modifiers.platform || modifiers.control || modifiers.alt || modifiers.function {
+            return false;
+        }
+        let key = keystroke.key.as_str();
+        let (Some(keys), Some(keyboard)) = (&mut self.computer_keys, &self.keyboard) else {
+            return false;
+        };
+        if !ComputerKeys::plays(key) {
+            return false;
+        }
+        // It goes where a MIDI keyboard's messages go, so the instrument, a take and the tools
+        // hear it as they hear those.
+        if let Some(played) = keys.down(key) {
+            keyboard.input().send(played);
+        }
+        true
+    }
+
+    /// A key came up. Gives whether it ended a note of the computer keys.
+    pub fn computer_key_up(&mut self, key: &str) -> bool {
+        let (Some(keys), Some(keyboard)) = (&mut self.computer_keys, &self.keyboard) else {
+            return false;
+        };
+        let Some(played) = keys.up(key) else {
+            return false;
+        };
+        keyboard.input().send(played);
+        true
+    }
+
+    /// Ends every note the computer keys hold, for when their key ups will not come: cmd is
+    /// down, or the window lost the keys.
+    pub fn let_go_of_computer_keys(&mut self, _: &mut Context<Self>) {
+        let (Some(keys), Some(keyboard)) = (&mut self.computer_keys, &self.keyboard) else {
+            return;
+        };
+        let input = keyboard.input();
+        for played in keys.release() {
+            input.send(played);
+        }
+    }
+
     /// The tempo the transport shows: the one in effect at the playhead. It is read from the
     /// project on every render, so an outside edit of `project.json` shows at once.
     pub fn shown_tempo(&self, cx: &App) -> Tempo {
@@ -1297,6 +1369,7 @@ impl Render for TransportPill {
         let strip = self.end.map(|end| self.strip(end, cx));
         let click_on = self.click_is_on();
         let has_click = self.click.is_some();
+        let keys_on = self.computer_keys_are_on();
         let recording = self.is_recording();
         let can_record = self.keyboard.is_some() || self.audio.can_open();
         let session = self.session.clone();
@@ -1385,8 +1458,21 @@ impl Render for TransportPill {
             .child(tempo)
             // Only a project with a fit has this, so every other pill is what it always was.
             .children(steadiness)
-            // The click is a reference, not part of the mix, so it takes no colour: a muted
-            // glyph while it is off, and white under a dark glyph while it sounds.
+            // The computer keys and the click are switches of the composer, not of the mix, so
+            // they take no colour: a muted glyph while off, and white under a dark glyph while on.
+            .child(
+                Button::icon_only("computer-keys", "keyboard-music")
+                    .variant(match keys_on {
+                        true => ButtonVariant::Primary,
+                        false => ButtonVariant::GhostColor(muted),
+                    })
+                    .size(ButtonSize::Sm)
+                    .rounded(true)
+                    .disabled(self.keyboard.is_none())
+                    .debug_selector(|| "computer-keys".to_string())
+                    .focus_handle(&self.keys_focus)
+                    .on_click(cx.listener(|pill, _, _, cx| pill.toggle_computer_keys(cx))),
+            )
             .child(
                 Button::icon_only("click", "metronome")
                     .variant(match click_on {

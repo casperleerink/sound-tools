@@ -1,5 +1,5 @@
 //! MIDI input: a keyboard plays the instrument of the selected track, and a recording of what
-//! was played becomes a clip.
+//! was played becomes a clip. The computer keys can be that keyboard too ([`ComputerKeys`]).
 //!
 //! This extension has no tool and no record. It is a processor in the engine, a device layer
 //! over `midir`, and a recorder. It meets the arrangement only through the note contract
@@ -18,6 +18,7 @@
 //! # }
 //! ```
 
+mod computer_keys;
 mod keyboard;
 mod keys;
 mod ports;
@@ -25,6 +26,7 @@ mod take;
 
 use sound_core::AgentDoc;
 
+pub use computer_keys::ComputerKeys;
 pub use keyboard::{Keyboard, Latency, Lost};
 pub use keys::{INPUT_CAPACITY, Input, Played};
 pub use ports::{PortError, Ports};

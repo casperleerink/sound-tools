@@ -1,5 +1,5 @@
 //! Tools of the project in the window, run by Bun: a key on a page and a note of the MIDI
-//! keyboard reach the code of a tool, and what it plays or changes comes back; a save of a tool
+//! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes back; a save of a tool
 //! keeps the sample it plays. Bun is not part
 //! of the build, so where it is not installed, as in CI, these tests say so and pass.
 
@@ -280,6 +280,25 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
     });
 }
 
+/// The computer keys play as a MIDI keyboard, but a page that hears keys keeps them.
+#[gpui::test]
+fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    window.cx.simulate_keystrokes("cmd-k");
+    window.cx.simulate_keystrokes("a");
+    window.until("the key on the page", |window| {
+        window.record("keys")["count"] == 1
+    });
+    // Bun would have answered a note of the computer keys by now.
+    for _ in 0..10 {
+        window.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(window.record("keys")["last"], serde_json::Value::Null);
+}
+
 #[gpui::test]
 fn a_held_key_comes_up_with_ctrl_held_and_when_cmd_goes_down(cx: &mut TestAppContext) {
     let Some(mut window) = open(cx, &EXPERIMENT) else {
@@ -379,6 +398,20 @@ fn a_tool_on_the_track_the_keyboard_plays_hears_it_and_one_on_another_does_not(
         window.record("arrangement/two/listener")["last"],
         serde_json::Value::Null
     );
+}
+
+#[gpui::test]
+fn a_tool_on_the_track_hears_the_computer_keys(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &TWO_TRACKS) else {
+        return;
+    };
+    window.cx.simulate_keystrokes("cmd-k");
+    window.poll();
+    window.poll();
+    window.cx.simulate_keystrokes("a");
+    window.until("the note on the first track", |window| {
+        window.record("arrangement/one/listener")["last"] == 60
+    });
 }
 
 #[gpui::test]

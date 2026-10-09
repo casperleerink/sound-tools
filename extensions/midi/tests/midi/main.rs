@@ -4,6 +4,7 @@
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]
 
+mod computer_keys;
 mod messages;
 mod playing;
 mod recording;

@@ -26,6 +26,7 @@
 //! - `piece`: a short piece made by hand from the default project, closed and opened again.
 //! - `audio`: audio clips moved, trimmed, faded and turned up or down, copied and pasted, the
 //!   Clip card, files dropped from the Finder, and adding an audio track.
+//! - `computer_keys`: the computer keys playing and recording a track as a MIDI keyboard.
 //! - `recording_audio`: arming audio tracks, the input select and recording them from a
 //!   simulated input.
 //! - `other_apps`: hearing another app that `project.json` connects.
@@ -44,6 +45,7 @@ mod built_in_effects;
 mod clip_automation;
 mod clips;
 mod compressor;
+mod computer_keys;
 mod delay;
 mod drum_pad;
 mod editing;
