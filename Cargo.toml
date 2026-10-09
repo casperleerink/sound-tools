@@ -176,6 +176,14 @@ wavetable = { opt-level = 3 }
 # a large part of a second.
 realfft = { opt-level = 3 }
 rustfft = { opt-level = 3 }
+# Writing a PNG of the window, in the snapshots and the screenshot example: unoptimized it
+# takes most of a second.
+png = { opt-level = 3 }
+fdeflate = { opt-level = 3 }
+flate2 = { opt-level = 3 }
+miniz_oxide = { opt-level = 3 }
+crc32fast = { opt-level = 3 }
+adler2 = { opt-level = 3 }
 
 [profile.dbg]
 inherits = "dev"
