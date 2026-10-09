@@ -58,21 +58,28 @@ const EXPERIMENT: [(&str, &str); 3] = [
     ("extensions/keys.ts", KEYS),
 ];
 
-/// An effect that keeps the last note of the MIDI keyboard in its record.
+/// An effect that keeps the last note of the MIDI keyboard in its record, and how many it
+/// holds.
 const LISTENER: &str = r#"import { input, knob, tool } from "./sdk";
 
 tool({
   name: "listener",
   title: "Listener",
   when: "You want to know the last note played",
-  doc: "Passes the sound and keeps the last note.",
-  state: { last: knob({ min: 0, max: 127, default: 0 }) },
+  doc: "Passes the sound and keeps the last note and how many are held.",
+  state: { last: knob({ min: 0, max: 127, default: 0 }), held: knob({ min: 0, max: 128, default: 0 }) },
   sound: () => input,
   onMidi: ({ update }, message) => {
-    if (message.type !== "noteOn") return;
-    update("Keep the note", (state) => {
-      state.last = message.pitch;
-    });
+    if (message.type === "noteOn") {
+      update("Keep the note", (state) => {
+        state.last = message.pitch;
+        state.held = (state.held ?? 0) + 1;
+      });
+    } else if (message.type === "noteOff") {
+      update("Let go of the note", (state) => {
+        state.held = (state.held ?? 0) - 1;
+      });
+    }
   },
 });
 "#;
@@ -220,13 +227,13 @@ impl Window<'_> {
         assert!(input.send(Played::On { pitch, velocity }));
     }
 
-    /// The `last` note of the record of `instance`.
-    fn last(&mut self, instance: &str) -> serde_json::Value {
+    /// The record of `instance`.
+    fn record(&mut self, instance: &str) -> serde_json::Value {
         let session = self.session.clone();
         let state = (self.cx)
             .read(|cx| session.read(cx).project().state_json(&id(instance)))
             .unwrap();
-        serde_json::from_str::<serde_json::Value>(&state).unwrap()["last"].clone()
+        serde_json::from_str(&state).unwrap()
     }
 }
 
@@ -262,7 +269,9 @@ fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &m
     };
     // The keyboard plays into `keys`, the one instance at the top that takes notes.
     window.play_midi(64);
-    window.until("the note in the record", |window| window.last("keys") == 64);
+    window.until("the note in the record", |window| {
+        window.record("keys")["last"] == 64
+    });
     // The instrument played it as well, as a keyboard plays any instrument.
     assert!(window.loudest(480) > 0.1);
 }
@@ -277,7 +286,7 @@ fn a_tool_on_the_track_the_keyboard_plays_hears_it_and_one_on_another_does_not(
     // Nothing is selected, so the keyboard plays the first track.
     window.play_midi(60);
     window.until("the note on the first track", |window| {
-        window.last("arrangement/one/listener") == 60
+        window.record("arrangement/one/listener")["last"] == 60
     });
     // Bun would have answered for both tracks at once.
     for _ in 0..10 {
@@ -285,9 +294,36 @@ fn a_tool_on_the_track_the_keyboard_plays_hears_it_and_one_on_another_does_not(
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(
-        window.last("arrangement/two/listener"),
+        window.record("arrangement/two/listener")["last"],
         serde_json::Value::Null
     );
+}
+
+#[gpui::test]
+fn a_tool_on_the_track_the_keyboard_leaves_hears_the_end_of_the_note_it_held(
+    cx: &mut TestAppContext,
+) {
+    // With no instrument on either track the keyboard plays into nothing before and after, so
+    // it has nothing to let go of itself.
+    let files: Vec<_> = (TWO_TRACKS.into_iter())
+        .filter(|(path, _)| !path.ends_with("instrument.json"))
+        .collect();
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.play_midi(60);
+    window.until("the note held on the first track", |window| {
+        window.record("arrangement/one/listener")["held"] == 1
+    });
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.select(Some(id("arrangement/two")), cx)
+        })
+    });
+    window.until("the end of the note on the first track", |window| {
+        window.record("arrangement/one/listener")["held"] == 0
+    });
 }
 
 /// A player of `sine.wav` at `level`, over and over.
