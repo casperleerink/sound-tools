@@ -39,7 +39,7 @@ pub(crate) struct TypeScriptCard {
     /// The pad or the canvas the pointer holds since its press.
     held: Option<Held>,
     /// It has the keys while it, or a control in it, has the focus: a click on it gives it
-    /// them, and a page takes them when it opens.
+    /// them, and a page takes them when it opens and nothing else has them.
     focus: FocusHandle,
     /// The keys that went down and not up yet. They go up when it loses the keys, when cmd
     /// goes down and when it closes, so a note a key holds is not held for ever.
@@ -79,7 +79,8 @@ impl TypeScriptCard {
         let card = live.update(cx, |live, cx| live.add(id.clone(), tool, surface, cx));
         let focus = cx.focus_handle();
         let hears_keys = live.read(cx).info(card).is_some_and(|info| info.keys);
-        if page && hears_keys {
+        // Not from what has the focus, such as the composer of the agent while it is typed in.
+        if page && hears_keys && window.focused(cx).is_none() {
             window.focus(&focus, cx);
         }
         cx.on_focus_out(&focus, window, |view, _, _, cx| view.let_go_of_keys(cx))

@@ -13,7 +13,7 @@ use midi::Played;
 use plugin_host::{Plugins, ScanCache};
 use runtime::window::{DeviceAccess, Shell, bind_keys};
 use runtime::{OFFLINE, views};
-use sound_core::Engine;
+use sound_core::{Changes, Engine};
 use sound_notes::{Pitch, Velocity};
 use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
@@ -62,6 +62,17 @@ const EXPERIMENT: [(&str, &str); 3] = [
   "connections": [{"from": {"instance": "keys", "port": "audio"}, "to": {"device_output": 0}}]}"#,
     ),
     ("state/keys.json", r#"{"tool": "keys", "state": {}}"#),
+    ("extensions/keys.ts", KEYS),
+];
+
+/// The tool `keys`, and no record of it yet.
+const ONLY_THE_TOOL: [(&str, &str); 2] = [
+    (
+        "project.json",
+        r#"{"format": 1, "extensions": [],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": []}"#,
+    ),
     ("extensions/keys.ts", KEYS),
 ];
 
@@ -303,6 +314,34 @@ fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppC
     window.until("six keys in the record", |window| {
         window.record("keys")["count"] == 6
     });
+}
+
+#[gpui::test]
+fn a_page_that_opens_leaves_the_focus_where_it_is(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &ONLY_THE_TOOL) else {
+        return;
+    };
+    // A control has the focus, as the composer of the agent does while it is typed in.
+    let window_focus = window.cx.update(|window, cx| window.focused(cx));
+    window.cx.simulate_keystrokes("tab");
+    let focused = window.cx.update(|window, cx| window.focused(cx));
+    assert!(focused.is_some() && focused != window_focus);
+
+    // The agent adds the tool at the top, and its page opens.
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                project.set_json(&mut changes, id("keys"), "keys", serde_json::json!({}))?;
+                project.commit("Add keys", changes)
+            })
+        })
+    });
+    window.poll();
+    let shell = window.shell.clone();
+    assert!(window.cx.read(|cx| shell.read(cx).main_view().is_some()));
+    assert_eq!(window.cx.update(|window, cx| window.focused(cx)), focused);
 }
 
 #[gpui::test]
