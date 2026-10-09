@@ -18,7 +18,9 @@ Earlier experiments, with their results next to this file:
   signals built with the SDK's functions. Both passed every task; the graph cost about 10% less
   and needs no doc of its own, so the SDK is the graph alone.
 - `results-experiments.jsonl`: a gravity harp page, a generative source and a grain cloud built from scratch,
-  and a composer that edits the pattern of a builder's acid bass. Every run passed.
+  and a composer that edits the pattern of a builder's acid bass; later a keyboard toy (`onKey`,
+  notes held while a key is down) and a MIDI arpeggiator (`onMidi`, played ahead with `at`).
+  Every run passed.
 - `results-ui.jsonl`: the `ui-*` scenarios, cards and pages from short prompts, with the doc
   commit each ran on. How they look is judged from screenshots (`cargo run -p runtime --example
   screenshot`); `fill` is the share of its page a page uses (`fill.py`). Before a page got its
@@ -347,6 +349,20 @@ def check_page(folder: Path) -> dict:
     return {**checks, "with a page": "page:" in "".join(project_tools(folder).values())}
 
 
+def check_keys(folder: Path) -> dict:
+    checks = check_page(folder)
+    return {**checks, "hears the keys": "onKey" in "".join(project_tools(folder).values())}
+
+
+def check_midi(folder: Path) -> dict:
+    tools = project_tools(folder)
+    used = [tool for tool in [instruments(folder).get("lead"), *track_effects(folder, "lead")]
+            if tool in tools]
+    text = tools.get(used[0], "") if used else ""
+    return {"a project tool on the lead": bool(used), "hears MIDI": "onMidi" in text,
+            "no problems": no_problems(folder)}
+
+
 def check_generative(folder: Path) -> dict:
     tools = project_tools(folder)
     tool = instruments(folder).get("pad")
@@ -407,6 +423,12 @@ SCENARIOS = {
     "ui-paint": (setup_tape_builder, check_page,
                  "Turn this project into one screen I paint on with the mouse; a line sweeps "
                  "across and plays what I painted, higher up is higher pitch."),
+    "keys-builder": (setup_tape_builder, check_keys,
+                     "Turn this project into one screen where my computer keyboard plays notes, "
+                     "each letter its own note, and every note draws a ripple."),
+    "midi-builder": (setup_tape_builder, check_midi,
+                     "Make the lead an arpeggiator I play from my MIDI keyboard: I hold a chord "
+                     "and it plays its notes up and down."),
     "experiment-builder": (setup_tape_builder, check_experiment,
                            "Turn this project into an interactive sound toy instead of a song, "
                            "just one screen and no timeline: a 'gravity harp'. I drop balls "
