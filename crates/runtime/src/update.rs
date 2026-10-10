@@ -182,7 +182,7 @@ pub struct Updater {
 
 impl Updater {
     /// The updater of this program, or `None` when it does not update: a dev build, a program
-    /// started with `SOUND_TOOLS_NO_UPDATES` set (the lab app of `tooling/install-lab.sh`), a
+    /// started with `SOUND_TOOLS_NO_UPDATES` set (the perf harness of `tooling/perf`), a
     /// release build that is not the app (`cargo build --release` names the program `runtime`),
     /// and on macOS a program outside a `.app`.
     fn of_this_app(support: &Path) -> Option<Self> {
