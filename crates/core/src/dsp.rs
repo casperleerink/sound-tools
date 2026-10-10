@@ -194,6 +194,14 @@ impl<const N: usize> Taps<N> {
     }
 }
 
+/// The one-pole factor for a time constant: after `seconds` a step is 63 % of the way. An
+/// `exp`: work it out when the time changes, not per frame. In `f64`, as is what it moves: in
+/// `f32` a slow pole stops short of where it goes, when the step it would take is smaller than
+/// the precision of the value.
+pub fn pole(seconds: f32, sample_rate: f32) -> f64 {
+    (-1.0 / (f64::from(seconds) * f64::from(sample_rate))).exp()
+}
+
 /// A one-pole filter in its trapezoidal form: stable at every cutoff, also while it moves, and
 /// never louder than what goes in, at any frequency.
 #[derive(Clone, Copy, Default)]

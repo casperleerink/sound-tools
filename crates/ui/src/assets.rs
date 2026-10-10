@@ -34,6 +34,7 @@ icons!(
     "device-drum-pad",
     "device-eq",
     "device-filter",
+    "device-gate",
     "device-limiter",
     "device-modulation",
     "device-plugin",

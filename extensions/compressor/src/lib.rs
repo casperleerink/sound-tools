@@ -39,7 +39,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, SIDECHAIN_INPUT};
 
-pub use processor::{Compressor, HOLD_SECONDS, Meters, reduction_db, static_gain_db};
+pub use processor::{Compressor, Meters, reduction_db, static_gain_db};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "compressor";

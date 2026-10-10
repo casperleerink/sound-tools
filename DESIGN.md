@@ -163,7 +163,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Track panel | Open window, on a plugin card | The plugin's own window, above this one, where it was last time. Again to close it |
 | Plugin card | Parameters | Search the plugin's parameters: a pick puts one on the card at the value it has, a checked one comes off, unless a lane moves it. 64 at most |
 | Plugin card | a parameter on the card | Two steps are a toggle, named steps a dropdown, the rest a knob, with the plugin's own text for the value; `Not found` or `Out of range` says what is wrong |
-| Compressor card | Sidechain, behind expand | Off, or the track whose sound drives it, its own track too. With a track picked, Tap says where on that track: Pre FX, Post FX (the default) or Post mixer |
+| Compressor and Gate cards | Sidechain, behind expand | Off, or the track whose sound drives it, its own track too. With a track picked, Tap says where on that track: Pre FX, Post FX (the default) or Post mixer |
 | EQ card | click a numbered handle, or 1 to 4 on a focused control | Select that band. No undo step |
 | Sampler card | drop an audio file on the display, or `Choose file` | Copy it into the project and play it across the keyboard |
 | Sampler card | up, down on the focused Root knob | One semitone |

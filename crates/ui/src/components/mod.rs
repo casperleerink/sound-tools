@@ -15,6 +15,7 @@ pub mod curves;
 pub mod device_card;
 pub mod display;
 pub mod drag_number;
+pub mod dynamics_display;
 pub mod gesture;
 pub mod knob;
 pub mod limiter_display;
