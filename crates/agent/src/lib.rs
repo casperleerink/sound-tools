@@ -14,7 +14,7 @@
 //!   each [`Setup`] state until the agent is ready.
 //!
 //! No async runtime of its own: the futures run on smol, so gpui's executors or
-//! `smol::block_on` drive them. The plan and the reasons are in `docs/plans/agent-sidebar.md`.
+//! `smol::block_on` drive them.
 //!
 //! `cargo run -p sound-agent --example chat -- <folder>` chats with Claude Code in the
 //! terminal, with a `claude` on the `PATH` ([`program_on_path`]).

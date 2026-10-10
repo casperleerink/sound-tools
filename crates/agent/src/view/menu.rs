@@ -75,8 +75,7 @@ impl Choice {
     }
 }
 
-/// The name in the menu's values, what the composer reads, and what it means, as in the
-/// plan's table.
+/// The name in the menu's values, what the composer reads, and what it means.
 fn approval_text(mode: ApprovalMode) -> (&'static str, &'static str, &'static str) {
     match mode {
         ApprovalMode::AskForEverything => (
