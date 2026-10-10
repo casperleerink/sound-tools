@@ -12,7 +12,7 @@
 //! }
 //! ```
 //!
-//! The processor only copies its input to its output and writes it into a [`Scope`]. The card
+//! The processor only copies its input to its output, into a [`Scope`] and its peaks. The card
 //! works out what it shows from the scope, off the audio thread, with the measuring code of
 //! `--analyze` ([`sound_media::analysis`]).
 //!
@@ -61,8 +61,11 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 
 /// Runs for every valid state, from every source.
 fn apply(_: &AnalyzerState, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    let scope = context.scope(Analyzer::SCOPE);
-    let analyzer = context.processor("analyzer", || Analyzer::new(scope))?;
+    let (scope, peaks) = (
+        context.scope(Analyzer::SCOPE),
+        context.peaks(Analyzer::PEAKS),
+    );
+    let analyzer = context.processor("analyzer", || Analyzer::new(scope, peaks))?;
     context.input(AUDIO_INPUT, InputEndpoint::new(analyzer, Analyzer::INPUT));
     context.output(
         AUDIO_OUTPUT,

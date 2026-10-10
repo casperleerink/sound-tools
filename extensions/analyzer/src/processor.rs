@@ -1,19 +1,17 @@
-//! The analyzer processor: the input goes out as it came, bit for bit, and into the scope the
-//! card reads.
+//! The analyzer processor: the input goes out as it came, bit for bit, into the scope the card
+//! reads and into the peaks of its meter.
 
 use sound_core::{
-    AudioInput, AudioOutput, Ports, PrepareConfig, ProcessContext, Processor, Scope,
+    AudioInput, AudioOutput, Peaks, Ports, PrepareConfig, ProcessContext, Processor, Scope,
     all_positive_zero,
 };
 
-/// How long silence still goes into the scope once the sound stops: longer than the 400 ms the
-/// loudness of the card is measured over, so it comes down to silence too.
-const REST_SECONDS: u32 = 1;
-
 pub struct Analyzer {
     scope: Scope,
-    /// Silent frames in a row written to the scope, up to `rest_frames`. From there the scope
-    /// holds only silence, and a silent block has nothing to do.
+    peaks: Peaks,
+    /// Silent frames in a row written to the scope, up to `rest_frames`: a second, longer than
+    /// the 400 ms the card measures loudness over, so its loudness comes down to silence too.
+    /// From there a silent block has nothing to do.
     quiet: usize,
     rest_frames: usize,
 }
@@ -21,12 +19,15 @@ pub struct Analyzer {
 impl Analyzer {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
-    /// The name the behaviour keeps the scope under, for [`sound_core::Project::scope`].
+    /// The names the behaviour keeps the scope and the peaks under, for
+    /// [`sound_core::Project::scope`] and [`sound_core::Project::peaks`].
     pub const SCOPE: &str = "sound";
+    pub const PEAKS: &str = "level";
 
-    pub fn new(scope: Scope) -> Self {
+    pub fn new(scope: Scope, peaks: Peaks) -> Self {
         Self {
             scope,
+            peaks,
             quiet: 0,
             rest_frames: 0,
         }
@@ -43,8 +44,7 @@ impl Processor for Analyzer {
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
-        let rest = (REST_SECONDS * config.sample_rate) as usize;
-        self.rest_frames = rest.max(Scope::FRAMES);
+        self.rest_frames = config.sample_rate as usize;
         self.quiet = 0;
     }
 
@@ -53,18 +53,19 @@ impl Processor for Analyzer {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let inputs = context.audio_inputs.get(Self::INPUT);
         // An output starts as +0.0, so a block of +0.0 in is already the same out.
-        let silent = inputs.iter().all(|samples| all_positive_zero(samples));
-        if silent && self.quiet >= self.rest_frames {
+        if inputs.iter().all(|samples| all_positive_zero(samples)) {
+            if self.quiet < self.rest_frames {
+                self.quiet += context.frames;
+                self.scope.write(inputs);
+            }
             return;
         }
-        self.quiet = match silent {
-            true => self.quiet.saturating_add(context.frames),
-            false => 0,
-        };
+        self.quiet = 0;
         let outputs = context.audio_outputs.get(Self::OUTPUT);
         for (output, input) in outputs.into_iter().zip(inputs) {
             output.copy_from_slice(input);
         }
         self.scope.write(inputs);
+        self.peaks.record_block(inputs);
     }
 }

@@ -26,7 +26,7 @@ const QUIET: f64 = 1e-6;
 const FUNDAMENTAL: f64 = 0.02;
 
 /// What one window sounds like.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy)]
 pub enum Pitch {
     Quiet,
     /// Sound with no clear period: noise, drums, a chord.
@@ -43,6 +43,13 @@ pub struct MeasuredPitch {
     /// From low to high, in cents, leaving out the lowest and the highest twentieth, where a
     /// note starts or ends.
     pub drift: f64,
+}
+
+/// The nearest MIDI note to `note`, a note number with its fraction, and how far off it `note`
+/// is in cents, from -50 to 50.
+pub fn nearest_note(note: f64) -> (i64, i64) {
+    let nearest = note.round();
+    (nearest as i64, ((note - nearest) * 100.0).round() as i64)
 }
 
 /// The note of each window with a clear pitch, and how many windows were not quiet.

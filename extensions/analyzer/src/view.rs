@@ -3,9 +3,9 @@
 //! so it has no knob and nothing behind expand. The rack gives the view a [`CardFrame`]: the
 //! picker of the slot as the title, and the power and close icons.
 //!
-//! Once per poll of the session the view reads what came into the scope of the analyzer since
-//! the last poll, works out what it shows with [`Analysis`], and draws again only when that
-//! changed. A card at rest costs no frame.
+//! Once per poll of the session the view reads the peaks of the analyzer and what came into its
+//! scope since the last poll, works out what it shows with [`Analysis`], and draws again only
+//! when that changed. A card at rest costs no frame.
 
 use gpui::{
     Context, Div, Entity, FontWeight, SharedString, Task, Window, div, point, prelude::*, px,
@@ -21,7 +21,7 @@ use sound_ui::{
     typography, weak_action,
 };
 
-use crate::analysis::{Analysis, COLUMNS, FLOOR_DB, Reading};
+use crate::analysis::{Analysis, COLUMNS, FLOOR_DB, tuning};
 use crate::{Analyzer, AnalyzerState};
 
 /// The name the rack puts on the card of an analyzer.
@@ -56,8 +56,6 @@ pub struct AnalyzerView {
     read: u64,
     frames: Vec<[f32; 2]>,
     metering: Metering,
-    /// What the card shows.
-    reading: Reading,
     _polling: Task<()>,
 }
 
@@ -78,38 +76,30 @@ impl AnalyzerView {
             read: 0,
             frames: Vec::new(),
             metering: Metering::default(),
-            reading: Reading::default(),
             _polling: every_poll(cx, Self::poll),
         }
     }
 
-    /// Hears what came into the scope since the last poll, and draws again when that changes
-    /// what the card shows.
+    /// Hears what came since the last poll, and draws again when that changes what the card
+    /// shows.
     fn poll(&mut self, cx: &mut Context<Self>) {
-        let project = self.session.read(cx).project();
-        let Some(scope) = project.scope(self.analyzer.id(), Analyzer::SCOPE) else {
-            return;
-        };
-        self.frames.clear();
-        self.read = scope.read(self.read, &mut self.frames);
-        self.analysis.hear(&self.frames);
-        let level_changed = self.metering.read_amplitudes(self.analysis.take_peaks());
-        // At rest nothing comes and nothing moves: no spectrum to work out.
-        if self.frames.is_empty() && self.reading == Reading::default() {
-            if level_changed {
-                cx.notify();
-            }
-            return;
+        let (project, id) = (self.session.read(cx).project(), self.analyzer.id());
+        let level_changed = self
+            .metering
+            .read(project.peaks(id, Analyzer::PEAKS).as_ref());
+        if let Some(scope) = project.scope(id, Analyzer::SCOPE) {
+            self.frames.clear();
+            self.read = scope.read(self.read, &mut self.frames);
+            self.analysis.hear(&self.frames);
         }
-        let reading = self.analysis.look(POLL_INTERVAL.as_secs_f32());
-        if level_changed || *reading != self.reading {
-            self.reading = reading.clone();
+        let moved = self.analysis.look(POLL_INTERVAL.as_secs_f32());
+        if level_changed || moved {
             cx.notify();
         }
     }
 
     fn display(&self, cx: &mut Context<Self>) -> Display {
-        let spectrum = self.reading.spectrum.iter().enumerate();
+        let spectrum = self.analysis.reading().spectrum.iter().enumerate();
         let curve = spectrum.map(|(column, db)| {
             let across = (column as f32 + 0.5) / COLUMNS as f32 * SPECTRUM_WIDTH;
             point(across, height(*db))
@@ -171,14 +161,13 @@ impl Render for AnalyzerView {
         {
             return div().into_any_element();
         }
-        let tuning = self.reading.tuning;
-        let note = Cell::new(readout(
-            tuning.map_or("–".into(), |tuning| tuning.name()),
-            cx,
-        ))
-        .label("Note")
-        .value(tuning.map_or(String::new(), |tuning| format!("{:+} ct", tuning.cents())));
-        let loudness = Cell::new(readout(tenths(self.reading.loudness), cx))
+        let reading = self.analysis.reading();
+        let (name, cents) = match reading.note.map(tuning) {
+            Some((name, cents)) => (name, format!("{cents:+} ct")),
+            None => ("–".into(), String::new()),
+        };
+        let note = Cell::new(readout(name, cx)).label("Note").value(cents);
+        let loudness = Cell::new(readout(tenths(reading.loudness), cx))
             .label("Loudness")
             .value("LUFS");
         let [left, right] = self.metering.level().peak;

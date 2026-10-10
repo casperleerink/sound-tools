@@ -2,8 +2,8 @@
 
 use analyzer::Analyzer;
 use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, Ports, PrepareConfig, ProcessContext, Processor,
-    Scope,
+    AudioOutput, Connection, Engine, EngineConfig, Peaks, Ports, PrepareConfig, ProcessContext,
+    Processor, Scope,
 };
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
@@ -67,7 +67,10 @@ pub(crate) fn rig(count: usize, sound: impl Fn(usize) -> Vec<[f32; 2]>) -> (Engi
             .unwrap();
         let scope = Scope::new();
         let analyzer = edit
-            .add_processor(&format!("analyzer-{index}"), Analyzer::new(scope.clone()))
+            .add_processor(
+                &format!("analyzer-{index}"),
+                Analyzer::new(scope.clone(), Peaks::new()),
+            )
             .unwrap();
         let input = Connection::new(source.id(), Source::OUTPUT, analyzer.id(), Analyzer::INPUT);
         edit.connect(input).unwrap();

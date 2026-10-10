@@ -3,7 +3,7 @@
 
 use sound_core::{Clock, Frames, Ticks, TimeSignatures};
 
-use sound_media::analysis::{BANDS, MeasuredPitch, Measures};
+use sound_media::analysis::{BANDS, MeasuredPitch, Measures, nearest_note};
 
 /// At most this many rows: enough to see the shape of a piece, few enough to read at once.
 const MOST_ROWS: u64 = 32;
@@ -259,10 +259,9 @@ pub fn report(timeline: &Timeline, measures: &Measures) -> String {
 
 /// The nearest note and how far off it the pitch is, in cents: `A4+3c`.
 fn note_name(pitch: MeasuredPitch) -> String {
-    let nearest = pitch.note.round();
-    let cents = ((pitch.note - nearest) * 100.0).round() as i64;
+    let (nearest, cents) = nearest_note(pitch.note);
     // The pitch finder looks from 40 Hz to 4 kHz, well inside the notes MIDI has.
-    let name = sound_notes::Pitch::nearest(nearest as i64).name();
+    let name = sound_notes::Pitch::nearest(nearest).name();
     format!("{name}{cents:+}c")
 }
 

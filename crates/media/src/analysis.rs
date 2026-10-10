@@ -21,7 +21,7 @@ use realfft::{RealFftPlanner, RealToComplex};
 use sound_core::{Oversampler, OversamplingFilters};
 
 use pitch::Pitches;
-pub use pitch::{MeasuredPitch, Pitch, PitchFinder};
+pub use pitch::{MeasuredPitch, Pitch, PitchFinder, nearest_note};
 
 /// Every render is stereo, and a file is read as stereo.
 const CHANNELS: usize = 2;
@@ -371,7 +371,6 @@ fn gated(windows: &[f64]) -> Option<f64> {
 
 /// The momentary loudness of BS.1770: the weighted power of the last 400 ms, in blocks of
 /// 100 ms, of a stereo sound pushed through it frame by frame.
-#[derive(Clone)]
 pub struct Momentary {
     weighting: [KWeighting; CHANNELS],
     /// The weighted power of the block of 100 ms being filled, summed over its frames.
@@ -522,12 +521,6 @@ pub struct PowerSpectrum {
     scale: f64,
     input: Vec<f32>,
     output: Vec<Complex<f32>>,
-}
-
-impl Default for PowerSpectrum {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl PowerSpectrum {
