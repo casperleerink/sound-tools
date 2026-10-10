@@ -348,7 +348,7 @@ impl Machine {
                     let Some(operation) = operations.get(register) else {
                         continue;
                     };
-                    match span.steady(*operation, filled, &memory.buffers) {
+                    match span.steady(*operation, registers, filled, memory, &frames) {
                         Some(value) => fill(registers, filled, register, value),
                         None => {
                             let frames = frames.clone();
@@ -647,12 +647,15 @@ impl Span<'_> {
     /// The value `operation` gives in every frame of the span, where it gives one: when what it
     /// reads is one value over the span, as a note is, a param that does not glide, or a
     /// register that is [`Machine::filled`]. By the formula it runs with over a span, on the
-    /// same values, so it gives what running it over the span would.
+    /// same values, so it gives what running it over the span would. A `hold` whose trigger does
+    /// not fire in the span gives what it holds.
     fn steady(
         &self,
         operation: Operation,
+        registers: &[[f32; MAX_BLOCK]],
         filled: &[Option<f32>],
-        buffers: &[Vec<f32>],
+        memory: &Memory,
+        frames: &Range<usize>,
     ) -> Option<f32> {
         let one = |register: Register| filled.get(usize::from(register)).copied().flatten();
         let block = self.block;
@@ -674,11 +677,19 @@ impl Span<'_> {
                 row_of(&block.parameters, block.steady_parameters, index)
             }
             Operation::Live(index) => row_of(&block.lives, block.steady_lives, index),
-            Operation::Length(table) => Some(table_of(table, self.arrays, buffers).len() as f32),
+            Operation::Length(table) => {
+                Some(table_of(table, self.arrays, &memory.buffers).len() as f32)
+            }
             Operation::Unary(op, x) => Some(unary(op, one(x)?)),
             Operation::Binary(op, a, b) => Some(binary(op, one(a)?, one(b)?)),
             Operation::Clamp(x, low, high) => Some(clamp(one(x)?, one(low)?, one(high)?)),
             Operation::Mix(a, b, amount) => Some(mix(one(a)?, one(b)?, one(amount)?)),
+            // A trigger that does not fire in the span keeps what is held, whatever the input.
+            Operation::Hold { when, slot, .. } => {
+                let whens = row(registers, usize::from(when), frames);
+                let fires = (whens.iter()).fold(false, |fires, when| fires | (*when > 0.0));
+                (memory.memories.get(usize::from(slot)).copied()).filter(|_| !fires)
+            }
             // What moves within a span, or keeps a memory.
             Operation::Input
             | Operation::InputLeft
@@ -693,7 +704,6 @@ impl Span<'_> {
             | Operation::Filter { .. }
             | Operation::Smooth { .. }
             | Operation::Envelope { .. }
-            | Operation::Hold { .. }
             | Operation::Rise { .. }
             | Operation::Change { .. }
             | Operation::Read { .. }

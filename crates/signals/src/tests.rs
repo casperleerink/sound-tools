@@ -365,6 +365,33 @@ fn rise_fires_once_when_a_value_goes_up_and_hold_keeps_it_until_the_next() {
 }
 
 #[test]
+fn a_hold_and_the_math_on_it_keep_its_value_over_spans_where_its_trigger_does_not_fire() {
+    let mut held = machine(compile(|| {
+        let x = input();
+        hold(x, x.lt(-1.0)) * 0.5 + 1.0
+    }));
+    // A new value to hold every 50 frames, in spans that start anywhere in one.
+    let input = |frame: usize| {
+        if frame.is_multiple_of(50) {
+            -1.5 - frame as f32 * 0.001
+        } else {
+            0.0
+        }
+    };
+    let rendered = render_in_spans(&mut held, input, 3, 24);
+    let mut kept = 0.0;
+    let expected: Vec<f32> = (0..3 * MAX_BLOCK)
+        .map(|frame| {
+            if input(frame) < -1.0 {
+                kept = input(frame);
+            }
+            kept * 0.5 + 1.0
+        })
+        .collect();
+    assert_eq!(rendered, [expected.clone(), expected]);
+}
+
+#[test]
 fn mono_code_and_what_hears_it_run_with_the_index_of_each_channel() {
     let mut panned = machine(compile(|| channel() * 0.5 + 0.25));
     let block = defaults(&panned);
