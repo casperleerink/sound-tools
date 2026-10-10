@@ -6,6 +6,7 @@ use std::any::{Any, TypeId};
 use std::cell::Cell;
 use std::marker::PhantomData;
 
+use crate::automation::Automation;
 use crate::transport::Transport;
 
 /// Processors never see more frames than this in one `process` call.
@@ -317,6 +318,10 @@ pub(crate) struct EventType {
 }
 
 impl EventType {
+    pub(crate) fn is<E: Event>(&self) -> bool {
+        self.id == TypeId::of::<E>()
+    }
+
     fn of<E: Event>() -> Self {
         Self {
             id: TypeId::of::<E>(),
@@ -379,6 +384,9 @@ pub(crate) trait ErasedEventBuffer: Send {
     fn merge_from(&mut self, source: &dyn ErasedEventBuffer);
     /// Events rejected since the last call because the buffer was full.
     fn take_overflow(&mut self) -> u64;
+    /// Drops the events of the first `frames` frames and moves the rest that much earlier: the
+    /// block goes on from there.
+    fn shift(&mut self, frames: usize);
 }
 
 impl<E: Event> ErasedEventBuffer for EventBuffer<E> {
@@ -406,6 +414,22 @@ impl<E: Event> ErasedEventBuffer for EventBuffer<E> {
     fn take_overflow(&mut self) -> u64 {
         std::mem::take(&mut self.overflow)
     }
+
+    fn shift(&mut self, frames: usize) {
+        let played = self.events.partition_point(|timed| timed.offset < frames);
+        self.events.drain(..played);
+        for timed in &mut self.events {
+            timed.offset -= frames;
+        }
+    }
+}
+
+/// The first frame after the first of an automation input at which a lane bends, where the
+/// engine starts the next piece of the block of its processor.
+pub(crate) fn next_bend(buffer: &dyn ErasedEventBuffer) -> Option<usize> {
+    let buffer = buffer.as_any().downcast_ref::<EventBuffer<Automation>>()?;
+    let mut offsets = buffer.events.iter().map(|timed| timed.offset);
+    offsets.find(|offset| *offset > 0)
 }
 
 /// The audio inputs of one block. Unconnected inputs are silent. Several connections to one
@@ -414,6 +438,8 @@ pub struct AudioInputs<'a> {
     pub(crate) buffers: &'a [AudioBuffer],
     /// Per port, the output buffers summed into it.
     pub(crate) sources: &'a [Vec<usize>],
+    /// Where this block starts in the buffers: a processor may play a sub-block in pieces.
+    pub(crate) start: usize,
     pub(crate) frames: usize,
     pub(crate) misuses: &'a Cell<u64>,
 }
@@ -422,11 +448,11 @@ impl AudioInputs<'_> {
     /// The channels of a port, left first. An undeclared port reads as empty slices and counts
     /// in `EngineStatus::port_misuses`.
     pub fn get(&self, port: AudioInput) -> [&[f32]; CHANNELS] {
-        let frames = self.frames;
+        let frames = self.start..self.start + self.frames;
         match self.buffers.get(port.0) {
             Some(buffer) => buffer
                 .each_ref()
-                .map(|channel| channel.get(..frames).unwrap_or_default()),
+                .map(|channel| channel.get(frames.clone()).unwrap_or_default()),
             None => misused(self.misuses),
         }
     }
@@ -451,6 +477,8 @@ fn misused<T: Default>(misuses: &Cell<u64>) -> T {
 /// The audio outputs of one block. They start silent.
 pub struct AudioOutputs<'a> {
     pub(crate) buffers: &'a mut [AudioBuffer],
+    /// Where this block starts in the buffers.
+    pub(crate) start: usize,
     pub(crate) frames: usize,
     pub(crate) misuses: &'a Cell<u64>,
 }
@@ -469,12 +497,12 @@ impl AudioOutputs<'_> {
         &mut self,
         ports: [AudioOutput; N],
     ) -> [[&mut [f32]; CHANNELS]; N] {
-        let frames = self.frames;
+        let frames = self.start..self.start + self.frames;
         match self.buffers.get_disjoint_mut(ports.map(|port| port.0)) {
             Ok(buffers) => buffers.map(|buffer| {
                 buffer
                     .each_mut()
-                    .map(|channel| channel.get_mut(..frames).unwrap_or_default())
+                    .map(|channel| channel.get_mut(frames.clone()).unwrap_or_default())
             }),
             Err(_) => {
                 misused::<()>(self.misuses);
@@ -487,6 +515,8 @@ impl AudioOutputs<'_> {
 /// The event inputs of one block, sorted by offset. Several connections to one input arrive merged.
 pub struct EventInputs<'a> {
     pub(crate) buffers: &'a [Box<dyn ErasedEventBuffer>],
+    /// The buffers hold the rest of the sub-block too, when the processor plays it in pieces.
+    pub(crate) frames: usize,
     pub(crate) misuses: &'a Cell<u64>,
 }
 
@@ -499,7 +529,12 @@ impl EventInputs<'_> {
             .get(port.index)
             .and_then(|buffer| buffer.as_any().downcast_ref::<EventBuffer<E>>());
         match buffer {
-            Some(buffer) => &buffer.events,
+            Some(buffer) => {
+                let inside = buffer
+                    .events
+                    .partition_point(|timed| timed.offset < self.frames);
+                buffer.events.get(..inside).unwrap_or_default()
+            }
             None => misused(self.misuses),
         }
     }
@@ -508,6 +543,8 @@ impl EventInputs<'_> {
 /// The event outputs of one block.
 pub struct EventOutputs<'a> {
     pub(crate) buffers: &'a mut [Box<dyn ErasedEventBuffer>],
+    /// Where this block starts in the buffers.
+    pub(crate) start: usize,
     pub(crate) frames: usize,
     pub(crate) misuses: &'a Cell<u64>,
     pub(crate) dropped: &'a Cell<u64>,
@@ -522,7 +559,7 @@ impl EventOutputs<'_> {
     /// Returns whether the event was taken. A sender that must not lose an event, such as a
     /// note off, keeps it and sends it again in the next block.
     pub fn push<E: Event>(&mut self, port: EventOutput<E>, offset: usize, event: E) -> bool {
-        let offset = offset.min(self.frames.saturating_sub(1));
+        let offset = self.start + offset.min(self.frames.saturating_sub(1));
         let buffer = self
             .buffers
             .get_mut(port.index)
