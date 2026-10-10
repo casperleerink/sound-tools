@@ -57,7 +57,8 @@ pub struct Taps<const N: usize> {
     from: [usize; N],
     to: [usize; N],
     next: [usize; N],
-    /// From 0 at `from` to 1 at `to`.
+    /// From 0 at `from` to 1 at `to`. Under 1 exactly while `from` and `to` differ, so a fade
+    /// is checked with one compare, not of two arrays.
     fade: f32,
     step: f32,
 }
@@ -91,14 +92,15 @@ impl<const N: usize> Taps<N> {
         }
     }
 
+    #[inline]
     pub fn is_fading(&self) -> bool {
-        self.from != self.to
+        self.fade < 1.0
     }
 
     /// The part of the new tap in this frame.
     #[inline]
     pub fn weight(&self) -> f32 {
-        if self.is_fading() { self.fade } else { 1.0 }
+        self.fade
     }
 
     /// One frame along, after every read of the frame: a fade that ends here may start the
