@@ -24,7 +24,7 @@ This file holds the technical decisions and the reasons for them: the model, the
 
 - One process, the runtime (`crates/runtime`), opens one project folder. It runs as a window, `--headless`, `--inspect` (print a summary, read-only), `--render` (offline WAV, read-only) or `--analyze` (measure a render or an audio file, read-only). `--plugins` lists the plugins of the machine.
 - The agent works in the project folder: Claude Code run by the agent sidebar, or any coding agent in a terminal. It edits files; the runtime applies them live. There is no separate edit API for agents.
-- Crates: `crates/core` (engine, clock, transport, live project folder), `crates/notes` (the note contract), `crates/media` (audio files), `crates/ui` (the UI SDK and the session bridge), `crates/agent` (the agent sidebar), `crates/runtime` (the app), `crates/gallery` (component gallery), `crates/typescript` and `crates/signals` (tools of the project). Each extension is a crate under `extensions/`.
+- Crates: `crates/core` (engine, clock, transport, live project folder), `crates/notes` (the note contract), `crates/media` (audio files, and measuring a sound), `crates/ui` (the UI SDK and the session bridge), `crates/agent` (the agent sidebar), `crates/runtime` (the app), `crates/gallery` (component gallery), `crates/typescript` and `crates/signals` (tools of the project). Each extension is a crate under `extensions/`.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name. A new project enables every registered one.
 - Rust for the core and extensions, GPUI for the window. The reason: a one-line extension edit reaches a new running window in about two seconds, and an agent wrote working GPUI views from our docs on the first try. Audio and saved data never depend on GPUI.
 - macOS is the main platform. Linux and Windows build and pass the tests. Platform code sits behind `cfg`: VST 3 bundle loading, plugin folders, cache folders, the terminal, the agent's process tree, and plugin windows (macOS and Windows; not Linux, where plugins need an X11 parent and a host run loop). System programs come from the system, never the `PATH`: `/usr/bin/curl`, or `System32` (`curl.exe`, `tar.exe`, `powershell.exe`) on Windows, started without a console window (`sound_core::process`).
@@ -35,7 +35,7 @@ This file holds the technical decisions and the reasons for them: the model, the
 This is the main rule of the codebase.
 
 - The core has no track, clip, note, pitch, velocity, effect, plugin or audio file type, and depends on no bundled crate. `workspace-rules` checks this.
-- Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (saved `Note` and `Clip` with its expression lanes, the realtime `NoteEvent` with the bend and mod wheels and key pressure, the raw MIDI take, the port names of instruments and effects, and how the bundled instruments play notes: `Voices` and `Wheels`) and `sound-media` (reading, resampling and pitching audio files).
+- Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (saved `Note` and `Clip` with its expression lanes, the realtime `NoteEvent` with the bend and mod wheels and key pressure, the raw MIDI take, the port names of instruments and effects, and how the bundled instruments play notes: `Voices` and `Wheels`) and `sound-media` (reading, resampling and pitching audio files, and measuring a sound).
 - Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`. An effect has an audio input and output both named `audio`, and may have a second input `sidechain` another sound keys it with. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
 - The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension.
 - `extensions/tone` is a small non-musical tool. It is not in the default project; it proves the core rules hold for a tool shaped differently from the arrangement.
@@ -134,6 +134,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 - A processor may declare an audio input as a side input (`Ports::side_audio_input`), such as the sidechain of a compressor. Leads skip it: its source runs only as far ahead as its own way to the device needs. A sidechain is the first time one track's sound goes two ways, and without this the source track would be led by the other track's chain and reach the device early. The detector hears the source a little early or late instead. `AudioInputs::is_connected` lets a processor fall back to its main input when nothing feeds the side input.
 - A send to a bus, when it comes, is a sound heard on two paths, not only by a detector. It will need a delay on the shorter path: the one exception to "no delay lines".
 - Levels leave the audio thread through `Peaks`: atomics, no messages, no missed peak. Views read them once per poll and draw only when the reading changes.
+- A sound leaves it through a `Scope`: its last frames in a ring of atomics. A view works out a spectrum, a loudness or a pitch from them on its own thread, as the Analyzer does with the measuring code of `--analyze` (`sound_media::analysis`). Rejected: measuring on the audio thread, an FFT per card in every block.
 - An offline render tells processors it is offline (`PrepareConfig::offline`), so a plugin that streams samples from disk waits for them instead of playing silence.
 - Every render is deterministic: the same project gives the same bytes. Nothing random: LFOs start at phase 0 and a sample and hold takes its levels from a seed. The click is attached only by the window, never by `--render`, `--inspect` or `--headless`.
 
@@ -191,7 +192,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 
 ## Built-in instruments and effects
 
-The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Delay, Reverb, Saturator, Utility and Modulation all follow one pattern; `extensions/filter` is the reference.
+The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Delay, Reverb, Saturator, Utility, Modulation and Analyzer all follow one pattern; `extensions/filter` is the reference.
 
 - One extension per device, one tool with no children, found by port names.
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.

@@ -8,9 +8,11 @@
 //! reads short bright hits as much quieter than they sound; the weighting and the loudest block
 //! of each row are what catch that. The true peak is the highest sample at four times the rate,
 //! the peak a converter or an encoder meets between the samples.
+//!
+//! The parts that measure a moment, [`Momentary`], [`PowerSpectrum`] and [`PitchFinder`], are
+//! public for a live display, such as the Analyzer card.
 
 mod pitch;
-pub mod report;
 
 use std::sync::Arc;
 
@@ -18,8 +20,8 @@ use realfft::num_complex::Complex;
 use realfft::{RealFftPlanner, RealToComplex};
 use sound_core::{Oversampler, OversamplingFilters};
 
-pub use pitch::MeasuredPitch;
-use pitch::{Pitch, PitchFinder, Pitches};
+use pitch::Pitches;
+pub use pitch::{MeasuredPitch, Pitch, PitchFinder, nearest_note};
 
 /// Every render is stereo, and a file is read as stereo.
 const CHANNELS: usize = 2;
@@ -36,7 +38,7 @@ pub const BANDS: [(&str, f64); 6] = [
 
 /// The length of one spectrum, in frames: 12 Hz apart at 48 kHz, so the sub band has bins of
 /// its own.
-const WINDOW: usize = 4096;
+pub const WINDOW: usize = 4096;
 /// Spectra overlap by three quarters: under the Hann window every frame then counts the same.
 const HOP: usize = WINDOW / 4;
 
@@ -93,14 +95,8 @@ pub struct Meter {
     rows: Vec<RowSums>,
     row: usize,
     frame: u64,
-    weighting: [KWeighting; CHANNELS],
-    /// The weighted power of the block of 100 ms being filled, summed over its frames.
-    block_sum: f64,
-    block_frames: u64,
-    frames_per_block: u64,
-    /// The mean weighted power of the last four blocks, oldest first. What [`Self::warm_up`]
-    /// heard, or silence before the start.
-    recent: [f64; BLOCKS_PER_WINDOW],
+    /// What [`Self::warm_up`] heard, or silence before the start.
+    momentary: Momentary,
     /// Whether the block being filled started after the start, and how many such blocks
     /// ended. From the fourth on, a block of 400 ms holds no warm-up, and counts for the whole.
     block_measured: bool,
@@ -146,11 +142,7 @@ impl Meter {
             row_starts,
             row: 0,
             frame: 0,
-            weighting: [KWeighting::new(rate); CHANNELS],
-            block_sum: 0.0,
-            block_frames: 0,
-            frames_per_block: (rate / 10.0).round() as u64,
-            recent: [0.0; BLOCKS_PER_WINDOW],
+            momentary: Momentary::new(sample_rate),
             block_measured: false,
             measured_blocks: 0,
             windows: Vec::new(),
@@ -189,7 +181,7 @@ impl Meter {
                 true => value,
                 false => 0.0,
             });
-            if self.block_frames == 0 {
+            if self.momentary.starts_block() {
                 self.block_measured = false;
             }
             self.hear(values);
@@ -201,24 +193,8 @@ impl Meter {
     /// weighted power of the frame, the highest sample at four times the rate of the frame
     /// [`PEAK_DELAY`] before it, and the momentary loudness of the block it ends, if it ends one.
     fn hear(&mut self, values: [f32; CHANNELS]) -> (f64, f32, Option<f64>) {
-        let mut power = 0.0;
-        for (value, weighting) in values.iter().zip(&mut self.weighting) {
-            let weighted = weighting.process(f64::from(*value));
-            power += weighted * weighted;
-        }
-        let oversampled = self.oversampled_peak(values);
-        self.block_sum += power;
-        self.block_frames += 1;
-        if self.block_frames < self.frames_per_block {
-            return (power, oversampled, None);
-        }
-        // A block of 100 ms is full: the block of 400 ms that ends with it is the momentary
-        // loudness of this moment.
-        self.recent.rotate_left(1);
-        self.recent[BLOCKS_PER_WINDOW - 1] = self.block_sum / self.block_frames as f64;
-        (self.block_sum, self.block_frames) = (0.0, 0);
-        let momentary = self.recent.iter().sum::<f64>() / BLOCKS_PER_WINDOW as f64;
-        (power, oversampled, Some(momentary))
+        let (power, momentary) = self.momentary.push(values);
+        (power, self.oversampled_peak(values), momentary)
     }
 
     /// The highest sample at four times the rate, of the frame [`PEAK_DELAY`] before `values`.
@@ -253,7 +229,7 @@ impl Meter {
         {
             self.row += 1;
         }
-        if self.block_frames == 0 {
+        if self.momentary.starts_block() {
             self.block_measured = true;
         }
         let (power, oversampled, momentary) = self.hear(values);
@@ -393,8 +369,59 @@ fn gated(windows: &[f64]) -> Option<f64> {
     lufs(mean(&mut windows.iter().filter(loud(relative)).copied())?)
 }
 
+/// The momentary loudness of BS.1770: the weighted power of the last 400 ms, in blocks of
+/// 100 ms, of a stereo sound pushed through it frame by frame.
+pub struct Momentary {
+    weighting: [KWeighting; CHANNELS],
+    /// The weighted power of the block of 100 ms being filled, summed over its frames.
+    block_sum: f64,
+    block_frames: u64,
+    frames_per_block: u64,
+    /// The mean weighted power of the last four blocks, oldest first.
+    recent: [f64; BLOCKS_PER_WINDOW],
+}
+
+impl Momentary {
+    pub fn new(sample_rate: u32) -> Self {
+        let rate = f64::from(sample_rate);
+        Self {
+            weighting: [KWeighting::new(rate); CHANNELS],
+            block_sum: 0.0,
+            block_frames: 0,
+            frames_per_block: (rate / 10.0).round() as u64,
+            recent: [0.0; BLOCKS_PER_WINDOW],
+        }
+    }
+
+    /// Whether the next frame starts a block of 100 ms.
+    pub fn starts_block(&self) -> bool {
+        self.block_frames == 0
+    }
+
+    /// Hears one frame. Gives its weighted power summed over the channels and, when it ends a
+    /// block of 100 ms, the power of the 400 ms that end with it, which [`lufs`] turns into the
+    /// momentary loudness.
+    pub fn push(&mut self, values: [f32; CHANNELS]) -> (f64, Option<f64>) {
+        let mut power = 0.0;
+        for (value, weighting) in values.iter().zip(&mut self.weighting) {
+            let weighted = weighting.process(f64::from(*value));
+            power += weighted * weighted;
+        }
+        self.block_sum += power;
+        self.block_frames += 1;
+        if self.block_frames < self.frames_per_block {
+            return (power, None);
+        }
+        self.recent.rotate_left(1);
+        self.recent[BLOCKS_PER_WINDOW - 1] = self.block_sum / self.block_frames as f64;
+        (self.block_sum, self.block_frames) = (0.0, 0);
+        let momentary = self.recent.iter().sum::<f64>() / BLOCKS_PER_WINDOW as f64;
+        (power, Some(momentary))
+    }
+}
+
 /// The loudness of a weighted power summed over the channels, or `None` for silence.
-fn lufs(power: f64) -> Option<f64> {
+pub fn lufs(power: f64) -> Option<f64> {
     let loudness = -0.691 + 10.0 * power.log10();
     (power > 0.0 && loudness > ABSOLUTE_GATE).then_some(loudness)
 }
@@ -483,26 +510,21 @@ struct Heard {
     pitch: Pitch,
 }
 
-/// The power of each band over the last [`WINDOW`] frames and their pitch, every [`HOP`] frames.
-struct Spectrum {
+/// The power spectrum of [`WINDOW`] frames under a Hann window: `WINDOW / 2 + 1` bins from
+/// 0 Hz to half the rate. Each bin is the mean square of the sound it stands for, its mirror
+/// image included, so the bins of a sound sum to its mean square.
+pub struct PowerSpectrum {
     fft: Arc<dyn RealToComplex<f32>>,
-    /// Hann, with the sum of its squares: a windowed spectrum is scaled back by it.
     window: Vec<f32>,
-    window_power: f64,
-    /// The last [`WINDOW`] frames of each channel, oldest first.
-    history: [Vec<f32>; CHANNELS],
-    /// Frames since the last spectrum.
-    since: usize,
+    /// What a windowed spectrum is scaled back by: the length times the sum of the squares of
+    /// the window.
+    scale: f64,
     input: Vec<f32>,
     output: Vec<Complex<f32>>,
-    /// The band of each bin and how much it counts: the bins between 0 and the top stand for
-    /// their mirror image too. The bin at 0 is no band.
-    bins: Vec<Option<(usize, f64)>>,
-    pitch: PitchFinder,
 }
 
-impl Spectrum {
-    fn new(rate: f64) -> Self {
+impl PowerSpectrum {
+    pub fn new() -> Self {
         let fft = RealFftPlanner::<f32>::new().plan_fft_forward(WINDOW);
         let window: Vec<f32> = (0..WINDOW)
             .map(|index| {
@@ -510,21 +532,65 @@ impl Spectrum {
                 (0.5 - 0.5 * phase.cos()) as f32
             })
             .collect();
-        let window_power = window.iter().map(|weight| f64::from(*weight).powi(2)).sum();
-        let bins = (0..=WINDOW / 2)
-            .map(|bin| {
-                let frequency = bin as f64 * rate / WINDOW as f64;
-                let band = BANDS.iter().rposition(|(_, lowest)| frequency >= *lowest)?;
-                let mirrored = if bin == WINDOW / 2 { 1.0 } else { 2.0 };
-                (bin > 0).then_some((band, mirrored))
-            })
-            .collect();
+        let window_power: f64 = window.iter().map(|weight| f64::from(*weight).powi(2)).sum();
         Self {
             input: fft.make_input_vec(),
             output: fft.make_output_vec(),
             fft,
             window,
-            window_power,
+            scale: WINDOW as f64 * window_power,
+        }
+    }
+
+    /// The power of each bin of `samples`, [`WINDOW`] frames of one channel. Fewer are padded
+    /// with silence.
+    pub fn powers(&mut self, samples: &[f32]) -> impl Iterator<Item = f64> + '_ {
+        let padded = samples.iter().chain(std::iter::repeat(&0.0));
+        for ((input, sample), weight) in self.input.iter_mut().zip(padded).zip(&self.window) {
+            *input = sample * weight;
+        }
+        // Only fails on buffers of the wrong length, which these are not: no bins then.
+        let bins = match self.fft.process(&mut self.input, &mut self.output) {
+            Ok(()) => self.output.len(),
+            Err(_) => 0,
+        };
+        let scale = self.scale;
+        let output = self.output.iter().take(bins).enumerate();
+        output.map(move |(bin, value)| {
+            // The bins between 0 and the top stand for their mirror image too.
+            let mirrored = if bin == 0 || bin == WINDOW / 2 {
+                1.0
+            } else {
+                2.0
+            };
+            mirrored * f64::from(value.norm_sqr()) / scale
+        })
+    }
+}
+
+/// The power of each band over the last [`WINDOW`] frames and their pitch, every [`HOP`] frames.
+struct Spectrum {
+    power: PowerSpectrum,
+    /// The last [`WINDOW`] frames of each channel, oldest first.
+    history: [Vec<f32>; CHANNELS],
+    /// Frames since the last spectrum.
+    since: usize,
+    /// The band of each bin. The bin at 0 is no band.
+    bins: Vec<Option<usize>>,
+    pitch: PitchFinder,
+}
+
+impl Spectrum {
+    fn new(rate: f64) -> Self {
+        let bins = (0..=WINDOW / 2)
+            .map(|bin| {
+                let frequency = bin as f64 * rate / WINDOW as f64;
+                let band = BANDS.iter().rposition(|(_, lowest)| frequency >= *lowest)?;
+                (bin > 0).then_some(band)
+            })
+            .collect();
+        Self {
+            power: PowerSpectrum::new(),
             history: [vec![0.0; WINDOW], vec![0.0; WINDOW]],
             since: 0,
             bins,
@@ -572,17 +638,9 @@ impl Spectrum {
     fn bands(&mut self) -> [f64; BANDS.len()] {
         let mut bands = [0.0; BANDS.len()];
         for history in &self.history {
-            for ((input, sample), weight) in self.input.iter_mut().zip(history).zip(&self.window) {
-                *input = sample * weight;
-            }
-            // Only fails on buffers of the wrong length, which these are not.
-            if self.fft.process(&mut self.input, &mut self.output).is_err() {
-                continue;
-            }
-            let scale = WINDOW as f64 * self.window_power;
-            for (bin, value) in self.bins.iter().zip(&self.output) {
-                if let Some((band, mirrored)) = bin {
-                    bands[*band] += mirrored * f64::from(value.norm_sqr()) / scale;
+            for (bin, power) in self.bins.iter().zip(self.power.powers(history)) {
+                if let Some(band) = bin {
+                    bands[*band] += power;
                 }
             }
         }

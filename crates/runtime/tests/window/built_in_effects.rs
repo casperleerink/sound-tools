@@ -73,15 +73,18 @@ fn numbers(value: &serde_json::Value, names: &mut Vec<String>) {
     }
 }
 
-/// A knob of the card of `slot`: the first number of its record that has one on screen.
-fn knob_of(opened: &mut Opened<'_>, slot: &InstanceId) -> Point<Pixels> {
+/// A knob of the card of `slot`: the first number of its record that has one on screen. `None`
+/// for a device with nothing to set, such as the Analyzer.
+fn knob_of(opened: &mut Opened<'_>, slot: &InstanceId) -> Option<Point<Pixels>> {
     let record = serde_json::from_str(&state(opened, slot)).unwrap();
     let mut names = Vec::new();
     numbers(&record, &mut names);
+    if names.is_empty() {
+        return None;
+    }
     let mut knobs = names.iter().map(|name| format!("knob-{name}"));
-    knobs
-        .find_map(|knob| opened.find(&knob))
-        .unwrap_or_else(|| panic!("no number of {slot} has a knob on screen"))
+    let knob = knobs.find_map(|knob| opened.find(&knob));
+    Some(knob.unwrap_or_else(|| panic!("no number of {slot} has a knob on screen")))
 }
 
 /// Presses a knob and moves it 20 pt: up, or down when it is at the top of its range. Gives
@@ -136,7 +139,10 @@ fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
         // Shown when a pass fails, so the failure names its device.
         eprintln!("{}", offer.name);
         let slot = add(&mut opened, &offer);
-        let knob = knob_of(&mut opened, &slot);
+        let Some(knob) = knob_of(&mut opened, &slot) else {
+            opened.keys("cmd-z");
+            continue;
+        };
         let before = mark(&mut opened);
         let record = state(&mut opened, &slot);
 
@@ -167,7 +173,10 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
         // Shown when a pass fails, so the failure names its device.
         eprintln!("{}", offer.name);
         let slot = add(&mut opened, &offer);
-        let knob = knob_of(&mut opened, &slot);
+        let Some(knob) = knob_of(&mut opened, &slot) else {
+            opened.keys("cmd-z");
+            continue;
+        };
         // A record that is not the one the card shows: what a drag made, taken back.
         turn(&mut opened, &slot, knob);
         let turned = state(&mut opened, &slot);
