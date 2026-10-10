@@ -329,14 +329,7 @@ impl Machine {
                         }
                     }
                 }
-                Step::Loop(looped) => {
-                    for frame in frames.clone() {
-                        for (register, operation) in looped.iter() {
-                            let register = usize::from(*register);
-                            span.step(*operation, register, frame, registers, memory);
-                        }
-                    }
-                }
+                Step::Loop(looped) => span.run_loop(looped, frames.clone(), registers, memory),
             }
         }
         // What each feedback reads in the first frame of the next span.
@@ -429,9 +422,9 @@ impl Span<'_> {
                         None => before.get(source),
                     }
                 });
-                let (source, set_before) = (source.flatten(), set_before(slot, memory));
+                let source = source.flatten();
                 for (out, frame) in out.iter_mut().zip(frames) {
-                    *out = self.heard(frame, set_before, source);
+                    *out = self.heard(frame, slot, &memory.histories, source);
                 }
             }
             Operation::Unary(unary, x) => apply_unary(unary, out, read(x)),
@@ -584,6 +577,23 @@ impl Span<'_> {
         }
     }
 
+    /// Runs the operations of a loop, in their order, frame by frame. Not inlined: in one
+    /// function with the kernels of [`Self::run`], a loop ran slower.
+    #[inline(never)]
+    fn run_loop(
+        &self,
+        looped: &[(Register, Operation)],
+        frames: Range<usize>,
+        registers: &mut [[f32; MAX_BLOCK]],
+        memory: &mut Memory,
+    ) {
+        for frame in frames {
+            for (register, operation) in looped {
+                self.step(*operation, usize::from(*register), frame, registers, memory);
+            }
+        }
+    }
+
     /// The value `operation` gives in every frame of the span, where it gives one: when what it
     /// reads is one value over the span, as a note is, a param that does not glide, or a
     /// register that is [`Machine::filled`]. By the formula it runs with over a span, on the
@@ -662,7 +672,7 @@ impl Span<'_> {
                 let source = (self.feedbacks.get(usize::from(slot)))
                     .filter(|source| usize::from(**source) != register)
                     .and_then(|source| registers.get(usize::from(*source)));
-                self.heard(frame, set_before(slot, memory), source)
+                self.heard(frame, slot, &memory.histories, source)
             }
             Operation::Unary(op, x) => unary(op, at(x)),
             Operation::Binary(op, a, b) => binary(op, at(a), at(b)),
@@ -720,8 +730,9 @@ impl Span<'_> {
                 at(index),
                 at(value),
             ),
-            // These read no register, so they are in no loop. Over one frame they give what
-            // they give over a span all the same.
+            // These read no register, feedback or buffer, so they are in no loop. Not run over
+            // one frame with `run` either: a second call of `run` keeps it from being inlined
+            // where a span runs it, which made code without loops slower.
             Operation::Constant(_)
             | Operation::Input
             | Operation::InputLeft
@@ -741,7 +752,7 @@ impl Span<'_> {
             | Operation::Trigger(_)
             | Operation::Noise { .. }
             | Operation::Length(_) => {
-                self.run(operation, register, frame..frame + 1, registers, memory);
+                debug_assert!(false, "an operation that reads nothing is in a loop");
                 return;
             }
         };
@@ -753,12 +764,18 @@ impl Span<'_> {
         }
     }
 
-    /// What a feedback reads in `frame`: what its `source` was in the frame before, and in the
-    /// first frame of the span what was `set_before`, in the span before.
+    /// What the feedback of `slot` reads in `frame`: what its `source` was in the frame before,
+    /// and in the first frame of the span what it was set to in the span before.
     #[inline(always)]
-    fn heard(&self, frame: usize, set_before: f32, source: Option<&[f32; MAX_BLOCK]>) -> f32 {
+    fn heard(
+        &self,
+        frame: usize,
+        slot: u16,
+        histories: &[f32],
+        source: Option<&[f32; MAX_BLOCK]>,
+    ) -> f32 {
         if frame == self.first {
-            return set_before;
+            return histories.get(usize::from(slot)).copied().unwrap_or(0.0);
         }
         let before = source.and_then(|source| source.get(frame - 1));
         before.map_or(0.0, |value| finite(*value))
@@ -768,15 +785,6 @@ impl Span<'_> {
     fn onset(&self, frame: usize) -> bool {
         self.note.onset && frame == self.first
     }
-}
-
-/// What the feedback of `slot` was set to in the last frame of the span before.
-fn set_before(slot: u16, memory: &Memory) -> f32 {
-    memory
-        .histories
-        .get(usize::from(slot))
-        .copied()
-        .unwrap_or(0.0)
 }
 
 /// Room for a row that is not there: 0 in every frame.
