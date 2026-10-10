@@ -55,7 +55,7 @@ How the engine keeps to that:
 - Events are `Copy` types in preallocated per-port buffers. Overflow is counted, never allocated.
 - Processors have two phases, from Pd: `prepare` on the control thread may allocate; `update` and `process` on the audio thread may not. `update` swaps values out of its message and never drops them.
 - Processors live in a slot table. A routing change sends a new schedule and every surviving processor keeps its state.
-- Device buffers are split into sub-blocks of at most 64 frames. Edits are taken at each sub-block start.
+- Device buffers are split into sub-blocks of at most 64 frames. Edits are taken at each sub-block start. A processor with an automation input plays its sub-block in pieces, split where a lane bends, so automation lands on its frame; a sub-block with no bend is one piece.
 - Time is integers: engine time is a frame counter, and ticks convert to frames through one function in `clock.rs`, which rounds in one place. Every part then agrees on the frame of a tick.
 - Timeline processors make their own events from the transport info of each block, instead of the control thread scheduling ahead. Timing then never depends on control thread latency.
 
