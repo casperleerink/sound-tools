@@ -118,6 +118,10 @@ pub struct Signals {
     watches: Vec<Watch>,
     /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
+    /// The beats per frame and the frames of the last block, where no voice sounded, that
+    /// `beat` has not moved on by yet. A block that plays sets the beat again; only a stop reads
+    /// where the last one ended.
+    unmoved: Option<(f64, usize)>,
     bend: f32,
     sample_rate: f32,
     fade_frames: usize,
@@ -220,6 +224,7 @@ impl Signals {
             next_frame: 0,
             watches,
             beat: 0.0,
+            unmoved: None,
             bend: 0.0,
             sample_rate: 48_000.0,
             fade_frames: 1,
@@ -555,7 +560,8 @@ fn in_part_mut<'a>(samples: &'a mut [f32; MAX_BLOCK], part: &Range<usize>) -> &'
 }
 
 impl Signals {
-    /// Works out what every voice reads in the first `frames` frames of this block.
+    /// Works out what every voice reads in the first `frames` frames of this block, but the
+    /// params and live controls.
     fn fill(
         &mut self,
         input: [&[f32]; CHANNELS],
@@ -570,14 +576,6 @@ impl Signals {
                 *sample = samples.get(frame).copied().unwrap_or(0.0);
             }
         }
-        let (parameters, lives) = self.counts;
-        block.steady_parameters = advance_rows(
-            &mut block.parameters,
-            &mut self.parameters,
-            parameters,
-            frames,
-        );
-        block.steady_lives = advance_rows(&mut block.lives, &mut self.lives, lives, frames);
         for beat in block.beat.iter_mut().take(frames) {
             *beat = self.beat as f32;
             if playing {
@@ -681,9 +679,18 @@ impl Processor for Signals {
         let frames = context.frames.min(MAX_BLOCK);
         let transport = &context.transport;
         let playing = transport.playing;
-        if let Some(quarters) = transport.quarters() {
-            self.beat = quarters;
+        match transport.quarters() {
+            Some(quarters) => self.beat = quarters,
+            // Frame by frame, as `fill` moves it.
+            None => {
+                if let Some((beats_per_frame, frames)) = self.unmoved {
+                    for _ in 0..frames {
+                        self.beat += beats_per_frame;
+                    }
+                }
+            }
         }
+        self.unmoved = None;
         let tempo_tick = if playing {
             transport.tick_range.start
         } else {
@@ -693,6 +700,31 @@ impl Processor for Signals {
         let beats_per_frame = bpm / 60.0 / f64::from(self.sample_rate);
         let quiet_limit = (QUIET_SECONDS * self.sample_rate) as usize;
         self.next_frame = context.start_frame + context.frames as u64;
+        let (parameters, lives) = self.counts;
+        let block = &mut *self.block;
+        block.steady_parameters = advance_rows(
+            &mut block.parameters,
+            &mut self.parameters,
+            parameters,
+            frames,
+        );
+        block.steady_lives = advance_rows(&mut block.lives, &mut self.lives, lives, frames);
+        let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
+        // An instrument with no voice that sounds, and no note in this block, plays silence.
+        let silent = match &self.players {
+            Players::Many(voices) => voices.is_idle(),
+            Players::One(_) => false,
+        };
+        let next = self.next_frame;
+        if silent
+            && context.event_inputs.get(Self::NOTES).is_empty()
+            && self.scheduled.last().is_none_or(|(at, _)| *at >= next)
+        {
+            self.unmoved = playing.then_some((beats_per_frame, frames));
+            left_out.fill(0.0);
+            right_out.fill(0.0);
+            return;
+        }
         let input = context.audio_inputs.get(Self::INPUT);
         self.fill(input, frames, bpm, beats_per_frame, playing);
         for channel in &mut self.mix {
@@ -729,7 +761,6 @@ impl Processor for Signals {
             start = end;
         }
 
-        let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
         for (out, channel) in [left_out, right_out].into_iter().zip(&self.mix) {
             for (sample, mixed) in out.iter_mut().zip(channel) {
                 *sample = mixed.clamp(-LIMIT, LIMIT);

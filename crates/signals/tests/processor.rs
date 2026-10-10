@@ -345,6 +345,22 @@ fn the_beat_counts_quarter_notes_while_the_transport_plays() {
 }
 
 #[test]
+fn an_instrument_silent_until_the_transport_stops_hears_the_beat_where_it_stopped() {
+    // A silent instrument does not move the beat frame by frame while it plays; a source does.
+    let stopped = |kind: Kind, notes: Vec<(usize, NoteEvent)>| {
+        let mut played = play(kind, compile(|| beat() * gate()), notes);
+        played.control.play();
+        played.render(4_800);
+        played.control.stop();
+        played.render(4_800)[4_799]
+    };
+    let instrument = stopped(Kind::Instrument { voices: 1 }, vec![(4_900, on(60))]);
+    let source = stopped(Kind::Source, vec![(0, on(60))]);
+    assert!(source > 0.0);
+    assert_eq!(instrument, source);
+}
+
+#[test]
 fn a_live_control_stays_where_it_is_when_the_code_is_new() {
     let mut played = play(
         Kind::Source,
