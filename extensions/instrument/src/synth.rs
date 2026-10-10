@@ -155,6 +155,8 @@ impl Voice {
     ) {
         let phase_step = (self.key_step * pitch_ratio).min(HIGHEST_PHASE_STEP);
         let [mut ic1, mut ic2] = self.filter_state;
+        // Only an event changes the envelope between frames, and events end the frames.
+        let still = self.envelope.is_still(envelope);
         for sample in output {
             let mut oscillator = sawtooth(self.phase, phase_step);
             if SQUARE {
@@ -176,7 +178,10 @@ impl Voice {
             if self.envelope.is_idle() {
                 break;
             }
-            let level = self.envelope.next(envelope) as f32;
+            let level = match still {
+                true => self.envelope.level,
+                false => self.envelope.next(envelope),
+            } as f32;
             *sample += filtered * level * self.amplitude;
         }
         self.filter_state = [ic1, ic2];

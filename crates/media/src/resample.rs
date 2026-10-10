@@ -168,18 +168,26 @@ impl SincTable {
         }
     }
 
+    /// The two rows around `fraction` (0 to 1), and how far it is from the first to the second.
+    #[inline]
+    pub(crate) fn rows_at(&self, fraction: f64) -> Option<(&[f32], &[f32], f32)> {
+        let width = 2 * self.half;
+        let phase = fraction * self.phases as f64;
+        let row = (phase as usize).min(self.phases.saturating_sub(1));
+        let between = (phase - row as f64) as f32;
+        let lower = self.rows.get(row * width..(row + 1) * width)?;
+        let upper = self.rows.get((row + 1) * width..(row + 2) * width)?;
+        Some((lower, upper, between))
+    }
+
     /// The filtered frame `fraction` (0 to 1) past the frame `input[first_tap + half - 1]`.
     /// Silence when its taps do not fit in `input`.
     #[inline]
     pub(crate) fn apply(&self, input: &[[f32; 2]], first_tap: usize, fraction: f64) -> [f32; 2] {
         let width = 2 * self.half;
-        let phase = fraction * self.phases as f64;
-        let row = (phase as usize).min(self.phases.saturating_sub(1));
-        let between = (phase - row as f64) as f32;
-        let lower = self.rows.get(row * width..(row + 1) * width);
-        let upper = self.rows.get((row + 1) * width..(row + 2) * width);
         let samples = input.get(first_tap..first_tap + width);
-        let (Some(lower), Some(upper), Some(samples)) = (lower, upper, samples) else {
+        let (Some((lower, upper, between)), Some(samples)) = (self.rows_at(fraction), samples)
+        else {
             return [0.0; 2];
         };
         let mut sum = [0.0_f32; 2];
