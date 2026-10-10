@@ -209,7 +209,9 @@ impl Voice {
     /// Adds this voice to `output`, left and right, over the frames of `block`.
     pub(crate) fn render(&mut self, output: [&mut [f32]; 2], block: &Block<'_>) {
         let frames = block.frames;
-        let modulation = self.modulate(block);
+        let mut levels = [0.0; MAX_BLOCK];
+        let (sounding, envelope_levels) = self.advance_envelopes(block, &mut levels[..frames]);
+        let modulation = self.modulate(block, envelope_levels);
         let targets = self.targets(block, &modulation);
         if std::mem::take(&mut self.fresh) {
             self.last = targets;
@@ -255,37 +257,65 @@ impl Voice {
 
         let [left, right] = output;
         let right_channel = channels - 1;
-        let envelope = &block.envelopes[0];
         let [output_from, output_to] = [last.output, targets.output];
-        for frame in 0..frames {
-            // An idle voice ended on the frame before: nothing of it is added any more.
-            if self.amp.is_idle() {
-                break;
-            }
-            let level = self.amp.next(envelope) as f32;
+        let frames_out = left[..sounding]
+            .iter_mut()
+            .zip(&mut right[..sounding])
+            .zip(&levels[..sounding])
+            .enumerate();
+        for (frame, ((left, right), level)) in frames_out {
             let at = (frame + 1) as f32 / frames as f32;
             let side = |side: usize| output_from[side] + (output_to[side] - output_from[side]) * at;
-            left[frame] += mixed[0][frame] * level * side(0);
-            right[frame] += mixed[right_channel][frame] * level * side(1);
+            *left += mixed[0][frame] * level * side(0);
+            *right += mixed[right_channel][frame] * level * side(1);
         }
         self.last = targets;
     }
 
-    /// Moves the modulation sources to the end of the block and works out the routes.
-    fn modulate(&mut self, block: &Block<'_>) -> Modulation {
-        let frames = block.frames;
-        let mut levels = [0.0; 2];
-        for ((state, envelope), level) in self
-            .envelopes
-            .iter_mut()
-            .zip(&block.envelopes[1..])
-            .zip(&mut levels)
-        {
-            for _ in 0..frames {
-                state.next(envelope);
+    /// Moves the three envelopes over the frames of `levels`, side by side, so the steps of one
+    /// overlap those of the others. Fills `levels` with the amp level of each frame, and returns
+    /// how many frames sound, and the levels of env 2 and env 3 at the end. An idle voice ended
+    /// on the frame before, and nothing of it is added any more.
+    fn advance_envelopes(&mut self, block: &Block<'_>, levels: &mut [f32]) -> (usize, [f32; 2]) {
+        let [amp_envelope, others @ ..] = block.envelopes;
+        let (mut amp, mut states) = (self.amp, self.envelopes);
+        let mut sounding = levels.len();
+        let mut amp_moves = true;
+        let mut moves = [true; 2];
+        for frame in 0..levels.len() {
+            if amp_moves {
+                if amp.is_idle() {
+                    sounding = frame;
+                    amp_moves = false;
+                } else {
+                    let before = amp;
+                    levels[frame] = amp.next(amp_envelope) as f32;
+                    if is_still(&before, &amp) {
+                        let level = levels[frame];
+                        levels[frame..].fill(level);
+                        amp_moves = false;
+                    }
+                }
             }
-            *level = state.level as f32;
+            for ((state, envelope), moves) in states.iter_mut().zip(others).zip(&mut moves) {
+                if *moves {
+                    let before = *state;
+                    state.next(envelope);
+                    *moves = !is_still(&before, state);
+                }
+            }
+            if !amp_moves && moves == [false; 2] {
+                break;
+            }
         }
+        (self.amp, self.envelopes) = (amp, states);
+        (sounding, states.map(|state| state.level as f32))
+    }
+
+    /// Moves the LFOs to the end of the block and works out the routes, with the levels of env
+    /// 2 and env 3 there.
+    fn modulate(&mut self, block: &Block<'_>, levels: [f32; 2]) -> Modulation {
+        let frames = block.frames;
         let mut lfos = [0.0; 2];
         for (index, lfo) in self.lfos.iter_mut().enumerate() {
             let hz = block.lfo_hz[index] * self.lfo_rates[index];
@@ -400,13 +430,26 @@ impl Voice {
     }
 }
 
+/// Whether a frame left an envelope as it was, such as at its sustain. A frame depends only
+/// on the state and the envelope, so every later frame would leave it as it is too.
+fn is_still(before: &EnvelopeState, after: &EnvelopeState) -> bool {
+    before.stage == after.stage && before.level.to_bits() == after.level.to_bits()
+}
+
 /// Adds `source` to `sum` at a weight that moves over the block, and nothing while it is 0.
 fn add(sum: &mut [f32; MAX_BLOCK], source: &[f32; MAX_BLOCK], weight: &Ramp, frames: usize) {
     if weight.is_zero() {
         return;
     }
-    let step = (weight.to - weight.from) / frames as f32;
     let pairs = sum[..frames].iter_mut().zip(&source[..frames]);
+    if weight.from == weight.to && weight.from.is_finite() {
+        // Most of the time. The ramp below adds a step of exactly 0 to the weight then.
+        for (sum, source) in pairs {
+            *sum += weight.from * source;
+        }
+        return;
+    }
+    let step = (weight.to - weight.from) / frames as f32;
     for (frame, (sum, source)) in pairs.enumerate() {
         *sum += (weight.from + step * (frame + 1) as f32) * source;
     }
@@ -472,59 +515,66 @@ impl Ramps {
     }
 }
 
-/// Which two frames of a level each frame of a block reads, and how much of the second.
-struct Frames {
-    first: [usize; MAX_BLOCK],
-    second: [usize; MAX_BLOCK],
-    mix: [f32; MAX_BLOCK],
+/// The two frames of a level a frame of a block reads, each `length + 1` samples, the last a
+/// copy of the first, and how much of the second.
+#[derive(Copy, Clone)]
+struct Morph<'a> {
+    first: &'a [f32],
+    second: &'a [f32],
+    mix: f32,
 }
 
-impl Frames {
-    fn new(level: &LevelView<'_>, position: &Ramp, frames: usize) -> Self {
+/// The frames of a level each frame of a block reads. It lives on the stack for one block, so
+/// its size does not matter, and a box would allocate on the audio thread.
+#[allow(clippy::large_enum_variant)]
+enum Frames<'a> {
+    /// The position stands still, which is most of the time: every frame reads the same.
+    Still(Morph<'a>),
+    Moving([Morph<'a>; MAX_BLOCK]),
+}
+
+impl<'a> Frames<'a> {
+    fn new(level: &LevelView<'a>, position: &Ramp, frames: usize) -> Self {
         let last = level.frames - 1;
         let stride = level.length + 1;
+        let samples = level.samples;
         let at = |position: f32| {
             let at = position * last as f32;
             let first = (at as usize).min(last);
-            (
-                first * stride,
-                (first + 1).min(last) * stride,
-                at - first as f32,
-            )
+            let second = (first + 1).min(last);
+            Morph {
+                first: &samples[first * stride..][..stride],
+                second: &samples[second * stride..][..stride],
+                mix: at - first as f32,
+            }
         };
         if position.from == position.to {
-            // It stands still, which is most of the time: every frame reads the same.
-            let (first, second, mix) = at(position.to);
-            return Self {
-                first: [first; MAX_BLOCK],
-                second: [second; MAX_BLOCK],
-                mix: [mix; MAX_BLOCK],
-            };
+            return Self::Still(at(position.to));
         }
-        let mut read = Self {
-            first: [0; MAX_BLOCK],
-            second: [0; MAX_BLOCK],
-            mix: [0.0; MAX_BLOCK],
-        };
-        for frame in 0..frames {
-            (read.first[frame], read.second[frame], read.mix[frame]) =
-                at(position.at(frame, frames));
+        let mut morphs = [at(position.from); MAX_BLOCK];
+        for (frame, morph) in morphs[..frames].iter_mut().enumerate() {
+            *morph = at(position.at(frame, frames));
         }
-        read
+        Self::Moving(morphs)
     }
 }
 
-/// Reads a level at a phase from 0 to 1, between two of its frames: in a straight line
-/// between the two samples around the phase in each, and `mix` of the second. A frame is
-/// `length + 1` samples, the last a copy of the first.
+/// Reads a level at a phase from 0 to 1, between the two frames of `morph`: in a straight line
+/// between the two samples around the phase in each, and `mix` of the second.
 #[inline]
-fn read(first: &[f32], second: &[f32], length: usize, mix: f32, phase: f32) -> f32 {
+fn read(Morph { first, second, mix }: Morph<'_>, length: usize, phase: f32) -> f32 {
     let at = phase * length as f32;
     let index = (at as usize).min(length - 1);
     let between = at - index as f32;
     let (a, b) = (first[index], first[index + 1]);
-    let (c, d) = (second[index], second[index + 1]);
     let one = a + (b - a) * between;
+    if mix == 0.0 {
+        // On a frame, such as the default position. The mix below would add a product with 0,
+        // which for finite tables changes at most the sign of a 0, and the sum of the copies,
+        // which starts at 0, loses that sign.
+        return one;
+    }
+    let (c, d) = (second[index], second[index + 1]);
     let two = c + (d - c) * between;
     one + (two - one) * mix
 }
@@ -578,7 +628,7 @@ impl OscillatorVoice {
             phases: &mut self.phases,
             steps,
             ramps,
-            level: &level,
+            length: level.length,
             frames: &read_frames,
             setting,
             channels,
@@ -639,8 +689,9 @@ struct Copies<'a> {
     phases: &'a mut [f32; MAX_UNISON],
     steps: &'a [f32; MAX_UNISON],
     ramps: &'a Ramps,
-    level: &'a LevelView<'a>,
-    frames: &'a Frames,
+    /// The samples of a frame of the level, less one.
+    length: usize,
+    frames: &'a Frames<'a>,
     /// The setting of the effect, such as the ratio of sync, at each end of the block.
     setting: Ramp,
     channels: usize,
@@ -656,12 +707,34 @@ impl Copies<'_> {
     #[inline]
     fn render<const FACTOR: usize>(
         self,
+        output: [&mut [f32]; 2],
+        warp: impl Fn(f32, f32) -> f32,
+        shape: impl Fn(f32, f32) -> f32,
+        restart: impl Fn(f32) -> Option<f32>,
+    ) {
+        // Apart, so a position that stands still is read without a look at each frame.
+        let frames = self.frames;
+        match frames {
+            Frames::Still(morph) => {
+                self.render_at::<FACTOR>(output, |_| *morph, warp, shape, restart);
+            }
+            Frames::Moving(morphs) => {
+                self.render_at::<FACTOR>(output, |frame| morphs[frame], warp, shape, restart);
+            }
+        }
+    }
+
+    #[inline]
+    fn render_at<'a, const FACTOR: usize>(
+        self,
         [left, right]: [&mut [f32]; 2],
+        morph_at: impl Fn(usize) -> Morph<'a>,
         warp: impl Fn(f32, f32) -> f32,
         shape: impl Fn(f32, f32) -> f32,
         restart: impl Fn(f32) -> Option<f32>,
     ) {
         let per_frame = 1.0 / self.count as f32;
+        let samples = self.count * FACTOR;
         for copy in 0..MAX_UNISON {
             if self.ramps.copy_is_silent(copy) {
                 continue;
@@ -669,22 +742,23 @@ impl Copies<'_> {
             let [from, to] = [self.ramps.gains[0][copy], self.ramps.gains[1][copy]];
             let step = self.steps[copy] / FACTOR as f32;
             let mut phase = self.phases[copy];
-            for frame in 0..self.count {
+            let left = left[..samples].chunks_exact_mut(FACTOR);
+            let right = right[..samples].chunks_exact_mut(FACTOR);
+            for (frame, (left, right)) in left.zip(right).enumerate() {
                 let at = (frame + 1) as f32 * per_frame;
                 let setting = self.setting.from + (self.setting.to - self.setting.from) * at;
                 let left_gain = from[0] + (to[0] - from[0]) * at;
                 let right_gain = from[1] + (to[1] - from[1]) * at;
-                let length = self.level.length;
-                let frame_at = |start: usize| &self.level.samples[start..start + length + 1];
-                let first = frame_at(self.frames.first[frame]);
-                let second = frame_at(self.frames.second[frame]);
-                let mix = self.frames.mix[frame];
+                let morph = morph_at(frame);
                 for sample in 0..FACTOR {
                     phase += step;
                     if phase >= 1.0 {
+                        // Once a cycle. A branch the processor predicts, and not a select, keeps
+                        // the step from one sample to the next one addition long.
+                        std::hint::cold_path();
                         phase -= 1.0;
                     }
-                    let read_at = |phase| read(first, second, length, mix, phase);
+                    let read_at = |phase| read(morph, self.length, phase);
                     let mut value = shape(read_at(warp(phase, setting)), setting);
                     if let Some(end) = restart(setting) {
                         let rounding = poly_blep(phase, step);
@@ -692,10 +766,9 @@ impl Copies<'_> {
                             value += 0.5 * (read_at(0.0) - read_at(end)) * rounding;
                         }
                     }
-                    let index = frame * FACTOR + sample;
-                    left[index] += value * left_gain;
+                    left[sample] += value * left_gain;
                     if self.channels == 2 {
-                        right[index] += value * right_gain;
+                        right[sample] += value * right_gain;
                     }
                 }
             }

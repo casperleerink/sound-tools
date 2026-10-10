@@ -491,7 +491,8 @@ mod tests {
     }
 
     /// Each level of each frame, back through an FFT: nothing above its highest harmonic, and
-    /// the copy of its first sample at its end.
+    /// the copy of its first sample at its end. Only finite samples: a voice on a frame reads
+    /// that frame alone, which sounds the same only then.
     #[test]
     fn no_level_holds_a_harmonic_above_its_limit() {
         let mut planner = RealFftPlanner::<f32>::new();
@@ -505,6 +506,7 @@ mod tests {
                     let start = frame * (view.length + 1);
                     let samples = &view.samples[start..start + view.length + 1];
                     assert_eq!(samples[view.length], samples[0]);
+                    assert!(samples.iter().all(|sample| sample.is_finite()));
                     let mut input = samples[..view.length].to_vec();
                     transform.process(&mut input, &mut spectrum).unwrap();
                     let loudest = spectrum.iter().map(|bin| bin.norm()).fold(0.0, f32::max);
