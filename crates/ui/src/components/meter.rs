@@ -24,7 +24,7 @@ pub const MAX_DB: f32 = sound_core::FADER_TOP_DB;
 /// Where 0 dB sits on the scale.
 pub const UNITY: f32 = sound_core::FADER_UNITY;
 /// Where green ends and yellow begins.
-pub const HOT_DB: f32 = -6.;
+const HOT_DB: f32 = -6.;
 
 /// Under this a level is silence: the bars and the peak line come to rest.
 pub const FLOOR_DB: f32 = -96.;

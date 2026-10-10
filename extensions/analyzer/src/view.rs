@@ -3,8 +3,9 @@
 //! so it has no knob and nothing behind expand. The rack gives the view a [`CardFrame`]: the
 //! picker of the slot as the title, and the power and close icons.
 //!
-//! The spectrum is a line over a fill coloured by level, as a meter is: green, yellow from
-//! where a meter turns yellow, and red near the top.
+//! The spectrum is a line over a fill coloured by level, as a meter is: green, then yellow,
+//! then red near the top. A band holds only part of the sound, so it sits well under the level
+//! of the whole, and its colours start lower than a meter's.
 //!
 //! Once per poll of the session the view reads the peaks of the analyzer and what came into its
 //! scope since the last poll, works out what it shows with [`Analysis`], and draws again only
@@ -19,7 +20,7 @@ use sound_ui::components::curves::{RESPONSE_CAPTION, response_decades};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Display, INSET_HEIGHT};
 use sound_ui::components::knob::{short, signed};
-use sound_ui::components::meter::{HOT_DB, Meter};
+use sound_ui::components::meter::Meter;
 use sound_ui::{
     ActiveTheme, Devices, Metering, OfferGroup, POLL_INTERVAL, Session, Views, every_poll,
     typography, weak_action,
@@ -40,9 +41,9 @@ const METER_ROOM: f32 = 24.;
 const SPECTRUM_WIDTH: f32 = (DISPLAY_WIDTH - METER_ROOM) / DISPLAY_WIDTH;
 /// The fill is quieter than a meter: it sits under the line.
 const FILL_OPACITY: f32 = 0.45;
-/// Where the fill turns red, in dB: the last few under full scale, where a meter nears its clip
-/// light.
-const RED_FROM_DB: f32 = -3.;
+/// Where the fill turns yellow and where it turns red, in dB.
+const YELLOW_FROM_DB: f32 = -18.;
+const RED_FROM_DB: f32 = -6.;
 
 /// Registers the view of the `analyzer` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -124,7 +125,7 @@ impl AnalyzerView {
         let theme = cx.theme();
         let bands = [
             (0., theme.green),
-            (height(HOT_DB), theme.yellow),
+            (height(YELLOW_FROM_DB), theme.yellow),
             (height(RED_FROM_DB), theme.red),
         ]
         .map(|(from, color)| (from, color.opacity(FILL_OPACITY)));

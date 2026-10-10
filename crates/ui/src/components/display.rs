@@ -1,9 +1,9 @@
 //! Display: the inset at the left of a device card that shows what the device does to the
 //! sound, 118 pt tall, with the line of its numbers or its scale under it on the value line of
 //! row 2. A curve is 1.5 pt over a fill of `alpha/5`, or over bands of colour by height for a
-//! level ([`Display::fill_bands`]), grid lines are `alpha/4` and the 0 dB
-//! line `alpha/8`. Thin marks up from the bottom and a dashed second line are 1 pt of `gray-950`
-//! at 50 %. Controls such as a segmented control go at its top as children.
+//! level ([`Display::fill_bands`]). Grid lines are `alpha/4` and the 0 dB line `alpha/8`. Thin
+//! marks up from the bottom and a dashed second line are 1 pt of `gray-950` at 50 %. Controls
+//! such as a segmented control go at its top as children.
 //!
 //! The display is not only a picture: its handles drag. A [`Handle`] moves one or two values,
 //! sideways and up and down, each on a [`KnobRange`] across the width or the height of the
