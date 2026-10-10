@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use crate::automation::{gate, off_the_gate};
 use crate::support::{BAR, Harness, clip, synth};
 
 /// The first TypeScript example of the doc for agents that write tools: a whole tool.
@@ -41,7 +42,7 @@ tool({
 });
 "#;
 
-/// A project whose `extensions/` holds the first example of the doc, `wobble`, and `COMBS`,
+/// A project whose `extensions/` holds the first example of the doc, `wobble`, `COMBS` and `LEVEL`,
 /// with a pad that plays a held chord through `effects` that are written next to it.
 fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
     pad_through_with(effects, "")
@@ -56,6 +57,7 @@ fn pad_through_with(effects: &[(&str, &str)], track_fields: &str) -> Option<Harn
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/wobble.ts", &doc_example());
     crate::support::write(folder.path(), "extensions/combs.ts", COMBS);
+    crate::support::write(folder.path(), "extensions/level.ts", LEVEL);
     let mut harness = Harness::open(folder);
     let names: Vec<String> = effects
         .iter()
@@ -155,6 +157,34 @@ fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
         );
         assert!(dip > top * 0.8, "{dip} dips under {top} at {start} s");
     }
+}
+
+/// A gain the track's lanes can move.
+const LEVEL: &str = r#"import { input, knob, tool } from "./sdk";
+
+tool({
+  name: "level",
+  title: "Level",
+  when: "You want a gain",
+  doc: "A gain.",
+  state: { level: knob({ min: 0, max: 1, default: 1 }) },
+  sound: ({ level }) => input.times(level),
+});
+"#;
+
+/// A lane of a tool of the project bends on its frame, as one of a built-in device does: the
+/// level opens from 0 to 1 in 50 frames, and is silent before and full after.
+#[test]
+fn a_fast_ramp_of_a_lane_starts_and_ends_on_its_frames() {
+    let gate = gate(Some("level"), "level", "0.0", "1.0");
+    let lanes = format!(r#", "automation": [{gate}]"#);
+    let Some(mut gated) = pad_through_with(&[("level", "{}")], &lanes) else {
+        return;
+    };
+    let gated = gated.play_from_the_start(2 * BAR);
+    let mut open = pad_through(&[("level", "{}")]).unwrap();
+    let open = open.play_from_the_start(2 * BAR);
+    assert_eq!(off_the_gate(&gated, &open), (0, 0));
 }
 
 /// Every function of the sound graph once, in mono and in stereo by its `out`, so a node the

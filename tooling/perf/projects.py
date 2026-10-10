@@ -31,7 +31,7 @@ PATTERNS = ("arp", "chords")
 
 def names():
     """Every project, in the order the tables show them."""
-    return (["builtin12", *[f"one-{tool}" for tool in TOOLS], "mixed-base", "mixed", "mixed-x2"]
+    return (["builtin12", "automated", *[f"one-{tool}" for tool in TOOLS], "mixed-base", "mixed", "mixed-x2"]
             + [f"{tool}-{pattern}" for built in REBUILDS.items() for tool in (built[1], built[0])
                for pattern in PATTERNS])
 
@@ -116,6 +116,28 @@ def mixed(folder, source, copies):
             order += 1
 
 
+def automate(folder):
+    """On every track, a gate on its volume and on the cutoff of its instrument each sixteenth: up
+    in 5 ticks, then down over the rest, so each lane bends twice a sixteenth inside a block."""
+    cutoffs = {"instrument.synth": "cutoff_hz", "wavetable": "filter_1.cutoff_hz"}
+
+    def gate(low, high):
+        return [point for step in range(BARS * 16)
+                for point in ({"tick": step * 240, "value": low}, {"tick": step * 240 + 5, "value": high})]
+
+    for path in (folder / "state/arrangement").glob("*/instance.json"):
+        instrument = path.parent / "instrument.json"
+        if not instrument.exists():
+            continue
+        record = json.loads(path.read_text())
+        record["state"]["automation"] = [
+            {"parameter": "gain_db", "points": gate(-12.0, 0.0)},
+            {"device": "instrument", "parameter": cutoffs[json.loads(instrument.read_text())["tool"]],
+             "points": gate(400.0, 4000.0)},
+        ]
+        write(path, record)
+
+
 def make(runtime, source, folder, name, env):
     """Makes project `name` in `folder` with `runtime`, from the sources of `source`."""
     shutil.rmtree(folder, ignore_errors=True)
@@ -125,6 +147,9 @@ def make(runtime, source, folder, name, env):
         raise SystemExit(f"could not make {name}:\n{made.stdout}{made.stderr}")
     if name == "builtin12":
         builtins(folder, 8, 4)
+    elif name == "automated":
+        builtins(folder, 8, 4)
+        automate(folder)
     elif name == "mixed-base":
         builtins(folder, 4, 2)
     elif name in ("mixed", "mixed-x2"):
