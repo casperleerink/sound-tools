@@ -3,7 +3,7 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, PeakLimiter, Peaks, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Targets, amplitude, held,
+    ProcessContext, Processor, Smoothed, Targets, all_held_silent, amplitude, held,
 };
 
 use crate::{GAIN, LimiterState, Lookahead, RELEASE};
@@ -115,10 +115,7 @@ impl Processor for Limiter {
         }
         let frames = context.frames;
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
-        let silent_input = left_in
-            .iter()
-            .chain(right_in)
-            .all(|sample| held(*sample) == 0.0);
+        let silent_input = all_held_silent(left_in) && all_held_silent(right_in);
         if silent_input && self.is_resting() {
             // Nothing sounds, nothing is left in the delay and nothing is turned down: the output
             // is silent already, and no glide can be heard.

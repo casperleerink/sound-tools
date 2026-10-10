@@ -20,7 +20,7 @@ use crate::{Curve, DRIVE, MIX, OUTPUT, PARAMETERS, SaturatorState, TONE};
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, OnePole, Oversampler,
     OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
-    amplitude, held, soft_clip,
+    all_held_silent, amplitude, held, soft_clip,
 };
 
 /// Every number of the saturator can be automated.
@@ -457,10 +457,7 @@ impl Processor for Saturator {
             self.aim(&targets);
         }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
-        let silent_input = left_in
-            .iter()
-            .chain(right_in)
-            .all(|sample| held(*sample) == 0.0);
+        let silent_input = all_held_silent(left_in) && all_held_silent(right_in);
         if silent_input && self.is_resting() {
             // Nothing sounds and nothing is left in the delays: the output is silent already,
             // and no glide can be heard.

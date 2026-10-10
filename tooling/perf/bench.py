@@ -320,7 +320,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["render", "live", "null", "profile"])
     parser.add_argument("refs", nargs="+", help="commits or branches, such as main HEAD")
-    parser.add_argument("--projects", help="comma separated; see projects.names()")
+    parser.add_argument("--projects", help="comma separated; see projects.names(), or a group of projects.GROUPS")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--seconds", type=int, help="render length (render 61, null 20, profile 10)")
     parser.add_argument("--window", type=int, default=30, help="seconds of live playback measured")
@@ -332,6 +332,7 @@ def main():
         "profile": ["one-grain-cloud"],
     }
     names = arguments.projects.split(",") if arguments.projects else defaults[arguments.mode]
+    names = [each for name in names for each in (projects.GROUPS[name]() if name in projects.GROUPS else [name])]
     (ROOT / "home").mkdir(parents=True, exist_ok=True)
     builds = [Build(ref) for ref in arguments.refs]
     for build in builds:
