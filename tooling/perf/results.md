@@ -2,7 +2,69 @@
 
 Newest first. Apple M1 Max, macOS. How to run: [README.md](README.md).
 
-## 2026-10-10: final, graph runtime at efde207 (t3code/native-typed-graph-runtime)
+## 2026-10-10: final, graph runtime at f548b98 (t3code/native-typed-graph-runtime)
+
+What changed since efde207: loops of the same formulas take turns per operation, so a frame
+matches each formula once per run, not once per operation. Also a docs commit and a small
+processor cleanup.
+
+Null test against main: every `one-` and ts-synth project is still bit for bit equal (-inf dB).
+
+Render: `bench.py render origin/main efde207 f548b98`, 61 s, median of 3, interleaved (mixed and
+mixed-x2 each in their own run). one-storm, ts-synth-arp and instrument.synth-arp were rerun with
+5 runs after one-storm showed a 13% spread; mixed was confirmed with 5 runs (main 46.95,
+f548b98 15.82). Spread was 0 to 2% after that.
+
+| project | main | efde207 | f548b98 | main / f548b98 | efde207 / f548b98 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| builtin12 | 9.77 | 9.74 | 9.72 | 1.0x | 1.00x |
+| one-acid-bass | 2.56 | 0.87 | 0.87 | 2.9x | 1.00x |
+| one-dorian-drift | 4.15 | 1.25 | 1.25 | 3.3x | 1.00x |
+| one-gravity-harp | 5.32 | 1.90 | 1.59 | 3.3x | 1.19x |
+| one-storm | 5.08 | 1.87 | 1.87 | 2.7x | 1.00x |
+| one-life | 10.42 | 1.77 | 1.77 | 5.9x | 1.00x |
+| one-grain-cloud | 15.51 | 5.80 | 4.48 | 3.5x | 1.29x |
+| mixed-base | 4.62 | 4.63 | 4.63 | 1.0x | 1.00x |
+| **mixed** | 46.88 | 17.41 | **15.77** | **2.97x** | 1.10x |
+| mixed-x2 | 94.00 | 35.00 | 31.71 | 2.96x | 1.10x |
+| instrument.synth-arp | 0.22 | 0.22 | 0.22 | 1.0x | 1.00x |
+| instrument.synth-chords | 0.30 | 0.30 | 0.30 | 1.0x | 1.00x |
+| ts-synth-arp | 1.99 | 0.40 | 0.40 | 5.0x | 1.00x |
+| ts-synth-chords | 2.48 | 0.45 | 0.46 | 5.4x | 0.98x |
+
+The commit's own claims hold: grain cloud 23% less CPU, gravity harp 16%, mixed 9%; the rest
+the same.
+
+Targets:
+
+| target | result | met |
+| --- | --- | --- |
+| ts-synth at most 2x the built-in synth (1.5x preferred) | arp 1.8x, chords 1.5x (main 9.2x, 8.3x) | yes; 1.5x on the chords only |
+| mixed at most main / 3 (15.6%) | 15.8%, main / 2.97. The tools (mixed minus mixed-base) cost 11.1%, 3.8x less than main; they must reach 11.0% | no, by 1% |
+| live mixed, mixed+edit: 0 late callbacks, 0 xruns | 0 and 0 in every run | yes |
+| live mixed-x2: 0 late callbacks, 0 xruns | at most 1 and 1 per session, at startup; none while playing | during play only |
+
+Live: `bench.py live f548b98 --window 60`, 3 runs of 60 s, master at -60 dB.
+
+| project | cpu % | bun cpu % | MB | bun MB | late callbacks | xruns | slowest callback |
+| --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| mixed | 28.0 | 0.1 | 134 | 60 | 0, 0, 0 | 0, 0, 0 | 5.7, 5.4, 6.6 ms |
+| mixed+edit | 28.2 | 0.3 | 161 | 60 | 0, 0, 0 | 0, 0, 0 | 6.0, 6.1, 5.0 ms |
+| mixed-x2 | 35.5 | 0.1 | 178 | 60 | 1, 0, 0 | 1, 0, 0 | 10.9, 10.1, 10.6 ms |
+| mixed-x2, 10 s, no play | | | | | 1, 0, 1 | 0, 0, 1 | 10.7, 9.4, 10.9 ms |
+
+- The last row is 3 sessions that start, wait 10 s and quit without playing. They have as many
+  late callbacks as the sessions that play for 60 s, so the late callback is at startup, not
+  during play. It now comes in 3 of 6 sessions; at efde207 it came in nearly every one.
+
+Profile: `bench.py profile f548b98 --projects mixed,one-grain-cloud`, busy samples.
+
+- mixed: the reverb 27%, `Machine::render` 25%, `Span::run_loop` 20%, wavetable voice 3.8%,
+  `sinf` 3.4%. `Span::run_loop` went from 27% to 20%; the reverbs now cost the most.
+- one-grain-cloud: `Span::run_loop` 39%, `Machine::render` 33%, the reverb 8.7%, `powf` 5.6%,
+  `fmodf` 3.2%. `Span::run_loop` went from 52% to 39%.
+
+## 2026-10-10: graph runtime at efde207 (t3code/native-typed-graph-runtime)
 
 What changed since 7b4949e: values that stay the same over a span are worked out once, glides
 stop once steady, steady settings of phasor, filter and envelope are worked out once per span,
