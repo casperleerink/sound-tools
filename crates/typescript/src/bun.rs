@@ -323,7 +323,7 @@ impl Bun {
     }
 
     /// Asks Bun and waits for the answer, at most [`ANSWER_TIMEOUT`].
-    pub(crate) fn ask<'a>(
+    fn ask<'a>(
         &self,
         request: impl FnOnce(u64) -> Request<'a>,
     ) -> Result<serde_json::Value, String> {

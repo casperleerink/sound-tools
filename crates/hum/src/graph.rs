@@ -1,5 +1,5 @@
-//! The sound graph the SDK of a tool sends, and its lowering to [`Code`], the flat list of
-//! operations a [`Machine`](crate::Machine) runs.
+//! The sound graph the SDK of a tool sends as JSON, and its lowering to [`Code`], the flat list
+//! of operations a [`Machine`](crate::Machine) runs.
 //!
 //! The nodes come in order, each reading nodes before it by their index, so one pass in order
 //! lowers them: a node is one operation, but a field or a control reads the operation made for
@@ -10,7 +10,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use serde::Deserialize;
 
-use crate::language::{
+use crate::code::{
     ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
     MAX_DELAYS, MAX_LIVES, MAX_OPERATIONS, MAX_PARAMETERS, MAX_WATCHES, Operation, Output,
     ParameterSpec, Register, Slots, Table, Unary,
@@ -57,9 +57,7 @@ enum TableNode {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
 enum Node {
-    Constant {
-        value: f32,
-    },
+    Constant(Constant),
     Input,
     InputLeft,
     InputRight,
@@ -74,179 +72,82 @@ enum Node {
     Velocity,
     Onset,
     /// A field or a control, by name.
-    Param {
-        name: String,
-    },
-    Feedback {
-        slot: usize,
-    },
-    Negate {
-        x: usize,
-    },
-    Sin {
-        x: usize,
-    },
-    Cos {
-        x: usize,
-    },
-    Tan {
-        x: usize,
-    },
-    Tanh {
-        x: usize,
-    },
-    Abs {
-        x: usize,
-    },
-    Sqrt {
-        x: usize,
-    },
-    Exp {
-        x: usize,
-    },
-    Log {
-        x: usize,
-    },
-    Floor {
-        x: usize,
-    },
-    Wrap {
-        x: usize,
-    },
-    Db {
-        x: usize,
-    },
-    Saturate {
-        x: usize,
-    },
-    Add {
-        a: usize,
-        b: usize,
-    },
-    Subtract {
-        a: usize,
-        b: usize,
-    },
-    Multiply {
-        a: usize,
-        b: usize,
-    },
-    Divide {
-        a: usize,
-        b: usize,
-    },
-    Remainder {
-        a: usize,
-        b: usize,
-    },
-    Less {
-        a: usize,
-        b: usize,
-    },
-    Greater {
-        a: usize,
-        b: usize,
-    },
-    LessOrEqual {
-        a: usize,
-        b: usize,
-    },
-    GreaterOrEqual {
-        a: usize,
-        b: usize,
-    },
-    Equal {
-        a: usize,
-        b: usize,
-    },
-    NotEqual {
-        a: usize,
-        b: usize,
-    },
-    Min {
-        a: usize,
-        b: usize,
-    },
-    Max {
-        a: usize,
-        b: usize,
-    },
-    Pow {
-        a: usize,
-        b: usize,
-    },
-    Clamp {
-        x: usize,
-        low: usize,
-        high: usize,
-    },
-    Mix {
-        a: usize,
-        b: usize,
-        amount: usize,
-    },
-    Phasor {
-        hz: usize,
-    },
+    Param(Param),
+    Feedback(Feedback),
+    Negate(One),
+    Sin(One),
+    Cos(One),
+    Tan(One),
+    Tanh(One),
+    Abs(One),
+    Sqrt(One),
+    Exp(One),
+    Log(One),
+    Floor(One),
+    Wrap(One),
+    Db(One),
+    Saturate(One),
+    Add(Two),
+    Subtract(Two),
+    Multiply(Two),
+    Divide(Two),
+    Remainder(Two),
+    Less(Two),
+    Greater(Two),
+    LessOrEqual(Two),
+    GreaterOrEqual(Two),
+    Equal(Two),
+    NotEqual(Two),
+    Min(Two),
+    Max(Two),
+    Pow(Two),
+    Clamp(Clamp),
+    Mix(Mix),
+    Phasor(Phasor),
     Noise,
-    /// `longest` is a constant node.
-    Delay {
-        x: usize,
-        ms: usize,
-        longest: Option<usize>,
-    },
-    Lowpass {
-        x: usize,
-        hz: usize,
-        q: usize,
-    },
-    Highpass {
-        x: usize,
-        hz: usize,
-        q: usize,
-    },
-    Bandpass {
-        x: usize,
-        hz: usize,
-        q: usize,
-    },
-    Smooth {
-        x: usize,
-        ms: usize,
-    },
-    Adsr {
-        gate: usize,
-        attack: usize,
-        decay: usize,
-        sustain: usize,
-        release: usize,
-    },
-    Hold {
-        x: usize,
-        when: usize,
-    },
-    Rise {
-        x: usize,
-    },
-    Change {
-        x: usize,
-    },
-    At {
-        table: TableNode,
-        index: usize,
-    },
-    Lookup {
-        table: TableNode,
-        phase: usize,
-    },
-    Length {
-        table: TableNode,
-    },
-    Write {
-        buffer: usize,
-        index: usize,
-        value: usize,
-    },
+    Delay(Delay),
+    Lowpass(Filter),
+    Highpass(Filter),
+    Bandpass(Filter),
+    Smooth(Smooth),
+    Adsr(Adsr),
+    Hold(Hold),
+    Rise(One),
+    Change(One),
+    At(At),
+    Lookup(Lookup),
+    Length(Length),
+    Write(Write),
+}
+
+/// The fields of the nodes, as the SDK names them.
+macro_rules! fields {
+    ($($name:ident { $($field:ident: $type:ty),* })*) => {$(
+        #[derive(Debug, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct $name { $($field: $type),* }
+    )*};
+}
+
+fields! {
+    Constant { value: f32 }
+    Param { name: String }
+    Feedback { slot: usize }
+    One { x: usize }
+    Two { a: usize, b: usize }
+    Clamp { x: usize, low: usize, high: usize }
+    Mix { a: usize, b: usize, amount: usize }
+    Phasor { hz: usize }
+    // `longest` is a constant node.
+    Delay { x: usize, ms: usize, longest: Option<usize> }
+    Filter { x: usize, hz: usize, q: usize }
+    Smooth { x: usize, ms: usize }
+    Adsr { gate: usize, attack: usize, decay: usize, sustain: usize, release: usize }
+    Hold { x: usize, when: usize }
+    At { table: TableNode, index: usize }
+    Lookup { table: TableNode, phase: usize }
+    Length { table: TableNode }
+    Write { buffer: usize, index: usize, value: usize }
 }
 
 /// What the record and the interface give a sound, in the order of the tool's fields and
@@ -266,7 +167,7 @@ pub enum ControlSpec {
     Trigger(String),
 }
 
-/// Why a sound does not build.
+/// Why a sound does not build, in the words of the SDK.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 #[error("{0}")]
 pub struct GraphError(String);
@@ -277,75 +178,86 @@ fn error<T>(message: impl Into<String>) -> Result<T, GraphError> {
 
 impl Graph {
     pub fn compile(&self, declarations: &Declarations) -> Result<Code, GraphError> {
-        // Each makes at most one operation, so more of them than operations is no sound.
+        // Each is read by an operation, so more of them than operations is no sound.
         if self.feedbacks.len() > MAX_OPERATIONS || self.buffers.len() > MAX_OPERATIONS {
             return error(format!(
                 "a sound has at most {MAX_OPERATIONS} feedbacks and buffers"
             ));
         }
-        let mut hasher = DefaultHasher::new();
-        format!("{self:?}{declarations:?}").hash(&mut hasher);
         let mut lowering = Lowering {
             graph: self,
-            code: Code {
-                parameters: Vec::new(),
-                arrays: Vec::new(),
-                lives: Vec::new(),
-                triggers: Vec::new(),
-                watches: Vec::new(),
-                hash: hasher.finish(),
-                operations: Vec::new(),
-                output: Output::Through,
-                history_writes: Vec::new(),
-                watch_registers: Vec::new(),
-                slots: Slots::default(),
+            arrays: &declarations.arrays,
+            operations: Vec::new(),
+            slots: Slots {
+                histories: self.feedbacks.len() as u16,
+                ..Slots::default()
             },
+            lives: Vec::new(),
+            triggers: Vec::new(),
             names: HashMap::new(),
             registers: Vec::with_capacity(self.nodes.len()),
         };
         lowering.declare(declarations)?;
         for &seconds in &self.buffers {
-            let total = lowering.code.slots.buffers.iter().sum::<f32>() + seconds;
+            let total = lowering.slots.buffers.iter().sum::<f32>() + seconds;
             if seconds <= 0.0 || total > MAX_BUFFER_SECONDS {
                 return error(format!(
                     "buffer({seconds}): a buffer holds more than 0 s, and the buffers of a sound up to {MAX_BUFFER_SECONDS} s together"
                 ));
             }
-            lowering.code.slots.buffers.push(seconds);
+            lowering.slots.buffers.push(seconds);
         }
-        lowering.code.slots.histories = self.feedbacks.len() as u16;
         for node in &self.nodes {
             let register = lowering.node(node)?;
             lowering.registers.push(register);
         }
-        for (slot, node) in self.feedbacks.iter().enumerate() {
-            let register = lowering.read(*node)?;
-            lowering.code.history_writes.push((slot as u16, register));
-        }
+        let history_writes = (self.feedbacks.iter().enumerate())
+            .map(|(slot, node)| Ok((slot as u16, lowering.read(*node)?)))
+            .collect::<Result<_, GraphError>>()?;
         if self.watches.len() > MAX_WATCHES {
             return error(format!("a sound has at most {MAX_WATCHES} watches"));
         }
+        let mut watches: Vec<String> = Vec::new();
         for watch in &self.watches {
-            if lowering.code.watches.contains(&watch.name) {
+            if watches.contains(&watch.name) {
                 return error(format!("watch `{}` is shown twice", watch.name));
             }
-            let register = lowering.read(watch.node)?;
-            lowering.code.watches.push(watch.name.clone());
-            lowering.code.watch_registers.push(register);
+            watches.push(watch.name.clone());
         }
-        lowering.code.output = match self.output {
+        let watch_registers = (self.watches.iter())
+            .map(|watch| lowering.read(watch.node))
+            .collect::<Result<_, _>>()?;
+        let output = match self.output {
             OutputNode::Mono { mono } => Output::Mono(lowering.read(mono)?),
             OutputNode::Stereo { left, right } => {
                 Output::Stereo(lowering.read(left)?, lowering.read(right)?)
             }
         };
-        Ok(lowering.code)
+        let mut hasher = DefaultHasher::new();
+        format!("{self:?}{declarations:?}").hash(&mut hasher);
+        Ok(Code {
+            parameters: declarations.parameters.clone(),
+            arrays: declarations.arrays.clone(),
+            lives: lowering.lives,
+            triggers: lowering.triggers,
+            watches,
+            hash: hasher.finish(),
+            operations: lowering.operations,
+            output,
+            history_writes,
+            watch_registers,
+            slots: lowering.slots,
+        })
     }
 }
 
 struct Lowering<'a> {
     graph: &'a Graph,
-    code: Code,
+    arrays: &'a [ArraySpec],
+    operations: Vec<Operation>,
+    slots: Slots,
+    lives: Vec<ParameterSpec>,
+    triggers: Vec<String>,
     /// The register of each field and control.
     names: HashMap<&'a str, Register>,
     /// The register of each node lowered so far.
@@ -353,7 +265,7 @@ struct Lowering<'a> {
 }
 
 impl<'a> Lowering<'a> {
-    /// The operations of the fields and controls, which come first, and their specs.
+    /// The operations of the fields and controls, which come first.
     fn declare(&mut self, declarations: &'a Declarations) -> Result<(), GraphError> {
         if declarations.parameters.len() > MAX_PARAMETERS {
             return error(format!(
@@ -370,12 +282,8 @@ impl<'a> Lowering<'a> {
             let register = self.emit(Operation::Parameter(index as u16))?;
             self.names.insert(&parameter.name, register);
         }
-        self.code.parameters = declarations.parameters.clone();
         for array in &declarations.arrays {
-            if array
-                .length
-                .is_some_and(|length| !(1..=MAX_ARRAY_LENGTH).contains(&length))
-            {
+            if !(1..=MAX_ARRAY_LENGTH).contains(&array.length.unwrap_or(1)) {
                 return error(format!(
                     "`{}`: a pattern holds 1 to {MAX_ARRAY_LENGTH} values",
                     array.name
@@ -383,29 +291,24 @@ impl<'a> Lowering<'a> {
             }
             check_range(&array.name, array.default, array.min, array.max)?;
         }
-        self.code.arrays = declarations.arrays.clone();
         for control in &declarations.controls {
             let (name, operation) = match control {
                 ControlSpec::Live(live) => {
-                    if self.code.lives.len() == MAX_LIVES {
+                    if self.lives.len() == MAX_LIVES {
                         return error(format!("a tool has at most {MAX_LIVES} live controls"));
                     }
                     check_range(&live.name, live.default, live.min, live.max)?;
-                    self.code.lives.push(live.clone());
-                    (
-                        &live.name,
-                        Operation::Live(self.code.lives.len() as u16 - 1),
-                    )
+                    let index = self.lives.len() as u16;
+                    self.lives.push(live.clone());
+                    (&live.name, Operation::Live(index))
                 }
                 ControlSpec::Trigger(name) => {
-                    if self.code.triggers.len() == MAX_LIVES {
+                    if self.triggers.len() == MAX_LIVES {
                         return error(format!("a tool has at most {MAX_LIVES} triggers"));
                     }
-                    self.code.triggers.push(name.clone());
-                    (
-                        name,
-                        Operation::Trigger(self.code.triggers.len() as u16 - 1),
-                    )
+                    let index = self.triggers.len() as u16;
+                    self.triggers.push(name.clone());
+                    (name, Operation::Trigger(index))
                 }
             };
             let register = self.emit(operation)?;
@@ -415,13 +318,13 @@ impl<'a> Lowering<'a> {
     }
 
     fn emit(&mut self, operation: Operation) -> Result<Register, GraphError> {
-        if self.code.operations.len() == MAX_OPERATIONS {
+        if self.operations.len() == MAX_OPERATIONS {
             return error(format!(
                 "a sound has at most {MAX_OPERATIONS} operations: build it from fewer signals"
             ));
         }
-        self.code.operations.push(operation);
-        Ok((self.code.operations.len() - 1) as Register)
+        self.operations.push(operation);
+        Ok((self.operations.len() - 1) as Register)
     }
 
     /// The register of a node lowered before.
@@ -432,56 +335,63 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    fn unary(&self, unary: Unary, x: usize) -> Result<Operation, GraphError> {
-        Ok(Operation::Unary(unary, self.read(x)?))
+    fn unary(&self, unary: Unary, One { x }: &One) -> Result<Operation, GraphError> {
+        Ok(Operation::Unary(unary, self.read(*x)?))
     }
 
-    fn binary(&self, binary: Binary, a: usize, b: usize) -> Result<Operation, GraphError> {
-        Ok(Operation::Binary(binary, self.read(a)?, self.read(b)?))
+    fn binary(&self, binary: Binary, Two { a, b }: &Two) -> Result<Operation, GraphError> {
+        Ok(Operation::Binary(binary, self.read(*a)?, self.read(*b)?))
     }
 
-    fn filter(
-        &mut self,
-        kind: FilterKind,
-        x: usize,
-        hz: usize,
-        q: usize,
-    ) -> Result<Operation, GraphError> {
+    fn filter(&mut self, kind: FilterKind, filter: &Filter) -> Result<Operation, GraphError> {
         Ok(Operation::Filter {
             kind,
-            input: self.read(x)?,
-            hz: self.read(hz)?,
-            q: self.read(q)?,
-            slot: next(&mut self.code.slots.filters),
+            input: self.read(filter.x)?,
+            hz: self.read(filter.hz)?,
+            q: self.read(filter.q)?,
+            slot: next(&mut self.slots.filters),
         })
     }
 
     fn table(&self, table: &TableNode) -> Result<Table, GraphError> {
         match table {
-            TableNode::List(name) => {
-                let index = (self.code.arrays.iter()).position(|array| array.name == *name);
-                match index {
-                    Some(index) => Ok(Table::Array(index as u16)),
-                    None => error(format!(
-                        "`{name}` is no pattern or sample field of the tool"
-                    )),
-                }
-            }
+            TableNode::List(name) => match self.arrays.iter().position(|a| a.name == *name) {
+                Some(index) => Ok(Table::Array(index as u16)),
+                None => error(format!(
+                    "`{name}` is no pattern or sample field of the tool"
+                )),
+            },
             TableNode::Buffer(index) => Ok(Table::Buffer(self.buffer(*index)?)),
         }
     }
 
     fn buffer(&self, index: usize) -> Result<u16, GraphError> {
-        match index < self.code.slots.buffers.len() {
+        match index < self.slots.buffers.len() {
             true => Ok(index as u16),
             false => error(format!("buffer {index} is not made")),
+        }
+    }
+
+    /// The longest a delay holds: what it says, or the most any delay holds.
+    fn longest(&self, longest: Option<usize>) -> Result<f32, GraphError> {
+        let Some(longest) = longest else {
+            return Ok(MAX_DELAY_MS);
+        };
+        self.read(longest)?;
+        match self.graph.nodes.get(longest) {
+            Some(Node::Constant(Constant { value })) if *value > 0.0 && *value <= MAX_DELAY_MS => {
+                Ok(*value)
+            }
+            _ => error(format!(
+                "delay(x, ms, longest): longest is a number of ms above 0 and up to {MAX_DELAY_MS}"
+            )),
         }
     }
 
     /// The register of `node`: of the operation it makes, or of its field or control.
     fn node(&mut self, node: &Node) -> Result<Register, GraphError> {
         let operation = match node {
-            Node::Constant { value } => Operation::Constant(*value),
+            Node::Constant(Constant { value }) => Operation::Constant(*value),
             Node::Input => Operation::Input,
             Node::InputLeft => Operation::InputLeft,
             Node::InputRight => Operation::InputRight,
@@ -495,135 +405,116 @@ impl<'a> Lowering<'a> {
             Node::Gate => Operation::Gate,
             Node::Velocity => Operation::Velocity,
             Node::Onset => Operation::Onset,
-            Node::Param { name } => {
+            Node::Param(Param { name }) => {
                 return match self.names.get(name.as_str()) {
                     Some(register) => Ok(*register),
                     None => error(format!("`{name}` is no field or control of the tool")),
                 };
             }
-            Node::Feedback { slot } if *slot < self.graph.feedbacks.len() => {
+            Node::Feedback(Feedback { slot }) if *slot < self.graph.feedbacks.len() => {
                 Operation::History(*slot as u16)
             }
-            Node::Feedback { slot } => return error(format!("feedback {slot} is never set")),
-            Node::Negate { x } => self.unary(Unary::Negate, *x)?,
-            Node::Sin { x } => self.unary(Unary::Sin, *x)?,
-            Node::Cos { x } => self.unary(Unary::Cos, *x)?,
-            Node::Tan { x } => self.unary(Unary::Tan, *x)?,
-            Node::Tanh { x } => self.unary(Unary::Tanh, *x)?,
-            Node::Abs { x } => self.unary(Unary::Abs, *x)?,
-            Node::Sqrt { x } => self.unary(Unary::Sqrt, *x)?,
-            Node::Exp { x } => self.unary(Unary::Exp, *x)?,
-            Node::Log { x } => self.unary(Unary::Log, *x)?,
-            Node::Floor { x } => self.unary(Unary::Floor, *x)?,
-            Node::Wrap { x } => self.unary(Unary::Wrap, *x)?,
-            Node::Db { x } => self.unary(Unary::Decibels, *x)?,
-            Node::Saturate { x } => self.unary(Unary::Saturate, *x)?,
-            Node::Add { a, b } => self.binary(Binary::Add, *a, *b)?,
-            Node::Subtract { a, b } => self.binary(Binary::Subtract, *a, *b)?,
-            Node::Multiply { a, b } => self.binary(Binary::Multiply, *a, *b)?,
-            Node::Divide { a, b } => self.binary(Binary::Divide, *a, *b)?,
-            Node::Remainder { a, b } => self.binary(Binary::Remainder, *a, *b)?,
-            Node::Less { a, b } => self.binary(Binary::Less, *a, *b)?,
-            Node::Greater { a, b } => self.binary(Binary::Greater, *a, *b)?,
-            Node::LessOrEqual { a, b } => self.binary(Binary::LessOrEqual, *a, *b)?,
-            Node::GreaterOrEqual { a, b } => self.binary(Binary::GreaterOrEqual, *a, *b)?,
-            Node::Equal { a, b } => self.binary(Binary::Equal, *a, *b)?,
-            Node::NotEqual { a, b } => self.binary(Binary::NotEqual, *a, *b)?,
-            Node::Min { a, b } => self.binary(Binary::Min, *a, *b)?,
-            Node::Max { a, b } => self.binary(Binary::Max, *a, *b)?,
-            Node::Pow { a, b } => self.binary(Binary::Power, *a, *b)?,
-            Node::Clamp { x, low, high } => {
+            Node::Feedback(Feedback { slot }) => {
+                return error(format!("feedback {slot} is never set"));
+            }
+            Node::Negate(x) => self.unary(Unary::Negate, x)?,
+            Node::Sin(x) => self.unary(Unary::Sin, x)?,
+            Node::Cos(x) => self.unary(Unary::Cos, x)?,
+            Node::Tan(x) => self.unary(Unary::Tan, x)?,
+            Node::Tanh(x) => self.unary(Unary::Tanh, x)?,
+            Node::Abs(x) => self.unary(Unary::Abs, x)?,
+            Node::Sqrt(x) => self.unary(Unary::Sqrt, x)?,
+            Node::Exp(x) => self.unary(Unary::Exp, x)?,
+            Node::Log(x) => self.unary(Unary::Log, x)?,
+            Node::Floor(x) => self.unary(Unary::Floor, x)?,
+            Node::Wrap(x) => self.unary(Unary::Wrap, x)?,
+            Node::Db(x) => self.unary(Unary::Decibels, x)?,
+            Node::Saturate(x) => self.unary(Unary::Saturate, x)?,
+            Node::Add(two) => self.binary(Binary::Add, two)?,
+            Node::Subtract(two) => self.binary(Binary::Subtract, two)?,
+            Node::Multiply(two) => self.binary(Binary::Multiply, two)?,
+            Node::Divide(two) => self.binary(Binary::Divide, two)?,
+            Node::Remainder(two) => self.binary(Binary::Remainder, two)?,
+            Node::Less(two) => self.binary(Binary::Less, two)?,
+            Node::Greater(two) => self.binary(Binary::Greater, two)?,
+            Node::LessOrEqual(two) => self.binary(Binary::LessOrEqual, two)?,
+            Node::GreaterOrEqual(two) => self.binary(Binary::GreaterOrEqual, two)?,
+            Node::Equal(two) => self.binary(Binary::Equal, two)?,
+            Node::NotEqual(two) => self.binary(Binary::NotEqual, two)?,
+            Node::Min(two) => self.binary(Binary::Min, two)?,
+            Node::Max(two) => self.binary(Binary::Max, two)?,
+            Node::Pow(two) => self.binary(Binary::Power, two)?,
+            Node::Clamp(Clamp { x, low, high }) => {
                 Operation::Clamp(self.read(*x)?, self.read(*low)?, self.read(*high)?)
             }
-            Node::Mix { a, b, amount } => {
+            Node::Mix(Mix { a, b, amount }) => {
                 Operation::Mix(self.read(*a)?, self.read(*b)?, self.read(*amount)?)
             }
-            Node::Phasor { hz } => Operation::Phasor {
+            Node::Phasor(Phasor { hz }) => Operation::Phasor {
                 hz: self.read(*hz)?,
-                slot: next(&mut self.code.slots.phasors),
+                slot: next(&mut self.slots.phasors),
             },
             Node::Noise => Operation::Noise {
-                slot: next(&mut self.code.slots.noises),
+                slot: next(&mut self.slots.noises),
             },
-            Node::Delay { x, ms, longest } => {
+            Node::Delay(Delay { x, ms, longest }) => {
                 let (input, ms) = (self.read(*x)?, self.read(*ms)?);
-                if self.code.slots.delays.len() == MAX_DELAYS {
+                if self.slots.delays.len() == MAX_DELAYS {
                     return error(format!("a sound has at most {MAX_DELAYS} delays"));
                 }
-                let longest = match longest {
-                    None => MAX_DELAY_MS,
-                    Some(longest) => {
-                        self.read(*longest)?;
-                        match self.graph.nodes.get(*longest) {
-                            Some(Node::Constant { value })
-                                if *value > 0.0 && *value <= MAX_DELAY_MS =>
-                            {
-                                *value
-                            }
-                            _ => {
-                                return error(format!(
-                                    "delay(x, ms, longest): longest is a number of ms above 0 and up to {MAX_DELAY_MS}"
-                                ));
-                            }
-                        }
-                    }
-                };
-                self.code.slots.delays.push(longest);
-                Operation::Delay {
-                    input,
-                    ms,
-                    slot: self.code.slots.delays.len() as u16 - 1,
-                }
+                let slot = self.slots.delays.len() as u16;
+                self.slots.delays.push(self.longest(*longest)?);
+                Operation::Delay { input, ms, slot }
             }
-            Node::Lowpass { x, hz, q } => self.filter(FilterKind::LowPass, *x, *hz, *q)?,
-            Node::Highpass { x, hz, q } => self.filter(FilterKind::HighPass, *x, *hz, *q)?,
-            Node::Bandpass { x, hz, q } => self.filter(FilterKind::BandPass, *x, *hz, *q)?,
-            Node::Smooth { x, ms } => Operation::Smooth {
+            Node::Lowpass(filter) => self.filter(FilterKind::LowPass, filter)?,
+            Node::Highpass(filter) => self.filter(FilterKind::HighPass, filter)?,
+            Node::Bandpass(filter) => self.filter(FilterKind::BandPass, filter)?,
+            Node::Smooth(Smooth { x, ms }) => Operation::Smooth {
                 input: self.read(*x)?,
                 ms: self.read(*ms)?,
-                slot: next(&mut self.code.slots.smooths),
+                slot: next(&mut self.slots.smooths),
             },
-            Node::Adsr {
+            Node::Adsr(Adsr {
                 gate,
                 attack,
                 decay,
                 sustain,
                 release,
-            } => Operation::Envelope {
+            }) => Operation::Envelope {
                 gate: self.read(*gate)?,
                 attack: self.read(*attack)?,
                 decay: self.read(*decay)?,
                 sustain: self.read(*sustain)?,
                 release: self.read(*release)?,
-                slot: next(&mut self.code.slots.envelopes),
+                slot: next(&mut self.slots.envelopes),
             },
-            Node::Hold { x, when } => Operation::Hold {
+            Node::Hold(Hold { x, when }) => Operation::Hold {
                 input: self.read(*x)?,
                 when: self.read(*when)?,
-                slot: next(&mut self.code.slots.memories),
+                slot: next(&mut self.slots.memories),
             },
-            Node::Rise { x } => Operation::Rise {
+            Node::Rise(One { x }) => Operation::Rise {
                 input: self.read(*x)?,
-                slot: next(&mut self.code.slots.memories),
+                slot: next(&mut self.slots.memories),
             },
-            Node::Change { x } => Operation::Change {
+            Node::Change(One { x }) => Operation::Change {
                 input: self.read(*x)?,
-                slot: next(&mut self.code.slots.memories),
+                slot: next(&mut self.slots.memories),
             },
-            Node::At { table, index } => Operation::Read {
+            Node::At(At { table, index }) => Operation::Read {
                 table: self.table(table)?,
                 index: self.read(*index)?,
             },
-            Node::Lookup { table, phase } => Operation::Lookup {
+            Node::Lookup(Lookup { table, phase }) => Operation::Lookup {
                 table: self.table(table)?,
                 phase: self.read(*phase)?,
             },
-            Node::Length { table } => Operation::Length(self.table(table)?),
-            Node::Write {
+            Node::Length(Length { table }) => Operation::Length(self.table(table)?),
+            Node::Write(Write {
                 buffer,
                 index,
                 value,
-            } => Operation::Write {
+            }) => Operation::Write {
                 buffer: self.buffer(*buffer)?,
                 index: self.read(*index)?,
                 value: self.read(*value)?,

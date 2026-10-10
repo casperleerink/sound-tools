@@ -150,7 +150,7 @@ impl Choice {
         }
     }
 
-    pub(crate) fn to_value(&self) -> Value {
+    fn to_value(&self) -> Value {
         match self {
             // As a record writes it: `4`, not `4.0`. The two are one option, and one key of
             // the sound that is kept per choice.

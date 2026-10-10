@@ -1,5 +1,5 @@
 //! Runs compiled [`Code`] one frame at a time, for both channels, with the memory of every
-//! `history`, `phasor`, `delay`, filter, envelope and buffer of the code: the memory of one
+//! feedback, `phasor`, `delay`, filter, envelope and buffer of the code: the memory of one
 //! voice. Made on the control thread, where it allocates all of it; running it allocates
 //! nothing.
 //!
@@ -8,12 +8,12 @@
 
 use sound_core::{CHANNELS, DelayLine, SVF_MAX_Q, SvfFactors, SvfSection, amplitude, soft_clip};
 
-use crate::language::{
+use crate::code::{
     Binary, Code, FilterKind, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
 };
 
-/// Where every param stands, in the order of the `param` lines, and every list of the record,
-/// in the order of the `param name[length]` lines.
+/// Where every knob and toggle stands, and every list of the record, in the order of the
+/// fields.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Values {
     pub parameters: [f32; MAX_PARAMETERS],
@@ -393,7 +393,7 @@ impl Machine {
         }
         held(match code.output {
             Output::Mono(register) => registers.get(usize::from(register)).copied().unwrap_or(0.0),
-            Output::Through | Output::Stereo(..) => input,
+            Output::Stereo(..) => input,
         })
     }
 }

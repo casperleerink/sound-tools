@@ -6,28 +6,40 @@
 use std::time::Instant;
 
 use sound_core::{Connection, Engine, EngineConfig};
-use sound_hum::{Hum, Kind, Machine, Values, compile};
+use sound_hum::{Code, Hum, Kind, Machine, Values};
+
+mod sound;
+
+use sound::*;
 
 const SAMPLE_RATE: u32 = 48_000;
 const PROCESSORS: usize = 100;
 const SECONDS: usize = 10;
 
 /// A tape echo with a darkening feedback: a typical effect of a project.
-const ECHO: &[&str] = &[
-    "param time = 350 [1, 2000]",
-    "param again = 0.45 [0, 0.95]",
-    "history echo",
-    "wet = delay(0.01 * noise() + echo * again, time)",
-    "echo = saturate(lowpass(wet, 2500))",
-    "out = mix(in, wet, 0.35)",
-];
+fn echo() -> Code {
+    compile(|| {
+        let time = param("time", 350.0, [1.0, 2000.0]);
+        let again = param("again", 0.45, [0.0, 0.95]);
+        let echo = feedback();
+        let wet = delay(0.01 * noise() + echo.read() * again, time);
+        echo.set(saturate(lowpass(
+            wet,
+            2500.0,
+            std::f32::consts::FRAC_1_SQRT_2,
+        )));
+        mix(input(), wet, 0.35)
+    })
+}
 
 /// A filtered saw with an envelope, played as a source so its one voice always runs.
-const VOICE: &[&str] = &[
-    "level = adsr(1, 5, 300, 0.4, 200)",
-    "saw = phasor(110) * 2 - 1",
-    "out = 0.01 * lowpass(saw, 300 + 3000 * level, 2) * level",
-];
+fn voice() -> Code {
+    compile(|| {
+        let level = adsr(1.0, 5.0, 300.0, 0.4, 200.0);
+        let saw = phasor(110.0) * 2.0 - 1.0;
+        0.01 * lowpass(saw, 300.0 + 3000.0 * level, 2.0) * level
+    })
+}
 
 /// Run with
 /// `cargo nextest run -p sound-hum --run-ignored only realtime_ratio --no-capture`.
@@ -35,14 +47,13 @@ const VOICE: &[&str] = &[
 #[ignore = "a measurement, not a check; run it locally and read the printed ratio"]
 fn realtime_ratio_of_one_hundred_processors() {
     for (label, code, kind) in [
-        ("echo effect", ECHO, Kind::Effect),
-        ("saw source", VOICE, Kind::Source),
+        ("echo effect", echo(), Kind::Effect),
+        ("saw source", voice(), Kind::Source),
     ] {
-        let lines: Vec<String> = code.iter().map(|line| line.to_string()).collect();
         let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let mut edit = control.edit();
         for index in 0..PROCESSORS {
-            let code = compile(&lines).unwrap();
+            let code = code.clone();
             let mut values = Values::default();
             for (value, parameter) in values.parameters.iter_mut().zip(&code.parameters) {
                 *value = parameter.default;

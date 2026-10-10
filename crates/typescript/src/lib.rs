@@ -14,8 +14,6 @@
 
 mod bun;
 mod card;
-#[cfg(test)]
-mod equivalence;
 mod samples;
 mod tools;
 mod tree;

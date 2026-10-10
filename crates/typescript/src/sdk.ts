@@ -462,11 +462,7 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
     /** The node of `operand` where it is used, made now when it is a number or a `Named`. */
     const use = (operand: Operand): number => {
       prepare(operand);
-      if (typeof operand === "number") {
-        const value = quantize(operand);
-        const constant = add({ op: "constant", value: Math.abs(value) });
-        return value < 0 ? add({ op: "negate", x: constant }) : constant;
-      }
+      if (typeof operand === "number") return add({ op: "constant", value: quantize(operand) });
       return operand instanceof Named ? add(operand.node) : (made.get(operand) as number);
     };
     const outputs = typeof output === "object" && !(output instanceof Signal) ? [output.left, output.right] : [output];

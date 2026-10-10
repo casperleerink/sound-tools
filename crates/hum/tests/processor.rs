@@ -3,12 +3,18 @@
 //! The Hum processor in an engine: notes into an instrument and a source, a trigger and a live
 //! control from the interface, a watch back to it, and the beat of the transport.
 
+use std::f32::consts::TAU;
+
 use sound_core::{
     Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput, Node, Ports,
     PrepareConfig, ProcessContext, Processor, Watch,
 };
-use sound_hum::{Hum, HumUpdate, Kind, Machine, Values, compile};
+use sound_hum::{Code, Hum, HumUpdate, Kind, Machine, Values};
 use sound_notes::{NoteEvent, Pitch, Velocity};
+
+mod sound;
+
+use sound::*;
 
 const SAMPLE_RATE: u32 = 48_000;
 
@@ -65,9 +71,7 @@ struct Played {
 }
 
 /// An engine that plays `code` as `kind` to the device, with `notes` into it.
-fn play(kind: Kind, code: &[&str], notes: Vec<(usize, NoteEvent)>) -> Played {
-    let lines: Vec<String> = code.iter().map(|line| line.to_string()).collect();
-    let code = compile(&lines).unwrap();
+fn play(kind: Kind, code: Code, notes: Vec<(usize, NoteEvent)>) -> Played {
     let watches: Vec<Watch> = code.watches.iter().map(|_| Watch::new()).collect();
     let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
     let hum = Hum::new(kind, machine, Values::default(), watches.clone());
@@ -125,15 +129,22 @@ fn frequency(samples: &[f32]) -> f32 {
     }
 }
 
-const SINE_VOICE: &[&str] = &[
-    "level = adsr(gate, 5, 50, 0.5, 100)",
-    "out = 0.2 * velocity * level * sin(phasor(freq) * tau)",
-];
+fn sine_voice() -> Code {
+    compile(|| {
+        let level = adsr(gate(), 5.0, 50.0, 0.5, 100.0);
+        0.2 * velocity() * level * sin(phasor(freq()) * TAU)
+    })
+}
+
+/// A sine at the note that plays while the gate is up.
+fn sine_note() -> Code {
+    compile(|| 0.2 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 1.0, 1.0, 1.0))
+}
 
 #[test]
 fn an_instrument_plays_each_note_at_its_pitch_until_its_release_is_over() {
     let notes = vec![(4_800, on(69)), (28_800, off(69))];
-    let mut played = play(Kind::Instrument { voices: 4 }, SINE_VOICE, notes);
+    let mut played = play(Kind::Instrument { voices: 4 }, sine_voice(), notes);
     let output = played.render(48_000);
     assert_eq!(loudest(&output[..4_800]), 0.0);
     let held = &output[9_600..28_800];
@@ -147,13 +158,13 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
     let one = loudest(
         &play(
             Kind::Instrument { voices: 4 },
-            SINE_VOICE,
+            sine_voice(),
             vec![(0, on(60))],
         )
         .render(9_600)[4_800..],
     );
     let chord = vec![(0, on(60)), (0, on(64)), (0, on(67))];
-    let three = play(Kind::Instrument { voices: 4 }, SINE_VOICE, chord).render(9_600);
+    let three = play(Kind::Instrument { voices: 4 }, sine_voice(), chord).render(9_600);
     // Three sines add up louder than one, and less than three times as loud.
     let three = loudest(&three[4_800..]);
     assert!(three > one * 1.5 && three < one * 3.01, "{one} and {three}");
@@ -161,15 +172,15 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
 
 #[test]
 fn a_note_that_takes_a_held_voice_starts_its_envelope_again() {
-    let code = [
-        "level = adsr(gate, 10, 10, 0.5, 10)",
-        "watch shown = level",
-        "out = 0.01 * level",
-    ];
+    let code = compile(|| {
+        let level = adsr(gate(), 10.0, 10.0, 0.5, 10.0);
+        watch("shown", level);
+        0.01 * level
+    });
     // Eight voices, all held at their sustain: the ninth note takes the oldest.
     let mut notes: Vec<(usize, NoteEvent)> = (60..68).map(|pitch| (0, on(pitch))).collect();
     notes.push((4_800, on(72)));
-    let mut played = play(Kind::Instrument { voices: 8 }, &code, notes);
+    let mut played = play(Kind::Instrument { voices: 8 }, code, notes);
     played.render(4_800);
     assert_eq!(played.watches[0].get(), 0.5);
     // 5 ms of a 10 ms attack from 0.5 reaches the top.
@@ -180,9 +191,9 @@ fn a_note_that_takes_a_held_voice_starts_its_envelope_again() {
 #[test]
 fn a_source_sounds_with_no_note_and_follows_the_newest_held_one() {
     // Before any note `gate` is 0, so this drone plays 110 Hz until a note comes.
-    let code = ["out = 0.2 * sin(phasor(mix(110, freq, gate)) * tau)"];
+    let code = compile(|| 0.2 * sin(phasor(mix(110.0, freq(), gate())) * TAU));
     let notes = vec![(24_000, on(69)), (36_000, on(81)), (42_000, off(81))];
-    let mut played = play(Kind::Source, &code, notes);
+    let mut played = play(Kind::Source, code, notes);
     let output = played.render(48_000);
     assert!((frequency(&output[..24_000]) - 110.0).abs() < 1.0);
     assert!((frequency(&output[24_100..36_000]) - 440.0).abs() < 1.0);
@@ -193,14 +204,14 @@ fn a_source_sounds_with_no_note_and_follows_the_newest_held_one() {
 
 #[test]
 fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
-    let code = [
-        "trigger hit",
-        "history count",
-        "count = count + hit",
-        "watch total = count",
-        "out = 0",
-    ];
-    let mut played = play(Kind::Source, &code, Vec::new());
+    let code = compile(|| {
+        let hit = trigger("hit");
+        let count = feedback();
+        count.set(count.read() + hit);
+        watch("total", count.read());
+        0.0
+    });
+    let mut played = play(Kind::Source, code, Vec::new());
     played.render(64);
     for _ in 0..3 {
         played
@@ -214,8 +225,7 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
 
 #[test]
 fn a_note_from_the_interface_plays_a_voice_for_its_length() {
-    let code = ["out = 0.2 * sin(phasor(freq) * tau) * adsr(gate, 1, 1, 1, 1)"];
-    let mut played = play(Kind::Instrument { voices: 8 }, &code, Vec::new());
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     assert_eq!(loudest(&played.render(4_800)), 0.0);
     let note = HumUpdate::Note {
         pitch: Pitch::new(69).unwrap(),
@@ -232,8 +242,7 @@ fn a_note_from_the_interface_plays_a_voice_for_its_length() {
 
 #[test]
 fn a_note_with_no_length_plays_until_it_is_released() {
-    let code = ["out = 0.2 * sin(phasor(freq) * tau) * adsr(gate, 1, 1, 1, 1)"];
-    let mut played = play(Kind::Instrument { voices: 8 }, &code, Vec::new());
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
     let note = HumUpdate::Note {
         pitch,
@@ -250,8 +259,7 @@ fn a_note_with_no_length_plays_until_it_is_released() {
 
 #[test]
 fn a_release_lets_go_of_its_note_when_the_list_of_what_waits_for_its_frame_is_full() {
-    let code = ["out = 0.2 * sin(phasor(freq) * tau) * adsr(gate, 1, 1, 1, 1)"];
-    let mut played = play(Kind::Instrument { voices: 8 }, &code, Vec::new());
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
     let note = HumUpdate::Note {
         pitch,
@@ -277,7 +285,7 @@ fn a_release_lets_go_of_its_note_when_the_list_of_what_waits_for_its_frame_is_fu
 
 #[test]
 fn a_trigger_with_a_time_fires_on_that_frame_and_one_whose_time_passed_at_once() {
-    let mut played = play(Kind::Source, &["trigger hit", "out = hit"], Vec::new());
+    let mut played = play(Kind::Source, compile(|| trigger("hit")), Vec::new());
     // Engine time is 640 from here.
     played.render(640);
     for at in [1_000, 100] {
@@ -294,7 +302,11 @@ fn a_trigger_with_a_time_fires_on_that_frame_and_one_whose_time_passed_at_once()
 
 #[test]
 fn a_live_control_glides_to_where_the_interface_puts_it() {
-    let mut played = play(Kind::Source, &["live x = 0 [0, 1]", "out = x"], Vec::new());
+    let mut played = play(
+        Kind::Source,
+        compile(|| live("x", 0.0, [0.0, 1.0])),
+        Vec::new(),
+    );
     assert_eq!(played.render(64)[63], 0.0);
     let live = HumUpdate::Live {
         index: 0,
@@ -311,7 +323,7 @@ fn a_live_control_glides_to_where_the_interface_puts_it() {
 
 #[test]
 fn the_beat_counts_quarter_notes_while_the_transport_plays() {
-    let mut played = play(Kind::Source, &["out = beat / 100"], Vec::new());
+    let mut played = play(Kind::Source, compile(|| beat() / 100.0), Vec::new());
     assert_eq!(played.render(4_800)[4_799], 0.0);
     played.control.play();
     // 120 bpm is two quarter notes a second.
@@ -325,16 +337,22 @@ fn the_beat_counts_quarter_notes_while_the_transport_plays() {
 
 #[test]
 fn a_live_control_stays_where_it_is_when_the_code_is_new() {
-    let mut played = play(Kind::Source, &["live x = 0 [0, 1]", "out = x"], Vec::new());
-    let live = HumUpdate::Live {
+    let mut played = play(
+        Kind::Source,
+        compile(|| live("x", 0.0, [0.0, 1.0])),
+        Vec::new(),
+    );
+    let moved = HumUpdate::Live {
         index: 0,
         value: 1.0,
     };
-    played.control.update(played.hum, live).unwrap();
+    played.control.update(played.hum, moved).unwrap();
     played.render(1_920);
     // New code, with another live control first: `x` keeps its value under its name.
-    let lines = ["live y = 0.5 [0, 1]", "live x = 0 [0, 1]", "out = x + y"];
-    let code = compile(&lines.map(String::from)).unwrap();
+    let code = compile(|| {
+        let y = live("y", 0.5, [0.0, 1.0]);
+        live("x", 0.0, [0.0, 1.0]) + y
+    });
     let new = HumUpdate::Set {
         machines: vec![Some(Box::new(Machine::new(code, SAMPLE_RATE as f32)))],
         values: Box::default(),
@@ -345,8 +363,7 @@ fn a_live_control_stays_where_it_is_when_the_code_is_new() {
 }
 
 /// The update the behaviour sends when the code of a tool of `kind` is new.
-fn new_code(kind: Kind, line: &str) -> HumUpdate {
-    let code = compile(&[line.to_string()]).unwrap();
+fn new_code(kind: Kind, code: Code) -> HumUpdate {
     let made = || Some(Box::new(Machine::new(code.clone(), SAMPLE_RATE as f32)));
     HumUpdate::Set {
         machines: (0..kind.machines()).map(|_| made()).collect(),
@@ -357,9 +374,9 @@ fn new_code(kind: Kind, line: &str) -> HumUpdate {
 
 #[test]
 fn new_code_fades_in_without_a_jump() {
-    let mut played = play(Kind::Source, &["out = 0.5"], Vec::new());
+    let mut played = play(Kind::Source, compile(|| 0.5), Vec::new());
     played.render(640);
-    let update = new_code(Kind::Source, "out = -0.5");
+    let update = new_code(Kind::Source, compile(|| -0.5));
     played.control.update(played.hum, update).unwrap();
     let output = played.render(1_920);
     let steps = output.windows(2).map(|pair| (pair[1] - pair[0]).abs());
@@ -401,11 +418,7 @@ impl Processor for Lane {
 
 #[test]
 fn a_lane_moves_a_param_and_the_record_takes_it_back_when_the_lane_stops() {
-    let lines = [
-        "param tone = 0.25 [0, 1]".to_string(),
-        "out = tone".to_string(),
-    ];
-    let code = compile(&lines).unwrap();
+    let code = compile(|| param("tone", 0.25, [0.0, 1.0]));
     let mut values = Values::default();
     values.parameters[0] = 0.25;
     values.automated = vec![0];
@@ -451,12 +464,12 @@ fn a_lane_moves_a_param_and_the_record_takes_it_back_when_the_lane_stops() {
 fn a_note_after_new_code_plays_only_the_new_code() {
     let kind = Kind::Instrument { voices: 1 };
     let notes = vec![(0, on(60)), (64, off(60)), (9_600, on(60))];
-    let mut played = play(kind, &["out = 0.5 * gate"], notes);
+    let mut played = play(kind, compile(|| 0.5 * gate()), notes);
     // Released at frame 64 and silent since, so the voice is idle when the code changes.
     played.render(4_800);
     played
         .control
-        .update(played.hum, new_code(kind, "out = -0.5 * gate"))
+        .update(played.hum, new_code(kind, compile(|| -0.5 * gate())))
         .unwrap();
     let output = played.render(9_600);
     // The note at frame 9600 starts with the new code, not with a fade from the old.

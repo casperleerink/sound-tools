@@ -14,7 +14,7 @@ use sound_core::{
 };
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice, Voices, frequency_hz};
 
-use crate::language::{Code, MAX_LIVES, MAX_PARAMETERS};
+use crate::code::{Code, MAX_LIVES, MAX_PARAMETERS};
 use crate::machine::{Inputs, LIMIT, Machine, Note, Values};
 
 /// How long the old code fades out while the new one fades in.
@@ -35,7 +35,7 @@ const MAX_SCHEDULED: usize = 256;
 /// What a Hum tool is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// Sound in, sound out: the code reads `in`.
+    /// Sound in, sound out: the code reads `input`.
     Effect,
     /// Notes in, sound out: the code runs once per note, up to `voices` at once.
     Instrument { voices: usize },
