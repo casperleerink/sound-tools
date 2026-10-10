@@ -86,8 +86,12 @@ pub(crate) struct Inputs<'a> {
 pub struct Machine {
     code: Code,
     steps: Box<[Step]>,
+    /// The steps the right channel of mono code runs again; it shares the results of the others
+    /// with the left.
+    per_channel: Box<[Step]>,
     sample_rate: f32,
-    /// What each operation gave in each frame of the span, of the channel that ran last.
+    /// What each operation gave in each frame of the span: of the left channel, and then of the
+    /// right where it differs.
     registers: Vec<[f32; MAX_BLOCK]>,
     channels: [Memory; CHANNELS],
     /// Where the delays write the first frame of the next span.
@@ -207,6 +211,7 @@ impl Machine {
             false
         });
         Self {
+            per_channel: program::per_channel(&code, &steps),
             steps: steps.into_boxed_slice(),
             sample_rate,
             registers,
@@ -266,11 +271,13 @@ impl Machine {
         self.position = self.position.wrapping_add(frames.len());
     }
 
-    /// Runs every step over `frames` with the memory of `channel`.
+    /// Runs the steps of `channel` over `frames` with its memory: every step for the left, and
+    /// for the right only those whose results differ from the left.
     fn run(&mut self, channel: usize, inputs: &Inputs<'_>, frames: Range<usize>) {
         let Self {
             code,
             steps,
+            per_channel,
             sample_rate,
             registers,
             channels,
@@ -280,6 +287,7 @@ impl Machine {
         let Some(memory) = channels.get_mut(channel) else {
             return;
         };
+        let steps = if channel == 0 { steps } else { per_channel };
         let span = Span {
             block: inputs.block,
             arrays: inputs.arrays,

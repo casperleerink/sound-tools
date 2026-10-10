@@ -83,6 +83,43 @@ pub(crate) fn schedule(code: &Code) -> Box<[Step]> {
     steps.into_boxed_slice()
 }
 
+/// The `steps` whose results differ between the channels of mono code: what reads the input or
+/// the index of its channel, a noise, whose seed is of its channel, and everything that hears
+/// them. The rest gives the same in both channels, so it runs once.
+pub(crate) fn per_channel(code: &Code, steps: &[Step]) -> Box<[Step]> {
+    let edges = edges(code);
+    let mut varies: Vec<bool> = (code.operations.iter())
+        .map(|operation| {
+            matches!(
+                operation,
+                Operation::Input | Operation::Channel | Operation::Noise { .. }
+            )
+        })
+        .collect();
+    let mut next: Vec<usize> = (varies.iter().enumerate())
+        .filter_map(|(node, varies)| varies.then_some(node))
+        .collect();
+    while let Some(node) = next.pop() {
+        for to in edges.get(node).into_iter().flatten() {
+            if let Some(varies) = varies.get_mut(*to)
+                && !*varies
+            {
+                *varies = true;
+                next.push(*to);
+            }
+        }
+    }
+    let varies = |register: &Register| varies.get(usize::from(*register)) == Some(&true);
+    (steps.iter())
+        .filter(|step| match step {
+            Step::Block(register) => varies(register),
+            // All in a loop hear each other.
+            Step::Loop(looped) => looped.iter().any(|(register, _)| varies(register)),
+        })
+        .cloned()
+        .collect()
+}
+
 /// For each operation, those that run after it: what reads it, the reads of a feedback it is
 /// the source of, and, in a ring, the next operation on its buffer.
 fn edges(code: &Code) -> Vec<Vec<usize>> {
