@@ -18,17 +18,21 @@ mod storage;
 mod watcher;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
 pub use editing::{Changes, Derived, Edit, OUTSIDE_UNDO_WINDOW};
-pub use file::{FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination};
+pub use file::{
+    FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
+};
 pub use generated::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, INSTRUCTIONS_FILE, NO_PROBLEMS, PROBLEMS_FILE,
 };
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
-pub use registry::{AgentDoc, Registry, RegistryError, ToolRegistration, Was};
+pub use registry::{
+    AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration, Was,
+};
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
 
@@ -39,13 +43,17 @@ use registry::DerivedFrom;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
+use crate::apps::AppSound;
 use crate::automation::PlayedLanes;
 use crate::clock::{Clock, Ticks, TimeSignatures};
 use crate::control::EngineControl;
+use crate::device::DeviceError;
 use crate::graph::GraphError;
+use crate::input::{InputId, LiveInput};
 use crate::parameter::AutomatedNumber;
 use crate::peaks::Peaks;
 use crate::processor::Processor;
+use crate::watch::Watch;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
@@ -97,6 +105,8 @@ pub enum ProjectError {
     Storage(#[from] StorageError),
     #[error("the file watcher failed: {0}")]
     Watcher(#[from] notify::Error),
+    #[error(transparent)]
+    Registry(#[from] RegistryError),
 }
 
 impl From<BindError> for ProjectError {
@@ -164,6 +174,12 @@ pub struct Project {
     /// The generated files may no longer match the project. See `generated.rs`.
     generated_are_stale: bool,
     watcher: Option<Watcher>,
+    /// The sample rate and channels of the live input, while one is given. See
+    /// [`Self::set_live_input`].
+    live_input: Option<(u32, usize)>,
+    /// The sample rate of the sound of each app that was given, or why it is not heard. See
+    /// [`Self::set_app_sound`].
+    app_sounds: BTreeMap<AppSound, Result<u32, String>>,
 }
 
 impl Project {
@@ -220,6 +236,8 @@ impl Project {
             derive_problems: BTreeMap::new(),
             generated_are_stale: true,
             watcher: None,
+            live_input: None,
+            app_sounds: BTreeMap::new(),
         };
         let mut changes = Vec::new();
         match project.storage.read_project_file()? {
@@ -286,6 +304,116 @@ impl Project {
         Ok(self.engine.update(node, update)?)
     }
 
+    /// The sample rate of the engine, which is that of the output device.
+    pub fn sample_rate(&self) -> u32 {
+        self.engine.config().sample_rate
+    }
+
+    /// Whether a `project.json` connection from the device input is in the graph, so the input
+    /// has to be open. One whose instance or port is missing needs no input.
+    pub fn hears_device_input(&self) -> bool {
+        let connections = self.project_file.connections.iter();
+        connections
+            .filter(|connection| matches!(connection.from, SavedSource::DeviceInput(_)))
+            .any(|connection| self.bindings.is_bound(connection))
+    }
+
+    /// The apps whose sound a `project.json` connection in the graph starts at, so each has to
+    /// be tapped.
+    pub fn app_sounds(&self) -> BTreeSet<AppSound> {
+        let connections = self.project_file.connections.iter();
+        let bound = connections.filter(|connection| self.bindings.is_bound(connection));
+        (bound.filter_map(|connection| match &connection.from {
+            SavedSource::App(app) => Some(app.clone()),
+            _ => None,
+        }))
+        .collect()
+    }
+
+    /// Plays the input of a device into the `device_input` connections of `project.json`, or
+    /// silence with `None`, which is what they hear until an input is given. An input at another
+    /// sample rate than the engine stays silent, and each of those connections is a problem that
+    /// says why, as is one from a channel the input does not have. That stays so until the next
+    /// call, also when the device itself was closed, as it is when it plays nothing.
+    pub fn set_live_input(&mut self, input: Option<LiveInput>) {
+        let before = self.live_input_problems();
+        self.live_input = (input.as_ref()).map(|input| (input.sample_rate(), input.channels()));
+        self.engine.set_live_input(InputId::DEVICE, input);
+        if before != self.live_input_problems() {
+            self.push_event(ProjectEvent::ProblemsChanged);
+        }
+    }
+
+    /// Plays the sound of `app` into the `app` connections of `project.json` that name it, or
+    /// silence with `None`. `Err` says why it is not heard, and each of those connections then
+    /// says so as a problem, as does one when the sound comes at another rate than the output.
+    pub fn set_app_sound(&mut self, app: &AppSound, sound: Option<Result<LiveInput, String>>) {
+        let before = self.live_input_problems();
+        let live = match sound {
+            None => {
+                self.app_sounds.remove(app);
+                None
+            }
+            Some(Ok(live)) => {
+                self.app_sounds.insert(app.clone(), Ok(live.sample_rate()));
+                Some(live)
+            }
+            Some(Err(why)) => {
+                self.app_sounds.insert(app.clone(), Err(why));
+                None
+            }
+        };
+        self.engine.set_live_input(app.input(), live);
+        if before != self.live_input_problems() {
+            self.push_event(ProjectEvent::ProblemsChanged);
+        }
+    }
+
+    /// Why a `device_input` or `app` connection is silent with what was given.
+    fn live_input_problems(&self) -> Vec<String> {
+        let connections = self.project_file.connections.iter().enumerate();
+        connections
+            .filter_map(|(index, connection)| {
+                let why = match &connection.from {
+                    SavedSource::DeviceInput(channel) => self.device_input_problem(*channel)?,
+                    SavedSource::App(app) => self.app_sound_problem(app)?,
+                    SavedSource::Output(_) => return None,
+                };
+                Some(format!("connections[{index}]: not heard, because {why}"))
+            })
+            .collect()
+    }
+
+    fn app_sound_problem(&self, app: &AppSound) -> Option<String> {
+        if !cfg!(target_os = "macos") {
+            return Some(DeviceError::AppsOnlyOnMacos.to_string());
+        }
+        let output_rate = self.engine.config().sample_rate;
+        match self.app_sounds.get(app)? {
+            Err(why) => Some(why.clone()),
+            Ok(rate) if *rate != output_rate => Some(format!(
+                "the sound of other apps comes at {rate} Hz and the output runs at {output_rate} Hz. Set the output device to {rate} Hz in Audio MIDI Setup"
+            )),
+            Ok(_) => None,
+        }
+    }
+
+    fn device_input_problem(&self, channel: usize) -> Option<String> {
+        let (input_rate, channels) = self.live_input?;
+        let output_rate = self.engine.config().sample_rate;
+        if input_rate != output_rate {
+            return Some(format!(
+                "the audio input runs at {input_rate} Hz and the output at {output_rate} Hz. Live input needs both at one rate: set them to the same rate in the sound settings of the system (Audio MIDI Setup on macOS)"
+            ));
+        }
+        let has = match channels {
+            1 => "one channel".to_string(),
+            channels => format!("{channels} channels"),
+        };
+        (channel >= channels)
+            .then(|| format!("the audio input has {has}, counted from 0, and no channel {channel}"))
+    }
+
     /// The input port that the behaviour of `instance` named, for code below the tools that
     /// plays into an instance from outside the project: MIDI input into the `notes` port of an
     /// instrument, wired by the window. `None` while the instance has no such port.
@@ -323,6 +451,11 @@ impl Project {
     /// the instance is created again.
     pub fn peaks(&self, instance: &InstanceId, name: &str) -> Option<Peaks> {
         self.bindings.peaks(instance, name).cloned()
+    }
+
+    /// Every watch the behaviour of `instance` keeps, by name, see [`BehaviourContext::watch`].
+    pub fn watches(&self, instance: &InstanceId) -> Vec<(String, Watch)> {
+        self.bindings.watches(instance)
     }
 
     /// The clock the engine plays by, for conversions while reading, such as ticks to seconds.
@@ -444,6 +577,83 @@ impl Project {
         Ok(true)
     }
 
+    /// Defines tools of the project while it is open, or defines them again because their
+    /// code changed. Their records are read again, those of live instances and those that did
+    /// not load, so one that waited for its tool loads and one the new check refuses is a
+    /// problem, and every instance of them runs the new behaviour. Where that fails, what
+    /// plays stays as it is and the record says why, as for a failed file. Nothing is written
+    /// and nothing is an undo step: no record changed. Every other file is left to the
+    /// watcher, so an outside edit of it is applied as one. All the tools of one save come in
+    /// one call, which reads their records once. A tool the registry refuses, such as one
+    /// named as a tool of the runtime, is left out and returned with why.
+    pub fn define_json_tools(
+        &mut self,
+        tools: impl IntoIterator<Item = JsonTool>,
+    ) -> Result<Vec<(String, RegistryError)>, ProjectError> {
+        let mut names = BTreeSet::new();
+        let mut refused = Vec::new();
+        for tool in tools {
+            let name = tool.name.clone();
+            match self.registry.json_tool(tool) {
+                Ok(()) => _ = names.insert(name),
+                Err(error) => refused.push((name, error)),
+            }
+        }
+        self.generated_are_stale = true;
+        let live: Vec<InstanceId> = (self.instances.iter())
+            .filter(|(_, record)| names.contains(record.tool))
+            .map(|(id, _)| id.clone())
+            .collect();
+        // Read again even where the file did not change: the check did.
+        for id in &live {
+            self.storage.forget(id);
+        }
+        let mut paths: Vec<PathBuf> = (live.iter())
+            .map(|id| self.storage.record_path(id, Form::File))
+            .collect();
+        // Records of these tools that did not load: one waited for its tool, or the old check
+        // or behaviour refused it. Not the whole folder: an outside edit the watcher has not
+        // delivered yet would apply here with no undo step and no derive, and then look like
+        // no change when it is delivered. A file that does not read keeps its problem.
+        let state_folder = self.storage.state_folder();
+        let not_loaded = (self.file_problems.keys())
+            .map(|path| self.storage.root().join(path))
+            .filter(|path| path.starts_with(&state_folder))
+            .filter(|path| storage::tool_named_in(path).is_some_and(|tool| names.contains(&tool)));
+        paths.extend(not_loaded);
+        self.apply_paths(&paths, Source::Load, std::time::Instant::now())?;
+        for id in live {
+            let path = self.storage.record_path(&id, Form::File);
+            let path = self.storage.display_path(&path);
+            // The file did not load, such as because the new check refuses it: it plays on
+            // as it was, under its problem.
+            if self.file_problems.contains_key(&path) {
+                continue;
+            }
+            if let Err(error) = self.rebind(&id) {
+                self.report_problem(path, format!("its behaviour failed: {error}"));
+            }
+        }
+        Ok(refused)
+    }
+
+    /// Says what is wrong with files outside `state/` that the runtime reads, such as the code
+    /// of the project's own tools under `extensions/`. It replaces every problem whose path
+    /// starts with `folder`, so a fixed file drops off the list.
+    pub fn set_problems_in(&mut self, folder: &str, problems: Vec<Problem>) {
+        let before = self.file_problems.len();
+        self.file_problems
+            .retain(|path, _| !path.starts_with(folder));
+        let cleared = self.file_problems.len() != before;
+        for problem in &problems {
+            self.file_problems
+                .insert(problem.path.clone(), problem.message.clone());
+        }
+        if cleared || !problems.is_empty() {
+            self.push_event(ProjectEvent::ProblemsChanged);
+        }
+    }
+
     /// Takes the events since the last call.
     pub fn drain_events(&mut self) -> Vec<ProjectEvent> {
         std::mem::take(&mut self.events)
@@ -455,13 +665,11 @@ impl Project {
             path: path.clone(),
             message: message.clone(),
         });
-        let connections = self
-            .bindings
-            .connection_problems()
-            .iter()
+        let connections = (self.bindings.connection_problems().iter().cloned())
+            .chain(self.live_input_problems())
             .map(|message| Problem {
                 path: storage::PROJECT_FILE.to_string(),
-                message: message.clone(),
+                message,
             });
         // What a behaviour or a derive said about its own instance while it ran. The record is
         // live and untouched; part of what it asks for is not.
@@ -510,6 +718,7 @@ impl Project {
         let project_file_before = self.project_file.clone();
         let derive_problems_before = self.derive_problems.clone();
         let problems_before = self.bindings.connection_problems().to_vec();
+        let live_input_problems_before = self.live_input_problems();
         // What behaviours said last time, so that `problems.txt` and the views follow a
         // behaviour that starts or stops reporting. Empty in a project with nothing to report.
         let instance_problems_before = self.instance_problems();
@@ -558,6 +767,7 @@ impl Project {
             self.push_event(ProjectEvent::ProjectFileChanged);
         }
         if problems_before != self.bindings.connection_problems()
+            || live_input_problems_before != self.live_input_problems()
             || instance_problems_before != self.instance_problems()
         {
             self.push_event(ProjectEvent::ProblemsChanged);
@@ -791,10 +1001,10 @@ impl Project {
     }
 
     fn check_tool(&self, tool: &'static str) -> Result<(), ProjectError> {
-        let enabled = self.registry.definition(tool).is_some_and(|definition| {
-            let extensions = &self.project_file.extensions;
-            extensions.iter().any(|it| it == definition.extension)
-        });
+        let enabled = self
+            .registry
+            .definition(tool)
+            .is_some_and(|definition| definition.is_enabled_in(&self.project_file.extensions));
         if enabled {
             Ok(())
         } else {

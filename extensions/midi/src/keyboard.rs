@@ -9,9 +9,9 @@ use sound_core::{
     monotonic_nanos,
 };
 
-use sound_notes::{Expression, NoteEvent, Pedal};
+use sound_notes::{Expression, Pedal, Pitch};
 
-use crate::keys::{Input, Keys, Played, Report};
+use crate::keys::{INPUT_CAPACITY, Input, Keys, Played, Report};
 use crate::take::{Take, TakeEvent};
 
 /// The name of the processor in the engine graph. Instance processors are named
@@ -119,6 +119,9 @@ pub struct Keyboard {
     /// Reports that were lost. Then this side does not know what is held, and a release is
     /// sent whether the mirror says so or not.
     seen_lost_reports: u64,
+    /// What the live input played since [`Self::take_heard`], for who listens besides the
+    /// instrument, such as a tool of the project.
+    heard: Vec<Played>,
 }
 
 impl Keyboard {
@@ -141,6 +144,7 @@ impl Keyboard {
             live_notes: 0,
             live_expression: Expression::REST,
             seen_lost_reports: 0,
+            heard: Vec::new(),
         })
     }
 
@@ -248,12 +252,14 @@ impl Keyboard {
             let sounded = match report {
                 Report::Sounded(sounded) => sounded,
                 Report::Released => {
+                    self.hear_release();
                     self.live_notes = 0;
                     self.live_pedal = Pedal::UP;
                     self.live_expression = Expression::REST;
                     continue;
                 }
             };
+            self.hear(sounded.arrived.played);
             if let Some(timing) = timing
                 && let Some(sound_nanos) = timing.sound_time_nanos(sounded.frame)
             {
@@ -264,16 +270,23 @@ impl Keyboard {
                 Played::On { pitch, .. } => self.live_notes |= 1 << pitch.number(),
                 Played::Off { pitch, .. } => self.live_notes &= !(1 << pitch.number()),
                 Played::Pedal(value) => self.live_pedal = value,
-                Played::Bend(_) | Played::ModWheel(_) | Played::Pressure(_) => {
-                    self.live_expression.follow(sounded.arrived.played.event());
+                Played::Bend(_)
+                | Played::ModWheel(_)
+                | Played::Pressure(_)
+                | Played::Control { .. } => {
+                    if let Some(event) = sounded.arrived.played.event() {
+                        self.live_expression.follow(event);
+                    }
                 }
             }
             let Some(recording) = &mut self.recording else {
                 continue;
             };
             // Only what the project played from the start of the recording on. A key that was
-            // pressed before, while the project was stopped, is not part of the take.
-            if !sounded.playing || sounded.tick < recording.start {
+            // pressed before, while the project was stopped, is not part of the take. A clip
+            // has no lane for another controller.
+            let control = matches!(sounded.arrived.played, Played::Control { .. });
+            if !sounded.playing || sounded.tick < recording.start || control {
                 continue;
             }
             let since = sounded
@@ -288,18 +301,46 @@ impl Keyboard {
         }
     }
 
+    /// What the live input played since the last call, in order: each message the engine
+    /// sounded, and the end of each note, the pedal and the wheels a release let go of, so
+    /// whoever heard something begin hears it end. Call it every poll: past what an input ring
+    /// holds, the rest is left out.
+    pub fn take_heard(&mut self) -> Vec<Played> {
+        std::mem::take(&mut self.heard)
+    }
+
+    fn hear(&mut self, played: Played) {
+        if self.heard.len() < INPUT_CAPACITY {
+            self.heard.push(played);
+        }
+    }
+
+    /// What a release lets go of, as the messages a hand would have played.
+    fn hear_release(&mut self) {
+        if self.live_pedal.is_down() {
+            self.hear(Played::Pedal(Pedal::UP));
+        }
+        for number in 0..128_u8 {
+            if self.live_notes & (1 << number) == 0 {
+                continue;
+            }
+            if let Ok(pitch) = Pitch::new(number) {
+                self.hear(Played::Off { pitch, velocity: 0 });
+            }
+        }
+        let wheels = self.live_expression.moves_to(Expression::REST);
+        for played in wheels.filter_map(Played::of_event) {
+            self.hear(played);
+        }
+    }
+
     /// Starts recording from the playhead. Whatever the engine sounds from here on is in the
     /// take. A recording that was going on is dropped.
     pub fn start_recording(&mut self, at: Ticks) {
         // A wheel away from rest is in the take from its first moment, so its clip starts
         // where the hand was, as it does for the pedal.
         let wheels = Expression::REST.moves_to(self.live_expression);
-        let wheels = wheels.filter_map(|event| match event {
-            NoteEvent::Bend(bend) => Some(Played::Bend(bend)),
-            NoteEvent::ModWheel(amount) => Some(Played::ModWheel(amount)),
-            NoteEvent::Pressure(amount) => Some(Played::Pressure(amount)),
-            _ => None,
-        });
+        let wheels = wheels.filter_map(Played::of_event);
         self.recording = Some(Recording {
             start: at,
             started_nanos: monotonic_nanos(),

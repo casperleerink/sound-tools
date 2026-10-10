@@ -28,6 +28,10 @@ type CreateCard =
 pub struct Views {
     by_tool: BTreeMap<&'static str, CreateView>,
     cards: BTreeMap<&'static str, CreateCard>,
+    /// See [`Views::set_other_cards`].
+    other_cards: Option<CreateCard>,
+    /// See [`Views::set_other_views`].
+    other_views: Option<(Rc<dyn Fn(&str) -> bool>, CreateView)>,
 }
 
 impl Global for Views {}
@@ -77,8 +81,36 @@ impl Views {
         );
     }
 
+    /// What makes the card of a tool that registered none: a tool the project wrote, which
+    /// comes and goes while the project is open. It says `None` for a tool it does not know.
+    pub fn set_other_cards(
+        &mut self,
+        create: impl Fn(
+            &Entity<Session>,
+            &InstanceId,
+            CardFrame,
+            &mut Window,
+            &mut App,
+        ) -> Option<AnyView>
+        + 'static,
+    ) {
+        self.other_cards = Some(Rc::new(create));
+    }
+
+    /// Which tools that registered no view have one, such as a tool the project wrote, and
+    /// what makes it: `create` is asked only for those. They come and go while the project is
+    /// open.
+    pub fn set_other_views(
+        &mut self,
+        has_view: impl Fn(&str) -> bool + 'static,
+        create: impl Fn(&Entity<Session>, &InstanceId, &mut Window, &mut App) -> Option<AnyView>
+        + 'static,
+    ) {
+        self.other_views = Some((Rc::new(has_view), Rc::new(create)));
+    }
+
     /// A new card of the instance in a slot of a rack, from the installed registry. `None`
-    /// when the instance is gone or its tool has no card.
+    /// when the instance is gone or nothing gives its tool a card.
     pub fn card_of(
         session: &Entity<Session>,
         id: &InstanceId,
@@ -87,8 +119,13 @@ impl Views {
         cx: &mut App,
     ) -> Option<AnyView> {
         let tool = session.read(cx).project().tool_of(id)?;
-        let create = cx.try_global::<Self>()?.cards.get(tool)?.clone();
-        create(session, id, frame, window, cx)
+        let views = cx.try_global::<Self>()?;
+        let create = views
+            .cards
+            .get(tool)
+            .or(views.other_cards.as_ref())
+            .cloned();
+        create?(session, id, frame, window, cx)
     }
 
     /// A new view of the instance, from the installed registry. `None` when the instance is
@@ -101,7 +138,11 @@ impl Views {
         cx: &mut App,
     ) -> Option<AnyView> {
         let tool = session.read(cx).project().tool_of(id)?;
-        let create = cx.try_global::<Self>()?.by_tool.get(tool)?.clone();
+        let views = cx.try_global::<Self>()?;
+        let other = (views.other_views.as_ref())
+            .filter(|(has, _)| has(tool))
+            .map(|(_, create)| create);
+        let create = views.by_tool.get(tool).or(other)?.clone();
         create(session, id, window, cx)
     }
 
@@ -111,8 +152,11 @@ impl Views {
         let views = cx.try_global::<Self>()?;
         let project = session.read(cx).project();
         let mut instances = project.instances();
+        let other = |tool: &str| views.other_views.as_ref().is_some_and(|(has, _)| has(tool));
         instances
-            .find(|(id, tool)| id.parent().is_none() && views.by_tool.contains_key(tool))
+            .find(|(id, tool)| {
+                id.parent().is_none() && (views.by_tool.contains_key(tool) || other(tool))
+            })
             .map(|(id, _)| id.clone())
     }
 }

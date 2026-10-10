@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::clock::{Clock, TempoMap, Ticks};
 use crate::engine::{Batch, Command, Engine, EngineStatus, ErasedProcessor, Slot};
 use crate::graph::{Connection, Graph, GraphError, NodeId, Schedule};
+use crate::input::{InputId, LiveInput};
 use crate::peaks::Peaks;
 use crate::processor::{Ports, PrepareConfig, Processor};
 use crate::transport::TransportCommand;
@@ -193,6 +194,14 @@ impl EngineControl {
         let mut edit = self.edit();
         edit.set_tempo_map(tempo_map);
         edit.send();
+    }
+
+    /// Plays `input` into the connections from the live input `id` from the next block on, or
+    /// silence with `None`. An input at another rate than the engine is not heard, as it would
+    /// play at the wrong speed. The one before comes back and is dropped in `poll`.
+    pub fn set_live_input(&mut self, id: InputId, input: Option<LiveInput>) {
+        let input = input.filter(|input| input.sample_rate() == self.config.sample_rate);
+        self.send(Command::SetLiveInput(id, input.map(Box::new)));
     }
 
     /// The clock of the tempo map set last. The audio thread switches to it at its next block.

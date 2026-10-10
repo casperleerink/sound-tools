@@ -11,6 +11,7 @@ use rtsan_standalone::nonblocking;
 
 use crate::clock::{Clock, Frames, Ticks};
 use crate::graph::Schedule;
+use crate::input::{InputId, LiveInput};
 use crate::peaks::{Peaks, loudest};
 use crate::processor::{
     AudioInputs, AudioOutputs, CHANNELS, EventInputs, EventOutputs, MAX_BLOCK, ProcessContext,
@@ -79,7 +80,12 @@ pub(crate) enum Command {
     Transport(TransportCommand),
     /// A new tempo map, compiled. The old clock comes back.
     SetClock(Arc<Clock>),
+    /// A live input, or none. The one before comes back.
+    SetLiveInput(InputId, Option<Box<LiveInput>>),
 }
+
+/// How many live inputs play at once: the device input and the sound of up to 15 apps.
+pub(crate) const LIVE_INPUTS: usize = 16;
 
 /// All commands of one edit. They apply at the start of the same block.
 pub(crate) type Batch = Vec<Command>;
@@ -122,6 +128,10 @@ pub struct EngineStatus {
     /// The longest latency from any processor to the device, in frames: how long the playhead
     /// waits after a play or a seek. Zero in a project where nothing reports latency.
     pub latency: u64,
+    /// Frames of the live inputs left out because too many waited, see [`LiveInput`].
+    pub live_input_dropped: u64,
+    /// Device blocks in which a live input was silence because too few frames had come.
+    pub live_input_underruns: u64,
 }
 
 pub struct Engine {
@@ -138,6 +148,9 @@ pub struct Engine {
     preroll_frames: u64,
     /// What the device plays, for a meter. The control side has a clone.
     output_peaks: Peaks,
+    /// What plays into the connections from each live input. A connection from an input that
+    /// is not here hears silence. A place with no input is free.
+    live_inputs: [(InputId, Option<Box<LiveInput>>); LIVE_INPUTS],
 }
 
 impl Engine {
@@ -165,6 +178,7 @@ impl Engine {
             status_writer,
             output_peaks,
             preroll_frames: 0,
+            live_inputs: std::array::from_fn(|_| (InputId::DEVICE, None)),
         }
     }
 
@@ -205,6 +219,17 @@ impl Engine {
                 let whole = output.len() - output.len() % self.channels.max(1);
                 let (frames, rest) = output.split_at_mut(whole);
                 rest.fill(0.0);
+                // One block of input for each block of output, decided once for the whole
+                // device block, so a short one is silent whole and not in pieces.
+                for input in self
+                    .live_inputs
+                    .iter_mut()
+                    .filter_map(|(_, input)| input.as_mut())
+                {
+                    let (dropped, short) = input.begin_block(whole / self.channels.max(1));
+                    self.status.live_input_dropped += dropped;
+                    self.status.live_input_underruns += u64::from(short);
+                }
                 for sub_block in frames.chunks_mut(MAX_BLOCK * self.channels.max(1)) {
                     if self.apply_batches() {
                         self.find_leads();
@@ -276,6 +301,7 @@ impl Engine {
                         }
                         self.transport.swap_clock(clock);
                     }
+                    Command::SetLiveInput(id, input) => self.set_live_input(*id, input),
                 }
             }
             self.status.batches_applied += 1;
@@ -286,6 +312,23 @@ impl Engine {
             }
         }
         applied
+    }
+
+    /// Swaps `input` into the place of `id`, or into a free place. With every place taken it
+    /// stays out, and goes back with the batch.
+    fn set_live_input(&mut self, id: InputId, input: &mut Option<Box<LiveInput>>) {
+        let places = &mut self.live_inputs;
+        let place = match places
+            .iter()
+            .position(|(at, live)| *at == id && live.is_some())
+        {
+            Some(place) => Some(place),
+            None => places.iter().position(|(_, live)| live.is_none()),
+        };
+        if let Some((at, live)) = place.and_then(|place| places.get_mut(place)) {
+            *at = id;
+            std::mem::swap(input, live);
+        }
     }
 
     fn processor_mut(&mut self, slot: usize) -> Option<&mut Box<dyn ErasedProcessor>> {
@@ -361,8 +404,29 @@ impl Engine {
             event_outputs,
             event_inputs,
             device_sources,
+            live_inputs,
             ..
         } = &mut *self.schedule;
+
+        // No step writes the buffers of the live inputs, so they are filled here, before any
+        // step reads them, and with silence from an input that is not there.
+        for input in self
+            .live_inputs
+            .iter_mut()
+            .filter_map(|(_, input)| input.as_mut())
+        {
+            input.read(frames);
+        }
+        for (id, channel, buffer) in live_inputs.iter() {
+            let Some(port) = audio_outputs.get_mut(*buffer) else {
+                continue;
+            };
+            let mut places = self.live_inputs.iter();
+            match places.find_map(|(at, input)| input.as_ref().filter(|_| at == id)) {
+                Some(input) => input.pair_into(*channel, frames, port),
+                None => port.iter_mut().for_each(|side| side.fill(0.0)),
+            }
+        }
 
         self.transport.begin_block();
         // What the device plays in this block. Every processor with no latency after it sees

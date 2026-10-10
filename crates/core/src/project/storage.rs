@@ -123,12 +123,21 @@ pub(crate) fn decode_record(
     let file: RecordFile = decode_json(bytes).map_err(Unloadable::Invalid)?;
     let definition = registry
         .definition(&file.tool)
-        .filter(|definition| {
-            let enabled = |extension: &String| extension == definition.extension;
-            project_file.extensions.iter().any(enabled)
-        })
+        .filter(|definition| definition.is_enabled_in(&project_file.extensions))
         .ok_or_else(|| Unloadable::UnknownTool(file.tool.clone()))?;
     (definition.decode)(file.state).map_err(Unloadable::Invalid)
+}
+
+/// The tool a record file names, with nothing else checked. `None` when the file does not
+/// read or names no tool.
+pub(crate) fn tool_named_in(path: &Path) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Named {
+        tool: String,
+    }
+    let bytes = fs::read(path).ok()?;
+    let named: Named = serde_json::from_slice(&bytes).ok()?;
+    Some(named.tool)
 }
 
 pub(crate) fn decode_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {

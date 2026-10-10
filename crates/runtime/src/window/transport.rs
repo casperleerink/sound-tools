@@ -1,7 +1,7 @@
 //! The transport: a pill in the middle of the title row. Play or pause, stop, record, the
 //! position as bar and beat and as time, a hairline seek strip with the duration when the
-//! project has an end, the tempo at the playhead, the steadiness of a fit, the click and the
-//! master meter.
+//! project has an end, the tempo at the playhead, the steadiness of a fit, the computer keys,
+//! the click and the master meter.
 //!
 //! It follows the playhead, so it renders every frame while the project plays. It therefore
 //! reads the end of the project, which walks every clip, only after a project event, and
@@ -11,7 +11,8 @@
 //! so a `project.json` written from outside shows at once, also during a drag. A drag is one
 //! gesture of the session and one undo step. The click is not project state at all: it is a
 //! processor in the engine with a switch, see [`metronome`]. Neither is the MIDI input, see
-//! [`midi`]: a finished recording is an edit, and nothing before it is.
+//! [`midi`]: a finished recording is an edit, and nothing before it is. The computer keys play
+//! into that input as one more keyboard.
 
 use std::sync::Arc;
 
@@ -23,12 +24,13 @@ use gpui::{
     canvas, div, fill, point, prelude::*, px, quad, size,
 };
 use metronome::Click;
-use midi::{Input, Keyboard, Latency, Lost};
+use midi::{ComputerKeys, Input, Keyboard, Latency, Lost};
 use sound_core::{
-    Changes, Clock, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange,
-    Ticks,
+    Changes, Clock, InputEndpoint, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo,
+    TempoChange, Ticks,
 };
 use sound_media::Imported;
+use sound_typescript::Midi;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
@@ -122,6 +124,16 @@ pub struct TransportPill {
     click: Option<Click>,
     /// The MIDI input in the engine. `None` only when the engine refused it, which is reported.
     keyboard: Option<Keyboard>,
+    /// The track whose tools of the project hear the MIDI input: the one it played into when
+    /// what they hear sounded. It moves with the keyboard, only after what was held is let go,
+    /// so a tool hears the end of each note it heard begin.
+    hearing: Option<InstanceId>,
+    /// The keys the tools of `hearing` heard go down and not up yet, one bit each.
+    hearing_held: u128,
+    /// Where the keyboard was last asked to play, and the track of that.
+    asked: (Option<InputEndpoint>, Option<InstanceId>),
+    /// The computer keys while they play as a MIDI keyboard. Not project state, like the click.
+    computer_keys: Option<ComputerKeys>,
     /// When the sound of an engine frame reaches the device, for the latency. `None` without a
     /// device, so an offline window measures nothing instead of guessing.
     timing: Option<Arc<StreamTiming>>,
@@ -130,7 +142,8 @@ pub struct TransportPill {
     seen: Playhead,
     /// The recording of the record control, from its start until its clips are made.
     take: Option<Take>,
-    /// The audio input, open while a track is armed, and its recorder.
+    /// The audio input, open while a track is armed or `project.json` connects it, and its
+    /// recorder.
     audio: AudioInput,
     recording: Entity<Recording>,
     tempo_drag: Option<TempoDrag>,
@@ -139,6 +152,7 @@ pub struct TransportPill {
     stop_focus: FocusHandle,
     record_focus: FocusHandle,
     strip_focus: FocusHandle,
+    keys_focus: FocusHandle,
     click_focus: FocusHandle,
     /// What the device plays, taken once per poll: the master meter at the right end.
     output: Peaks,
@@ -195,6 +209,15 @@ impl TransportPill {
                     pill.finish_recording(tick, cx);
                 }
             }
+            // An agent may connect the device input in `project.json`, or take it away, while
+            // the window runs. A connection that comes into the graph or leaves it, as its
+            // instance comes or goes, changes the problems.
+            if matches!(
+                event,
+                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged
+            ) {
+                pill.follow_input(cx);
+            }
             // A deleted track is no longer armed.
             if matches!(event, ProjectEvent::Deleted(_)) {
                 let project = pill.session.read(cx).project();
@@ -212,10 +235,15 @@ impl TransportPill {
         })
         .detach();
         // The input is open while a track is armed: that is how a composer sees the level
-        // before a take.
+        // before a take. A project that connects the device input opens it with the window.
         let recording = session.read(cx).recording().clone();
-        cx.observe(&recording, |pill, _, cx| pill.follow_arming(cx))
+        cx.observe(&recording, |pill, _, cx| pill.follow_input(cx))
             .detach();
+        let pill = cx.weak_entity();
+        cx.defer(move |cx| {
+            // A window that went in the meantime opens nothing.
+            pill.update(cx, |pill, cx| pill.follow_input(cx)).ok();
+        });
         // The end is not read during a drag, see `refresh`. The end of a gesture sends no
         // event, and the session notifies after it.
         cx.observe(&session, |pill, _, cx| {
@@ -269,6 +297,10 @@ impl TransportPill {
             scrubbing: false,
             click,
             keyboard,
+            hearing: None,
+            hearing_held: 0,
+            asked: (None, None),
+            computer_keys: None,
             timing,
             tempo_drag: None,
             steadiness_drag: DragEdit::default(),
@@ -276,6 +308,7 @@ impl TransportPill {
             stop_focus: cx.focus_handle().tab_stop(true),
             record_focus: cx.focus_handle().tab_stop(true),
             strip_focus: cx.focus_handle().tab_stop(true),
+            keys_focus: cx.focus_handle().tab_stop(true),
             click_focus: cx.focus_handle().tab_stop(true),
             output,
             metering: Metering::default(),
@@ -293,6 +326,8 @@ impl TransportPill {
         let selected = session.read(cx).selected().cloned();
         let project = session.read(cx).project();
         let destination = recording::live_notes_input(project, selected.as_ref());
+        let track = recording::target_track(project, selected.as_ref());
+        let track = track.map(|track| track.id().clone());
         let timing = self.timing.clone();
         let recording_track = self.take.as_ref().map(|take| take.midi_track.clone());
         self.poll_audio(cx);
@@ -304,17 +339,43 @@ impl TransportPill {
         let polled = session.update(cx, |session, _| {
             keyboard.poll(session.engine(), timing.as_deref())
         });
+        // What sounded since the last poll went where the keyboard played until now, and the
+        // tools of that track hear it.
+        let heard = keyboard.take_heard().into_iter();
+        let mut heard: Vec<_> = heard.filter_map(recording::tool_message).collect();
+        for message in &heard {
+            match *message {
+                Midi::NoteOn { pitch, .. } => self.hearing_held |= 1 << pitch,
+                Midi::NoteOff { pitch } => self.hearing_held &= !(1 << pitch),
+                Midi::Cc { .. } | Midi::Bend { .. } => {}
+            }
+        }
+        let hearing = self.hearing.clone();
+        if keyboard.destination() == self.asked.0 {
+            self.hearing = self.asked.1.clone();
+        }
+        // The keyboard lets go of nothing when it plays into the same port, such as nowhere
+        // on two tracks with no instrument: the tools of the old track hear the ends here.
+        if self.hearing != hearing {
+            let held = std::mem::take(&mut self.hearing_held);
+            let offs = (0..128_u8).filter(|pitch| held & (1 << pitch) != 0);
+            heard.extend(offs.map(|pitch| Midi::NoteOff { pitch }));
+        }
         // A take goes to the track it began on, so the live input stays there too while it
         // runs. Selecting another track during a take would otherwise split the two.
         let wired = match recording_track.is_some() {
             true => Ok(()),
-            false => session.update(cx, |session, _| {
-                keyboard.play_into(session.engine(), destination)
-            }),
+            false => {
+                self.asked = (destination, track);
+                session.update(cx, |session, _| {
+                    keyboard.play_into(session.engine(), destination)
+                })
+            }
         };
         if let Err(error) = polled.and(wired) {
             session.update(cx, |session, cx| session.report(error, cx));
         }
+        sound_typescript::hear_midi(hearing.as_ref(), &heard, cx);
         self.show_notes(cx);
     }
 
@@ -612,7 +673,7 @@ impl TransportPill {
             });
         }
         drop(audio_takes);
-        self.follow_arming(cx);
+        self.follow_input(cx);
     }
 
     /// Opens the input on the background executor, when it is not open or on its way.
@@ -642,9 +703,26 @@ impl TransportPill {
         let assets = self.session.read(cx).project().assets().clone();
         match self.audio.opened(generation, opened, &assets) {
             None => {}
-            Some(Ok(channels)) => self.recording.update(cx, |recording, cx| {
-                recording.set_input_channels(Some(channels), cx)
-            }),
+            Some(Ok((channels, live))) => {
+                let plays = live.sample_rate() == self.session.read(cx).project().sample_rate();
+                // The engine reads it while the input is open, whether a connection hears it
+                // or not, so it never falls behind.
+                self.session.update(cx, |session, cx| {
+                    session.background(cx, |project| project.set_live_input(Some(live)))
+                });
+                // Opened for a connection alone, an input at another rate plays nothing. The
+                // problem of the connection says why, and the device closes. A track records
+                // at any rate.
+                let armed = self.recording.read(cx).armed().next().is_some();
+                let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
+                if !plays && !armed && !records {
+                    self.audio.give_up();
+                    return;
+                }
+                self.recording.update(cx, |recording, cx| {
+                    recording.set_input_channels(Some(channels), cx)
+                });
+            }
             Some(Err(error)) => {
                 self.session
                     .update(cx, |session, cx| session.report(error, cx));
@@ -665,17 +743,24 @@ impl TransportPill {
         }
     }
 
-    /// The input is open while a track is armed or audio records, and closed otherwise, so the
-    /// device is not held and macOS shows no microphone in use.
-    fn follow_arming(&mut self, cx: &mut Context<Self>) {
-        let armed = self.recording.read(cx).armed().next().is_some();
+    /// The input is open while a track is armed, audio records or a `project.json` connection
+    /// in the graph hears the device input, and closed otherwise, so the device is not held and
+    /// macOS shows no microphone in use. One that failed or went away is closed and not opened
+    /// again here until something new wants it: the next arming, or a connection that comes,
+    /// opens the input there is then.
+    fn follow_input(&mut self, cx: &mut Context<Self>) {
+        let armed: Vec<InstanceId> = self.recording.read(cx).armed().cloned().collect();
         let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
-        if armed {
+        let heard = self.session.read(cx).project().hears_device_input();
+        if self.audio.wants(armed, heard) && !self.audio.is_gone() {
             self.open_input(cx);
         } else if !records && self.audio.is_open_or_opening() {
             self.audio.close();
             self.recording
                 .update(cx, |recording, cx| recording.set_input_channels(None, cx));
+            self.session.update(cx, |session, cx| {
+                session.background(cx, |project| project.set_live_input(None))
+            });
         }
     }
 
@@ -686,7 +771,7 @@ impl TransportPill {
             self.recording
                 .update(cx, |recording, cx| recording.set_levels(levels, cx));
             if silent {
-                let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then arm again.";
+                let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then open the project again.";
                 self.session
                     .update(cx, |session, cx| session.report(notice, cx));
             }
@@ -732,7 +817,7 @@ impl TransportPill {
             .update(cx, |recording, cx| recording.retain_armed(|_| false, cx));
         // The recorder writes the last of the take first; the input closes once it is done.
         if !records {
-            self.follow_arming(cx);
+            self.follow_input(cx);
         }
     }
 
@@ -852,6 +937,80 @@ impl TransportPill {
             }
         });
         cx.notify();
+    }
+
+    /// Whether the computer keys play. For tests and for the button.
+    pub fn computer_keys_are_on(&self) -> bool {
+        self.computer_keys.is_some()
+    }
+
+    /// Turns the computer keys on or off. Not an edit, like the click. Off ends what they hold.
+    pub fn toggle_computer_keys(&mut self, cx: &mut Context<Self>) {
+        if self.keyboard.is_none() {
+            return;
+        }
+        match self.computer_keys.is_some() {
+            true => {
+                self.let_go_of_computer_keys(cx);
+                self.computer_keys = None;
+            }
+            false => self.computer_keys = Some(ComputerKeys::default()),
+        }
+        cx.notify();
+    }
+
+    /// A key went down. Gives whether the computer keys took it, and then nothing else may
+    /// hear it. A key they hold stays theirs wherever the focus went since, so its repeats
+    /// reach nothing else. Another key is theirs while they play, when it is one of theirs
+    /// with no cmd, ctrl, alt or fn and the plain keys are `free`.
+    pub fn computer_key_down(&mut self, event: &KeyDownEvent, free: bool) -> bool {
+        let (Some(keys), Some(keyboard)) = (&mut self.computer_keys, &self.keyboard) else {
+            return false;
+        };
+        let keystroke = &event.keystroke;
+        let key = keystroke.key.as_str();
+        if keys.holds(key) {
+            return true;
+        }
+        let modifiers = keystroke.modifiers;
+        let plain =
+            !(modifiers.platform || modifiers.control || modifiers.alt || modifiers.function);
+        if !(free && plain && ComputerKeys::plays(key)) {
+            return false;
+        }
+        // A repeat of a key that went down where they did not hear it, such as on a tool's
+        // card, starts nothing. Else it goes where a MIDI keyboard's messages go, so the
+        // instrument, a take and the tools hear it as they hear those.
+        if !event.is_held
+            && let Some(played) = keys.down(key)
+        {
+            keyboard.input().send(played);
+        }
+        true
+    }
+
+    /// A key came up. Gives whether it was the computer keys', and ends its note.
+    pub fn computer_key_up(&mut self, key: &str) -> bool {
+        let (Some(keys), Some(keyboard)) = (&mut self.computer_keys, &self.keyboard) else {
+            return false;
+        };
+        let held = keys.holds(key);
+        if let Some(played) = keys.up(key) {
+            keyboard.input().send(played);
+        }
+        held
+    }
+
+    /// Ends every note the computer keys hold, for when their key ups will not come: cmd is
+    /// down, or the window lost the keys.
+    pub fn let_go_of_computer_keys(&mut self, _: &mut Context<Self>) {
+        let (Some(keys), Some(keyboard)) = (&mut self.computer_keys, &self.keyboard) else {
+            return;
+        };
+        let input = keyboard.input();
+        for played in keys.release() {
+            input.send(played);
+        }
     }
 
     /// The tempo the transport shows: the one in effect at the playhead. It is read from the
@@ -1218,6 +1377,7 @@ impl Render for TransportPill {
         let strip = self.end.map(|end| self.strip(end, cx));
         let click_on = self.click_is_on();
         let has_click = self.click.is_some();
+        let keys_on = self.computer_keys_are_on();
         let recording = self.is_recording();
         let can_record = self.keyboard.is_some() || self.audio.can_open();
         let session = self.session.clone();
@@ -1306,8 +1466,21 @@ impl Render for TransportPill {
             .child(tempo)
             // Only a project with a fit has this, so every other pill is what it always was.
             .children(steadiness)
-            // The click is a reference, not part of the mix, so it takes no colour: a muted
-            // glyph while it is off, and white under a dark glyph while it sounds.
+            // The computer keys and the click are switches of the composer, not of the mix, so
+            // they take no colour: a muted glyph while off, and white under a dark glyph while on.
+            .child(
+                Button::icon_only("computer-keys", "keyboard-music")
+                    .variant(match keys_on {
+                        true => ButtonVariant::Primary,
+                        false => ButtonVariant::GhostColor(muted),
+                    })
+                    .size(ButtonSize::Sm)
+                    .rounded(true)
+                    .disabled(self.keyboard.is_none())
+                    .debug_selector(|| "computer-keys".to_string())
+                    .focus_handle(&self.keys_focus)
+                    .on_click(cx.listener(|pill, _, _, cx| pill.toggle_computer_keys(cx))),
+            )
             .child(
                 Button::icon_only("click", "metronome")
                     .variant(match click_on {

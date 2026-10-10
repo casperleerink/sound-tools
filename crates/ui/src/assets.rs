@@ -53,6 +53,7 @@ icons!(
     "eye-off",
     "folder",
     "info",
+    "keyboard-music",
     "loader-circle",
     "lock",
     "lock-open",

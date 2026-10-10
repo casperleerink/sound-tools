@@ -7,7 +7,7 @@
 //! thread that draws then places each take ([`take_clip`]): the moment a frame was captured is
 //! the moment the composer played it, the timing of the output device says which engine frame
 //! was sounding then, and the engine status says which project frame that engine frame was.
-//! Nothing of this is on the audio thread, and nothing is played: there is no monitoring.
+//! Nothing of this is on the audio thread, and the recorder plays nothing.
 
 use std::ops::Range;
 use std::sync::Arc;

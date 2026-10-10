@@ -22,8 +22,9 @@ use plugin_host::{
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
     AgentDoc, Changes, Engine, EngineConfig, EngineControl, Instance, InstanceId, Project,
-    ProjectError, Registry, SavedDestination, State, Ticks,
+    ProjectError, Registry, SavedDestination, SavedSource, State, Ticks,
 };
+use sound_typescript::Extensions;
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use window::{LeftPanel, LeftPanelSlot};
 
@@ -155,6 +156,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     utility::register(&mut registry)?;
     wavetable::register(&mut registry)?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
+    registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
@@ -242,9 +244,14 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
     let threads = support.as_deref().map(app::threads_folder);
     let file = support.as_deref().map(app::agent_settings_file);
     let settings = cx.new(|cx| AgentSettings::new(file, cx));
+    // The agent checks the types of the project's tools with the Bun that runs them.
+    let bun_folder =
+        sound_typescript::bundled_bun().and_then(|bun| bun.parent().map(Path::to_path_buf));
     LeftPanelSlot::new(remembered, move |session, window, cx| {
         let (agents, threads, settings) = (agents.clone(), threads.clone(), settings.clone());
-        let sidebar = cx.new(|cx| Sidebar::new(session, agents, threads, settings, window, cx));
+        let bun_folder = bun_folder.clone();
+        let sidebar =
+            cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
     })
 }
@@ -322,7 +329,7 @@ pub fn solo(
     };
     let tracks = arrangement::tracks(project, arrangement.id());
     let called = |(track, state): &(Instance<TrackState>, &TrackState), name: &String| {
-        state.name == *name || track.id().as_str() == name
+        state.name == *name || track.id().as_str() == name || track.id().name() == name
     };
     if let Some(missing) = names
         .iter()
@@ -420,14 +427,39 @@ pub fn open_or_create_with(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
+    Ok(open_with_extensions(folder, control, plugins)?.0)
+}
+
+/// [`open_or_create_with`], and the project's own tools in `extensions/` for a window to keep
+/// running: it defines them again when their code is saved. Without the window they play on
+/// as long as the project lives.
+pub fn open_with_extensions(
+    folder: &Path,
+    control: EngineControl,
+    plugins: Plugins,
+) -> Result<(Project, Option<Extensions>)> {
     let is_new = !folder.join(PROJECT_FILE).exists();
-    let mut project = Project::open(folder, registry(plugins)?, control)?;
+    let (registry, extensions) = registry_of(folder, plugins)?;
+    let mut project = Project::open(folder, registry, control)?;
+    if let Some(extensions) = &extensions {
+        extensions.report(&mut project);
+    }
     // A `state/` folder with content but no project file is someone's work, not a new project.
     if is_new && project.instances().next().is_none() && project.problems().is_empty() {
         arrangement::create_default_project(&mut project)?;
         project.clear_history();
     }
-    Ok(project)
+    Ok((project, extensions))
+}
+
+/// The registry, with the tools of the project in `folder` when it has its own.
+fn registry_of(folder: &Path, plugins: Plugins) -> Result<(Registry, Option<Extensions>)> {
+    let mut registry = registry(plugins)?;
+    let mut extensions = Extensions::start(folder);
+    if let Some(extensions) = &mut extensions {
+        extensions.register(&mut registry);
+    }
+    Ok((registry, extensions))
 }
 
 /// Opens the project the way `--inspect` does: without its lock, and with a host that looks a
@@ -443,7 +475,11 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
-    let project = Project::open_read_only(folder, registry(plugins)?, control)?;
+    let (registry, extensions) = registry_of(folder, plugins)?;
+    let mut project = Project::open_read_only(folder, registry, control)?;
+    if let Some(extensions) = &extensions {
+        extensions.report(&mut project);
+    }
     Ok((project, engine))
 }
 
@@ -496,12 +532,16 @@ pub fn summary(project: &Project) -> String {
 
     lines.push(format!("connections: {}", project_file.connections.len()));
     for connection in &project_file.connections {
-        let from = &connection.from;
+        let from = match &connection.from {
+            SavedSource::DeviceInput(channel) => format!("device input {channel}"),
+            SavedSource::App(app) => format!("the sound of {app}"),
+            SavedSource::Output(output) => format!("{}:{}", output.instance, output.port),
+        };
         let to = match &connection.to {
             SavedDestination::DeviceOutput(channel) => format!("device output {channel}"),
             SavedDestination::Input(input) => format!("{}:{}", input.instance, input.port),
         };
-        lines.push(format!("  {}:{} -> {to}", from.instance, from.port));
+        lines.push(format!("  {from} -> {to}"));
     }
     lines.push(problems(project));
     lines.join("\n")

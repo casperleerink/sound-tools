@@ -9,15 +9,16 @@ use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
-    AppContext, Bounds, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
-    TestAppContext, VisualTestContext, point, px,
+    AppContext, BackgroundExecutor, Bounds, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta,
+    ScrollWheelEvent, TestAppContext, VisualTestContext, point, px,
 };
 use plugin_host::WeakPlugins;
 use runtime::window::audio_input::{OpenInput, OpenedInput};
-use runtime::window::{Shell, TransportPill, bind_keys};
+use runtime::window::other_apps::AppSounds;
+use runtime::window::{DeviceAccess, ListDevices, Shell, TransportPill, bind_keys};
 use runtime::{OFFLINE, views};
-use sound_core::{CaptureWriter, Engine, InstanceId, Project, Ticks};
+use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{POLL_INTERVAL, Playhead, Session};
 use tempfile::TempDir;
@@ -231,7 +232,14 @@ pub(crate) fn open_project(
     engine: Engine,
     plugins: WeakPlugins,
 ) -> Opened<'_> {
-    open_project_with_input(cx, folder, project, engine, plugins, None)
+    open_project_with_device(
+        cx,
+        folder,
+        project,
+        engine,
+        plugins,
+        DeviceAccess::default(),
+    )
 }
 
 /// An audio input the window opens as its default input, with no device: two channels at
@@ -241,34 +249,52 @@ pub(crate) fn open_project(
 #[derive(Clone, Default)]
 pub(crate) struct SimulatedInput {
     writer: Arc<Mutex<Option<CaptureWriter>>>,
+    /// What the engine plays live, written with the capture.
+    live: Arc<Mutex<Option<LiveWriter>>>,
     /// Input frames written so far.
     written: Arc<AtomicU64>,
     /// Times the window opened it.
     pub openings: Arc<AtomicU32>,
+    /// Times the window tried to, the ones that failed too.
+    attempts: Arc<AtomicU32>,
     /// Whether opening it fails, as a device that is in use or not allowed.
     pub fails: Arc<AtomicBool>,
+    /// Its sample rate, when not 48 kHz.
+    pub rate: Arc<AtomicU32>,
 }
 
 impl SimulatedInput {
     pub(crate) fn opener(&self) -> OpenInput {
         let input = self.clone();
         Arc::new(move || {
+            input.attempts.fetch_add(1, Ordering::Relaxed);
             if input.fails.load(Ordering::Relaxed) {
                 return Err(sound_core::DeviceError::NoInputDevice);
             }
-            let (writer, reader) = sound_core::capture(48_000, 2);
+            let rate = match input.rate.load(Ordering::Relaxed) {
+                0 => 48_000,
+                rate => rate,
+            };
+            let (writer, reader) = sound_core::capture(rate, 2);
+            let (live_writer, live) = sound_core::live_input(rate, 2);
             *input.writer.lock().unwrap() = Some(writer);
+            *input.live.lock().unwrap() = Some(live_writer);
             input.written.store(0, Ordering::Relaxed);
             input.openings.fetch_add(1, Ordering::Relaxed);
             Ok(OpenedInput {
                 stream: None,
                 reader,
+                live,
             })
         })
     }
 
     pub(crate) fn openings(&self) -> u32 {
         self.openings.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn attempts(&self) -> u32 {
+        self.attempts.load(Ordering::Relaxed)
     }
 
     /// Writes the input up to engine frame `until`: each frame from `sample(frame)`, left and
@@ -285,12 +311,16 @@ impl SimulatedInput {
         let samples: Vec<f32> = (first..until).flat_map(sample).collect();
         let nanos = |frame: u64| frame * 1_000_000_000 / 48_000;
         writer.write(&samples, nanos(first), 0);
+        if let Some(live) = self.live.lock().unwrap().as_mut() {
+            live.write(&samples);
+        }
         self.written.store(until, Ordering::Relaxed);
     }
 
     /// The device goes away, as an interface that is unplugged.
     pub(crate) fn unplug(&self) {
         self.writer.lock().unwrap().take();
+        self.live.lock().unwrap().take();
     }
 }
 
@@ -305,18 +335,120 @@ pub(crate) fn open_with_input(
     add_first_track(&mut project);
     fill(&mut project);
     let input = SimulatedInput::default();
-    let opener = Some(input.opener());
-    let opened = open_project_with_input(cx, folder, project, engine, plugins.downgrade(), opener);
+    let device = DeviceAccess {
+        open_input: Some(input.opener()),
+        ..DeviceAccess::default()
+    };
+    let plugins = plugins.downgrade();
+    let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
     (opened, input)
 }
 
-fn open_project_with_input(
+/// The sound of one app that runs or not, with no tap: two channels at 48 kHz, into which the
+/// test writes what the app would play.
+#[derive(Clone, Default)]
+pub(crate) struct SimulatedApp {
+    /// Its processes; none while it is not running.
+    processes: Arc<Mutex<Vec<u32>>>,
+    live: Arc<Mutex<Option<LiveWriter>>>,
+    /// For each tap that closed, whether it closed on the thread that draws.
+    closed: Arc<Mutex<Vec<bool>>>,
+}
+
+impl SimulatedApp {
+    /// `executor` is what a tap that closes asks whether it is on the thread that draws.
+    pub(crate) fn sounds(&self, executor: BackgroundExecutor) -> AppSounds {
+        let (app, processes) = (self.clone(), self.processes.clone());
+        AppSounds {
+            open: Arc::new(move |name| {
+                if app.processes.lock().unwrap().is_empty() {
+                    return Err(sound_core::DeviceError::NoApp(name.clone().into()));
+                }
+                let (writer, live) = sound_core::live_input(48_000, 2);
+                *app.live.lock().unwrap() = Some(writer);
+                let stream = SimulatedStream {
+                    closed: app.closed.clone(),
+                    executor: executor.clone(),
+                };
+                Ok((Box::new(stream), live))
+            }),
+            processes: Arc::new(move |_| processes.lock().unwrap().clone()),
+        }
+    }
+
+    /// The app starts, or quits with no processes.
+    pub(crate) fn set_processes(&self, processes: Vec<u32>) {
+        *self.processes.lock().unwrap() = processes;
+    }
+
+    /// Plays one stereo frame, `frames` times.
+    pub(crate) fn play(&self, frame: [f32; 2], frames: usize) {
+        if let Some(writer) = self.live.lock().unwrap().as_mut() {
+            writer.write(&frame.repeat(frames));
+        }
+    }
+
+    /// Whether the engine has the live input of its tap.
+    pub(crate) fn is_heard(&self) -> bool {
+        (self.live.lock().unwrap().as_ref()).is_some_and(|writer| !writer.is_abandoned())
+    }
+
+    /// For each tap that closed, whether it closed on the thread that draws.
+    pub(crate) fn closed_on_ui_thread(&self) -> Vec<bool> {
+        self.closed.lock().unwrap().clone()
+    }
+}
+
+/// The stream of a simulated tap, which tells where it was dropped.
+struct SimulatedStream {
+    closed: Arc<Mutex<Vec<bool>>>,
+    executor: BackgroundExecutor,
+}
+
+impl Drop for SimulatedStream {
+    fn drop(&mut self) {
+        let on_ui_thread = self.executor.is_main_thread();
+        self.closed.lock().unwrap().push(on_ui_thread);
+    }
+}
+
+/// A new project with one track, in a window that hears a simulated app.
+pub(crate) fn open_with_app(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedApp) {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, engine) = Engine::new(OFFLINE);
+    let (mut project, plugins) = open_or_create(folder.path(), control);
+    add_first_track(&mut project);
+    let app = SimulatedApp::default();
+    let device = DeviceAccess {
+        app_sounds: Some(app.sounds(cx.executor())),
+        ..DeviceAccess::default()
+    };
+    let plugins = plugins.downgrade();
+    let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
+    (opened, app)
+}
+
+/// A new project with one track, in a window that lists the audio devices with `list`.
+pub(crate) fn open_with_devices(cx: &mut TestAppContext, list: ListDevices) -> Opened<'_> {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, engine) = Engine::new(OFFLINE);
+    let (mut project, plugins) = open_or_create(folder.path(), control);
+    add_first_track(&mut project);
+    let device = DeviceAccess {
+        list_devices: Some(list),
+        ..DeviceAccess::default()
+    };
+    let plugins = plugins.downgrade();
+    open_project_with_device(cx, folder, project, engine, plugins, device)
+}
+
+fn open_project_with_device(
     cx: &mut TestAppContext,
     folder: TempDir,
     project: Project,
     engine: Engine,
     plugins: WeakPlugins,
-    input: Option<OpenInput>,
+    device: DeviceAccess,
 ) -> Opened<'_> {
     cx.update(sound_ui::init);
     let session = cx.new(|cx| Session::new(project, cx));
@@ -325,7 +457,7 @@ fn open_project_with_input(
         let (session, plugins) = (session.clone(), plugins.clone());
         move |window, cx| {
             let name = "Test device".into();
-            Shell::with_device(session, views(plugins), name, (None, input), window, cx)
+            Shell::with_device(session, views(plugins), name, device, window, cx)
         }
     });
     cx.run_until_parked();

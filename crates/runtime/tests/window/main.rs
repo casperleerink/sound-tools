@@ -1,7 +1,8 @@
 //! The window driven by simulated keys and mouse events, on a project with an offline engine.
 //! No display and no device.
 //!
-//! - `shell`: the keys of the window, the focus, the transport and the read-only timeline.
+//! - `shell`: the keys of the window, the focus, the transport, the read-only timeline and
+//!   when the project menu lists the audio devices.
 //! - `clips`: adding, moving, resizing, deleting and nudging clips in the arrangement.
 //! - `clip_automation`: the automation under a clip going along when it moves or is copied.
 //! - `automation_lanes`: the automation lanes under a track: shown, added, drawn, erased,
@@ -25,9 +26,13 @@
 //! - `piece`: a short piece made by hand from the default project, closed and opened again.
 //! - `audio`: audio clips moved, trimmed, faded and turned up or down, copied and pasted, the
 //!   Clip card, files dropped from the Finder, and adding an audio track.
+//! - `computer_keys`: the computer keys playing and recording a track as a MIDI keyboard.
 //! - `recording_audio`: arming audio tracks, the input select and recording them from a
 //!   simulated input.
+//! - `other_apps`: hearing another app that `project.json` connects.
 //! - `agent`: the agent sidebar in the left panel, with events fed by hand and no process.
+//! - `tools`: tools of the project, run by Bun, hearing a key on their page and the MIDI
+//!   keyboard.
 
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them, and
 // it does not know `#[gpui::test]`.
@@ -40,6 +45,7 @@ mod built_in_effects;
 mod clip_automation;
 mod clips;
 mod compressor;
+mod computer_keys;
 mod delay;
 mod drum_pad;
 mod editing;
@@ -52,6 +58,7 @@ mod lanes;
 mod limiter;
 mod modulation;
 mod notes;
+mod other_apps;
 mod piece;
 mod plugin_card;
 #[path = "../shared/plugin_hosts.rs"]
@@ -65,6 +72,7 @@ mod saturator;
 mod several_notes;
 mod shell;
 mod support;
+mod tools;
 mod track_order;
 mod track_panel;
 mod transport;

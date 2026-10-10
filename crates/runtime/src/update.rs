@@ -181,11 +181,12 @@ pub struct Updater {
 }
 
 impl Updater {
-    /// The updater of this program, or `None` when it does not update: a dev build, a release
-    /// build that is not the app (`cargo build --release` names the program `runtime`), and on
-    /// macOS a program outside a `.app`.
+    /// The updater of this program, or `None` when it does not update: a dev build, a program
+    /// started with `SOUND_TOOLS_NO_UPDATES` set (the lab app of `tooling/install-lab.sh`), a
+    /// release build that is not the app (`cargo build --release` names the program `runtime`),
+    /// and on macOS a program outside a `.app`.
     fn of_this_app(support: &Path) -> Option<Self> {
-        if cfg!(debug_assertions) {
+        if cfg!(debug_assertions) || std::env::var_os("SOUND_TOOLS_NO_UPDATES").is_some() {
             return None;
         }
         let program = dunce::canonicalize(std::env::current_exe().ok()?).ok()?;
@@ -303,19 +304,22 @@ impl Updater {
             .map(Some)
     }
 
-    /// Removes the program an update moved aside. `install.ps1` renames the running
-    /// `sound-tools.exe` to `sound-tools.exe.old`, because Windows cannot overwrite a running
+    /// Removes the programs an update moved aside. `install.ps1` renames the running
+    /// `sound-tools.exe` and `bun.exe` to `.old`, because Windows cannot overwrite a running
     /// program but can rename it. Linux and macOS leave none.
-    fn remove_old_program(&self) {
+    fn remove_old_programs(&self) {
         let Place::Script { program } = &self.place else {
             return;
         };
-        let old = with_suffix(program, ".old");
-        match fs::remove_file(&old) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            // The program that started this one may still be ending. The next start tries again.
-            Err(error) => eprintln!("error: could not remove {}: {error}", old.display()),
+        let bun = program.with_file_name(format!("bun{}", std::env::consts::EXE_SUFFIX));
+        for old in [program, &bun].map(|program| with_suffix(program, ".old")) {
+            match fs::remove_file(&old) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                // The program that started this one, or a Bun of another window, may still be
+                // ending. The next start tries again.
+                Err(error) => eprintln!("error: could not remove {}: {error}", old.display()),
+            }
         }
     }
 }
@@ -521,7 +525,7 @@ pub fn start_pending_update() -> bool {
     else {
         return false;
     };
-    updater.remove_old_program();
+    updater.remove_old_programs();
     let program = match updater.install_pending() {
         Ok(Some(program)) => program,
         Ok(None) => return false,

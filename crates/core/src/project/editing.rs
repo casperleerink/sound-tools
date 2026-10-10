@@ -450,6 +450,57 @@ impl Project {
         self.publish(edit, changes)
     }
 
+    /// [`Self::update`] for code that knows the record only as JSON, such as a view written in
+    /// TypeScript. `change` gets the `state` of the record; what it leaves is decoded and
+    /// validated as a file of the tool would be, and an error names the field.
+    pub fn update_json(
+        &mut self,
+        edit: &mut Edit,
+        id: &InstanceId,
+        change: impl FnOnce(&mut serde_json::Value),
+    ) -> Result<(), ProjectError> {
+        let record = self
+            .instances
+            .get(id)
+            .ok_or_else(|| ProjectError::MissingInstance(id.clone()))?;
+        let tool = record.tool;
+        let invalid = |message: String| ProjectError::InvalidState {
+            id: id.clone(),
+            message,
+        };
+        let json = (record.state.to_json()).map_err(|error| invalid(error.to_string()))?;
+        let mut state = serde_json::from_str(&json).map_err(|error| invalid(error.to_string()))?;
+        change(&mut state);
+        let mut changes = Changes::new();
+        self.set_json(&mut changes, id.clone(), tool, state)?;
+        self.publish(edit, changes)
+    }
+
+    /// Puts a record of `tool` with this `state` at `id` into `changes`, for code that knows the
+    /// tool only by name, such as an offer of a tool the project wrote. The state is decoded
+    /// and checked here, as a file of the tool would be.
+    pub fn set_json(
+        &self,
+        changes: &mut Changes,
+        id: InstanceId,
+        tool: &str,
+        state: serde_json::Value,
+    ) -> Result<(), ProjectError> {
+        let definition =
+            self.registry
+                .definition(tool)
+                .ok_or_else(|| ProjectError::InvalidState {
+                    id: id.clone(),
+                    message: format!("tool {tool:?} is not registered"),
+                })?;
+        let record = (definition.decode)(state).map_err(|message| ProjectError::InvalidState {
+            id: id.clone(),
+            message,
+        })?;
+        changes.changes.push(Change::Set(id, record));
+        Ok(())
+    }
+
     /// Ends the edit as one undo step and writes every record it touched, once. The step runs
     /// from the committed state before it to the state now, whoever wrote last. That is the
     /// state before the edit, or what a file change, an undo or a redo wrote during it.

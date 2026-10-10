@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use super::registry::AgentDoc;
+use super::registry::{AgentDoc, AgentDocText};
 use super::storage::layout;
 use super::{Project, ProjectError};
 
@@ -46,9 +46,9 @@ impl Project {
     /// `project.json`, where they are.
     pub fn agent_doc(&self) -> String {
         let mut tools = String::from("| Tool | Form |\n| --- | --- |\n");
-        for (tool, extension, owns_children) in self.registry.tools() {
-            if self.enables(extension) {
-                let form = if owns_children {
+        for (tool, definition) in self.registry.tools() {
+            if definition.is_enabled_in(&self.project_file.extensions) {
+                let form = if definition.owns_children {
                     "`<name>/instance.json`, children next to it"
                 } else {
                     "`<name>.json`"
@@ -70,17 +70,13 @@ impl Project {
     }
 
     /// Every doc this project writes under `agent-docs/`, in the order of the map.
-    pub fn agent_docs(&self) -> impl Iterator<Item = AgentDoc> {
+    pub fn agent_docs(&self) -> impl Iterator<Item = AgentDocText<'_>> {
         self.registry.agent_docs(&self.project_file.extensions)
     }
 
     /// The text of one doc, with the generated note in front of it.
-    fn agent_doc_text(&self, doc: &AgentDoc) -> String {
+    fn agent_doc_text(&self, doc: &AgentDocText<'_>) -> String {
         format!("{GENERATED_NOTE}{}", self.fill(doc.markdown.trim_end()))
-    }
-
-    fn enables(&self, extension: &str) -> bool {
-        (self.project_file.extensions.iter()).any(|enabled| enabled == extension)
     }
 
     /// Fills `{{extensions}}` in a generated text.

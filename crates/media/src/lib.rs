@@ -9,6 +9,8 @@
 //! - [`import`] copies a file into `assets/audio/` under a free name.
 //! - [`load`] gives the file in memory, [`Audio`], shared by everything that plays it, and
 //!   [`info`] what it is, how long and at what rate.
+//! - [`Loader`] reads what takes long once, such as an instrument, and in the window on a
+//!   thread of its own.
 //! - [`Resampler`] plays it at another sample rate than the engine's.
 //! - [`Varispeed`] plays it at any speed, for an instrument that plays a sample at the pitch of
 //!   a key.
@@ -21,6 +23,7 @@
 //! audio thread reads it as plainly as a WAV file. Other compressed formats are not read.
 
 mod file;
+mod loader;
 mod overview;
 mod resample;
 mod stream;
@@ -40,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 
 pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES, SampleLoop};
+pub use loader::{Keep, Loader, Read, Stamp, load_in_background};
 pub use overview::{FINEST_FRAMES, Overview};
 pub use resample::{Resampler, SCRATCH_FRAMES};
 pub use stream::{HEAD_SECONDS, ReadAhead};

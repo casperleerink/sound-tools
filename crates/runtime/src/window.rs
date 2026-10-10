@@ -7,6 +7,7 @@
 //! it name the agent: the left panel is whatever the installed [`LeftPanelSlot`] makes.
 
 pub mod audio_input;
+pub mod other_apps;
 mod project_menu;
 pub mod recording;
 mod start;
@@ -22,7 +23,8 @@ use std::time::Duration;
 use anyhow::Result;
 use arrangement::view::layout::RULER_HEIGHT;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding, MouseButton,
+    AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
+    KeyBindingContextPredicate, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
     WindowBounds, WindowOptions, actions, div, point, prelude::*, px, size,
 };
@@ -37,19 +39,23 @@ use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::text_input;
-use sound_ui::{ActiveTheme, Assets, Devices, Session, Views, typography};
+use sound_ui::{ActiveTheme, Assets, Devices, Session, SpareKey, SpareKeys, Views, typography};
 
 use audio_input::OpenInput;
+use other_apps::{AppSounds, OtherApps};
+pub use project_menu::{DeviceMenu, ListDevices};
 use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
 pub use transport::TransportPill;
 
-use crate::{open_or_create_with, update, views};
+use crate::app::ChosenDevices;
+use crate::{open_with_extensions, update, views};
 
 actions!(
     sound_tools,
     [
         TogglePlayback,
         ToggleRecording,
+        ToggleComputerKeys,
         Undo,
         Redo,
         FocusNext,
@@ -149,6 +155,17 @@ impl LeftPanel {
     }
 }
 
+/// What the window of the real runtime has of the device: its timing, for the latency and for
+/// where a take lands, how it opens the audio input, how it hears other apps, and how it lists
+/// the devices to pick from. A test window has none of it, or simulated ones.
+#[derive(Default)]
+pub struct DeviceAccess {
+    pub timing: Option<Arc<StreamTiming>>,
+    pub open_input: Option<OpenInput>,
+    pub app_sounds: Option<AppSounds>,
+    pub list_devices: Option<ListDevices>,
+}
+
 /// The root view of the window.
 pub struct Shell {
     session: Entity<Session>,
@@ -170,6 +187,8 @@ pub struct Shell {
     /// The last write of whether the panel is open. Each waits for the one before, so the
     /// file ends with the last.
     remembering: Task<()>,
+    /// The taps of the other apps `project.json` hears, in a window that can open them.
+    _other_apps: Option<Entity<OtherApps>>,
 }
 
 impl Shell {
@@ -182,20 +201,27 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::with_device(session, registries, device_name, (None, None), window, cx)
+        let device = DeviceAccess::default();
+        Self::with_device(session, registries, device_name, device, window, cx)
     }
 
-    /// The window of the real runtime, which has a device: its timing, for the latency and for
-    /// where a take lands, and how it opens the audio input. A window without them measures no
-    /// latency and cannot record audio; a test gives a simulated input.
+    /// The window of the real runtime, which has a device, see [`DeviceAccess`]. A window
+    /// without it measures no latency, cannot record audio and hears no other app; a test gives
+    /// simulated ones.
     pub fn with_device(
         session: Entity<Session>,
         registries: (Views, Devices),
         device_name: SharedString,
-        (timing, open_input): (Option<Arc<StreamTiming>>, Option<OpenInput>),
+        device: DeviceAccess,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let DeviceAccess {
+            timing,
+            open_input,
+            app_sounds,
+            list_devices,
+        } = device;
         let (views, devices) = registries;
         views.install(cx);
         devices.install(cx);
@@ -210,12 +236,20 @@ impl Shell {
         .detach();
 
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle, cx);
         // The keys of the window work from its key context, so the focus must stay inside it.
         // A control that goes away while it has the focus, such as a dismissed notice, would
         // leave it nowhere.
         cx.on_focus_lost(window, |shell, window, cx| {
             window.focus(&shell.focus_handle, cx)
+        })
+        .detach();
+        // A key the computer keys hold comes up in the app that has the keys now.
+        cx.observe_window_activation(window, |shell, window, cx| {
+            if !window.is_window_active() {
+                shell
+                    .transport
+                    .update(cx, TransportPill::let_go_of_computer_keys);
+            }
         })
         .detach();
         let slot = cx.try_global::<LeftPanelSlot>().cloned();
@@ -228,11 +262,16 @@ impl Shell {
         let left_panel_open = left_panel_file
             .as_deref()
             .is_none_or(crate::app::left_panel_was_open);
-        let project_menu = cx.new(|cx| ProjectMenu::new(session.clone(), device_name, window, cx));
+        let project_menu =
+            cx.new(|cx| ProjectMenu::new(session.clone(), device_name, list_devices, window, cx));
         // For the notice of an export, and of an update.
         cx.observe(&project_menu, |_, _, cx| cx.notify()).detach();
         cx.observe_global::<update::Ready>(|_, cx| cx.notify())
             .detach();
+        let other_apps = app_sounds.map(|sounds| {
+            let session = session.clone();
+            cx.new(|cx| OtherApps::new(session, sounds, cx))
+        });
         let mut shell = Self {
             project_menu,
             transport: cx
@@ -248,8 +287,30 @@ impl Shell {
             left_panel_icon_focus: cx.focus_handle().tab_stop(true),
             return_focus: None,
             remembering: Task::ready(()),
+            _other_apps: other_apps,
         };
+        // A plugin's window passes on the keys its plugin does not use, to play the computer
+        // keys. The plain keys are always free there: it has no text field and no tool.
+        let transport = shell.transport.downgrade();
+        let pass = move |key: SpareKey<'_>, cx: &mut App| {
+            // Fails only when the window is gone.
+            (transport.update(cx, |pill, cx| match key {
+                SpareKey::Down(event) => {
+                    pill.computer_key_down(event, true);
+                }
+                SpareKey::Up(event) => {
+                    pill.computer_key_up(&event.keystroke.key);
+                }
+                SpareKey::LetGo => pill.let_go_of_computer_keys(cx),
+            }))
+            .ok();
+        };
+        SpareKeys::install(pass, cx);
         shell.show_main_instance(window, cx);
+        // After the main view, which may take the focus: a page that hears keys does.
+        if window.focused(cx).is_none() {
+            window.focus(&shell.focus_handle, cx);
+        }
         shell
     }
 
@@ -542,6 +603,37 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &ToggleRecording, _, cx| {
                 shell.transport.update(cx, TransportPill::toggle_recording)
             }))
+            .on_action(cx.listener(|shell, _: &ToggleComputerKeys, _, cx| {
+                shell
+                    .transport
+                    .update(cx, TransportPill::toggle_computer_keys)
+            }))
+            // Before the focused view hears it, so a key that plays does nothing else, such as
+            // `a` in the arrangement.
+            .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+                let free = keys_are_free(window);
+                if (shell.transport).update(cx, |pill, _| pill.computer_key_down(event, free)) {
+                    cx.stop_propagation();
+                }
+            }))
+            // Wherever the focus went since its key went down.
+            .capture_key_up(cx.listener(|shell, event: &KeyUpEvent, _, cx| {
+                let key = &event.keystroke.key;
+                if shell
+                    .transport
+                    .update(cx, |pill, _| pill.computer_key_up(key))
+                {
+                    cx.stop_propagation();
+                }
+            }))
+            // macOS sends no key up while cmd is held.
+            .on_modifiers_changed(cx.listener(|shell, event: &ModifiersChangedEvent, _, cx| {
+                if event.modifiers.platform {
+                    shell
+                        .transport
+                        .update(cx, TransportPill::let_go_of_computer_keys);
+                }
+            }))
             .on_action(
                 cx.listener(|shell, _: &Undo, _, cx| shell.session.update(cx, Session::undo)),
             )
@@ -604,13 +696,35 @@ impl Render for Shell {
 /// The key context of the window root. Every binding of the window names it.
 const KEY_CONTEXT: &str = "Shell";
 
-/// The keys of the window. Space, record and undo belong to a focused text field first: there
-/// they are characters and cmd-z is not an undo of the project. Tab moves the focus everywhere.
+/// Outside a text field, where keys are characters and cmd-z is not an undo of the project.
+fn outside_text() -> String {
+    format!("{KEY_CONTEXT} && !{}", text_input::KEY_CONTEXT)
+}
+
+/// Where the plain keys are the window's: outside a text field, and outside a tool of the
+/// project that has the keys, which plays them.
+fn plain_keys() -> String {
+    format!("{} && !{}", outside_text(), sound_typescript::KEY_CONTEXT)
+}
+
+/// Whether the plain keys are the window's where the focus is, as the bindings of space and
+/// `r` match them.
+fn keys_are_free(window: &Window) -> bool {
+    KeyBindingContextPredicate::parse(&plain_keys())
+        .is_ok_and(|plain| plain.depth_of(&window.context_stack()).is_some())
+}
+
+/// The keys of the window. Space and record are [`plain_keys`], undo works outside a text
+/// field. Tab moves the focus everywhere. The computer keys are no bindings: they need the key
+/// going up as well, see the key listeners of [`Shell`].
 pub fn bind_keys(cx: &mut App) {
-    let outside_text = Some("Shell && !TextInput");
+    let (outside_text, plain) = (outside_text(), plain_keys());
+    let (outside_text, plain) = (Some(outside_text.as_str()), Some(plain.as_str()));
     cx.bind_keys([
-        KeyBinding::new("space", TogglePlayback, outside_text),
-        KeyBinding::new("r", ToggleRecording, outside_text),
+        KeyBinding::new("space", TogglePlayback, plain),
+        KeyBinding::new("r", ToggleRecording, plain),
+        // Not cmd-K on Windows, where Win+K is the system's.
+        KeyBinding::new("secondary-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-z", Undo, outside_text),
         KeyBinding::new("shift-cmd-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
@@ -660,6 +774,17 @@ fn show_recent_projects(window: gpui::WindowHandle<Shell>, cx: &mut App) {
     .detach();
 }
 
+/// The audio devices of this machine for the device menus of the app's window. A test window
+/// lists none, so a snapshot does not show this machine's devices.
+fn list_devices(chosen: ChosenDevices) -> ListDevices {
+    Arc::new(move || DeviceMenu {
+        // A failure leaves a list empty, and the menu offers the default.
+        outputs: sound_core::output_devices().unwrap_or_default(),
+        inputs: sound_core::input_devices().unwrap_or_default(),
+        chosen: chosen.clone(),
+    })
+}
+
 /// What the headless runtime prints at the end too, so a session in the window can be judged
 /// the same way.
 fn print_device_report(stream: &OutputStream) {
@@ -696,7 +821,7 @@ fn print_midi_report(latency: Latency, lost: Lost) {
 /// back before any window, for the terminal that started it.
 pub fn run(folder: &Path) -> Result<()> {
     // A window must not wait while a Sampler reads hundreds of samples, also not to open.
-    sampler::instrument::load_in_background();
+    sound_media::load_in_background();
     let opened = Opened::open(folder)?;
     gpui_platform::application()
         .with_assets(Assets)
@@ -710,7 +835,7 @@ pub fn run(folder: &Path) -> Result<()> {
 /// The app with no folder, as the Finder starts it: the last project, or the folder panel
 /// when there is none. See [`start`].
 pub fn run_app() {
-    sampler::instrument::load_in_background();
+    sound_media::load_in_background();
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {
@@ -739,17 +864,21 @@ fn init(cx: &mut App) {
     crate::agent_panel(support, cx).install(cx);
 }
 
-/// A project that is open and plays on the default output, ready for its window.
+/// A project that is open and plays on the chosen output, ready for its window.
 struct Opened {
     project: Project,
+    /// The project's own tools, for the window to keep live.
+    extensions: Option<sound_typescript::Extensions>,
     plugins: WeakPlugins,
     stream: OutputStream,
     device_name: String,
+    chosen: ChosenDevices,
 }
 
 impl Opened {
     fn open(folder: &Path) -> Result<Self> {
-        let device = OutputDevice::default_output()?;
+        let chosen = ChosenDevices::read();
+        let device = OutputDevice::open(chosen.output.as_deref())?;
         let device_name = device.name()?;
         let config = EngineConfig::new(device.sample_rate(), device.channels());
         let (control, engine) = Engine::new(config);
@@ -759,7 +888,10 @@ impl Opened {
         // up: the tick below runs its behaviour again.
         let plugins = crate::plugins(false)?;
         plugins.start_scanning();
-        let mut project = open_or_create_with(folder, control, plugins.clone())?;
+        // An experiment: every project the window opens can have tools of its own, written
+        // while it runs, so the folder for them is always there.
+        std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
+        let (mut project, extensions) = open_with_extensions(folder, control, plugins.clone())?;
         project.watch()?;
         // From here only the project holds the plugins, so that dropping the project ends them
         // and saves the state of every one. A handle kept here would outlive the project: the
@@ -774,9 +906,11 @@ impl Opened {
         }
         Ok(Self {
             project,
+            extensions,
             plugins: weak_plugins,
             stream,
             device_name,
+            chosen,
         })
     }
 
@@ -784,9 +918,11 @@ impl Opened {
     fn show(self, cx: &mut App) {
         let Self {
             project,
+            extensions,
             plugins: weak_plugins,
             stream,
             device_name,
+            chosen,
         } = self;
         let title = project
             .root()
@@ -886,10 +1022,26 @@ impl Opened {
         };
         let opened = cx.open_window(options, |window, cx| {
             cx.new(|cx| {
-                let registries = views(weak_plugins.clone());
+                let (mut views, mut devices) = views(weak_plugins.clone());
+                if let Some(extensions) = extensions {
+                    sound_typescript::start_window(
+                        extensions,
+                        &session,
+                        &mut views,
+                        &mut devices,
+                        cx,
+                    );
+                }
+                let registries = (views, devices);
                 let name = device_name.into();
-                let input: OpenInput = Arc::new(audio_input::default_input);
-                let device = (Some(timing), Some(input));
+                let device = DeviceAccess {
+                    timing: Some(timing),
+                    open_input: Some(audio_input::system_input(chosen.input.clone())),
+                    // Only macOS has taps. Elsewhere every connection from an app is a
+                    // problem that says so, and nothing is opened.
+                    app_sounds: cfg!(target_os = "macos").then(AppSounds::system),
+                    list_devices: Some(list_devices(chosen.clone())),
+                };
                 Shell::with_device(session.clone(), registries, name, device, window, cx)
             })
         });

@@ -9,17 +9,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::assets::Assets;
-use super::file::{PortReference, SavedConnection, SavedDestination};
+use super::file::{PortReference, SavedConnection, SavedDestination, SavedSource};
 use super::instance::{InstanceId, Record, State};
 use super::registry::Registry;
 use crate::automation::{AutomationInput, MAX_AUTOMATED, PlayedLanes};
 use crate::clock::TempoMap;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
-use crate::graph::{Connection, Destination, GraphError, NodeId};
+use crate::graph::{Connection, Destination, GraphError, NodeId, Source};
+use crate::input::InputId;
 use crate::parameter::{AutomatedNumber, ParameterInfo};
 use crate::peaks::Peaks;
 use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
+use crate::watch::Watch;
 
 /// Why a behaviour could not apply a state. It rejects the whole edit group.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -97,6 +99,10 @@ struct Binding {
     lanes: BTreeMap<InstanceId, Arc<dyn PlayedLanes>>,
     /// The levels its processors show, by the name the behaviour chose.
     peaks: BTreeMap<String, Peaks>,
+    /// The values its processors show, by the name the behaviour chose.
+    watches: BTreeMap<String, Watch>,
+    /// The keys of [`BehaviourContext::changed`], by the name the behaviour chose.
+    keys: BTreeMap<String, u64>,
     /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
     problems: Vec<String>,
     /// Connections it declared that are not in the graph because they close a cycle, each with
@@ -250,6 +256,18 @@ impl BehaviourContext<'_> {
         Ok(Node::from_id(id))
     }
 
+    /// The watch this instance keeps under `name`, for a processor that shows a value, as
+    /// [`Self::peaks`] is for a level: the same watch every run while the name is declared, read
+    /// with [`Project::watches`](super::Project::watches).
+    pub fn watch(&mut self, name: &str) -> Watch {
+        let previous = self
+            .previous
+            .and_then(|previous| previous.watches.get(name));
+        let watch = previous.cloned().unwrap_or_default();
+        self.next.watches.insert(name.to_string(), watch.clone());
+        watch
+    }
+
     /// The peaks this instance keeps under `name`, for a processor that shows a level: give
     /// a clone to the processor when it is made, record every block, and an interface reads
     /// them with [`Project::peaks`](super::Project::peaks). The same peaks every run, as long
@@ -259,6 +277,17 @@ impl BehaviourContext<'_> {
         let peaks = previous.cloned().unwrap_or_default();
         self.next.peaks.insert(name.to_string(), peaks.clone());
         peaks
+    }
+
+    /// Whether `key` differs from the one this instance gave under `name` the last time its
+    /// behaviour ran, and true the first time. For a behaviour that builds something costly
+    /// from part of its state, such as code to compile or memory to allocate, and sends it only
+    /// when that part changed: a hash of it is the key. A run of a rejected group did not
+    /// happen, so the next run compares with the run before it.
+    pub fn changed(&mut self, name: &str, key: u64) -> bool {
+        let previous = self.previous.and_then(|previous| previous.keys.get(name));
+        self.next.keys.insert(name.to_string(), key);
+        previous != Some(&key)
     }
 
     /// Sends parameters or an `Arc` snapshot. It applies in the same block as the rest of the
@@ -485,7 +514,7 @@ impl Run {
 }
 
 fn touches(connection: &Connection, removed: &BTreeSet<NodeId>) -> bool {
-    removed.contains(&connection.source)
+    matches!(connection.source, Source::Node(node, _) if removed.contains(&node))
         || matches!(connection.destination, Destination::Node(node, _) if removed.contains(&node))
 }
 
@@ -536,10 +565,7 @@ fn device_clashes(lines: &[(usize, Connection)]) -> BTreeMap<usize, LeftOut> {
         };
         let overlapping = carried.iter().find(|(_, other, taken)| {
             let distance = taken.abs_diff(channel);
-            other.source == connection.source
-                && other.output == connection.output
-                && distance != 0
-                && distance < CHANNELS
+            other.source == connection.source && distance != 0 && distance < CHANNELS
         });
         match overlapping {
             Some((winner, _, winner_channel)) => {
@@ -579,6 +605,15 @@ impl Bindings {
     /// The peaks that the behaviour of `instance` keeps under `name`.
     pub(super) fn peaks(&self, instance: &InstanceId, name: &str) -> Option<&Peaks> {
         self.by_instance.get(instance)?.peaks.get(name)
+    }
+
+    /// Every watch that the behaviour of `instance` keeps.
+    pub(super) fn watches(&self, instance: &InstanceId) -> Vec<(String, Watch)> {
+        let binding = self.by_instance.get(instance);
+        let watches = binding.into_iter().flat_map(|binding| &binding.watches);
+        watches
+            .map(|(name, watch)| (name.clone(), watch.clone()))
+            .collect()
     }
 
     /// The number `field` that the behaviour of `instance` takes automation for, see
@@ -895,6 +930,11 @@ impl Bindings {
         self.saved.contains(connection) || self.by_instance.values().any(declared)
     }
 
+    /// Whether this `project.json` connection is in the graph.
+    pub(super) fn is_bound(&self, connection: &SavedConnection) -> bool {
+        (self.resolve(connection)).is_ok_and(|resolved| self.saved.contains(&resolved))
+    }
+
     fn resolve(&self, connection: &SavedConnection) -> Result<Connection, String> {
         let binding = |port: &PortReference| {
             self.by_instance.get(&port.instance).ok_or_else(|| {
@@ -904,16 +944,22 @@ impl Bindings {
                 )
             })
         };
-        let from = &connection.from;
-        let output = binding(from)?.outputs.get(&from.port).ok_or_else(|| {
-            format!(
-                "instance {:?} has no output {:?}",
-                from.instance.as_str(),
-                from.port
-            )
-        })?;
-        match &connection.to {
-            SavedDestination::DeviceOutput(channel) => Ok(output.to_device(*channel)),
+        let source = match &connection.from {
+            SavedSource::DeviceInput(channel) => Source::Input(InputId::DEVICE, *channel),
+            SavedSource::App(app) => Source::Input(app.input(), 0),
+            SavedSource::Output(from) => {
+                let output = binding(from)?.outputs.get(&from.port).ok_or_else(|| {
+                    format!(
+                        "instance {:?} has no output {:?}",
+                        from.instance.as_str(),
+                        from.port
+                    )
+                })?;
+                Source::Node(output.node, output.port)
+            }
+        };
+        let destination = match &connection.to {
+            SavedDestination::DeviceOutput(channel) => Destination::DeviceOutput(*channel),
             SavedDestination::Input(to) => {
                 let input = binding(to)?.inputs.get(&to.port).ok_or_else(|| {
                     format!(
@@ -922,8 +968,12 @@ impl Bindings {
                         to.port
                     )
                 })?;
-                Ok(output.to(*input))
+                Destination::Node(input.node, input.port)
             }
-        }
+        };
+        Ok(Connection {
+            source,
+            destination,
+        })
     }
 }

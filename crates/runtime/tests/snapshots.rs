@@ -7,6 +7,7 @@
 //! - `piece.png`: three tracks with several clips, playing, one clip selected.
 //! - `transport-click-off.png`: the same with the transport in focus, the click off.
 //! - `transport-click-on.png`: the same with the click on.
+//! - `transport-keys-on.png`: the same with the computer keys on as well.
 //! - `transport-recording.png`: the same while it records, a few keys played so far.
 //! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
 //!   top-right.
@@ -130,12 +131,13 @@ use midi::Played;
 use plugin_host::{PluginFormat, PluginRecord, WeakPlugins};
 use reverb::ReverbState;
 use reverb::view::ReverbView;
-use runtime::window::Shell;
+use runtime::app::ChosenDevices;
+use runtime::window::{DeviceAccess, DeviceMenu, Shell};
 use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
 use saturator::{Curve, SaturatorState};
 use sound_core::{
-    Changes, Engine, Instance, InstanceId, Project, Tempo, TempoChange, TempoMap, Ticks,
-    TimeSignature,
+    Changes, DeviceChoice, Engine, Instance, InstanceId, Project, Tempo, TempoChange, TempoMap,
+    Ticks, TimeSignature,
 };
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
 use sound_ui::{Assets, Session};
@@ -232,7 +234,10 @@ impl Opened {
             let (session, plugins) = (session.clone(), plugins.clone());
             cx.new(|cx| {
                 let name = "MacBook Pro Speakers".into();
-                let device = (None, input);
+                let device = DeviceAccess {
+                    open_input: input,
+                    ..DeviceAccess::default()
+                };
                 Shell::with_device(session, views(plugins), name, device, window, cx)
             })
         })?;
@@ -1093,6 +1098,14 @@ fn main() -> Result<()> {
         "the click did not come on"
     );
     save(&mut cx, &opened, "transport-click-on")?;
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_computer_keys(cx)));
+    cx.run_until_parked();
+    anyhow::ensure!(
+        cx.update(|cx| transport.read(cx).computer_keys_are_on()),
+        "the computer keys did not come on"
+    );
+    save(&mut cx, &opened, "transport-keys-on")?;
+    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_computer_keys(cx)));
 
     // Recording: the record control in red, next to play and stop, and the take on the
     // selected track growing to the playhead with what was played so far, the last key held.
@@ -1187,6 +1200,25 @@ fn main() -> Result<()> {
                 "/Users/someone/Sketches/Piano",
             ];
             project_menu.set_recent_projects(recent.map(PathBuf::from).to_vec(), cx);
+            let device = |id: &str, name: &str| DeviceChoice {
+                id: id.to_string(),
+                name: name.to_string(),
+            };
+            let devices = DeviceMenu {
+                outputs: vec![
+                    device("coreaudio:speakers", "MacBook Pro Speakers"),
+                    device("coreaudio:blackhole", "BlackHole 2ch"),
+                ],
+                inputs: vec![
+                    device("coreaudio:microphone", "MacBook Pro Microphone"),
+                    device("coreaudio:blackhole", "BlackHole 2ch"),
+                ],
+                chosen: ChosenDevices {
+                    output: Some("coreaudio:blackhole".to_string()),
+                    input: None,
+                },
+            };
+            project_menu.set_devices(devices, cx);
         });
         anyhow::Ok(project_menu.read(cx).menu().clone())
     })?;
@@ -1199,6 +1231,11 @@ fn main() -> Result<()> {
         opened.key(key, &mut cx)?;
     }
     save(&mut cx, &opened, "menu")?;
+    // On up to the output device, which opens the devices of the machine.
+    for key in ["left", "up", "up", "up", "up", "right"] {
+        opened.key(key, &mut cx)?;
+    }
+    save(&mut cx, &opened, "menu-devices")?;
     drop(opened);
 
     // Editing the arrangement: two tempo changes in the ruler, three clips selected, the snap

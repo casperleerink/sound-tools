@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use sound_core::{
     AudioInput, AudioOutput, Connection, Engine, EngineConfig, EngineControl, EventInput,
-    EventOutput, GraphError, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor,
+    EventOutput, GraphError, InputId, LiveInput, MAX_BLOCK, Ports, PrepareConfig, ProcessContext,
+    Processor, live_input,
 };
 
 const OUTPUT: AudioOutput = AudioOutput::new(0);
@@ -900,6 +901,99 @@ fn three_channels_and_a_trailing_partial_frame() {
     }
     assert_eq!(rest, [0.0, 0.0]);
     assert_eq!(control.poll().unwrap().frames, 70);
+}
+
+/// A stereo engine whose `Through` hears the live input from channel `first` and plays it on
+/// the device, with the live input attached: the block that attaches it is behind it.
+fn live_through(first: usize, input: LiveInput) -> (EngineControl, Engine) {
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, 2));
+    let mut edit = control.edit();
+    let through = edit.add_processor("through", Through).unwrap();
+    edit.connect(Connection::from_device(first, through.id(), INPUT))
+        .unwrap();
+    edit.connect(Connection::to_device(through.id(), OUTPUT, 0))
+        .unwrap();
+    edit.commit().unwrap();
+    control.set_live_input(InputId::DEVICE, Some(input));
+    engine.process_block(&mut [0.0; 2 * 64]);
+    (control, engine)
+}
+
+/// The left side of each frame of a stereo render.
+fn left(engine: &mut Engine, frames: usize) -> Vec<f32> {
+    let mut output = vec![f32::NAN; 2 * frames];
+    engine.process_block(&mut output);
+    output.iter().step_by(2).copied().collect()
+}
+
+/// Frames `from..to` of a one-channel input whose frame N holds N.
+fn numbered(frames: std::ops::Range<usize>) -> Vec<f32> {
+    frames.map(|frame| frame as f32).collect()
+}
+
+#[test]
+fn the_live_input_reaches_the_input_port_it_is_connected_to() {
+    let (mut writer, input) = live_input(48_000, 3);
+    let (_control, mut engine) = live_through(1, input);
+    // Channel 0 is not connected; 1 and 2 are the stereo pair.
+    let samples = (0..300).flat_map(|frame| [9.0, frame as f32, -(frame as f32)]);
+    writer.write(&samples.collect::<Vec<f32>>());
+    let mut output = vec![f32::NAN; 2 * 300];
+    engine.process_block(&mut output);
+    for (frame, samples) in output.chunks(2).enumerate() {
+        assert_eq!(samples, [frame as f32, -(frame as f32)]);
+    }
+
+    // A one-channel input, such as the microphone of a laptop, is heard on both sides.
+    let (mut writer, input) = live_input(48_000, 1);
+    let (_control, mut engine) = live_through(0, input);
+    writer.write(&[0.5; 100]);
+    let mut output = vec![f32::NAN; 2 * 100];
+    engine.process_block(&mut output);
+    assert!(output.iter().all(|sample| *sample == 0.5));
+
+    // At another rate than the engine, it is not heard.
+    let (mut writer, input) = live_input(44_100, 1);
+    let (_control, mut engine) = live_through(0, input);
+    writer.write(&[0.5; 100]);
+    assert!(left(&mut engine, 100).iter().all(|sample| *sample == 0.0));
+}
+
+#[test]
+fn the_live_input_never_waits_more_than_two_of_its_buffers() {
+    let (mut writer, input) = live_input(48_000, 1);
+    let (mut control, mut engine) = live_through(0, input);
+    // Ten buffers of 128 frames come while the output plays nothing: it was held up.
+    for buffer in 0..10 {
+        writer.write(&numbered(buffer * 128..(buffer + 1) * 128));
+    }
+    // The next block of 256 keeps only itself and two buffers waiting behind it, and leaves
+    // the oldest out.
+    assert_eq!(left(&mut engine, 256), numbered(768..1024));
+    assert_eq!(control.poll().unwrap().live_input_dropped, 768);
+    // From there the input and the output go on in step, two buffers behind what came, with
+    // nothing more left out.
+    for block in 0..8 {
+        let written = 1280 + block * 256;
+        writer.write(&numbered(written..written + 128));
+        writer.write(&numbered(written + 128..written + 256));
+        let played = 1024 + block * 256;
+        assert_eq!(left(&mut engine, 256), numbered(played..played + 256));
+    }
+    assert_eq!(control.poll().unwrap().live_input_dropped, 768);
+}
+
+#[test]
+fn a_block_the_live_input_has_not_filled_is_silence_and_loses_nothing() {
+    let (mut writer, input) = live_input(48_000, 1);
+    let (mut control, mut engine) = live_through(0, input);
+    writer.write(&numbered(0..100));
+    assert_eq!(left(&mut engine, 128), [0.0; 128]);
+    assert_eq!(control.poll().unwrap().live_input_underruns, 1);
+    // What came stays for the next block, which finds enough.
+    writer.write(&numbered(100..200));
+    assert_eq!(left(&mut engine, 128), numbered(0..128));
+    assert_eq!(control.poll().unwrap().live_input_underruns, 1);
 }
 
 thread_local! {

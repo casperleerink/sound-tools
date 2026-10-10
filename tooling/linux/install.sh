@@ -4,22 +4,27 @@
 set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"
-program="$HOME/.local/lib/sound-tools/sound-tools"
+# The program and the Bun that runs the tools of a project, next to each other.
+lib="$HOME/.local/lib/sound-tools"
+program="$lib/sound-tools"
 link="$HOME/.local/bin/sound-tools"
 desktop="$HOME/.local/share/applications/sound-tools.desktop"
 icon="$HOME/.local/share/icons/hicolor/512x512/apps/sound-tools.png"
 
-mkdir -p "$(dirname "$program")" "$(dirname "$link")" "$(dirname "$desktop")" "$(dirname "$icon")"
+mkdir -p "$lib" "$(dirname "$link")" "$(dirname "$desktop")" "$(dirname "$icon")"
 # A copy and a rename, so a running Sound Tools does not stop the update.
-cp "$here/sound-tools" "$program.new"
-mv -f "$program.new" "$program"
+for name in sound-tools bun; do
+  cp "$here/$name" "$lib/$name.new"
+  mv -f "$lib/$name.new" "$lib/$name"
+done
+cp "$here/bun-LICENSE.md" "$lib/"
 # A link, as the app's own "Install command line tool" makes, so that item still works.
 ln -sf "$program" "$link"
 sed "s|^Exec=.*|Exec=\"$program\"|" "$here/sound-tools.desktop" > "$desktop"
 cp "$here/sound-tools.png" "$icon"
 
 echo "Installed Sound Tools:"
-echo "  $program"
+echo "  $lib"
 echo "  $link"
 echo "  $desktop"
 echo "  $icon"

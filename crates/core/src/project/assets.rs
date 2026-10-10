@@ -91,7 +91,7 @@ impl std::fmt::Display for AssetName {
 }
 
 /// The `assets/` folder of one project. Cheap to clone: it is one path.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Assets {
     folder: PathBuf,
 }

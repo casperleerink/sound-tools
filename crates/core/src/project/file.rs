@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::instance::InstanceId;
+use crate::apps::AppSound;
 use crate::clock::TempoMap;
 
 /// The only project format this runtime reads and writes.
@@ -62,6 +63,96 @@ impl PortReference {
     }
 }
 
+/// Where a saved connection starts: an output of an instance, `{"instance": "drone", "port":
+/// "audio"}`, the device input, `{"device_input": 0}`, or the sound of other apps, `{"app":
+/// "Music"}`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "SourceFields", into = "SourceFields")]
+pub enum SavedSource {
+    Output(PortReference),
+    /// A channel of the device input, counted from 0: the first of a stereo port, as for
+    /// [`SavedDestination::DeviceOutput`].
+    DeviceInput(usize),
+    /// The sound of other apps, in stereo.
+    App(AppSound),
+}
+
+impl From<PortReference> for SavedSource {
+    fn from(port: PortReference) -> Self {
+        Self::Output(port)
+    }
+}
+
+/// [`SavedSource`] as it is written. Both forms in one struct, so a wrong mix of fields gets a
+/// message that names both.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceFields {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance: Option<InstanceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_input: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app: Option<AppSound>,
+}
+
+impl TryFrom<SourceFields> for SavedSource {
+    type Error = &'static str;
+
+    fn try_from(fields: SourceFields) -> Result<Self, Self::Error> {
+        match fields {
+            SourceFields {
+                instance: Some(instance),
+                port: Some(port),
+                device_input: None,
+                app: None,
+            } => Ok(Self::Output(PortReference { instance, port })),
+            SourceFields {
+                instance: None,
+                port: None,
+                device_input: Some(channel),
+                app: None,
+            } => Ok(Self::DeviceInput(channel)),
+            SourceFields {
+                instance: None,
+                port: None,
+                device_input: None,
+                app: Some(app),
+            } => Ok(Self::App(app)),
+            _ => Err(
+                r#"a connection starts at an output, {"instance": ..., "port": ...}, at the device input, {"device_input": 0}, or at the sound of other apps, {"app": "Music"} or {"app": "all"}"#,
+            ),
+        }
+    }
+}
+
+impl From<SavedSource> for SourceFields {
+    fn from(source: SavedSource) -> Self {
+        match source {
+            SavedSource::Output(PortReference { instance, port }) => Self {
+                instance: Some(instance),
+                port: Some(port),
+                device_input: None,
+                app: None,
+            },
+            SavedSource::DeviceInput(channel) => Self {
+                instance: None,
+                port: None,
+                device_input: Some(channel),
+                app: None,
+            },
+            SavedSource::App(app) => Self {
+                instance: None,
+                port: None,
+                device_input: None,
+                app: Some(app),
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SavedDestination {
@@ -77,14 +168,14 @@ pub enum SavedDestination {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SavedConnection {
-    pub from: PortReference,
+    pub from: SavedSource,
     pub to: SavedDestination,
 }
 
 impl SavedConnection {
     pub fn to_device(from: PortReference, channel: usize) -> Self {
         Self {
-            from,
+            from: from.into(),
             to: SavedDestination::DeviceOutput(channel),
         }
     }
@@ -92,6 +183,7 @@ impl SavedConnection {
     /// Whether an end is `id` or an instance inside it.
     pub(crate) fn touches(&self, id: &InstanceId) -> bool {
         let names = |port: &PortReference| &port.instance == id || port.instance.is_inside(id);
-        names(&self.from) || matches!(&self.to, SavedDestination::Input(input) if names(input))
+        matches!(&self.from, SavedSource::Output(output) if names(output))
+            || matches!(&self.to, SavedDestination::Input(input) if names(input))
     }
 }

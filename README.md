@@ -16,16 +16,16 @@ What it has: instrument and audio tracks, clips with notes or audio, a synth, a 
 Linux x86_64 and arm64 build from source, and CI runs the tests on Ubuntu. On Ubuntu or Debian, install:
 
 ```sh
-sudo apt-get install build-essential pkg-config libasound2-dev libfontconfig-dev \
-  libfreetype-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libvulkan1 \
-  mesa-vulkan-drivers
+sudo apt-get install build-essential pkg-config libasound2-dev libpipewire-0.3-dev \
+  libdbus-1-dev libclang-dev libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev \
+  libxkbcommon-x11-dev libvulkan1 mesa-vulkan-drivers
 ```
 
 Then build and run as on macOS. The window needs Vulkan: a graphics driver, or `mesa-vulkan-drivers` for a software one.
 
 CI builds and tests on Ubuntu. Playback, MIDI, recording and plugins go through ALSA and should work, but nobody has tried them on a real Linux desktop yet. Plugins are looked for in `~/.clap` and `/usr/lib/clap`, and in `~/.vst3`, `/usr/lib/vst3` and `/usr/local/lib/vst3`. The plugin cache is in `~/.cache/sound-tools/`.
 
-A release has a tarball for x86_64 and one for aarch64, see "Releases". `tooling/bundle-linux.sh` makes it: the program, a menu entry, the icon and `install.sh`, which puts them in `~/.local`. It needs glibc 2.39 or later (Ubuntu 24.04 or newer) and the runtime libraries the page of the release names, not the `-dev` packages above.
+A release has a tarball for x86_64 and one for aarch64, see "Releases". `tooling/bundle-linux.sh` makes it: the program, Bun, a menu entry, the icon and `install.sh`, which puts them in `~/.local`. It needs glibc 2.39 or later (Ubuntu 24.04 or newer) and the runtime libraries the page of the release names, not the `-dev` packages above.
 
 With no folder, `runtime` opens the last project, which it keeps in `~/.config/sound-tools/`, or else a folder panel. The panel needs the XDG desktop portal, which GNOME and KDE have. **Install command line tool** links `sound-tools` into `~/.local/bin`.
 
@@ -63,7 +63,7 @@ cp -R "dist/Sound Tools.app" /Applications/
 
 The script makes a release build and puts `Sound Tools.app` in `dist/`. Double click it in the Finder. It opens the last project you had open, or asks for a folder the first time: pick a project, or click **New Folder** for a new project. Cancel quits. **Open project…** in the project menu switches to another one.
 
-The app is signed on this Mac only ("ad hoc"), not by a known developer. If macOS says it cannot check the app, right-click it in the Finder, pick **Open**, and confirm once. macOS asks for the microphone the first time you record audio; a new build of the app asks again.
+The app is signed on this Mac only ("ad hoc"), not by a known developer. If macOS says it cannot check the app, right-click it in the Finder, pick **Open**, and confirm once. macOS asks for the microphone the first time you record audio, and whether the app may record other apps the first time a project hears one; a new build of the app asks again. Run from a terminal, macOS asks for the terminal app instead.
 
 The app and `cargo run -p runtime` are the same program. Opening a folder on the command line also makes it the last project of the app. `tooling/bundle-macos.sh --zip` also writes a zip of the app, for a release.
 
@@ -151,7 +151,7 @@ cargo deny check
 
 CI runs the same on macOS with the realtime sanitizer on, and the tests on Linux and Windows, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`. The plugin build comes first because the tests load the repository's own CLAP and VST 3 test plugins, which `cargo test` does not build.
 
-The two snapshot tests render the UI components and the window to PNGs without opening a window: `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`. They print the folder they write to. CI does not run them; run them after a UI change and look at the PNGs. `cargo run -p gallery` opens the component gallery in a window.
+The two snapshot tests render the UI components and the window to PNGs without opening a window: `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`. They print the folder they write to. CI does not run them; run them after a UI change and look at the PNGs. `cargo run -p runtime --example screenshot -- <project> <out-folder>` does the same for a project folder, its TypeScript cards and pages included: `window.png` as it opens and `track-<name>.png` for each track with its cards. It works on a copy and plays nothing. `cargo run -p gallery` opens the component gallery in a window.
 
 ## Docs
 

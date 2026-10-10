@@ -291,6 +291,36 @@ impl<S: State> ErasedState for S {
     }
 }
 
+/// Checks the `state` of a record of a JSON tool, see [`super::JsonTool`].
+pub(crate) type CheckJson =
+    std::sync::Arc<dyn Fn(&serde_json::Value) -> Result<(), String> + Send + Sync>;
+
+/// The state of a record of a JSON tool: the `state` of its file as it was read, checked by the
+/// tool's own check.
+pub(crate) struct JsonState {
+    pub value: serde_json::Value,
+    pub check: CheckJson,
+}
+
+impl ErasedState for JsonState {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn equals(&self, other: &dyn ErasedState) -> bool {
+        let other = other.as_any().downcast_ref::<Self>();
+        other.is_some_and(|other| other.value == self.value)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        (self.check)(&self.value)
+    }
+
+    fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(&self.value)
+    }
+}
+
 /// The live form of one record: the tool name and the typed state. Cloning shares the state,
 /// so undo history costs no copies.
 #[derive(Clone)]
@@ -307,6 +337,16 @@ impl Record {
             tool: S::TOOL,
             owns_children: S::OWNS_CHILDREN,
             place: S::PLACE,
+            state: Arc::new(state),
+        }
+    }
+
+    /// A record of a JSON tool, which lives anywhere and owns no children.
+    pub(crate) fn json(tool: &'static str, state: JsonState) -> Self {
+        Self {
+            tool,
+            owns_children: false,
+            place: Place::Anywhere,
             state: Arc::new(state),
         }
     }

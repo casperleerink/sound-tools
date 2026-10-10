@@ -1,13 +1,15 @@
 //! Tool registration. Extensions register their tools here before a project opens.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
 use super::editing::Derived;
-use super::instance::{Instance, InstanceId, Record, State, is_valid_name};
+use super::instance::{Instance, InstanceId, JsonState, Record, State, is_valid_name};
 use crate::clock::Ticks;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -20,6 +22,36 @@ pub enum RegistryError {
         "invalid agent doc name {0:?}: it becomes a file name, so it uses lowercase letters, digits, `-` and `_`"
     )]
     InvalidAgentDocName(&'static str),
+    #[error(
+        "invalid tool name {0:?}: a tool of the project names its doc file too, so it uses lowercase letters, digits, `-` and `_`"
+    )]
+    InvalidToolName(String),
+}
+
+/// A tool whose saved state is JSON checked by a function instead of a Rust type: a tool the
+/// project defines for itself, such as one written in TypeScript. Its records load in every
+/// project, with no extension to enable, and it may be defined again while the project is
+/// open, see [`Project::define_json_tools`]. Its records live anywhere and own no children.
+pub struct JsonTool {
+    /// The `tool` of its records, and the name of its doc.
+    pub name: String,
+    /// Checks the `state` of a record on every path in, as [`State::validate`] does. The
+    /// message names the field, as `state.rate: 25 is outside [0.1, 20]`.
+    pub check: Arc<dyn Fn(&serde_json::Value) -> Result<(), String> + Send + Sync>,
+    /// What [`ToolRegistration::behaviour`] is for a typed tool. It gets the `state`.
+    pub behaviour:
+        Box<dyn Fn(&serde_json::Value, &mut BehaviourContext<'_>) -> Result<(), BehaviourError>>,
+    /// Its doc for agents, named as the tool.
+    pub doc: Option<JsonToolDoc>,
+    /// Folders under `assets/` whose changes run its behaviour again where it had a problem,
+    /// as [`ToolRegistration::rebinds_on_assets`] does for a typed tool.
+    pub asset_folders: Vec<&'static str>,
+}
+
+/// See [`AgentDoc`], whose name is the tool's.
+pub struct JsonToolDoc {
+    pub when: String,
+    pub markdown: String,
 }
 
 /// One doc for an agent that works in the project folder with only file access. The runtime
@@ -35,10 +67,41 @@ pub struct AgentDoc {
     pub markdown: &'static str,
 }
 
+/// A doc as a project writes it: a view of a registered [`AgentDoc`], or of the doc of a tool
+/// of the project, whose text changes while the project is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentDocText<'a> {
+    pub name: &'a str,
+    pub when: &'a str,
+    pub markdown: &'a str,
+}
+
 /// An agent doc with the extension it belongs to. `None` is a doc every project gets.
 pub(crate) struct RegisteredDoc {
     pub extension: Option<&'static str>,
-    pub doc: AgentDoc,
+    pub name: &'static str,
+    /// Owned for the doc of a tool of the project, which is replaced at every save of it.
+    pub when: Cow<'static, str>,
+    pub markdown: Cow<'static, str>,
+}
+
+impl RegisteredDoc {
+    fn of(extension: Option<&'static str>, doc: AgentDoc) -> Self {
+        Self {
+            extension,
+            name: doc.name,
+            when: Cow::Borrowed(doc.when),
+            markdown: Cow::Borrowed(doc.markdown),
+        }
+    }
+
+    fn text(&self) -> AgentDocText<'_> {
+        AgentDocText {
+            name: self.name,
+            when: &self.when,
+            markdown: &self.markdown,
+        }
+    }
 }
 
 /// Not `Send`: a behaviour may keep control-side state that belongs to the thread the project
@@ -80,9 +143,10 @@ pub enum Was<'a, S> {
 }
 
 pub(crate) struct ToolDefinition {
-    pub extension: &'static str,
+    /// `None` for a tool of the project itself, which every project loads.
+    pub extension: Option<&'static str>,
     /// Decodes and validates the `state` value of a record. The error names the field.
-    pub decode: fn(serde_json::Value) -> Result<Record, String>,
+    pub decode: Box<dyn Fn(serde_json::Value) -> Result<Record, String>>,
     pub behaviour: Option<ErasedBehaviour>,
     pub derive: Option<ErasedDerive>,
     pub summary: Option<ErasedSummary>,
@@ -91,6 +155,16 @@ pub(crate) struct ToolDefinition {
     /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
     /// again. See [`ToolRegistration::rebinds_on_assets`].
     pub asset_folders: Vec<&'static str>,
+}
+
+impl ToolDefinition {
+    /// Whether a project whose `project.json` enables `extensions` loads records of this tool.
+    pub(crate) fn is_enabled_in(&self, extensions: &[String]) -> bool {
+        match self.extension {
+            Some(extension) => extensions.iter().any(|enabled| enabled == extension),
+            None => true,
+        }
+    }
 }
 
 /// Every tool the compiled extensions offer. Registering makes a type available. It creates
@@ -113,10 +187,7 @@ impl Registry {
         Self {
             tools: BTreeMap::new(),
             // `project.json` is core, not an extension, so the core brings its doc itself.
-            agent_docs: vec![RegisteredDoc {
-                extension: None,
-                doc: super::generated::PROJECT_FILE_DOC,
-            }],
+            agent_docs: vec![RegisteredDoc::of(None, super::generated::PROJECT_FILE_DOC)],
         }
     }
 
@@ -130,8 +201,8 @@ impl Registry {
             return Err(RegistryError::DuplicateTool(S::TOOL));
         }
         let definition = self.tools.entry(S::TOOL).or_insert(ToolDefinition {
-            extension,
-            decode: decode::<S>,
+            extension: Some(extension),
+            decode: Box::new(decode::<S>),
             behaviour: None,
             derive: None,
             summary: None,
@@ -174,15 +245,82 @@ impl Registry {
             return Err(RegistryError::InvalidAgentDocName(doc.name));
         }
         // Two docs of one name would write over each other's file. The doc of `project.json`
-        // is in the list from the start, so its name is taken like any other.
-        if self
-            .agent_docs
-            .iter()
-            .any(|other| other.doc.name == doc.name)
+        // is in the list from the start, so its name is taken like any other. A tool of the
+        // project names its doc as itself.
+        let project_tool = self.tools.get(doc.name);
+        if self.agent_docs.iter().any(|other| other.name == doc.name)
+            || project_tool.is_some_and(|tool| tool.extension.is_none())
         {
             return Err(RegistryError::DuplicateAgentDoc(doc.name));
         }
-        self.agent_docs.push(RegisteredDoc { extension, doc });
+        self.agent_docs.push(RegisteredDoc::of(extension, doc));
+        Ok(())
+    }
+
+    /// Registers a tool of the project, or replaces the one of that name. A typed tool or
+    /// another doc of that name is an error: they come with the runtime.
+    pub fn json_tool(&mut self, tool: JsonTool) -> Result<(), RegistryError> {
+        let JsonTool {
+            name,
+            check,
+            behaviour,
+            doc,
+            asset_folders,
+        } = tool;
+        let name = match self.tools.get_key_value(name.as_str()) {
+            Some((existing, definition)) if definition.extension.is_some() => {
+                return Err(RegistryError::DuplicateTool(existing));
+            }
+            Some((existing, _)) => *existing,
+            None if !is_valid_name(&name) => return Err(RegistryError::InvalidToolName(name)),
+            None => {
+                // Its doc is named as the tool, and a doc of the runtime may have the name.
+                let taken = self.agent_docs.iter().find(|other| other.name == name);
+                if let Some(registered) = taken {
+                    return Err(RegistryError::DuplicateAgentDoc(registered.name));
+                }
+                // Names are few and live as long as the program: a tool defined again keeps
+                // its name, so a name is leaked once.
+                &*Box::leak(name.into_boxed_str())
+            }
+        };
+        // Neither a new tool nor a new doc takes the name of the other, so a doc of this name
+        // is the one this tool had.
+        self.agent_docs.retain(|registered| registered.name != name);
+        if let Some(JsonToolDoc { when, markdown }) = doc {
+            self.agent_docs.push(RegisteredDoc {
+                extension: None,
+                name,
+                when: Cow::Owned(when),
+                markdown: Cow::Owned(markdown),
+            });
+        }
+        let decode_check = check.clone();
+        let decode = move |value: serde_json::Value| {
+            decode_check(&value)?;
+            let check = decode_check.clone();
+            Ok(Record::json(name, JsonState { value, check }))
+        };
+        let behaviour = move |state: &dyn Any, context: &mut BehaviourContext<'_>| {
+            match state.downcast_ref::<JsonState>() {
+                Some(state) => behaviour(&state.value, context),
+                // The record of an instance always holds the state type of its tool.
+                None => Ok(()),
+            }
+        };
+        self.tools.insert(
+            name,
+            ToolDefinition {
+                extension: None,
+                decode: Box::new(decode),
+                behaviour: Some(Box::new(behaviour)),
+                derive: None,
+                summary: None,
+                end: None,
+                owns_children: false,
+                asset_folders,
+            },
+        );
         Ok(())
     }
 
@@ -190,30 +328,33 @@ impl Registry {
     pub(crate) fn agent_docs<'a>(
         &'a self,
         enabled: &'a [String],
-    ) -> impl Iterator<Item = AgentDoc> + 'a {
+    ) -> impl Iterator<Item = AgentDocText<'a>> + 'a {
         self.agent_docs
             .iter()
             .filter(|registered| match registered.extension {
                 Some(extension) => enabled.iter().any(|enabled| enabled == extension),
                 None => true,
             })
-            .map(|registered| registered.doc)
+            .map(RegisteredDoc::text)
     }
 
-    /// Every tool as (name, extension, owns children), in name order.
-    pub(crate) fn tools(&self) -> impl Iterator<Item = (&'static str, &'static str, bool)> {
-        let tools = self.tools.iter();
-        tools.map(|(name, definition)| (*name, definition.extension, definition.owns_children))
+    /// Every tool as (name, its definition), in name order.
+    pub(crate) fn tools(&self) -> impl Iterator<Item = (&'static str, &ToolDefinition)> {
+        self.tools
+            .iter()
+            .map(|(name, definition)| (*name, definition))
     }
 
     pub(crate) fn definition(&self, tool: &str) -> Option<&ToolDefinition> {
         self.tools.get(tool)
     }
 
+    /// The extensions of the runtime, which `project.json` enables. A tool of the project has
+    /// none.
     pub(crate) fn extensions(&self) -> BTreeSet<&'static str> {
         self.tools
             .values()
-            .map(|definition| definition.extension)
+            .filter_map(|definition| definition.extension)
             .collect()
     }
 }

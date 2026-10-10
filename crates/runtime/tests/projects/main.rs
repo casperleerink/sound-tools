@@ -37,4 +37,5 @@ mod scale;
 mod solo;
 mod summary;
 mod support;
+mod typescript;
 mod utility;

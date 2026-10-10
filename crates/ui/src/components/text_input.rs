@@ -82,16 +82,20 @@ actions!(
     ]
 );
 
+/// The key context of a text field. A binding of a plain key outside the field leaves it out,
+/// so the field keeps the key.
+pub const KEY_CONTEXT: &str = "TextInput";
+
 struct BindingsInstalled;
 impl Global for BindingsInstalled {}
 
-/// Bind the editing keys once per process, scoped to the `TextInput` key context.
+/// Bind the editing keys once per process, scoped to the [`KEY_CONTEXT`].
 fn install_bindings(cx: &mut App) {
     if cx.has_global::<BindingsInstalled>() {
         return;
     }
     cx.set_global(BindingsInstalled);
-    let ctx = Some("TextInput");
+    let ctx = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, ctx),
         // Shift is still held after a shift-enter or a capital, and must not eat the key.
@@ -127,7 +131,8 @@ fn install_bindings(cx: &mut App) {
     ]);
     // Only a multi-line input takes these, so a one-line field (a rename) leaves up, down and
     // cmd-z to the views around it, as before.
-    let multi_line = Some("TextInput && multi_line");
+    let multi_line = format!("{KEY_CONTEXT} && multi_line");
+    let multi_line = Some(multi_line.as_str());
     cx.bind_keys([
         KeyBinding::new("up", Up, multi_line),
         KeyBinding::new("down", Down, multi_line),
@@ -1363,7 +1368,7 @@ impl Render for TextInput {
         let bare = self.bare;
         let multi_line = self.max_rows.is_some();
         let mut key_context = KeyContext::default();
-        key_context.add("TextInput");
+        key_context.add(KEY_CONTEXT);
         if multi_line {
             key_context.add("multi_line");
         }

@@ -55,13 +55,25 @@ fn the_bend_the_mod_wheel_and_the_pressure_are_read() {
 }
 
 #[test]
-fn other_controllers_and_messages_are_left_alone() {
-    let ignored: [&[u8]; 5] = [
-        &[0xB0, 33, 127], // the fine half of the mod wheel
-        &[0xB0, 7, 100],  // volume
-        &[0xA0, 60, 80],  // polyphonic key pressure
-        &[0xF8],          // MIDI clock
-        &[0xC0, 4],       // program change
+fn another_controller_is_read_for_the_tools_but_plays_no_instrument() {
+    let knob = Played::from_bytes(&[0xB3, 74, 100]);
+    assert_eq!(
+        knob,
+        Some(Played::Control {
+            controller: 74,
+            value: 100
+        })
+    );
+    assert_eq!(knob.and_then(Played::event), None);
+}
+
+#[test]
+fn other_messages_are_left_alone() {
+    let ignored: [&[u8]; 4] = [
+        &[0xB0, 123, 0], // all notes off, a channel mode message
+        &[0xA0, 60, 80], // polyphonic key pressure
+        &[0xF8],         // MIDI clock
+        &[0xC0, 4],      // program change
     ];
     for bytes in ignored {
         assert_eq!(Played::from_bytes(bytes), None, "{bytes:?}");
@@ -75,14 +87,14 @@ fn other_controllers_and_messages_are_left_alone() {
 fn a_message_becomes_the_event_the_note_contract_has() {
     assert_eq!(
         on(60, 88).event(),
-        NoteEvent::On {
+        Some(NoteEvent::On {
             pitch: pitch(60),
             velocity: sound_notes::Velocity::new(88).unwrap()
-        }
+        })
     );
-    assert_eq!(off(60).event(), NoteEvent::Off { pitch: pitch(60) });
+    assert_eq!(off(60).event(), Some(NoteEvent::Off { pitch: pitch(60) }));
     assert_eq!(
         pedal(127).event(),
-        NoteEvent::Pedal(Pedal::new(127).unwrap())
+        Some(NoteEvent::Pedal(Pedal::new(127).unwrap()))
     );
 }

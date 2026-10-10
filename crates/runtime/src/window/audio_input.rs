@@ -1,38 +1,48 @@
-//! The audio input of the window: open while a track is armed or a take records, its level for
-//! the meters, and the recorder that writes the takes. The input is opened and the recorder
-//! runs on the background executor, never on the thread that draws: opening a device can take
-//! a while, and the first time macOS asks the composer whether the app may use the microphone.
+//! The audio input of the window: open while a track is armed, a take records or `project.json`
+//! connects the device input, its level for the meters, and the recorder that writes the takes.
+//! The input is opened and the recorder runs on the background executor, never on the thread
+//! that draws: opening a device can take a while, and the first time macOS asks the composer
+//! whether the app may use the microphone.
 
 use std::sync::Arc;
 
-use sound_core::{Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InputStream};
+use sound_core::{
+    Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InputStream, InstanceId,
+    LiveInput,
+};
 
 use crate::recorder::{Recorder, RecorderCommand, RecorderReport};
 
-/// An input the window opened: the stream of the device, which stops when it is dropped, and
-/// the reader of what it captures. A test gives one with no device and writes into it itself.
+/// An input the window opened: the stream of the device, which stops when it is dropped, the
+/// reader of what it captures, and the live input for the engine. A test gives one with no
+/// device and writes into it itself.
 pub struct OpenedInput {
     pub stream: Option<InputStream>,
     pub reader: CaptureReader,
+    pub live: LiveInput,
 }
 
-/// How the window opens its input: the default input of the system, or a simulated one. It is
+/// How the window opens its input: an input device of the system, or a simulated one. It is
 /// called on a background thread.
 pub type OpenInput = Arc<dyn Fn() -> Result<OpenedInput, DeviceError> + Send + Sync>;
 
-/// The default input of the system, as set in macOS. No choice of device in the window.
-pub fn default_input() -> Result<OpenedInput, DeviceError> {
-    let device = InputDevice::default_input()?;
-    let name = device.name()?;
-    let (stream, reader) = device.start()?;
-    println!(
-        "audio in: {name}, {} Hz, {} channels",
-        reader.sample_rate(),
-        reader.channels()
-    );
-    Ok(OpenedInput {
-        stream: Some(stream),
-        reader,
+/// The input device the composer chose on this machine, by its id, or the default input of the
+/// system when there is no choice or that device is not there.
+pub fn system_input(choice: Option<String>) -> OpenInput {
+    Arc::new(move || {
+        let device = InputDevice::open(choice.as_deref())?;
+        let name = device.name()?;
+        let (stream, reader, live) = device.start()?;
+        println!(
+            "audio in: {name}, {} Hz, {} channels",
+            reader.sample_rate(),
+            reader.channels()
+        );
+        Ok(OpenedInput {
+            stream: Some(stream),
+            reader,
+            live,
+        })
     })
 }
 
@@ -63,6 +73,12 @@ pub(super) struct AudioInput {
     /// What waits for the recorder's next run. A start waits here while the input opens.
     commands: Vec<RecorderCommand>,
     openings: u64,
+    /// The last opening failed, the input went away, or it was given up because it plays
+    /// nothing. It is not opened again until something new wants it, see [`Self::wants`].
+    failed: bool,
+    /// What wanted it at the last [`Self::wants`].
+    armed: Vec<InstanceId>,
+    heard: bool,
 }
 
 impl AudioInput {
@@ -73,7 +89,29 @@ impl AudioInput {
             opening: None,
             commands: Vec::new(),
             openings: 0,
+            failed: false,
+            armed: Vec::new(),
+            heard: false,
         }
+    }
+
+    /// Whether the input is to be open for the armed tracks and whether a `project.json`
+    /// connection hears it. After a failure it stays closed until something new wants it: a
+    /// track armed that was not, or a connection that was not there. Else a failure that
+    /// disarms every track would open it again, and fail again, at once.
+    pub(super) fn wants(&mut self, armed: Vec<InstanceId>, heard: bool) -> bool {
+        let new = (heard && !self.heard) || armed.iter().any(|track| !self.armed.contains(track));
+        self.failed &= !new;
+        self.heard = heard;
+        self.armed = armed;
+        (heard || !self.armed.is_empty()) && !self.failed
+    }
+
+    /// Closes an input that was opened for a connection alone and plays nothing, because it runs
+    /// at another rate than the output. It is not opened again until something new wants it.
+    pub(super) fn give_up(&mut self) {
+        self.close();
+        self.failed = true;
     }
 
     /// Whether this window has an input to open at all.
@@ -98,37 +136,49 @@ impl AudioInput {
         Some((opener, self.openings))
     }
 
-    /// The input opening `generation` opened, or why not. Gives its channel count, or `None`
-    /// for an opening that was given up since: its input stops again.
+    /// The input opening `generation` opened, or why not. Gives its channel count and its live
+    /// input for the engine, or `None` for an opening that was given up since: its input stops
+    /// again.
     pub(super) fn opened(
         &mut self,
         generation: u64,
         opened: Result<OpenedInput, DeviceError>,
         assets: &Assets,
-    ) -> Option<Result<usize, DeviceError>> {
+    ) -> Option<Result<(usize, LiveInput), DeviceError>> {
         if self.opening != Some(generation) {
             return None;
         }
         self.opening = None;
-        let opened = match opened {
+        let OpenedInput {
+            stream,
+            reader,
+            live,
+        } = match opened {
             Ok(opened) => opened,
             Err(error) => {
                 self.commands.clear();
+                self.failed = true;
                 return Some(Err(error));
             }
         };
-        let status = opened.reader.status();
+        let status = reader.status();
         let channels = status.channels();
+        self.failed = false;
         self.open = Some(Open {
             generation,
             silent_polls: 0,
             gone_told: false,
-            _stream: opened.stream,
+            _stream: stream,
             status,
-            sample_rate: opened.reader.sample_rate(),
-            recorder: Some(Recorder::new(opened.reader, assets.clone())),
+            sample_rate: reader.sample_rate(),
+            recorder: Some(Recorder::new(reader, assets.clone())),
         });
-        Some(Ok(channels))
+        Some(Ok((channels, live)))
+    }
+
+    /// Whether the open input went away, such as an interface that was unplugged.
+    pub(super) fn is_gone(&self) -> bool {
+        self.open.as_ref().is_some_and(|open| open.status.is_gone())
     }
 
     /// Stops the device, or forgets the opening on its way. A recorder out on a run is dropped
@@ -164,6 +214,7 @@ impl AudioInput {
         };
         let now = open.status.is_gone() && !open.gone_told;
         open.gone_told |= now;
+        self.failed |= now;
         now
     }
 

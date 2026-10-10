@@ -70,7 +70,9 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Anywhere | cmd-L | Open the agent sidebar with the focus in its composer. In the composer, close it again |
 | Anywhere | cmd-B | Open or close the agent sidebar, like its icon. The focus stays where it is |
 | Anywhere | cmd-q | Quit. There is no save: every finished edit is already in the folder |
-| A MIDI keyboard | any key, the sustain pedal, the bend and mod wheels, key pressure | Play the instrument of the selected track, whether the project plays or not. The synth, the Wavetable and the Sampler bend two semitones and add a vibrato with the mod wheel; the Wavetable can also route the mod wheel and the key pressure in its matrix. A plugin gets them as MIDI (CLAP) or on the parameters it maps them to (VST 3). A take records the wheels too |
+| A MIDI keyboard | any key, the sustain pedal, the bend and mod wheels, key pressure | Play the instrument of the selected track, whether the project plays or not. The synth, the Wavetable and the Sampler bend two semitones and add a vibrato with the mod wheel; the Wavetable can also route the mod wheel and the key pressure in its matrix. A plugin gets them as MIDI (CLAP) or on the parameters it maps them to (VST 3). A take records the wheels too. A tool of the project on that track, or at the top of the project, hears them, and the other controllers of the keyboard too |
+| The computer keys | cmd-K or the keyboard button in the transport, then the letter rows | Play the instrument of the selected track as a MIDI keyboard does, and record into a take. `a` is C, then `w` C#, `s` D, `e` D#, `d` E, `f` F, `t` F#, `g` G, `y` G#, `h` A, `u` A#, `j` B, `k` C, up to `p` D#; `z` and `x` go an octave down and up. Those keys then do nothing else; space, `r` and keys with cmd stay the window's. A text field, and a tool of the project that hears keys, keep their keys. In a plugin's window they play the keys the plugin does not use. cmd-K again turns them off. Not saved, no undo step |
+| A tool of the project | keys, while its page shows or after a click on its card | Go to the tool when its code hears keys. Plain keys are then the tool's, so space and `r` do not play or record and the computer keys do not play; keys with cmd and tab stay the window's |
 | Title row | the sidebar icon, right of the traffic lights | Open or close the agent sidebar. It stays as it is at the next start. While it is closed and the agent works or asks, the icon carries a lavender dot |
 | Agent sidebar | **Set up**, at the first use | Download the pinned Claude Code (215 MB), then sign in. **Cancel** stops; **Try again** resumes |
 | Agent sidebar | Sign in with your Claude plan, Use an Anthropic Console account (API) | Run Claude Code's own sign-in in the browser. **Open the page again** starts it again, **Cancel** stops it |
@@ -86,7 +88,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Agent sidebar | N files are not live, under an answer | Show the problems that turn left, as `path: message` lines |
 | Project menu | Fit tempo to take | Fit the tempo map to the take of the selected clip, so bar lines land on the beats as played |
 | Project menu | Undo, Redo | Named after the step they undo or redo |
-| Project menu | Output device | Shows the device the app plays on |
+| Project menu | Output device, Input device | Show the devices in use and open the devices of the machine, with System default. A pick is kept for this machine and the app reopens on it |
 | Project menu | Open project… | Pick another project folder, or make a new one. The app reopens on it. A folder with other files and no `project.json` is refused |
 | Project menu | Reveal project folder | Show the folder in the Finder |
 | Project menu | Open terminal in project folder | A terminal in the folder, to start a coding agent there |
@@ -97,6 +99,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Transport | arrows on the focused tempo | One bpm, with shift a tenth |
 | Transport | drag the steadiness up or down | Only with a fit: 0 is as played, 100 is one steady tempo. One percent per pixel, with shift tenths |
 | Transport | arrows on the focused steadiness | Five percent, with shift one |
+| Transport | the keyboard button | The computer keys on or off, as cmd-K |
 | Transport | the metronome button | The click on or off. Not an undo step, changes no file, never in a render |
 | Ruler | click | Move the playhead there, on the snap |
 | Ruler | double click, or `t` in the arrangement | Add a tempo change there, or at the playhead. It keeps the tempo that played there |
@@ -143,7 +146,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Track panel | the close icon | Close the panel |
 | Track panel | the volume under the track name | Drag the thumb or the meter; double click for 0 dB; arrows 0.5 dB, with shift 0.1 dB |
 | Track panel | Pan, M, S | Pan the track; mute it; solo it (with other soloed tracks) |
-| Track panel | the input select of an audio track | Which channels of the default input it records: one, or a pair for stereo |
+| Track panel | the input select of an audio track | Which channels of the input device it records: one, or a pair for stereo |
 | Track panel | drag a knob up or down | Change the value. With shift ten times finer |
 | Track panel | arrows on a focused knob | A fiftieth of the travel, with shift a five-hundredth |
 | Track panel | double click a knob, or backspace on it | Set its default |

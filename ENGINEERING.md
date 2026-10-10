@@ -61,7 +61,7 @@ How the engine keeps to that:
 
 ### How the realtime sanitizer check runs
 
-`Engine::process_block` is marked `#[nonblocking]` with `rtsan-standalone`. It does nothing unless the build sets `RTSAN_ENABLE=1`. Then it aborts on any allocation, lock or system call inside `process_block`, which covers every `update` and `process`. The input device callback (`CaptureWriter::write`) is marked the same way.
+`Engine::process_block` is marked `#[nonblocking]` with `rtsan-standalone`. It does nothing unless the build sets `RTSAN_ENABLE=1`. Then it aborts on any allocation, lock or system call inside `process_block`, which covers every `update` and `process`. The input device callback (`CaptureWriter::write`, `LiveWriter::write`) is marked the same way.
 
 - The CI job `test` in `.github/workflows/ci.yml` runs the whole test suite with the sanitizer on, on main.
 - A test in `crates/core/tests/engine.rs` starts a child that allocates inside `process` and expects the abort, so a sanitizer that is silently off fails CI.
