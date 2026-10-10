@@ -82,6 +82,7 @@ impl<const N: usize> Taps<N> {
         if !self.is_fading() {
             self.start();
         }
+        self.check();
     }
 
     fn start(&mut self) {
@@ -116,6 +117,13 @@ impl<const N: usize> Taps<N> {
             self.fade = 1.0;
             self.start();
         }
+        self.check();
+    }
+
+    /// The rule of `fade`: under 1 exactly while `from` and `to` differ.
+    #[inline]
+    fn check(&self) {
+        debug_assert_eq!(self.fade < 1.0, self.from != self.to);
     }
 
     /// Takes the newest taps at once.

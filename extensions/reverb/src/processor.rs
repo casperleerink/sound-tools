@@ -144,7 +144,8 @@ fn highs_part(damping: f32) -> f32 {
 
 /// The sign of line `index` in the left and the right output, and in what the left and the
 /// right input put into it. The second and third rows of the Hadamard matrix: each line is in
-/// both sides, and the two sides are as different as sixteen lines allow.
+/// both sides, and the two sides are as different as sixteen lines allow. `Reverb::frame` takes
+/// the wet sound from rows 1 and 2 of the mixed lines: change these rows and that changes too.
 fn signs(index: usize) -> [f32; CHANNELS] {
     let sign = |bit: usize| if index & bit == 0 { 1.0 } else { -1.0 };
     [sign(1), sign(2)]
@@ -214,7 +215,8 @@ impl<T: Copy + Default> Frames<T> {
         }
     }
 
-    fn frames(&self) -> usize {
+    /// How many frames the buffer holds.
+    fn len(&self) -> usize {
         self.frames.len()
     }
 
@@ -222,7 +224,7 @@ impl<T: Copy + Default> Frames<T> {
     #[inline]
     fn at(&self, position: usize, delay: usize) -> &T {
         // The length is the mask plus one. Cut to it, the compiler sees that a masked index is
-        // inside and checks no bound per read.
+        // inside: the one check left is of the cut, which it may lift out of a loop.
         let frames = &self.frames[..=self.mask];
         &frames[position.wrapping_sub(delay) & self.mask]
     }
@@ -235,18 +237,22 @@ impl<T: Copy + Default> Frames<T> {
 }
 
 /// A number that moves in a straight line over the frames of a run, a step per frame. A glide
-/// is a straight line, so a run moves its [`Smoothed`] once and adds the steps in between, which
-/// is cheaper than moving it each frame.
+/// is a straight line, so a run moves its [`Smoothed`] once and works out the frames in between,
+/// which is cheaper than moving it each frame. Each frame is counted back from the end, so the
+/// last one is exactly where the glide is going and a number that does not move stays exact.
 struct Ramp {
-    value: f32,
+    to: f32,
     step: f32,
+    /// The frames still to come, counted down before each value: 0 on the last frame.
+    remaining: usize,
 }
 
 impl Ramp {
     fn between(from: f32, to: f32, frames: usize) -> Self {
         Self {
-            value: from,
+            to,
             step: (to - from) / frames.max(1) as f32,
+            remaining: frames,
         }
     }
 
@@ -258,8 +264,8 @@ impl Ramp {
 
     /// The value of the next frame.
     fn next(&mut self) -> f32 {
-        self.value += self.step;
-        self.value
+        self.remaining = self.remaining.saturating_sub(1);
+        self.to - self.step * self.remaining as f32
     }
 }
 
@@ -305,11 +311,10 @@ pub struct Reverb {
     stale: bool,
     /// Whether the tail factor takes its target at once, with nothing to glide from.
     snapped: bool,
-    /// Frames in a row with a silent input and nothing audible in the lines.
+    /// Frames in a row with a silent input and nothing audible in the lines, counted in whole
+    /// runs: a run with anything audible counts none. So the reverb rests up to a run later than
+    /// it could, never earlier.
     quiet_frames: usize,
-    /// The loudest each line took in the frames of a run so far. A maximum side by side for all
-    /// lines per frame and one compare per run, not a compare per line and frame.
-    loudest: [f32; LINES],
 }
 
 impl Reverb {
@@ -350,7 +355,6 @@ impl Reverb {
             stale: true,
             snapped: true,
             quiet_frames: 0,
-            loudest: [0.0; LINES],
         }
     }
 
@@ -501,11 +505,19 @@ impl Reverb {
     /// The largest delay a sound can take through the reverb before it is in the lines.
     fn longest_path(&self) -> usize {
         let diffusers: usize = self.diffuser_frames.iter().flatten().sum();
-        self.pre_delay.frames() + diffusers + self.lines.frames()
+        self.pre_delay.len() + diffusers + self.lines.len()
     }
 
-    /// One frame of the reverb, from the input of each channel to the wet sound of each.
-    fn frame(&mut self, input: [f32; CHANNELS], diffusion: f32, gain: f32) -> [f32; CHANNELS] {
+    /// One frame of the reverb, from the input of each channel to the wet sound of each. Keeps
+    /// in `loudest` the loudest each line took: a maximum side by side for all lines per frame
+    /// and one compare per run, not a compare per line and frame.
+    fn frame(
+        &mut self,
+        input: [f32; CHANNELS],
+        diffusion: f32,
+        gain: f32,
+        loudest: &mut [f32; LINES],
+    ) -> [f32; CHANNELS] {
         let position = self.position;
         let (line_fade, pre_fade) = (self.line_taps.weight(), self.pre_delay_tap.weight());
         let [low_factor, high_factor] = self.cut_factors;
@@ -552,7 +564,7 @@ impl Reverb {
         let written: [f32; LINES] =
             std::array::from_fn(|index| self.damped[index] + inputs[index % 4]);
         self.lines.write(position, written);
-        self.loudest = std::array::from_fn(|index| self.loudest[index].max(written[index].abs()));
+        *loudest = std::array::from_fn(|index| loudest[index].max(written[index].abs()));
         self.position = position.wrapping_add(1);
         self.line_taps.advance();
         self.pre_delay_tap.advance();
@@ -605,6 +617,7 @@ impl Processor for Reverb {
             let mut diffusion = Ramp::along(&mut self.diffusion, length);
             let mut width = Ramp::along(&mut self.width, length);
             let mut mix = Ramp::along(&mut self.mix, length);
+            let mut loudest = [0.0; LINES];
             let frames = left_in
                 .iter()
                 .zip(right_in)
@@ -613,7 +626,7 @@ impl Processor for Reverb {
             for (((left_in, right_in), left_out), right_out) in frames {
                 let input = [held(*left_in), held(*right_in)];
                 let gain = input_gain.next() * tail_gain.next();
-                let [left, right] = self.frame(input, diffusion.next(), gain);
+                let [left, right] = self.frame(input, diffusion.next(), gain, &mut loudest);
                 let (width, mix) = (width.next(), mix.next());
                 let middle = (left + right) * 0.5;
                 let side = (left - right) * 0.5 * width;
@@ -621,10 +634,7 @@ impl Processor for Reverb {
                 *left_out = (1.0 - mix) * *left_in + mix * (middle + side);
                 *right_out = (1.0 - mix) * *right_in + mix * (middle - side);
             }
-            let loudest = std::mem::take(&mut self.loudest)
-                .into_iter()
-                .fold(0.0, f32::max);
-            if loudest >= REST {
+            if loudest.into_iter().fold(0.0, f32::max) >= REST {
                 self.quiet_frames = 0;
             } else {
                 self.quiet_frames = self.quiet_frames.saturating_add(length);
@@ -675,6 +685,16 @@ mod tests {
                     assert!(!lines[index + 1..].contains(line), "{lines:?}");
                 }
             }
+        }
+    }
+
+    /// Ends at its target, so the input that freeze glides to 0 lets nothing through after.
+    #[test]
+    fn a_ramp_ends_exactly_on_its_target() {
+        for (from, to, frames) in [(0.3, 0.0, 16), (0.7, 0.1, 13), (1.0, 0.0, 15)] {
+            let mut ramp = Ramp::between(from, to, frames);
+            let last = (0..frames).map(|_| ramp.next()).last();
+            assert_eq!(last, Some(to), "{from} {to} {frames}");
         }
     }
 
