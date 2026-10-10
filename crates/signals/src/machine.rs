@@ -725,7 +725,7 @@ impl Span<'_> {
                             }
                         }
                         #[allow(unreachable_patterns)]
-                        _ => {}
+                        _ => debug_assert!(false, "a run mixes formulas"),
                     }
                 }
             };

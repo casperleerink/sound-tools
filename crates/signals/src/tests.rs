@@ -5,7 +5,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, TAU};
 use serde_json::json;
 
 #[path = "../tests/sound/mod.rs"]
-mod sound;
+pub(crate) mod sound;
 
 use sound_core::MAX_BLOCK;
 

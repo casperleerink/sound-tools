@@ -450,3 +450,40 @@ impl Tarjan {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Step, edges, schedule};
+    use crate::code::Register;
+    use crate::tests::sound::{compile, feedback, input};
+
+    #[test]
+    fn loops_of_the_same_formulas_run_as_one_step_a_formula_each() {
+        // As a tool makes them in a `for`.
+        let code = compile(|| {
+            let [first, second, third] = [0.5, 0.25, -0.75].map(|again| {
+                let echo = feedback();
+                let wet = input() + echo.read() * again;
+                echo.set(wet);
+                wet
+            });
+            first + second + third
+        });
+        let loops: Vec<Vec<Vec<Register>>> = (schedule(&code, &edges(&code)).iter())
+            .filter_map(|step| match step {
+                Step::Loop(runs) => Some(
+                    (runs.iter())
+                        .map(|run| run.iter().map(|(register, _)| *register).collect())
+                        .collect(),
+                ),
+                Step::Block(_) => None,
+            })
+            .collect();
+        // The reads of the feedbacks, then each times its factor, then each sum.
+        let [runs] = loops.as_slice() else {
+            panic!("{loops:?}");
+        };
+        assert_eq!(runs.len(), 3, "{runs:?}");
+        assert!(runs.iter().all(|run| run.len() == 3), "{runs:?}");
+    }
+}
