@@ -252,10 +252,16 @@ impl Taps<'_> {
         let mut sums = [[0.0_f32; 2]; N];
         for tap in 0..WIDTH {
             for (sum, taps) in sums.iter_mut().zip(&taps) {
-                let (lower, upper) = (taps.lower[tap], taps.upper[tap]);
+                let (Some(lower), Some(upper), Some(sample)) = (
+                    taps.lower.get(tap),
+                    taps.upper.get(tap),
+                    taps.samples.get(tap),
+                ) else {
+                    continue;
+                };
                 let weight = lower + taps.between * (upper - lower);
-                sum[0] += taps.samples[tap][0] * weight;
-                sum[1] += taps.samples[tap][1] * weight;
+                sum[0] += sample[0] * weight;
+                sum[1] += sample[1] * weight;
             }
         }
         sums
