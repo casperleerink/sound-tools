@@ -63,7 +63,8 @@ def track(folder, name, order, instrument, clip_notes, effects=True):
     write(base / "instance.json", {"tool": "arrangement.track", "state": state})
     write(base / "instrument.json", instrument)
     if clip_notes is not None:
-        write(base / "clip.json", {"tool": "arrangement.clip", "state": {"start": 0, "length": BAR * BARS, "notes": clip_notes}})
+        clip = {"start": 0, "length": BAR * BARS, "notes": clip_notes}
+        write(base / "clip.json", {"tool": "arrangement.clip", "state": clip})
 
 
 def builtins(folder, synths, wavetables, start=0):
@@ -96,7 +97,8 @@ def tool(folder, source, name, order, suffix=""):
     file, state, plays_notes = TOOLS[name]
     (folder / "extensions").mkdir(exist_ok=True)
     shutil.copy(source / file, folder / "extensions" / Path(file).name)
-    track(folder, f"{name}{suffix}", order, {"tool": name, "state": state}, notes("arp", order) if plays_notes else None)
+    clip_notes = notes("arp", order) if plays_notes else None
+    track(folder, f"{name}{suffix}", order, {"tool": name, "state": state}, clip_notes)
 
 
 def rebuild_file(source, name):

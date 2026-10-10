@@ -103,7 +103,7 @@ def render(builds, names, runs, seconds):
         print(f"render run {run + 1} of {runs}", file=sys.stderr, flush=True)
         for name in names:  # interleaved, so a slow minute of the machine hits every row alike
             for build in builds:
-                for length in (1, seconds):
+                for length in (0, 1, seconds):  # 0 s is the startup alone
                     results.setdefault((name, build.sha, length), []).append(
                         render_once(build, name, length, ROOT / "out.wav"))
     save("render", {"|".join(map(str, key)): value for key, value in results.items()})
@@ -111,16 +111,23 @@ def render(builds, names, runs, seconds):
     def median(name, build, length, field):
         return statistics.median(row[field] for row in results[(name, build.sha, length)])
 
-    def dsp(name, build):  # share of one core while it plays, without startup
+    def spread(name, build):  # how far apart the runs of the long render are; high means a busy machine
+        cpu = [row["cpu"] for row in results[(name, build.sha, seconds)]]
+        return (max(cpu) - min(cpu)) / statistics.median(cpu) * 100
+
+    def dsp(name, build):  # share of one core while it plays
         return (median(name, build, seconds, "cpu") - median(name, build, 1, "cpu")) / (seconds - 1) * 100
 
-    print(f"\nRender, median of {runs}. dsp: CPU of {seconds} s minus CPU of 1 s, as % of one core.\n")
-    print("| project | commit | dsp % of a core | startup cpu s | startup wall s | peak MB |")
-    print("| --- | --- | ---: | ---: | ---: | ---: |")
+    print(f"\nRender, median of {runs}. dsp: CPU of {seconds} s minus CPU of 1 s, as % of one core. "
+          "Spread: (slowest - fastest) / median of the long render. "
+          "Startup: a render of 0 s. MB: peak RSS of the runtime.\n")
+    print("| project | commit | dsp % of a core | spread % | startup cpu s | startup wall s | peak MB |")
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
     for name in names:
         for build in builds:
-            print(f"| {name} | {build} | {dsp(name, build):.2f} | {median(name, build, 1, 'cpu'):.2f} "
-                  f"| {median(name, build, 1, 'wall'):.2f} | {median(name, build, seconds, 'mb'):.0f} |")
+            print(f"| {name} | {build} | {dsp(name, build):.2f} | {spread(name, build):.0f} "
+                  f"| {median(name, build, 0, 'cpu'):.2f} | {median(name, build, 0, 'wall'):.2f} "
+                  f"| {median(name, build, seconds, 'mb'):.0f} |")
     ratios = [(rebuild, builtin, pattern) for rebuild, builtin in projects.REBUILDS.items()
               for pattern in projects.PATTERNS if f"{rebuild}-{pattern}" in names and f"{builtin}-{pattern}" in names]
     if ratios:
@@ -207,7 +214,7 @@ def live_once(build, job, window):
 
     return {"cpu": (cpu(after) - cpu(before)) / elapsed * 100,
             "bun cpu": (cpu(after, True) - cpu(before, True)) / elapsed * 100,
-            "mb": max(rss) / 2**20, "bun mb": max(bun_rss) / 2**20, "edits": edits,
+            "mb": max(rss) / 2**20, "bun mb": max(bun_rss) / 2**20,
             "engine edits": int(re.findall(r"(\d+) edits applied", text)[-1]),
             "callbacks": int(count("callbacks")), "late": int(count("late callbacks")),
             "slowest": count("slowest callback"), "xruns": int(count("xruns"))}
