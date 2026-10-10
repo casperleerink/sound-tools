@@ -15,7 +15,7 @@ use crate::input::{InputId, LiveInput};
 use crate::peaks::{Peaks, loudest};
 use crate::processor::{
     AudioInputs, AudioOutputs, CHANNELS, EventInputs, EventOutputs, MAX_BLOCK, ProcessContext,
-    Processor,
+    Processor, next_bend,
 };
 use crate::transport::{TransportCommand, TransportState};
 
@@ -431,7 +431,7 @@ impl Engine {
         self.transport.begin_block();
         // What the device plays in this block. Every processor with no latency after it sees
         // exactly this, so a project without latency builds it once per block, as it always did.
-        let heard = self.transport.view(frames, 0, false, None);
+        let heard = self.transport.view(0, frames, 0, false, None);
         let port_misuses = Cell::new(0);
         let dropped_events = Cell::new(0);
         for step in steps.iter() {
@@ -477,44 +477,68 @@ impl Engine {
             }) = self.slots.get_mut(step.slot)
             {
                 let lead = lead.unwrap_or_default();
-                let transport = match (lead, *moved, *resume_from) {
-                    (0, false, None) => heard.clone(),
-                    _ => self.transport.view(frames, lead, *moved, *resume_from),
-                };
-                *moved = false;
-                if let Some(from) = *resume_from
-                    && (transport.jumped || transport.tick_range.end > from)
-                {
-                    *resume_from = None;
+                // A piece of the block from where it starts to where a lane of its automation
+                // bends next, so a lane bends on its frame and not on the edge of a block.
+                // Without such a bend the block is one piece, as it always was.
+                let mut start = 0;
+                while start < frames {
+                    let rest = frames - start;
+                    let bend = (step.automation_inputs.iter())
+                        .filter_map(|index| step_event_inputs.get(*index))
+                        .filter_map(|buffer| next_bend(buffer.as_ref()))
+                        .min();
+                    let length = bend.map_or(rest, |bend| bend.min(rest));
+                    let transport = match (lead, *moved, *resume_from) {
+                        (0, false, None) if length == frames => heard.clone(),
+                        _ => self
+                            .transport
+                            .view(start, length, lead, *moved, *resume_from),
+                    };
+                    *moved = false;
+                    if let Some(from) = *resume_from
+                        && (transport.jumped || transport.tick_range.end > from)
+                    {
+                        *resume_from = None;
+                    }
+                    processor.process(&mut ProcessContext {
+                        frames: length,
+                        start_frame: self.status.frames + start as u64,
+                        transport,
+                        audio_inputs: AudioInputs {
+                            buffers: audio_scratch
+                                .get(..step.audio_sources.len())
+                                .unwrap_or_default(),
+                            sources: &step.audio_sources,
+                            start,
+                            frames: length,
+                            misuses: &port_misuses,
+                        },
+                        audio_outputs: AudioOutputs {
+                            buffers: &mut *step_audio_outputs,
+                            start,
+                            frames: length,
+                            misuses: &port_misuses,
+                        },
+                        event_inputs: EventInputs {
+                            buffers: &*step_event_inputs,
+                            frames: length,
+                            misuses: &port_misuses,
+                        },
+                        event_outputs: EventOutputs {
+                            buffers: &mut *step_event_outputs,
+                            start,
+                            frames: length,
+                            misuses: &port_misuses,
+                            dropped: &dropped_events,
+                        },
+                    });
+                    start += length;
+                    if start < frames {
+                        for buffer in step_event_inputs.iter_mut() {
+                            buffer.shift(length);
+                        }
+                    }
                 }
-                processor.process(&mut ProcessContext {
-                    frames,
-                    start_frame: self.status.frames,
-                    transport,
-                    audio_inputs: AudioInputs {
-                        buffers: audio_scratch
-                            .get(..step.audio_sources.len())
-                            .unwrap_or_default(),
-                        sources: &step.audio_sources,
-                        frames,
-                        misuses: &port_misuses,
-                    },
-                    audio_outputs: AudioOutputs {
-                        buffers: &mut *step_audio_outputs,
-                        frames,
-                        misuses: &port_misuses,
-                    },
-                    event_inputs: EventInputs {
-                        buffers: step_event_inputs,
-                        misuses: &port_misuses,
-                    },
-                    event_outputs: EventOutputs {
-                        buffers: &mut *step_event_outputs,
-                        frames,
-                        misuses: &port_misuses,
-                        dropped: &dropped_events,
-                    },
-                });
             }
             for buffer in step_event_outputs {
                 self.status.event_overflows += buffer.take_overflow();

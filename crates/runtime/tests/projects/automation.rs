@@ -339,6 +339,38 @@ fn unmuting_while_a_gain_lane_moves_glides_over_twenty_milliseconds() {
     assert!((after - 1.0).abs() < 1e-3, "{after}");
 }
 
+/// A gate: from `closed` to `open` in two ticks, 50 frames at 120 BPM, from tick 3841. It starts
+/// at frame 25 and ends at frame 75 of the second bar, both inside a block of 64 frames.
+pub(crate) fn gate(device: Option<&str>, parameter: &str, closed: &str, open: &str) -> String {
+    let (start, end) = (BAR_TICKS + 1, BAR_TICKS + 3);
+    lane(device, parameter, &[(start, closed), (end, open)])
+}
+
+/// How far a render through a [`gate`] is from its frames: the frames that sound before it
+/// opens, and the frames after it is open that differ from the sound with it open. A lane that
+/// bends only on the edge of a block sounds early; one that glides arrives late.
+pub(crate) fn off_the_gate(gated: &[f32], open: &[f32]) -> (usize, usize) {
+    let (start, end) = (BAR + 25, BAR + 75);
+    let early = frames(gated, 0, start).chunks(2);
+    let early = early.filter(|frame| frame.iter().any(|sample| *sample != 0.0));
+    let after = frames(gated, end, end + 4_800).chunks(2);
+    let after = after.zip(frames(open, end, end + 4_800).chunks(2));
+    let late = after.filter(|(gated, open)| largest_difference(gated, open) > 1e-6);
+    (early.count(), late.count())
+}
+
+/// The volume of a track opens from silence to full in 50 frames, both ends inside a block: it
+/// is silent up to the frame the lane opens, and full from the frame it is open.
+#[test]
+fn a_fast_volume_ramp_starts_and_ends_on_its_frames() {
+    let fade = gate(None, "gain_db", r#""-inf""#, "0.0");
+    let mut harness = piano(&automation(&[fade]), "{}");
+    assert_eq!(harness.project.problems(), []);
+    let gated = harness.play_from_the_start(2 * BAR);
+    let open = piano("", "{}").play_from_the_start(2 * BAR);
+    assert_eq!(off_the_gate(&gated, &open), (0, 0));
+}
+
 /// A lane whose device or track has no such number, or that takes no automation, or whose
 /// values are outside the range is reported by the field, and the lanes that can play play. A record
 /// whose points are out of order does not load, and the track keeps what it had. A sine of the
