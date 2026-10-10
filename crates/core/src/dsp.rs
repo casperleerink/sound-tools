@@ -137,14 +137,21 @@ impl<const N: usize> Taps<N> {
     /// tap that does not exist.
     #[inline]
     pub fn read(&self, line: &DelayLine, index: usize, position: usize, fade: f32) -> f32 {
+        self.read_with(index, fade, |delay| line.read(position, delay))
+    }
+
+    /// Reads tap `index` with `fade` of the new tap, through `read`, which gives what the line
+    /// held that many frames ago. For lines that are not a [`DelayLine`] each.
+    #[inline]
+    pub fn read_with(&self, index: usize, fade: f32, read: impl Fn(usize) -> f32) -> f32 {
         let (Some(&from), Some(&to)) = (self.from.get(index), self.to.get(index)) else {
             return 0.0;
         };
-        let to = line.read(position, to);
+        let to = read(to);
         if fade >= 1.0 {
             return to;
         }
-        let from = line.read(position, from);
+        let from = read(from);
         from + (to - from) * fade
     }
 }
