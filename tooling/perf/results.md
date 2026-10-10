@@ -12,6 +12,101 @@ Baseline vs final: main at 1a1c1e2 against the graph runtime at 871839f, same ma
 
 Newest first. Apple M1 Max, macOS. How to run: [README.md](README.md).
 
+## 2026-10-10: built-ins baseline, main at f613f8c
+
+The built-in devices as they are, before any work on them. The built-ins are the same at
+1a1c1e2 (no change under `extensions/` or `crates/core`). The machine was busy with other work:
+spread was 5 to 30%, but medians of two passes (7 and 5 runs) agree within 2%.
+
+Render: `bench.py render f613f8c --projects builtins --runs 5`, 61 s. Each `bi-` project is 4
+tracks of the device. Own cost per instance: an effect `(bi-<effect> - bi-synth) / 4`, an
+instrument `(bi-<instrument> - empty) / 4`. The profile shares of each `bi-` project agree with
+these within 0.01.
+
+| device | project, % of a core | own, per instance | where the time goes (profile of the `bi-` project) |
+| --- | ---: | ---: | --- |
+| synth | 0.85 | 0.18 | `Synth::render` 76%: one voice bank, 4 voices |
+| wavetable | 4.32 | **1.05** | `Voice::render` 71%, `FilterVoice::render` 21% (default patch, no unison) |
+| sampler | 4.00 | **0.97** | `Varispeed::render` 80%: a 32-tap windowed sinc per voice and frame |
+| drum-pad | 0.29 | 0.04 | plays buffers it made beforehand; mostly the engine and the master |
+| reverb | 2.76 | **0.48** | `Reverb::process` 60%, `memcmp` 7.4% from it |
+| delay | 1.04 | 0.05 | `Delay::process` 17% |
+| eq | 1.35 | 0.13 | `Eq::process` 33%, 4 bands on |
+| compressor | 1.27 | 0.11 | `Compressor::process` 25%, `expf` and `log10f` 6% |
+| limiter | 1.05 | 0.05 | `PeakLimiter::next` (shared with the master) |
+| saturator | 3.12 | **0.57** | `Oversampler::up` 32%, `down` 26%, `Saturator::process` 16% |
+| filter | 1.35 | 0.13 | `Filter::process` 41%, LFO on the cutoff |
+| modulation | 1.20 | 0.09 | `Modulation::process` 29% (chorus) |
+| utility | 1.00 | 0.04 | `Utility::process` 16% |
+| empty project | 0.14 | | the master limiter, which runs on silence too |
+
+`bi-heavy` (24 tracks, synth or wavetable, through reverb, delay, EQ and compressor) costs
+28.5% of a core. Its profile: reverb 39% (35% plus 4% `memcmp`), wavetable 27%, EQ 10%,
+compressor 9%, synth 4%, delay 4%, engine 2.4%.
+
+The master chain is the arrangement's `Master` with its fixed `PeakLimiter`, about 0.05% of a
+core while sound plays. It does not return early: in the empty project it is most of the 0.14%.
+
+Idle: does a device return before it touches its output once nothing sounds?
+
+| device | after its sound died | own cost over the tail project of the synth, per instance |
+| --- | --- | ---: |
+| reverb | returns early, once nothing in its lines is over -180 dB: about 6 s after the last note at a 2 s decay, 3 min at 60 s | 0.06 (7 s of full cost) |
+| delay | returns early once its lines are empty | 0.02 |
+| eq, filter, modulation, utility | return early | 0.01 |
+| compressor, limiter, saturator | return early, but their silence check runs `held()` on every sample, and the compressor on 4 channels (its key is its input when nothing is keyed) | 0.02 to 0.03 |
+| synth, wavetable, sampler, drum-pad | return early with no notes and no voice | 0.01 to 0.02 |
+| master limiter | never returns early | about 0.07 total |
+
+The profiles of the `-tail` projects, sampled after the tail, confirm it: each device is 9 to 36%
+of a project that costs about 0.2% of a core, which is the silence check, not frames.
+
+| project | render, % of a core | live, % of a core (3 runs of 30 s) |
+| --- | ---: | ---: |
+| empty | 0.14 | 1.2 |
+| bi-heavy-idle (24 tracks, 120 devices, no clips) | 1.95 | 7.6 |
+| bi-heavy | 28.5 | 31.0 |
+
+Idle costs 0.075% of a core per track in a render and 0.27% live: the same functions, slower
+with cold caches between 10 ms callbacks. Where idle goes (live profile): engine
+`process_block` 25%, compressor 20%, mixer 12%, reverb 9%, EQ 8%, delay 8%, wavetable 7%.
+
+What to work on, by gain:
+
+1. Reverb, 0.48 per instance and the largest cost in `mixed` and `bi-heavy`. The `memcmp` is
+   `Taps<16>::is_fading` (`crates/core/src/dsp.rs`), which compares two `[usize; 16]` arrays,
+   called by `weight()` and `advance()` twice per frame from `Reverb::frame`. A flag or
+   `fade < 1.0` drops 7.4% of `bi-reverb`, about 11% of the reverb, bit for bit. The rest is
+   16 delay line reads and writes per frame over 16 lines of 8192 floats (512 KB, past L1), a
+   Hadamard of 16 and 16 damping filters. A new algorithm (fewer lines, or a cheaper diffusion)
+   is allowed and could halve it. Stopping at -120 dB instead of -180 dB cuts the work after the
+   last note by a third.
+2. Wavetable, 1.05 per instance, 6 times the synth. Per frame it reads two table frames and
+   morphs them even when the position does not move, then a filter per voice. Reading one
+   frame when the morph is 0 is exact (`one + (two - one) * 0`). Perhaps 20 to 30% of the voice.
+3. Idle: 7.6% of a core live for an idle 24-track project. A silence check of `x == 0.0` on 2
+   channels for the compressor, limiter and saturator (NaN counts as silent today, so keep
+   that), and a master that returns on silence, would take off most of the compressor's 20%
+   share. The rest is the engine and the mixer running every processor of 24 tracks every 64
+   frames.
+
+Not first: the sampler's sinc (0.97) must stay bit for bit, so its order of sums is fixed; the
+saturator's oversampler is already a polyphase half band with 8-lane dot products.
+
+Reverb quality of main: `reverb.py f613f8c f613f8c`, all differences 0 (null -inf dB), so
+the check reports nothing on equal commits. Wet only, click at -6 dBFS.
+
+| setting | T30 125 Hz to 8 kHz, s | EDT 1 kHz | energy 125 Hz to 8 kHz, dB | echo density 0.95 at | correlation | tail peak | peak, RMS of 1 s |
+| --- | --- | ---: | --- | ---: | ---: | --- | --- |
+| default (2 s, size 0.5) | 2.05 1.97 1.99 1.93 1.75 1.36 0.83 | 2.09 | -23.2 -18.6 -15.1 -11.7 -10.0 -9.1 -10.7 | 40 ms | -0.04 | 8.9 dB at 973 Hz | -32.7, -52.8 dBFS |
+| long (6 s, size 1, damping 0.3) | 6.02 5.97 5.97 5.91 5.63 4.90 3.53 | 6.31 | -24.5 -19.3 -16.2 -13.0 -10.2 -8.7 -9.5 | 122 ms | -0.05 | 4.4 dB at 1453 Hz | -34.9, -53.0 dBFS |
+| short (0.6 s, size 0.15, damping 0.6) | 0.58 0.60 0.57 0.57 0.50 0.37 0.20 | 0.77 | -25.6 -18.7 -14.0 -13.3 -10.0 -9.4 -10.9 | 32 ms | -0.06 | 12.0 dB at 4160 Hz | -27.4, -52.9 dBFS |
+
+T30 holds the decay setting within 5% up to 1 kHz. The tail peaks are real resonances, not
+chance: the same measure on noise with the same envelope gives 1 to 3 dB. So main's short room
+rings at 4.2 kHz; a new reverb should not ring more (limit: A + 3 dB). Music: on synth chords
+peak -23.3 dBFS, RMS -36.2; on drums peak -14.0, RMS -26.1.
+
 ## 2026-10-10: final, graph runtime at 871839f (t3code/native-typed-graph-runtime)
 
 What changed since f548b98: a hold whose trigger does not fire in a span gives one value over the
