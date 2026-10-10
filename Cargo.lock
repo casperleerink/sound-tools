@@ -2360,6 +2360,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gate"
+version = "0.8.0"
+dependencies = [
+ "gpui",
+ "serde",
+ "sound-core",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5589,6 +5600,7 @@ dependencies = [
  "eq",
  "filter",
  "fit-tempo",
+ "gate",
  "gpui",
  "gpui_platform",
  "hound",
