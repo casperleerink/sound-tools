@@ -159,10 +159,8 @@ gpui (Zed v1.20.2) ships no text field. The pattern (from the crate's `examples/
 3. Editing keys are actions (`Backspace, Left, SelectAll, Paste, ...`) bound with `cx.bind_keys`
    and handled with `.on_action(cx.listener(Self::backspace))` on the wrapper div that
    `.track_focus(&self.focus_handle)` and `.key_context("TextInput")`.
-Recommendation: put one copy of that file in `crates/ui/src/components/text_input.rs`, wrap it in
-the design-system styling, and reuse it for every text/numeric field. Add the
-`unicode-segmentation` crate for grapheme-correct cursor movement (the example here uses
-`char_indices` to stay dependency-free). Multi-line editing is a much bigger job; avoid it.
+The project's field is `crates/ui/src/components/text_input.rs` (one line or multi-line). Reuse
+it for every text field.
 
 ## 6. Scrolling and lists
 
@@ -216,7 +214,7 @@ impl AssetSource for Assets {
 }
 gpui_platform::application().with_assets(Assets).run(..)
 ```
-For `crates/ui/assets/icons/*.svg` generate the match arms with a macro or `rust-embed`. Lucide
+The project registers `crates/ui/assets/icons/*.svg` with a macro in `crates/ui/src/assets.rs`. Lucide
 icons use `stroke="currentColor"`, which gpui's renderer maps to `text_color`. Raster: `img(path_or_bytes)`.
 
 ## 9. Fonts and OpenType features (both supported)
@@ -237,5 +235,5 @@ div().font(ui_font)     // inherited by all children; `.font_family("..")` / `.f
 ```
 `FontFeatures` is a public tuple struct of `(tag, value)` pairs; macOS applies them via
 `apply_features_and_fallbacks` in `platform/mac/open_type.rs` (verified). Check the real family
-name with `cx.text_system().all_font_names()`. Add it to the theme (`Theme.ui_font`) and set it once
-on the root element of each window so every text run inherits it.
+name with `cx.text_system().all_font_names()`. The project's font is `ui_font()` in
+`crates/ui/src/typography.rs`, set once on the root element of each window so every text run inherits it.

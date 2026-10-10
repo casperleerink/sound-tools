@@ -138,7 +138,7 @@ div().relative()
 `trait ActiveTheme { fn theme(&self) -> &Theme }` for `App`. Because `Context<T>` derefs to `App`,
 `cx.theme()` works in `Render`, `RenderOnce`, listeners and `main`. Read colors into locals before
 building the element tree so the immutable borrow of `cx` ends. Add non-color tokens there too
-(`ui_font: Font`, radius, spacing) instead of scattering `px(6.)` literals.
+(radius, spacing) instead of scattering `px(6.)` literals; the font is in `crates/ui/src/typography.rs`.
 
 ## 5. Colors, borders, shadows, states
 

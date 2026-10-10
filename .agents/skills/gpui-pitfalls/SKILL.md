@@ -76,12 +76,7 @@ select, toast, `Icon` type, `h_flex()/v_flex()`. Those are all `crates/ui` work.
   not match a `.key_context("Name")` ancestor, or `.on_action` sits on an element outside the focus path.
 - Tab does nothing: gpui does not bind `tab` itself; bind `tab`/`shift-tab` to actions that call
   `window.focus_next(cx)` / `focus_prev(cx)`, and give handles `.tab_index(n).tab_stop(true)`.
-- Screen stale but state changed (see gpui-basics section 2): on macOS drawing runs off a
-  CVDisplayLink that gpui stops when the window is occluded/hidden. A covered window keeps its
-  last frame; `screencapture -l` returns that stale frame. Bring the window to front before
-  screenshotting; resize/re-activate to force a frame. Verified with a traced build: renders per
-  timer tick while visible, zero renders after the app was hidden and unhidden, until re-activated.
-- `window.refresh()` / `cx.refresh_windows()` only mark dirty; they do not bypass the display link.
+- Screen stale but state changed: see "The repaint pitfall" in gpui-basics.
 
 ## 4. Layout and text
 
