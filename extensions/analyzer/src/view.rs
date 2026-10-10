@@ -3,17 +3,16 @@
 //! so it has no knob and nothing behind expand. The rack gives the view a [`CardFrame`]: the
 //! picker of the slot as the title, and the power and close icons.
 //!
-//! The spectrum is a line over a fill coloured by level, as a meter is: green, then yellow
-//! towards 0 dB and red at the top.
+//! The spectrum is a line over a fill coloured by level, as a meter is: green, yellow from
+//! -18 dB and red from -6 dB. Three bands of solid colour cost less to paint than a gradient.
 //!
 //! Once per poll of the session the view reads the peaks of the analyzer and what came into its
 //! scope since the last poll, works out what it shows with [`Analysis`], and draws again only
 //! when that changed. A card at rest costs no frame.
 
 use gpui::{
-    Background, Bounds, ContentMask, Context, Div, Entity, FontWeight, Hsla, PathBuilder, Pixels,
-    SharedString, Task, Window, canvas, div, fill, linear_color_stop, linear_gradient, point,
-    prelude::*, px, size,
+    Bounds, ContentMask, Context, Div, Entity, FontWeight, Hsla, PathBuilder, Pixels, Point,
+    SharedString, Task, Window, canvas, div, point, prelude::*, px,
 };
 use sound_core::Instance;
 use sound_ui::components::cell::Cell;
@@ -180,58 +179,48 @@ struct Ink {
     red: Hsla,
 }
 
-/// The spectrum on the display: a column of fill under each level and the line through them.
-/// The fill of a column is cut out of bands that span the height of the display, so a colour is
-/// always at the same level, as on a meter.
+/// The spectrum on the display: the area under the levels, then the line through them. The area
+/// is painted once per band of the height, each in its colour, so a colour is always at the same
+/// level, as on a meter.
 fn paint_spectrum(bounds: Bounds<Pixels>, levels: &[f32], ink: Ink, window: &mut Window) {
     let (left, bottom) = (bounds.origin.x, bounds.bottom());
     let full = f32::from(bounds.size.height);
     let y = |up: f32| bottom - px(up * full);
     let column = f32::from(bounds.size.width) * SPECTRUM_WIDTH / COLUMNS as f32;
-    let bands: [(f32, f32, Background); 3] = [
-        (0., height(YELLOW_FROM_DB), ink.green.into()),
-        (
-            height(YELLOW_FROM_DB),
-            height(RED_FROM_DB),
-            linear_gradient(
-                0.,
-                linear_color_stop(ink.green, 0.),
-                linear_color_stop(ink.yellow, 1.),
-            ),
-        ),
-        (
-            height(RED_FROM_DB),
-            1.,
-            linear_gradient(
-                0.,
-                linear_color_stop(ink.yellow, 0.),
-                linear_color_stop(ink.red, 1.),
-            ),
-        ),
+    let places: Vec<Point<Pixels>> = (levels.iter().enumerate())
+        .map(|(index, db)| point(left + px((index as f32 + 0.5) * column), y(height(*db))))
+        .collect();
+    let (Some(first), Some(last)) = (places.first(), places.last()) else {
+        return;
+    };
+    let mut area = PathBuilder::fill();
+    area.move_to(point(first.x, bottom));
+    for place in &places {
+        area.line_to(*place);
+    }
+    area.line_to(point(last.x, bottom));
+    area.close();
+    let loudest = levels.iter().fold(FLOOR_DB, |loudest, db| loudest.max(*db));
+    let bands = [
+        (FLOOR_DB, YELLOW_FROM_DB, ink.green),
+        (YELLOW_FROM_DB, RED_FROM_DB, ink.yellow),
+        (RED_FROM_DB, 0., ink.red),
     ];
-    for (index, db) in levels.iter().enumerate() {
-        let up = height(*db);
-        if up <= 0. {
-            continue;
+    if let Ok(area) = area.build() {
+        for (from, to, color) in bands.into_iter().filter(|(from, ..)| *from < loudest) {
+            let band = Bounds::from_corners(
+                point(left, y(height(to))),
+                point(bounds.right(), y(height(from))),
+            );
+            window.with_content_mask(Some(ContentMask { bounds: band }), |window| {
+                window.paint_path(area.clone(), color);
+            });
         }
-        let x = left + px(index as f32 * column);
-        // Half a point wider, so neighbours meet with no seam.
-        let width = px(column + 0.5);
-        let bar = Bounds::new(point(x, y(up)), size(width, y(0.) - y(up)));
-        window.with_content_mask(Some(ContentMask { bounds: bar }), |window| {
-            for (from, to, background) in bands.iter().filter(|(from, ..)| *from < up) {
-                let band = Bounds::new(point(x, y(*to)), size(width, y(*from) - y(*to)));
-                window.paint_quad(fill(band, *background));
-            }
-        });
     }
     let mut line = PathBuilder::stroke(px(LINE_WIDTH));
-    for (index, db) in levels.iter().enumerate() {
-        let place = point(left + px((index as f32 + 0.5) * column), y(height(*db)));
-        match index {
-            0 => line.move_to(place),
-            _ => line.line_to(place),
-        }
+    line.move_to(*first);
+    for place in &places {
+        line.line_to(*place);
     }
     // A path that does not tessellate paints nothing, which is all there is to do about it.
     if let Ok(line) = line.build() {
