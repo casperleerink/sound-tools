@@ -67,7 +67,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential pkg-config \
-            libasound2-dev libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev \
+            libasound2-dev libpipewire-0.3-dev libdbus-1-dev libclang-dev libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev \
             libxkbcommon-x11-dev libvulkan1 unzip
       - name: Install the pinned toolchain
         run: rustup toolchain install
@@ -140,7 +140,7 @@ jobs:
           ./install.sh
           ```
 
-          It needs glibc 2.39 or later: Ubuntu 24.04, Debian 13, Fedora 40 or newer. It also needs ALSA, Vulkan (a graphics driver, or Mesa for a software one), xkbcommon, fontconfig and Wayland or X11, which a desktop mostly has. On Ubuntu or Debian: `sudo apt-get install libasound2t64 libvulkan1 mesa-vulkan-drivers libxkbcommon-x11-0 libwayland-client0 libx11-xcb1 libfontconfig1`.
+          It needs glibc 2.39 or later: Ubuntu 24.04, Debian 13, Fedora 40 or newer. It also needs ALSA, PipeWire, D-Bus, Vulkan (a graphics driver, or Mesa for a software one), xkbcommon, fontconfig and Wayland or X11, which a desktop mostly has. On Ubuntu or Debian: `sudo apt-get install libasound2t64 libpipewire-0.3-0t64 libdbus-1-3 libvulkan1 mesa-vulkan-drivers libxkbcommon-x11-0 libwayland-client0 libx11-xcb1 libfontconfig1`.
 
           **Windows** (x86_64, Windows 10 or later): unzip `sound-tools-*-windows-x86_64.zip`, open the folder, right-click `install.ps1` and pick **Run with PowerShell**. It puts the app in `%LOCALAPPDATA%\Programs\Sound Tools` and adds it to the Start menu. The app is not signed, so Windows SmartScreen may block the first start: click **More info**, then **Run anyway**.
           NOTES

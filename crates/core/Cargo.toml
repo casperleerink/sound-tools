@@ -27,6 +27,11 @@ objc2-core-audio = { workspace = true, features = ["std", "AudioHardware", "objc
 objc2-core-foundation = { workspace = true, features = ["std", "CFDictionary"] }
 objc2-foundation = { workspace = true, features = ["std", "NSArray", "NSDictionary", "NSObject", "NSString", "NSUUID", "NSValue"] }
 
+# Real-time priority through rtkit. cpal gives it only to a thread of its PipeWire host, not to one
+# behind ALSA's PipeWire plugin, which is how most Linux desktops play.
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { workspace = true, features = ["pipewire", "realtime-dbus"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",

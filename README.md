@@ -16,9 +16,9 @@ What it has: instrument and audio tracks, clips with notes or audio, a synth, a 
 Linux x86_64 and arm64 build from source, and CI runs the tests on Ubuntu. On Ubuntu or Debian, install:
 
 ```sh
-sudo apt-get install build-essential pkg-config libasound2-dev libfontconfig-dev \
-  libfreetype-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libvulkan1 \
-  mesa-vulkan-drivers
+sudo apt-get install build-essential pkg-config libasound2-dev libpipewire-0.3-dev \
+  libdbus-1-dev libclang-dev libfontconfig-dev libfreetype-dev libwayland-dev libx11-xcb-dev \
+  libxkbcommon-x11-dev libvulkan1 mesa-vulkan-drivers
 ```
 
 Then build and run as on macOS. The window needs Vulkan: a graphics driver, or `mesa-vulkan-drivers` for a software one.

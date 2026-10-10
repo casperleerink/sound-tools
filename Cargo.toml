@@ -50,7 +50,9 @@ claxon = "0.4.3"
 clack-extensions = "0.2"
 clack-host = "0.2"
 clack-plugin = "0.2"
-cpal = "0.18"
+# `realtime`: the audio thread plays at real-time priority on Windows. macOS gives it that
+# without asking; Linux needs more, see crates/core/Cargo.toml.
+cpal = { version = "0.18", features = ["realtime"] }
 # The chat example of the agent crate: ctrl-c stops the turn instead of the program.
 ctrlc = "3.5"
 # The icon of the Windows program, in crates/runtime/build.rs. The version gpui uses. MIT.

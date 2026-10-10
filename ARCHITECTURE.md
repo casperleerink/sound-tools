@@ -117,6 +117,7 @@ Built in `crates/core/src/project` (`editing.rs`, `outside.rs`, `watcher.rs`).
 
 The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.md) section 3. Built in `crates/core/src` (`engine.rs`, `processor.rs`, `clock.rs`, `transport.rs`).
 
+- The audio thread plays at real-time priority: Core Audio gives it on macOS, cpal asks for it on Windows and, through rtkit, on Linux. On Linux it plays through PipeWire, since cpal raises no thread behind ALSA's PipeWire plugin. A real-time thread also keeps the CPU at full speed between blocks; without it a slow laptop played the same piece at 2.5 times the cost and dropped out. Without PipeWire it plays through ALSA at normal priority.
 - One audio engine. `process` never allocates, locks or makes a system call; values leaving the audio thread are dropped on the control thread. Every crate with a processor runs its tests under the realtime sanitizer in CI.
 - Every audio port is stereo. No mono ports means no channel negotiation, a stereo cable cannot be half connected, and a plugin's stereo output fits one port.
 - Engine time is an integer frame count. Musical time is an integer tick count, 960 per quarter note. Saved positions are ticks, never floats or seconds. Tick to frame rounds in one place, and each clock segment keeps the fraction of a frame across tempo changes, so a map with a change on every beat stays exact.
