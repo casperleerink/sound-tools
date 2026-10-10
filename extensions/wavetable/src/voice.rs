@@ -279,29 +279,28 @@ impl Voice {
     fn advance_envelopes(&mut self, block: &Block<'_>, levels: &mut [f32]) -> (usize, [f32; 2]) {
         let [amp_envelope, others @ ..] = block.envelopes;
         let (mut amp, mut states) = (self.amp, self.envelopes);
+        // A block ends at every event, so only stepping changes an envelope within it.
+        let mut amp_moves = !amp.is_still(amp_envelope);
+        let moves = [0, 1].map(|index| !states[index].is_still(&others[index]));
         let mut sounding = levels.len();
-        let mut amp_moves = true;
-        let mut moves = [true; 2];
+        if !amp_moves {
+            if amp.is_idle() {
+                sounding = 0;
+            }
+            levels.fill(amp.level as f32);
+        }
         for frame in 0..levels.len() {
             if amp_moves {
                 if amp.is_idle() {
                     sounding = frame;
                     amp_moves = false;
                 } else {
-                    let before = amp;
                     levels[frame] = amp.next(amp_envelope) as f32;
-                    if is_still(&before, &amp) {
-                        let level = levels[frame];
-                        levels[frame..].fill(level);
-                        amp_moves = false;
-                    }
                 }
             }
-            for ((state, envelope), moves) in states.iter_mut().zip(others).zip(&mut moves) {
-                if *moves {
-                    let before = *state;
+            for ((state, envelope), moves) in states.iter_mut().zip(others).zip(moves) {
+                if moves {
                     state.next(envelope);
-                    *moves = !is_still(&before, state);
                 }
             }
             if !amp_moves && moves == [false; 2] {
@@ -428,12 +427,6 @@ impl Voice {
         }
         mixed
     }
-}
-
-/// Whether a frame left an envelope as it was, such as at its sustain. A frame depends only
-/// on the state and the envelope, so every later frame would leave it as it is too.
-fn is_still(before: &EnvelopeState, after: &EnvelopeState) -> bool {
-    before.stage == after.stage && before.level.to_bits() == after.level.to_bits()
 }
 
 /// Adds `source` to `sum` at a weight that moves over the block, and nothing while it is 0.

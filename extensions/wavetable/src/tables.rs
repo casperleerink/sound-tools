@@ -148,6 +148,11 @@ impl Wavetable {
                 samples.extend(frame.iter().map(|sample| sample * scale));
                 samples.push(frame[0] * scale);
             }
+            // A voice on a frame reads that frame alone, which sounds the same only for finite
+            // samples.
+            if !samples.iter().all(|sample| sample.is_finite()) {
+                return Err("a wavetable frame has a sample that is not a number".into());
+            }
             levels.push(Level {
                 length,
                 samples: samples.into_boxed_slice(),
@@ -491,8 +496,7 @@ mod tests {
     }
 
     /// Each level of each frame, back through an FFT: nothing above its highest harmonic, and
-    /// the copy of its first sample at its end. Only finite samples: a voice on a frame reads
-    /// that frame alone, which sounds the same only then.
+    /// the copy of its first sample at its end.
     #[test]
     fn no_level_holds_a_harmonic_above_its_limit() {
         let mut planner = RealFftPlanner::<f32>::new();
@@ -506,7 +510,6 @@ mod tests {
                     let start = frame * (view.length + 1);
                     let samples = &view.samples[start..start + view.length + 1];
                     assert_eq!(samples[view.length], samples[0]);
-                    assert!(samples.iter().all(|sample| sample.is_finite()));
                     let mut input = samples[..view.length].to_vec();
                     transform.process(&mut input, &mut spectrum).unwrap();
                     let loudest = spectrum.iter().map(|bin| bin.norm()).fold(0.0, f32::max);
@@ -549,6 +552,14 @@ mod tests {
             }
         }
         assert_eq!(Wavetable::level_for(f32::NAN), 0);
+    }
+
+    /// A voice on a frame reads only that frame, which sounds the same only for finite tables.
+    #[test]
+    fn a_table_with_a_sample_that_is_not_a_number_is_refused() {
+        let mut spectrum = vec![Complex::default(); FRAME_LENGTH / 2 + 1];
+        spectrum[1] = Complex::new(f32::NAN, 0.0);
+        assert!(Wavetable::from_spectra(&[spectrum]).is_err());
     }
 
     /// The morph between two frames is a mix of the two, so a position that moves a little

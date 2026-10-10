@@ -163,6 +163,21 @@ impl EnvelopeState {
         self.stage == EnvelopeStage::Idle
     }
 
+    /// Whether a frame on `envelope` leaves it as it is, such as at its sustain or idle. A
+    /// frame depends only on the state and the envelope, so every later frame leaves it as it
+    /// is too: a voice may stop stepping it until either changes, and play its level.
+    pub fn is_still(&self, envelope: &Envelope) -> bool {
+        let mut next = *self;
+        next.next(envelope);
+        // Every field, so one added later is compared too.
+        let Self { stage, level } = *self;
+        let Self {
+            stage: next_stage,
+            level: next_level,
+        } = next;
+        stage == next_stage && level.to_bits() == next_level.to_bits()
+    }
+
     /// In its attack or its decay and sustain: the key is down.
     fn is_held(&self) -> bool {
         matches!(self.stage, EnvelopeStage::Attack | EnvelopeStage::Decay)
