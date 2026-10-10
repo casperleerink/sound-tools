@@ -23,6 +23,7 @@ use gpui::{
 use crate::components::automated;
 use crate::components::cell::CELL_WIDTH;
 use crate::components::gesture::{self, ChangeHandler, GestureState, Travel, ValueChange};
+use crate::components::knob::signed;
 use crate::components::meter::{self, BAR_GAP, BAR_WIDTH, Level, Meter, SCALE_TOP};
 use crate::theme::ActiveTheme;
 use crate::typography;
@@ -46,16 +47,9 @@ const MARK_GAP: f32 = 2.;
 /// A level in dB as the readout shows it, to a tenth.
 pub fn readout(db: f32) -> String {
     if db == f32::NEG_INFINITY {
-        return "-inf".into();
+        return "−inf".into();
     }
-    let tenths = (db * 10.).round() / 10.;
-    let text = format!("{tenths:.1}");
-    let text = text.trim_end_matches(".0");
-    match tenths {
-        0. => "0 dB".into(),
-        _ if tenths > 0. => format!("+{text} dB"),
-        _ => format!("{text} dB"),
-    }
+    format!("{} dB", signed((db * 10.).round() / 10.))
 }
 
 /// The level at a place on the scale, to a tenth of a dB, as a drag gives it.
@@ -352,12 +346,12 @@ mod tests {
 
     #[test]
     fn the_readout_is_in_tenths_with_a_sign() {
-        assert_eq!(readout(f32::NEG_INFINITY), "-inf");
+        assert_eq!(readout(f32::NEG_INFINITY), "−inf");
         assert_eq!(readout(0.), "0 dB");
         assert_eq!(readout(-0.01), "0 dB");
-        assert_eq!(readout(-3.5), "-3.5 dB");
+        assert_eq!(readout(-3.5), "−3.5 dB");
         assert_eq!(readout(2.), "+2 dB");
-        assert_eq!(readout(-12.34), "-12.3 dB");
+        assert_eq!(readout(-12.34), "−12.3 dB");
         assert_eq!(readout(6.), "+6 dB");
     }
 

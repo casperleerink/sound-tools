@@ -166,13 +166,9 @@ pub fn gain_moved(from: f32, db: f32) -> f32 {
 /// The label of a gain: `-6 dB`, `+3.5 dB`, `0 dB`, `-inf`.
 pub fn gain_label(db: f32) -> String {
     if db == f32::NEG_INFINITY {
-        return "-inf".to_string();
+        return "−inf".to_string();
     }
-    let short = sound_ui::components::knob::short(db);
-    match db > 0.0 {
-        true => format!("+{short} dB"),
-        false => format!("{short} dB"),
-    }
+    format!("{} dB", sound_ui::components::knob::signed(db))
 }
 
 /// A time as a knob and a label show it: `420 ms`, `1.2 s`.

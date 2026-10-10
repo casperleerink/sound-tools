@@ -33,7 +33,7 @@ use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     Knob, KnobRange, decibels_readout, hertz_readout, pan_readout, percent_readout,
-    seconds_readout, short,
+    seconds_readout, signed,
 };
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::select::Select;
@@ -88,12 +88,8 @@ enum Unit {
     Count,
 }
 
-/// A value with its unit, as a knob shows it: `632 Hz`, `5 ms`, `70%`, `+1 oct`, `-7 ct`.
+/// A value with its unit, as a knob shows it: `632 Hz`, `5 ms`, `70%`, `+1 oct`, `−7 ct`.
 fn readout(unit: Unit, value: f32) -> String {
-    let signed = |value: f32| match value > 0. {
-        true => format!("+{}", short(value)),
-        false => short(value),
-    };
     match unit {
         Unit::Part => percent_readout(value),
         Unit::Hertz => hertz_readout(value),

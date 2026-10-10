@@ -81,6 +81,14 @@ pub fn short(value: f32) -> String {
     text.replace('-', "\u{2212}")
 }
 
+/// A number that goes either way, with its sign: `+3.5`, `−7`, `0`.
+pub fn signed(value: f32) -> String {
+    match value > 0. {
+        true => format!("+{}", short(value)),
+        false => short(value),
+    }
+}
+
 /// A frequency: `632 Hz`, `1.2 kHz`.
 pub fn hertz_readout(hz: f32) -> String {
     match hz < 1_000. {

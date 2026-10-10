@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn a_value_reads_in_its_unit() {
-        assert_eq!(readout(None, "gain_db", -4.5), "-4.5 dB");
+        assert_eq!(readout(None, "gain_db", -4.5), "−4.5 dB");
         assert_eq!(readout(None, "pan", -0.25), "25L");
         assert_eq!(readout(Some("Filter"), "cutoff_hz", 1200.), "1.2 kHz");
         assert_eq!(readout(Some("Delay"), "time_ms", 250.), "250 ms");

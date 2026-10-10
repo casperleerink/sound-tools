@@ -1,6 +1,7 @@
 //! Display: the inset at the left of a device card that shows what the device does to the
 //! sound, 118 pt tall, with the line of its numbers or its scale under it on the value line of
-//! row 2. A curve is 1.5 pt over a fill of `alpha/5`, grid lines are `alpha/4` and the 0 dB
+//! row 2. A curve is 1.5 pt over a fill of `alpha/5`, or over bands of colour by height for a
+//! level ([`Display::fill_bands`]), grid lines are `alpha/4` and the 0 dB
 //! line `alpha/8`. Thin marks up from the bottom and a dashed second line are 1 pt of `gray-950`
 //! at 50 %. Controls such as a segmented control go at its top as children.
 //!
@@ -201,6 +202,8 @@ pub struct Display {
     lines: Vec<Vec<Point<f32>>>,
     /// Whether the curve is filled down to the bottom.
     filled: bool,
+    /// The colours of the fill by height, see [`Display::fill_bands`].
+    bands: Vec<(f32, Hsla)>,
     waveform: Waveform,
     handles: Vec<Handle>,
     caption: Option<SharedString>,
@@ -222,6 +225,7 @@ impl Display {
             dashed: Vec::new(),
             lines: Vec::new(),
             filled: true,
+            bands: Vec::new(),
             waveform: Waveform::default(),
             handles: Vec::new(),
             caption: None,
@@ -288,6 +292,14 @@ impl Display {
     /// Whether the curve is filled down to the bottom, as a level is. A wave is not.
     pub fn filled(mut self, filled: bool) -> Self {
         self.filled = filled;
+        self
+    }
+
+    /// The fill in colours by height, as on a meter, instead of one quiet tint: each colour from
+    /// its place up, 0 to 1, to the place of the next. So a colour is always at the same height,
+    /// such as the level of a spectrum.
+    pub fn fill_bands(mut self, bands: impl IntoIterator<Item = (f32, Hsla)>) -> Self {
+        self.bands = bands.into_iter().collect();
         self
     }
 
@@ -374,6 +386,7 @@ struct Drawing {
     dashed: Vec<Point<f32>>,
     lines: Vec<Vec<Point<f32>>>,
     filled: bool,
+    bands: Vec<(f32, Hsla)>,
     waveform: Waveform,
 }
 
@@ -412,6 +425,7 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
         dashed,
         lines,
         filled,
+        bands,
         waveform,
     } = drawing;
     let mask = ContentMask { bounds };
@@ -468,12 +482,38 @@ fn paint_display(bounds: Bounds<Pixels>, drawing: &Drawing, ink: Ink, window: &m
         area.line_to(at(bounds, point(last.x, 0.)));
         area.close();
         if let Ok(area) = area.build() {
-            window.paint_path(area, ink.fill);
+            if bands.is_empty() {
+                window.paint_path(area, ink.fill);
+            } else {
+                paint_bands(bounds, &area, curve, bands, window);
+            }
         }
         if let Some(stroke) = stroke(bounds, curve, CURVE_WIDTH, None) {
             window.paint_path(stroke, ink.curve);
         }
     });
+}
+
+/// The area under the curve once per band, under a mask of the band's heights. A band above the
+/// curve has nothing to paint.
+fn paint_bands(
+    bounds: Bounds<Pixels>,
+    area: &gpui::Path<Pixels>,
+    curve: &[Point<f32>],
+    bands: &[(f32, Hsla)],
+    window: &mut Window,
+) {
+    let top = curve.iter().fold(0_f32, |top, place| top.max(place.y));
+    let ends = bands.iter().skip(1).map(|(from, _)| *from).chain([1.]);
+    for ((from, color), to) in bands.iter().zip(ends) {
+        if *from >= top {
+            break;
+        }
+        let band = Bounds::from_corners(at(bounds, point(0., to)), at(bounds, point(1., *from)));
+        window.with_content_mask(Some(ContentMask { bounds: band }), |window| {
+            window.paint_path(area.clone(), *color);
+        });
+    }
 }
 
 /// The waveform, the shade outside the part that plays with its two lines, the tint of the part
@@ -709,6 +749,7 @@ impl RenderOnce for Display {
             dashed: self.dashed,
             lines: self.lines,
             filled: self.filled,
+            bands: self.bands,
             waveform: self.waveform,
         };
         let drawing = canvas(

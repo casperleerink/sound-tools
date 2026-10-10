@@ -190,11 +190,11 @@ fn paint_history(
     }
 }
 
-/// The reduction under the display, to a tenth of a dB: `0 dB`, `-4.1 dB`.
+/// The reduction under the display, to a tenth of a dB: `0 dB`, `−4.1 dB`.
 fn reduction_readout(db: f32) -> String {
     match db < 0.05 {
         true => "0 dB".into(),
-        false => format!("-{db:.1} dB"),
+        false => format!("\u{2212}{db:.1} dB"),
     }
 }
 
@@ -228,6 +228,6 @@ mod tests {
     fn the_reduction_reads_to_a_tenth_of_a_decibel() {
         assert_eq!(reduction_readout(0.0), "0 dB");
         assert_eq!(reduction_readout(0.04), "0 dB");
-        assert_eq!(reduction_readout(4.12), "-4.1 dB");
+        assert_eq!(reduction_readout(4.12), "−4.1 dB");
     }
 }
