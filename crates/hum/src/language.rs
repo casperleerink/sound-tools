@@ -19,14 +19,14 @@ pub const MAX_LIVES: usize = 32;
 /// The most watches.
 pub const MAX_WATCHES: usize = 16;
 /// The longest a `delay` can be.
-const MAX_DELAY_MS: f32 = 4000.0;
+pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
 /// Each delay holds up to [`MAX_DELAY_MS`] per channel and voice, so their number is held too.
-const MAX_DELAYS: usize = 16;
+pub(crate) const MAX_DELAYS: usize = 16;
 /// The seconds of all the buffers of one code together, per channel and voice.
-const MAX_BUFFER_SECONDS: f32 = 30.0;
+pub(crate) const MAX_BUFFER_SECONDS: f32 = 30.0;
 /// The longest list a `param` can be.
-const MAX_ARRAY_LENGTH: usize = 1024;
-const MAX_OPERATIONS: usize = 4096;
+pub(crate) const MAX_ARRAY_LENGTH: usize = 1024;
+pub(crate) const MAX_OPERATIONS: usize = 4096;
 
 /// The index of an operation, and of the register it writes.
 pub(crate) type Register = u16;

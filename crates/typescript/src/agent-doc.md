@@ -67,8 +67,6 @@ Inside `sound` only:
 - `buffer(seconds)`: memory to `.write(index, value)` every sample and read with `.at` or `lookup`, for loops and grains.
 - `watch(name, signal)`: shows the signal's value to the card, as `watches[name]`: a meter, a step light. Up to 16.
 
-A field, a control or a watch cannot take a name the sound has built in: `in`, `in_left`, `in_right`, `channel`, `sr`, `pi`, `tau`, `beat`, `bpm`, `playing`, `freq`, `pitch`, `gate`, `velocity`, `onset`, `out`, `out_left`, `out_right`, `param`, `live`, `trigger`, `watch`, `history`, `buffer`, `sample`.
-
 A sound is held to 4, about 12 dB over full scale, and a value that is not a number is 0, so a feedback that runs away is loud, not dangerous. Keep feedback gains under 1. An instrument's voice ends when its gate is 0 and it has been silent for 50 ms, so multiply it by an `adsr` of `note.gate`.
 
 ```ts

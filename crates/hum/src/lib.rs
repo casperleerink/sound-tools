@@ -7,10 +7,12 @@
 //! A [`Hum`] processor plays one machine per voice as an effect, an instrument or a source,
 //! and fades to new ones when the code changes.
 
+mod graph;
 mod language;
 mod machine;
 mod processor;
 
+pub use graph::{ControlSpec, Declarations, Graph, GraphError};
 pub use language::{
     ArraySpec, Code, CompileError, MAX_LIVES, MAX_PARAMETERS, MAX_WATCHES, ParameterSpec, compile,
 };

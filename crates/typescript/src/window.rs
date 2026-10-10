@@ -768,7 +768,7 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        // Every tool, changed or not: its file was saved, so its `sound` may make other Hum.
+        // Every tool, changed or not: its file was saved, so its `sound` may make another graph.
         let mut problems = crate::define(&self.bun, &mut loaded, |tools| {
             let names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
             let defined = session.update(cx, |session, cx| {

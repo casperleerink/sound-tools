@@ -1,10 +1,10 @@
 //! A tool of the project, as `extensions/*.ts` defines it, made into a [`JsonTool`] of the core:
 //! the check of its records from its fields, its doc for agents, and a behaviour that plays
-//! the Hum its code generates as an effect, an instrument or a source.
+//! the sound graph its code builds as an effect, an instrument or a source.
 //!
 //! The check runs in Rust, from the fields Bun sent once, so a record loads, and an agent
 //! hears what is wrong with it, without asking Bun. Only a new combination of choices asks Bun
-//! for Hum; a knob, a toggle or a pattern only moves a value of the Hum that plays.
+//! for a graph; a knob, a toggle or a pattern only moves a value of the sound that plays.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -19,7 +19,10 @@ use sound_core::{
     Assets, BehaviourContext, BehaviourError, InputEndpoint, InstanceId, JsonTool, JsonToolDoc,
     OutputEndpoint, ParameterInfo, Problem, ValueRange, Watch,
 };
-use sound_hum::{ArraySpec, Code, Hum, HumUpdate, Kind, Machine, Values, compile};
+use sound_hum::{
+    ArraySpec, Code, ControlSpec, Declarations, Hum, HumUpdate, Kind, Machine, ParameterSpec,
+    Values,
+};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 
 use crate::bun::Bun;
@@ -95,7 +98,7 @@ pub(crate) enum Field {
         default: Choice,
         label: Option<String>,
     },
-    /// A sound under `assets/audio/`, by its file name, which the Hum reads as a list.
+    /// A sound under `assets/audio/`, by its file name, which the sound reads as a list.
     Sample { label: Option<String> },
     /// A list of numbers, such as the steps of a sequence.
     Pattern {
@@ -147,10 +150,10 @@ impl Choice {
         }
     }
 
-    fn to_value(&self) -> Value {
+    pub(crate) fn to_value(&self) -> Value {
         match self {
             // As a record writes it: `4`, not `4.0`. The two are one option, and one key of
-            // the Hum that is kept per choice.
+            // the sound that is kept per choice.
             Self::Number(number) if number.fract() == 0.0 && number.abs() < 1e15 => {
                 Value::from(*number as i64)
             }
@@ -207,6 +210,58 @@ impl ToolInfo {
         }
     }
 
+    /// What the record and the card give its sound: the knobs and toggles, the patterns and
+    /// samples, and the controls, each in the order the code gives them.
+    pub(crate) fn declarations(&self) -> Declarations {
+        let mut declarations = Declarations::default();
+        let number = |name: &str, default, min, max| ParameterSpec {
+            name: name.to_string(),
+            default,
+            min,
+            max,
+        };
+        let list = |name: &str, length, default, min, max| ArraySpec {
+            name: name.to_string(),
+            length,
+            default,
+            min,
+            max,
+        };
+        for (name, field) in &self.fields.0 {
+            match field {
+                Field::Knob {
+                    min, max, default, ..
+                } => (declarations.parameters).push(number(name, *default, *min, *max)),
+                Field::Toggle { default, .. } => {
+                    let default = f32::from(u8::from(*default));
+                    declarations
+                        .parameters
+                        .push(number(name, default, 0.0, 1.0));
+                }
+                Field::Choice { .. } => {}
+                Field::Pattern {
+                    length,
+                    min,
+                    max,
+                    default,
+                    ..
+                } => (declarations.arrays).push(list(name, Some(*length), *default, *min, *max)),
+                Field::Sample { .. } => {
+                    (declarations.arrays).push(list(name, None, 0.0, -1.0, 1.0))
+                }
+            }
+        }
+        for (name, control) in &self.controls.0 {
+            declarations.controls.push(match control {
+                Control::Live {
+                    min, max, default, ..
+                } => ControlSpec::Live(number(name, *default, *min, *max)),
+                Control::Trigger { .. } => ControlSpec::Trigger(name.clone()),
+            });
+        }
+        declarations
+    }
+
     /// A problem of the tool, listed under its file.
     pub(crate) fn problem(&self, message: impl fmt::Display) -> Problem {
         Problem {
@@ -225,7 +280,7 @@ impl ToolInfo {
     }
 
     /// The index of the live control or the trigger `name` among those of its kind, which is
-    /// its index in the Hum the tool generates.
+    /// its index in the sound the tool builds.
     pub(crate) fn control(&self, name: &str) -> Option<(usize, &Control)> {
         let same_kind = |control: &Control, other: &Control| {
             std::mem::discriminant(control) == std::mem::discriminant(other)
@@ -341,7 +396,7 @@ impl ToolInfo {
     }
 
     /// The choices of a record, each at its default when the record leaves it out: what the
-    /// Hum of a record depends on.
+    /// sound of a record depends on.
     fn choices(&self, state: &Value) -> Map<String, Value> {
         let mut choices = Map::new();
         for (name, field) in &self.fields.0 {
@@ -425,7 +480,7 @@ impl ToolInfo {
         )
     }
 
-    /// The tool for the core. `bun` makes its Hum.
+    /// The tool for the core. `bun` builds its sound.
     pub(crate) fn json_tool(&self, bun: &Arc<Bun>) -> JsonTool {
         let sounds = Sounds::new(self, bun);
         let info = sounds.info.clone();
@@ -447,9 +502,10 @@ impl ToolInfo {
 /// which waits for a sample read on its thread.
 type Read<'a> = (&'a Assets, u32, &'a InstanceId);
 
-/// The behaviour of a tool: its Hum per combination of choices, asked of Bun once each.
+/// The behaviour of a tool: its sound per combination of choices, asked of Bun once each.
 pub(crate) struct Sounds {
     info: Arc<ToolInfo>,
+    declarations: Declarations,
     bun: Arc<Bun>,
     /// By the choices as JSON. A failure is kept too, so a record that cannot play does not
     /// ask again on every turn of a knob. A tool defined again starts empty.
@@ -460,6 +516,7 @@ impl Sounds {
     pub(crate) fn new(info: &ToolInfo, bun: &Arc<Bun>) -> Self {
         Self {
             info: Arc::new(info.clone()),
+            declarations: info.declarations(),
             bun: bun.clone(),
             compiled: RefCell::default(),
         }
@@ -481,22 +538,17 @@ impl Sounds {
         })
     }
 
-    /// The compiled Hum for the choices of `state`.
+    /// The compiled sound for the choices of `state`.
     pub(crate) fn code(&self, state: &Value) -> Result<Rc<Code>, String> {
         let choices = self.info.choices(state);
         let key = Value::Object(choices.clone()).to_string();
         if let Some(code) = self.compiled.borrow().get(&key) {
             return code.clone();
         }
-        let code = self.bun.sound(&self.info.name, &choices).and_then(|lines| {
+        let code = self.bun.sound(&self.info.name, &choices).and_then(|graph| {
             let file = &self.info.file;
-            compile(&lines).map(Rc::new).map_err(|error| {
-                let line = lines.get(error.line).map_or("", String::as_str);
-                format!(
-                    "the sound of extensions/{file} does not build: {} (in the Hum it makes: `{line}`)",
-                    error.message
-                )
-            })
+            (graph.compile(&self.declarations).map(Rc::new))
+                .map_err(|error| format!("the sound of extensions/{file} does not build: {error}"))
         });
         self.compiled.borrow_mut().insert(key, code.clone());
         code

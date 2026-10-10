@@ -6211,6 +6211,7 @@ dependencies = [
 name = "sound-hum"
 version = "0.7.0"
 dependencies = [
+ "serde",
  "sound-core",
  "sound-notes",
  "thiserror 2.0.20",
