@@ -37,35 +37,84 @@ fn a_sound_under_the_threshold_is_down_by_the_range_and_one_over_it_is_untouched
     }
 }
 
+/// A constant at `level` until each frame, then the next one, in both channels.
+fn steps<const N: usize>(parts: [(usize, f32); N]) -> Signal {
+    let mut frame = 0;
+    Box::new(move || {
+        let level = parts.iter().find(|(until, _)| frame < *until);
+        frame += 1;
+        [level.map_or(0.0, |(_, level)| *level); 2]
+    })
+}
+
+const LOUD: f32 = 0.5;
+const AT: usize = SECOND / 2;
+const MILLISECOND: usize = SECOND / 1_000;
+
+fn quiet() -> f32 {
+    decibels(-60.0)
+}
+
 /// A constant that steps from loud to under the threshold: the gate stays open, gain exactly
 /// 1, while the loud part is in the detector (10 to 11 ms) and for the hold after, then closes.
 #[test]
 fn the_gate_stays_open_for_the_hold_after_the_level_falls() {
-    let (loud, quiet, at) = (0.5_f32, decibels(-60.0), SECOND / 2);
-    let step = || -> Signal {
-        let mut frame = 0;
-        Box::new(move || {
-            frame += 1;
-            [if frame <= at { loud } else { quiet }; 2]
-        })
-    };
-    let millisecond = SECOND / 1_000;
     for hold_ms in [0.0, 50.0] {
         let state = GateState {
             hold_ms,
             release_ms: 1.0,
             ..gate()
         };
-        let output = Rig::new(state, step()).render(SECOND);
-        let gain = |frame: usize| output[frame] / quiet;
-        let open_until = at - 1 + 10 * millisecond + hold_ms as usize * millisecond;
+        let signal = steps([(AT, LOUD), (SECOND, quiet())]);
+        let output = Rig::new(state, signal).render(SECOND);
+        let gain = |frame: usize| output[frame] / quiet();
+        let open_until = AT - 1 + 10 * MILLISECOND + hold_ms as usize * MILLISECOND;
         assert_eq!(gain(open_until), 1.0, "hold {hold_ms}");
-        let closed = gain(open_until + 12 * millisecond);
-        assert!(
-            (closed - decibels(-24.0)).abs() < 1e-3,
-            "hold {hold_ms}: {closed}"
-        );
+        let closed = gain(open_until + 12 * MILLISECOND);
+        let floor = decibels(-24.0);
+        assert!((closed - floor).abs() < 1e-3, "hold {hold_ms}: {closed}");
     }
+}
+
+/// Digital silence inside the hold does not close the gate: a quiet sound 20 ms after the
+/// loud one still comes out untouched while a hold of 100 ms lasts.
+#[test]
+fn silence_inside_the_hold_keeps_the_gate_open() {
+    let state = GateState {
+        hold_ms: 100.0,
+        release_ms: 1.0,
+        ..gate()
+    };
+    let gap = 20 * MILLISECOND;
+    let signal = steps([(AT, LOUD), (AT + gap, 0.0), (SECOND, quiet())]);
+    let output = Rig::new(state, signal).render(SECOND);
+    assert_eq!(output[AT + gap + 10 * MILLISECOND] / quiet(), 1.0);
+}
+
+/// The gate opens 63 % of the way from the floor in `attack_ms`, and closes 63 % of the way
+/// in `release_ms` after its last open frame: a one-pole glide of that time constant.
+#[test]
+fn attack_and_release_go_63_percent_of_the_way_in_their_time() {
+    let state = GateState {
+        attack_ms: 5.0,
+        hold_ms: 0.0,
+        release_ms: 50.0,
+        ..gate()
+    };
+    let signal = steps([(AT, quiet()), (2 * AT - 1, LOUD), (2 * SECOND, quiet())]);
+    let output = Rig::new(state, signal).render(2 * SECOND);
+    let floor = f64::from(decibels(-24.0));
+    let part = 1.0 - (-1.0_f64).exp();
+    let opened = f64::from(output[AT - 1 + 5 * MILLISECOND] / LOUD);
+    let expected = floor + (1.0 - floor) * part;
+    assert!((opened - expected).abs() < 1e-4, "{opened} {expected}");
+    let last_open = (AT..2 * SECOND)
+        .rev()
+        .find(|frame| output[*frame] / quiet() == 1.0)
+        .unwrap();
+    let closed = f64::from(output[last_open + 50 * MILLISECOND] / quiet());
+    let expected = floor + (1.0 - floor) * (1.0 - part);
+    assert!((closed - expected).abs() < 1e-4, "{closed} {expected}");
 }
 
 /// A quiet pad under the threshold, keyed by loud hits on the sidechain: open while a hit

@@ -37,4 +37,4 @@ Every number here can move over time with an automation lane of the track: see `
 
 Another track can key it, so a pad opens only while the kick plays: see the sidechain in `agent-docs/arrangement.md`. The gate then follows the key; the transient shaper always follows the track's own sound.
 
-The level is the peak of both channels over the last 10 ms, so the gate closes `hold_ms` after the sound stayed under the threshold for 10 ms. The transient is about the first 20 ms of a hit, the tail what falls after it; a steady sound passes the shaper unchanged.
+The level is the peak of both channels over the last 10 ms, so the gate closes `hold_ms` after the sound stayed under the threshold for 10 to 11 ms. The transient is about the first 20 ms of a hit, the tail what falls after it; a steady sound passes the shaper unchanged.

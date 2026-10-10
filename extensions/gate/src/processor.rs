@@ -18,11 +18,12 @@ use sound_core::{
     ProcessContext, Processor, Smoothed, Targets, all_held_silent, amplitude, held, pole,
 };
 
-use crate::{GateState, PARAMETERS, RANGE, SUSTAIN, TRANSIENT};
+use crate::{GateState, PARAMETERS, RANGE, SUSTAIN, THRESHOLD, TRANSIENT};
 
 type GateTargets = Targets<GateState, { PARAMETERS.len() }>;
 
-/// How long a change of range, transient or sustain takes to arrive. A jump would click.
+/// How long a change of threshold, range, transient or sustain takes to arrive. A jump would
+/// click, and a threshold follows its lane in a line.
 const RAMP_SECONDS: f32 = 0.02;
 
 /// How long the start of a hit counts as its transient: the rise of the slow follower.
@@ -30,6 +31,9 @@ const TRANSIENT_SECONDS: f32 = 0.02;
 
 /// How long the tail of a hit counts as its sustain: the fall of the slow follower.
 const SUSTAIN_SECONDS: f32 = 0.5;
+
+/// A follower under this, -120 dB, has let go of the last sound.
+const SILENT: f64 = 1e-6;
 
 /// A gain or a follower this close to where it goes has arrived, as a part of it. So an open
 /// gate comes to exactly 1, and a steady sound to exactly no shaping.
@@ -65,8 +69,8 @@ pub struct Gate {
     /// The record, with the values of the lanes that automate it.
     state: Automated<GateState, { PARAMETERS.len() }>,
     ramp_frames: f32,
-    /// The threshold as an amplitude. A jump of it does not click: the gain still glides.
-    threshold: f32,
+    /// The threshold as an amplitude.
+    threshold: Smoothed,
     hold_frames: usize,
     attack: f64,
     release: f64,
@@ -108,7 +112,7 @@ impl Gate {
             meters,
             state: Automated::new(Self::AUTOMATION, state),
             ramp_frames: 1.0,
-            threshold: 0.0,
+            threshold: Smoothed::new(0.0),
             hold_frames: 0,
             attack: 0.0,
             release: 0.0,
@@ -146,7 +150,8 @@ impl Gate {
     /// a value moves, and never per frame.
     fn aim(&mut self, targets: &GateTargets) {
         let state = *self.state;
-        self.threshold = amplitude(state.threshold_db);
+        self.threshold
+            .set_target(amplitude(state.threshold_db), targets.ramp(&THRESHOLD));
         self.hold_frames = (state.hold_ms / 1_000.0 * self.sample_rate).round() as usize;
         self.attack = pole(state.attack_ms / 1_000.0, self.sample_rate);
         self.release = pole(state.release_ms / 1_000.0, self.sample_rate);
@@ -158,11 +163,16 @@ impl Gate {
             .set_target(amplitude(state.sustain_db), targets.ramp(&SUSTAIN));
     }
 
-    /// The state silence leads to: closed, nothing held or followed, every value arrived. Only
-    /// while the output is silent whatever the gain, so nobody hears the jump; and the sound
-    /// that comes next is then treated the same whatever played before.
+    /// The state silence leads to: closed, nothing held or followed, every value arrived. So the
+    /// sound that comes after a rest is treated the same whatever played before.
     fn rest(&mut self) {
-        for smoothed in [&mut self.floor, &mut self.transient, &mut self.sustain] {
+        let smoothers = [
+            &mut self.threshold,
+            &mut self.floor,
+            &mut self.transient,
+            &mut self.sustain,
+        ];
+        for smoothed in smoothers {
             smoothed.snap();
         }
         self.detector.restart();
@@ -173,16 +183,20 @@ impl Gate {
         self.falling = 0.0;
     }
 
-    /// Whether the input and the sidechain have been silent long enough to have left the
-    /// detectors.
+    /// Whether silence has left the detectors, the hold, the release and the followers, so a
+    /// silent block changes nothing that can be heard later.
     fn is_resting(&self) -> bool {
         self.quiet >= self.detector.window_frames()
+            && self.holding == 0
+            && !self.floor.is_moving()
+            && self.gain == f64::from(self.floor.current())
+            && self.falling == 0.0
     }
 
     /// The gain of the gate for the next frame, from the level it hears.
     #[inline]
     fn gate(&mut self, level: f32) -> f64 {
-        let open = match level >= self.threshold {
+        let open = match level >= self.threshold.advance(1) {
             true => {
                 self.holding = self.hold_frames;
                 true
@@ -193,11 +207,8 @@ impl Gate {
             }
             false => false,
         };
-        let target = if open {
-            1.0
-        } else {
-            f64::from(self.floor.advance(1))
-        };
+        let floor = f64::from(self.floor.advance(1));
+        let target = if open { 1.0 } else { floor };
         let pole = if target > self.gain {
             self.attack
         } else {
@@ -214,6 +225,9 @@ impl Gate {
         let level = f64::from(level);
         self.rising = glide(self.rising.min(level), level, self.rising_pole);
         self.falling = glide(self.falling.max(level), level, self.falling_pole);
+        if self.falling < SILENT {
+            self.falling = 0.0;
+        }
         if !shaping || level == 0.0 {
             return 1.0;
         }
