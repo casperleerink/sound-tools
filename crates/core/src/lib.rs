@@ -9,6 +9,7 @@ mod automation;
 mod clock;
 mod control;
 mod delay_line;
+mod detector;
 mod device;
 mod dsp;
 mod engine;
@@ -39,6 +40,7 @@ pub use clock::{
 };
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
 pub use delay_line::DelayLine;
+pub use detector::{PeakDetector, pole};
 pub use device::{
     DeviceChoice, DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming,
     input_devices, monotonic_nanos, output_devices,
