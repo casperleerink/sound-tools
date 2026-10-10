@@ -8,17 +8,15 @@
 //! automation lane of the track moves shows the value that plays and does not drag
 //! ([`Lanes`]).
 
-use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*, px};
+use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::device_card::{CardFrame, Column, Section};
-use sound_ui::components::display::{Axis, Display, Handle, INSET_HEIGHT};
+use sound_ui::components::display::{Axis, Display, Handle};
+use sound_ui::components::dynamics_display::{self, Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    Knob, KnobRange, ParameterKnob, decibels_readout, milliseconds_readout, short,
-};
-use sound_ui::components::meter::GainReduction;
+use sound_ui::components::knob::{Knob, ParameterKnob, decibels_readout, milliseconds_readout};
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Views, every_poll, weak_callback,
+    ControlEdit, Devices, Lanes, OfferGroup, Session, Views, every_poll, weak_callback,
 };
 
 use crate::{ATTACK, Gate, GateState, HOLD, Meters, RANGE, RELEASE, SUSTAIN, THRESHOLD, TRANSIENT};
@@ -26,20 +24,11 @@ use crate::{ATTACK, Gate, GateState, HOLD, Meters, RANGE, RELEASE, SUSTAIN, THRE
 /// The name the rack puts on the card of a gate.
 pub const NAME: &str = "Gate";
 
-/// The width of the display, as on the compressor.
-const DISPLAY_WIDTH: f32 = 136.;
-
-/// The curve shows levels from here to there, in dBFS, the input across and the output up:
-/// the range of the threshold.
-const LEVELS_DB: (f32, f32) = (-80., 0.);
-
-/// The curve is as wide as the display is tall, so an open gate is a diagonal. The gain
-/// reduction bar has the rest, at the right edge.
-const CURVE_WIDTH: f32 = INSET_HEIGHT / DISPLAY_WIDTH;
-
-/// The dot of the level and the bar of the gain reduction, in points.
-const LEVEL_DOT: f32 = 8.;
-const BAR_INSET: f32 = 6.;
+/// The curve shows levels from here to there, in dBFS: the range of the threshold.
+const LEVELS: Levels = Levels {
+    bottom_db: -80.,
+    top_db: 0.,
+};
 
 /// Registers the view of the `gate` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -77,77 +66,23 @@ const TRANSIENT_KNOB: Control = Control::new(
 const SUSTAIN_KNOB: Control =
     Control::new(&SUSTAIN, "Sustain", "Change sustain", decibels_readout).bipolar();
 
-/// The gain reduction under the display, to a tenth of a dB: `GR 0 dB`, `GR -24 dB`.
-fn reduction_readout(db: f32) -> String {
-    let tenths = (db * 10.).round() / 10.;
-    match tenths > 0. {
-        true => format!("GR -{} dB", short(tenths)),
-        false => "GR 0 dB".into(),
-    }
-}
-
-/// Where a level in dBFS is across the display, from 0 at the left to [`CURVE_WIDTH`].
-fn across(db: f32) -> f32 {
-    let (bottom, top) = LEVELS_DB;
-    CURVE_WIDTH * ((db - bottom) / (top - bottom)).clamp(0., 1.)
-}
-
-/// Where a level in dBFS is up the display, from 0 at the bottom to 1 at the top.
-fn up(db: f32) -> f32 {
-    let (bottom, top) = LEVELS_DB;
-    ((db - bottom) / (top - bottom)).clamp(0., 1.)
-}
-
-/// The levels across the whole width of the display, so the handle drags as the dot moves.
-fn threshold_travel() -> KnobRange {
-    let (bottom, top) = LEVELS_DB;
-    KnobRange::linear(bottom, bottom + (top - bottom) / CURVE_WIDTH)
-}
-
 /// The transfer curve: what comes out for each level that goes in. Four corners: under the
 /// threshold down by the range, a step up at the threshold, then the diagonal.
 fn curve(state: &GateState) -> Vec<Point<f32>> {
-    let (bottom, top) = LEVELS_DB;
+    let Levels {
+        bottom_db: bottom,
+        top_db: top,
+    } = LEVELS;
     let threshold = state.threshold_db;
-    let below = threshold - state.range_db;
     [
         (bottom, bottom - state.range_db),
-        (threshold, below),
+        (threshold, threshold - state.range_db),
         (threshold, threshold),
         (top, top),
     ]
     .into_iter()
-    .map(|(input, output)| point(across(input), up(output)))
+    .map(|(input, output)| point(LEVELS.across(input), LEVELS.up(output)))
     .collect()
-}
-
-/// What the gate heard and did since the card last looked: the peak level and the most it
-/// turned down, both in dB, rounded so a card whose sound holds still asks for no frame.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Reading {
-    level_db: f32,
-    reduction_db: f32,
-}
-
-impl Reading {
-    fn new(level: f32, reduction_db: f32) -> Self {
-        let (bottom, top) = LEVELS_DB;
-        let quarter_point = (top - bottom) / INSET_HEIGHT / 4.;
-        let level_db = match level > 0. {
-            true => (20. * level.log10() / quarter_point).round() * quarter_point,
-            false => f32::NEG_INFINITY,
-        };
-        Self {
-            level_db,
-            reduction_db: (reduction_db * 10.).round() / 10.,
-        }
-    }
-}
-
-impl Default for Reading {
-    fn default() -> Self {
-        Self::new(0., 0.)
-    }
 }
 
 pub struct GateView {
@@ -208,10 +143,10 @@ impl GateView {
 
     /// Takes what the gate heard and did since the last look, and draws again when that
     /// changes what the card shows. Called once per poll of the session.
-    pub fn read_meters(&mut self, cx: &mut Context<Self>) {
+    fn read_meters(&mut self, cx: &mut Context<Self>) {
         let (project, id) = (self.session.read(cx).project(), self.gate.id());
         let take = |name| project.peaks(id, name).map_or(0., |peaks| peaks.take()[0]);
-        let reading = Reading::new(take(Meters::LEVEL), take(Meters::REDUCTION));
+        let reading = LEVELS.reading(take(Meters::LEVEL), take(Meters::REDUCTION));
         if reading != self.reading {
             self.reading = reading;
             cx.notify();
@@ -219,7 +154,7 @@ impl GateView {
     }
 
     /// Shows or hides hold and the sidechain, as the expand icon does.
-    pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
     }
@@ -248,8 +183,8 @@ impl GateView {
     /// The handle at the top of the step: sideways is threshold.
     fn threshold_handle(&self, state: &GateState, cx: &mut Context<Self>) -> Handle {
         let threshold = state.threshold_db;
-        let x = Axis::new(threshold_travel(), threshold, THRESHOLD.default);
-        let y = Axis::fixed(up(threshold));
+        let x = Axis::new(LEVELS.threshold_travel(), threshold, THRESHOLD.default);
+        let y = Axis::fixed(LEVELS.up(threshold));
         let automated = self.lanes.read(cx).is_automated(THRESHOLD.field);
         Handle::new("threshold", x, y)
             .automated(automated)
@@ -266,36 +201,11 @@ impl GateView {
     }
 
     fn display(&self, state: &GateState, cx: &mut Context<Self>) -> Display {
-        let theme = cx.theme();
-        let Reading {
-            level_db,
-            reduction_db,
-        } = self.reading;
-        let (bottom, _) = LEVELS_DB;
-        // The level now: what came in, and that less the reduction.
-        let level = (level_db > bottom).then(|| {
-            let (x, y) = (across(level_db), up(level_db - reduction_db));
-            div()
-                .debug_selector(|| "gate-level".into())
-                .absolute()
-                .left(px(x * DISPLAY_WIDTH - LEVEL_DOT / 2.))
-                .top(px((1. - y) * INSET_HEIGHT - LEVEL_DOT / 2.))
-                .size(px(LEVEL_DOT))
-                .rounded_full()
-                .bg(theme.green)
-        });
-        let bar = div()
-            .absolute()
-            .top(px(BAR_INSET))
-            .right(px(BAR_INSET))
-            .child(GainReduction::new(reduction_db).h(px(INSET_HEIGHT - 2. * BAR_INSET)));
-        Display::new("display", DISPLAY_WIDTH)
+        let display = Display::new("display", dynamics_display::WIDTH)
             .curve(curve(state))
-            .grid(vec![across(state.threshold_db)], Vec::new())
-            .handle(self.threshold_handle(state, cx))
-            .caption(reduction_readout(reduction_db))
-            .children(level)
-            .child(bar)
+            .grid(vec![LEVELS.across(state.threshold_db)], Vec::new())
+            .handle(self.threshold_handle(state, cx));
+        LEVELS.meters(display, self.reading, "gate-level", cx)
     }
 }
 

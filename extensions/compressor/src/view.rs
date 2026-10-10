@@ -12,21 +12,21 @@
 //! card is expanded. A number that an automation lane of the track moves shows the value that
 //! plays, on its knob and on the display, and does not drag ([`Lanes`]).
 
-use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*, px};
+use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*};
 use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column, Section};
-use sound_ui::components::display::{Axis, Display, Handle, INSET_HEIGHT};
+use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
+use sound_ui::components::dynamics_display::{self, Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     Knob, KnobRange, ParameterKnob, decibels_readout, milliseconds_readout, percent_readout, short,
 };
-use sound_ui::components::meter::GainReduction;
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Views, every_poll, weak_callback,
+    ControlEdit, Devices, Lanes, OfferGroup, Session, Views, every_poll, weak_callback,
 };
 
 use crate::{
@@ -37,24 +37,15 @@ use crate::{
 /// The name the rack puts on the card of a compressor.
 pub const NAME: &str = "Compressor";
 
-/// The width of the display. With it and two columns of cells the card is 288 pt, as DESIGN.md
-/// gives the compressor.
-const DISPLAY_WIDTH: f32 = 136.;
-
-/// The curve shows levels from here to there, in dBFS, the input across and the output up:
-/// the range of the threshold.
-const LEVELS_DB: (f32, f32) = (-60., 0.);
-
-/// The curve takes this part of the width, so that it is as wide as the display is tall and a
-/// ratio of 1 is a diagonal. The gain reduction bar has the rest, at the right edge.
-const CURVE_WIDTH: f32 = INSET_HEIGHT / DISPLAY_WIDTH;
+/// The curve shows levels from here to there, in dBFS: the range of the threshold. With the
+/// display and two columns of cells the card is 288 pt, as DESIGN.md gives the compressor.
+const LEVELS: Levels = Levels {
+    bottom_db: -60.,
+    top_db: 0.,
+};
 
 /// Points of the curve across its width.
 const CURVE_POINTS: usize = 60;
-
-/// The dot of the level and the bar of the gain reduction, in points.
-const LEVEL_DOT: f32 = 8.;
-const BAR_INSET: f32 = 6.;
 
 /// Registers the view of the `compressor` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -120,41 +111,19 @@ fn ratio_readout(ratio: f32) -> String {
     format!("{}:1", short(ratio))
 }
 
-/// The gain reduction under the display, to a tenth of a dB: `GR 0 dB`, `GR -6.8 dB`.
-fn reduction_readout(db: f32) -> String {
-    let tenths = (db * 10.).round() / 10.;
-    match tenths > 0. {
-        true => format!("GR -{} dB", short(tenths)),
-        false => "GR 0 dB".into(),
-    }
-}
-
-/// Where a level in dBFS is across the display, from 0 at the left to [`CURVE_WIDTH`].
-fn across(db: f32) -> f32 {
-    let (bottom, top) = LEVELS_DB;
-    CURVE_WIDTH * ((db - bottom) / (top - bottom)).clamp(0., 1.)
-}
-
-/// Where a level in dBFS is up the display, from 0 at the bottom to 1 at the top.
-fn up(db: f32) -> f32 {
-    let (bottom, top) = LEVELS_DB;
-    ((db - bottom) / (top - bottom)).clamp(0., 1.)
-}
-
-/// The levels across the whole width of the display: past the right end of the curve are
-/// levels over 0 dBFS, which the threshold does not reach.
-fn threshold_travel() -> KnobRange {
-    let (bottom, top) = LEVELS_DB;
-    KnobRange::linear(bottom, bottom + (top - bottom) / CURVE_WIDTH)
-}
-
 /// The transfer curve: what comes out for each level that goes in, before makeup and mix.
 fn curve(state: &CompressorState) -> Vec<Point<f32>> {
-    let (bottom, top) = LEVELS_DB;
+    let Levels {
+        bottom_db: bottom,
+        top_db: top,
+    } = LEVELS;
     (0..=CURVE_POINTS)
         .map(|step| {
             let input = bottom + (top - bottom) * step as f32 / CURVE_POINTS as f32;
-            point(across(input), up(input - reduction_db(state, input)))
+            point(
+                LEVELS.across(input),
+                LEVELS.up(input - reduction_db(state, input)),
+            )
         })
         .collect()
 }
@@ -165,44 +134,7 @@ fn curve(state: &CompressorState) -> Vec<Point<f32>> {
 /// at the bottom to 1 at the top. `None` when the threshold is so close to 0 dBFS that the line
 /// above it has no length to drag.
 fn inverse_ratio_travel(threshold_db: f32) -> Option<KnobRange> {
-    let (bottom, _) = LEVELS_DB;
-    (threshold_db < -1.).then(|| KnobRange::linear(1. - bottom / threshold_db, 1.))
-}
-
-/// What the compressor did since the card last looked: the peak of what came in and the most it
-/// turned down, both in dB. The view reads them from the audio thread once per poll.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Reading {
-    level_db: f32,
-    reduction_db: f32,
-}
-
-impl Reading {
-    /// A reading of the amplitude of the level and the reduction in dB, to a quarter of a point
-    /// of the display and a tenth of a dB, so that a card whose sound holds still asks for no
-    /// frame. Silence has no level.
-    fn new(level: f32, reduction_db: f32) -> Self {
-        let (bottom, top) = LEVELS_DB;
-        let quarter_point = (top - bottom) / INSET_HEIGHT / 4.;
-        let level_db = match level > 0. {
-            true => (20. * level.log10() / quarter_point).round() * quarter_point,
-            false => f32::NEG_INFINITY,
-        };
-        let reduction_db = (reduction_db * 10.).round() / 10.;
-        Self {
-            level_db,
-            reduction_db,
-        }
-    }
-}
-
-impl Default for Reading {
-    fn default() -> Self {
-        Self {
-            level_db: f32::NEG_INFINITY,
-            reduction_db: 0.,
-        }
-    }
+    (threshold_db < -1.).then(|| KnobRange::linear(1. - LEVELS.bottom_db / threshold_db, 1.))
 }
 
 pub struct CompressorView {
@@ -313,7 +245,7 @@ impl CompressorView {
     pub fn read_meters(&mut self, cx: &mut Context<Self>) {
         let (project, id) = (self.session.read(cx).project(), self.compressor.id());
         let take = |name| project.peaks(id, name).map_or(0., |peaks| peaks.take()[0]);
-        let reading = Reading::new(take(Meters::LEVEL), take(Meters::REDUCTION));
+        let reading = LEVELS.reading(take(Meters::LEVEL), take(Meters::REDUCTION));
         if reading != self.reading {
             self.reading = reading;
             cx.notify();
@@ -350,8 +282,8 @@ impl CompressorView {
     /// The handle at the threshold, on the curve: sideways is threshold.
     fn threshold_handle(&self, state: &CompressorState, cx: &mut Context<Self>) -> Handle {
         let threshold = state.threshold_db;
-        let x = Axis::new(threshold_travel(), threshold, THRESHOLD.default);
-        let y = Axis::fixed(up(threshold - reduction_db(state, threshold)));
+        let x = Axis::new(LEVELS.threshold_travel(), threshold, THRESHOLD.default);
+        let y = Axis::fixed(LEVELS.up(threshold - reduction_db(state, threshold)));
         let automated = self.lanes.read(cx).is_automated(THRESHOLD.field);
         Handle::new("threshold", x, y)
             .automated(automated)
@@ -369,11 +301,11 @@ impl CompressorView {
 
     /// The handle at the end of the line above the threshold: up and down is ratio.
     fn ratio_handle(&self, state: &CompressorState, cx: &mut Context<Self>) -> Handle {
-        let (_, top) = LEVELS_DB;
-        let x = Axis::fixed(across(top));
+        let top = LEVELS.top_db;
+        let x = Axis::fixed(LEVELS.across(top));
         let y = match inverse_ratio_travel(state.threshold_db) {
             Some(travel) => Axis::new(travel, 1. / state.ratio, 1. / RATIO.default),
-            None => Axis::fixed(up(top - reduction_db(state, top))),
+            None => Axis::fixed(LEVELS.up(top - reduction_db(state, top))),
         };
         let automated = self.lanes.read(cx).is_automated(RATIO.field);
         Handle::new("ratio", x, y)
@@ -394,38 +326,12 @@ impl CompressorView {
     }
 
     fn display(&self, state: &CompressorState, cx: &mut Context<Self>) -> Display {
-        let theme = cx.theme();
-        let Reading {
-            level_db,
-            reduction_db,
-        } = self.reading;
-        let (bottom, _) = LEVELS_DB;
-        // The level now, where it is on the curve: what came in, and that less the reduction.
-        let level = (level_db > bottom).then(|| {
-            let (x, y) = (across(level_db), up(level_db - reduction_db));
-            div()
-                .debug_selector(|| "compressor-level".into())
-                .absolute()
-                .left(px(x * DISPLAY_WIDTH - LEVEL_DOT / 2.))
-                .top(px((1. - y) * INSET_HEIGHT - LEVEL_DOT / 2.))
-                .size(px(LEVEL_DOT))
-                .rounded_full()
-                .bg(theme.green)
-        });
-        // In a place of its own: the bar positions itself relative to its own box.
-        let bar = div()
-            .absolute()
-            .top(px(BAR_INSET))
-            .right(px(BAR_INSET))
-            .child(GainReduction::new(reduction_db).h(px(INSET_HEIGHT - 2. * BAR_INSET)));
-        Display::new("display", DISPLAY_WIDTH)
+        let display = Display::new("display", dynamics_display::WIDTH)
             .curve(curve(state))
-            .grid(vec![across(state.threshold_db)], Vec::new())
+            .grid(vec![LEVELS.across(state.threshold_db)], Vec::new())
             .handle(self.threshold_handle(state, cx))
-            .handle(self.ratio_handle(state, cx))
-            .caption(reduction_readout(reduction_db))
-            .children(level)
-            .child(bar)
+            .handle(self.ratio_handle(state, cx));
+        LEVELS.meters(display, self.reading, "compressor-level", cx)
     }
 }
 
@@ -482,21 +388,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_readout_has_its_unit_and_three_digits_at_most() {
+    fn a_ratio_reads_as_a_ratio() {
         assert_eq!(ratio_readout(4.0), "4:1");
         assert_eq!(ratio_readout(2.5), "2.5:1");
-        assert_eq!(reduction_readout(0.0), "GR 0 dB");
-        assert_eq!(reduction_readout(0.04), "GR 0 dB");
-        assert_eq!(reduction_readout(6.83), "GR -6.8 dB");
-    }
-
-    #[test]
-    fn a_reading_of_silence_has_no_level_and_a_steady_one_does_not_move() {
-        assert_eq!(Reading::new(0., 0.), Reading::default());
-        let reading = Reading::new(0.5, 6.83);
-        assert!((reading.level_db + 6.02).abs() < 0.2, "{reading:?}");
-        assert_eq!(reading.reduction_db, 6.8);
-        assert_eq!(Reading::new(0.5001, 6.8301), reading);
     }
 
     /// The defaults and both ends of every range, through the travel of its knob and back.
@@ -525,12 +419,12 @@ mod tests {
                     knee_db: 0.,
                     ..CompressorState::default()
                 };
-                let across_at = |db: f32| threshold_travel().position(db);
-                assert!((across_at(threshold_db) - across(threshold_db)).abs() < 1e-5);
+                let across_at = |db: f32| LEVELS.threshold_travel().position(db);
+                assert!((across_at(threshold_db) - LEVELS.across(threshold_db)).abs() < 1e-5);
                 let travel = inverse_ratio_travel(threshold_db).unwrap();
                 let handle = travel.position(1. / ratio);
-                let (_, top) = LEVELS_DB;
-                let curve = up(top - reduction_db(&state, top));
+                let top = LEVELS.top_db;
+                let curve = LEVELS.up(top - reduction_db(&state, top));
                 assert!(
                     (handle - curve).abs() < 1e-4,
                     "{threshold_db} {ratio}: {handle} {curve}"
