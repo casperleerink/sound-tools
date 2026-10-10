@@ -16,7 +16,7 @@ Users need enough musical intent to guide the agent. Programming knowledge is no
 
 ## Core and extensions
 
-The core provides reliable audio execution, timing including a musical clock, project storage, shared editing behaviour, a UI SDK, the agent integration, and the ability to build and reload extensions.
+The core provides reliable audio execution, timing including a musical clock, project storage, shared editing behaviour, a UI SDK, the agent integration, and running the tools a project defines itself.
 
 Extensions provide instruments, effects, editors and complete workflows. The bundled arrangement, mixer, instruments and effects are extensions built on the same SDK available to user extensions. They give the agent working examples to adapt.
 
@@ -28,7 +28,7 @@ Extensions are trusted user code. The project provides clear contracts, document
 
 The DAW comes first: a composer can make a short piece with the bundled tools and reopen it later. The agent sidebar runs Claude Code in the project folder. The app downloads it and signs in through Claude Code's own browser flow, and each message is one undo step. A coding agent in a terminal still works the same way, since both only edit the project files.
 
-Next come agent-built extensions: a composer asks for a tool that does not exist, and the agent writes it as an extension that the app builds and reloads.
+A composer can also ask for a tool that does not exist: the agent writes it in TypeScript in the project folder, and it plays at once, with no build.
 
 ## Inspirations
 

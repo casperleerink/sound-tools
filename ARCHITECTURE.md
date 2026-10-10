@@ -24,7 +24,7 @@ This file holds the technical decisions and the reasons for them: the model, the
 
 - One process, the runtime (`crates/runtime`), opens one project folder. It runs as a window, `--headless`, `--inspect` (print a summary, read-only), `--render` (offline WAV, read-only) or `--analyze` (measure a render or an audio file, read-only). `--plugins` lists the plugins of the machine.
 - The agent works in the project folder: Claude Code run by the agent sidebar, or any coding agent in a terminal. It edits files; the runtime applies them live. There is no separate edit API for agents.
-- Crates: `crates/core` (engine, clock, transport, live project folder), `crates/notes` (the note contract), `crates/media` (audio files), `crates/ui` (the UI SDK and the session bridge), `crates/agent` (the agent sidebar), `crates/runtime` (the app), `crates/gallery` (component gallery). Each extension is a crate under `extensions/`.
+- Crates: `crates/core` (engine, clock, transport, live project folder), `crates/notes` (the note contract), `crates/media` (audio files), `crates/ui` (the UI SDK and the session bridge), `crates/agent` (the agent sidebar), `crates/runtime` (the app), `crates/gallery` (component gallery), `crates/typescript` and `crates/signals` (tools of the project). Each extension is a crate under `extensions/`.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name. A new project enables every registered one.
 - Rust for the core and extensions, GPUI for the window. The reason: a one-line extension edit reaches a new running window in about two seconds, and an agent wrote working GPUI views from our docs on the first try. Audio and saved data never depend on GPUI.
 - macOS is the main platform. Linux and Windows build and pass the tests. Platform code sits behind `cfg`: VST 3 bundle loading, plugin folders, cache folders, the terminal, the agent's process tree, and plugin windows (macOS and Windows; not Linux, where plugins need an X11 parent and a host run loop). System programs come from the system, never the `PATH`: `/usr/bin/curl`, or `System32` (`curl.exe`, `tar.exe`, `powershell.exe`) on Windows, started without a console window (`sound_core::process`).
@@ -115,7 +115,7 @@ Built in `crates/core/src/project` (`editing.rs`, `outside.rs`, `watcher.rs`).
 
 ## Audio engine, transport and time
 
-The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.md) section 3. Built in `crates/core/src` (`engine.rs`, `processor.rs`, `clock.rs`, `transport.rs`).
+The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.md), "The audio engine". Built in `crates/core/src` (`engine.rs`, `processor.rs`, `clock.rs`, `transport.rs`).
 
 - The audio thread plays at real-time priority: Core Audio gives it on macOS, cpal asks for it on Windows and, through rtkit, on Linux. On Linux it plays through PipeWire, since cpal raises no thread behind ALSA's PipeWire plugin. A real-time thread also keeps the CPU at full speed between blocks; without it a slow laptop played the same piece at 2.5 times the cost and dropped out. Without PipeWire it plays through ALSA at normal priority.
 - One audio engine. `process` never allocates, locks or makes a system call; values leaving the audio thread are dropped on the control thread. Every crate with a processor runs its tests under the realtime sanitizer in CI.
