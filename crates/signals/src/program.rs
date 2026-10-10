@@ -6,6 +6,10 @@
 //! what its source was in the frame before, and through a buffer, which a write changes for the
 //! reads after it. A feedback read in no loop with its source runs after it over the span, one
 //! frame behind.
+//!
+//! A loop is bound by the chain from one frame to the next, not by its count of operations.
+//! Loops that hear nothing of each other run in one pass over the frames, so the processor
+//! works on their chains side by side.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -16,13 +20,18 @@ use crate::code::{Code, Operation, Register, Table};
 pub(crate) enum Step {
     /// One operation over the whole span.
     Block(Register),
-    /// Operations in their order, frame by frame.
+    /// Operations in their order, frame by frame: of one loop, or of loops that hear nothing
+    /// of each other, one after the other.
     Loop(Box<[(Register, Operation)]>),
 }
 
 /// The steps that run `code`, whose [`edges`] are `edges`, over a span. Each operation comes
 /// after what it reads, and otherwise as close to its own place as it can, so the order stays
 /// near the one the graph was written in.
+///
+/// Loops with as many loops on the longest path to them run as one step: a path between two
+/// would put one more loop before one of them. What else has as many loops before it runs just
+/// before that step.
 pub(crate) fn schedule(code: &Code, edges: &[Vec<usize>]) -> Box<[Step]> {
     let (component_of, members) = components(edges);
     // How many edges into each component are from components not run yet.
@@ -45,29 +54,30 @@ pub(crate) fn schedule(code: &Code, edges: &[Vec<usize>]) -> Box<[Step]> {
         .filter(|(_, waiting)| **waiting == 0)
         .filter_map(|(nodes, _)| nodes.first().copied().map(Reverse))
         .collect();
-    let mut steps = Vec::new();
+    // How many loops are on the longest path to each component.
+    let mut loops_before = vec![0_usize; members.len()];
+    // Each component in order, with its stage: the blocks after `n` loops are at `2n`, the
+    // loops after `n` at `2n + 1`.
+    let mut order = Vec::new();
     while let Some(Reverse(first)) = ready.pop() {
         let Some(&component) = component_of.get(first) else {
             continue;
         };
         let nodes = members.get(component).map_or(&[][..], Vec::as_slice);
-        let looped =
-            nodes.len() > 1 || (edges.get(first)).is_some_and(|targets| targets.contains(&first));
-        if looped {
-            steps.push(Step::Loop(
-                (nodes.iter())
-                    .filter_map(|node| Some((*node as Register, *code.operations.get(*node)?)))
-                    .collect(),
-            ));
-        } else {
-            steps.push(Step::Block(first as Register));
-        }
+        let looped = usize::from(
+            nodes.len() > 1 || (edges.get(first)).is_some_and(|targets| targets.contains(&first)),
+        );
+        let before = loops_before.get(component).copied().unwrap_or(0);
+        order.push((before * 2 + looped, nodes));
         for to in nodes.iter().filter_map(|node| edges.get(*node)).flatten() {
             let Some(&next) = component_of.get(*to) else {
                 continue;
             };
             if next == component {
                 continue;
+            }
+            if let Some(after) = loops_before.get_mut(next) {
+                *after = (*after).max(before + looped);
             }
             if let Some(count) = waiting.get_mut(next) {
                 *count -= 1;
@@ -77,6 +87,21 @@ pub(crate) fn schedule(code: &Code, edges: &[Vec<usize>]) -> Box<[Step]> {
                     ready.push(Reverse(*first));
                 }
             }
+        }
+    }
+    // Stable, so each stage keeps the order above.
+    order.sort_by_key(|(stage, _)| *stage);
+    let mut steps = Vec::new();
+    for stage in order.chunk_by(|a, b| a.0 == b.0) {
+        let nodes = stage.iter().flat_map(|(_, nodes)| nodes.iter());
+        if stage.first().is_some_and(|(stage, _)| stage % 2 == 1) {
+            steps.push(Step::Loop(
+                nodes
+                    .filter_map(|node| Some((*node as Register, *code.operations.get(*node)?)))
+                    .collect(),
+            ));
+        } else {
+            steps.extend(nodes.map(|node| Step::Block(*node as Register)));
         }
     }
     steps.into_boxed_slice()
@@ -104,12 +129,17 @@ pub(crate) fn per_channel(code: &Code, edges: &[Vec<usize>], steps: &[Step]) -> 
     }
     let varies = |register: &Register| varies.get(usize::from(*register)) == Some(&true);
     (steps.iter())
-        .filter(|step| match step {
-            Step::Block(register) => varies(register),
-            // All in a loop hear each other.
-            Step::Loop(looped) => looped.iter().any(|(register, _)| varies(register)),
+        .filter_map(|step| match step {
+            Step::Block(register) => varies(register).then_some(step.clone()),
+            // All in one loop hear each other, so each loop of the step stays whole or goes.
+            Step::Loop(looped) => {
+                let looped: Box<[_]> = (looped.iter())
+                    .filter(|(register, _)| varies(register))
+                    .copied()
+                    .collect();
+                (!looped.is_empty()).then_some(Step::Loop(looped))
+            }
         })
-        .cloned()
         .collect()
 }
 

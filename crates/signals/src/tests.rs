@@ -63,7 +63,7 @@ fn run(machine: &mut Machine, input: impl Fn(usize) -> f32, frames: usize) -> Ve
     run_with(machine, &[], |_| Note::default(), input, frames)
 }
 
-/// The left channel of `blocks` blocks of `input`, each rendered in spans of `span` frames.
+/// Both channels of `blocks` blocks of `input`, each rendered in spans of `span` frames.
 /// In spans of one frame every operation runs frame by frame, in an order where each comes
 /// after what it reads: what the code means.
 fn render_in_spans(
@@ -71,10 +71,10 @@ fn render_in_spans(
     input: impl Fn(usize) -> f32,
     blocks: usize,
     span: usize,
-) -> Vec<f32> {
+) -> [Vec<f32>; 2] {
     let mut block = defaults(machine);
     let mut output = [[0.0; MAX_BLOCK]; 2];
-    let mut left = Vec::new();
+    let mut rendered = [Vec::new(), Vec::new()];
     for index in 0..blocks {
         for (frame, sample) in block.input[0].iter_mut().enumerate() {
             *sample = input(index * MAX_BLOCK + frame);
@@ -88,9 +88,11 @@ fn render_in_spans(
         for start in (0..MAX_BLOCK).step_by(span) {
             machine.render(&inputs, start..(start + span).min(MAX_BLOCK), &mut output);
         }
-        left.extend_from_slice(&output[0]);
+        for (rendered, output) in rendered.iter_mut().zip(&output) {
+            rendered.extend_from_slice(output);
+        }
     }
-    left
+    rendered
 }
 
 fn loudest(samples: &[f32]) -> f32 {
@@ -188,7 +190,7 @@ fn a_buffer_keeps_what_was_written_and_a_read_further_back_hears_it_later() {
 }
 
 #[test]
-fn a_feedback_through_a_filter_renders_over_a_whole_span_as_it_does_frame_by_frame() {
+fn feedbacks_through_filters_render_over_a_whole_span_as_they_do_frame_by_frame() {
     let sound = || {
         compile(|| {
             // A read whose source is in no loop with it: what `input` was a frame before.
@@ -198,13 +200,19 @@ fn a_feedback_through_a_filter_renders_over_a_whole_span_as_it_does_frame_by_fra
             let ring = feedback();
             let wet = lowpass(input() + ring.read() * 0.9, 2000.0, 4.0);
             ring.set(saturate(wet));
-            wet + late * 0.5
+            // A loop that hears nothing of the first runs in the same pass over the frames.
+            // It hears the channel, so the right runs it again, but not the first.
+            let other = feedback();
+            let panned = lowpass(input() * channel() + other.read() * 0.8, 700.0, 2.0);
+            other.set(saturate(panned));
+            wet + panned + late * 0.5
         })
     };
     let input = |frame: usize| if frame % 97 < 3 { 1.0 } else { 0.0 };
     let whole = render_in_spans(&mut machine(sound()), input, 20, MAX_BLOCK);
     let by_frame = render_in_spans(&mut machine(sound()), input, 20, 1);
-    assert!(loudest(&whole) > 0.5);
+    assert!(loudest(&whole[0]) > 0.5);
+    assert!(loudest(&whole[1]) > loudest(&whole[0]));
     assert_eq!(whole, by_frame);
 }
 
@@ -216,7 +224,7 @@ fn a_buffer_read_hears_a_write_before_it_in_the_same_frame_and_one_after_it_a_fr
         tape.write(0.0, input());
         tape.at(0.0)
     }));
-    let output = render_in_spans(&mut write_first, ramp, 1, MAX_BLOCK);
+    let [output, _] = render_in_spans(&mut write_first, ramp, 1, MAX_BLOCK);
     assert_eq!(output, (0..MAX_BLOCK).map(ramp).collect::<Vec<_>>());
 
     let mut read_first = machine(compile(|| {
@@ -225,7 +233,7 @@ fn a_buffer_read_hears_a_write_before_it_in_the_same_frame_and_one_after_it_a_fr
         tape.write(0.0, input());
         heard
     }));
-    let output = render_in_spans(&mut read_first, ramp, 1, MAX_BLOCK);
+    let [output, _] = render_in_spans(&mut read_first, ramp, 1, MAX_BLOCK);
     let before = |frame: usize| frame.checked_sub(1).map_or(0.0, ramp);
     assert_eq!(output, (0..MAX_BLOCK).map(before).collect::<Vec<_>>());
 }
