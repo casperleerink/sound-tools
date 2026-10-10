@@ -642,6 +642,8 @@ impl Processor for Signals {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         self.aim(context.event_inputs.get(Self::AUTOMATION));
+        // The engine's promise: it splits a device buffer into sub-blocks of at most this.
+        debug_assert!(context.frames <= MAX_BLOCK);
         let frames = context.frames.min(MAX_BLOCK);
         let transport = &context.transport;
         let playing = transport.playing;

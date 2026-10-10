@@ -20,15 +20,6 @@ pub(crate) enum Step {
     Loop(Box<[(Register, Operation)]>),
 }
 
-/// Whether `operation` is the same in every frame for as long as a machine lives. It is worked
-/// out when the machine is made, and is no step.
-pub(crate) fn is_fixed(operation: Operation) -> bool {
-    matches!(
-        operation,
-        Operation::Constant(_) | Operation::SampleRate | Operation::Length(Table::Buffer(_))
-    )
-}
-
 /// The steps that run `code` over a span. Each operation comes after what it reads, and
 /// otherwise as close to its own place as it can, so the order stays near the one the graph
 /// was written in.
@@ -63,14 +54,13 @@ pub(crate) fn schedule(code: &Code) -> Box<[Step]> {
         let nodes = members.get(component).map_or(&[][..], Vec::as_slice);
         let looped =
             nodes.len() > 1 || (edges.get(first)).is_some_and(|targets| targets.contains(&first));
-        let operation = code.operations.get(first).copied();
         if looped {
             steps.push(Step::Loop(
                 (nodes.iter())
                     .filter_map(|node| Some((*node as Register, *code.operations.get(*node)?)))
                     .collect(),
             ));
-        } else if operation.is_some_and(|operation| !is_fixed(operation)) {
+        } else {
             steps.push(Step::Block(first as Register));
         }
         for to in nodes.iter().filter_map(|node| edges.get(*node)).flatten() {
@@ -122,8 +112,14 @@ fn edges(code: &Code) -> Vec<Vec<usize>> {
             operations.push(index);
         }
     }
-    // A ring through all of them puts them in one loop.
-    for operations in on_buffers.iter().filter(|operations| operations.len() > 1) {
+    // A ring through all of them puts them in one loop. Without a write, the reads of a buffer
+    // hear nothing of each other.
+    for operations in &on_buffers {
+        let written = (operations.iter())
+            .any(|index| matches!(code.operations.get(*index), Some(Operation::Write { .. })));
+        if operations.len() < 2 || !written {
+            continue;
+        }
         let next = operations.iter().cycle().skip(1);
         for (from, to) in operations.iter().zip(next) {
             add(*from, *to);

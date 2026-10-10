@@ -185,20 +185,29 @@ impl Machine {
         let mut registers = vec![[0.0; MAX_BLOCK]; code.operations.len()];
         // The buffers of every channel are as long.
         let buffers = channels.first().map_or(&[][..], |memory| &memory.buffers);
-        for (row, operation) in registers.iter_mut().zip(&code.operations) {
-            // What `program::is_fixed` names.
-            let value = match *operation {
-                Operation::Constant(value) => value,
-                Operation::SampleRate => sample_rate,
-                Operation::Length(table @ Table::Buffer(_)) => {
-                    table_of(table, &[], buffers).len() as f32
-                }
-                _ => continue,
+        let mut steps = program::schedule(&code).into_vec();
+        // What is the same in every frame for as long as the machine lives is set once, and is
+        // no step.
+        steps.retain(|step| {
+            let Step::Block(register) = step else {
+                return true;
             };
-            row.fill(value);
-        }
+            let register = usize::from(*register);
+            let value = match code.operations.get(register) {
+                Some(Operation::Constant(value)) => *value,
+                Some(Operation::SampleRate) => sample_rate,
+                Some(Operation::Length(table @ Table::Buffer(_))) => {
+                    table_of(*table, &[], buffers).len() as f32
+                }
+                _ => return true,
+            };
+            if let Some(row) = registers.get_mut(register) {
+                row.fill(value);
+            }
+            false
+        });
         Self {
-            steps: program::schedule(&code),
+            steps: steps.into_boxed_slice(),
             sample_rate,
             registers,
             channels,
@@ -341,14 +350,14 @@ impl Span<'_> {
         registers: &mut [[f32; MAX_BLOCK]],
         memory: &mut Memory,
     ) {
-        if let Operation::History(slot) = operation {
-            return self.history(slot, register, frames, registers, &memory.histories);
-        }
-        // Every other operation reads only registers before its own.
+        // An operation reads only registers before its own, but for the source of a feedback.
         let Some((before, rest)) = registers.split_at_mut_checked(register) else {
             return;
         };
-        let Some(out) = rest.first_mut().and_then(|row| row.get_mut(frames.clone())) else {
+        let Some((own, after)) = rest.split_first_mut() else {
+            return;
+        };
+        let Some(out) = own.get_mut(frames.clone()) else {
             return;
         };
         let read = |register: Register| row(before, usize::from(register), &frames);
@@ -384,8 +393,16 @@ impl Span<'_> {
                     *out = truth(triggers & (1 << index) != 0);
                 }
             }
-            // Run above.
-            Operation::History(_) => {}
+            Operation::History(slot) => {
+                let source = self.feedbacks.get(usize::from(slot)).map(|source| {
+                    let source = usize::from(*source);
+                    match source.checked_sub(register + 1) {
+                        Some(index) => after.get(index),
+                        None => before.get(source),
+                    }
+                });
+                self.history(slot, out, frames, source.flatten(), &memory.histories);
+            }
             Operation::Unary(unary, x) => apply_unary(unary, out, read(x)),
             Operation::Binary(binary, a, b) => apply_binary(binary, out, read(a), read(b)),
             Operation::Clamp(x, low, high) => {
@@ -553,30 +570,23 @@ impl Span<'_> {
         }
     }
 
-    /// A feedback read: what its source was in the frame before, and in the first frame of the
+    /// A feedback read: what its `source` was in the frame before, and in the first frame of the
     /// span what was set in the span before. The source may come after it.
     fn history(
         &self,
         slot: u16,
-        register: usize,
+        out: &mut [f32],
         frames: Range<usize>,
-        registers: &mut [[f32; MAX_BLOCK]],
+        source: Option<&[f32; MAX_BLOCK]>,
         histories: &[f32],
     ) {
         let set_before = histories.get(usize::from(slot)).copied().unwrap_or(0.0);
-        let source = self.feedbacks.get(usize::from(slot));
-        for frame in frames {
-            let value = match source {
+        for (out, frame) in out.iter_mut().zip(frames) {
+            *out = match source {
                 _ if frame == self.first => set_before,
-                Some(source) => finite(value_at(registers, *source, frame - 1)),
+                Some(source) => finite(source.get(frame - 1).copied().unwrap_or(0.0)),
                 None => 0.0,
             };
-            if let Some(cell) = registers
-                .get_mut(register)
-                .and_then(|row| row.get_mut(frame))
-            {
-                *cell = value;
-            }
         }
     }
 

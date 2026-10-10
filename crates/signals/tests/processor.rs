@@ -554,6 +554,22 @@ fn scored_effect(stereo: bool) -> Code {
     })
 }
 
+/// A tape: a feedback through a filter and a buffer, read before it is set, and a lookup that
+/// plays the tape back.
+fn scored_tape(behind: f32) -> Code {
+    compile(|| {
+        let again = param("again", 0.6, [0.0, 0.9]);
+        let tape = buffer(0.05);
+        let echo = feedback();
+        let back = echo.read();
+        let head = phasor(20.0) * 2400.0;
+        tape.write(head, input() + back * again);
+        let old = tape.at(head - behind);
+        echo.set(lowpass(old, 2500.0, 0.7));
+        mix(input(), old + 0.2 * lookup(&tape, phasor(3.0)), 0.5)
+    })
+}
+
 /// The hashes are of renders on macOS on Apple silicon: `sin` and `tan` are of the platform,
 /// and may differ in their last bit elsewhere.
 #[test]
@@ -570,6 +586,7 @@ fn a_score_of_every_timing_renders_as_it_did() {
         ),
         score_tool(Kind::Source, scored_source(110.0), scored_source(220.0)),
         score_tool(Kind::Effect, scored_effect(false), scored_effect(true)),
+        score_tool(Kind::Effect, scored_tape(600.0), scored_tape(1_000.0)),
     ];
     let mut found = Vec::new();
     for tool in &tools {
@@ -585,6 +602,8 @@ fn a_score_of_every_timing_renders_as_it_did() {
         (1203857699514163717, 7353583470673154908),
         (8521250857642533575, 14695981039346656037),
         (12097547745870752178, 14695981039346656037),
+        (12019199482111183270, 14695981039346656037),
+        (1782942339727100491, 14695981039346656037),
     ];
     assert_eq!(found, expected);
 }

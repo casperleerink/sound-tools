@@ -665,8 +665,9 @@ impl Sounds {
             values.arrays = Some(self.lists(&code, state, reading));
         }
         let made = || Box::new(Machine::new(code.as_ref().clone(), sample_rate));
+        // Made once and cloned for every voice: scheduling the code is not free.
         let mut machines: Vec<Option<Box<Machine>>> = match new_code {
-            true => (0..kind.machines()).map(|_| Some(made())).collect(),
+            true => vec![Some(made()); kind.machines()],
             false => Vec::new(),
         };
         let mut created = false;
