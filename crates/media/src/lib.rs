@@ -16,12 +16,14 @@
 //!   a key.
 //! - [`Overview`] is what a waveform of it draws, made from the file and never saved.
 //! - [`TakeFile`] is a recording on its way in: a WAV file that grows while it records.
+//! - [`analysis`] measures a sound: its loudness, peaks, spectrum and pitch.
 //!
 //! The WAV and AIFF parser is our own. These files are a few chunks around plain samples, and
 //! a decoding library would only add a copy of what the file already holds. FLAC, which free
 //! sample libraries use, is decoded whole into memory with `claxon` when it is read, so the
 //! audio thread reads it as plainly as a WAV file. Other compressed formats are not read.
 
+pub mod analysis;
 mod file;
 mod loader;
 mod overview;

@@ -3,9 +3,9 @@
 //! the application window. Tests of whole projects, with every bundled extension, use this
 //! crate.
 
-pub mod analysis;
 pub mod app;
 pub mod recorder;
+pub mod report;
 pub mod update;
 pub mod window;
 

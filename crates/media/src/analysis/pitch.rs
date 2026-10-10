@@ -26,8 +26,8 @@ const QUIET: f64 = 1e-6;
 const FUNDAMENTAL: f64 = 0.02;
 
 /// What one window sounds like.
-#[derive(Clone, Copy)]
-pub(super) enum Pitch {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pitch {
     Quiet,
     /// Sound with no clear period: noise, drums, a chord.
     Unclear,
@@ -82,7 +82,7 @@ impl Pitches {
     }
 }
 
-pub(super) struct PitchFinder {
+pub struct PitchFinder {
     rate: f64,
     /// The lags looked at, in frames: the periods of [`HIGHEST`] to [`LOWEST`]. The difference
     /// at each lag is summed over `longest` frames, so a window is twice as long.
@@ -108,7 +108,7 @@ impl PitchFinder {
     /// A finder for a sound at `rate` that looks at no more than `window` frames. When two
     /// periods of [`LOWEST`] do not fit, the lowest note found is higher: 47 Hz at 96 kHz in
     /// 4096 frames.
-    pub(super) fn new(rate: f64, window: usize) -> Self {
+    pub fn new(rate: f64, window: usize) -> Self {
         let longest = ((rate / LOWEST).ceil() as usize).min(window / 2);
         let shortest = ((rate / HIGHEST).floor() as usize).max(2);
         let mut planner = RealFftPlanner::<f64>::new();
@@ -132,12 +132,12 @@ impl PitchFinder {
     }
 
     /// How many frames a window is.
-    pub(super) fn length(&self) -> usize {
+    pub fn length(&self) -> usize {
         self.sound.len()
     }
 
     /// The pitch of a window of [`Self::length`] frames of each channel.
-    pub(super) fn find(&mut self, left: &[f32], right: &[f32]) -> Pitch {
+    pub fn find(&mut self, left: &[f32], right: &[f32]) -> Pitch {
         for ((sound, left), right) in self.sound.iter_mut().zip(left).zip(right) {
             *sound = (f64::from(*left) + f64::from(*right)) / 2.0;
         }

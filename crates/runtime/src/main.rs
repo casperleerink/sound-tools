@@ -44,12 +44,12 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use plugin_host::{PluginFormat, Plugins};
-use runtime::analysis::Meter;
-use runtime::analysis::report::{Timeline, report};
+use runtime::report::{Timeline, report};
 use runtime::{OFFLINE, open_or_create_with, open_read_only_with, problems, summary};
 use sound_core::{
     Clock, Engine, EngineConfig, EngineStatus, OutputDevice, Project, ProjectEvent, Ticks,
 };
+use sound_media::analysis::Meter;
 
 fn print_summary(project: &Project) {
     println!("project: {}", project.root().display());
@@ -472,7 +472,7 @@ fn render(folder: &Path, wav: &Path, options: &Options, progress: bool) -> Resul
 const WARM_UP_SECONDS: f64 = 4.0;
 
 /// Renders the span of `options` and prints what it measures, row by row: no file is written.
-/// See [`runtime::analysis`].
+/// See [`sound_media::analysis`].
 fn analyze(path: &Path, options: &Options) -> Result<()> {
     if path.is_file() {
         return analyze_file(path, options);

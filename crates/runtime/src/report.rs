@@ -3,7 +3,7 @@
 
 use sound_core::{Clock, Frames, Ticks, TimeSignatures};
 
-use super::{BANDS, MeasuredPitch, Measures};
+use sound_media::analysis::{BANDS, MeasuredPitch, Measures};
 
 /// At most this many rows: enough to see the shape of a piece, few enough to read at once.
 const MOST_ROWS: u64 = 32;
@@ -40,7 +40,7 @@ struct Row {
 }
 
 impl Timeline {
-    /// Where each row starts, in frames from the start, for [`super::Meter::new`].
+    /// Where each row starts, in frames from the start, for [`sound_media::analysis::Meter::new`].
     pub fn row_starts(&self) -> Vec<u64> {
         self.rows().1.iter().map(|row| row.start).collect()
     }
