@@ -41,7 +41,7 @@ pub use device::{
     DeviceChoice, DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming,
     input_devices, monotonic_nanos, output_devices,
 };
-pub use dsp::{HIGHEST_PHASE_STEP, OnePole, Taps, held, is_held_silent, poly_blep};
+pub use dsp::{HIGHEST_PHASE_STEP, OnePole, Taps, held, is_held_silent, is_zero, poly_blep};
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};
 pub use gain::{amplitude, pan_gains};

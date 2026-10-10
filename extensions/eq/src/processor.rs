@@ -26,7 +26,7 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude, held,
+    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude, held, is_zero,
 };
 
 use crate::{AUTOMATED, BAND_LANES, BANDS, Band, EqState, OUTPUT_GAIN, Parameter, Shape};
@@ -358,7 +358,7 @@ impl Processor for Eq {
             self.aim(&targets);
         }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
-        let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);
+        let silent_input = is_zero(left_in) && is_zero(right_in);
         if silent_input && self.is_resting() {
             // Nothing sounds and nothing rings: no glide can be heard, and the output is
             // already silent.

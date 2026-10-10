@@ -22,7 +22,7 @@ use std::f32::consts::SQRT_2;
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude, held,
+    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude, held, is_zero,
     pan_gains,
 };
 
@@ -320,7 +320,7 @@ impl Processor for Utility {
             }
             return;
         }
-        let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);
+        let silent_input = is_zero(left_in) && is_zero(right_in);
         if self.is_muted() || (silent_input && self.crossover.is_silent()) {
             // Nothing sounds, or nothing may: the output is already silent, and no glide can be
             // heard. The crossover starts again from rest.

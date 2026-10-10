@@ -44,6 +44,15 @@ pub fn is_held_silent(samples: &[f32]) -> bool {
         .fold(false, |sound, sample| sound | (sample.abs() > 0.0))
 }
 
+/// Whether every sample is zero, either sign. Not a number is not. The idle check of an effect
+/// that takes its input as it comes, in vector compares as [`is_held_silent`].
+#[inline]
+pub fn is_zero(samples: &[f32]) -> bool {
+    !samples
+        .iter()
+        .fold(false, |sound, sample| sound | (*sample != 0.0))
+}
+
 /// What rounds off a step at the start of a cycle, times half the step, for a phase that moves
 /// by `step` per frame (PolyBLEP): from 0 far from the step to 1 just before it and -1 just
 /// after it, so both samples next to the step meet in the middle. It takes away most of the
@@ -228,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn the_idle_check_says_what_held_says_on_every_edge() {
+    fn the_idle_checks_say_what_a_check_of_each_sample_says_on_every_edge() {
         let denormal = f32::from_bits(1);
         let edges = [
             0.0,
@@ -250,6 +259,8 @@ mod tests {
                     let block = black_box(block);
                     let held_silent = block.iter().all(|sample| held(*sample) == 0.0);
                     assert_eq!(is_held_silent(&block), held_silent, "{block:?}");
+                    let zero = block.iter().all(|sample| *sample == 0.0);
+                    assert_eq!(is_zero(&block), zero, "{block:?}");
                 }
             }
         };
