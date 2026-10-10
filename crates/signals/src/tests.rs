@@ -266,6 +266,8 @@ fn a_graph_that_does_not_hold_says_what_is_wrong_in_the_words_of_the_sdk() {
     assert_eq!(found, "node 0 is read before it is made");
     let found = error(graph(json!([{ "op": "param", "name": "rate" }])));
     assert_eq!(found, "`rate` is no field or control of the tool");
+    let found = error(graph(json!([{ "op": "constant", "value": 1e39 }])));
+    assert!(found.starts_with("a number of a sound is at most"));
     let longest = json!([
         { "op": "input" },
         { "op": "delay", "x": 0, "ms": 0, "longest": 0 },

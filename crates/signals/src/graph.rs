@@ -391,6 +391,13 @@ impl<'a> Lowering<'a> {
     /// The register of `node`: of the operation it makes, or of its field or control.
     fn node(&mut self, node: &Node) -> Result<Register, GraphError> {
         let operation = match node {
+            // JSON gives an f64; one beyond f32 arrives as infinity.
+            Node::Constant(Constant { value }) if !value.is_finite() => {
+                return error(format!(
+                    "a number of a sound is at most {:e} either way",
+                    f32::MAX
+                ));
+            }
             Node::Constant(Constant { value }) => Operation::Constant(*value),
             Node::Input => Operation::Input,
             Node::InputLeft => Operation::InputLeft,

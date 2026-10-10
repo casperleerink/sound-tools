@@ -430,9 +430,6 @@ export function buffer(seconds: number): Buffer {
 
 /** Shows `value` to the card as `watches[name]`. Inside `sound` only. */
 export function watch(name: string, value: Operand): void {
-  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
-    throw new Error(`watch ${JSON.stringify(name)}: a watch name is lowercase letters, digits and _, starting with a letter`);
-  }
   building().watches.push({ name, value });
 }
 
