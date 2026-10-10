@@ -313,13 +313,8 @@ impl Machine {
                 Step::Loop(looped) => {
                     for frame in frames.clone() {
                         for (register, operation) in looped.iter() {
-                            span.run(
-                                *operation,
-                                usize::from(*register),
-                                frame..frame + 1,
-                                registers,
-                                memory,
-                            );
+                            let register = usize::from(*register);
+                            span.step(*operation, register, frame, registers, memory);
                         }
                     }
                 }
@@ -351,12 +346,10 @@ struct Span<'a> {
 impl Span<'_> {
     /// Runs `operation`, whose register is `register`, over `frames` of the span. Each kind of
     /// operation has a loop of its own over the frames, so it is not matched in every frame.
-    /// Inlined: a loop of a feedback calls it for every operation in every frame.
     ///
     /// A memory is kept in a local over the frames and put back after: left in its slot, it is
     /// stored and loaded again in every frame, which lengthens the chain from one frame to the
     /// next.
-    #[inline(always)]
     fn run(
         &self,
         operation: Operation,
@@ -421,27 +414,13 @@ impl Span<'_> {
             }
             Operation::Unary(unary, x) => apply_unary(unary, out, read(x)),
             Operation::Binary(binary, a, b) => apply_binary(binary, out, read(a), read(b)),
-            Operation::Clamp(x, low, high) => {
-                map3(out, read(x), read(low), read(high), |x, low, high| {
-                    x.max(low).min(high)
-                });
-            }
-            Operation::Mix(a, b, amount) => {
-                map3(out, read(a), read(b), read(amount), |a, b, amount| {
-                    a + (b - a) * amount
-                });
-            }
+            Operation::Clamp(x, low, high) => map3(out, read(x), read(low), read(high), clamp),
+            Operation::Mix(a, b, amount) => map3(out, read(a), read(b), read(amount), mix),
             Operation::Phasor { hz, slot } => match memory.phases.get_mut(usize::from(slot)) {
                 Some(kept) => {
                     let mut phase = *kept;
                     for (out, hz) in out.iter_mut().zip(read(hz)) {
-                        *out = phase;
-                        let next = phase + hz / sample_rate;
-                        phase = if next.is_finite() {
-                            next - next.floor()
-                        } else {
-                            0.0
-                        };
+                        *out = phasor(&mut phase, *hz, sample_rate);
                     }
                     *kept = phase;
                 }
@@ -467,9 +446,7 @@ impl Span<'_> {
                         let mut position =
                             (self.position).wrapping_add(frames.start.wrapping_sub(self.first));
                         for ((out, input), ms) in out.iter_mut().zip(read(input)).zip(read(ms)) {
-                            let frames = ms * 0.001 * sample_rate;
-                            *out = line.read_between(position, frames);
-                            line.write(position, finite(*input));
+                            *out = delayed(line, position, *input, *ms, sample_rate);
                             position = position.wrapping_add(1);
                         }
                     }
@@ -521,11 +498,9 @@ impl Span<'_> {
                     for ((out, frame), ((gate, sustain), ((attack, decay), release))) in
                         outs.zip(values)
                     {
-                        let times = [*attack, *decay, *release]
-                            .map(|ms| (ms * 0.001 * sample_rate).max(1.0));
-                        // A sustain that is not a number would stay in the level for good.
-                        let sustain = finite(*sustain).clamp(0.0, 1.0);
-                        *out = envelope.next(*gate > 0.0, self.onset(frame), times, sustain);
+                        let times = [*attack, *decay, *release];
+                        let onset = self.onset(frame);
+                        *out = envelope.next(*gate, onset, times, *sustain, sample_rate);
                     }
                     *kept = envelope;
                 }
@@ -537,10 +512,7 @@ impl Span<'_> {
                         let mut held = *kept;
                         for ((out, input), when) in out.iter_mut().zip(read(input)).zip(read(when))
                         {
-                            if *when > 0.0 {
-                                held = finite(*input);
-                            }
-                            *out = held;
+                            *out = hold(&mut held, *input, *when);
                         }
                         *kept = held;
                     }
@@ -551,9 +523,7 @@ impl Span<'_> {
                 Some(kept) => {
                     let mut before = *kept;
                     for (out, now) in out.iter_mut().zip(read(input)) {
-                        let rose = before <= 0.0 && *now > 0.0;
-                        before = finite(*now);
-                        *out = truth(rose);
+                        *out = rise(&mut before, *now);
                     }
                     *kept = before;
                 }
@@ -563,10 +533,7 @@ impl Span<'_> {
                 Some(kept) => {
                     let mut before = *kept;
                     for (out, now) in out.iter_mut().zip(read(input)) {
-                        let now = finite(*now);
-                        let changed = before != now;
-                        before = now;
-                        *out = truth(changed);
+                        *out = change(&mut before, *now);
                     }
                     *kept = before;
                 }
@@ -589,16 +556,126 @@ impl Span<'_> {
                 value,
             } => {
                 for ((out, index), value) in out.iter_mut().zip(read(index)).zip(read(value)) {
-                    let value = finite(*value);
-                    if let Some(values) = memory.buffers.get_mut(usize::from(buffer))
-                        && let Some(slot) = wrapped(values.len(), *index)
-                        && let Some(sample) = values.get_mut(slot)
-                    {
-                        *sample = value;
-                    }
-                    *out = value;
+                    *out = write(memory.buffers.get_mut(usize::from(buffer)), *index, *value);
                 }
             }
+        }
+    }
+
+    /// Runs `operation`, whose register is `register`, in one `frame`, from what the registers
+    /// hold in it: how a loop runs it, every operation in turn in each frame. With the formulas
+    /// of [`Self::run`], so a loop gives what the span would. Inlined, so a loop is one function.
+    #[inline(always)]
+    fn step(
+        &self,
+        operation: Operation,
+        register: usize,
+        frame: usize,
+        registers: &mut [[f32; MAX_BLOCK]],
+        memory: &mut Memory,
+    ) {
+        let at = |register: Register| value_at(registers, register, frame);
+        let sample_rate = self.sample_rate;
+        let value = match operation {
+            Operation::History(slot) => {
+                let source = self.feedbacks.get(usize::from(slot)).copied();
+                match source {
+                    _ if frame == self.first => {
+                        (memory.histories.get(usize::from(slot)).copied()).unwrap_or(0.0)
+                    }
+                    // As in `run`, a feedback set to its own read reads 0.
+                    Some(source) if usize::from(source) != register => {
+                        finite(value_at(registers, source, frame - 1))
+                    }
+                    _ => 0.0,
+                }
+            }
+            Operation::Unary(op, x) => unary(op, at(x)),
+            Operation::Binary(op, a, b) => binary(op, at(a), at(b)),
+            Operation::Clamp(x, low, high) => clamp(at(x), at(low), at(high)),
+            Operation::Mix(a, b, amount) => mix(at(a), at(b), at(amount)),
+            Operation::Phasor { hz, slot } => (memory.phases.get_mut(usize::from(slot)))
+                .map_or(0.0, |phase| phasor(phase, at(hz), sample_rate)),
+            Operation::Delay { input, ms, slot } => {
+                let position = (self.position).wrapping_add(frame.wrapping_sub(self.first));
+                (memory.delays.get_mut(usize::from(slot))).map_or(0.0, |line| {
+                    delayed(line, position, at(input), at(ms), sample_rate)
+                })
+            }
+            Operation::Filter {
+                kind,
+                input,
+                hz,
+                q,
+                slot,
+            } => (memory.filters.get_mut(usize::from(slot))).map_or(0.0, |filter| {
+                filter.next(kind, at(input), at(hz), at(q), sample_rate)
+            }),
+            Operation::Smooth { input, ms, slot } => (memory.smooths.get_mut(usize::from(slot)))
+                .map_or(0.0, |smooth| smooth.next(at(input), at(ms), sample_rate)),
+            Operation::Envelope {
+                gate,
+                attack,
+                decay,
+                sustain,
+                release,
+                slot,
+            } => (memory.envelopes.get_mut(usize::from(slot))).map_or(0.0, |envelope| {
+                let times = [at(attack), at(decay), at(release)];
+                let onset = self.onset(frame);
+                envelope.next(at(gate), onset, times, at(sustain), sample_rate)
+            }),
+            Operation::Hold { input, when, slot } => (memory.memories.get_mut(usize::from(slot)))
+                .map_or(0.0, |held| hold(held, at(input), at(when))),
+            Operation::Rise { input, slot } => (memory.memories.get_mut(usize::from(slot)))
+                .map_or(0.0, |before| rise(before, at(input))),
+            Operation::Change { input, slot } => (memory.memories.get_mut(usize::from(slot)))
+                .map_or(0.0, |before| change(before, at(input))),
+            Operation::Read { table, index } => {
+                read_at(table_of(table, self.arrays, &memory.buffers), at(index))
+            }
+            Operation::Lookup { table, phase } => {
+                look_up(table_of(table, self.arrays, &memory.buffers), at(phase))
+            }
+            Operation::Write {
+                buffer,
+                index,
+                value,
+            } => write(
+                memory.buffers.get_mut(usize::from(buffer)),
+                at(index),
+                at(value),
+            ),
+            // These read no register, so they are in no loop. Over one frame they give what
+            // they give over a span all the same.
+            Operation::Constant(_)
+            | Operation::Input
+            | Operation::InputLeft
+            | Operation::InputRight
+            | Operation::Channel
+            | Operation::SampleRate
+            | Operation::Beat
+            | Operation::Bpm
+            | Operation::Playing
+            | Operation::Frequency
+            | Operation::Pitch
+            | Operation::Gate
+            | Operation::Velocity
+            | Operation::Onset
+            | Operation::Parameter(_)
+            | Operation::Live(_)
+            | Operation::Trigger(_)
+            | Operation::Noise { .. }
+            | Operation::Length(_) => {
+                self.run(operation, register, frame..frame + 1, registers, memory);
+                return;
+            }
+        };
+        if let Some(out) = registers
+            .get_mut(register)
+            .and_then(|row| row.get_mut(frame))
+        {
+            *out = value;
         }
     }
 
@@ -766,16 +843,21 @@ impl Smooth {
 }
 
 impl Envelope {
-    /// `frames` are of the attack, the decay and the release. A note that takes over a voice
-    /// whose gate is still up, as one does under the sustain pedal, starts the attack at its
-    /// `onset`: the gate it sees never fell.
+    /// `times` are of the attack, the decay and the release, in milliseconds. A note that takes
+    /// over a voice whose gate is still up, as one does under the sustain pedal, starts the
+    /// attack at its `onset`: the gate it sees never fell.
     fn next(
         &mut self,
-        gate: bool,
+        gate: f32,
         onset: bool,
-        [attack, decay, release]: [f32; 3],
+        times: [f32; 3],
         sustain: f32,
+        sample_rate: f32,
     ) -> f32 {
+        let [attack, decay, release] = times.map(|ms| (ms * 0.001 * sample_rate).max(1.0));
+        // A sustain that is not a number would stay in the level for good.
+        let sustain = finite(sustain).clamp(0.0, 1.0);
+        let gate = gate > 0.0;
         if gate && (!self.gate || onset) {
             self.stage = Stage::Attack;
         } else if !gate && self.gate {
@@ -816,41 +898,156 @@ fn truth(condition: bool) -> f32 {
     if condition { 1.0 } else { 0.0 }
 }
 
-fn apply_unary(unary: Unary, out: &mut [f32], x: &[f32]) {
-    match unary {
-        Unary::Negate => map(out, x, |x| -x),
-        Unary::Sin => map(out, x, f32::sin),
-        Unary::Cos => map(out, x, f32::cos),
-        Unary::Tan => map(out, x, f32::tan),
-        Unary::Tanh => map(out, x, f32::tanh),
-        Unary::Abs => map(out, x, f32::abs),
-        Unary::Sqrt => map(out, x, |x| x.max(0.0).sqrt()),
-        Unary::Exp => map(out, x, f32::exp),
-        Unary::Log => map(out, x, |x| x.max(f32::MIN_POSITIVE).ln()),
-        Unary::Floor => map(out, x, f32::floor),
-        Unary::Wrap => map(out, x, |x| x - x.floor()),
-        Unary::Decibels => map(out, x, amplitude),
-        Unary::Saturate => map(out, x, soft_clip),
+/// The formula of `op`.
+#[inline(always)]
+fn unary(op: Unary, x: f32) -> f32 {
+    match op {
+        Unary::Negate => -x,
+        Unary::Sin => x.sin(),
+        Unary::Cos => x.cos(),
+        Unary::Tan => x.tan(),
+        Unary::Tanh => x.tanh(),
+        Unary::Abs => x.abs(),
+        Unary::Sqrt => x.max(0.0).sqrt(),
+        Unary::Exp => x.exp(),
+        Unary::Log => x.max(f32::MIN_POSITIVE).ln(),
+        Unary::Floor => x.floor(),
+        Unary::Wrap => x - x.floor(),
+        Unary::Decibels => amplitude(x),
+        Unary::Saturate => soft_clip(x),
     }
 }
 
-fn apply_binary(binary: Binary, out: &mut [f32], a: &[f32], b: &[f32]) {
-    match binary {
-        Binary::Add => map2(out, a, b, |a, b| a + b),
-        Binary::Subtract => map2(out, a, b, |a, b| a - b),
-        Binary::Multiply => map2(out, a, b, |a, b| a * b),
-        Binary::Divide => map2(out, a, b, |a, b| a / b),
-        Binary::Remainder => map2(out, a, b, f32::rem_euclid),
-        Binary::Less => map2(out, a, b, |a, b| truth(a < b)),
-        Binary::Greater => map2(out, a, b, |a, b| truth(a > b)),
-        Binary::LessOrEqual => map2(out, a, b, |a, b| truth(a <= b)),
-        Binary::GreaterOrEqual => map2(out, a, b, |a, b| truth(a >= b)),
-        Binary::Equal => map2(out, a, b, |a, b| truth(a == b)),
-        Binary::NotEqual => map2(out, a, b, |a, b| truth(a != b)),
-        Binary::Min => map2(out, a, b, f32::min),
-        Binary::Max => map2(out, a, b, f32::max),
-        Binary::Power => map2(out, a, b, f32::powf),
+/// The formula of `op`.
+#[inline(always)]
+fn binary(op: Binary, a: f32, b: f32) -> f32 {
+    match op {
+        Binary::Add => a + b,
+        Binary::Subtract => a - b,
+        Binary::Multiply => a * b,
+        Binary::Divide => a / b,
+        Binary::Remainder => a.rem_euclid(b),
+        Binary::Less => truth(a < b),
+        Binary::Greater => truth(a > b),
+        Binary::LessOrEqual => truth(a <= b),
+        Binary::GreaterOrEqual => truth(a >= b),
+        Binary::Equal => truth(a == b),
+        Binary::NotEqual => truth(a != b),
+        Binary::Min => a.min(b),
+        Binary::Max => a.max(b),
+        Binary::Power => a.powf(b),
     }
+}
+
+/// `op` over a span, matched once, so each loop over the frames is of one formula.
+fn apply_unary(op: Unary, out: &mut [f32], x: &[f32]) {
+    macro_rules! each {
+        ($($kind:ident),*) => {
+            match op {
+                $(Unary::$kind => map(out, x, |x| unary(Unary::$kind, x)),)*
+            }
+        };
+    }
+    each!(
+        Negate, Sin, Cos, Tan, Tanh, Abs, Sqrt, Exp, Log, Floor, Wrap, Decibels, Saturate
+    );
+}
+
+/// `op` over a span, matched once, so each loop over the frames is of one formula.
+fn apply_binary(op: Binary, out: &mut [f32], a: &[f32], b: &[f32]) {
+    macro_rules! each {
+        ($($kind:ident),*) => {
+            match op {
+                $(Binary::$kind => map2(out, a, b, |a, b| binary(Binary::$kind, a, b)),)*
+            }
+        };
+    }
+    each!(
+        Add,
+        Subtract,
+        Multiply,
+        Divide,
+        Remainder,
+        Less,
+        Greater,
+        LessOrEqual,
+        GreaterOrEqual,
+        Equal,
+        NotEqual,
+        Min,
+        Max,
+        Power
+    );
+}
+
+#[inline(always)]
+fn clamp(x: f32, low: f32, high: f32) -> f32 {
+    x.max(low).min(high)
+}
+
+#[inline(always)]
+fn mix(a: f32, b: f32, amount: f32) -> f32 {
+    a + (b - a) * amount
+}
+
+/// The phase a `phasor` is at, and moves it on by `hz`.
+#[inline(always)]
+fn phasor(phase: &mut f32, hz: f32, sample_rate: f32) -> f32 {
+    let now = *phase;
+    let next = now + hz / sample_rate;
+    *phase = if next.is_finite() {
+        next - next.floor()
+    } else {
+        0.0
+    };
+    now
+}
+
+/// What `line` holds from `ms` ago at `position`, and `input` into it there.
+#[inline(always)]
+fn delayed(line: &mut DelayLine, position: usize, input: f32, ms: f32, sample_rate: f32) -> f32 {
+    let out = line.read_between(position, ms * 0.001 * sample_rate);
+    line.write(position, finite(input));
+    out
+}
+
+/// What is `held`, which is `input` where `when` is above 0.
+#[inline(always)]
+fn hold(held: &mut f32, input: f32, when: f32) -> f32 {
+    if when > 0.0 {
+        *held = finite(input);
+    }
+    *held
+}
+
+/// 1 where `now` is above 0 and the value `before` was not.
+#[inline(always)]
+fn rise(before: &mut f32, now: f32) -> f32 {
+    let rose = *before <= 0.0 && now > 0.0;
+    *before = finite(now);
+    truth(rose)
+}
+
+/// 1 where `now` is not the value `before`.
+#[inline(always)]
+fn change(before: &mut f32, now: f32) -> f32 {
+    let now = finite(now);
+    let changed = *before != now;
+    *before = now;
+    truth(changed)
+}
+
+/// `value` into the slot of `index` of a `buffer`, and what it wrote.
+#[inline(always)]
+fn write(buffer: Option<&mut Vec<f32>>, index: f32, value: f32) -> f32 {
+    let value = finite(value);
+    if let Some(values) = buffer
+        && let Some(slot) = wrapped(values.len(), index)
+        && let Some(sample) = values.get_mut(slot)
+    {
+        *sample = value;
+    }
+    value
 }
 
 /// What leaves the code: held to [`LIMIT`], and 0 where it is not a number.
