@@ -134,6 +134,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 - A processor may declare an audio input as a side input (`Ports::side_audio_input`), such as the sidechain of a compressor. Leads skip it: its source runs only as far ahead as its own way to the device needs. A sidechain is the first time one track's sound goes two ways, and without this the source track would be led by the other track's chain and reach the device early. The detector hears the source a little early or late instead. `AudioInputs::is_connected` lets a processor fall back to its main input when nothing feeds the side input.
 - A send to a bus, when it comes, is a sound heard on two paths, not only by a detector. It will need a delay on the shorter path: the one exception to "no delay lines".
 - Levels leave the audio thread through `Peaks`: atomics, no messages, no missed peak. Views read them once per poll and draw only when the reading changes.
+- A sound leaves it through a `Scope`: its last frames in a ring of atomics. A view works out a spectrum, a loudness or a pitch from them on its own thread, as the Analyzer does with the measuring code of `--analyze` (`sound_media::analysis`). Rejected: measuring on the audio thread, an FFT per card in every block.
 - An offline render tells processors it is offline (`PrepareConfig::offline`), so a plugin that streams samples from disk waits for them instead of playing silence.
 - Every render is deterministic: the same project gives the same bytes. Nothing random: LFOs start at phase 0 and a sample and hold takes its levels from a seed. The click is attached only by the window, never by `--render`, `--inspect` or `--headless`.
 
@@ -191,7 +192,7 @@ The threads, messages and schedule compile are in [ENGINEERING.md](ENGINEERING.m
 
 ## Built-in instruments and effects
 
-The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Delay, Reverb, Saturator, Utility and Modulation all follow one pattern; `extensions/filter` is the reference.
+The synth (`extensions/instrument`), Wavetable, Sampler, Drum pad, Filter, Compressor, Limiter, EQ, Delay, Reverb, Saturator, Utility, Modulation and Analyzer all follow one pattern; `extensions/filter` is the reference.
 
 - One extension per device, one tool with no children, found by port names.
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` constant with range and default, which validation, the knobs, the reset and the doc tests all read.
