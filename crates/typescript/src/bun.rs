@@ -1,5 +1,5 @@
 //! The Bun process that runs `host.ts`, and the two ways to talk to it: a question that waits
-//! for its answer, such as the Hum of a tool, and messages that come when they come, which the
+//! for its answer, such as the sound graph of a tool, and messages that come when they come, which the
 //! window reads. One JSON message per line, both ways.
 
 use std::collections::{BTreeMap, HashMap};
@@ -13,6 +13,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use sound_core::InstanceId;
+use sound_signals::Graph;
 
 use crate::Midi;
 use crate::tools::ToolInfo;
@@ -34,7 +35,7 @@ const STOPPED: &str = "the TypeScript host is not running";
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Request<'a> {
-    /// The Hum of a tool with these choices: the answer is its lines.
+    /// The sound graph of a tool with these choices.
     Sound {
         id: u64,
         tool: &'a str,
@@ -306,14 +307,14 @@ impl Bun {
         self.events.clone()
     }
 
-    /// The Hum of `tool` with these choices. Waits for Bun.
+    /// The sound graph of `tool` with these choices. Waits for Bun.
     pub(crate) fn sound(
         &self,
         tool: &str,
         choices: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<Vec<String>, String> {
-        let lines = self.ask(|id| Request::Sound { id, tool, choices })?;
-        serde_json::from_value(lines).map_err(|error| error.to_string())
+    ) -> Result<Graph, String> {
+        let graph = self.ask(|id| Request::Sound { id, tool, choices })?;
+        serde_json::from_value(graph).map_err(|error| error.to_string())
     }
 
     /// The tree of the card of `tool`, or of its page, at its defaults. Waits for Bun.

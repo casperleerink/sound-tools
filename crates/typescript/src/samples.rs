@@ -1,4 +1,4 @@
-//! The sounds a `sample` field of a tool names, as Hum reads them: a file under
+//! The sounds a `sample` field of a tool names, as its sound reads them: a file under
 //! `assets/audio/`, mixed to one channel at the rate of the engine. One cache for the process,
 //! by file and rate: a file is read once while it stays the same, a failure too, so a turn of a
 //! knob or a save of the tool reads nothing again. In the window a file is read on a thread of

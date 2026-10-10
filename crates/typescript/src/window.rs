@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use sound_core::{InstanceId, Problem, Project};
-use sound_hum::{Hum, HumUpdate};
 use sound_notes::{Pitch, Velocity};
+use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
 use crate::bun::{ANSWER_TIMEOUT, Bun, Event, Loaded, Looped, PageSize, Request};
@@ -474,7 +474,7 @@ impl Live {
     fn send_update(
         &self,
         id: &InstanceId,
-        update: impl FnOnce(&ToolInfo, &Session) -> Result<HumUpdate, String>,
+        update: impl FnOnce(&ToolInfo, &Session) -> Result<SignalsUpdate, String>,
         cx: &mut App,
     ) -> bool {
         let Some(session) = self.session.upgrade() else {
@@ -495,7 +495,8 @@ impl Live {
         let processor = info.processor();
         drop(tools);
         session.update(cx, |session, cx| {
-            let sent = session.background(cx, |project| project.send::<Hum>(id, processor, update));
+            let sent =
+                session.background(cx, |project| project.send::<Signals>(id, processor, update));
             if let Err(error) = sent {
                 session.report(error, cx);
             }
@@ -515,9 +516,9 @@ impl Live {
     ) {
         let update = |info: &ToolInfo, session: &Session| match (info.control(name), value) {
             (Some((index, Control::Live { .. })), Some(value)) => {
-                Ok(HumUpdate::Live { index, value })
+                Ok(SignalsUpdate::Live { index, value })
             }
-            (Some((index, Control::Trigger { .. })), None) => Ok(HumUpdate::Trigger {
+            (Some((index, Control::Trigger { .. })), None) => Ok(SignalsUpdate::Trigger {
                 index,
                 at: at.map(|at| frames_of(at, session)),
             }),
@@ -538,7 +539,7 @@ impl Live {
 
     /// Plays a key of the voices of an instance, or lets go of one, as the keyboard would:
     /// `update` makes what the processor gets.
-    fn note(&self, id: &InstanceId, update: impl FnOnce(&Session) -> HumUpdate, cx: &mut App) {
+    fn note(&self, id: &InstanceId, update: impl FnOnce(&Session) -> SignalsUpdate, cx: &mut App) {
         self.send_update(
             id,
             |info, session| match info.kind {
@@ -738,7 +739,7 @@ impl Live {
                 at,
             } => self.note(
                 &instance,
-                |session| HumUpdate::Note {
+                |session| SignalsUpdate::Note {
                     pitch: Pitch::nearest(i64::from(pitch)),
                     velocity: Velocity::nearest((velocity.clamp(0.0, 1.0) * 127.0).round() as i64),
                     at: at.map(|at| frames_of(at, session)),
@@ -752,7 +753,7 @@ impl Live {
                 at,
             } => self.note(
                 &instance,
-                |session| HumUpdate::Release {
+                |session| SignalsUpdate::Release {
                     pitch: Pitch::nearest(i64::from(pitch)),
                     at: at.map(|at| frames_of(at, session)),
                 },
@@ -768,7 +769,7 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        // Every tool, changed or not: its file was saved, so its `sound` may make other Hum.
+        // Every tool, changed or not: its file was saved, so its `sound` may make another graph.
         let mut problems = crate::define(&self.bun, &mut loaded, |tools| {
             let names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
             let defined = session.update(cx, |session, cx| {

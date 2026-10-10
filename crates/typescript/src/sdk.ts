@@ -137,12 +137,64 @@ export type SoundOf<S extends Fields, C extends Controls> = {
 } & { [Name in keyof C]: Param };
 
 // ---------------------------------------------------------------------------------------------
-// The sound graph: a sound is a `Signal`, built from the functions below. The SDK turns it into
-// Hum, the small language the runtime compiles and plays sample by sample; a tool never writes
-// Hum itself.
+// The sound graph: a sound is a `Signal`, built from the functions below. The SDK sends the graph
+// to the runtime, which plays it sample by sample.
 
 /** A signal, or a plain number. */
 export type Operand = Signal | number;
+
+/** What a sound reads from outside: what comes in, the transport, the note of the voice. */
+type Source =
+  | "input" | "inputLeft" | "inputRight" | "channel" | "sampleRate" | "beat" | "bpm" | "playing"
+  | "frequency" | "pitch" | "gate" | "velocity" | "onset";
+type Unary =
+  | "negate" | "sin" | "cos" | "tan" | "tanh" | "abs" | "sqrt" | "exp" | "log" | "floor" | "wrap"
+  | "db" | "saturate";
+type Binary =
+  | "add" | "subtract" | "multiply" | "divide" | "remainder" | "less" | "greater" | "lessOrEqual"
+  | "greaterOrEqual" | "equal" | "notEqual" | "min" | "max" | "pow";
+
+/** Where a table reads: a pattern or sample field by name, or a `buffer` by its number. */
+export type TableRef = { list: string } | { buffer: number };
+
+/** A node of the sound graph, with `R` for each signal it reads. */
+type SignalNode<R> =
+  | { op: Source }
+  /** A field or a control. */
+  | { op: "param"; name: string }
+  | { op: "feedback"; slot: number }
+  | { op: Unary; x: R }
+  | { op: Binary; a: R; b: R }
+  | { op: "clamp"; x: R; low: R; high: R }
+  | { op: "mix"; a: R; b: R; amount: R }
+  | { op: "phasor"; hz: R }
+  | { op: "noise" }
+  | { op: "delay"; x: R; ms: R; longest?: R }
+  | { op: "lowpass" | "highpass" | "bandpass"; x: R; hz: R; q: R }
+  | { op: "smooth"; x: R; ms: R }
+  | { op: "adsr"; gate: R; attack: R; decay: R; sustain: R; release: R }
+  | { op: "hold"; x: R; when: R }
+  | { op: "rise" | "change"; x: R }
+  | { op: "at"; table: TableRef; index: R }
+  | { op: "lookup"; table: TableRef; phase: R }
+  | { op: "length"; table: TableRef };
+
+/** A node the runtime gets: each signal it reads is the index of a node before it. */
+export type GraphNode =
+  | SignalNode<number>
+  | { op: "constant"; value: number }
+  | { op: "write"; buffer: number; index: number; value: number };
+
+/** A sound as the runtime gets it. */
+export interface Graph {
+  nodes: GraphNode[];
+  /** What each `feedback` is set to, by its slot. */
+  feedbacks: number[];
+  /** The seconds of each `buffer`. */
+  buffers: number[];
+  watches: Array<{ name: string; node: number }>;
+  output: { mono: number } | { left: number; right: number };
+}
 
 /**
  * A stream of samples: one value per sample, per channel, per voice. Combine signals with the
@@ -150,63 +202,68 @@ export type Operand = Signal | number;
  * heard twice, with one memory.
  */
 export class Signal {
-  constructor(
-    readonly operation: string,
-    readonly operands: readonly Operand[] = [],
-  ) {}
-  plus(other: Operand): Signal { return new Signal("+", [this, other]); }
-  minus(other: Operand): Signal { return new Signal("-", [this, other]); }
-  times(other: Operand): Signal { return new Signal("*", [this, other]); }
-  over(other: Operand): Signal { return new Signal("/", [this, other]); }
+  constructor(readonly node: SignalNode<Operand>) {}
+  plus(other: Operand): Signal { return new Signal({ op: "add", a: this, b: other }); }
+  minus(other: Operand): Signal { return new Signal({ op: "subtract", a: this, b: other }); }
+  times(other: Operand): Signal { return new Signal({ op: "multiply", a: this, b: other }); }
+  over(other: Operand): Signal { return new Signal({ op: "divide", a: this, b: other }); }
   /** The remainder after division, always 0 or above for a divisor above 0. */
-  mod(other: Operand): Signal { return new Signal("%", [this, other]); }
-  negate(): Signal { return new Signal("neg", [this]); }
+  mod(other: Operand): Signal { return new Signal({ op: "remainder", a: this, b: other }); }
+  negate(): Signal { return new Signal({ op: "negate", x: this }); }
   /** 1 where the comparison holds, else 0. */
-  lt(other: Operand): Signal { return new Signal("<", [this, other]); }
-  gt(other: Operand): Signal { return new Signal(">", [this, other]); }
-  le(other: Operand): Signal { return new Signal("<=", [this, other]); }
-  ge(other: Operand): Signal { return new Signal(">=", [this, other]); }
-  eq(other: Operand): Signal { return new Signal("==", [this, other]); }
-  ne(other: Operand): Signal { return new Signal("!=", [this, other]); }
+  lt(other: Operand): Signal { return new Signal({ op: "less", a: this, b: other }); }
+  gt(other: Operand): Signal { return new Signal({ op: "greater", a: this, b: other }); }
+  le(other: Operand): Signal { return new Signal({ op: "lessOrEqual", a: this, b: other }); }
+  ge(other: Operand): Signal { return new Signal({ op: "greaterOrEqual", a: this, b: other }); }
+  eq(other: Operand): Signal { return new Signal({ op: "equal", a: this, b: other }); }
+  ne(other: Operand): Signal { return new Signal({ op: "notEqual", a: this, b: other }); }
 }
 
-/** A name the Hum reads as it is: a field, a control, a built-in. */
+/** A value read where it is used, with no memory: a source, a field, a control, a feedback. */
 class Named extends Signal {
-  constructor(readonly name: string) {
-    super("name");
-  }
+  declare readonly node: Extract<SignalNode<Operand>, { op: Source | "param" | "feedback" }>;
 }
 
 /**
  * A field or a control of the tool. A `Signal`, so the sound uses it as any other; it is no
  * number, so code cannot branch on it: a turn of a knob must not run `sound` again.
  */
-export class Param extends Named {}
+export class Param extends Named {
+  constructor(readonly name: string) {
+    super({ op: "param", name });
+  }
+}
 
 /** A list to read by index or by phase: a pattern of the record, or a `buffer`. */
 export class Table {
-  constructor(readonly name: string) {}
+  constructor(readonly ref: TableRef) {}
   /** The value at `index`: its whole part, wrapped, so any index reads. */
   at(index: Operand): Signal {
-    return new Signal("at", [new Named(this.name), index]);
+    return new Signal({ op: "at", table: this.ref, index });
   }
   /** How many values it holds. */
   get length(): Signal {
-    return new Signal("len", [new Named(this.name)]);
+    return new Signal({ op: "length", table: this.ref });
   }
 }
 
 /** Memory to write and read, such as a loop or a grain cloud: all 0 at first. */
 export class Buffer extends Table {
+  constructor(private readonly slot: number) {
+    super({ buffer: slot });
+  }
   /** Writes `value` at `index`, every sample. */
   write(index: Operand, value: Operand): void {
-    building().writes.push([this.name, index, value]);
+    building().writes.push({ buffer: this.slot, index, value });
   }
 }
 
 /** A value that feeds back: reading it gives what it was `set` to one sample before. */
 export class Feedback extends Named {
   value: Operand | undefined;
+  constructor(slot: number) {
+    super({ op: "feedback", slot });
+  }
   /** What it is in the next sample. Set it once. */
   set(value: Operand): void {
     if (this.value !== undefined) throw new Error("a feedback is set once");
@@ -217,9 +274,9 @@ export class Feedback extends Named {
 /** What one call of `sound` declares besides its output. */
 interface Building {
   feedbacks: Feedback[];
-  buffers: Array<[string, number]>;
-  writes: Array<[string, Operand, Operand]>;
-  watches: Array<[string, Operand]>;
+  buffers: number[];
+  writes: Array<{ buffer: number; index: Operand; value: Operand }>;
+  watches: Array<{ name: string; value: Operand }>;
 }
 
 let current: Building | undefined;
@@ -230,10 +287,10 @@ function building(): Building {
 }
 
 /** The sample that comes in, in an effect. 0 in an instrument or a source. */
-export const input: Signal = new Named("in");
+export const input: Signal = new Named({ op: "input" });
 /** Both channels of what comes in, for a sound that returns `{ left, right }`. */
-export const inputLeft: Signal = new Named("in_left");
-export const inputRight: Signal = new Named("in_right");
+export const inputLeft: Signal = new Named({ op: "inputLeft" });
+export const inputRight: Signal = new Named({ op: "inputRight" });
 
 /**
  * A sound in stereo: it runs once per sample for both channels and hears both, for a ping-pong,
@@ -244,13 +301,13 @@ export interface Stereo {
   right: Operand;
 }
 /** 0 on the left channel, 1 on the right. */
-export const channel: Signal = new Named("channel");
-export const sampleRate: Signal = new Named("sr");
+export const channel: Signal = new Named({ op: "channel" });
+export const sampleRate: Signal = new Named({ op: "sampleRate" });
 /** Quarter notes since the start of the piece, while it plays; it stands still while stopped. */
-export const beat: Signal = new Named("beat");
-export const bpm: Signal = new Named("bpm");
+export const beat: Signal = new Named({ op: "beat" });
+export const bpm: Signal = new Named({ op: "bpm" });
 /** 1 while the piece plays. */
-export const playing: Signal = new Named("playing");
+export const playing: Signal = new Named({ op: "playing" });
 /** The note of the voice. */
 export const note: {
   /** In Hz, with the bend wheel. */
@@ -264,78 +321,84 @@ export const note: {
   /** 1 in the first sample of the note. */
   onset: Signal;
 } = {
-  freq: new Named("freq"),
-  pitch: new Named("pitch"),
-  gate: new Named("gate"),
-  velocity: new Named("velocity"),
-  onset: new Named("onset"),
+  freq: new Named({ op: "frequency" }),
+  pitch: new Named({ op: "pitch" }),
+  gate: new Named({ op: "gate" }),
+  velocity: new Named({ op: "velocity" }),
+  onset: new Named({ op: "onset" }),
 };
 export const PI = Math.PI;
 export const TAU = 2 * Math.PI;
 
-const call =
-  (name: string) =>
-  (...operands: Operand[]): Signal =>
-    new Signal(name, operands);
-export const sin: (x: Operand) => Signal = call("sin");
-export const cos: (x: Operand) => Signal = call("cos");
-export const tan: (x: Operand) => Signal = call("tan");
-export const tanh: (x: Operand) => Signal = call("tanh");
-export const abs: (x: Operand) => Signal = call("abs");
-export const sqrt: (x: Operand) => Signal = call("sqrt");
-export const exp: (x: Operand) => Signal = call("exp");
-export const log: (x: Operand) => Signal = call("log");
-export const floor: (x: Operand) => Signal = call("floor");
+const unary =
+  (op: Unary) =>
+  (x: Operand): Signal =>
+    new Signal({ op, x });
+const binary =
+  (op: Binary) =>
+  (a: Operand, b: Operand): Signal =>
+    new Signal({ op, a, b });
+export const sin = unary("sin");
+export const cos = unary("cos");
+export const tan = unary("tan");
+export const tanh = unary("tanh");
+export const abs = unary("abs");
+export const sqrt = unary("sqrt");
+export const exp = unary("exp");
+export const log = unary("log");
+export const floor = unary("floor");
 /** The part after the point: 0 to 1. */
-export const wrap: (x: Operand) => Signal = call("wrap");
+export const wrap = unary("wrap");
 /** The gain of a level in dB: `db(-6)` is about 0.5. */
-export const db: (decibels: Operand) => Signal = call("db");
+export const db: (decibels: Operand) => Signal = unary("db");
 /** Clean up to full scale, then bends softly; never above 1.5. */
-export const saturate: (x: Operand) => Signal = call("saturate");
-export const min: (a: Operand, b: Operand) => Signal = call("min");
-export const max: (a: Operand, b: Operand) => Signal = call("max");
-export const pow: (x: Operand, power: Operand) => Signal = call("pow");
-export const clamp: (x: Operand, low: Operand, high: Operand) => Signal = call("clamp");
+export const saturate = unary("saturate");
+export const min = binary("min");
+export const max = binary("max");
+export const pow: (x: Operand, power: Operand) => Signal = binary("pow");
+export const clamp = (x: Operand, low: Operand, high: Operand): Signal =>
+  new Signal({ op: "clamp", x, low, high });
 /** `a` at 0, `b` at 1, in between for amounts in between. */
-export const mix: (a: Operand, b: Operand, amount: Operand) => Signal = call("mix");
+export const mix = (a: Operand, b: Operand, amount: Operand): Signal =>
+  new Signal({ op: "mix", a, b, amount });
 /** A ramp from 0 to 1, `hz` times a second. `sin(phasor(hz).times(TAU))` is a sine. */
-export const phasor: (hz: Operand) => Signal = call("phasor");
+export const phasor = (hz: Operand): Signal => new Signal({ op: "phasor", hz });
 /** White noise from -1 to 1, different on each channel. */
-export const noise: () => Signal = call("noise");
+export const noise = (): Signal => new Signal({ op: "noise" });
 /**
  * `x` as it was `ms` milliseconds ago, up to 4000. `ms` may move every sample, smoothly, for a
  * chorus or a tape wobble. `longest` is the most it holds, a number; give it in an instrument,
  * where every voice keeps its own.
  */
 export const delay = (x: Operand, ms: Operand, longest?: number): Signal =>
-  new Signal("delay", longest === undefined ? [x, ms] : [x, ms, longest]);
+  new Signal(longest === undefined ? { op: "delay", x, ms } : { op: "delay", x, ms, longest });
 const filter =
-  (name: string) =>
+  (op: "lowpass" | "highpass" | "bandpass") =>
   (x: Operand, hz: Operand, q: Operand = Math.SQRT1_2): Signal =>
-    new Signal(name, [x, hz, q]);
+    new Signal({ op, x, hz, q });
 /** Filters. `q` is 0.707 when left out: no peak; higher rings at `hz`, up to 20. */
 export const lowpass = filter("lowpass");
 export const highpass = filter("highpass");
 export const bandpass = filter("bandpass");
 /** `x` that follows changes slowly, in about `ms` milliseconds. */
-export const smooth: (x: Operand, ms: Operand) => Signal = call("smooth");
+export const smooth = (x: Operand, ms: Operand): Signal => new Signal({ op: "smooth", x, ms });
 /** An envelope from 0 to 1 that follows `gate`; times in ms, `sustain` 0 to 1. */
-export const adsr: (
+export const adsr = (
   gate: Operand,
   attack: Operand,
   decay: Operand,
   sustain: Operand,
   release: Operand,
-) => Signal = call("adsr");
+): Signal => new Signal({ op: "adsr", gate, attack, decay, sustain, release });
 /** 1 in the sample where `x` goes from 0 or below to above 0: a clock from a ramp. */
-export const rise: (x: Operand) => Signal = call("rise");
+export const rise = (x: Operand): Signal => new Signal({ op: "rise", x });
 /** 1 in the sample where `x` differs from the sample before. */
-export const change: (x: Operand) => Signal = call("change");
+export const change = (x: Operand): Signal => new Signal({ op: "change", x });
 /** `x` as it was the last time `when` was above 0: sample and hold. */
-export const hold: (x: Operand, when: Operand) => Signal = call("hold");
+export const hold = (x: Operand, when: Operand): Signal => new Signal({ op: "hold", x, when });
 /** A table read from `phase` 0 to 1 over its length, wrapped, smoothly between its values. */
 export const lookup = (table: Table, phase: Operand): Signal =>
-  new Signal("lookup", [new Named(table.name), phase]);
+  new Signal({ op: "lookup", table: table.ref, phase });
 
 /** A sine at `hz`, from -1 to 1. */
 export const sine = (hz: Operand): Signal => sin(phasor(hz).times(TAU));
@@ -349,92 +412,93 @@ export const triangle = (hz: Operand): Signal =>
   abs(phasor(hz).times(4).minus(2)).minus(1);
 /** The frequency of a MIDI pitch: `mtof(69)` is 440 Hz. */
 export const mtof = (pitch: Operand): Signal =>
-  pow(2, new Signal("-", [pitch, 69]).over(12)).times(440);
+  pow(2, new Signal({ op: "subtract", a: pitch, b: 69 }).over(12)).times(440);
 
 /** A value that feeds back, see `Feedback`. Inside `sound` only. */
 export function feedback(): Feedback {
-  // A name of the SDK starts with _, which no name of a tool does.
-  const made = new Feedback(`_feedback_${building().feedbacks.length}`);
+  const made = new Feedback(building().feedbacks.length);
   building().feedbacks.push(made);
   return made;
 }
 
 /** Memory of `seconds`, see `Buffer`. Inside `sound` only. */
 export function buffer(seconds: number): Buffer {
-  const name = `_buffer_${building().buffers.length}`;
-  building().buffers.push([name, seconds]);
-  return new Buffer(name);
+  const made = new Buffer(building().buffers.length);
+  building().buffers.push(seconds);
+  return made;
 }
 
 /** Shows `value` to the card as `watches[name]`. Inside `sound` only. */
 export function watch(name: string, value: Operand): void {
-  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
-    throw new Error(`watch ${JSON.stringify(name)}: a watch name is lowercase letters, digits and _, starting with a letter`);
-  }
-  building().watches.push([name, value]);
+  building().watches.push({ name, value });
 }
 
-const INFIX = new Set(["+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!="]);
-
-/** For the host: the Hum of a sound. `build` makes the output; what it declares is kept meanwhile. */
-export function graphToHum(build: () => Operand | Stereo): string[] {
+/**
+ * For the host: the graph of a sound. `build` makes the output; what it declares is kept
+ * meanwhile. A signal is one node, after the nodes it reads; a number or a `Named` is a node
+ * of its own wherever it is read.
+ */
+export function graphToJson(build: () => Operand | Stereo): Graph {
   current = { feedbacks: [], buffers: [], writes: [], watches: [] };
   try {
     const declared = current;
     const output = build();
-    const lines: string[] = [];
-    const names = new Map<Signal, string>();
-    const text = (operand: Operand): string => {
-      if (typeof operand === "number") return humNumber(operand);
-      if (operand instanceof Named) return operand.name;
-      const known = names.get(operand);
-      if (known) return known;
-      const parts = operand.operands.map(text);
-      const operation = operand.operation;
-      const expression = INFIX.has(operation)
-        ? `${parts[0]} ${operation} ${parts[1]}`
-        : operation === "neg"
-          ? `-${parts[0]}`
-          : operation === "at"
-            ? `${parts[0]}[${parts[1]}]`
-            : `${operation}(${parts.join(", ")})`;
-      const name = `_v${names.size}`;
-      names.set(operand, name);
-      lines.push(`${name} = ${expression}`);
-      return name;
+    const nodes: GraphNode[] = [];
+    const made = new Map<Signal, number>();
+    const add = (node: GraphNode) => nodes.push(node) - 1;
+    /** Adds the nodes of `operand` that are made once, the signals it reads first. */
+    const prepare = (operand: Operand) => {
+      if (typeof operand === "number" || operand instanceof Named || made.has(operand)) return;
+      const operands = Object.entries(operand.node).filter((entry): entry is [string, Operand] =>
+        isOperand(entry[1]),
+      );
+      for (const [, each] of operands) prepare(each);
+      const read = Object.fromEntries(operands.map(([key, each]) => [key, use(each)]));
+      made.set(operand, add({ ...operand.node, ...read } as GraphNode));
     };
-    const outs =
-      typeof output === "object" && !(output instanceof Signal)
-        ? [`out_left = ${text(output.left)}`, `out_right = ${text(output.right)}`]
-        : [`out = ${text(output)}`];
-    for (const [name, value] of declared.watches) lines.push(`watch ${name} = ${text(value)}`);
-    for (const [name, index, value] of declared.writes) {
-      lines.push(`${name}[${text(index)}] = ${text(value)}`);
+    /** The node of `operand` where it is used, made now when it is a number or a `Named`. */
+    const use = (operand: Operand): number => {
+      prepare(operand);
+      if (typeof operand === "number") return add({ op: "constant", value: quantize(operand) });
+      return operand instanceof Named ? add(operand.node) : (made.get(operand) as number);
+    };
+    const outputs = typeof output === "object" && !(output instanceof Signal) ? [output.left, output.right] : [output];
+    outputs.forEach(prepare);
+    const watches = declared.watches.map(({ name, value }) => ({ name, node: use(value) }));
+    for (const { buffer, index, value } of declared.writes) {
+      prepare(index);
+      prepare(value);
+      add({ op: "write", buffer, index: use(index), value: use(value) });
     }
-    for (const feedback of declared.feedbacks) {
+    const feedbacks = declared.feedbacks.map((feedback) => {
       if (feedback.value === undefined) {
         throw new Error("a feedback is never set: call .set(value) on it");
       }
-      lines.push(`${feedback.name} = ${text(feedback.value)}`);
-    }
-    return [
-      ...declared.buffers.map(([name, seconds]) => `buffer ${name} = ${humNumber(seconds)}`),
-      ...declared.feedbacks.map((feedback) => `history ${feedback.name}`),
-      ...lines,
-      ...outs,
-    ];
+      return use(feedback.value);
+    });
+    const [first, second] = outputs.map(use);
+    return {
+      nodes,
+      feedbacks,
+      buffers: declared.buffers.map(quantize),
+      watches,
+      output: second === undefined ? { mono: first } : { left: first, right: second },
+    };
   } finally {
     current = undefined;
   }
 }
 
-/** Hum reads digits and a point, so a number is written without an exponent. */
-function humNumber(value: number): string {
+function isOperand(value: unknown): value is Operand {
+  return typeof value === "number" || value instanceof Signal;
+}
+
+/** A number as the sound plays it: to 9 decimals, and 0 below that. */
+function quantize(value: number): number {
   if (!Number.isFinite(value)) {
-    throw new Error(`${value} is not a number Hum can play`);
+    throw new Error(`${value} is not a number a sound can play`);
   }
-  const text = Math.abs(value) < 1e-9 ? "0" : value.toFixed(9).replace(/\.?0+$/, "");
-  return value < 0 ? `(${text})` : text;
+  return Math.abs(value) < 1e-9 ? 0 : Number(value.toFixed(9));
 }
 
 // ---------------------------------------------------------------------------------------------

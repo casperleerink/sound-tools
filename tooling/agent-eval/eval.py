@@ -14,8 +14,8 @@ a storm drone played with an XY pad, a generative part in D dorian, and a grain 
 Earlier experiments, with their results next to this file:
 - `results-docs-vs-skills.jsonl`: the docs map against the docs as Claude Code skills. The map
   did as well or better, without the settings skills need.
-- `results-hum-vs-graph.jsonl`: a tool's sound written in Hum with a template against a graph of
-  signals built with the SDK's functions. Both passed every task; the graph cost about 10% less
+- `results-text-vs-graph.jsonl`: a tool's sound written in a text language with a template against
+  a graph of signals built with the SDK's functions. Both passed every task; the graph cost about 10% less
   and needs no doc of its own, so the SDK is the graph alone.
 - `results-experiments.jsonl`: a gravity harp page, a generative source and a grain cloud built from scratch,
   and a composer that edits the pattern of a builder's acid bass; later a keyboard toy (`onKey`,

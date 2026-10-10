@@ -4,7 +4,7 @@
 
 import { readdirSync, watch } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec } from "./sdk";
+import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec } from "./sdk";
 
 const folder = process.cwd();
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
@@ -72,7 +72,7 @@ function fail(tool: string, message: string) {
 }
 let version = 0;
 
-const HUM_NAME = /^[a-z][a-z0-9_]*$/;
+const NAME = /^[a-z][a-z0-9_]*$/;
 
 /**
  * What is wrong with the definition of a tool that its types do not say, so the agent that
@@ -94,7 +94,7 @@ function problemsOf(spec: Spec): string[] {
     };
     const names = [...Object.keys(spec.state), ...Object.keys(spec.controls ?? {})];
     for (const name of names) {
-      if (!HUM_NAME.test(name)) {
+      if (!NAME.test(name)) {
         problems.push(`${name}: a field or control name is lowercase letters, digits and _, starting with a letter`);
       }
       if (names.indexOf(name) !== names.lastIndexOf(name)) {
@@ -181,40 +181,22 @@ function specOf(tool: string): Spec {
   return spec;
 }
 
-/**
- * The Hum of a tool for these choices: a line per field and control, which says what the
- * record and the card give the code, then its code.
- */
-function sound(tool: string, choices: Record<string, string | number>): string[] {
+/** The sound graph of a tool for these choices. */
+function sound(tool: string, choices: Record<string, string | number>): Graph {
   const spec = specOf(tool);
   const fields: Record<string, unknown> = {};
-  const lines: string[] = [];
   for (const [name, field] of Object.entries(spec.state)) {
-    if (field.kind === "choice") {
-      fields[name] = choices[name] ?? field.default;
-      continue;
-    }
-    const list = field.kind === "pattern" || field.kind === "sample";
-    fields[name] = list ? new sdk.Table(name) : new sdk.Param(name);
-    if (field.kind === "sample") {
-      lines.push(`sample ${name}`);
-    } else if (field.kind === "knob") {
-      lines.push(`param ${name} = ${field.default} [${field.min}, ${field.max}]`);
-    } else if (field.kind === "toggle") {
-      lines.push(`param ${name} = ${field.default ? 1 : 0} [0, 1]`);
-    } else {
-      lines.push(`param ${name}[${field.length}] = ${field.default} [${field.min}, ${field.max}]`);
-    }
+    fields[name] =
+      field.kind === "choice"
+        ? (choices[name] ?? field.default)
+        : field.kind === "pattern" || field.kind === "sample"
+          ? new sdk.Table({ list: name })
+          : new sdk.Param(name);
   }
-  for (const [name, control] of Object.entries(spec.controls ?? {})) {
+  for (const name of Object.keys(spec.controls ?? {})) {
     fields[name] = new sdk.Param(name);
-    lines.push(
-      control.kind === "live"
-        ? `live ${name} = ${control.default} [${control.min}, ${control.max}]`
-        : `trigger ${name}`,
-    );
   }
-  return [...lines, ...sdk.graphToHum(() => spec.sound(fields as never))];
+  return sdk.graphToJson(() => spec.sound(fields as never));
 }
 
 function flatten(child: Child, handlers: Handler[], into: Sent[]) {

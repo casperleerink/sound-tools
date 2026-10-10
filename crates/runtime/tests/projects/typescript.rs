@@ -14,7 +14,7 @@ fn doc_example() -> String {
     block.split("```").next().unwrap().to_string()
 }
 
-/// Combs whose number is a choice: `sound` builds a different Hum for each.
+/// Combs whose number is a choice: `sound` builds a different graph for each.
 const COMBS: &str = r#"import { choice, delay, feedback, input, knob, lowpass, mix, tool, type Signal } from "./sdk";
 
 const TIMES = [29.7, 37.1, 41.1, 43.7, 31.3, 39.9, 45.1, 33.5];
@@ -155,6 +155,69 @@ fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
         );
         assert!(dip > top * 0.8, "{dip} dips under {top} at {start} s");
     }
+}
+
+/// Every function of the sound graph once, in mono and in stereo by its `out`, so a node the
+/// SDK sends and the runtime does not read fails a test.
+const EVERY_NODE: &str = r#"import * as s from "./sdk";
+
+s.tool({
+  name: "every",
+  title: "Every node",
+  when: "Never",
+  doc: "Every function of the sound graph.",
+  state: {
+    out: s.choice({ options: ["mono", "stereo"], default: "mono" }),
+    level: s.knob({ min: 0, max: 1, default: 0.5 }),
+    on: s.toggle({ default: true }),
+    steps: s.pattern({ length: 4, min: 0, max: 1, default: 0.5 }),
+  },
+  controls: { x: s.live({ min: 0, max: 1, default: 0 }), hit: s.trigger() },
+  sound: ({ out, level, on, steps, x, hit }) => {
+    const back = s.feedback();
+    back.set(s.input);
+    const tape = s.buffer(0.1);
+    tape.write(s.phasor(1).times(tape.length), s.input);
+    s.watch("level", level);
+    const n = s.note;
+    const all: s.Operand[] = [
+      s.inputLeft, s.inputRight, s.channel, s.sampleRate, s.beat, s.bpm, s.playing,
+      n.freq, n.pitch, n.gate, n.velocity, n.onset, on, x, hit, back,
+      s.sin(1), s.cos(1), s.tan(1), s.tanh(1), s.abs(1), s.sqrt(1), s.exp(1), s.log(1),
+      s.floor(1), s.wrap(1), s.db(1), s.saturate(1), level.negate(),
+      level.minus(1), level.over(2), level.mod(2), level.lt(1), level.gt(1), level.le(1),
+      level.ge(1), level.eq(1), level.ne(1), s.min(level, 1), s.max(level, 1), s.pow(level, 2),
+      s.clamp(level, 0, 1), s.mix(level, 1, 0.5), s.noise(), s.delay(s.input, 10),
+      s.delay(s.input, 10, 20), s.lowpass(s.input, 1000, 1), s.highpass(s.input, 1000, 1),
+      s.bandpass(s.input, 1000, 1), s.smooth(level, 10), s.adsr(n.gate, 1, 1, 0.5, 1),
+      s.hold(level, hit), s.rise(hit), s.change(level), steps.at(0), steps.length,
+      s.lookup(steps, 0.5), tape.at(0), s.lookup(tape, 0.5),
+    ];
+    const sum = all.reduce<s.Signal>((total, each) => total.plus(each), s.input);
+    return out === "mono" ? sum.times(0) : { left: sum.times(0), right: s.input };
+  },
+});
+"#;
+
+#[test]
+fn every_node_of_the_sdk_builds_in_mono_and_in_stereo() {
+    if !sound_typescript::has_bun() {
+        return eprintln!("skipped: Bun is not installed");
+    }
+    let folder = tempfile::tempdir().unwrap();
+    crate::support::write(folder.path(), "extensions/every.ts", EVERY_NODE);
+    let mut harness = Harness::open(folder);
+    let track =
+        r#"{"tool": "arrangement.track", "state": {"name": "Pad", "effects": ["mono", "stereo"]}}"#;
+    harness.write("state/arrangement/pad/instance.json", track);
+    harness.write("state/arrangement/pad/instrument.json", &synth(0.2));
+    for out in ["mono", "stereo"] {
+        let record = format!(r#"{{"tool": "every", "state": {{"out": "{out}"}}}}"#);
+        harness.write(&format!("state/arrangement/pad/{out}.json"), &record);
+    }
+    let folder = harness.path("state/arrangement/pad");
+    harness.apply(&[folder]);
+    assert_eq!(harness.project.problems(), []);
 }
 
 /// A player of a sample: its sound, from the start, at its own speed.

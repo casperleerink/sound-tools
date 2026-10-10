@@ -4,13 +4,13 @@
 //! A project whose `extensions/` folder has a tool file starts Bun on `host.ts` when it opens,
 //! or, in the window, when the first one comes. Bun loads every `.ts` and `.tsx` file there and
 //! says which tools they define: the fields of a record, a doc
-//! for agents, and a sound, a graph of signals that the SDK turns into Hum. The runtime
+//! for agents, and a sound, a graph of signals that the SDK sends as JSON. The runtime
 //! registers each as a [`JsonTool`] before the records load, so a record of one loads like any
-//! other. Its check runs in Rust; only a new combination of choices asks Bun for Hum. In the
+//! other. Its check runs in Rust; only a new combination of choices asks Bun for a graph. In the
 //! window, a save of a file defines the tools again and draws the cards again.
 //!
 //! Nothing of it runs on the audio thread, and a knob never waits for Bun: it moves a value of
-//! the Hum that plays, as the knob of a built-in effect moves its processor.
+//! the sound that plays, as the knob of a built-in effect moves its processor.
 
 mod bun;
 mod card;

@@ -14,9 +14,9 @@ serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 sound-core.workspace = true
-sound-hum.workspace = true
 sound-media.workspace = true
 sound-notes.workspace = true
+sound-signals.workspace = true
 sound-ui.workspace = true
 
 [dev-dependencies]
