@@ -1,18 +1,12 @@
-//! The level detector of a dynamics effect: the peak of the last 10 ms, and the factor of an
-//! attack or release time. The Compressor and the Gate share them, so both hear a level the
-//! same way. Next to [`Smoothed`](crate::Smoothed), a helper a processor uses per frame.
-//!
-//! A steady tone from 50 Hz up has the same peak in every stretch of 10 ms, so its level is
-//! still and a gain worked out from it does not wobble with the wave.
+//! The level detector the Compressor and the Gate share, so both hear a level the same way.
 
-/// The detector keeps the peak of this many stretches of 1 ms, and of the one it is in: the
-/// peak of the last 10 to 11 ms. Every tone from 50 Hz up has a peak in each such stretch, so
-/// its level is steady.
 const STRETCHES: usize = 10;
 const STRETCH_SECONDS: f32 = 0.001;
 
 /// The peak of the last 10 to 11 ms: the largest sample of each finished stretch of 1 ms in a
-/// ring, and of the stretch it is in now. Only the end of a stretch looks at the ring.
+/// ring, and of the stretch it is in now. Only the end of a stretch looks at the ring. Every
+/// tone from 50 Hz up has a peak in each stretch, so its level is still and a gain worked out
+/// from it does not wobble with the wave.
 pub struct PeakDetector {
     stretches: [f32; STRETCHES],
     /// Where the next finished stretch goes in the ring.
@@ -26,8 +20,8 @@ pub struct PeakDetector {
 }
 
 impl PeakDetector {
-    /// How long a peak stays in the level after it passed.
-    pub const HOLD_SECONDS: f32 = STRETCHES as f32 * STRETCH_SECONDS;
+    /// How long a peak stays in the level after it passed, at least.
+    pub const WINDOW_SECONDS: f32 = STRETCHES as f32 * STRETCH_SECONDS;
 
     pub fn new(sample_rate: f32) -> Self {
         Self {
@@ -69,14 +63,6 @@ impl PeakDetector {
     pub fn window_frames(&self) -> usize {
         (STRETCHES + 1) * self.stretch_frames
     }
-}
-
-/// The one-pole factor for a time constant: after `seconds` a step is 63 % of the way. An
-/// `exp`: work it out when the time changes, not per frame. In `f64`, as is what it moves: in
-/// `f32` a slow pole stops short of where it goes, when the step it would take is smaller than
-/// the precision of the value.
-pub fn pole(seconds: f32, sample_rate: f32) -> f64 {
-    (-1.0 / (f64::from(seconds) * f64::from(sample_rate))).exp()
 }
 
 #[cfg(test)]

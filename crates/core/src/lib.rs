@@ -40,13 +40,13 @@ pub use clock::{
 };
 pub use control::{Edit, EngineConfig, EngineControl, EngineStopped, Node};
 pub use delay_line::DelayLine;
-pub use detector::{PeakDetector, pole};
+pub use detector::PeakDetector;
 pub use device::{
     DeviceChoice, DeviceError, DeviceStatus, OutputDevice, OutputStream, StreamTiming,
     input_devices, monotonic_nanos, output_devices,
 };
 pub use dsp::{
-    HIGHEST_PHASE_STEP, OnePole, Taps, all_held_silent, all_positive_zero, all_zero, held,
+    HIGHEST_PHASE_STEP, OnePole, Taps, all_held_silent, all_positive_zero, all_zero, held, pole,
     poly_blep,
 };
 pub use engine::{Engine, EngineStatus};

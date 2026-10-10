@@ -89,7 +89,7 @@ fn the_release_reaches_63_percent_in_its_time_after_the_hold() {
             .position(|reduction| *reduction < FULL_DB - 1e-5)
             .unwrap();
         let hold_ms = hold as f32 * 1_000.0 / SAMPLE_RATE as f32;
-        let hold_frames = (PeakDetector::HOLD_SECONDS * SAMPLE_RATE as f32).round() as usize;
+        let hold_frames = (PeakDetector::WINDOW_SECONDS * SAMPLE_RATE as f32).round() as usize;
         assert!(
             (hold_frames..=hold_frames * 11 / 10).contains(&hold),
             "release {release_ms} ms: held for {hold_ms} ms"
