@@ -2,7 +2,7 @@
 
 A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent sidebar runs Claude Code in the project folder. Any coding agent in a terminal works too.
 
-What it has: instrument and audio tracks, clips with notes or audio, a synth, a Wavetable, a Sampler, a Drum pad, CLAP and VST 3 plugins, nine effects (Filter, Compressor, Limiter, EQ, Delay, Reverb, Saturator, Utility, and Modulation: a chorus, flanger and phaser), a mixer with a limited master, MIDI and audio recording, and **fit tempo**: play freely with no click, and one action moves the grid onto your playing.
+What it has: instrument and audio tracks, clips with notes or audio, a synth, a Wavetable, a Sampler, a Drum pad, CLAP and VST 3 plugins, ten effects (Filter, Compressor, Gate with a transient shaper, Limiter, EQ, Delay, Reverb, Saturator, Utility, and Modulation: a chorus, flanger and phaser), a mixer with a limited master, MIDI and audio recording, and **fit tempo**: play freely with no click, and one action moves the grid onto your playing.
 
 ## Requirements
 

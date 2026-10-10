@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/gate", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -20,6 +20,7 @@ drum-pad = { path = "extensions/drum-pad" }
 eq = { path = "extensions/eq" }
 filter = { path = "extensions/filter" }
 fit-tempo = { path = "extensions/fit-tempo" }
+gate = { path = "extensions/gate" }
 instrument = { path = "extensions/instrument" }
 limiter = { path = "extensions/limiter" }
 metronome = { path = "extensions/metronome" }
@@ -160,6 +161,7 @@ drum-pad = { opt-level = 3 }
 eq = { opt-level = 3 }
 filter = { opt-level = 3 }
 fit-tempo = { opt-level = 3 }
+gate = { opt-level = 3 }
 instrument = { opt-level = 3 }
 limiter = { opt-level = 3 }
 metronome = { opt-level = 3 }

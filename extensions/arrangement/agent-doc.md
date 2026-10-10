@@ -117,11 +117,11 @@ The sound of a track goes through its instrument, then through each effect in `e
 }
 ```
 
-An effect is any tool with an `audio` input and an `audio` output. Today that is the built-in `filter`, `compressor`, `limiter`, `eq`, `delay`, `reverb`, `saturator`, `utility` and `modulation`, each with its record in `agent-docs/<tool>.md`, and the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
+An effect is any tool with an `audio` input and an `audio` output. Today that is the built-in `filter`, `compressor`, `gate`, `limiter`, `eq`, `delay`, `reverb`, `saturator`, `utility` and `modulation`, each with its record in `agent-docs/<tool>.md`, and the `plugin` tool, which is the same record as an instrument; `agent-docs/plugins.md` says where the ids come from. The file name is yours: lowercase letters, digits, `-` and `_`, and not `instrument`.
 
 To turn an effect off for a while, write its slot as `{"name": "warmth", "bypass": true}`, and as `"warmth"` again to turn it on. The sound goes past it untouched, without its latency, and its record stays.
 
-An effect with a `sidechain` input, such as the `compressor`, can follow the sound of another track instead of its own: the bass ducks while the kick plays. Its slot says which track keys it. Here the drums key the compressor `duck` of the sub bass, which turns the bass down on every hit:
+An effect with a `sidechain` input, the `compressor` or the `gate`, can follow the sound of another track instead of its own: the bass ducks while the kick plays. Its slot says which track keys it. Here the drums key the compressor `duck` of the sub bass, which turns the bass down on every hit:
 
 ```json state/arrangement/sub/instance.json
 {
