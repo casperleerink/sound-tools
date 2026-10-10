@@ -284,6 +284,8 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/rhodes/instrument",
             "arrangement/riser",
             "arrangement/riser/dark",
+            "arrangement/snare",
+            "arrangement/snare/tight",
             "arrangement/strings",
             "arrangement/strings/instrument",
             "arrangement/sub",

@@ -274,6 +274,13 @@ fn a_lane_of_every_built_in_device_sounds_as_its_record_set_to_that_value() {
             "{}",
             r#"{"bands": [{}, {"gain_db": 12.0}]}"#,
         ),
+        (
+            "gate",
+            "threshold_db",
+            "0.0",
+            "{}",
+            r#"{"threshold_db": 0.0}"#,
+        ),
         ("limiter", "gain_db", "12.0", "{}", r#"{"gain_db": 12.0}"#),
         ("modulation", "mix", "1.0", "{}", r#"{"mix": 1.0}"#),
         ("reverb", "mix", "1.0", "{}", r#"{"mix": 1.0}"#),

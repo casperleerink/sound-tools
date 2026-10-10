@@ -145,6 +145,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
     eq::register(&mut registry)?;
     filter::register(&mut registry)?;
     fit_tempo::register(&mut registry)?;
+    gate::register(&mut registry)?;
     instrument::register(&mut registry)?;
     limiter::register(&mut registry)?;
     modulation::register(&mut registry)?;
@@ -183,6 +184,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     filter::view::register(&mut views, &mut devices);
     saturator::view::register(&mut views, &mut devices);
     compressor::view::register(&mut views, &mut devices);
+    gate::view::register(&mut views, &mut devices);
     limiter::view::register(&mut views, &mut devices);
     modulation::view::register(&mut views, &mut devices);
     delay::view::register(&mut views, &mut devices);

@@ -186,7 +186,7 @@ def check_toy(folder: Path) -> dict:
     }
 
 
-BUILT_IN = {"delay", "eq", "filter", "reverb", "compressor", "limiter", "saturator", "utility",
+BUILT_IN = {"delay", "eq", "filter", "reverb", "compressor", "gate", "limiter", "saturator", "utility",
             "modulation", "script", None}
 
 
