@@ -1,6 +1,73 @@
 # Performance results
 
+Baseline vs final: main at 1a1c1e2 against the graph runtime at 871839f, same machine, same sound
+(bit for bit).
+
+| measure | main 1a1c1e2 | 871839f |
+| --- | --- | --- |
+| render mixed, % of a core | 46.9 | 15.5 (3.03x less) |
+| ts-synth / built-in synth, arp and chords | 9.2x, 8.1x | 1.8x, 1.5x |
+| live mixed and mixed+edit: CPU, late callbacks, xruns | 49%, 1, 1 per session | 28%, 0, 0 |
+| live mixed-x2: late callbacks per session | about 1500 (40% of callbacks lost) | 0 while playing; 1 at startup in 1 of 6 sessions |
+
 Newest first. Apple M1 Max, macOS. How to run: [README.md](README.md).
+
+## 2026-10-10: final, graph runtime at 871839f (t3code/native-typed-graph-runtime)
+
+What changed since f548b98: a hold whose trigger does not fire in a span gives one value over the
+span, so the math on it runs once per span (871839f). 4539bfa adds a test and a debug check only.
+
+Null test against main: every `one-` and ts-synth project is still bit for bit equal (-inf dB).
+
+Render: `bench.py render origin/main f548b98 871839f`, 61 s, interleaved. Median of 5 for mixed
+and mixed-x2 (each in its own run) and for the synth rows (main's ts-synth-arp showed 8% spread
+in 3 runs); median of 3 for the rest. Spread was 0 to 3% on every graph runtime row.
+
+| project | main | f548b98 | 871839f | main / 871839f | f548b98 / 871839f |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| builtin12 | 9.84 | 9.75 | 9.74 | 1.0x | 1.00x |
+| one-acid-bass | 2.56 | 0.87 | 0.87 | 2.9x | 1.00x |
+| one-dorian-drift | 4.13 | 1.25 | 1.25 | 3.3x | 1.00x |
+| one-gravity-harp | 5.33 | 1.59 | 1.58 | 3.4x | 1.01x |
+| one-storm | 5.08 | 1.87 | 1.85 | 2.7x | 1.01x |
+| one-life | 10.40 | 1.77 | 1.76 | 5.9x | 1.01x |
+| one-grain-cloud | 15.52 | 4.47 | 4.21 | 3.7x | 1.06x |
+| mixed-base | 4.63 | 4.64 | 4.62 | 1.0x | 1.00x |
+| **mixed** | 46.90 | 15.76 | **15.50** | **3.03x** | 1.02x |
+| mixed-x2 | 94.45 | 31.84 | 31.19 | 3.03x | 1.02x |
+| instrument.synth-arp | 0.22 | 0.22 | 0.22 | 1.0x | 1.00x |
+| instrument.synth-chords | 0.30 | 0.30 | 0.30 | 1.0x | 1.00x |
+| ts-synth-arp | 1.98 | 0.41 | 0.40 | 5.0x | 1.02x |
+| ts-synth-chords | 2.43 | 0.45 | 0.45 | 5.4x | 1.00x |
+
+The commit's own claims hold: grain cloud 6% less CPU, mixed 2%; storm 1% (claimed 2%).
+
+Targets:
+
+| target | result | met |
+| --- | --- | --- |
+| ts-synth at most 2x the built-in synth (1.5x preferred) | arp 1.84x, chords 1.52x (main 9.2x, 8.1x) | yes; 1.5x on the chords only |
+| mixed at most main / 3 (15.63%) | 15.50%, main / 3.03. The tools (mixed minus mixed-base) cost 10.9%, 3.9x less than main | yes |
+| live mixed, mixed+edit, mixed-x2: 0 late callbacks, 0 xruns | 0 and 0 in all 9 sessions that play | yes |
+
+Live: `bench.py live 871839f --window 60`, 3 runs of 60 s, master at -60 dB.
+
+| project | cpu % | bun cpu % | MB | bun MB | late callbacks | xruns | slowest callback |
+| --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| mixed | 27.7 | 0.2 | 135 | 61 | 0, 0, 0 | 0, 0, 0 | 6.5, 5.9, 4.8 ms |
+| mixed+edit | 27.8 | 0.3 | 182 | 60 | 0, 0, 0 | 0, 0, 0 | 5.7, 5.9, 6.5 ms |
+| mixed-x2 | 36.4 | 0.1 | 178 | 60 | 0, 0, 0 | 0, 0, 0 | 10.0, 10.6, 10.0 ms |
+| mixed-x2, 10 s, no play | | | | | 0, 0, 1 | 0, 0, 1 | 10.6, 9.8, 10.8 ms |
+
+- The late callback at startup of mixed-x2 still comes now and then: 1 of these 6 sessions, in
+  one that never played. None came while playing.
+
+Profile: `bench.py profile 871839f --projects mixed`, busy samples. The reverb 29% (plus 3%
+`memcmp` called from it), `Machine::render` 24%, `Span::run_loop` 20%, wavetable voice 3.7%,
+`sinf` 3.1%. Much as at f548b98.
+
+What's left: the signal machine (`Machine::render` and `Span::run_loop`) is still 44% of mixed,
+and the reverbs, unchanged from main, are now the largest single cost.
 
 ## 2026-10-10: final, graph runtime at f548b98 (t3code/native-typed-graph-runtime)
 
