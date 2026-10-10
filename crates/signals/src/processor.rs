@@ -12,8 +12,8 @@
 use std::ops::Range;
 
 use sound_core::{
-    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, MAX_BLOCK, Ports, PrepareConfig,
-    ProcessContext, Processor, Smoothed, Timed, Watch,
+    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, Lane, MAX_BLOCK, Ports,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
 };
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice, Voices, frequency_hz};
 
@@ -22,7 +22,8 @@ use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, Values};
 
 /// How long the old code fades out while the new one fades in.
 const FADE_SECONDS: f32 = 0.01;
-/// How long a new value of a param or a live control takes to arrive. A jump would click.
+/// How long a new value of a param or a live control takes to arrive, also a lane that takes a
+/// param over or lets it go. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
 /// A released voice this quiet for this long is over and free for another note.
 const QUIET: f32 = 1e-4;
@@ -100,6 +101,10 @@ pub struct Signals {
     aimed: [f32; MAX_PARAMETERS],
     /// The param each automation lane moves, see [`Values::automated`].
     automated: Vec<u16>,
+    /// How fast the lane of each param moves, decided as a built-in device decides it.
+    lanes: [Lane; MAX_PARAMETERS],
+    /// Whether a block played yet: in the first, the lanes take their values at once.
+    followed: bool,
     lives: [Smoothed; MAX_LIVES],
     /// What every voice reads in this block.
     block: Box<Block>,
@@ -194,7 +199,11 @@ impl Signals {
                     always: false,
                     ..voice
                 };
-                Players::Many(Box::new(Voices::new(idle, voices)))
+                let mut voices = Box::new(Voices::new(idle, voices));
+                for (index, voice) in voices.iter_mut().enumerate() {
+                    voice.machine.seed(index);
+                }
+                Players::Many(voices)
             }
             Kind::Effect | Kind::Source => Players::One(Box::new(Single {
                 voice,
@@ -210,6 +219,8 @@ impl Signals {
             records: values.parameters,
             aimed: values.parameters,
             automated: values.automated,
+            lanes: [Lane::default(); MAX_PARAMETERS],
+            followed: false,
             lives,
             block: Box::new(Block::new()),
             mix: [[0.0; MAX_BLOCK]; CHANNELS],
@@ -262,13 +273,18 @@ impl Signals {
         }
         // Aimed at in the next block, unless a lane moves them.
         self.records = values.parameters;
+        let ramp = RAMP_SECONDS * self.sample_rate;
+        for lane in &mut self.lanes {
+            lane.edited(ramp);
+        }
         if let Some(arrays) = &mut values.arrays {
             std::mem::swap(&mut self.arrays, arrays);
         }
         std::mem::swap(&mut self.automated, &mut values.automated);
         let fade_frames = self.fade_frames;
-        let swap = |voice: &mut SignalsVoice, machine: &mut Option<Box<Machine>>| {
-            if let Some(new) = machine.take() {
+        let swap = |voice: &mut SignalsVoice, machine: &mut Option<Box<Machine>>, index| {
+            if let Some(mut new) = machine.take() {
+                new.seed(index);
                 let old = std::mem::replace(&mut voice.machine, new);
                 // The one that faded before rides back with this update, to be dropped there.
                 *machine = voice.fading.replace(old);
@@ -280,34 +296,44 @@ impl Signals {
         match &mut self.players {
             Players::One(single) => {
                 if let Some(machine) = machines.first_mut() {
-                    swap(&mut single.voice, machine);
+                    swap(&mut single.voice, machine, 0);
                 }
             }
             Players::Many(voices) => {
-                for (voice, machine) in voices.iter_mut().zip(machines.iter_mut()) {
-                    swap(voice, machine);
+                let pairs = voices.iter_mut().zip(machines.iter_mut()).enumerate();
+                for (index, (voice, machine)) in pairs {
+                    swap(voice, machine, index);
                 }
             }
         }
     }
 
-    /// Aims every param at its lane in this block, or at its record when no lane moves it.
-    fn aim(&mut self, lanes: &[Timed<Automation>]) {
-        let mut targets = self.records;
-        for lane in lanes {
+    /// Aims every param at its lane in this block, or at its record when no lane moves it. A
+    /// lane that moves ramps over the block; one that takes a param over or lets it go glides.
+    fn aim(&mut self, context: &ProcessContext<'_>) {
+        let mut heard = [None; MAX_PARAMETERS];
+        for lane in context.event_inputs.get(Self::AUTOMATION) {
             let param = self.automated.get(usize::from(lane.event.parameter));
-            if let Some(target) = param.and_then(|param| targets.get_mut(usize::from(*param))) {
-                *target = lane.event.value;
+            if let Some(heard) = param.and_then(|param| heard.get_mut(usize::from(*param))) {
+                *heard = Some(lane.event.value);
             }
         }
-        let ramp = RAMP_SECONDS * self.sample_rate;
-        let count = self.counts.0;
-        let moving = (self.parameters.iter_mut().zip(&mut self.aimed).zip(targets)).take(count);
-        for ((parameter, aimed), target) in moving {
-            if *aimed != target {
-                parameter.set_target(target, ramp);
-                *aimed = target;
+        let first = !std::mem::replace(&mut self.followed, true);
+        let jumped = context.transport.jumped;
+        let block = context.frames as f32;
+        let edit = RAMP_SECONDS * self.sample_rate;
+        let params = (self.parameters.iter_mut().zip(&mut self.aimed)).zip(&mut self.lanes);
+        let params = params.zip(self.records.iter().zip(heard));
+        for (((parameter, aimed), lane), (record, heard)) in params.take(self.counts.0) {
+            let target = heard.unwrap_or(*record);
+            let ramp = lane.hear(heard, block, first, jumped, edit);
+            match ramp {
+                Some(ramp) => parameter.set_target(target, ramp),
+                // An edit of the record glides.
+                None if *aimed != target => parameter.set_target(target, edit),
+                None => continue,
             }
+            *aimed = target;
         }
     }
 
@@ -669,7 +695,7 @@ impl Processor for Signals {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        self.aim(context.event_inputs.get(Self::AUTOMATION));
+        self.aim(context);
         // The engine's promise: it splits a device buffer into sub-blocks of at most this.
         debug_assert!(context.frames <= MAX_BLOCK);
         let frames = context.frames.min(MAX_BLOCK);

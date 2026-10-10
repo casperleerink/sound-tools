@@ -107,6 +107,23 @@ chance: the same measure on noise with the same envelope gives 1 to 3 dB. So mai
 rings at 4.2 kHz; a new reverb should not ring more (limit: A + 3 dB). Music: on synth chords
 peak -23.3 dBFS, RMS -36.2; on drums peak -14.0, RMS -26.1.
 
+## 2026-10-10: automation bends on its frame (fix/sample-accurate-automation)
+
+A processor with an automation input plays its block in pieces split where a lane bends. `automated`
+is `builtin12` with a gate on the volume and the cutoff of every track each sixteenth, so each lane
+bends twice a sixteenth inside a block.
+
+Render, against main at f613f8c / f3c936b, median of 5 (spread 1 to 2%):
+
+| project | main | branch |
+| --- | ---: | ---: |
+| builtin12 | 10.07 | 10.12 |
+| mixed | 16.13 | 16.17 |
+| automated | 10.43 | 10.68 (+2.4%) |
+
+Null test: builtin12 and mixed are bit for bit equal (-inf dB); automated differs (-27.7 dB), on
+purpose.
+
 ## 2026-10-10: final, graph runtime at 871839f (t3code/native-typed-graph-runtime)
 
 What changed since f548b98: a hold whose trigger does not fire in a span gives one value over the

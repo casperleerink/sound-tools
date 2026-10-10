@@ -17,11 +17,11 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
-    Automation, BehaviourContext, BehaviourError, EventOutput, InputEndpoint, InstanceId,
-    OutputEndpoint, ParameterInfo, PlayedLanes, Ports, PrepareConfig, ProcessContext, Processor,
-    Project, Ticks, ValueRange,
+    Automation, BehaviourContext, BehaviourError, Clock, EventOutput, Frames, InputEndpoint,
+    InstanceId, OutputEndpoint, ParameterInfo, PlayedLanes, Ports, PrepareConfig, ProcessContext,
+    Processor, Project, Ticks, Transport, ValueRange,
 };
-use sound_notes::{Point, check_order, value_at};
+use sound_notes::{LaneValue, Point, check_order, value_at};
 
 pub(crate) use moves::write;
 pub use moves::{Carried, LaneMove, Moved, Travel, moved, travel_in};
@@ -182,9 +182,29 @@ pub(crate) struct LaneLine {
 }
 
 impl LaneLine {
-    /// The value at `tick`, not rounded: what the device hears, and what its knob shows.
+    /// The value at `tick`, not rounded: what the knob shows.
     fn value_at(&self, tick: Ticks) -> Option<f32> {
         let position = value_at(&self.positions, tick)?;
+        Some(self.range.exact(position))
+    }
+
+    /// The value at the project frame `frame`, on the straight line between the frames of the
+    /// points around it: what the device hears. A tick is many frames, so a ramp a few ticks
+    /// long would reach its point up to a tick early if it ended on a whole tick.
+    fn value_at_frame(&self, frame: Frames, clock: &Clock) -> Option<f32> {
+        let positions = &self.positions;
+        let after = positions.partition_point(|point| clock.frame_of(point.tick) <= frame);
+        let before = after.checked_sub(1).and_then(|index| positions.get(index));
+        let position = match (before, positions.get(after)) {
+            (Some(before), Some(next)) => {
+                let from = clock.frame_of(before.tick).0;
+                let to = clock.frame_of(next.tick).0;
+                let done = (frame.0 - from) as f64 / (to - from) as f64;
+                f32::between(before.value, next.value, done)
+            }
+            (Some(only), None) | (None, Some(only)) => only.value,
+            (None, None) => return None,
+        };
         Some(self.range.exact(position))
     }
 }
@@ -203,13 +223,15 @@ impl PlayedLanes for LaneLines {
 
 /// Plays the lanes of one device on the audio thread: every block, the value of each lane at
 /// the end of the block, at offset 0, also while the project does not play. The device ramps to
-/// it over the block, so a sweep follows the line.
+/// it over the block, so a sweep follows the line. Where the line of a lane bends inside the
+/// block, every lane is sent again at that frame with its value where the next piece ends, and
+/// the engine plays the device in pieces split there, so a fast ramp starts and ends on its frame.
 ///
 /// Every block and not only when a value moved: a device takes a number that hears nothing in a
 /// block back to its record, which is how it learns that a lane or its player went away.
 ///
-/// A number has one lane, so a block holds at most as many events as the device has numbers,
-/// which `MAX_AUTOMATED` keeps far under the capacity of an event port.
+/// A number has one lane, so a block holds at most as many events as the device has numbers
+/// times [`MAX_PIECES`], which `MAX_AUTOMATED` keeps within the capacity of an event port.
 #[derive(Default)]
 pub(crate) struct LanePlayer {
     lanes: Arc<LaneLines>,
@@ -217,6 +239,45 @@ pub(crate) struct LanePlayer {
 
 impl LanePlayer {
     pub(crate) const OUTPUT: EventOutput<Automation> = EventOutput::new(0);
+}
+
+/// The most pieces a player cuts a block into. Bends past these in one block, which only lanes
+/// with points a few frames apart have, ramp straight to the end of the block.
+const MAX_PIECES: usize = 4;
+
+/// The frames inside the block where the line of some lane bends, the earliest first, each with
+/// its project frame: the start of the second piece of the block and on.
+fn bends(
+    lanes: &LaneLines,
+    transport: &Transport<'_>,
+) -> ([(usize, Frames); MAX_PIECES - 1], usize) {
+    let mut bends = [(0, Frames(0)); MAX_PIECES - 1];
+    let mut count = 0;
+    let range = &transport.tick_range;
+    for lane in &lanes.0 {
+        let after = lane
+            .positions
+            .partition_point(|point| point.tick < range.start);
+        let points = lane.positions.get(after..).unwrap_or_default().iter();
+        for point in points.take_while(|point| point.tick < range.end) {
+            let Some(offset) = transport.offset_of(point.tick).filter(|offset| *offset > 0) else {
+                continue;
+            };
+            let found = bends.get(..count).unwrap_or_default();
+            let at = found.partition_point(|(other, _)| *other < offset);
+            if found.get(at).is_some_and(|(other, _)| *other == offset) || at == bends.len() {
+                continue;
+            }
+            count = (count + 1).min(bends.len());
+            if let Some(later) = bends.get_mut(at..count) {
+                later.rotate_right(1);
+                if let Some(bend) = later.first_mut() {
+                    *bend = (offset, transport.clock.frame_of(point.tick));
+                }
+            }
+        }
+    }
+    (bends, count)
 }
 
 impl Processor for LanePlayer {
@@ -234,15 +295,23 @@ impl Processor for LanePlayer {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        // Where the next block starts, so the ramp of this block ends on the line.
-        let tick = context.transport.tick_range.end;
-        for lane in &self.lanes.0 {
-            if let Some(value) = lane.value_at(tick) {
-                let event = Automation {
-                    parameter: lane.parameter,
-                    value,
-                };
-                context.event_outputs.push(Self::OUTPUT, 0, event);
+        let (bends, count) = bends(&self.lanes, &context.transport);
+        let bends = bends.get(..count).unwrap_or_default();
+        let starts = std::iter::once(0).chain(bends.iter().map(|(offset, _)| *offset));
+        // Each piece ends where the next starts, the last where the next block starts, so the
+        // ramp of each piece ends on the line.
+        let ends = bends.iter().map(|(_, frame)| *frame);
+        let ends = ends.chain(std::iter::once(context.transport.frame_range.end));
+        let clock = context.transport.clock;
+        for (offset, frame) in starts.zip(ends) {
+            for lane in &self.lanes.0 {
+                if let Some(value) = lane.value_at_frame(frame, clock) {
+                    let event = Automation {
+                        parameter: lane.parameter,
+                        value,
+                    };
+                    context.event_outputs.push(Self::OUTPUT, offset, event);
+                }
             }
         }
     }
