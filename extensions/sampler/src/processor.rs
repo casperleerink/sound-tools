@@ -399,18 +399,32 @@ impl Layer {
         let start = self.position;
         self.read(zone, step, frames, buffers, filter);
         let envelope = self.envelope.as_ref().unwrap_or(record_envelope);
+        // Only an event changes the envelope between frames, and events end the frames.
+        let still = self.state.is_still(envelope);
+        // Engine frames from frame `index` to the end of the part that plays. Each step of the
+        // sum rounds the same way, so it never grows from one frame to the next.
+        let end = self.end;
+        let to_end = |index: usize| {
+            let at = start + direction * step * index as f64;
+            direction * (end - at) / step
+        };
+        // So when the last frame is a whole edge from the end, every frame plays in full.
+        let far_from_end = match self.looping {
+            Looping::Loop { .. } => true,
+            Looping::No { .. } => {
+                step > 0.0 && to_end(count.saturating_sub(1)) / edge_frames >= 1.0
+            }
+        };
         for (index, ((left, right), frame)) in left
             .iter_mut()
             .zip(right.iter_mut())
             .zip(frames.iter())
             .enumerate()
         {
-            let edge = match self.looping {
-                Looping::Loop { .. } => 1.0,
-                Looping::No { .. } => {
-                    // Engine frames from this one to the end of the part that plays.
-                    let at = start + direction * step * index as f64;
-                    let to_end = direction * (self.end - at) / step;
+            let edge = match far_from_end {
+                true => 1.0,
+                false => {
+                    let to_end = to_end(index);
                     if to_end <= 0.0 {
                         self.phase = Phase::Idle;
                         break;
@@ -418,7 +432,10 @@ impl Layer {
                     (to_end / edge_frames).min(1.0) as f32
                 }
             };
-            let level = self.state.next(envelope) as f32;
+            let level = match still {
+                true => self.state.level,
+                false => self.state.next(envelope),
+            } as f32;
             if self.state.is_idle() {
                 self.phase = Phase::Idle;
                 break;

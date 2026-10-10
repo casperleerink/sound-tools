@@ -148,6 +148,11 @@ impl Wavetable {
                 samples.extend(frame.iter().map(|sample| sample * scale));
                 samples.push(frame[0] * scale);
             }
+            // A voice on a frame reads that frame alone, which sounds the same only for finite
+            // samples.
+            if !samples.iter().all(|sample| sample.is_finite()) {
+                return Err("a wavetable frame has a sample that is not a number".into());
+            }
             levels.push(Level {
                 length,
                 samples: samples.into_boxed_slice(),
@@ -547,6 +552,14 @@ mod tests {
             }
         }
         assert_eq!(Wavetable::level_for(f32::NAN), 0);
+    }
+
+    /// A voice on a frame reads only that frame, which sounds the same only for finite tables.
+    #[test]
+    fn a_table_with_a_sample_that_is_not_a_number_is_refused() {
+        let mut spectrum = vec![Complex::default(); FRAME_LENGTH / 2 + 1];
+        spectrum[1] = Complex::new(f32::NAN, 0.0);
+        assert!(Wavetable::from_spectra(&[spectrum]).is_err());
     }
 
     /// The morph between two frames is a mix of the two, so a position that moves a little
