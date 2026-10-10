@@ -1,5 +1,5 @@
-//! Compiled code: a flat list of operations that [`Machine`](crate::Machine) runs once per
-//! frame and channel, which [`Graph::compile`](crate::Graph::compile) makes.
+//! Compiled code: a flat list of operations that [`Machine`](crate::Machine) runs for each
+//! channel, which [`Graph::compile`](crate::Graph::compile) makes.
 //!
 //! Every operation writes the register with its own index and only reads registers before it,
 //! so one pass in order computes a frame. A `History` reads what a feedback was set to in the
@@ -62,8 +62,8 @@ pub struct Code {
     pub hash: u64,
     pub(crate) operations: Vec<Operation>,
     pub(crate) output: Output,
-    /// What each feedback takes for the next frame: the slot and the register.
-    pub(crate) history_writes: Vec<(u16, Register)>,
+    /// The register each feedback takes for the next frame, by its slot.
+    pub(crate) feedbacks: Vec<Register>,
     /// The register of each watch, in the order of [`Self::watches`].
     pub(crate) watch_registers: Vec<Register>,
     pub(crate) slots: Slots,

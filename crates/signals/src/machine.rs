@@ -16,6 +16,7 @@ use sound_core::{
 use crate::code::{
     Binary, Code, FilterKind, MAX_LIVES, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
 };
+use crate::program::{self, Step};
 
 /// Where every knob and toggle stands, and every list of the record, in the order of the
 /// fields.
@@ -84,10 +85,12 @@ pub(crate) struct Inputs<'a> {
 #[derive(Clone)]
 pub struct Machine {
     code: Code,
+    steps: Box<[Step]>,
     sample_rate: f32,
-    registers: Vec<f32>,
+    /// What each operation gave in each frame of the span, of the channel that ran last.
+    registers: Vec<[f32; MAX_BLOCK]>,
     channels: [Memory; CHANNELS],
-    /// Where the delays and buffers write the next frame.
+    /// Where the delays write the first frame of the next span.
     position: usize,
     /// The last value of each watch, of the left channel.
     watched: Vec<f32>,
@@ -150,7 +153,7 @@ enum Stage {
 impl Machine {
     pub fn new(code: Code, sample_rate: f32) -> Self {
         let slots = &code.slots;
-        let channels = std::array::from_fn(|channel| Memory {
+        let channels: [Memory; CHANNELS] = std::array::from_fn(|channel| Memory {
             histories: vec![0.0; usize::from(slots.histories)],
             phases: vec![0.0; usize::from(slots.phasors)],
             // A fixed seed per slot and channel, so a render is the same every time and the
@@ -179,9 +182,25 @@ impl Machine {
                 .map(|seconds| vec![0.0; ((seconds * sample_rate) as usize).max(1)])
                 .collect(),
         });
+        let mut registers = vec![[0.0; MAX_BLOCK]; code.operations.len()];
+        // The buffers of every channel are as long.
+        let buffers = channels.first().map_or(&[][..], |memory| &memory.buffers);
+        for (row, operation) in registers.iter_mut().zip(&code.operations) {
+            // What `program::is_fixed` names.
+            let value = match *operation {
+                Operation::Constant(value) => value,
+                Operation::SampleRate => sample_rate,
+                Operation::Length(table @ Table::Buffer(_)) => {
+                    table_of(table, &[], buffers).len() as f32
+                }
+                _ => continue,
+            };
+            row.fill(value);
+        }
         Self {
+            steps: program::schedule(&code),
             sample_rate,
-            registers: vec![0.0; code.operations.len()],
+            registers,
             channels,
             position: 0,
             watched: vec![0.0; code.watches.len()],
@@ -205,266 +224,430 @@ impl Machine {
         frames: Range<usize>,
         output: &mut Frames,
     ) {
-        let first = frames.start;
-        for frame in frames {
-            let note = Note {
-                onset: inputs.note.onset && frame == first,
-                ..inputs.note
-            };
-            let sound = self.frame(inputs, note, frame);
-            for (channel, sample) in output.iter_mut().zip(sound) {
-                if let Some(out) = channel.get_mut(frame) {
-                    *out = sample;
+        let Some(last) = frames.clone().last() else {
+            return;
+        };
+        // Stereo code runs once, with the memory of the left channel, for both.
+        let runs = match self.code.output {
+            Output::Mono(_) => CHANNELS,
+            Output::Stereo(..) => 1,
+        };
+        for channel in 0..runs {
+            self.run(channel, inputs, frames.clone());
+            let registers = &self.registers;
+            if channel == 0 {
+                // The watches show the left channel.
+                for (watched, register) in self.watched.iter_mut().zip(&self.code.watch_registers) {
+                    *watched = value_at(registers, *register, last);
+                }
+            }
+            match self.code.output {
+                Output::Mono(register) => {
+                    if let Some(output) = output.get_mut(channel) {
+                        held_into(output, registers, register, &frames);
+                    }
+                }
+                Output::Stereo(left, right) => {
+                    for (output, register) in output.iter_mut().zip([left, right]) {
+                        held_into(output, registers, register, &frames);
+                    }
                 }
             }
         }
+        self.position = self.position.wrapping_add(frames.len());
     }
 
-    /// One frame of both channels.
-    fn frame(&mut self, inputs: &Inputs<'_>, note: Note, frame: usize) -> [f32; CHANNELS] {
-        let mut output = [0.0; CHANNELS];
-        if let Output::Stereo(left, right) = self.code.output {
-            // Once, with the memory of the left channel, for both.
-            self.run(0, inputs, note, frame);
-            self.keep_watches();
-            output = [left, right].map(|register| held(self.register(register)));
-        } else {
-            for (channel, sample) in output.iter_mut().enumerate() {
-                *sample = self.run(channel, inputs, note, frame);
-                if channel == 0 {
-                    self.keep_watches();
-                }
-            }
-        }
-        self.position = self.position.wrapping_add(1);
-        output
-    }
-
-    fn register(&self, register: Register) -> f32 {
-        self.registers
-            .get(usize::from(register))
-            .copied()
-            .unwrap_or(0.0)
-    }
-
-    /// The watches show the left channel.
-    fn keep_watches(&mut self) {
-        for (watched, register) in self.watched.iter_mut().zip(&self.code.watch_registers) {
-            *watched = self
-                .registers
-                .get(usize::from(*register))
-                .copied()
-                .unwrap_or(0.0);
-        }
-    }
-
-    fn run(&mut self, channel: usize, inputs: &Inputs<'_>, note: Note, frame: usize) -> f32 {
+    /// Runs every step over `frames` with the memory of `channel`.
+    fn run(&mut self, channel: usize, inputs: &Inputs<'_>, frames: Range<usize>) {
         let Self {
             code,
+            steps,
             sample_rate,
             registers,
             channels,
             position,
             ..
         } = self;
-        let sample_rate = *sample_rate;
         let Some(memory) = channels.get_mut(channel) else {
-            return 0.0;
+            return;
         };
-        let block = inputs.block;
-        let [left, right] = block
-            .input
-            .each_ref()
-            .map(|samples| at_frame(samples, frame));
-        let input = (block.input.get(channel)).map_or(0.0, |samples| at_frame(samples, frame));
-        let beat = at_frame(&block.beat, frame);
-        let triggers = block.triggers.get(frame).copied().unwrap_or(0);
-        for (index, operation) in code.operations.iter().enumerate() {
-            let read =
-                |register: Register| registers.get(usize::from(register)).copied().unwrap_or(0.0);
-            let value = match *operation {
-                Operation::Constant(value) => value,
-                Operation::Input => input,
-                Operation::InputLeft => left,
-                Operation::InputRight => right,
-                Operation::Channel => channel as f32,
-                Operation::SampleRate => sample_rate,
-                Operation::Beat => beat,
-                Operation::Bpm => block.bpm,
-                Operation::Playing => truth(block.playing),
-                Operation::Frequency => note.frequency,
-                Operation::Pitch => note.pitch,
-                Operation::Gate => truth(note.gate),
-                Operation::Velocity => note.velocity,
-                Operation::Onset => truth(note.onset),
-                Operation::Parameter(index) => in_row(&block.parameters, index, frame),
-                Operation::Live(index) => in_row(&block.lives, index, frame),
-                Operation::Trigger(index) => truth(triggers & (1 << index) != 0),
-                Operation::History(slot) => at(&memory.histories, slot),
-                Operation::Unary(unary, x) => apply_unary(unary, read(x)),
-                Operation::Binary(binary, a, b) => apply_binary(binary, read(a), read(b)),
-                Operation::Clamp(x, low, high) => read(x).max(read(low)).min(read(high)),
-                Operation::Mix(a, b, amount) => {
-                    let (a, b) = (read(a), read(b));
-                    a + (b - a) * read(amount)
+        let span = Span {
+            block: inputs.block,
+            arrays: inputs.arrays,
+            note: inputs.note,
+            channel,
+            first: frames.start,
+            position: *position,
+            sample_rate: *sample_rate,
+            feedbacks: &code.feedbacks,
+        };
+        let operations = &code.operations;
+        for step in steps.iter() {
+            match step {
+                Step::Block(register) => {
+                    let register = usize::from(*register);
+                    if let Some(operation) = operations.get(register) {
+                        span.run(*operation, register, frames.clone(), registers, memory);
+                    }
                 }
-                Operation::Phasor { hz, slot } => match memory.phases.get_mut(usize::from(slot)) {
-                    Some(phase) => {
-                        let value = *phase;
-                        let next = *phase + read(hz) / sample_rate;
+                Step::Loop(looped) => {
+                    for frame in frames.clone() {
+                        for (register, operation) in looped.iter() {
+                            span.run(
+                                *operation,
+                                usize::from(*register),
+                                frame..frame + 1,
+                                registers,
+                                memory,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // What each feedback reads in the first frame of the next span.
+        let last = frames.end.saturating_sub(1);
+        for (history, source) in memory.histories.iter_mut().zip(&code.feedbacks) {
+            *history = finite(value_at(registers, *source, last));
+        }
+    }
+}
+
+/// What the operations of one channel read over a span of frames.
+struct Span<'a> {
+    block: &'a Block,
+    arrays: &'a [Vec<f32>],
+    note: Note,
+    channel: usize,
+    /// The first frame of the span: of the onset of a note, and the one where a feedback reads
+    /// what was set in the span before.
+    first: usize,
+    /// Where the delays write the first frame.
+    position: usize,
+    sample_rate: f32,
+    feedbacks: &'a [Register],
+}
+
+impl Span<'_> {
+    /// Runs `operation`, whose register is `register`, over `frames` of the span. Each kind of
+    /// operation has a loop of its own over the frames, so it is not matched in every frame.
+    /// Inlined: a loop of a feedback calls it for every operation in every frame.
+    #[inline(always)]
+    fn run(
+        &self,
+        operation: Operation,
+        register: usize,
+        frames: Range<usize>,
+        registers: &mut [[f32; MAX_BLOCK]],
+        memory: &mut Memory,
+    ) {
+        if let Operation::History(slot) = operation {
+            return self.history(slot, register, frames, registers, &memory.histories);
+        }
+        // Every other operation reads only registers before its own.
+        let Some((before, rest)) = registers.split_at_mut_checked(register) else {
+            return;
+        };
+        let Some(out) = rest.first_mut().and_then(|row| row.get_mut(frames.clone())) else {
+            return;
+        };
+        let read = |register: Register| row(before, usize::from(register), &frames);
+        let block = self.block;
+        let note = self.note;
+        let sample_rate = self.sample_rate;
+        match operation {
+            Operation::Constant(value) => out.fill(value),
+            Operation::Input => copy(out, row(&block.input, self.channel, &frames)),
+            Operation::InputLeft => copy(out, row(&block.input, 0, &frames)),
+            Operation::InputRight => copy(out, row(&block.input, 1, &frames)),
+            Operation::Channel => out.fill(self.channel as f32),
+            Operation::SampleRate => out.fill(sample_rate),
+            Operation::Beat => copy(out, part(&block.beat, &frames)),
+            Operation::Bpm => out.fill(block.bpm),
+            Operation::Playing => out.fill(truth(block.playing)),
+            Operation::Frequency => out.fill(note.frequency),
+            Operation::Pitch => out.fill(note.pitch),
+            Operation::Gate => out.fill(truth(note.gate)),
+            Operation::Velocity => out.fill(note.velocity),
+            Operation::Onset => {
+                for (out, frame) in out.iter_mut().zip(frames.clone()) {
+                    *out = truth(self.onset(frame));
+                }
+            }
+            Operation::Parameter(index) => {
+                copy(out, row(&block.parameters, usize::from(index), &frames));
+            }
+            Operation::Live(index) => copy(out, row(&block.lives, usize::from(index), &frames)),
+            Operation::Trigger(index) => {
+                let triggers = block.triggers.get(frames.clone()).unwrap_or_default();
+                for (out, triggers) in out.iter_mut().zip(triggers) {
+                    *out = truth(triggers & (1 << index) != 0);
+                }
+            }
+            // Run above.
+            Operation::History(_) => {}
+            Operation::Unary(unary, x) => apply_unary(unary, out, read(x)),
+            Operation::Binary(binary, a, b) => apply_binary(binary, out, read(a), read(b)),
+            Operation::Clamp(x, low, high) => {
+                map3(out, read(x), read(low), read(high), |x, low, high| {
+                    x.max(low).min(high)
+                });
+            }
+            Operation::Mix(a, b, amount) => {
+                map3(out, read(a), read(b), read(amount), |a, b, amount| {
+                    a + (b - a) * amount
+                });
+            }
+            Operation::Phasor { hz, slot } => match memory.phases.get_mut(usize::from(slot)) {
+                Some(phase) => {
+                    for (out, hz) in out.iter_mut().zip(read(hz)) {
+                        *out = *phase;
+                        let next = *phase + hz / sample_rate;
                         *phase = if next.is_finite() {
                             next - next.floor()
                         } else {
                             0.0
                         };
-                        value
                     }
-                    None => 0.0,
-                },
-                Operation::Noise { slot } => match memory.noises.get_mut(usize::from(slot)) {
-                    Some(state) => {
+                }
+                None => out.fill(0.0),
+            },
+            Operation::Noise { slot } => match memory.noises.get_mut(usize::from(slot)) {
+                Some(state) => {
+                    for out in out.iter_mut() {
                         // xorshift32
                         *state ^= *state << 13;
                         *state ^= *state >> 17;
                         *state ^= *state << 5;
-                        *state as f32 / u32::MAX as f32 * 2.0 - 1.0
+                        *out = *state as f32 / u32::MAX as f32 * 2.0 - 1.0;
                     }
-                    None => 0.0,
-                },
-                Operation::Delay { input, ms, slot } => {
-                    match memory.delays.get_mut(usize::from(slot)) {
-                        Some(line) => {
-                            let frames = read(ms) * 0.001 * sample_rate;
-                            let value = line.read_between(*position, frames);
-                            line.write(*position, finite(read(input)));
-                            value
+                }
+                None => out.fill(0.0),
+            },
+            Operation::Delay { input, ms, slot } => {
+                match memory.delays.get_mut(usize::from(slot)) {
+                    Some(line) => {
+                        let mut position =
+                            (self.position).wrapping_add(frames.start.wrapping_sub(self.first));
+                        for ((out, input), ms) in out.iter_mut().zip(read(input)).zip(read(ms)) {
+                            let frames = ms * 0.001 * sample_rate;
+                            *out = line.read_between(position, frames);
+                            line.write(position, finite(*input));
+                            position = position.wrapping_add(1);
                         }
-                        None => 0.0,
+                    }
+                    None => out.fill(0.0),
+                }
+            }
+            Operation::Filter {
+                kind,
+                input,
+                hz,
+                q,
+                slot,
+            } => match memory.filters.get_mut(usize::from(slot)) {
+                Some(filter) => {
+                    let values = read(input).iter().zip(read(hz)).zip(read(q));
+                    for (out, ((input, hz), q)) in out.iter_mut().zip(values) {
+                        *out = filter.next(kind, *input, *hz, *q, sample_rate);
                     }
                 }
-                Operation::Filter {
-                    kind,
-                    input,
-                    hz,
-                    q,
-                    slot,
-                } => match memory.filters.get_mut(usize::from(slot)) {
-                    Some(filter) => filter.next(kind, read(input), read(hz), read(q), sample_rate),
-                    None => 0.0,
-                },
-                Operation::Smooth { input, ms, slot } => {
-                    match memory.smooths.get_mut(usize::from(slot)) {
-                        Some(smooth) => smooth.next(read(input), read(ms), sample_rate),
-                        None => 0.0,
+                None => out.fill(0.0),
+            },
+            Operation::Smooth { input, ms, slot } => {
+                match memory.smooths.get_mut(usize::from(slot)) {
+                    Some(smooth) => {
+                        for ((out, input), ms) in out.iter_mut().zip(read(input)).zip(read(ms)) {
+                            *out = smooth.next(*input, *ms, sample_rate);
+                        }
                     }
+                    None => out.fill(0.0),
                 }
-                Operation::Envelope {
-                    gate,
-                    attack,
-                    decay,
-                    sustain,
-                    release,
-                    slot,
-                } => match memory.envelopes.get_mut(usize::from(slot)) {
-                    Some(envelope) => {
-                        let times = [read(attack), read(decay), read(release)]
+            }
+            Operation::Envelope {
+                gate,
+                attack,
+                decay,
+                sustain,
+                release,
+                slot,
+            } => match memory.envelopes.get_mut(usize::from(slot)) {
+                Some(envelope) => {
+                    let times = read(attack).iter().zip(read(decay)).zip(read(release));
+                    let values = read(gate).iter().zip(read(sustain)).zip(times);
+                    let outs = out.iter_mut().zip(frames.clone());
+                    for ((out, frame), ((gate, sustain), ((attack, decay), release))) in
+                        outs.zip(values)
+                    {
+                        let times = [*attack, *decay, *release]
                             .map(|ms| (ms * 0.001 * sample_rate).max(1.0));
                         // A sustain that is not a number would stay in the level for good.
-                        let sustain = finite(read(sustain)).clamp(0.0, 1.0);
-                        envelope.next(read(gate) > 0.0, note.onset, times, sustain)
+                        let sustain = finite(*sustain).clamp(0.0, 1.0);
+                        *out = envelope.next(*gate > 0.0, self.onset(frame), times, sustain);
                     }
-                    None => 0.0,
-                },
-                Operation::Hold { input, when, slot } => {
-                    match memory.memories.get_mut(usize::from(slot)) {
-                        Some(held) => {
-                            if read(when) > 0.0 {
-                                *held = finite(read(input));
+                }
+                None => out.fill(0.0),
+            },
+            Operation::Hold { input, when, slot } => {
+                match memory.memories.get_mut(usize::from(slot)) {
+                    Some(held) => {
+                        for ((out, input), when) in out.iter_mut().zip(read(input)).zip(read(when))
+                        {
+                            if *when > 0.0 {
+                                *held = finite(*input);
                             }
-                            *held
+                            *out = *held;
                         }
-                        None => 0.0,
+                    }
+                    None => out.fill(0.0),
+                }
+            }
+            Operation::Rise { input, slot } => match memory.memories.get_mut(usize::from(slot)) {
+                Some(before) => {
+                    for (out, now) in out.iter_mut().zip(read(input)) {
+                        let rose = *before <= 0.0 && *now > 0.0;
+                        *before = finite(*now);
+                        *out = truth(rose);
                     }
                 }
-                Operation::Rise { input, slot } => match memory.memories.get_mut(usize::from(slot))
-                {
-                    Some(before) => {
-                        let now = read(input);
-                        let rose = *before <= 0.0 && now > 0.0;
-                        *before = finite(now);
-                        truth(rose)
-                    }
-                    None => 0.0,
-                },
-                Operation::Change { input, slot } => {
-                    match memory.memories.get_mut(usize::from(slot)) {
-                        Some(before) => {
-                            let now = finite(read(input));
-                            let changed = *before != now;
-                            *before = now;
-                            truth(changed)
-                        }
-                        None => 0.0,
+                None => out.fill(0.0),
+            },
+            Operation::Change { input, slot } => match memory.memories.get_mut(usize::from(slot)) {
+                Some(before) => {
+                    for (out, now) in out.iter_mut().zip(read(input)) {
+                        let now = finite(*now);
+                        let changed = *before != now;
+                        *before = now;
+                        *out = truth(changed);
                     }
                 }
-                Operation::Read { table, index } => {
-                    let values = table_of(table, inputs.arrays, &memory.buffers);
-                    read_at(values, read(index))
-                }
-                Operation::Lookup { table, phase } => {
-                    let values = table_of(table, inputs.arrays, &memory.buffers);
-                    look_up(values, read(phase))
-                }
-                Operation::Length(table) => {
-                    table_of(table, inputs.arrays, &memory.buffers).len() as f32
-                }
-                Operation::Write {
-                    buffer,
-                    index,
-                    value,
-                } => {
-                    let value = finite(read(value));
+                None => out.fill(0.0),
+            },
+            Operation::Read { table, index } => {
+                let values = table_of(table, self.arrays, &memory.buffers);
+                map(out, read(index), |index| read_at(values, index));
+            }
+            Operation::Lookup { table, phase } => {
+                let values = table_of(table, self.arrays, &memory.buffers);
+                map(out, read(phase), |phase| look_up(values, phase));
+            }
+            Operation::Length(table) => {
+                out.fill(table_of(table, self.arrays, &memory.buffers).len() as f32);
+            }
+            Operation::Write {
+                buffer,
+                index,
+                value,
+            } => {
+                for ((out, index), value) in out.iter_mut().zip(read(index)).zip(read(value)) {
+                    let value = finite(*value);
                     if let Some(values) = memory.buffers.get_mut(usize::from(buffer))
-                        && let Some(slot) = wrapped(values.len(), read(index))
+                        && let Some(slot) = wrapped(values.len(), *index)
                         && let Some(sample) = values.get_mut(slot)
                     {
                         *sample = value;
                     }
-                    value
+                    *out = value;
                 }
+            }
+        }
+    }
+
+    /// A feedback read: what its source was in the frame before, and in the first frame of the
+    /// span what was set in the span before. The source may come after it.
+    fn history(
+        &self,
+        slot: u16,
+        register: usize,
+        frames: Range<usize>,
+        registers: &mut [[f32; MAX_BLOCK]],
+        histories: &[f32],
+    ) {
+        let set_before = histories.get(usize::from(slot)).copied().unwrap_or(0.0);
+        let source = self.feedbacks.get(usize::from(slot));
+        for frame in frames {
+            let value = match source {
+                _ if frame == self.first => set_before,
+                Some(source) => finite(value_at(registers, *source, frame - 1)),
+                None => 0.0,
             };
-            if let Some(register) = registers.get_mut(index) {
-                *register = value;
+            if let Some(cell) = registers
+                .get_mut(register)
+                .and_then(|row| row.get_mut(frame))
+            {
+                *cell = value;
             }
         }
-        for (slot, register) in &code.history_writes {
-            let value = registers
-                .get(usize::from(*register))
-                .copied()
-                .unwrap_or(0.0);
-            if let Some(history) = memory.histories.get_mut(usize::from(*slot)) {
-                *history = finite(value);
-            }
-        }
-        held(match code.output {
-            Output::Mono(register) => registers.get(usize::from(register)).copied().unwrap_or(0.0),
-            Output::Stereo(..) => input,
-        })
+    }
+
+    /// Whether `frame` is the first of a note.
+    fn onset(&self, frame: usize) -> bool {
+        self.note.onset && frame == self.first
     }
 }
 
-fn at(values: &[f32], index: u16) -> f32 {
-    values.get(usize::from(index)).copied().unwrap_or(0.0)
+/// Room for a row that is not there: 0 in every frame.
+static ZEROS: [f32; MAX_BLOCK] = [0.0; MAX_BLOCK];
+
+/// The `frames` of `samples`.
+fn part<'a>(samples: &'a [f32; MAX_BLOCK], frames: &Range<usize>) -> &'a [f32] {
+    samples
+        .get(frames.clone())
+        .unwrap_or_else(|| ZEROS.get(..frames.len()).unwrap_or_default())
 }
 
-fn at_frame(samples: &[f32; MAX_BLOCK], frame: usize) -> f32 {
-    samples.get(frame).copied().unwrap_or(0.0)
+/// The `frames` of the row `index` of `rows`: of a register, an input, a param or a live
+/// control. 0 for a row that is not there.
+fn row<'a>(rows: &'a [[f32; MAX_BLOCK]], index: usize, frames: &Range<usize>) -> &'a [f32] {
+    match rows.get(index) {
+        Some(samples) => part(samples, frames),
+        None => part(&ZEROS, frames),
+    }
 }
 
-/// The value in `frame` of the row `index`: of a param or a live control.
-fn in_row(rows: &[[f32; MAX_BLOCK]], index: u16, frame: usize) -> f32 {
-    rows.get(usize::from(index))
-        .map_or(0.0, |row| at_frame(row, frame))
+fn value_at(registers: &[[f32; MAX_BLOCK]], register: Register, frame: usize) -> f32 {
+    (registers.get(usize::from(register)))
+        .and_then(|row| row.get(frame))
+        .copied()
+        .unwrap_or(0.0)
+}
+
+fn copy(out: &mut [f32], values: &[f32]) {
+    for (out, value) in out.iter_mut().zip(values) {
+        *out = *value;
+    }
+}
+
+/// What leaves the code from `register` into the `frames` of `output`.
+fn held_into(
+    output: &mut [f32; MAX_BLOCK],
+    registers: &[[f32; MAX_BLOCK]],
+    register: Register,
+    frames: &Range<usize>,
+) {
+    let values = row(registers, usize::from(register), frames);
+    let output = output.get_mut(frames.clone()).unwrap_or_default();
+    for (output, value) in output.iter_mut().zip(values) {
+        *output = held(*value);
+    }
+}
+
+fn map(out: &mut [f32], x: &[f32], f: impl Fn(f32) -> f32) {
+    for (out, x) in out.iter_mut().zip(x) {
+        *out = f(*x);
+    }
+}
+
+fn map2(out: &mut [f32], a: &[f32], b: &[f32], f: impl Fn(f32, f32) -> f32) {
+    for ((out, a), b) in out.iter_mut().zip(a).zip(b) {
+        *out = f(*a, *b);
+    }
+}
+
+fn map3(out: &mut [f32], a: &[f32], b: &[f32], c: &[f32], f: impl Fn(f32, f32, f32) -> f32) {
+    for (((out, a), b), c) in out.iter_mut().zip(a).zip(b).zip(c) {
+        *out = f(*a, *b, *c);
+    }
 }
 
 fn table_of<'a>(table: Table, arrays: &'a [Vec<f32>], buffers: &'a [Vec<f32>]) -> &'a [f32] {
@@ -591,40 +774,40 @@ fn truth(condition: bool) -> f32 {
     if condition { 1.0 } else { 0.0 }
 }
 
-fn apply_unary(unary: Unary, x: f32) -> f32 {
+fn apply_unary(unary: Unary, out: &mut [f32], x: &[f32]) {
     match unary {
-        Unary::Negate => -x,
-        Unary::Sin => x.sin(),
-        Unary::Cos => x.cos(),
-        Unary::Tan => x.tan(),
-        Unary::Tanh => x.tanh(),
-        Unary::Abs => x.abs(),
-        Unary::Sqrt => x.max(0.0).sqrt(),
-        Unary::Exp => x.exp(),
-        Unary::Log => x.max(f32::MIN_POSITIVE).ln(),
-        Unary::Floor => x.floor(),
-        Unary::Wrap => x - x.floor(),
-        Unary::Decibels => amplitude(x),
-        Unary::Saturate => soft_clip(x),
+        Unary::Negate => map(out, x, |x| -x),
+        Unary::Sin => map(out, x, f32::sin),
+        Unary::Cos => map(out, x, f32::cos),
+        Unary::Tan => map(out, x, f32::tan),
+        Unary::Tanh => map(out, x, f32::tanh),
+        Unary::Abs => map(out, x, f32::abs),
+        Unary::Sqrt => map(out, x, |x| x.max(0.0).sqrt()),
+        Unary::Exp => map(out, x, f32::exp),
+        Unary::Log => map(out, x, |x| x.max(f32::MIN_POSITIVE).ln()),
+        Unary::Floor => map(out, x, f32::floor),
+        Unary::Wrap => map(out, x, |x| x - x.floor()),
+        Unary::Decibels => map(out, x, amplitude),
+        Unary::Saturate => map(out, x, soft_clip),
     }
 }
 
-fn apply_binary(binary: Binary, a: f32, b: f32) -> f32 {
+fn apply_binary(binary: Binary, out: &mut [f32], a: &[f32], b: &[f32]) {
     match binary {
-        Binary::Add => a + b,
-        Binary::Subtract => a - b,
-        Binary::Multiply => a * b,
-        Binary::Divide => a / b,
-        Binary::Remainder => a.rem_euclid(b),
-        Binary::Less => truth(a < b),
-        Binary::Greater => truth(a > b),
-        Binary::LessOrEqual => truth(a <= b),
-        Binary::GreaterOrEqual => truth(a >= b),
-        Binary::Equal => truth(a == b),
-        Binary::NotEqual => truth(a != b),
-        Binary::Min => a.min(b),
-        Binary::Max => a.max(b),
-        Binary::Power => a.powf(b),
+        Binary::Add => map2(out, a, b, |a, b| a + b),
+        Binary::Subtract => map2(out, a, b, |a, b| a - b),
+        Binary::Multiply => map2(out, a, b, |a, b| a * b),
+        Binary::Divide => map2(out, a, b, |a, b| a / b),
+        Binary::Remainder => map2(out, a, b, f32::rem_euclid),
+        Binary::Less => map2(out, a, b, |a, b| truth(a < b)),
+        Binary::Greater => map2(out, a, b, |a, b| truth(a > b)),
+        Binary::LessOrEqual => map2(out, a, b, |a, b| truth(a <= b)),
+        Binary::GreaterOrEqual => map2(out, a, b, |a, b| truth(a >= b)),
+        Binary::Equal => map2(out, a, b, |a, b| truth(a == b)),
+        Binary::NotEqual => map2(out, a, b, |a, b| truth(a != b)),
+        Binary::Min => map2(out, a, b, f32::min),
+        Binary::Max => map2(out, a, b, f32::max),
+        Binary::Power => map2(out, a, b, f32::powf),
     }
 }
 

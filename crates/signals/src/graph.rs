@@ -211,9 +211,9 @@ impl Graph {
             let register = lowering.node(node)?;
             lowering.registers.push(register);
         }
-        let history_writes = (self.feedbacks.iter().enumerate())
-            .map(|(slot, node)| Ok((slot as u16, lowering.read(*node)?)))
-            .collect::<Result<_, GraphError>>()?;
+        let feedbacks = (self.feedbacks.iter())
+            .map(|node| lowering.read(*node))
+            .collect::<Result<_, _>>()?;
         if self.watches.len() > MAX_WATCHES {
             return error(format!("a sound has at most {MAX_WATCHES} watches"));
         }
@@ -244,7 +244,7 @@ impl Graph {
             hash: hasher.finish(),
             operations: lowering.operations,
             output,
-            history_writes,
+            feedbacks,
             watch_registers,
             slots: lowering.slots,
         })
