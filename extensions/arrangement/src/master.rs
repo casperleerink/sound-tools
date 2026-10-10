@@ -14,7 +14,7 @@ use sound_core::{
 };
 
 use crate::decibels;
-use crate::mixer::RAMP_SECONDS;
+use crate::mixer::{RAMP_SECONDS, is_positive_zero};
 
 /// The master of an arrangement: its volume and its limiter. A record that leaves it out gets
 /// 0 dB and the limiter at its defaults, which is on.
@@ -173,14 +173,6 @@ impl Master {
             && self.limiter.is_resting()
             && self.quiet >= self.limiter.latency()
     }
-}
-
-/// Whether every sample is +0.0.
-fn is_positive_zero(samples: &[f32]) -> bool {
-    // No early return, so the loop compiles to vector compares.
-    !samples
-        .iter()
-        .fold(false, |sound, sample| sound | (sample.to_bits() != 0))
 }
 
 impl Processor for Master {

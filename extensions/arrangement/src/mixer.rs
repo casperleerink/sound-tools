@@ -20,6 +20,14 @@ pub const RAMP_SECONDS: f32 = 0.02;
 /// The gain of each channel, left first.
 pub type ChannelGains = [f32; CHANNELS];
 
+/// Whether every sample is +0.0, the silence an output starts as.
+pub(crate) fn is_positive_zero(samples: &[f32]) -> bool {
+    // No early return, so the loop compiles to vector compares.
+    !samples
+        .iter()
+        .fold(false, |sound, sample| sound | (sample.to_bits() != 0))
+}
+
 /// What a track sends its mixer.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Mix {
@@ -160,6 +168,15 @@ impl Processor for Mixer {
         let pan = self.pan.advance(frames);
         self.gains = pan_gains(f64::from(level), pan);
         let input = context.audio_inputs.get(Self::INPUT);
+        // +0.0 times a gain that stays and is not negative is +0.0: the output as it starts,
+        // with no peak.
+        let steady = before == self.gains
+            && before
+                .iter()
+                .all(|gain| gain.is_sign_positive() && gain.is_finite());
+        if steady && input.iter().all(|channel| is_positive_zero(channel)) {
+            return;
+        }
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         let outputs = [&mut *left, &mut *right];
         let channels = outputs
