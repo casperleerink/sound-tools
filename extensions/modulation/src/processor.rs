@@ -28,7 +28,7 @@ use std::f64::consts::TAU;
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Lfo, LfoShape, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Targets, held,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Targets, all_zero, held,
 };
 
 use crate::{DEPTH, FEEDBACK, MIX, Mode, ModulationState, PARAMETERS, RATE, SPREAD};
@@ -409,7 +409,7 @@ impl Processor for Modulation {
         }
         let frames = context.frames;
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
-        let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);
+        let silent_input = all_zero(left_in) && all_zero(right_in);
         if silent_input && self.quiet_frames > self.channels[0].line.frames() {
             // Nothing sounds and nothing is left in the effect: no glide can be heard, and the
             // output is already silent. The LFO goes on, so where it is does not depend on the

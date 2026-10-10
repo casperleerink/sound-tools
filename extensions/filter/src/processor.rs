@@ -7,8 +7,8 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Lfo, LfoShape, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, amplitude,
-    held, soft_clip, svf_response,
+    PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, all_zero,
+    amplitude, held, soft_clip, svf_response,
 };
 
 use crate::{CUTOFF, DRIVE, FilterState, LFO_DEPTH, MIX, PARAMETERS, RESONANCE};
@@ -213,7 +213,7 @@ impl Processor for Filter {
         }
         let frames = context.frames;
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
-        let silent_input = left_in.iter().chain(right_in).all(|sample| *sample == 0.0);
+        let silent_input = all_zero(left_in) && all_zero(right_in);
         if silent_input && self.is_resting() {
             // Nothing sounds and nothing rings: no glide can be heard, and the output is
             // already silent. The LFO goes on, so where it is does not depend on the silence.

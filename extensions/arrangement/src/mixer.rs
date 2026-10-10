@@ -9,7 +9,8 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Parameter, Peaks, Ports,
-    PrepareConfig, ProcessContext, Processor, Scale, Smoothed, Targets, amplitude, pan_gains,
+    PrepareConfig, ProcessContext, Processor, Scale, Smoothed, Targets, all_positive_zero,
+    amplitude, pan_gains,
 };
 
 use crate::TrackState;
@@ -160,6 +161,15 @@ impl Processor for Mixer {
         let pan = self.pan.advance(frames);
         self.gains = pan_gains(f64::from(level), pan);
         let input = context.audio_inputs.get(Self::INPUT);
+        // +0.0 times a gain that stays and is not negative is +0.0: the output as it starts,
+        // with no peak.
+        let steady = before == self.gains
+            && before
+                .iter()
+                .all(|gain| gain.is_sign_positive() && gain.is_finite());
+        if steady && input.iter().all(|channel| all_positive_zero(channel)) {
+            return;
+        }
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         let outputs = [&mut *left, &mut *right];
         let channels = outputs
