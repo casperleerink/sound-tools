@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use crate::automation::Automation;
 use crate::input::InputId;
 use crate::processor::{
     AudioBuffer, CHANNELS, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
@@ -464,6 +465,10 @@ impl Graph {
                 event_sources: vec![Vec::new(); node.ports.event_inputs.len()],
                 event_inputs: event_inputs_start..schedule.event_inputs.len(),
                 event_outputs: event_outputs_start..schedule.event_outputs.len(),
+                automation_inputs: (node.ports.event_inputs.iter().enumerate())
+                    .filter(|(_, event_type)| event_type.is::<Automation>())
+                    .map(|(index, _)| index)
+                    .collect(),
             });
         }
 
@@ -581,6 +586,9 @@ pub(crate) struct Step {
     pub event_sources: Vec<Vec<usize>>,
     pub event_inputs: Range<usize>,
     pub event_outputs: Range<usize>,
+    /// The event inputs, by index, that carry [`Automation`]: the engine plays the block of
+    /// the processor in pieces split where a lane bends.
+    pub automation_inputs: Vec<usize>,
 }
 
 /// The flat list the audio thread walks, with every buffer it needs.
