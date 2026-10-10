@@ -2,6 +2,61 @@
 
 Newest first. Apple M1 Max, macOS. How to run: [README.md](README.md).
 
+## 2026-10-10: graph runtime, 7b4949e (t3code/native-typed-graph-runtime)
+
+What changed since 18e97e0: loops of a feedback or a buffer run one value at a time from
+registers, and loops that do not hear each other run side by side in one pass over the frames.
+
+Null test against main: every `one-` and ts-synth project is still bit for bit equal (-inf dB).
+
+Render: `bench.py render origin/main 18e97e0 7b4949e`, 61 s, median of 3, interleaved (mixed and
+mixed-x2 each in their own run). Spread was 1 to 5%. A compile at nice 19 ran during the first
+run; a rerun of the projects that got slower (18e97e0 against 7b4949e, 5 runs) gave the same.
+
+| project | main | 18e97e0 | now | main / 18e97e0 | main / now | 18e97e0 / now |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| builtin12 | 9.84 | 9.88 | 9.86 | 1.0x | 1.0x | 1.00x |
+| one-acid-bass | 2.59 | 0.94 | 0.94 | 2.8x | 2.7x | 0.99x |
+| one-dorian-drift | 4.20 | 1.38 | 1.39 | 3.1x | 3.0x | 0.99x |
+| one-gravity-harp | 5.43 | 2.90 | 2.17 | 1.9x | 2.5x | 1.34x |
+| one-storm | 5.18 | 2.01 | 2.07 | 2.6x | 2.5x | 0.97x |
+| one-life | 10.57 | 1.99 | 2.03 | 5.3x | 5.2x | 0.98x |
+| one-grain-cloud | 15.72 | 7.29 | 6.11 | 2.2x | 2.6x | 1.19x |
+| mixed-base | 4.82 | 4.73 | 4.77 | 1.0x | 1.0x | 0.99x |
+| **mixed** | 48.14 | 20.71 | **18.85** | 2.3x | **2.6x** | 1.10x |
+| mixed-x2 | 97.43 | 42.85 | 38.00 | 2.3x | 2.6x | 1.13x |
+| instrument.synth-arp | 0.22 | 0.22 | 0.22 | 1.0x | 1.0x | 1.00x |
+| instrument.synth-chords | 0.31 | 0.31 | 0.31 | 1.0x | 1.0x | 1.00x |
+| ts-synth-arp | 2.08 | 0.50 | 0.52 | 4.1x | 4.0x | 0.96x |
+| ts-synth-chords | 2.53 | 0.55 | 0.59 | 4.6x | 4.3x | 0.94x |
+
+- ts-synth / built-in synth: **2.4x** on the arp, **1.9x** on the chords (18e97e0 2.3x, 1.8x;
+  target 2x). ts-synth, one-life and one-storm are 2 to 6% slower than at 18e97e0, the same in
+  both runs.
+- mixed: **2.6x** less CPU than main, 18.9% of a core (target 3x, 16.0%). The tools (mixed minus
+  mixed-base) cost 14.1%, 3.1x less than main; they must reach about 11.3%.
+- The gain is in gravity-harp (1.34x) and grain-cloud (1.19x).
+
+Live: `bench.py live 7b4949e --window 60`, 3 runs of 60 s, master at -60 dB.
+
+| project | cpu % | bun cpu % | MB | bun MB | late callbacks | xruns | slowest callback |
+| --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| mixed | 20.0 | 0.0 | 134 | 60 | 0, 0, 0 | 0, 0, 0 | 6.5, 6.3, 7.4 ms |
+| mixed+edit | 20.9 | 0.2 | 172 | 60 | 0, 0, 0 | 0, 0, 0 | 6.4, 5.3, 6.8 ms |
+| mixed-x2 | 38.0 | 0.1 | 177 | 60 | 1, 1, 1 | 1, 1, 1 | 11.1, 11.0, 11.0 ms |
+
+- Live CPU of mixed has two levels, about 20% and about 30%, whatever the commit. A rerun of
+  mixed and mixed+edit against 18e97e0, interleaved, gave 22.0, 30.5, 30.2 for 18e97e0 and 19.3,
+  29.7, 29.6 now. The low runs came while other apps were busy, so it is likely the clock speed
+  of the cores. Compare live CPU only within one interleaved run: there, 7b4949e equals 18e97e0.
+- No late callbacks or xruns in mixed. mixed-x2's one is at startup, as before.
+
+Profile: `bench.py profile 7b4949e --projects mixed,one-grain-cloud`, busy samples.
+
+- mixed: `Machine::render` 26%, the reverbs 25%, `Span::run` 16%, `apply_binary` 3.6%, `powf` 3.5%;
+  `_platform_memcmp` 3.1%. The graph (render, `Span::run`, `apply_binary`) is 46%, from 54% at 18e97e0.
+- one-grain-cloud: `Machine::render` 54%, `Span::run` 14%, `apply_binary` 6.8%, the reverb 6.2%, `powf` 4.1%.
+
 ## 2026-10-10: graph runtime, 18e97e0 (t3code/native-typed-graph-runtime)
 
 What changed since 2bb342a: mono code runs on the right channel only the operations that differ
