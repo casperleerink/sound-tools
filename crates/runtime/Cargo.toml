@@ -8,6 +8,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+analyzer.workspace = true
 anyhow.workspace = true
 arrangement.workspace = true
 compressor.workspace = true

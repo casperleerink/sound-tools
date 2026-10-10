@@ -178,6 +178,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "analyzer"
+version = "0.8.0"
+dependencies = [
+ "gpui",
+ "serde",
+ "sound-core",
+ "sound-media",
+ "sound-notes",
+ "sound-ui",
+]
+
+[[package]]
 name = "android-build"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5579,6 +5591,7 @@ dependencies = [
 name = "runtime"
 version = "0.8.0"
 dependencies = [
+ "analyzer",
  "anyhow",
  "arrangement",
  "compressor",

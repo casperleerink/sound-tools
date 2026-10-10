@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
+members = ["crates/agent", "crates/core", "crates/media", "crates/notes", "crates/signals", "crates/runtime", "crates/typescript", "crates/ui", "crates/gallery", "extensions/analyzer", "extensions/arrangement", "extensions/compressor", "extensions/delay", "extensions/drum-pad", "extensions/eq", "extensions/filter", "extensions/fit-tempo", "extensions/instrument", "extensions/limiter", "extensions/metronome", "extensions/midi", "extensions/modulation", "extensions/plugin-host", "extensions/reverb", "extensions/sampler", "extensions/saturator", "extensions/tone", "extensions/utility", "extensions/wavetable", "tooling/test-clap-plugin", "tooling/test-plugin-support", "tooling/test-vst3-plugin", "tooling/workspace-rules"]
 resolver = "2"
 
 [workspace.package]
@@ -13,6 +13,7 @@ publish = false
 # `wayland` and `x11` are the window systems of Linux. Without them Linux opens no window.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "7c451e694f3c52ee0aeb01d7e28b5fa18cd0ad2f", features = ["runtime_shaders", "font-kit", "wayland", "x11"] }
+analyzer = { path = "extensions/analyzer" }
 arrangement = { path = "extensions/arrangement" }
 compressor = { path = "extensions/compressor" }
 delay = { path = "extensions/delay" }
@@ -153,6 +154,7 @@ lyon_path = { opt-level = 3 }
 lyon_geom = { opt-level = 3 }
 # Decodes FLAC samples of SFZ instruments when they load.
 claxon = { opt-level = 3 }
+analyzer = { opt-level = 3 }
 arrangement = { opt-level = 3 }
 compressor = { opt-level = 3 }
 delay = { opt-level = 3 }

@@ -28,6 +28,7 @@ icons!(
     "circle-check",
     "claude",
     "copy",
+    "device-analyzer",
     "device-compressor",
     "device-delay",
     "device-drum-pad",

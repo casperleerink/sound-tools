@@ -138,6 +138,7 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 /// Every bundled extension registers here.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
+    analyzer::register(&mut registry)?;
     arrangement::register(&mut registry)?;
     compressor::register(&mut registry)?;
     delay::register(&mut registry)?;
@@ -188,6 +189,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     delay::view::register(&mut views, &mut devices);
     reverb::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
+    analyzer::view::register(&mut views, &mut devices);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     // What the picker says under its offers: that the scan of this machine is still running,
     // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST
