@@ -20,12 +20,11 @@ pub(crate) enum Step {
     Loop(Box<[(Register, Operation)]>),
 }
 
-/// The steps that run `code` over a span. Each operation comes after what it reads, and
-/// otherwise as close to its own place as it can, so the order stays near the one the graph
-/// was written in.
-pub(crate) fn schedule(code: &Code) -> Box<[Step]> {
-    let edges = edges(code);
-    let (component_of, members) = components(&edges);
+/// The steps that run `code`, whose [`edges`] are `edges`, over a span. Each operation comes
+/// after what it reads, and otherwise as close to its own place as it can, so the order stays
+/// near the one the graph was written in.
+pub(crate) fn schedule(code: &Code, edges: &[Vec<usize>]) -> Box<[Step]> {
+    let (component_of, members) = components(edges);
     // How many edges into each component are from components not run yet.
     let mut waiting = vec![0_usize; members.len()];
     for (from, targets) in edges.iter().enumerate() {
@@ -83,18 +82,12 @@ pub(crate) fn schedule(code: &Code) -> Box<[Step]> {
     steps.into_boxed_slice()
 }
 
-/// The `steps` whose results differ between the channels of mono code: what reads the input or
-/// the index of its channel, a noise, whose seed is of its channel, and everything that hears
-/// them. The rest gives the same in both channels, so it runs once.
-pub(crate) fn per_channel(code: &Code, steps: &[Step]) -> Box<[Step]> {
-    let edges = edges(code);
+/// The `steps` whose results differ between the channels of mono code: what
+/// [varies by channel](varies_by_channel), and everything that hears it. The rest gives the same
+/// in both channels, so it runs once.
+pub(crate) fn per_channel(code: &Code, edges: &[Vec<usize>], steps: &[Step]) -> Box<[Step]> {
     let mut varies: Vec<bool> = (code.operations.iter())
-        .map(|operation| {
-            matches!(
-                operation,
-                Operation::Input | Operation::Channel | Operation::Noise { .. }
-            )
-        })
+        .map(|operation| varies_by_channel(*operation))
         .collect();
     let mut next: Vec<usize> = (varies.iter().enumerate())
         .filter_map(|(node, varies)| varies.then_some(node))
@@ -122,7 +115,7 @@ pub(crate) fn per_channel(code: &Code, steps: &[Step]) -> Box<[Step]> {
 
 /// For each operation, those that run after it: what reads it, the reads of a feedback it is
 /// the source of, and, in a ring, the next operation on its buffer.
-fn edges(code: &Code) -> Vec<Vec<usize>> {
+pub(crate) fn edges(code: &Code) -> Vec<Vec<usize>> {
     let count = code.operations.len();
     let mut edges = vec![Vec::new(); count];
     let mut add = |from: usize, to: usize| {
@@ -223,6 +216,46 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::History(_)
         | Operation::Noise { .. }
         | Operation::Length(_) => Vec::new(),
+    }
+}
+
+/// Whether `operation` gives each channel of mono code its own result whatever it reads: the
+/// input or the index of its channel, or a noise, whose seed is of its channel.
+fn varies_by_channel(operation: Operation) -> bool {
+    match operation {
+        Operation::Input | Operation::Channel | Operation::Noise { .. } => true,
+        Operation::Constant(_)
+        | Operation::InputLeft
+        | Operation::InputRight
+        | Operation::SampleRate
+        | Operation::Beat
+        | Operation::Bpm
+        | Operation::Playing
+        | Operation::Frequency
+        | Operation::Pitch
+        | Operation::Gate
+        | Operation::Velocity
+        | Operation::Onset
+        | Operation::Parameter(_)
+        | Operation::Live(_)
+        | Operation::Trigger(_)
+        | Operation::History(_)
+        | Operation::Unary(..)
+        | Operation::Binary(..)
+        | Operation::Clamp(..)
+        | Operation::Mix(..)
+        | Operation::Phasor { .. }
+        | Operation::Delay { .. }
+        | Operation::Filter { .. }
+        | Operation::Smooth { .. }
+        | Operation::Envelope { .. }
+        | Operation::Hold { .. }
+        | Operation::Rise { .. }
+        | Operation::Change { .. }
+        | Operation::Read { .. }
+        | Operation::Lookup { .. }
+        | Operation::Length(_)
+        | Operation::Write { .. } => false,
     }
 }
 

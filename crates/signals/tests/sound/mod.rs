@@ -84,6 +84,9 @@ impl Signal {
 pub(crate) fn input() -> Signal {
     node("input", &[])
 }
+pub(crate) fn channel() -> Signal {
+    node("channel", &[])
+}
 pub(crate) fn input_left() -> Signal {
     node("inputLeft", &[])
 }

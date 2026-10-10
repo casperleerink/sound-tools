@@ -312,6 +312,16 @@ fn rise_fires_once_when_a_value_goes_up_and_hold_keeps_it_until_the_next() {
 }
 
 #[test]
+fn mono_code_and_what_hears_it_run_with_the_index_of_each_channel() {
+    let mut panned = machine(compile(|| channel() * 0.5 + 0.25));
+    let block = defaults(&panned);
+    assert_eq!(
+        frame(&mut panned, &block, &[], Note::default()),
+        [0.25, 0.75]
+    );
+}
+
+#[test]
 fn stereo_code_hears_both_channels_and_sets_both() {
     let mut swap = machine(compile(|| (input_right(), input_left() * 0.5)));
     let mut block = defaults(&swap);

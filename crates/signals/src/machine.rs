@@ -189,29 +189,32 @@ impl Machine {
         let mut registers = vec![[0.0; MAX_BLOCK]; code.operations.len()];
         // The buffers of every channel are as long.
         let buffers = channels.first().map_or(&[][..], |memory| &memory.buffers);
-        let mut steps = program::schedule(&code).into_vec();
-        // What is the same in every frame for as long as the machine lives is set once, and is
-        // no step.
-        steps.retain(|step| {
-            let Step::Block(register) = step else {
-                return true;
-            };
-            let register = usize::from(*register);
-            let value = match code.operations.get(register) {
-                Some(Operation::Constant(value)) => *value,
-                Some(Operation::SampleRate) => sample_rate,
-                Some(Operation::Length(table @ Table::Buffer(_))) => {
-                    table_of(*table, &[], buffers).len() as f32
+        let edges = program::edges(&code);
+        let mut steps = Vec::new();
+        for step in program::schedule(&code, &edges) {
+            if let Step::Block(register) = step {
+                let register = usize::from(register);
+                // What is the same in every frame for as long as the machine lives is set once,
+                // and is no step.
+                let fixed = match code.operations.get(register) {
+                    Some(Operation::Constant(value)) => Some(*value),
+                    Some(Operation::SampleRate) => Some(sample_rate),
+                    Some(Operation::Length(table @ Table::Buffer(_))) => {
+                        Some(table_of(*table, &[], buffers).len() as f32)
+                    }
+                    _ => None,
+                };
+                if let Some(value) = fixed {
+                    if let Some(row) = registers.get_mut(register) {
+                        row.fill(value);
+                    }
+                    continue;
                 }
-                _ => return true,
-            };
-            if let Some(row) = registers.get_mut(register) {
-                row.fill(value);
             }
-            false
-        });
+            steps.push(step);
+        }
         Self {
-            per_channel: program::per_channel(&code, &steps),
+            per_channel: program::per_channel(&code, &edges, &steps),
             steps: steps.into_boxed_slice(),
             sample_rate,
             registers,
@@ -406,6 +409,7 @@ impl Span<'_> {
                 }
             }
             Operation::History(slot) => {
+                // A feedback set to its own read is in neither `before` nor `after`: it reads 0.
                 let source = self.feedbacks.get(usize::from(slot)).map(|source| {
                     let source = usize::from(*source);
                     match source.checked_sub(register + 1) {
