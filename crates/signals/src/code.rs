@@ -187,7 +187,7 @@ pub(crate) enum Operation {
     },
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Unary {
     Negate,
     Sin,
@@ -204,7 +204,7 @@ pub(crate) enum Unary {
     Saturate,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Binary {
     Add,
     Subtract,

@@ -17,7 +17,7 @@ use sound_core::{
 use crate::code::{
     Binary, Code, FilterKind, MAX_LIVES, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
 };
-use crate::program::{self, Step};
+use crate::program::{self, Run, Step};
 
 /// Where every knob and toggle stands, and every list of the record, in the order of the
 /// fields.
@@ -162,6 +162,34 @@ enum Stage {
     Decay,
     Sustain,
     Release,
+}
+
+/// `$body` for the formula `$op` of a unary operation, with `$kind` that formula: matched
+/// once, and `$body` compiled for each formula with its own constant.
+macro_rules! with_unary {
+    ($op:expr, $kind:ident => $body:expr) => {
+        with_kind!($op, $kind => $body, Unary: Negate, Sin, Cos, Tan, Tanh, Abs, Sqrt, Exp, Log,
+            Floor, Wrap, Decibels, Saturate)
+    };
+}
+
+/// As [`with_unary`], of a binary operation.
+macro_rules! with_binary {
+    ($op:expr, $kind:ident => $body:expr) => {
+        with_kind!($op, $kind => $body, Binary: Add, Subtract, Multiply, Divide, Remainder, Less,
+            Greater, LessOrEqual, GreaterOrEqual, Equal, NotEqual, Min, Max, Power)
+    };
+}
+
+macro_rules! with_kind {
+    ($op:expr, $kind:ident => $body:expr, $type:ident: $($variant:ident),*) => {
+        match $op {
+            $($type::$variant => {
+                let $kind = $type::$variant;
+                $body
+            })*
+        }
+    };
 }
 
 impl Machine {
@@ -603,14 +631,15 @@ impl Span<'_> {
     #[inline(never)]
     fn run_loop(
         &self,
-        looped: &[(Register, Operation)],
+        looped: &[Run],
         frames: Range<usize>,
         registers: &mut [[f32; MAX_BLOCK]],
         memory: &mut Memory,
     ) {
-        for frame in frames {
-            for (register, operation) in looped {
-                self.step(*operation, usize::from(*register), frame, registers, memory);
+        // No frame is past a block, which the compiler then knows: it checks no frame of a row.
+        for frame in frames.start..frames.end.min(MAX_BLOCK) {
+            for run in looped {
+                self.run_formula(run, frame, registers, memory);
             }
         }
     }
@@ -673,25 +702,86 @@ impl Span<'_> {
         }
     }
 
-    /// Runs `operation`, whose register is `register`, in one `frame`, from what the registers
-    /// hold in it: how a loop runs it, every operation in turn in each frame. With the formulas
-    /// of [`Self::run`], so a loop gives what the span would. Inlined, so a loop is one function.
+    /// Runs `run`, operations of one formula, in one `frame`, in their order. The formula is
+    /// matched once for the run, and [`Self::step`] is compiled for each formula on its own.
     #[inline(always)]
-    fn step(
+    fn run_formula(
         &self,
-        operation: Operation,
-        register: usize,
+        run: &[(Register, Operation)],
         frame: usize,
         registers: &mut [[f32; MAX_BLOCK]],
         memory: &mut Memory,
     ) {
+        // Every operation of a run has the formula of the first, so it matches `$pattern`.
+        macro_rules! each {
+            ($pattern:pat => $operation:expr) => {
+                for (register, operation) in run {
+                    match *operation {
+                        $pattern => {
+                            let value = self.step($operation, *register, frame, registers, memory);
+                            let row = registers.get_mut(usize::from(*register));
+                            if let Some(out) = row.and_then(|row| row.get_mut(frame)) {
+                                *out = value;
+                            }
+                        }
+                        #[allow(unreachable_patterns)]
+                        _ => {}
+                    }
+                }
+            };
+        }
+        let Some((_, first)) = run.first() else {
+            return;
+        };
+        match *first {
+            Operation::Unary(op, _) => with_unary!(op, kind => {
+                each!(Operation::Unary(_, x) => Operation::Unary(kind, x))
+            }),
+            Operation::Binary(op, ..) => with_binary!(op, kind => {
+                each!(Operation::Binary(_, a, b) => Operation::Binary(kind, a, b))
+            }),
+            Operation::History(_) => each!(operation @ Operation::History(_) => operation),
+            Operation::Clamp(..) => each!(operation @ Operation::Clamp(..) => operation),
+            Operation::Mix(..) => each!(operation @ Operation::Mix(..) => operation),
+            Operation::Phasor { .. } => each!(operation @ Operation::Phasor { .. } => operation),
+            Operation::Delay { .. } => each!(operation @ Operation::Delay { .. } => operation),
+            Operation::Filter { .. } => each!(operation @ Operation::Filter { .. } => operation),
+            Operation::Smooth { .. } => each!(operation @ Operation::Smooth { .. } => operation),
+            Operation::Envelope { .. } => {
+                each!(operation @ Operation::Envelope { .. } => operation);
+            }
+            Operation::Hold { .. } => each!(operation @ Operation::Hold { .. } => operation),
+            Operation::Rise { .. } => each!(operation @ Operation::Rise { .. } => operation),
+            Operation::Change { .. } => each!(operation @ Operation::Change { .. } => operation),
+            Operation::Read { .. } => each!(operation @ Operation::Read { .. } => operation),
+            Operation::Lookup { .. } => each!(operation @ Operation::Lookup { .. } => operation),
+            Operation::Write { .. } => each!(operation @ Operation::Write { .. } => operation),
+            // In no loop, see `step`.
+            _ => each!(operation => operation),
+        }
+    }
+
+    /// What `operation`, whose register is `register`, gives in one `frame`, from what the
+    /// registers hold in it: how a loop runs it, every operation in turn in each frame. With the
+    /// formulas of [`Self::run`], so a loop gives what the span would. Inlined, so a loop is one
+    /// function.
+    #[inline(always)]
+    fn step(
+        &self,
+        operation: Operation,
+        register: Register,
+        frame: usize,
+        registers: &[[f32; MAX_BLOCK]],
+        memory: &mut Memory,
+    ) -> f32 {
         let at = |register: Register| value_at(registers, register, frame);
         let sample_rate = self.sample_rate;
-        let value = match operation {
+        match operation {
+            // The source of a feedback in a loop is in it too, and puts each frame in its row,
+            // where this reads the frame before. As in `run`, one set to its own read reads 0.
             Operation::History(slot) => {
-                // As in `run`, a feedback set to its own read reads 0.
                 let source = (self.feedbacks.get(usize::from(slot)))
-                    .filter(|source| usize::from(**source) != register)
+                    .filter(|source| **source != register)
                     .and_then(|source| registers.get(usize::from(*source)));
                 self.heard(frame, slot, &memory.histories, source)
             }
@@ -774,14 +864,8 @@ impl Span<'_> {
             | Operation::Noise { .. }
             | Operation::Length(_) => {
                 debug_assert!(false, "an operation that reads nothing is in a loop");
-                return;
+                0.0
             }
-        };
-        if let Some(out) = registers
-            .get_mut(register)
-            .and_then(|row| row.get_mut(frame))
-        {
-            *out = value;
         }
     }
 
@@ -1061,43 +1145,12 @@ fn binary(op: Binary, a: f32, b: f32) -> f32 {
 
 /// `op` over a span, matched once, so each loop over the frames is of one formula.
 fn apply_unary(op: Unary, out: &mut [f32], x: &[f32]) {
-    macro_rules! each {
-        ($($kind:ident),*) => {
-            match op {
-                $(Unary::$kind => map(out, x, |x| unary(Unary::$kind, x)),)*
-            }
-        };
-    }
-    each!(
-        Negate, Sin, Cos, Tan, Tanh, Abs, Sqrt, Exp, Log, Floor, Wrap, Decibels, Saturate
-    );
+    with_unary!(op, kind => map(out, x, |x| unary(kind, x)));
 }
 
 /// `op` over a span, matched once, so each loop over the frames is of one formula.
 fn apply_binary(op: Binary, out: &mut [f32], a: &[f32], b: &[f32]) {
-    macro_rules! each {
-        ($($kind:ident),*) => {
-            match op {
-                $(Binary::$kind => map2(out, a, b, |a, b| binary(Binary::$kind, a, b)),)*
-            }
-        };
-    }
-    each!(
-        Add,
-        Subtract,
-        Multiply,
-        Divide,
-        Remainder,
-        Less,
-        Greater,
-        LessOrEqual,
-        GreaterOrEqual,
-        Equal,
-        NotEqual,
-        Min,
-        Max,
-        Power
-    );
+    with_binary!(op, kind => map2(out, a, b, |a, b| binary(kind, a, b)));
 }
 
 #[inline(always)]

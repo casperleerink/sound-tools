@@ -9,7 +9,8 @@
 //!
 //! A loop is bound by the chain from one frame to the next, not by its count of operations.
 //! Loops that hear nothing of each other run in one pass over the frames, so the processor
-//! works on their chains side by side.
+//! works on their chains side by side. Loops of the same formulas, such as those a tool makes
+//! in a `for`, take turns an operation each, so a frame matches each formula once for all.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -21,8 +22,61 @@ pub(crate) enum Step {
     /// One operation over the whole span.
     Block(Register),
     /// Operations in their order, frame by frame: of one loop, or of loops that hear nothing
-    /// of each other, one after the other.
-    Loop(Box<[(Register, Operation)]>),
+    /// of each other. Cut in [`runs`].
+    Loop(Box<[Run]>),
+}
+
+/// Operations of a loop next to each other with the same formula: a frame matches the formula
+/// once for all of them.
+pub(crate) type Run = Box<[(Register, Operation)]>;
+
+fn runs(operations: &[(Register, Operation)]) -> Box<[Run]> {
+    (operations.chunk_by(|(_, a), (_, b)| same_formula(*a, *b)))
+        .map(Box::from)
+        .collect()
+}
+
+/// Whether `a` and `b` work out their values by the same formula: the same kind of operation,
+/// and for a unary or a binary one, the same of those.
+fn same_formula(a: Operation, b: Operation) -> bool {
+    match (a, b) {
+        (Operation::Unary(a, _), Operation::Unary(b, _)) => a == b,
+        (Operation::Binary(a, ..), Operation::Binary(b, ..)) => a == b,
+        _ => std::mem::discriminant(&a) == std::mem::discriminant(&b),
+    }
+}
+
+/// The operations of `loops`, which hear nothing of each other, in an order that runs each in
+/// its own: loops of the same formulas in the same order take turns, an operation each, so
+/// each formula is one run for all of them.
+fn interleaved(loops: Vec<Vec<(Register, Operation)>>) -> Vec<(Register, Operation)> {
+    let same_shape = |a: &[(Register, Operation)], b: &[(Register, Operation)]| {
+        a.len() == b.len() && (a.iter().zip(b)).all(|((_, a), (_, b))| same_formula(*a, *b))
+    };
+    let mut shapes: Vec<Vec<Vec<(Register, Operation)>>> = Vec::new();
+    for operations in loops {
+        let shape = (shapes.iter_mut()).find(|shape| {
+            shape
+                .first()
+                .is_some_and(|first| same_shape(first, &operations))
+        });
+        match shape {
+            Some(shape) => shape.push(operations),
+            None => shapes.push(vec![operations]),
+        }
+    }
+    let mut operations = Vec::new();
+    for shape in shapes {
+        let length = shape.first().map_or(0, Vec::len);
+        for position in 0..length {
+            operations.extend(
+                shape
+                    .iter()
+                    .filter_map(|operations| operations.get(position)),
+            );
+        }
+    }
+    operations
 }
 
 /// The steps that run `code`, whose [`edges`] are `edges`, over a span. Each operation comes
@@ -93,14 +147,17 @@ pub(crate) fn schedule(code: &Code, edges: &[Vec<usize>]) -> Box<[Step]> {
     order.sort_by_key(|(stage, _)| *stage);
     let mut steps = Vec::new();
     for stage in order.chunk_by(|a, b| a.0 == b.0) {
-        let nodes = stage.iter().flat_map(|(_, nodes)| nodes.iter());
         if stage.first().is_some_and(|(stage, _)| stage % 2 == 1) {
-            steps.push(Step::Loop(
-                nodes
-                    .filter_map(|node| Some((*node as Register, *code.operations.get(*node)?)))
-                    .collect(),
-            ));
+            let loops = (stage.iter())
+                .map(|(_, nodes)| {
+                    (nodes.iter())
+                        .filter_map(|node| Some((*node as Register, *code.operations.get(*node)?)))
+                        .collect()
+                })
+                .collect();
+            steps.push(Step::Loop(runs(&interleaved(loops))));
         } else {
+            let nodes = stage.iter().flat_map(|(_, nodes)| nodes.iter());
             steps.extend(nodes.map(|node| Step::Block(*node as Register)));
         }
     }
@@ -133,11 +190,11 @@ pub(crate) fn per_channel(code: &Code, edges: &[Vec<usize>], steps: &[Step]) -> 
             Step::Block(register) => varies(register).then_some(step.clone()),
             // All in one loop hear each other, so each loop of the step stays whole or goes.
             Step::Loop(looped) => {
-                let looped: Box<[_]> = (looped.iter())
+                let operations: Vec<_> = (looped.iter().flatten())
                     .filter(|(register, _)| varies(register))
                     .copied()
                     .collect();
-                (!looped.is_empty()).then_some(Step::Loop(looped))
+                (!operations.is_empty()).then(|| Step::Loop(runs(&operations)))
             }
         })
         .collect()

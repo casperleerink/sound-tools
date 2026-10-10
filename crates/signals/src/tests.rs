@@ -235,6 +235,33 @@ fn a_loop_that_hears_another_loop_hears_it_in_the_same_frame() {
 }
 
 #[test]
+fn loops_of_the_same_formulas_take_turns_and_each_hears_only_itself() {
+    // As a tool makes them in a `for`.
+    let again = [0.5, 0.25, -0.75];
+    let mut echoes = machine(compile(|| {
+        let [first, second, third] = again.map(|again| {
+            let echo = feedback();
+            let wet = input() + echo.read() * again;
+            echo.set(wet);
+            wet
+        });
+        first + second + third
+    }));
+    let click = |frame: usize| if frame.is_multiple_of(7) { 0.25 } else { 0.0 };
+    let [output, _] = render_in_spans(&mut echoes, click, 2, MAX_BLOCK);
+    let mut wet = [0.0_f32; 3];
+    let expected: Vec<f32> = (0..output.len())
+        .map(|frame| {
+            for (wet, again) in wet.iter_mut().zip(again) {
+                *wet = click(frame) + *wet * again;
+            }
+            wet[0] + wet[1] + wet[2]
+        })
+        .collect();
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn a_buffer_read_hears_a_write_before_it_in_the_same_frame_and_one_after_it_a_frame_later() {
     let ramp = |frame: usize| frame as f32 * 0.01;
     let mut write_first = machine(compile(|| {
