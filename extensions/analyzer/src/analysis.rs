@@ -24,6 +24,10 @@ const BAND_OCTAVES: f64 = 1.0 / 6.0;
 /// A sine of amplitude `a` has a mean square of `a * a / 2`. Times this, it reads its peak level
 /// in dBFS.
 const SINE: f64 = 2.0;
+/// Longer than any gap between two device buffers, see [`Analysis::hear_silence`].
+const SILENT_AFTER_SECONDS: f32 = 0.1;
+/// Silence to hear, a piece at a time.
+const SILENCE: [[f32; 2]; 1024] = [[0.0; 2]; 1024];
 
 /// What the card shows, besides the peaks.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,10 +57,14 @@ pub(crate) fn tuning(note: f64) -> (String, i64) {
 }
 
 pub(crate) struct Analysis {
-    /// The last [`WINDOW`] frames, both channels mixed, oldest first.
-    history: Vec<f32>,
+    rate: f32,
+    /// The last [`WINDOW`] frames of each channel, oldest first.
+    history: [Vec<f32>; 2],
     /// Whether frames came since the last look: else the history is as it was.
     heard: bool,
+    /// Seconds since frames last came, and the frames of silence heard since.
+    waiting: f32,
+    silence: usize,
     /// The power of each bin of the history, and the bins of the band of each column.
     bins: Vec<f64>,
     columns: Vec<Range<usize>>,
@@ -86,8 +94,11 @@ impl Analysis {
             })
             .collect();
         Self {
-            history: vec![0.0; WINDOW],
+            rate: rate as f32,
+            history: [vec![0.0; WINDOW], vec![0.0; WINDOW]],
             heard: false,
+            waiting: 0.0,
+            silence: 0,
             bins: vec![0.0; bins],
             columns,
             power: PowerSpectrum::new(),
@@ -105,36 +116,68 @@ impl Analysis {
 
     /// Hears the frames that came since the last call.
     pub(crate) fn hear(&mut self, frames: &[[f32; 2]]) {
-        if frames.is_empty() {
-            return;
+        if !frames.is_empty() {
+            (self.waiting, self.silence) = (0.0, 0);
+            self.take(frames);
         }
+    }
+
+    fn take(&mut self, frames: &[[f32; 2]]) {
         for frame in frames {
             if let (_, Some(power)) = self.momentary.push(*frame) {
                 self.reading.loudness = lufs(power).map(|loudness| loudness as f32);
             }
         }
         let new = frames.len().min(WINDOW);
-        self.history.copy_within(new.., 0);
         let frames = frames.iter().skip(frames.len() - new);
-        for (slot, [left, right]) in self.history.iter_mut().skip(WINDOW - new).zip(frames) {
-            *slot = (left + right) / 2.0;
+        for (channel, history) in self.history.iter_mut().enumerate() {
+            history.copy_within(new.., 0);
+            let samples = frames.clone().filter_map(|frame| frame.get(channel));
+            for (slot, sample) in history.iter_mut().skip(WINDOW - new).zip(samples) {
+                *slot = *sample;
+            }
         }
         self.heard = true;
+    }
+
+    /// The analyzer writes no silence, so frames that stop coming are silence: once none came
+    /// for [`SILENT_AFTER_SECONDS`], the card hears silence for the time that passes, until a
+    /// second of it has emptied the history and the loudness.
+    fn hear_silence(&mut self, seconds: f32) {
+        self.waiting += seconds;
+        if self.waiting < SILENT_AFTER_SECONDS || self.silence >= self.rate as usize {
+            return;
+        }
+        let mut frames = (seconds * self.rate) as usize;
+        self.silence += frames;
+        while frames > 0 {
+            let silence = SILENCE.get(..frames.min(SILENCE.len())).unwrap_or_default();
+            frames -= silence.len();
+            self.take(silence);
+        }
     }
 
     /// The spectrum and the note of the last frames heard, `seconds` after the last look.
     /// Whether that changed the reading.
     pub(crate) fn look(&mut self, seconds: f32) -> bool {
         let before = self.reading.clone();
+        if !self.heard {
+            self.hear_silence(seconds);
+        }
         // A history that did not change has the bins and the pitch it had.
         if std::mem::take(&mut self.heard) {
-            for (bin, power) in self.bins.iter_mut().zip(self.power.powers(&self.history)) {
-                *bin = power;
+            self.bins.fill(0.0);
+            // The power of both channels, so sounds that cancel in a mix still show.
+            for history in &self.history {
+                for (bin, power) in self.bins.iter_mut().zip(self.power.powers(history)) {
+                    *bin += power / 2.0;
+                }
             }
-            let last = self.history.get(WINDOW - self.pitch.length()..);
-            let last = last.unwrap_or_default();
-            // Both channels are the mix already.
-            self.found = self.pitch.find(last, last);
+            let [left, right] = self.history.each_ref().map(|history| {
+                let last = history.get(WINDOW - self.pitch.length()..);
+                last.unwrap_or_default()
+            });
+            self.found = self.pitch.find(left, right);
         }
         let fall = FALL_DB_PER_SECOND * seconds;
         for (shown, bins) in self.reading.spectrum.iter_mut().zip(&self.columns) {
@@ -174,6 +217,11 @@ mod tests {
         (0..frames).map(|frame| [value(frame); 2]).collect()
     }
 
+    fn loudest_column(analysis: &Analysis) -> (usize, f32) {
+        let spectrum = analysis.reading.spectrum.iter().copied().enumerate();
+        spectrum.max_by(|(_, a), (_, b)| a.total_cmp(b)).unwrap()
+    }
+
     /// Hears `frames` in pieces of one poll and looks after each, as the card does.
     fn analyse(frames: &[[f32; 2]]) -> Analysis {
         let mut analysis = Analysis::new(RATE);
@@ -205,21 +253,29 @@ mod tests {
     #[test]
     fn a_sine_peaks_at_its_level_in_its_column_and_the_spectrum_falls_to_rest() {
         let mut analysis = analyse(&sine(1_000.0, 0.5, 0.5));
-        let spectrum = analysis.reading.spectrum;
-        let (loudest, db) = (spectrum.iter().enumerate())
-            .max_by(|(_, a), (_, b)| a.total_cmp(b))
-            .unwrap();
+        let (loudest, db) = loudest_column(&analysis);
         // -6 dBFS.
-        assert!((-6.3..=-5.9).contains(db), "{db}");
+        assert!((-6.3..=-5.9).contains(&db), "{db}");
         let column = (RESPONSE_ACROSS.position(1_000.0) * COLUMNS as f32) as usize;
         assert!(loudest.abs_diff(column) <= 1, "{loudest} is not {column}");
-        assert!(spectrum[column / 2] < -60.0, "{spectrum:?}");
-        // Silence: the note goes, the columns fall and come to rest at the floor.
-        analysis.hear(&vec![[0.0; 2]; RATE as usize / 2]);
+        assert!(analysis.reading.spectrum[column / 2] < -60.0);
+        // The analyzer writes no silence: frames that stop are silence. The note and the
+        // loudness go, the columns fall to the floor, and the card comes to rest.
         for _ in 0..240 {
             analysis.look(1.0 / 60.0);
         }
         assert_eq!(analysis.reading, Reading::default());
         assert!(!analysis.look(1.0 / 60.0));
+    }
+
+    /// The two channels upside down to each other cancel in a mix, and still show.
+    #[test]
+    fn a_sound_whose_channels_cancel_shows_at_its_level() {
+        let mut opposite = sine(1_000.0, 0.5, 0.5);
+        for frame in &mut opposite {
+            frame[1] = -frame[0];
+        }
+        let (_, db) = loudest_column(&analyse(&opposite));
+        assert!((-6.3..=-5.9).contains(&db), "{db}");
     }
 }

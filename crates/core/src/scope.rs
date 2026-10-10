@@ -61,9 +61,9 @@ impl Scope {
         ring.written.store(start + frames, Ordering::Release);
     }
 
-    /// Appends to `into` the frames written since `from`, a count [`Self::read`] gave before or
-    /// 0, oldest first. Gives the count to read from next time. Frames written over before they
-    /// were read are left out.
+    /// Appends to `into` the frames written since `from`, a count [`Self::read`] gave before, 0,
+    /// or `u64::MAX` for none, oldest first. Gives the count to read from next time. Frames
+    /// written over before they were read are left out.
     pub fn read(&self, from: u64, into: &mut Vec<[f32; CHANNELS]>) -> u64 {
         let ring = &self.0;
         let written = ring.written.load(Ordering::Acquire);

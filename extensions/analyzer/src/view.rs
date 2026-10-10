@@ -67,13 +67,21 @@ impl AnalyzerView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let sample_rate = session.read(cx).project().sample_rate();
+        let project = session.read(cx).project();
+        let sample_rate = project.sample_rate();
+        // What the analyzer heard before this card was made, such as before its last silence,
+        // is not what it hears now: read from the end.
+        let read = project.scope(analyzer.id(), Analyzer::SCOPE);
+        let read = read.map_or(0, |scope| scope.read(u64::MAX, &mut Vec::new()));
+        if let Some(peaks) = project.peaks(analyzer.id(), Analyzer::PEAKS) {
+            peaks.take();
+        }
         Self {
             session,
             analyzer,
             frame,
             analysis: Analysis::new(sample_rate),
-            read: 0,
+            read,
             frames: Vec::new(),
             metering: Metering::default(),
             _polling: every_poll(cx, Self::poll),
