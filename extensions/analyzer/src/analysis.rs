@@ -15,9 +15,12 @@ pub(crate) const FLOOR_DB: f32 = -90.0;
 const FALL_DB_PER_SECOND: f32 = 30.0;
 /// How long a note stays once the sound has none, so it does not blink between notes.
 const NOTE_HOLD_SECONDS: f32 = 0.3;
-/// Under a Hann window a sine of amplitude `a` puts `a * a / 3` in the bin it is on, its mirror
-/// image included. Times this, a sine reads its peak level in dBFS.
-const SINE_IN_A_BIN: f64 = 3.0;
+/// Each column is the power of a band a sixth of an octave wide around its frequency, so the
+/// harmonics of a high note read as one calm line and not as a comb.
+const BAND_OCTAVES: f64 = 1.0 / 6.0;
+/// A sine of amplitude `a` has a mean square of `a * a / 2`. Times this, it reads its peak level
+/// in dBFS.
+const SINE: f64 = 2.0;
 
 /// What the card shows, besides the peaks.
 #[derive(Clone, Debug, PartialEq)]
@@ -65,7 +68,7 @@ pub(crate) struct Analysis {
     /// Both channels of the history mixed, and the power of each bin of it.
     mid: Vec<f32>,
     bins: Vec<f64>,
-    /// The bins of each column of the spectrum.
+    /// The bins of the band of each column of the spectrum.
     columns: Vec<Range<usize>>,
     power: PowerSpectrum,
     pitch: PitchFinder,
@@ -82,14 +85,13 @@ impl Analysis {
         let rate = f64::from(sample_rate);
         let bin_hz = rate / WINDOW as f64;
         let bins = WINDOW / 2 + 1;
-        let edge = |column: usize| {
-            let hz = RESPONSE_ACROSS.value(column as f32 / COLUMNS as f32);
-            f64::from(hz) / bin_hz
-        };
+        let edge = 2_f64.powf(BAND_OCTAVES / 2.0);
         let columns = (0..COLUMNS)
             .map(|column| {
-                let start = (edge(column).floor() as usize).min(bins - 1);
-                let end = (edge(column + 1).ceil() as usize).clamp(start + 1, bins);
+                let middle = RESPONSE_ACROSS.value((column as f32 + 0.5) / COLUMNS as f32);
+                let middle = f64::from(middle) / bin_hz;
+                let start = ((middle / edge).round() as usize).min(bins - 1);
+                let end = ((middle * edge).round() as usize + 1).clamp(start + 1, bins);
                 start..end
             })
             .collect();
@@ -144,11 +146,8 @@ impl Analysis {
         }
         let fall = FALL_DB_PER_SECOND * seconds;
         for (shown, bins) in self.reading.spectrum.iter_mut().zip(&self.columns) {
-            let bins = self.bins.get(bins.clone()).unwrap_or_default();
-            let power = bins
-                .iter()
-                .fold(0.0_f64, |loudest, power| loudest.max(*power));
-            let db = (10.0 * (SINE_IN_A_BIN * power).log10()) as f32;
+            let power: f64 = self.bins.get(bins.clone()).unwrap_or_default().iter().sum();
+            let db = (10.0 * (SINE * power).log10()) as f32;
             *shown = db.max(*shown - fall).max(FLOOR_DB);
         }
         let length = self.pitch.length();
@@ -227,8 +226,8 @@ mod tests {
         let (loudest, db) = (spectrum.iter().enumerate())
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .unwrap();
-        // -6 dBFS, less what the window loses between two bins.
-        assert!((-7.5..=-5.9).contains(db), "{db}");
+        // -6 dBFS.
+        assert!((-6.3..=-5.9).contains(db), "{db}");
         let column = (RESPONSE_ACROSS.position(1_000.0) * COLUMNS as f32) as usize;
         assert!(loudest.abs_diff(column) <= 1, "{loudest} is not {column}");
         assert!(spectrum[column / 2] < -60.0, "{spectrum:?}");
