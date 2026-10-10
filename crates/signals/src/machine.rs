@@ -54,6 +54,10 @@ pub(crate) struct Block {
     pub(crate) input: Frames,
     pub(crate) parameters: [[f32; MAX_BLOCK]; MAX_PARAMETERS],
     pub(crate) lives: [[f32; MAX_BLOCK]; MAX_LIVES],
+    /// One bit per param, and per live control, whose row is one value in every frame of the
+    /// block: it does not glide.
+    pub(crate) steady_parameters: u32,
+    pub(crate) steady_lives: u32,
     /// One bit per trigger, set in the frame it fires.
     pub(crate) triggers: [u32; MAX_BLOCK],
     pub(crate) beat: [f32; MAX_BLOCK],
@@ -67,6 +71,8 @@ impl Block {
             input: [[0.0; MAX_BLOCK]; CHANNELS],
             parameters: [[0.0; MAX_BLOCK]; MAX_PARAMETERS],
             lives: [[0.0; MAX_BLOCK]; MAX_LIVES],
+            steady_parameters: 0,
+            steady_lives: 0,
             triggers: [0; MAX_BLOCK],
             beat: [0.0; MAX_BLOCK],
             bpm: 0.0,
@@ -93,6 +99,9 @@ pub struct Machine {
     /// What each operation gave in each frame of the span: of the left channel, and then of the
     /// right where it differs.
     registers: Vec<[f32; MAX_BLOCK]>,
+    /// The value a register holds in every frame of its row, where it holds one. A step that
+    /// gives one value over a span works it out once, and fills the row only when it differs.
+    filled: Vec<Option<f32>>,
     channels: [Memory; CHANNELS],
     /// Where the delays write the first frame of the next span.
     position: usize,
@@ -187,6 +196,7 @@ impl Machine {
                 .collect(),
         });
         let mut registers = vec![[0.0; MAX_BLOCK]; code.operations.len()];
+        let mut filled = vec![None; code.operations.len()];
         // The buffers of every channel are as long.
         let buffers = channels.first().map_or(&[][..], |memory| &memory.buffers);
         let edges = program::edges(&code);
@@ -205,9 +215,7 @@ impl Machine {
                     _ => None,
                 };
                 if let Some(value) = fixed {
-                    if let Some(row) = registers.get_mut(register) {
-                        row.fill(value);
-                    }
+                    fill(&mut registers, &mut filled, register, value);
                     continue;
                 }
             }
@@ -218,6 +226,7 @@ impl Machine {
             steps: steps.into_boxed_slice(),
             sample_rate,
             registers,
+            filled,
             channels,
             position: 0,
             watched: vec![0.0; code.watches.len()],
@@ -283,6 +292,7 @@ impl Machine {
             per_channel,
             sample_rate,
             registers,
+            filled,
             channels,
             position,
             ..
@@ -306,8 +316,17 @@ impl Machine {
             match step {
                 Step::Block(register) => {
                     let register = usize::from(*register);
-                    if let Some(operation) = operations.get(register) {
-                        span.run(*operation, register, frames.clone(), registers, memory);
+                    let Some(operation) = operations.get(register) else {
+                        continue;
+                    };
+                    match span.steady(*operation, filled, &memory.buffers) {
+                        Some(value) => fill(registers, filled, register, value),
+                        None => {
+                            span.run(*operation, register, frames.clone(), registers, memory);
+                            if let Some(filled) = filled.get_mut(register) {
+                                *filled = None;
+                            }
+                        }
                     }
                 }
                 Step::Loop(looped) => {
@@ -562,6 +581,64 @@ impl Span<'_> {
         }
     }
 
+    /// The value `operation` gives in every frame of the span, where it gives one: when what it
+    /// reads is one value over the span, as a note is, a param that does not glide, or a
+    /// register that is [`Machine::filled`]. By the formula it runs with over a span, on the
+    /// same values, so it gives what running it over the span would.
+    fn steady(
+        &self,
+        operation: Operation,
+        filled: &[Option<f32>],
+        buffers: &[Vec<f32>],
+    ) -> Option<f32> {
+        let one = |register: Register| filled.get(usize::from(register)).copied().flatten();
+        let block = self.block;
+        let row_of = |rows: &[[f32; MAX_BLOCK]], steady: u32, index: u16| {
+            let steady = steady.checked_shr(u32::from(index)).unwrap_or(0) & 1 == 1;
+            steady.then(|| value_at(rows, index, self.first))
+        };
+        match operation {
+            Operation::Constant(value) => Some(value),
+            Operation::Channel => Some(self.channel as f32),
+            Operation::SampleRate => Some(self.sample_rate),
+            Operation::Bpm => Some(block.bpm),
+            Operation::Playing => Some(truth(block.playing)),
+            Operation::Frequency => Some(self.note.frequency),
+            Operation::Pitch => Some(self.note.pitch),
+            Operation::Gate => Some(truth(self.note.gate)),
+            Operation::Velocity => Some(self.note.velocity),
+            Operation::Parameter(index) => {
+                row_of(&block.parameters, block.steady_parameters, index)
+            }
+            Operation::Live(index) => row_of(&block.lives, block.steady_lives, index),
+            Operation::Length(table) => Some(table_of(table, self.arrays, buffers).len() as f32),
+            Operation::Unary(op, x) => Some(unary(op, one(x)?)),
+            Operation::Binary(op, a, b) => Some(binary(op, one(a)?, one(b)?)),
+            Operation::Clamp(x, low, high) => Some(clamp(one(x)?, one(low)?, one(high)?)),
+            Operation::Mix(a, b, amount) => Some(mix(one(a)?, one(b)?, one(amount)?)),
+            // What moves within a span, or keeps a memory.
+            Operation::Input
+            | Operation::InputLeft
+            | Operation::InputRight
+            | Operation::Beat
+            | Operation::Onset
+            | Operation::Trigger(_)
+            | Operation::History(_)
+            | Operation::Phasor { .. }
+            | Operation::Noise { .. }
+            | Operation::Delay { .. }
+            | Operation::Filter { .. }
+            | Operation::Smooth { .. }
+            | Operation::Envelope { .. }
+            | Operation::Hold { .. }
+            | Operation::Rise { .. }
+            | Operation::Change { .. }
+            | Operation::Read { .. }
+            | Operation::Lookup { .. }
+            | Operation::Write { .. } => None,
+        }
+    }
+
     /// Runs `operation`, whose register is `register`, in one `frame`, from what the registers
     /// hold in it: how a loop runs it, every operation in turn in each frame. With the formulas
     /// of [`Self::run`], so a loop gives what the span would. Inlined, so a loop is one function.
@@ -721,6 +798,21 @@ fn row<'a>(rows: &'a [[f32; MAX_BLOCK]], index: usize, frames: &Range<usize>) ->
     match rows.get(index) {
         Some(samples) => part(samples, frames),
         None => part(&ZEROS, frames),
+    }
+}
+
+/// `value` in every frame of the row of `register`, unless it holds that already.
+fn fill(
+    registers: &mut [[f32; MAX_BLOCK]],
+    filled: &mut [Option<f32>],
+    register: usize,
+    value: f32,
+) {
+    if let (Some(row), Some(filled)) = (registers.get_mut(register), filled.get_mut(register))
+        && filled.map(f32::to_bits) != Some(value.to_bits())
+    {
+        row.fill(value);
+        *filled = Some(value);
     }
 }
 

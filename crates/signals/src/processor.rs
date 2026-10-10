@@ -391,6 +391,41 @@ fn hold_rows(rows: &mut [[f32; MAX_BLOCK]], values: &[Smoothed], range: Range<us
     }
 }
 
+/// Moves the first `count` of `rows` along the glide of their param or live control over
+/// `frames`, and gives a bit for each row that is one value in all of them. The rows past
+/// `count` are: nothing moves them after [`hold_rows`].
+fn advance_rows(
+    rows: &mut [[f32; MAX_BLOCK]],
+    values: &mut [Smoothed],
+    count: usize,
+    frames: usize,
+) -> u32 {
+    let mut steady = u32::MAX;
+    for (index, (row, value)) in rows.iter_mut().zip(values).take(count).enumerate() {
+        let row = row.get_mut(..frames).unwrap_or_default();
+        // Frame by frame: a glide moved by `n` frames at once rounds otherwise. A frame that
+        // gives what the one before gave leaves the glide as it found it, so every frame after
+        // gives that too.
+        let mut settled = row.len();
+        let mut before = None;
+        for (frame, current) in row.iter_mut().enumerate() {
+            *current = value.advance(1);
+            if before == Some(current.to_bits()) {
+                settled = frame;
+                break;
+            }
+            before = Some(current.to_bits());
+        }
+        if let Some((kept, rest)) = row.get_mut(settled..).and_then(<[f32]>::split_first_mut) {
+            rest.fill(*kept);
+        }
+        if settled > 1 {
+            steady &= !(1 << index);
+        }
+    }
+    steady
+}
+
 fn velocity_of(velocity: Velocity) -> f32 {
     f32::from(velocity.value()) / 127.0
 }
@@ -536,14 +571,13 @@ impl Signals {
             }
         }
         let (parameters, lives) = self.counts;
-        let rows = (block.parameters.iter_mut().zip(&mut self.parameters)).take(parameters);
-        let rows = rows.chain((block.lives.iter_mut().zip(&mut self.lives)).take(lives));
-        for (row, value) in rows {
-            // Frame by frame: a glide moved by `n` frames at once rounds otherwise.
-            for current in row.iter_mut().take(frames) {
-                *current = value.advance(1);
-            }
-        }
+        block.steady_parameters = advance_rows(
+            &mut block.parameters,
+            &mut self.parameters,
+            parameters,
+            frames,
+        );
+        block.steady_lives = advance_rows(&mut block.lives, &mut self.lives, lives, frames);
         for beat in block.beat.iter_mut().take(frames) {
             *beat = self.beat as f32;
             if playing {
