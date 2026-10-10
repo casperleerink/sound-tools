@@ -7,8 +7,9 @@ use serde_json::json;
 #[path = "../tests/sound/mod.rs"]
 mod sound;
 
-use crate::code::MAX_PARAMETERS;
-use crate::machine::{Inputs, Machine, Note};
+use sound_core::MAX_BLOCK;
+
+use crate::machine::{Block, Inputs, Machine, Note};
 use crate::{Code, Declarations, Graph};
 use sound::*;
 
@@ -18,13 +19,25 @@ fn machine(code: Code) -> Machine {
     Machine::new(code, SAMPLE_RATE)
 }
 
-/// Every param at its default.
-fn defaults(machine: &Machine) -> [f32; MAX_PARAMETERS] {
-    let mut values = [0.0; MAX_PARAMETERS];
-    for (value, parameter) in values.iter_mut().zip(&machine.code().parameters) {
-        *value = parameter.default;
+/// A block with every param at its default in its first frame.
+fn defaults(machine: &Machine) -> Box<Block> {
+    let mut block = Box::new(Block::new());
+    for (row, parameter) in block.parameters.iter_mut().zip(&machine.code().parameters) {
+        row[0] = parameter.default;
     }
-    values
+    block
+}
+
+/// One frame of both channels, the first of `block`.
+fn frame(machine: &mut Machine, block: &Block, arrays: &[Vec<f32>], note: Note) -> [f32; 2] {
+    let mut output = [[0.0; MAX_BLOCK]; 2];
+    let inputs = Inputs {
+        block,
+        arrays,
+        note,
+    };
+    machine.render(&inputs, 0..1, &mut output);
+    output.map(|channel| channel[0])
 }
 
 /// The left channel of `frames` frames, with `input` in and `arrays` as the lists of the
@@ -36,21 +49,12 @@ fn run_with(
     input: impl Fn(usize) -> f32,
     frames: usize,
 ) -> Vec<f32> {
-    let parameters = defaults(machine);
+    let mut block = defaults(machine);
+    block.bpm = 120.0;
     (0..frames)
-        .map(|frame| {
-            let inputs = Inputs {
-                input: [input(frame); 2],
-                parameters: &parameters,
-                lives: &[],
-                arrays,
-                triggers: 0,
-                beat: 0.0,
-                bpm: 120.0,
-                playing: false,
-                note: note(frame),
-            };
-            machine.frame(&inputs)[0]
+        .map(|at| {
+            block.input = [[input(at); MAX_BLOCK]; 2];
+            self::frame(machine, &block, arrays, note(at))[0]
         })
         .collect()
 }
@@ -237,19 +241,9 @@ fn rise_fires_once_when_a_value_goes_up_and_hold_keeps_it_until_the_next() {
 #[test]
 fn stereo_code_hears_both_channels_and_sets_both() {
     let mut swap = machine(compile(|| (input_right(), input_left() * 0.5)));
-    let parameters = defaults(&swap);
-    let inputs = Inputs {
-        input: [0.25, 1.0],
-        parameters: &parameters,
-        lives: &[],
-        arrays: &[],
-        triggers: 0,
-        beat: 0.0,
-        bpm: 120.0,
-        playing: false,
-        note: Note::default(),
-    };
-    assert_eq!(swap.frame(&inputs), [1.0, 0.125]);
+    let mut block = defaults(&swap);
+    block.input = [[0.25; MAX_BLOCK], [1.0; MAX_BLOCK]];
+    assert_eq!(frame(&mut swap, &block, &[], Note::default()), [1.0, 0.125]);
 }
 
 #[test]

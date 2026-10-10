@@ -1,15 +1,20 @@
-//! Runs compiled [`Code`] one frame at a time, for both channels, with the memory of every
-//! feedback, `phasor`, `delay`, filter, envelope and buffer of the code: the memory of one
-//! voice. Made on the control thread, where it allocates all of it; running it allocates
+//! Runs compiled [`Code`] over a span of frames of a block, for both channels, with the memory
+//! of every feedback, `phasor`, `delay`, filter, envelope and buffer of the code: the memory of
+//! one voice. Made on the control thread, where it allocates all of it; running it allocates
 //! nothing.
 //!
-//! What every voice shares, the values of the record and of the interface, the note and the
-//! transport, the processor gives each frame as [`Inputs`].
+//! What every voice shares, the values of the record and of the interface and the transport,
+//! the processor works out once per block as a [`Block`]. The note of a voice is the same over
+//! the span the voice plays: the processor splits a block where a note comes or goes.
 
-use sound_core::{CHANNELS, DelayLine, SVF_MAX_Q, SvfFactors, SvfSection, amplitude, soft_clip};
+use std::ops::Range;
+
+use sound_core::{
+    CHANNELS, DelayLine, MAX_BLOCK, SVF_MAX_Q, SvfFactors, SvfSection, amplitude, soft_clip,
+};
 
 use crate::code::{
-    Binary, Code, FilterKind, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
+    Binary, Code, FilterKind, MAX_LIVES, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
 };
 
 /// Where every knob and toggle stands, and every list of the record, in the order of the
@@ -36,21 +41,43 @@ pub(crate) struct Note {
     pub(crate) frequency: f32,
     pub(crate) velocity: f32,
     pub(crate) gate: bool,
-    /// The first frame of the note.
+    /// The first frame of the note: the first frame of the span it starts.
     pub(crate) onset: bool,
 }
 
-/// What every voice reads in one frame, from the processor.
-pub(crate) struct Inputs<'a> {
-    pub(crate) input: [f32; CHANNELS],
-    pub(crate) parameters: &'a [f32],
-    pub(crate) lives: &'a [f32],
-    pub(crate) arrays: &'a [Vec<f32>],
+/// Both channels of up to a block of frames.
+pub(crate) type Frames = [[f32; MAX_BLOCK]; CHANNELS];
+
+/// What every voice reads in one block, frame by frame, from the processor.
+pub(crate) struct Block {
+    pub(crate) input: Frames,
+    pub(crate) parameters: [[f32; MAX_BLOCK]; MAX_PARAMETERS],
+    pub(crate) lives: [[f32; MAX_BLOCK]; MAX_LIVES],
     /// One bit per trigger, set in the frame it fires.
-    pub(crate) triggers: u32,
-    pub(crate) beat: f64,
+    pub(crate) triggers: [u32; MAX_BLOCK],
+    pub(crate) beat: [f32; MAX_BLOCK],
     pub(crate) bpm: f32,
     pub(crate) playing: bool,
+}
+
+impl Block {
+    pub(crate) fn new() -> Self {
+        Self {
+            input: [[0.0; MAX_BLOCK]; CHANNELS],
+            parameters: [[0.0; MAX_BLOCK]; MAX_PARAMETERS],
+            lives: [[0.0; MAX_BLOCK]; MAX_LIVES],
+            triggers: [0; MAX_BLOCK],
+            beat: [0.0; MAX_BLOCK],
+            bpm: 0.0,
+            playing: false,
+        }
+    }
+}
+
+/// What one voice reads over a span of frames.
+pub(crate) struct Inputs<'a> {
+    pub(crate) block: &'a Block,
+    pub(crate) arrays: &'a [Vec<f32>],
     pub(crate) note: Note,
 }
 
@@ -171,17 +198,39 @@ impl Machine {
         &self.watched
     }
 
+    /// The `frames` of a block, both channels, into the same frames of `output`.
+    pub(crate) fn render(
+        &mut self,
+        inputs: &Inputs<'_>,
+        frames: Range<usize>,
+        output: &mut Frames,
+    ) {
+        let first = frames.start;
+        for frame in frames {
+            let note = Note {
+                onset: inputs.note.onset && frame == first,
+                ..inputs.note
+            };
+            let sound = self.frame(inputs, note, frame);
+            for (channel, sample) in output.iter_mut().zip(sound) {
+                if let Some(out) = channel.get_mut(frame) {
+                    *out = sample;
+                }
+            }
+        }
+    }
+
     /// One frame of both channels.
-    pub(crate) fn frame(&mut self, inputs: &Inputs<'_>) -> [f32; CHANNELS] {
+    fn frame(&mut self, inputs: &Inputs<'_>, note: Note, frame: usize) -> [f32; CHANNELS] {
         let mut output = [0.0; CHANNELS];
         if let Output::Stereo(left, right) = self.code.output {
             // Once, with the memory of the left channel, for both.
-            self.run(0, inputs);
+            self.run(0, inputs, note, frame);
             self.keep_watches();
             output = [left, right].map(|register| held(self.register(register)));
         } else {
             for (channel, sample) in output.iter_mut().enumerate() {
-                *sample = self.run(channel, inputs);
+                *sample = self.run(channel, inputs, note, frame);
                 if channel == 0 {
                     self.keep_watches();
                 }
@@ -209,7 +258,7 @@ impl Machine {
         }
     }
 
-    fn run(&mut self, channel: usize, inputs: &Inputs<'_>) -> f32 {
+    fn run(&mut self, channel: usize, inputs: &Inputs<'_>, note: Note, frame: usize) -> f32 {
         let Self {
             code,
             sample_rate,
@@ -222,29 +271,35 @@ impl Machine {
         let Some(memory) = channels.get_mut(channel) else {
             return 0.0;
         };
-        let input = inputs.input.get(channel).copied().unwrap_or(0.0);
-        let note = inputs.note;
+        let block = inputs.block;
+        let [left, right] = block
+            .input
+            .each_ref()
+            .map(|samples| at_frame(samples, frame));
+        let input = (block.input.get(channel)).map_or(0.0, |samples| at_frame(samples, frame));
+        let beat = at_frame(&block.beat, frame);
+        let triggers = block.triggers.get(frame).copied().unwrap_or(0);
         for (index, operation) in code.operations.iter().enumerate() {
             let read =
                 |register: Register| registers.get(usize::from(register)).copied().unwrap_or(0.0);
             let value = match *operation {
                 Operation::Constant(value) => value,
                 Operation::Input => input,
-                Operation::InputLeft => inputs.input[0],
-                Operation::InputRight => inputs.input[1],
+                Operation::InputLeft => left,
+                Operation::InputRight => right,
                 Operation::Channel => channel as f32,
                 Operation::SampleRate => sample_rate,
-                Operation::Beat => inputs.beat as f32,
-                Operation::Bpm => inputs.bpm,
-                Operation::Playing => truth(inputs.playing),
+                Operation::Beat => beat,
+                Operation::Bpm => block.bpm,
+                Operation::Playing => truth(block.playing),
                 Operation::Frequency => note.frequency,
                 Operation::Pitch => note.pitch,
                 Operation::Gate => truth(note.gate),
                 Operation::Velocity => note.velocity,
                 Operation::Onset => truth(note.onset),
-                Operation::Parameter(index) => at(inputs.parameters, index),
-                Operation::Live(index) => at(inputs.lives, index),
-                Operation::Trigger(index) => truth(inputs.triggers & (1 << index) != 0),
+                Operation::Parameter(index) => in_row(&block.parameters, index, frame),
+                Operation::Live(index) => in_row(&block.lives, index, frame),
+                Operation::Trigger(index) => truth(triggers & (1 << index) != 0),
                 Operation::History(slot) => at(&memory.histories, slot),
                 Operation::Unary(unary, x) => apply_unary(unary, read(x)),
                 Operation::Binary(binary, a, b) => apply_binary(binary, read(a), read(b)),
@@ -400,6 +455,16 @@ impl Machine {
 
 fn at(values: &[f32], index: u16) -> f32 {
     values.get(usize::from(index)).copied().unwrap_or(0.0)
+}
+
+fn at_frame(samples: &[f32; MAX_BLOCK], frame: usize) -> f32 {
+    samples.get(frame).copied().unwrap_or(0.0)
+}
+
+/// The value in `frame` of the row `index`: of a param or a live control.
+fn in_row(rows: &[[f32; MAX_BLOCK]], index: u16, frame: usize) -> f32 {
+    rows.get(usize::from(index))
+        .map_or(0.0, |row| at_frame(row, frame))
 }
 
 fn table_of<'a>(table: Table, arrays: &'a [Vec<f32>], buffers: &'a [Vec<f32>]) -> &'a [f32] {

@@ -102,6 +102,12 @@ pub(crate) fn gate() -> Signal {
 pub(crate) fn velocity() -> Signal {
     node("velocity", &[])
 }
+pub(crate) fn pitch() -> Signal {
+    node("pitch", &[])
+}
+pub(crate) fn onset() -> Signal {
+    node("onset", &[])
+}
 pub(crate) fn noise() -> Signal {
     node("noise", &[])
 }

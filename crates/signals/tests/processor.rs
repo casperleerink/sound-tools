@@ -12,6 +12,7 @@ use sound_core::{
 use sound_notes::{NoteEvent, Pitch, Velocity};
 use sound_signals::{Code, Kind, Machine, Signals, SignalsUpdate, Values};
 
+mod score;
 mod sound;
 
 use sound::*;
@@ -482,4 +483,108 @@ fn a_note_after_new_code_plays_only_the_new_code() {
     let output = played.render(9_600);
     // The note at frame 9600 starts with the new code, not with a fade from the old.
     assert_eq!(output[4_800], -0.5);
+}
+
+/// Every param at its default, and the first one moved by a lane.
+fn defaults(code: &Code) -> Values {
+    let mut values = Values::default();
+    for (value, spec) in values.parameters.iter_mut().zip(&code.parameters) {
+        *value = spec.default;
+    }
+    values.automated = vec![0];
+    values
+}
+
+fn score_tool(kind: Kind, code: Code, other: Code) -> score::Tool {
+    score::Tool {
+        kind,
+        values: defaults(&code),
+        code,
+        other,
+    }
+}
+
+fn scored_instrument(bright: bool) -> Code {
+    compile(|| {
+        let cutoff = param("cutoff", 2000.0, [200.0, 8000.0]);
+        let level = param("level", 0.5, [0.0, 1.0]);
+        let x = live("x", 0.2, [0.0, 1.0]);
+        let hit = trigger("hit");
+        let level_of_note = adsr(gate(), 3.0, 30.0, 0.6, 40.0);
+        let count = feedback();
+        count.set(count.read() + onset() + hit);
+        watch("count", count.read());
+        watch("level", level_of_note);
+        let mut tone = sin(phasor(freq()) * TAU) + 0.3 * phasor(pitch() * 2.0);
+        if bright {
+            tone = saturate(tone * 3.0);
+        }
+        0.2 * level * velocity() * level_of_note * lowpass(tone, cutoff, 0.7)
+            + 0.01 * x * hold(noise(), hit)
+    })
+}
+
+fn scored_source(low: f32) -> Code {
+    compile(|| {
+        let rate = param("rate", 3.0, [0.5, 10.0]);
+        let x = live("x", 0.5, [0.0, 1.0]);
+        let hits = trigger("hit") + trigger("other");
+        let tick = rise(wrap(beat()).lt(0.5));
+        let level = adsr(gate(), 2.0, 20.0, 0.5, 30.0);
+        watch("beat", beat());
+        let tone = sin(phasor(mix(low, freq(), gate())) * TAU) * (0.5 + 0.5 * level);
+        0.2 * tone * (1.0 + x) + 0.3 * (tick + hits + onset()) + 0.01 * sin(phasor(rate) * TAU)
+    })
+}
+
+fn scored_effect(stereo: bool) -> Code {
+    if stereo {
+        return compile(|| {
+            let width = param("width", 0.5, [0.0, 1.0]);
+            (input_right() * width, delay(input_left(), 3.0))
+        });
+    }
+    compile(|| {
+        let time = param("time", 120.0, [10.0, 400.0]);
+        let again = param("again", 0.4, [0.0, 0.9]);
+        let echo = feedback();
+        let wet = delay(input() + echo.read() * again, time);
+        echo.set(lowpass(wet, 3000.0, 0.7));
+        mix(input(), wet, live("wet", 0.3, [0.0, 1.0]))
+    })
+}
+
+/// The hashes are of renders on macOS on Apple silicon: `sin` and `tan` are of the platform,
+/// and may differ in their last bit elsewhere.
+#[test]
+#[cfg_attr(
+    not(all(target_os = "macos", target_arch = "aarch64")),
+    ignore = "hashes of macOS on Apple silicon"
+)]
+fn a_score_of_every_timing_renders_as_it_did() {
+    let tools = [
+        score_tool(
+            Kind::Instrument { voices: 4 },
+            scored_instrument(false),
+            scored_instrument(true),
+        ),
+        score_tool(Kind::Source, scored_source(110.0), scored_source(220.0)),
+        score_tool(Kind::Effect, scored_effect(false), scored_effect(true)),
+    ];
+    let mut found = Vec::new();
+    for tool in &tools {
+        for buffer in [37, 512] {
+            let (output, shown) = score::render(tool, buffer);
+            found.push((score::hash(&output), score::hash(&shown)));
+        }
+    }
+    let expected = [
+        (12778597150993281767, 6986213450020811758),
+        (15135685791053183329, 1929420734028792441),
+        (2862924557966494273, 1517712285991712962),
+        (1203857699514163717, 7353583470673154908),
+        (8521250857642533575, 14695981039346656037),
+        (12097547745870752178, 14695981039346656037),
+    ];
+    assert_eq!(found, expected);
 }
