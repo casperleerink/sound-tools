@@ -5,8 +5,7 @@ description: How to build a reusable component library in gpui (Zed v1.20.2) (Re
 
 # gpui (Zed v1.20.2) components
 
-Compiling reference: `examples/components.rs` (Theme, Button, Switch, LiveBadge, Tooltip, Popover)
-and `examples/gallery.rs` (storybook). Project: components live in `crates/ui/src/components/*.rs`,
+Project: components live in `crates/ui/src/components/*.rs`,
 theme in `crates/ui/src/theme.rs` (`Theme: Global`, `cx.theme()` via `ActiveTheme`), showcase in
 `crates/gallery/src/sections/*.rs`. Build: `cargo build -p gallery`.
 
@@ -108,7 +107,7 @@ the parent should not manage: open/closed popover or select, text input (needs `
 - Lightweight alternative for tiny per-element state inside a `RenderOnce`:
   `window.use_keyed_state(id, cx, |_, _| S::default())` returns an `Entity<S>` tied to that element id.
 
-Popover pattern (stateful; full code in `examples/components.rs`):
+Popover pattern (stateful):
 ```rust
 div().relative()
     .child(Button::new("trigger", label).on_click(cx.listener(|this, _, _, cx| { this.open = !this.open; cx.notify(); })))
@@ -192,7 +191,7 @@ For state-driven transitions (open/close) keep it simple: swap styles; there is 
 ## 8. Storybook gallery
 
 One window, one root view that scrolls, one `section(title, cx, items)` per component with every
-variant in a wrapping row (`examples/gallery.rs`; project version in `crates/gallery/src/sections`).
+variant in a wrapping row (project version in `crates/gallery/src/sections`).
 ```rust
 fn section(title: &'static str, cx: &App, items: impl IntoIterator<Item = impl IntoElement>) -> impl IntoElement {
     let t = cx.theme(); let (muted, border) = (t.text_muted, t.border);

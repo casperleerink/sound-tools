@@ -5,8 +5,7 @@ description: Core model of gpui (Zed v1.20.2) (App, Window, Entity, Context, Ren
 
 # gpui (Zed v1.20.2) basics
 
-Every API name here was checked against `~/.cargo/git/checkouts/zed-*/7c451e6/crates/gpui/src`. Full compiling
-examples: `examples/app.rs` (everything below in one app) and `examples/text_input.rs`.
+Every API name here was checked against `~/.cargo/git/checkouts/zed-*/7c451e6/crates/gpui/src`.
 Project: `crates/ui` (theme in `crates/ui/src/theme.rs`, fonts `crates/ui/assets/fonts`, lucide
 icons `crates/ui/assets/icons`) and `crates/gallery`. Build: `cargo build -p gallery` from repo root.
 Workspace deps: `gpui` and `gpui_platform` from Zed git, pinned to v1.20.2 in the root `Cargo.toml`; `gpui_platform` has the `runtime_shaders` and `font-kit` features. Edition 2024. Apps start with `gpui_platform::application()`.
@@ -74,7 +73,7 @@ There is no `WindowOptions.title`; it is `titlebar: Some(TitlebarOptions { title
   `cx.observe_global::<Theme>(|this, cx| ..)`.
 
 ### The repaint pitfall
-The code pattern above is correct; verified with a traced build of `examples/app.rs`: a 500 ms
+The code pattern above is correct; verified with a traced build: a 500 ms
 `cx.spawn` timer + `cx.notify()` produced one `render` per tick while the window was on screen.
 Rendering on macOS only happens from a `CVDisplayLink` tick, and gpui stops that link when the
 window is occluded (`windowDidChangeOcclusionState` in `src/platform/mac/window.rs`) and restarts
@@ -148,8 +147,8 @@ Cursor: `.cursor_pointer()`, `.cursor(CursorStyle::IBeam)`.
 
 ## 5. Text input (no built-in widget)
 
-gpui (Zed v1.20.2) ships no text field. The pattern (from the crate's `examples/input.rs`, copied to
-`examples/text_input.rs` here) is:
+gpui (Zed v1.20.2) ships no text field. The pattern (from the crate's `examples/input.rs`; project version in
+`crates/ui/src/components/text_input.rs`) is:
 1. An `Entity<TextInput>` holding `content: SharedString`, `selected_range`, `marked_range`,
    `focus_handle`, and implementing `EntityInputHandler` (IME + `replace_text_in_range`).
 2. A custom `Element` (`TextElement { input: Entity<TextInput> }`) whose `paint` calls
