@@ -101,6 +101,32 @@ fn under_the_ceiling_the_limiter_leaves_every_sample_as_it_was() {
     assert_eq!(with_lookahead[2 * wait..2 * wait + bar], off[..bar]);
 }
 
+/// A note that ends comes out whole, one lookahead later: the master skips the silence after
+/// it only once the delay has let out its tail.
+#[test]
+fn the_tail_in_the_lookahead_comes_out_after_the_input_stops() {
+    let ahead = with_limiter(|limiter| limiter.lookahead_ms = 5.0);
+    let mut harness = Harness::with_config(EngineConfig::new(SAMPLE_RATE, 2));
+    let mut changes = Changes::new();
+    let master = harness
+        .project
+        .resolve::<ArrangementState>(&id("arrangement"));
+    changes.set(&master.unwrap(), ahead);
+    harness.project.commit("Set the master", changes).unwrap();
+    harness.add_track("piano", 0.01);
+    let mut changes = Changes::new();
+    changes.create(
+        id("arrangement/piano/short"),
+        clip(0, BAR, vec![note(0, 960, 60)]),
+    );
+    harness.project.commit("Add clip", changes).unwrap();
+    let render = left(&harness.play(2 * BAR as usize * TICK));
+    let wait = harness.engine.preroll_frames() as usize;
+    let end = wait + 960 * TICK;
+    assert!(render[wait..end].iter().all(|sample| *sample == QUIET));
+    assert!(render[end..].iter().all(|sample| *sample == 0.0));
+}
+
 #[test]
 fn a_lookahead_lowers_the_gain_before_the_peak_and_says_it_as_latency() {
     let ahead = with_limiter(|limiter| limiter.lookahead_ms = 5.0);

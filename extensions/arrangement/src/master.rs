@@ -10,11 +10,11 @@
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AudioInput, AudioOutput, PeakLimiter, Peaks, Ports, PrepareConfig, ProcessContext, Processor,
-    Smoothed,
+    Smoothed, all_positive_zero,
 };
 
 use crate::decibels;
-use crate::mixer::{RAMP_SECONDS, is_positive_zero};
+use crate::mixer::RAMP_SECONDS;
 
 /// The master of an arrangement: its volume and its limiter. A record that leaves it out gets
 /// 0 dB and the limiter at its defaults, which is on.
@@ -211,7 +211,7 @@ impl Processor for Master {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let frames = context.frames;
         let [input_left, input_right] = context.audio_inputs.get(Self::INPUT);
-        if is_positive_zero(input_left) && is_positive_zero(input_right) && self.is_resting() {
+        if all_positive_zero(input_left) && all_positive_zero(input_right) && self.is_resting() {
             return;
         }
         let [output_left, output_right] = context.audio_outputs.get(Self::OUTPUT);

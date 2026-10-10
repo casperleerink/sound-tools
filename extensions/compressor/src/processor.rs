@@ -18,7 +18,7 @@ use std::f32::consts::LN_10;
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, Peaks, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, held, is_held_silent,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, all_held_silent, held,
 };
 
 use crate::{CompressorState, KNEE, Lookahead, MAKEUP, MIX, PARAMETERS, RATIO, THRESHOLD};
@@ -339,7 +339,7 @@ impl Processor for Compressor {
         };
         let silent_input = [left_in, right_in, left_key, right_key]
             .into_iter()
-            .all(is_held_silent);
+            .all(all_held_silent);
         if silent_input && self.is_resting() {
             // Nothing sounds, nothing is left in the lookahead and nothing is turned down: the
             // output is silent already, and no glide can be heard. What comes next is then

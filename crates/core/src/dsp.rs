@@ -35,7 +35,7 @@ pub fn held(sample: f32) -> f32 {
 /// Whether every sample is silence as [`held`] takes it: zero or not a number. The idle check
 /// of an effect that holds its input.
 #[inline]
-pub fn is_held_silent(samples: &[f32]) -> bool {
+pub fn all_held_silent(samples: &[f32]) -> bool {
     // `abs() > 0.0` is false for exactly zero and not a number, so it says what
     // `held(sample) != 0.0` says, also for denormals with or without flush to zero. Without an
     // early return the loop compiles to vector compares, many times faster on a block.
@@ -45,12 +45,21 @@ pub fn is_held_silent(samples: &[f32]) -> bool {
 }
 
 /// Whether every sample is zero, either sign. Not a number is not. The idle check of an effect
-/// that takes its input as it comes, in vector compares as [`is_held_silent`].
+/// that takes its input as it comes, in vector compares as [`all_held_silent`].
 #[inline]
-pub fn is_zero(samples: &[f32]) -> bool {
+pub fn all_zero(samples: &[f32]) -> bool {
     !samples
         .iter()
         .fold(false, |sound, sample| sound | (*sample != 0.0))
+}
+
+/// Whether every sample is +0.0, the silence an output starts as. The idle check of a mixer that
+/// must stay bit for bit the same, in vector compares as [`all_held_silent`].
+#[inline]
+pub fn all_positive_zero(samples: &[f32]) -> bool {
+    !samples
+        .iter()
+        .fold(false, |sound, sample| sound | (sample.to_bits() != 0))
 }
 
 /// What rounds off a step at the start of a cycle, times half the step, for a phase that moves
@@ -258,9 +267,13 @@ mod tests {
                     // Hidden from the compiler, which would work both out without flush to zero.
                     let block = black_box(block);
                     let held_silent = block.iter().all(|sample| held(*sample) == 0.0);
-                    assert_eq!(is_held_silent(&block), held_silent, "{block:?}");
+                    assert_eq!(all_held_silent(&block), held_silent, "{block:?}");
                     let zero = block.iter().all(|sample| *sample == 0.0);
-                    assert_eq!(is_zero(&block), zero, "{block:?}");
+                    assert_eq!(all_zero(&block), zero, "{block:?}");
+                    let positive_zero = block
+                        .iter()
+                        .all(|sample| *sample == 0.0 && sample.is_sign_positive());
+                    assert_eq!(all_positive_zero(&block), positive_zero, "{block:?}");
                 }
             }
         };

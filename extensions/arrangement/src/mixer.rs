@@ -9,7 +9,8 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Parameter, Peaks, Ports,
-    PrepareConfig, ProcessContext, Processor, Scale, Smoothed, Targets, amplitude, pan_gains,
+    PrepareConfig, ProcessContext, Processor, Scale, Smoothed, Targets, all_positive_zero,
+    amplitude, pan_gains,
 };
 
 use crate::TrackState;
@@ -19,14 +20,6 @@ pub const RAMP_SECONDS: f32 = 0.02;
 
 /// The gain of each channel, left first.
 pub type ChannelGains = [f32; CHANNELS];
-
-/// Whether every sample is +0.0, the silence an output starts as.
-pub(crate) fn is_positive_zero(samples: &[f32]) -> bool {
-    // No early return, so the loop compiles to vector compares.
-    !samples
-        .iter()
-        .fold(false, |sound, sample| sound | (sample.to_bits() != 0))
-}
 
 /// What a track sends its mixer.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -174,7 +167,7 @@ impl Processor for Mixer {
             && before
                 .iter()
                 .all(|gain| gain.is_sign_positive() && gain.is_finite());
-        if steady && input.iter().all(|channel| is_positive_zero(channel)) {
+        if steady && input.iter().all(|channel| all_positive_zero(channel)) {
             return;
         }
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);

@@ -18,7 +18,7 @@
 
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, OnePole, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, held, is_zero,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, all_zero, held,
 };
 
 use crate::{
@@ -265,7 +265,7 @@ impl Processor for Delay {
             self.tap.snap();
         }
         let [left_in, right_in] = context.audio_inputs.get(Self::INPUT);
-        let silent_input = is_zero(left_in) && is_zero(right_in);
+        let silent_input = all_zero(left_in) && all_zero(right_in);
         if self.quiet_frames > self.lines[0].frames() {
             // Nothing is left in the lines, so a new time cannot be heard: it starts at once.
             self.tap.snap();
