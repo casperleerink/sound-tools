@@ -12,7 +12,7 @@ const SECONDS: usize = 10;
 
 /// Noise hits every `period` frames that fall 60 dB in 300 ms: cheap to make, so the time is
 /// the gates'.
-fn hits(period: usize) -> Signal {
+fn noise_hits(period: usize) -> Signal {
     let mut noise = noise(0.5);
     let fall = 10_f32.powf(-60.0 / 20.0 / (0.3 * SAMPLE_RATE as f32));
     let (mut frame, mut level) = (0, 1.0);
@@ -73,6 +73,6 @@ fn render(label: &str, input: impl Fn() -> Signal, key: impl Fn() -> Signal) {
 #[ignore = "a measurement, not a check; run it locally and read the printed ratio"]
 fn realtime_ratio_of_one_hundred_gates() {
     let rate = SAMPLE_RATE as usize;
-    render("playing", || hits(rate / 4), || hits(rate / 2));
+    render("playing", || noise_hits(rate / 4), || noise_hits(rate / 2));
     render("idle", silence, silence);
 }

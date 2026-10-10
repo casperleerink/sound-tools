@@ -193,46 +193,46 @@ impl Gate {
             }
             false => false,
         };
-        let floor = f64::from(self.floor.advance(1));
-        let target = if open { 1.0 } else { floor };
-        let pole = match target > self.gain {
-            true => self.attack,
-            false => self.release,
+        let target = if open {
+            1.0
+        } else {
+            f64::from(self.floor.advance(1))
         };
-        self.gain = target + pole * (self.gain - target);
-        if (self.gain - target).abs() <= ARRIVED * target {
-            self.gain = target;
-        }
+        let pole = if target > self.gain {
+            self.attack
+        } else {
+            self.release
+        };
+        self.gain = glide(self.gain, target, pole);
         self.gain
     }
 
-    /// The gain of the shaper for the next frame, from the level of the sound.
+    /// The gain of the shaper for the next frame, from the level of the sound. The followers
+    /// run also while `shaping` is off, so turning it on starts from where the sound is.
     #[inline]
-    fn shape(&mut self, level: f32) -> f64 {
+    fn shape(&mut self, level: f32, shaping: bool) -> f64 {
         let level = f64::from(level);
-        self.rising = match level <= self.rising {
-            true => level,
-            false => level + self.rising_pole * (self.rising - level),
-        };
-        if level - self.rising <= ARRIVED * level {
-            self.rising = level;
-        }
-        self.falling = match level >= self.falling {
-            true => level,
-            false => level + self.falling_pole * (self.falling - level),
-        };
-        if self.falling - level <= ARRIVED * self.falling {
-            self.falling = level;
+        self.rising = glide(self.rising.min(level), level, self.rising_pole);
+        self.falling = glide(self.falling.max(level), level, self.falling_pole);
+        if !shaping || level == 0.0 {
+            return 1.0;
         }
         let transient = f64::from(self.transient.advance(1));
         let sustain = f64::from(self.sustain.advance(1));
-        if level == 0.0 {
-            return 1.0;
-        }
         // How much of the level is a start, and how much of the follower is a tail: 0 to 1.
         let start = 1.0 - self.rising / level;
         let tail = 1.0 - level / self.falling;
         (1.0 + (transient - 1.0) * start) * (1.0 + (sustain - 1.0) * tail)
+    }
+}
+
+/// One step of a one-pole glide to `target`, which takes it at once within [`ARRIVED`].
+#[inline]
+fn glide(value: f64, target: f64, pole: f64) -> f64 {
+    let next = target + pole * (value - target);
+    match (next - target).abs() <= ARRIVED * target {
+        true => target,
+        false => next,
     }
 }
 
@@ -274,6 +274,10 @@ impl Processor for Gate {
             // Silence in and nothing left in the detectors: the output is silent already.
             return;
         }
+        // At 0 dB and still, the shaper multiplies by exactly 1: its math can wait.
+        let shaping = [&self.transient, &self.sustain]
+            .iter()
+            .any(|gain| gain.is_moving() || gain.current() != 1.0);
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
         let (mut loudest, mut lowest) = (0.0_f32, 1.0_f64);
         let frames = left_in
@@ -300,7 +304,7 @@ impl Processor for Gate {
             loudest = loudest.max(heard);
             let gate = self.gate(heard);
             lowest = lowest.min(gate);
-            let gain = (gate * self.shape(level)) as f32;
+            let gain = (gate * self.shape(level, shaping)) as f32;
             *left_out = input[0] * gain;
             *right_out = input[1] * gain;
         }

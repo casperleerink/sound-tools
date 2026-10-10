@@ -79,22 +79,18 @@ fn a_keyed_gate_opens_on_the_key() {
     };
     let mut rig = Rig::new(state, sine(1_000.0, amplitude));
     rig.key(hits(SECOND / 2));
-    let output = rig.render(SECOND);
-    let gain_db = |from_ms: usize, to_ms: usize| {
+    let keyed = rig.render(SECOND);
+    let unkeyed = Rig::new(state, sine(1_000.0, amplitude)).render(SECOND);
+    let gain_db = |output: &[f32], from_ms: usize, to_ms: usize| {
         let window = &output[from_ms * SECOND / 1_000..to_ms * SECOND / 1_000];
         20.0 * (peak(window) / amplitude).log10()
     };
     // The hit is over the threshold for its first 170 ms.
-    assert!(gain_db(510, 650).abs() < 1e-3, "{}", gain_db(510, 650));
-    assert!(
-        (gain_db(400, 500) + 24.0).abs() < 1e-3,
-        "{}",
-        gain_db(400, 500)
-    );
-    let mut plain = Rig::new(gate(), sine(1_000.0, amplitude));
-    let unkeyed = plain.render(SECOND);
-    let closed_db = 20.0 * (peak(&unkeyed[SECOND / 2..]) / amplitude).log10();
-    assert!((closed_db + 24.0).abs() < 1e-3, "{closed_db}");
+    let open = gain_db(&keyed, 510, 650);
+    assert!(open.abs() < 1e-3, "{open}");
+    for closed in [gain_db(&keyed, 400, 500), gain_db(&unkeyed, 500, 1_000)] {
+        assert!((closed + 24.0).abs() < 1e-3, "{closed}");
+    }
 }
 
 /// Same project, same bytes: the gate and its shaper do not depend on where blocks start.
