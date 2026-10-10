@@ -25,6 +25,7 @@ pub mod process;
 mod processor;
 mod project;
 mod saturation;
+mod scope;
 mod svf;
 mod transport;
 mod watch;
@@ -77,6 +78,7 @@ pub use project::{
     SavedSource, State, StorageError, ToolRegistration, Was,
 };
 pub use saturation::soft_clip;
+pub use scope::Scope;
 pub use svf::{FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response};
 pub use transport::Transport;
 pub use watch::Watch;
