@@ -255,6 +255,50 @@ fn after_a_peak_the_gain_comes_back_to_exactly_one() {
     }
 }
 
+/// The master skips silent blocks only at rest. Through a silence after a peak the gain keeps
+/// coming back along the release, so a note in the silence comes out at the gain the release
+/// has reached; a note after it comes out bit for bit as it went in.
+#[test]
+fn the_gain_comes_back_through_silence() {
+    let release_ms = 1_000.0;
+    let arrangement = with_limiter(|limiter| limiter.release_ms = release_ms);
+    let mut harness = Harness::with_config(EngineConfig::new(SAMPLE_RATE, 2));
+    let mut changes = Changes::new();
+    let master = harness
+        .project
+        .resolve::<ArrangementState>(&id("arrangement"));
+    changes.set(&master.unwrap(), arrangement);
+    harness.project.commit("Set the master", changes).unwrap();
+    harness.add_track("loud", 1.0);
+    harness.add_track("quiet", 0.001);
+    let mut changes = Changes::new();
+    changes.create(
+        id("arrangement/loud/hit"),
+        clip(0, BAR, vec![note(0, 960, 60)]),
+    );
+    let notes = vec![note(1920, 480, 60), note(6 * BAR, 480, 60)];
+    changes.create(id("arrangement/quiet/notes"), clip(0, 8 * BAR, notes));
+    harness.project.commit("Add clips", changes).unwrap();
+    let render = left(&harness.play(2 * 7 * BAR as usize * TICK));
+    let quiet = 0.001_f32 * 60.0;
+
+    // The hit is 60 at a ceiling of 1, so the gain is down to 1 / 60 when the silence starts.
+    let hit_end = render
+        .iter()
+        .rposition(|sample| *sample == ceiling())
+        .unwrap()
+        + 1;
+    let first = hit_end + render[hit_end..].iter().position(|s| *s != 0.0).unwrap();
+    let frames = (first - hit_end) as f32;
+    let release_frames = release_ms / 1_000.0 * SAMPLE_RATE as f32;
+    let gain = 1.0 - (1.0 - 1.0 / 60.0) * (-frames / release_frames).exp();
+    let heard = render[first] / quiet;
+    assert!((heard / gain - 1.0).abs() < 1e-3, "{heard} {gain}");
+
+    let late = 6 * BAR as usize * TICK;
+    assert!(render[late + 100..late + 1_000].iter().all(|s| *s == quiet));
+}
+
 /// Not a number and infinity are no sound: they come out as silence, never as full scale, and
 /// the limiter plays on as before once they are gone.
 #[test]

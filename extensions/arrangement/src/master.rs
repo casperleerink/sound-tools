@@ -139,6 +139,9 @@ pub(crate) struct Master {
     peaks: Peaks,
     /// The largest reduction of each block, as the factor the input was above the output.
     reduction: Peaks,
+    /// Frames in a row that went into the limiter as +0.0 on both channels, up to what fills
+    /// its delay.
+    quiet: usize,
 }
 
 impl Master {
@@ -155,8 +158,29 @@ impl Master {
             limiter: PeakLimiter::new(),
             peaks,
             reduction,
+            quiet: 0,
         }
     }
+
+    /// Whether a block of +0.0 changes nothing: the delay holds only +0.0, the gain is back at
+    /// 1 and nothing glides. The output is then +0.0, as it starts, and the frames left out
+    /// leave the limiter as they would have: its rings hold one value each and its queue one
+    /// gain of 1. -0.0 or a glide, which can round a factor to just under 0, would come out as
+    /// -0.0, so they run.
+    fn is_resting(&self) -> bool {
+        !self.volume.is_moving()
+            && !self.gain.is_moving()
+            && self.limiter.is_resting()
+            && self.quiet >= self.limiter.latency()
+    }
+}
+
+/// Whether every sample is +0.0.
+fn is_positive_zero(samples: &[f32]) -> bool {
+    // No early return, so the loop compiles to vector compares.
+    !samples
+        .iter()
+        .fold(false, |sound, sample| sound | (sample.to_bits() != 0))
 }
 
 impl Processor for Master {
@@ -195,6 +219,9 @@ impl Processor for Master {
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         let frames = context.frames;
         let [input_left, input_right] = context.audio_inputs.get(Self::INPUT);
+        if is_positive_zero(input_left) && is_positive_zero(input_right) && self.is_resting() {
+            return;
+        }
         let [output_left, output_right] = context.audio_outputs.get(Self::OUTPUT);
         let volume_before = self.volume.current();
         let volume_step = (self.volume.advance(frames) - volume_before) / frames as f32;
@@ -226,6 +253,10 @@ impl Processor for Master {
             let through = match bypass {
                 true => [left, right],
                 false => limited,
+            };
+            self.quiet = match through.map(f32::to_bits) == [0; 2] {
+                true => self.quiet.saturating_add(1),
+                false => 0,
             };
             let (delayed, applied) = self.limiter.next(peak, through, ceiling);
             [*out_left, *out_right] = match bypass {
