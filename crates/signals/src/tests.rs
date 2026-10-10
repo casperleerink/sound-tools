@@ -389,6 +389,17 @@ fn a_hold_and_the_math_on_it_keep_its_value_over_spans_where_its_trigger_does_no
         })
         .collect();
     assert_eq!(rendered, [expected.clone(), expected]);
+
+    // On the left the trigger never fires, on the right it fires in every frame: each channel
+    // keeps or takes by its own trigger, in the one row they share.
+    let mut by_channel = machine(compile(|| hold(sound::input(), channel()) * 0.5 + 1.0));
+    let ramp = |frame: usize| frame as f32 * 0.01;
+    let [left, right] = render_in_spans(&mut by_channel, ramp, 3, 24);
+    assert_eq!(left, vec![1.0; 3 * MAX_BLOCK]);
+    let expected: Vec<f32> = (0..3 * MAX_BLOCK)
+        .map(|frame| ramp(frame) * 0.5 + 1.0)
+        .collect();
+    assert_eq!(right, expected);
 }
 
 #[test]

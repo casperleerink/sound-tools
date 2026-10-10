@@ -687,7 +687,7 @@ impl Span<'_> {
             // A trigger that does not fire in the span keeps what is held, whatever the input.
             Operation::Hold { when, slot, .. } => {
                 let whens = row(registers, usize::from(when), frames);
-                let fires = (whens.iter()).fold(false, |fires, when| fires | (*when > 0.0));
+                let fires = (whens.iter()).fold(false, |fired, when| fired | fires(*when));
                 (memory.memories.get(usize::from(slot)).copied()).filter(|_| !fires)
             }
             // What moves within a span, or keeps a memory.
@@ -1194,10 +1194,16 @@ fn delayed(line: &mut DelayLine, position: usize, input: f32, ms: f32, sample_ra
     out
 }
 
-/// What is `held`, which is `input` where `when` is above 0.
+/// Whether a trigger fires on a frame: where `when` is above 0.
+#[inline(always)]
+fn fires(when: f32) -> bool {
+    when > 0.0
+}
+
+/// What is `held`, which is `input` where `when` fires.
 #[inline(always)]
 fn hold(held: &mut f32, input: f32, when: f32) -> f32 {
-    if when > 0.0 {
+    if fires(when) {
         *held = finite(input);
     }
     *held
