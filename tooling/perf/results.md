@@ -12,6 +12,76 @@ Baseline vs final: main at 1a1c1e2 against the graph runtime at 871839f, same ma
 
 Newest first. Apple M1 Max, macOS. How to run: [README.md](README.md).
 
+## 2026-10-10: built-ins after, main at 8df8888
+
+Against the built-ins baseline f613f8c, after #182 and #185 (reverb), #183 (idle checks, early
+return of the master and mixer), #184 (wavetable voice) and #186 (still envelopes for synth and
+sampler, 4-wide sampler filter). The f613f8c numbers below are a new run next to 8df8888 and
+agree with the baseline entry within 1%. Music player and editor open; spread 1 to 6%.
+
+Null, 20 s, f613f8c against 8df8888: every `bi-` project without a reverb is -inf dB; `empty` and
+`bi-heavy-idle` render the same file (`cmp`). With a reverb, rounding only: `bi-reverb` and
+`bi-reverb-tail` -153.0, `bi-heavy` -141.0, `builtin12` -141.0, `mixed` -135.0. `automated` is
+left out: #179 changed its sound on purpose.
+
+Render, median of 5 interleaved, 61 s. Own cost per instance, % of a core, as in the baseline.
+
+| device | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| synth | 0.18 | 0.15 | 1.24x |
+| wavetable | 1.05 | 0.50 | 2.11x |
+| sampler | 0.96 | 0.77 | 1.25x |
+| drum-pad | 0.04 | 0.05 | same |
+| reverb | 0.48 | 0.18 | 2.73x |
+| delay, eq, compressor, limiter, saturator, filter, modulation, utility | 0.05, 0.13, 0.11, 0.05, 0.56, 0.13, 0.09, 0.04 | same | 1.0x |
+
+The drum pad and the effects other than the reverb cost what they did while they play; each of
+their projects is 0.18 cheaper, which is bi-synth. Their gains are when idle.
+
+| project, % of a core | before | after | ratio |
+| --- | ---: | ---: | ---: |
+| bi-heavy | 28.30 | 17.35 | 1.63x |
+| bi-heavy-idle | 1.91 | 1.14 | 1.68x |
+| empty | 0.13 | 0.09 | 1.44x |
+| builtin12 | 10.02 | 5.26 | 1.90x |
+| mixed | 16.12 | 12.35 | 1.31x |
+| `-tail` projects | 0.20 to 0.43 | 0.14 to 0.25 | 1.3 to 1.8x |
+
+After its sound died, per instance over `bi-synth-tail`: reverb 0.06 to 0.03, compressor 0.03 to
+0.01, limiter 0.02 to 0.01, saturator 0.03 to 0.02; the rest stay at 0.01 or less.
+
+Live, 3 runs of 30 s, master at -60 dB:
+
+| project | cpu % before | after | late callbacks, xruns |
+| --- | ---: | ---: | --- |
+| empty | 1.3 | 1.1 | 0 |
+| bi-heavy-idle | 8.2 | 6.3 | 0 |
+| bi-heavy | 34.7 | 25.7 | 1 and 1 in 3 of 6 sessions, on both commits alike (two passes) |
+| mixed | 24.6 | 19.4 | 0 |
+
+An idle track costs 0.22% of a core live, was 0.29%. The late callbacks of `bi-heavy` (slowest 11
+to 14 ms) come as often before as after, so they are the busy machine or startup, not the work.
+
+Reverb quality, `reverb.py f613f8c 8df8888`: passes every limit; every metric is equal to two
+decimals (T30, EDT, energy, correlation per band, echo density, tail peak, peak, RMS). WAVs in
+`/tmp/st-perf/reverb/f613f8c-8df8888/`.
+
+| setting | null dB |
+| --- | ---: |
+| default | -168.6 |
+| long | -171.1 |
+| short | -162.6 |
+| chords | -159.0 |
+| drums | -148.6 |
+
+Profile of `bi-heavy` at 8df8888, top of stack: `Reverb::process` 23.6%, `Eq::process` 16.6%,
+wavetable `FilterVoice::render` 11.4%, `Compressor::process` 11.2% (plus 3% `log10f`, `expf`),
+`WavetableSynth::render` 8.2%. The wavetable in all is 25%, delay 6.5%, synth 5.9%, engine 4.0%.
+In % of a core: reverb 11.0 to 4.1, wavetable 7.6 to 4.3; EQ (2.9) and compressor (2.4) as before.
+
+Left: EQ and compressor are now a third of `bi-heavy` and untouched; the saturator (0.56) and
+sampler (0.77) are the dearest devices per instance; idle is still 0.22% of a core per track live.
+
 ## 2026-10-10: built-ins baseline, main at f613f8c
 
 The built-in devices as they are, before any work on them. The built-ins are the same at
