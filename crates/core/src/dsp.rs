@@ -87,7 +87,8 @@ pub struct Taps<const N: usize> {
     from: [usize; N],
     to: [usize; N],
     next: [usize; N],
-    /// From 0 at `from` to 1 at `to`.
+    /// From 0 at `from` to 1 at `to`. Under 1 exactly while `from` and `to` differ, so a fade
+    /// is checked with one compare, not of two arrays.
     fade: f32,
     step: f32,
 }
@@ -111,6 +112,7 @@ impl<const N: usize> Taps<N> {
         if !self.is_fading() {
             self.start();
         }
+        self.check();
     }
 
     fn start(&mut self) {
@@ -121,14 +123,15 @@ impl<const N: usize> Taps<N> {
         }
     }
 
+    #[inline]
     pub fn is_fading(&self) -> bool {
-        self.from != self.to
+        self.fade < 1.0
     }
 
     /// The part of the new tap in this frame.
     #[inline]
     pub fn weight(&self) -> f32 {
-        if self.is_fading() { self.fade } else { 1.0 }
+        self.fade
     }
 
     /// One frame along, after every read of the frame: a fade that ends here may start the
@@ -144,6 +147,13 @@ impl<const N: usize> Taps<N> {
             self.fade = 1.0;
             self.start();
         }
+        self.check();
+    }
+
+    /// The rule of `fade`: under 1 exactly while `from` and `to` differ.
+    #[inline]
+    fn check(&self) {
+        debug_assert_eq!(self.fade < 1.0, self.from != self.to);
     }
 
     /// Takes the newest taps at once.
@@ -165,14 +175,21 @@ impl<const N: usize> Taps<N> {
     /// tap that does not exist.
     #[inline]
     pub fn read(&self, line: &DelayLine, index: usize, position: usize, fade: f32) -> f32 {
+        self.read_with(index, fade, |delay| line.read(position, delay))
+    }
+
+    /// Reads tap `index` with `fade` of the new tap, through `read`, which gives what the line
+    /// held that many frames ago. For lines that are not a [`DelayLine`] each.
+    #[inline]
+    pub fn read_with(&self, index: usize, fade: f32, read: impl Fn(usize) -> f32) -> f32 {
         let (Some(&from), Some(&to)) = (self.from.get(index), self.to.get(index)) else {
             return 0.0;
         };
-        let to = line.read(position, to);
+        let to = read(to);
         if fade >= 1.0 {
             return to;
         }
-        let from = line.read(position, from);
+        let from = read(from);
         from + (to - from) * fade
     }
 }

@@ -27,8 +27,8 @@
 use std::f32::consts::{LOG2_10, TAU};
 
 use sound_core::{
-    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, DelayLine, OnePole, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Taps, Targets, held,
+    AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, OnePole, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, Taps, Targets, held,
 };
 
 use crate::{
@@ -89,8 +89,10 @@ const HEARD_HZ: [f32; 8] = [
     500.0, 1_500.0, 2_500.0, 3_500.0, 4_500.0, 5_500.0, 6_500.0, 7_500.0,
 ];
 
-/// While factors move, they are worked out again this often.
-const FACTOR_FRAMES: usize = 16;
+/// The reverb runs in runs of this many frames. While factors move, they are worked out again
+/// for each run, and a glide moves in a straight line over the frames of a run. Whether
+/// anything in the lines is audible is asked once per run, of the loudest each line took in it.
+const RUN_FRAMES: usize = 16;
 
 /// While the input is silent and nothing in the lines is louder than this, -180 dB, the reverb
 /// has rung out: it does no work and its output is silent.
@@ -141,8 +143,9 @@ fn highs_part(damping: f32) -> f32 {
 }
 
 /// The sign of line `index` in the left and the right output, and in what the left and the
-/// right input put into it. Two rows of a Hadamard matrix: each line is in both sides, and the
-/// two sides are as different as sixteen lines allow.
+/// right input put into it. The second and third rows of the Hadamard matrix: each line is in
+/// both sides, and the two sides are as different as sixteen lines allow. `Reverb::frame` takes
+/// the wet sound from rows 1 and 2 of the mixed lines: change these rows and that changes too.
 fn signs(index: usize) -> [f32; CHANNELS] {
     let sign = |bit: usize| if index & bit == 0 { 1.0 } else { -1.0 };
     [sign(1), sign(2)]
@@ -191,6 +194,81 @@ fn frames_of(seconds: f32, sample_rate: f32) -> usize {
     ((seconds * sample_rate).round() as usize).max(1)
 }
 
+/// Delay lines that are written together, stored frame by frame: one write stores what all of
+/// them take in a frame, and each is read at its own delay. In buffers of their own, a power of
+/// two long, the sixteen lines of the network wrote to addresses that share one set of the CPU
+/// cache, which has room for eight, so nearly every write missed the cache. The length is a
+/// power of two, as in a [`DelayLine`](sound_core::DelayLine), so a position wraps with a mask.
+struct Frames<T> {
+    frames: Vec<T>,
+    mask: usize,
+}
+
+impl<T: Copy + Default> Frames<T> {
+    /// Holds at least `frames` frames, as a [`DelayLine`](sound_core::DelayLine) does.
+    /// Allocates.
+    fn new(frames: usize) -> Self {
+        let length = (frames + 1).next_power_of_two();
+        Self {
+            frames: vec![T::default(); length],
+            mask: length - 1,
+        }
+    }
+
+    /// How many frames the buffer holds.
+    fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// The frame written `delay` frames before `position`.
+    #[inline]
+    fn at(&self, position: usize, delay: usize) -> &T {
+        // The length is the mask plus one. Cut to it, the compiler sees that a masked index is
+        // inside: the one check left is of the cut, which it may lift out of a loop.
+        let frames = &self.frames[..=self.mask];
+        &frames[position.wrapping_sub(delay) & self.mask]
+    }
+
+    #[inline]
+    fn write(&mut self, position: usize, frame: T) {
+        let frames = &mut self.frames[..=self.mask];
+        frames[position & self.mask] = frame;
+    }
+}
+
+/// A number that moves in a straight line over the frames of a run, a step per frame. A glide
+/// is a straight line, so a run moves its [`Smoothed`] once and works out the frames in between,
+/// which is cheaper than moving it each frame. Each frame is counted back from the end, so the
+/// last one is exactly where the glide is going and a number that does not move stays exact.
+struct Ramp {
+    to: f32,
+    step: f32,
+    /// The frames still to come, counted down before each value: 0 on the last frame.
+    remaining: usize,
+}
+
+impl Ramp {
+    fn between(from: f32, to: f32, frames: usize) -> Self {
+        Self {
+            to,
+            step: (to - from) / frames.max(1) as f32,
+            remaining: frames,
+        }
+    }
+
+    /// Moves `smoothed` `frames` along.
+    fn along(smoothed: &mut Smoothed, frames: usize) -> Self {
+        let from = smoothed.current();
+        Self::between(from, smoothed.advance(frames), frames)
+    }
+
+    /// The value of the next frame.
+    fn next(&mut self) -> f32 {
+        self.remaining = self.remaining.saturating_sub(1);
+        self.to - self.step * self.remaining as f32
+    }
+}
+
 pub struct Reverb {
     sample_rate: f32,
     /// The frames a change takes.
@@ -199,11 +277,11 @@ pub struct Reverb {
     state: Automated<ReverbState, { PARAMETERS.len() }>,
     /// Where every delay line writes the next frame.
     position: usize,
-    pre_delay: [DelayLine; CHANNELS],
+    pre_delay: Frames<[f32; CHANNELS]>,
     pre_delay_tap: Taps<1>,
-    diffusers: [[DelayLine; DIFFUSERS]; CHANNELS],
+    diffusers: Frames<[[f32; DIFFUSERS]; CHANNELS]>,
     diffuser_frames: [[usize; DIFFUSERS]; CHANNELS],
-    lines: [DelayLine; LINES],
+    lines: Frames<[f32; LINES]>,
     line_taps: Taps<LINES>,
     /// The memory of the damping filter of each line.
     damped: [f32; LINES],
@@ -233,7 +311,9 @@ pub struct Reverb {
     stale: bool,
     /// Whether the tail factor takes its target at once, with nothing to glide from.
     snapped: bool,
-    /// Frames in a row with a silent input and nothing audible in the lines.
+    /// Frames in a row with a silent input and nothing audible in the lines, counted in whole
+    /// runs: a run with anything audible counts none. So the reverb rests up to a run later than
+    /// it could, never earlier.
     quiet_frames: usize,
 }
 
@@ -250,11 +330,11 @@ impl Reverb {
             ramp_frames: 1.0,
             state: Automated::new(Self::AUTOMATION, state),
             position: 0,
-            pre_delay: [(); CHANNELS].map(|_| DelayLine::new(1)),
+            pre_delay: Frames::new(1),
             pre_delay_tap: Taps::new([1]),
-            diffusers: [(); CHANNELS].map(|_| [(); DIFFUSERS].map(|_| DelayLine::new(1))),
+            diffusers: Frames::new(1),
             diffuser_frames: [[1; DIFFUSERS]; CHANNELS],
-            lines: [(); LINES].map(|_| DelayLine::new(1)),
+            lines: Frames::new(1),
             line_taps: Taps::new([1; LINES]),
             damped: [0.0; LINES],
             line_gains: [0.0; LINES],
@@ -284,13 +364,11 @@ impl Reverb {
         self.sample_rate = sample_rate;
         self.ramp_frames = (RAMP_SECONDS * sample_rate).max(1.0);
         let frames = |seconds| frames_of(seconds, sample_rate);
-        self.pre_delay = [(); CHANNELS].map(|_| DelayLine::new(frames(PRE_DELAY.max / 1_000.0)));
+        self.pre_delay = Frames::new(frames(PRE_DELAY.max / 1_000.0));
         self.diffuser_frames = DIFFUSER_SECONDS.map(|channel| channel.map(frames));
-        self.diffusers = self
-            .diffuser_frames
-            .map(|channel| channel.map(DelayLine::new));
-        let longest = frames(longest_line_seconds());
-        self.lines = [(); LINES].map(|_| DelayLine::new(longest));
+        let longest_diffuser = self.diffuser_frames.into_iter().flatten().max();
+        self.diffusers = Frames::new(longest_diffuser.unwrap_or(1));
+        self.lines = Frames::new(frames(longest_line_seconds()));
         self.damped = [0.0; LINES];
         self.cuts = [[OnePole::default(); 2]; CHANNELS];
         self.position = 0;
@@ -427,64 +505,69 @@ impl Reverb {
     /// The largest delay a sound can take through the reverb before it is in the lines.
     fn longest_path(&self) -> usize {
         let diffusers: usize = self.diffuser_frames.iter().flatten().sum();
-        self.pre_delay[0].frames() + diffusers + self.lines[0].frames()
+        self.pre_delay.len() + diffusers + self.lines.len()
     }
 
-    /// One frame of the reverb, from the input of each channel to the wet sound of each.
-    fn frame(&mut self, input: [f32; CHANNELS], tail_gain: f32) -> [f32; CHANNELS] {
+    /// One frame of the reverb, from the input of each channel to the wet sound of each. Keeps
+    /// in `loudest` the loudest each line took: a maximum side by side for all lines per frame
+    /// and one compare per run, not a compare per line and frame.
+    fn frame(
+        &mut self,
+        input: [f32; CHANNELS],
+        diffusion: f32,
+        gain: f32,
+        loudest: &mut [f32; LINES],
+    ) -> [f32; CHANNELS] {
         let position = self.position;
         let (line_fade, pre_fade) = (self.line_taps.weight(), self.pre_delay_tap.weight());
-        let diffusion = self.diffusion.advance(1);
-        let input_gain = self.input.advance(1);
         let [low_factor, high_factor] = self.cut_factors;
+        let cut = std::array::from_fn(|channel| {
+            let [low_cut, high_cut] = &mut self.cuts[channel];
+            high_cut.low(high_factor, low_cut.high(low_factor, input[channel]))
+        });
+        // Every delay is a frame or more, so no read below sees what this frame writes.
+        self.pre_delay.write(position, cut);
+        let mut kept = [[0.0; DIFFUSERS]; CHANNELS];
         let mut into = [0.0; CHANNELS];
         for channel in 0..CHANNELS {
-            let [low_cut, high_cut] = &mut self.cuts[channel];
-            let cut = high_cut.low(high_factor, low_cut.high(low_factor, input[channel]));
-            let pre_delay = &mut self.pre_delay[channel];
-            pre_delay.write(position, cut);
-            let mut sound = self.pre_delay_tap.read(pre_delay, 0, position, pre_fade);
-            let diffusers = self.diffusers[channel].iter_mut();
-            for (diffuser, frames) in diffusers.zip(self.diffuser_frames[channel]) {
-                let delayed = diffuser.read(position, frames);
-                let kept = sound + diffusion * delayed;
-                diffuser.write(position, kept);
-                sound = delayed - diffusion * kept;
+            let pre_delay = |delay| self.pre_delay.at(position, delay)[channel];
+            let mut sound = self.pre_delay_tap.read_with(0, pre_fade, pre_delay);
+            for (diffuser, frames) in self.diffuser_frames[channel].into_iter().enumerate() {
+                let delayed = self.diffusers.at(position, frames)[channel][diffuser];
+                let kept = &mut kept[channel][diffuser];
+                *kept = sound + diffusion * delayed;
+                sound = delayed - diffusion * *kept;
             }
-            into[channel] = sound * input_gain * tail_gain;
+            into[channel] = sound * gain;
         }
+        self.diffusers.write(position, kept);
 
         // What comes out is what the lines hold, so the tail is what a freeze keeps: a frozen
         // loop holds the energy of the lines, and the tail was that energy all along. The loss
         // of a pass is on the way back in, after the mix, on what goes into each line.
         let out: [f32; LINES] = std::array::from_fn(|index| {
-            let line = &self.lines[index];
-            self.line_taps.read(line, index, position, line_fade)
+            let line = |delay| self.lines.at(position, delay)[index];
+            self.line_taps.read_with(index, line_fade, line)
         });
-        let mut wet = [0.0; CHANNELS];
-        for (index, out) in out.iter().enumerate() {
-            let [left, right] = signs(index);
-            wet[0] += left * out;
-            wet[1] += right * out;
-        }
         let mixed = hadamard(out);
-        let mut loudest = 0.0_f32;
-        for (index, mixed) in mixed.iter().enumerate() {
+        // The output is two rows of the matrix, so the mix has its sums already, added in a
+        // tree and not one after the other. Without the quarter: four times a quarter is exact.
+        let wet = [4.0 * mixed[1], 4.0 * mixed[2]];
+        // The signs of a line repeat every four lines, so four sums are all the input there is.
+        let inputs: [f32; 4] = std::array::from_fn(|index| {
             let [left, right] = signs(index);
-            let damped = self.line_gains[index] * mixed + self.poles[index] * self.damped[index];
-            self.damped[index] = damped;
-            let written = damped + 0.5 * (left * into[0] + right * into[1]);
-            self.lines[index].write(position, written);
-            loudest = loudest.max(written.abs());
-        }
+            0.5 * (left * into[0] + right * into[1])
+        });
+        self.damped = std::array::from_fn(|index| {
+            self.line_gains[index] * mixed[index] + self.poles[index] * self.damped[index]
+        });
+        let written: [f32; LINES] =
+            std::array::from_fn(|index| self.damped[index] + inputs[index % 4]);
+        self.lines.write(position, written);
+        *loudest = std::array::from_fn(|index| loudest[index].max(written[index].abs()));
         self.position = position.wrapping_add(1);
         self.line_taps.advance();
         self.pre_delay_tap.advance();
-        if loudest < REST {
-            self.quiet_frames = self.quiet_frames.saturating_add(1);
-        } else {
-            self.quiet_frames = 0;
-        }
         wet
     }
 }
@@ -522,29 +605,39 @@ impl Processor for Reverb {
         }
         let [left_out, right_out] = context.audio_outputs.get(Self::OUTPUT);
         let chunks = left_in
-            .chunks(FACTOR_FRAMES)
-            .zip(right_in.chunks(FACTOR_FRAMES))
-            .zip(left_out.chunks_mut(FACTOR_FRAMES))
-            .zip(right_out.chunks_mut(FACTOR_FRAMES));
+            .chunks(RUN_FRAMES)
+            .zip(right_in.chunks(RUN_FRAMES))
+            .zip(left_out.chunks_mut(RUN_FRAMES))
+            .zip(right_out.chunks_mut(RUN_FRAMES));
         for (((left_in, right_in), left_out), right_out) in chunks {
-            self.move_factors(left_in.len());
-            let length = left_in.len() as f32;
-            let (from, to) = (self.tail_gain, self.tail_gain_target);
+            let length = left_in.len();
+            self.move_factors(length);
+            let mut tail_gain = Ramp::between(self.tail_gain, self.tail_gain_target, length);
+            let mut input_gain = Ramp::along(&mut self.input, length);
+            let mut diffusion = Ramp::along(&mut self.diffusion, length);
+            let mut width = Ramp::along(&mut self.width, length);
+            let mut mix = Ramp::along(&mut self.mix, length);
+            let mut loudest = [0.0; LINES];
             let frames = left_in
                 .iter()
                 .zip(right_in)
                 .zip(left_out.iter_mut())
                 .zip(right_out.iter_mut());
-            for (index, (((left_in, right_in), left_out), right_out)) in frames.enumerate() {
-                let tail_gain = from + (to - from) * (index + 1) as f32 / length;
-                let [left, right] = self.frame([held(*left_in), held(*right_in)], tail_gain);
-                let width = self.width.advance(1);
-                let mix = self.mix.advance(1);
+            for (((left_in, right_in), left_out), right_out) in frames {
+                let input = [held(*left_in), held(*right_in)];
+                let gain = input_gain.next() * tail_gain.next();
+                let [left, right] = self.frame(input, diffusion.next(), gain, &mut loudest);
+                let (width, mix) = (width.next(), mix.next());
                 let middle = (left + right) * 0.5;
                 let side = (left - right) * 0.5 * width;
                 // The dry sound as it came in: only what goes into the reverb is held.
                 *left_out = (1.0 - mix) * *left_in + mix * (middle + side);
                 *right_out = (1.0 - mix) * *right_in + mix * (middle - side);
+            }
+            if loudest.into_iter().fold(0.0, f32::max) >= REST {
+                self.quiet_frames = 0;
+            } else {
+                self.quiet_frames = self.quiet_frames.saturating_add(length);
             }
         }
         if !silent_input {
@@ -592,6 +685,16 @@ mod tests {
                     assert!(!lines[index + 1..].contains(line), "{lines:?}");
                 }
             }
+        }
+    }
+
+    /// Ends at its target, so the input that freeze glides to 0 lets nothing through after.
+    #[test]
+    fn a_ramp_ends_exactly_on_its_target() {
+        for (from, to, frames) in [(0.3, 0.0, 16), (0.7, 0.1, 13), (1.0, 0.0, 15)] {
+            let mut ramp = Ramp::between(from, to, frames);
+            let last = (0..frames).map(|_| ramp.next()).last();
+            assert_eq!(last, Some(to), "{from} {to} {frames}");
         }
     }
 
