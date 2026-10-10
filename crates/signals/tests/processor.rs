@@ -178,16 +178,26 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
 
 #[test]
 fn two_voices_started_on_the_same_frame_play_different_noise() {
+    let kind = Kind::Instrument { voices: 4 };
     let noise = || compile(|| 0.2 * noise() * adsr(gate(), 1.0, 1.0, 1.0, 1.0));
-    let loudness = |notes| {
-        let output = play(Kind::Instrument { voices: 4 }, noise(), notes).render(9_600);
+    // With `renew`, the code is new before the notes, so the voices play machines it sent.
+    let loudness = |pitches: &[u8], renew: bool| {
+        let notes = pitches.iter().map(|pitch| (0, on(*pitch))).collect();
+        let mut played = play(kind, noise(), notes);
+        if renew {
+            let update = new_code(kind, noise());
+            played.control.update(played.signals, update).unwrap();
+        }
+        let output = played.render(9_600);
         let held = &output[4_800..];
         (held.iter().map(|sample| sample * sample).sum::<f32>() / held.len() as f32).sqrt()
     };
-    let one = loudness(vec![(0, on(60))]);
-    let two = loudness(vec![(0, on(60)), (0, on(64))]);
-    // The same noise twice is twice as loud; two different ones are about 1.41 times as loud.
-    assert!(two > one * 1.2 && two < one * 1.6, "{one} and {two}");
+    for renew in [false, true] {
+        let one = loudness(&[60], renew);
+        let two = loudness(&[60, 64], renew);
+        // The same noise twice is twice as loud; two different ones are about 1.41 times as loud.
+        assert!(two > one * 1.2 && two < one * 1.6, "{one} and {two}");
+    }
 }
 
 #[test]
