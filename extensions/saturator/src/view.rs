@@ -264,7 +264,7 @@ mod tests {
             drive_db: 24.0,
             ..SaturatorState::default()
         };
-        assert_eq!(auto_gain_readout(&state), "Auto gain -15.6 dB");
+        assert_eq!(auto_gain_readout(&state), "Auto gain −15.6 dB");
     }
 
     /// The defaults and both ends of every range, through the travel of its knob and back.

@@ -1068,7 +1068,7 @@ mod tests {
         assert_eq!(readout(Unit::Seconds, 0.005), "5 ms");
         assert_eq!(readout(Unit::Octaves, 1.), "+1 oct");
         assert_eq!(readout(Unit::Octaves, 0.), "0 oct");
-        assert_eq!(readout(Unit::Semitones, -7.), "-7 st");
+        assert_eq!(readout(Unit::Semitones, -7.), "−7 st");
         assert_eq!(readout(Unit::Cents, 7.), "+7 ct");
         assert_eq!(readout(Unit::Pan, -0.25), "25L");
         assert_eq!(readout(Unit::Count, 8.), "8");

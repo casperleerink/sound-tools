@@ -64,7 +64,8 @@ pub fn pan_readout(pan: f32) -> String {
     }
 }
 
-/// A number with three significant digits and no zeros at its end: `2`, `15.5`, `632`. What a
+/// A number with three significant digits and no zeros at its end: `2`, `15.5`, `632`, and a
+/// minus sign, not a hyphen, before a negative one: `−4.5`, as wide as the plus. What a
 /// readout next to a knob shows, so a value at rest is short and a moving one does not jump
 /// between widths.
 pub fn short(value: f32) -> String {
@@ -73,10 +74,11 @@ pub fn short(value: f32) -> String {
     }
     let decimals = (2 - value.abs().log10().floor() as i32).max(0) as usize;
     let text = format!("{value:.decimals$}");
-    match text.contains('.') {
-        true => text.trim_end_matches('0').trim_end_matches('.').into(),
-        false => text,
-    }
+    let text = match text.contains('.') {
+        true => text.trim_end_matches('0').trim_end_matches('.'),
+        false => &text,
+    };
+    text.replace('-', "\u{2212}")
 }
 
 /// A frequency: `632 Hz`, `1.2 kHz`.
@@ -538,7 +540,7 @@ mod tests {
         assert_eq!(hertz_readout(1_000.), "1 kHz");
         assert_eq!(hertz_readout(2_143.553), "2.14 kHz");
         assert_eq!(decibels_readout(0.), "0 dB");
-        assert_eq!(decibels_readout(-4.5), "-4.5 dB");
+        assert_eq!(decibels_readout(-4.5), "−4.5 dB");
         assert_eq!(decibels_readout(12.26), "12.3 dB");
         assert_eq!(percent_readout(0.), "0%");
         assert_eq!(percent_readout(0.123_456), "12.3%");
@@ -550,7 +552,7 @@ mod tests {
         assert_eq!(seconds_readout(0.0155), "15.5 ms");
         assert_eq!(seconds_readout(1.), "1 s");
         assert_eq!(seconds_readout(60.), "60 s");
-        assert_eq!(semitones_readout(-7.), "-7 st");
+        assert_eq!(semitones_readout(-7.), "−7 st");
         assert_eq!(semitones_readout(0.01), "0.01 st");
     }
 

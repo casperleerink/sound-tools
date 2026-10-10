@@ -3,18 +3,24 @@
 //! so it has no knob and nothing behind expand. The rack gives the view a [`CardFrame`]: the
 //! picker of the slot as the title, and the power and close icons.
 //!
+//! The spectrum is a line over a fill coloured by level, as a meter is: green, then yellow
+//! towards 0 dB and red at the top.
+//!
 //! Once per poll of the session the view reads the peaks of the analyzer and what came into its
 //! scope since the last poll, works out what it shows with [`Analysis`], and draws again only
 //! when that changed. A card at rest costs no frame.
 
 use gpui::{
-    Context, Div, Entity, FontWeight, SharedString, Task, Window, div, point, prelude::*, px,
+    Background, Bounds, ContentMask, Context, Div, Entity, FontWeight, Hsla, PathBuilder, Pixels,
+    SharedString, Task, Window, canvas, div, fill, linear_color_stop, linear_gradient, point,
+    prelude::*, px, size,
 };
 use sound_core::Instance;
 use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{RESPONSE_CAPTION, response_decades};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Display, INSET_HEIGHT};
+use sound_ui::components::knob::short;
 use sound_ui::components::meter::Meter;
 use sound_ui::{
     ActiveTheme, Devices, Metering, OfferGroup, POLL_INTERVAL, Session, Views, every_poll,
@@ -34,6 +40,13 @@ const METER_INSET: f32 = 6.;
 const METER_ROOM: f32 = 24.;
 /// The part of the width the spectrum takes; the meter has the rest.
 const SPECTRUM_WIDTH: f32 = (DISPLAY_WIDTH - METER_ROOM) / DISPLAY_WIDTH;
+/// The line of the spectrum, as the curve of every display.
+const LINE_WIDTH: f32 = 1.5;
+/// The fill is quieter than a meter: it sits under the line.
+const FILL_OPACITY: f32 = 0.45;
+/// Where the fill turns from green to yellow, and from yellow to red, in dB.
+const YELLOW_FROM_DB: f32 = -18.;
+const RED_FROM_DB: f32 = -6.;
 
 /// Registers the view of the `analyzer` tool, what a rack calls one and its offer in a picker.
 pub fn register(views: &mut Views, devices: &mut Devices) {
@@ -107,11 +120,22 @@ impl AnalyzerView {
     }
 
     fn display(&self, cx: &mut Context<Self>) -> Display {
-        let spectrum = self.analysis.reading().spectrum.iter().enumerate();
-        let curve = spectrum.map(|(column, db)| {
-            let across = (column as f32 + 0.5) / COLUMNS as f32 * SPECTRUM_WIDTH;
-            point(across, height(*db))
-        });
+        let theme = cx.theme();
+        let colors = Ink {
+            line: theme.gray_950,
+            green: theme.green.opacity(FILL_OPACITY),
+            yellow: theme.yellow.opacity(FILL_OPACITY),
+            red: theme.red.opacity(FILL_OPACITY),
+        };
+        let levels = self.analysis.reading().spectrum;
+        let spectrum = canvas(
+            |_, _, _| {},
+            move |bounds, (), window, _| paint_spectrum(bounds, &levels, colors, window),
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         let decades = response_decades().into_iter();
         let across = decades.map(|place| place * SPECTRUM_WIDTH).collect();
         let meter = Meter::new("level", self.metering.level())
@@ -121,9 +145,9 @@ impl AnalyzerView {
                 cx.notify();
             }));
         Display::new("spectrum", DISPLAY_WIDTH)
-            .curve(curve)
             .grid(across, vec![height(-30.), height(-60.)])
             .caption(RESPONSE_CAPTION)
+            .child(spectrum)
             .child(
                 div()
                     .absolute()
@@ -139,11 +163,79 @@ fn height(db: f32) -> f32 {
     ((db - FLOOR_DB) / -FLOOR_DB).clamp(0., 1.)
 }
 
-/// A level to a tenth, or a dash for silence.
-fn tenths(value: Option<f32>) -> String {
+/// A level as every readout shows a number, or a dash for silence.
+fn level(value: Option<f32>) -> String {
     match value.filter(|value| value.is_finite() && *value > FLOOR_DB) {
-        Some(value) => format!("{value:.1}"),
+        Some(value) => short(value),
         None => "–".into(),
+    }
+}
+
+/// The colours of the spectrum.
+#[derive(Clone, Copy)]
+struct Ink {
+    line: Hsla,
+    green: Hsla,
+    yellow: Hsla,
+    red: Hsla,
+}
+
+/// The spectrum on the display: a column of fill under each level and the line through them.
+/// The fill of a column is cut out of bands that span the height of the display, so a colour is
+/// always at the same level, as on a meter.
+fn paint_spectrum(bounds: Bounds<Pixels>, levels: &[f32], ink: Ink, window: &mut Window) {
+    let (left, bottom) = (bounds.origin.x, bounds.bottom());
+    let full = f32::from(bounds.size.height);
+    let y = |up: f32| bottom - px(up * full);
+    let column = f32::from(bounds.size.width) * SPECTRUM_WIDTH / COLUMNS as f32;
+    let bands: [(f32, f32, Background); 3] = [
+        (0., height(YELLOW_FROM_DB), ink.green.into()),
+        (
+            height(YELLOW_FROM_DB),
+            height(RED_FROM_DB),
+            linear_gradient(
+                0.,
+                linear_color_stop(ink.green, 0.),
+                linear_color_stop(ink.yellow, 1.),
+            ),
+        ),
+        (
+            height(RED_FROM_DB),
+            1.,
+            linear_gradient(
+                0.,
+                linear_color_stop(ink.yellow, 0.),
+                linear_color_stop(ink.red, 1.),
+            ),
+        ),
+    ];
+    for (index, db) in levels.iter().enumerate() {
+        let up = height(*db);
+        if up <= 0. {
+            continue;
+        }
+        let x = left + px(index as f32 * column);
+        // Half a point wider, so neighbours meet with no seam.
+        let width = px(column + 0.5);
+        let bar = Bounds::new(point(x, y(up)), size(width, y(0.) - y(up)));
+        window.with_content_mask(Some(ContentMask { bounds: bar }), |window| {
+            for (from, to, background) in bands.iter().filter(|(from, ..)| *from < up) {
+                let band = Bounds::new(point(x, y(*to)), size(width, y(*from) - y(*to)));
+                window.paint_quad(fill(band, *background));
+            }
+        });
+    }
+    let mut line = PathBuilder::stroke(px(LINE_WIDTH));
+    for (index, db) in levels.iter().enumerate() {
+        let place = point(left + px((index as f32 + 0.5) * column), y(height(*db)));
+        match index {
+            0 => line.move_to(place),
+            _ => line.line_to(place),
+        }
+    }
+    // A path that does not tessellate paints nothing, which is all there is to do about it.
+    if let Ok(line) = line.build() {
+        window.paint_path(line, ink.line);
     }
 }
 
@@ -171,15 +263,15 @@ impl Render for AnalyzerView {
         }
         let reading = self.analysis.reading();
         let (name, cents) = match reading.note.map(tuning) {
-            Some((name, cents)) => (name, format!("{cents:+} ct")),
+            Some((name, cents)) => (name, format!("{cents:+} ct").replace('-', "\u{2212}")),
             None => ("–".into(), String::new()),
         };
         let note = Cell::new(readout(name, cx)).label("Note").value(cents);
-        let loudness = Cell::new(readout(tenths(reading.loudness), cx))
+        let loudness = Cell::new(readout(level(reading.loudness), cx))
             .label("Loudness")
             .value("LUFS");
         let [left, right] = self.metering.level().peak;
-        let peak = Cell::new(readout(tenths(Some(left.max(right))), cx))
+        let peak = Cell::new(readout(level(Some(left.max(right))), cx))
             .label("Peak")
             .value("dB");
         self.frame
