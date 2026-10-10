@@ -194,7 +194,11 @@ impl Signals {
                     always: false,
                     ..voice
                 };
-                Players::Many(Box::new(Voices::new(idle, voices)))
+                let mut voices = Box::new(Voices::new(idle, voices));
+                for (index, voice) in voices.iter_mut().enumerate() {
+                    voice.machine.seed(index);
+                }
+                Players::Many(voices)
             }
             Kind::Effect | Kind::Source => Players::One(Box::new(Single {
                 voice,
@@ -267,8 +271,9 @@ impl Signals {
         }
         std::mem::swap(&mut self.automated, &mut values.automated);
         let fade_frames = self.fade_frames;
-        let swap = |voice: &mut SignalsVoice, machine: &mut Option<Box<Machine>>| {
-            if let Some(new) = machine.take() {
+        let swap = |voice: &mut SignalsVoice, machine: &mut Option<Box<Machine>>, index| {
+            if let Some(mut new) = machine.take() {
+                new.seed(index);
                 let old = std::mem::replace(&mut voice.machine, new);
                 // The one that faded before rides back with this update, to be dropped there.
                 *machine = voice.fading.replace(old);
@@ -280,12 +285,13 @@ impl Signals {
         match &mut self.players {
             Players::One(single) => {
                 if let Some(machine) = machines.first_mut() {
-                    swap(&mut single.voice, machine);
+                    swap(&mut single.voice, machine, 0);
                 }
             }
             Players::Many(voices) => {
-                for (voice, machine) in voices.iter_mut().zip(machines.iter_mut()) {
-                    swap(voice, machine);
+                let pairs = voices.iter_mut().zip(machines.iter_mut()).enumerate();
+                for (index, (voice, machine)) in pairs {
+                    swap(voice, machine, index);
                 }
             }
         }

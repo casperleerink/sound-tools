@@ -177,6 +177,20 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
 }
 
 #[test]
+fn two_voices_started_on_the_same_frame_play_different_noise() {
+    let noise = || compile(|| 0.2 * noise() * adsr(gate(), 1.0, 1.0, 1.0, 1.0));
+    let loudness = |notes| {
+        let output = play(Kind::Instrument { voices: 4 }, noise(), notes).render(9_600);
+        let held = &output[4_800..];
+        (held.iter().map(|sample| sample * sample).sum::<f32>() / held.len() as f32).sqrt()
+    };
+    let one = loudness(vec![(0, on(60))]);
+    let two = loudness(vec![(0, on(60)), (0, on(64))]);
+    // The same noise twice is twice as loud; two different ones are about 1.41 times as loud.
+    assert!(two > one * 1.2 && two < one * 1.6, "{one} and {two}");
+}
+
+#[test]
 fn a_note_that_takes_a_held_voice_starts_its_envelope_again() {
     let code = compile(|| {
         let level = adsr(gate(), 10.0, 10.0, 0.5, 10.0);
@@ -612,8 +626,8 @@ fn a_score_of_every_timing_renders_as_it_did() {
         }
     }
     let expected = [
-        (12778597150993281767, 6986213450020811758),
-        (15135685791053183329, 1929420734028792441),
+        (5776360306822237945, 6672061644954794190),
+        (9782693442129799630, 6622498506930331513),
         (2862924557966494273, 1517712285991712962),
         (1203857699514163717, 7353583470673154908),
         (8521250857642533575, 14695981039346656037),
