@@ -53,6 +53,7 @@ use crate::input::{InputId, LiveInput};
 use crate::parameter::AutomatedNumber;
 use crate::peaks::Peaks;
 use crate::processor::Processor;
+use crate::scope::Scope;
 use crate::watch::Watch;
 
 #[derive(Debug, thiserror::Error)]
@@ -451,6 +452,12 @@ impl Project {
     /// the instance is created again.
     pub fn peaks(&self, instance: &InstanceId, name: &str) -> Option<Peaks> {
         self.bindings.peaks(instance, name).cloned()
+    }
+
+    /// The scope that the behaviour of `instance` keeps under `name`, see
+    /// [`BehaviourContext::scope`]. It stays the same while the behaviour declares it.
+    pub fn scope(&self, instance: &InstanceId, name: &str) -> Option<Scope> {
+        self.bindings.scope(instance, name).cloned()
     }
 
     /// Every watch the behaviour of `instance` keeps, by name, see [`BehaviourContext::watch`].

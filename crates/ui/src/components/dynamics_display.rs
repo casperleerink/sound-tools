@@ -119,10 +119,10 @@ impl Default for Reading {
     }
 }
 
-/// The gain reduction under the display, to a tenth of a dB: `GR 0 dB`, `GR -6.8 dB`.
+/// The gain reduction under the display, to a tenth of a dB: `GR 0 dB`, `GR −6.8 dB`.
 fn reduction_readout(db: f32) -> String {
     match db > 0. {
-        true => format!("GR -{} dB", short(db)),
+        true => format!("GR {} dB", short(-db)),
         false => "GR 0 dB".into(),
     }
 }
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn a_readout_has_its_unit_and_three_digits_at_most() {
         assert_eq!(reduction_readout(0.0), "GR 0 dB");
-        assert_eq!(reduction_readout(6.8), "GR -6.8 dB");
+        assert_eq!(reduction_readout(6.8), "GR −6.8 dB");
     }
 
     #[test]

@@ -21,6 +21,7 @@ use crate::input::InputId;
 use crate::parameter::{AutomatedNumber, ParameterInfo};
 use crate::peaks::Peaks;
 use crate::processor::{CHANNELS, InputPort, OutputPort, Ports, PrepareConfig, Processor};
+use crate::scope::Scope;
 use crate::watch::Watch;
 
 /// Why a behaviour could not apply a state. It rejects the whole edit group.
@@ -101,6 +102,8 @@ struct Binding {
     peaks: BTreeMap<String, Peaks>,
     /// The values its processors show, by the name the behaviour chose.
     watches: BTreeMap<String, Watch>,
+    /// The sounds its processors show, by the name the behaviour chose.
+    scopes: BTreeMap<String, Scope>,
     /// The keys of [`BehaviourContext::changed`], by the name the behaviour chose.
     keys: BTreeMap<String, u64>,
     /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
@@ -277,6 +280,16 @@ impl BehaviourContext<'_> {
         let peaks = previous.cloned().unwrap_or_default();
         self.next.peaks.insert(name.to_string(), peaks.clone());
         peaks
+    }
+
+    /// The scope this instance keeps under `name`, for a processor that shows its sound, as
+    /// [`Self::peaks`] is for a level: the same scope every run while the name is declared,
+    /// read with [`Project::scope`](super::Project::scope).
+    pub fn scope(&mut self, name: &str) -> Scope {
+        let previous = self.previous.and_then(|previous| previous.scopes.get(name));
+        let scope = previous.cloned().unwrap_or_default();
+        self.next.scopes.insert(name.to_string(), scope.clone());
+        scope
     }
 
     /// Whether `key` differs from the one this instance gave under `name` the last time its
@@ -605,6 +618,11 @@ impl Bindings {
     /// The peaks that the behaviour of `instance` keeps under `name`.
     pub(super) fn peaks(&self, instance: &InstanceId, name: &str) -> Option<&Peaks> {
         self.by_instance.get(instance)?.peaks.get(name)
+    }
+
+    /// The scope that the behaviour of `instance` keeps under `name`.
+    pub(super) fn scope(&self, instance: &InstanceId, name: &str) -> Option<&Scope> {
+        self.by_instance.get(instance)?.scopes.get(name)
     }
 
     /// Every watch that the behaviour of `instance` keeps.
