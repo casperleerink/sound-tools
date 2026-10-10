@@ -7,6 +7,7 @@
 //! the processor works out once per block as a [`Block`]. The note of a voice is the same over
 //! the span the voice plays: the processor splits a block where a note comes or goes.
 
+use std::iter::repeat;
 use std::ops::Range;
 
 use sound_core::{
@@ -322,7 +323,8 @@ impl Machine {
                     match span.steady(*operation, filled, &memory.buffers) {
                         Some(value) => fill(registers, filled, register, value),
                         None => {
-                            span.run(*operation, register, frames.clone(), registers, memory);
+                            let frames = frames.clone();
+                            span.run(*operation, register, frames, registers, filled, memory);
                             if let Some(filled) = filled.get_mut(register) {
                                 *filled = None;
                             }
@@ -362,12 +364,17 @@ impl Span<'_> {
     /// A memory is kept in a local over the frames and put back after: left in its slot, it is
     /// stored and loaded again in every frame, which lengthens the chain from one frame to the
     /// next.
+    ///
+    /// A memory whose settings, such as the cutoff of a filter, are [`Machine::filled`] runs over
+    /// their one value repeated: the formula works out from them in every frame, and the
+    /// compiler moves that out of the loop, so it runs once per span.
     fn run(
         &self,
         operation: Operation,
         register: usize,
         frames: Range<usize>,
         registers: &mut [[f32; MAX_BLOCK]],
+        filled: &[Option<f32>],
         memory: &mut Memory,
     ) {
         // An operation reads only registers before its own, but for the source of a feedback.
@@ -381,6 +388,20 @@ impl Span<'_> {
             return;
         };
         let read = |register: Register| row(before, usize::from(register), &frames);
+        let one = |register: Register| filled.get(usize::from(register)).copied().flatten();
+        // `$body` with each of the `$settings` registers as its values: one value repeated
+        // where all are filled, else their rows.
+        macro_rules! settled {
+            ([$($settings:ident),*], $body:expr) => {
+                if let ($(Some($settings),)*) = ($(one($settings),)*) {
+                    $(let $settings = repeat($settings);)*
+                    $body
+                } else {
+                    $(let $settings = read($settings).iter().copied();)*
+                    $body
+                }
+            };
+        }
         let block = self.block;
         let note = self.note;
         let sample_rate = self.sample_rate;
@@ -432,13 +453,13 @@ impl Span<'_> {
             Operation::Clamp(x, low, high) => map3(out, read(x), read(low), read(high), clamp),
             Operation::Mix(a, b, amount) => map3(out, read(a), read(b), read(amount), mix),
             Operation::Phasor { hz, slot } => match memory.phases.get_mut(usize::from(slot)) {
-                Some(kept) => {
+                Some(kept) => settled!([hz], {
                     let mut phase = *kept;
-                    for (out, hz) in out.iter_mut().zip(read(hz)) {
-                        *out = phasor(&mut phase, *hz, sample_rate);
+                    for (out, hz) in out.iter_mut().zip(hz) {
+                        *out = phasor(&mut phase, hz, sample_rate);
                     }
                     *kept = phase;
-                }
+                }),
                 None => out.fill(0.0),
             },
             Operation::Noise { slot } => match memory.noises.get_mut(usize::from(slot)) {
@@ -475,14 +496,14 @@ impl Span<'_> {
                 q,
                 slot,
             } => match memory.filters.get_mut(usize::from(slot)) {
-                Some(kept) => {
+                Some(kept) => settled!([hz, q], {
                     let mut filter = kept.clone();
-                    let values = read(input).iter().zip(read(hz)).zip(read(q));
+                    let values = read(input).iter().zip(hz).zip(q);
                     for (out, ((input, hz), q)) in out.iter_mut().zip(values) {
-                        *out = filter.next(kind, *input, *hz, *q, sample_rate);
+                        *out = filter.next(kind, *input, hz, q, sample_rate);
                     }
                     *kept = filter;
-                }
+                }),
                 None => out.fill(0.0),
             },
             Operation::Smooth { input, ms, slot } => {
@@ -505,20 +526,20 @@ impl Span<'_> {
                 release,
                 slot,
             } => match memory.envelopes.get_mut(usize::from(slot)) {
-                Some(kept) => {
+                Some(kept) => settled!([attack, decay, sustain, release], {
                     let mut envelope = kept.clone();
-                    let times = read(attack).iter().zip(read(decay)).zip(read(release));
-                    let values = read(gate).iter().zip(read(sustain)).zip(times);
+                    let times = attack.zip(decay).zip(release);
+                    let values = read(gate).iter().zip(sustain).zip(times);
                     let outs = out.iter_mut().zip(frames.clone());
                     for ((out, frame), ((gate, sustain), ((attack, decay), release))) in
                         outs.zip(values)
                     {
-                        let times = [*attack, *decay, *release];
+                        let times = [attack, decay, release];
                         let onset = self.onset(frame);
-                        *out = envelope.next(*gate, onset, times, *sustain, sample_rate);
+                        *out = envelope.next(*gate, onset, times, sustain, sample_rate);
                     }
                     *kept = envelope;
-                }
+                }),
                 None => out.fill(0.0),
             },
             Operation::Hold { input, when, slot } => {
@@ -904,6 +925,7 @@ fn look_up(values: &[f32], phase: f32) -> f32 {
 }
 
 impl Filter {
+    #[inline(always)]
     fn next(&mut self, kind: FilterKind, input: f32, hz: f32, q: f32, sample_rate: f32) -> f32 {
         if (hz != self.hz || q != self.q) && hz.is_finite() && q.is_finite() {
             let g = SvfFactors::cutoff_factor(hz.max(1.0), sample_rate);
@@ -943,6 +965,7 @@ impl Envelope {
     /// `times` are of the attack, the decay and the release, in milliseconds. A note that takes
     /// over a voice whose gate is still up, as one does under the sustain pedal, starts the
     /// attack at its `onset`: the gate it sees never fell.
+    #[inline(always)]
     fn next(
         &mut self,
         gate: f32,
