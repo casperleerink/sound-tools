@@ -118,10 +118,6 @@ pub struct Signals {
     watches: Vec<Watch>,
     /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
-    /// The beats per frame and the frames of the last block, where no voice sounded, that
-    /// `beat` has not moved on by yet. A block that plays sets the beat again; only a stop reads
-    /// where the last one ended.
-    unmoved: Option<(f64, usize)>,
     bend: f32,
     sample_rate: f32,
     fade_frames: usize,
@@ -224,7 +220,6 @@ impl Signals {
             next_frame: 0,
             watches,
             beat: 0.0,
-            unmoved: None,
             bend: 0.0,
             sample_rate: 48_000.0,
             fade_frames: 1,
@@ -396,9 +391,12 @@ fn hold_rows(rows: &mut [[f32; MAX_BLOCK]], values: &[Smoothed], range: Range<us
     }
 }
 
+// A bit per param and per live control, in a `u32`.
+const _: () = assert!(MAX_PARAMETERS <= 32 && MAX_LIVES <= 32);
+
 /// Moves the first `count` of `rows` along the glide of their param or live control over
-/// `frames`, and gives a bit for each row that is one value in all of them. The rows past
-/// `count` are: nothing moves them after [`hold_rows`].
+/// `frames`, and gives a bit for each row that is one value in all of them. Rows past `count`
+/// keep their bit: [`hold_rows`] set each to one value, and nothing moves them after.
 fn advance_rows(
     rows: &mut [[f32; MAX_BLOCK]],
     values: &mut [Smoothed],
@@ -561,30 +559,28 @@ fn in_part_mut<'a>(samples: &'a mut [f32; MAX_BLOCK], part: &Range<usize>) -> &'
 
 impl Signals {
     /// Works out what every voice reads in the first `frames` frames of this block, but the
-    /// params and live controls.
-    fn fill(
-        &mut self,
-        input: [&[f32]; CHANNELS],
-        frames: usize,
-        bpm: f64,
-        beats_per_frame: f64,
-        playing: bool,
-    ) {
+    /// params, the live controls and the beat.
+    fn fill(&mut self, input: [&[f32]; CHANNELS], frames: usize, bpm: f64, playing: bool) {
         let block = &mut *self.block;
         for (row, samples) in block.input.iter_mut().zip(input) {
             for (frame, sample) in row.iter_mut().take(frames).enumerate() {
                 *sample = samples.get(frame).copied().unwrap_or(0.0);
             }
         }
-        for beat in block.beat.iter_mut().take(frames) {
+        block.triggers.fill(0);
+        block.bpm = bpm as f32;
+        block.playing = playing;
+    }
+
+    /// The beat of each of the first `frames` frames of this block, moving it on frame by frame
+    /// while `playing`.
+    fn move_beat(&mut self, frames: usize, beats_per_frame: f64, playing: bool) {
+        for beat in self.block.beat.iter_mut().take(frames) {
             *beat = self.beat as f32;
             if playing {
                 self.beat += beats_per_frame;
             }
         }
-        block.triggers.fill(0);
-        block.bpm = bpm as f32;
-        block.playing = playing;
     }
 
     /// Plays `frames` of every voice that sounds into the mix.
@@ -679,18 +675,9 @@ impl Processor for Signals {
         let frames = context.frames.min(MAX_BLOCK);
         let transport = &context.transport;
         let playing = transport.playing;
-        match transport.quarters() {
-            Some(quarters) => self.beat = quarters,
-            // Frame by frame, as `fill` moves it.
-            None => {
-                if let Some((beats_per_frame, frames)) = self.unmoved {
-                    for _ in 0..frames {
-                        self.beat += beats_per_frame;
-                    }
-                }
-            }
+        if let Some(quarters) = transport.quarters() {
+            self.beat = quarters;
         }
-        self.unmoved = None;
         let tempo_tick = if playing {
             transport.tick_range.start
         } else {
@@ -699,6 +686,8 @@ impl Processor for Signals {
         let bpm = transport.clock.tempo_at(tempo_tick).bpm();
         let beats_per_frame = bpm / 60.0 / f64::from(self.sample_rate);
         let quiet_limit = (QUIET_SECONDS * self.sample_rate) as usize;
+        // Also in a block that plays silence: a stop reads where it ended.
+        self.move_beat(frames, beats_per_frame, playing);
         self.next_frame = context.start_frame + context.frames as u64;
         let (parameters, lives) = self.counts;
         let block = &mut *self.block;
@@ -720,13 +709,12 @@ impl Processor for Signals {
             && context.event_inputs.get(Self::NOTES).is_empty()
             && self.scheduled.last().is_none_or(|(at, _)| *at >= next)
         {
-            self.unmoved = playing.then_some((beats_per_frame, frames));
             left_out.fill(0.0);
             right_out.fill(0.0);
             return;
         }
         let input = context.audio_inputs.get(Self::INPUT);
-        self.fill(input, frames, bpm, beats_per_frame, playing);
+        self.fill(input, frames, bpm, playing);
         for channel in &mut self.mix {
             channel.fill(0.0);
         }
