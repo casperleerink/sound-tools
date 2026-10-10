@@ -1,12 +1,12 @@
 #![allow(clippy::unwrap_used)]
 
-//! How much faster than realtime many Hum processors render: effects, and instruments with
+//! How much faster than realtime many `Signals` processors render: effects, and instruments with
 //! every voice playing.
 
 use std::time::Instant;
 
 use sound_core::{Connection, Engine, EngineConfig};
-use sound_hum::{Code, Hum, Kind, Machine, Values};
+use sound_signals::{Code, Kind, Machine, Signals, Values};
 
 mod sound;
 
@@ -42,7 +42,7 @@ fn voice() -> Code {
 }
 
 /// Run with
-/// `cargo nextest run -p sound-hum --run-ignored only realtime_ratio --no-capture`.
+/// `cargo nextest run -p sound-signals --run-ignored only realtime_ratio --no-capture`.
 #[test]
 #[ignore = "a measurement, not a check; run it locally and read the printed ratio"]
 fn realtime_ratio_of_one_hundred_processors() {
@@ -59,9 +59,11 @@ fn realtime_ratio_of_one_hundred_processors() {
                 *value = parameter.default;
             }
             let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
-            let hum = Hum::new(kind, machine, values, Vec::new());
-            let hum = edit.add_processor(&format!("hum-{index}"), hum).unwrap();
-            edit.connect(Connection::to_device(hum.id(), Hum::OUTPUT, 0))
+            let signals = Signals::new(kind, machine, values, Vec::new());
+            let signals = edit
+                .add_processor(&format!("signals-{index}"), signals)
+                .unwrap();
+            edit.connect(Connection::to_device(signals.id(), Signals::OUTPUT, 0))
                 .unwrap();
         }
         edit.commit().unwrap();
@@ -73,7 +75,7 @@ fn realtime_ratio_of_one_hundred_processors() {
         let elapsed = started.elapsed().as_secs_f64();
         let ratio = SECONDS as f64 / elapsed;
         println!(
-            "{PROCESSORS} Hum processors, {label}: {SECONDS} s in {elapsed:.3} s, {ratio:.1} times realtime"
+            "{PROCESSORS} signals processors, {label}: {SECONDS} s in {elapsed:.3} s, {ratio:.1} times realtime"
         );
     }
 }

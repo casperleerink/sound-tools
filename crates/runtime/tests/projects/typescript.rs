@@ -14,7 +14,7 @@ fn doc_example() -> String {
     block.split("```").next().unwrap().to_string()
 }
 
-/// Combs whose number is a choice: `sound` builds a different Hum for each.
+/// Combs whose number is a choice: `sound` builds a different graph for each.
 const COMBS: &str = r#"import { choice, delay, feedback, input, knob, lowpass, mix, tool, type Signal } from "./sdk";
 
 const TIMES = [29.7, 37.1, 41.1, 43.7, 31.3, 39.9, 45.1, 33.5];

@@ -19,11 +19,11 @@ use sound_core::{
     Assets, BehaviourContext, BehaviourError, InputEndpoint, InstanceId, JsonTool, JsonToolDoc,
     OutputEndpoint, ParameterInfo, Problem, ValueRange, Watch,
 };
-use sound_hum::{
-    ArraySpec, Code, ControlSpec, Declarations, Hum, HumUpdate, Kind, Machine, ParameterSpec,
-    Values,
-};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
+use sound_signals::{
+    ArraySpec, Code, ControlSpec, Declarations, Kind, Machine, ParameterSpec, Signals,
+    SignalsUpdate, Values,
+};
 
 use crate::bun::Bun;
 use crate::{FOLDER, samples};
@@ -199,12 +199,12 @@ impl Field {
 }
 
 impl ToolInfo {
-    /// What the Hum processor of this tool is.
+    /// What the `Signals` processor of this tool is.
     pub(crate) fn kind(&self) -> Kind {
         match self.kind {
             ToolKind::Effect => Kind::Effect,
             ToolKind::Instrument => Kind::Instrument {
-                voices: sound_hum::MAX_VOICES,
+                voices: sound_signals::MAX_VOICES,
             },
             ToolKind::Source => Kind::Source,
         }
@@ -273,9 +273,9 @@ impl ToolInfo {
     /// The name of its processor. Another kind is another processor, with other ports.
     pub(crate) fn processor(&self) -> &'static str {
         match self.kind {
-            ToolKind::Effect => "hum-effect",
-            ToolKind::Instrument => "hum-instrument",
-            ToolKind::Source => "hum-source",
+            ToolKind::Effect => "signals-effect",
+            ToolKind::Instrument => "signals-instrument",
+            ToolKind::Source => "signals-source",
         }
     }
 
@@ -670,7 +670,7 @@ impl Sounds {
             false => Vec::new(),
         };
         let mut created = false;
-        let hum = context.processor(self.info.processor(), || {
+        let signals = context.processor(self.info.processor(), || {
             created = true;
             let first = machines.first_mut().and_then(Option::take);
             let lists = (values.arrays.take()).unwrap_or_else(|| self.lists(&code, state, reading));
@@ -678,14 +678,14 @@ impl Sounds {
                 arrays: Some(lists),
                 ..values.clone()
             };
-            Hum::new(kind, first.unwrap_or_else(made), values, watches.clone())
+            Signals::new(kind, first.unwrap_or_else(made), values, watches.clone())
         })?;
         // A new processor already plays this code with these values.
         if !created {
             let watches = if new_code { watches } else { Vec::new() };
             context.update(
-                hum,
-                HumUpdate::Set {
+                signals,
+                SignalsUpdate::Set {
                     machines,
                     values: Box::new(values),
                     watches,
@@ -694,13 +694,13 @@ impl Sounds {
         }
         match kind {
             Kind::Effect => {
-                context.input(AUDIO_INPUT, InputEndpoint::new(hum, Hum::INPUT));
+                context.input(AUDIO_INPUT, InputEndpoint::new(signals, Signals::INPUT));
             }
             Kind::Instrument { .. } | Kind::Source => {
-                context.input(NOTES_INPUT, InputEndpoint::new(hum, Hum::NOTES));
+                context.input(NOTES_INPUT, InputEndpoint::new(signals, Signals::NOTES));
             }
         }
-        context.output(AUDIO_OUTPUT, OutputEndpoint::new(hum, Hum::OUTPUT));
+        context.output(AUDIO_OUTPUT, OutputEndpoint::new(signals, Signals::OUTPUT));
         // Every knob can be automated, as a number of any device. A toggle or a pattern is no
         // straight line, and a lane cannot move it.
         let numbers: Vec<(ParameterInfo, f32)> = (self.knobs())
@@ -714,7 +714,7 @@ impl Sounds {
             })
             .collect();
         if !numbers.is_empty() {
-            let input = InputEndpoint::new(hum, Hum::AUTOMATION);
+            let input = InputEndpoint::new(signals, Signals::AUTOMATION);
             context.runtime_automation(input, numbers)?;
         }
         Ok(())

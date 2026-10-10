@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use sound_core::InstanceId;
-use sound_hum::Graph;
+use sound_signals::Graph;
 
 use crate::Midi;
 use crate::tools::ToolInfo;

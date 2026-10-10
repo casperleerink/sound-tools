@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
-//! The Hum processor in an engine: notes into an instrument and a source, a trigger and a live
-//! control from the interface, a watch back to it, and the beat of the transport.
+//! The `Signals` processor in an engine: notes into an instrument and a source, a trigger and a
+//! live control from the interface, a watch back to it, and the beat of the transport.
 
 use std::f32::consts::TAU;
 
@@ -9,8 +9,8 @@ use sound_core::{
     Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput, Node, Ports,
     PrepareConfig, ProcessContext, Processor, Watch,
 };
-use sound_hum::{Code, Hum, HumUpdate, Kind, Machine, Values};
 use sound_notes::{NoteEvent, Pitch, Velocity};
+use sound_signals::{Code, Kind, Machine, Signals, SignalsUpdate, Values};
 
 mod sound;
 
@@ -66,7 +66,7 @@ fn off(pitch: u8) -> NoteEvent {
 struct Played {
     control: EngineControl,
     engine: Engine,
-    hum: Node<Hum>,
+    signals: Node<Signals>,
     watches: Vec<Watch>,
 }
 
@@ -74,24 +74,29 @@ struct Played {
 fn play(kind: Kind, code: Code, notes: Vec<(usize, NoteEvent)>) -> Played {
     let watches: Vec<Watch> = code.watches.iter().map(|_| Watch::new()).collect();
     let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
-    let hum = Hum::new(kind, machine, Values::default(), watches.clone());
+    let signals = Signals::new(kind, machine, Values::default(), watches.clone());
     let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
     let mut edit = control.edit();
-    let hum = edit.add_processor("hum", hum).unwrap();
-    edit.connect(Connection::to_device(hum.id(), Hum::OUTPUT, 0))
+    let signals = edit.add_processor("signals", signals).unwrap();
+    edit.connect(Connection::to_device(signals.id(), Signals::OUTPUT, 0))
         .unwrap();
     if kind != Kind::Effect {
         let score = edit
             .add_processor("score", Score { notes, frame: 0 })
             .unwrap();
-        edit.connect(Connection::new(score.id(), SCORE_OUT, hum.id(), Hum::NOTES))
-            .unwrap();
+        edit.connect(Connection::new(
+            score.id(),
+            SCORE_OUT,
+            signals.id(),
+            Signals::NOTES,
+        ))
+        .unwrap();
     }
     edit.commit().unwrap();
     Played {
         control,
         engine,
-        hum,
+        signals,
         watches,
     }
 }
@@ -216,7 +221,10 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
     for _ in 0..3 {
         played
             .control
-            .update(played.hum, HumUpdate::Trigger { index: 0, at: None })
+            .update(
+                played.signals,
+                SignalsUpdate::Trigger { index: 0, at: None },
+            )
             .unwrap();
         played.render(640);
     }
@@ -227,13 +235,13 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
 fn a_note_from_the_interface_plays_a_voice_for_its_length() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     assert_eq!(loudest(&played.render(4_800)), 0.0);
-    let note = HumUpdate::Note {
+    let note = SignalsUpdate::Note {
         pitch: Pitch::new(69).unwrap(),
         velocity: Velocity::new(100).unwrap(),
         at: None,
         frames: Some(24_000),
     };
-    played.control.update(played.hum, note).unwrap();
+    played.control.update(played.signals, note).unwrap();
     let output = played.render(48_000);
     assert!((frequency(&output[2_400..24_000]) - 440.0).abs() < 1.0);
     // Let go after its length, and over 1 ms of release.
@@ -244,16 +252,16 @@ fn a_note_from_the_interface_plays_a_voice_for_its_length() {
 fn a_note_with_no_length_plays_until_it_is_released() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = HumUpdate::Note {
+    let note = SignalsUpdate::Note {
         pitch,
         velocity: Velocity::new(100).unwrap(),
         at: None,
         frames: None,
     };
-    played.control.update(played.hum, note).unwrap();
+    played.control.update(played.signals, note).unwrap();
     assert!(loudest(&played.render(96_000)[48_000..]) > 0.1);
-    let release = HumUpdate::Release { pitch, at: None };
-    played.control.update(played.hum, release).unwrap();
+    let release = SignalsUpdate::Release { pitch, at: None };
+    played.control.update(played.signals, release).unwrap();
     assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
 }
 
@@ -261,25 +269,25 @@ fn a_note_with_no_length_plays_until_it_is_released() {
 fn a_release_lets_go_of_its_note_when_the_list_of_what_waits_for_its_frame_is_full() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = HumUpdate::Note {
+    let note = SignalsUpdate::Note {
         pitch,
         velocity: Velocity::new(100).unwrap(),
         at: None,
         frames: None,
     };
-    played.control.update(played.hum, note).unwrap();
+    played.control.update(played.signals, note).unwrap();
     // A trigger far ahead waits in the list, which holds 256.
     for _ in 0..256 {
-        let hit = HumUpdate::Trigger {
+        let hit = SignalsUpdate::Trigger {
             index: 0,
             at: Some(u64::MAX),
         };
-        played.control.update(played.hum, hit).unwrap();
+        played.control.update(played.signals, hit).unwrap();
         played.render(64);
     }
     assert!(loudest(&played.render(4_800)) > 0.1);
-    let release = HumUpdate::Release { pitch, at: None };
-    played.control.update(played.hum, release).unwrap();
+    let release = SignalsUpdate::Release { pitch, at: None };
+    played.control.update(played.signals, release).unwrap();
     assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
 }
 
@@ -289,11 +297,11 @@ fn a_trigger_with_a_time_fires_on_that_frame_and_one_whose_time_passed_at_once()
     // Engine time is 640 from here.
     played.render(640);
     for at in [1_000, 100] {
-        let hit = HumUpdate::Trigger {
+        let hit = SignalsUpdate::Trigger {
             index: 0,
             at: Some(at),
         };
-        played.control.update(played.hum, hit).unwrap();
+        played.control.update(played.signals, hit).unwrap();
     }
     let output = played.render(1_280);
     let fired: Vec<usize> = (0..output.len()).filter(|&at| output[at] == 1.0).collect();
@@ -308,11 +316,11 @@ fn a_live_control_glides_to_where_the_interface_puts_it() {
         Vec::new(),
     );
     assert_eq!(played.render(64)[63], 0.0);
-    let live = HumUpdate::Live {
+    let live = SignalsUpdate::Live {
         index: 0,
         value: 1.0,
     };
-    played.control.update(played.hum, live).unwrap();
+    played.control.update(played.signals, live).unwrap();
     let output = played.render(1_920);
     // It takes 20 ms, 960 frames, and does not jump.
     assert!(output[479] > 0.4 && output[479] < 0.6, "{}", output[479]);
@@ -342,30 +350,30 @@ fn a_live_control_stays_where_it_is_when_the_code_is_new() {
         compile(|| live("x", 0.0, [0.0, 1.0])),
         Vec::new(),
     );
-    let moved = HumUpdate::Live {
+    let moved = SignalsUpdate::Live {
         index: 0,
         value: 1.0,
     };
-    played.control.update(played.hum, moved).unwrap();
+    played.control.update(played.signals, moved).unwrap();
     played.render(1_920);
     // New code, with another live control first: `x` keeps its value under its name.
     let code = compile(|| {
         let y = live("y", 0.5, [0.0, 1.0]);
         live("x", 0.0, [0.0, 1.0]) + y
     });
-    let new = HumUpdate::Set {
+    let new = SignalsUpdate::Set {
         machines: vec![Some(Box::new(Machine::new(code, SAMPLE_RATE as f32)))],
         values: Box::default(),
         watches: Vec::new(),
     };
-    played.control.update(played.hum, new).unwrap();
+    played.control.update(played.signals, new).unwrap();
     assert_eq!(played.render(1_920)[1_919], 1.5);
 }
 
 /// The update the behaviour sends when the code of a tool of `kind` is new.
-fn new_code(kind: Kind, code: Code) -> HumUpdate {
+fn new_code(kind: Kind, code: Code) -> SignalsUpdate {
     let made = || Some(Box::new(Machine::new(code.clone(), SAMPLE_RATE as f32)));
-    HumUpdate::Set {
+    SignalsUpdate::Set {
         machines: (0..kind.machines()).map(|_| made()).collect(),
         values: Box::default(),
         watches: Vec::new(),
@@ -377,7 +385,7 @@ fn new_code_fades_in_without_a_jump() {
     let mut played = play(Kind::Source, compile(|| 0.5), Vec::new());
     played.render(640);
     let update = new_code(Kind::Source, compile(|| -0.5));
-    played.control.update(played.hum, update).unwrap();
+    played.control.update(played.signals, update).unwrap();
     let output = played.render(1_920);
     let steps = output.windows(2).map(|pair| (pair[1] - pair[0]).abs());
     // From 0.5 to -0.5 over 10 ms, 480 frames.
@@ -423,10 +431,10 @@ fn a_lane_moves_a_param_and_the_record_takes_it_back_when_the_lane_stops() {
     values.parameters[0] = 0.25;
     values.automated = vec![0];
     let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
-    let hum = Hum::new(Kind::Source, machine, values, Vec::new());
+    let signals = Signals::new(Kind::Source, machine, values, Vec::new());
     let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
     let mut edit = control.edit();
-    let hum = edit.add_processor("hum", hum).unwrap();
+    let signals = edit.add_processor("signals", signals).unwrap();
     let lane = edit
         .add_processor(
             "lane",
@@ -436,20 +444,20 @@ fn a_lane_moves_a_param_and_the_record_takes_it_back_when_the_lane_stops() {
             },
         )
         .unwrap();
-    edit.connect(Connection::to_device(hum.id(), Hum::OUTPUT, 0))
+    edit.connect(Connection::to_device(signals.id(), Signals::OUTPUT, 0))
         .unwrap();
     edit.connect(Connection::new(
         lane.id(),
         LANE_OUT,
-        hum.id(),
-        Hum::AUTOMATION,
+        signals.id(),
+        Signals::AUTOMATION,
     ))
     .unwrap();
     edit.commit().unwrap();
     let mut played = Played {
         control,
         engine,
-        hum,
+        signals,
         watches: Vec::new(),
     };
     // 100 blocks of 64 frames: the lane holds it at 1 after its 20 ms glide.
@@ -469,7 +477,7 @@ fn a_note_after_new_code_plays_only_the_new_code() {
     played.render(4_800);
     played
         .control
-        .update(played.hum, new_code(kind, compile(|| -0.5 * gate())))
+        .update(played.signals, new_code(kind, compile(|| -0.5 * gate())))
         .unwrap();
     let output = played.render(9_600);
     // The note at frame 9600 starts with the new code, not with a fade from the old.

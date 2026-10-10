@@ -1,5 +1,5 @@
 [package]
-name = "sound-hum"
+name = "sound-signals"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

@@ -6208,17 +6208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sound-hum"
-version = "0.7.0"
-dependencies = [
- "serde",
- "serde_json",
- "sound-core",
- "sound-notes",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "sound-media"
 version = "0.7.0"
 dependencies = [
@@ -6245,6 +6234,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sound-signals"
+version = "0.7.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sound-core",
+ "sound-notes",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "sound-typescript"
 version = "0.7.0"
 dependencies = [
@@ -6255,9 +6255,9 @@ dependencies = [
  "serde_json",
  "smol",
  "sound-core",
- "sound-hum",
  "sound-media",
  "sound-notes",
+ "sound-signals",
  "sound-ui",
  "tempfile",
 ]

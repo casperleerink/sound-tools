@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use serde_json::{Value, json};
-use sound_hum::{ArraySpec, Code, ControlSpec, Declarations, Graph, ParameterSpec};
+use sound_signals::{ArraySpec, Code, ControlSpec, Declarations, Graph, ParameterSpec};
 
 #[derive(Default)]
 struct Building {

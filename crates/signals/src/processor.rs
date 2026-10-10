@@ -1,5 +1,5 @@
-//! The Hum processor: plays [`Machine`]s, one per voice, and fades each from old code to new
-//! over a few milliseconds, so an edit of the code while it plays does not click.
+//! The [`Signals`] processor: plays [`Machine`]s, one per voice, and fades each from old code to
+//! new over a few milliseconds, so an edit of the code while it plays does not click.
 //!
 //! What every voice shares lives here and is worked out once per frame: the values of the
 //! record, or of an automation lane, glided; the `live` controls and triggers the interface
@@ -32,7 +32,7 @@ pub const MAX_VOICES: usize = 8;
 /// The most notes and triggers that wait for their frame: a control loop plays a little ahead.
 const MAX_SCHEDULED: usize = 256;
 
-/// What a Hum tool is.
+/// What a tool is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// Sound in, sound out: the code reads `input`.
@@ -53,7 +53,7 @@ impl Kind {
     }
 }
 
-pub enum HumUpdate {
+pub enum SignalsUpdate {
     /// From the behaviour, on every run: where the values stand, and, when the code is new, a
     /// machine per voice and the watches of that code. What it replaces rides back in here, to
     /// be dropped off the audio thread.
@@ -69,8 +69,8 @@ pub enum HumUpdate {
     /// frame when there is none or it has passed. Not saved.
     Trigger { index: usize, at: Option<u64> },
     /// From the interface: a key held for `frames` from the frame `at` of engine time, or from
-    /// the next frame, as if it came in on [`Hum::NOTES`]; with no `frames`, until a
-    /// [`HumUpdate::Release`] of its pitch. Not saved.
+    /// the next frame, as if it came in on [`Signals::NOTES`]; with no `frames`, until a
+    /// [`SignalsUpdate::Release`] of its pitch. Not saved.
     Note {
         pitch: Pitch,
         velocity: Velocity,
@@ -89,7 +89,7 @@ enum Scheduled {
     Trigger(usize),
 }
 
-pub struct Hum {
+pub struct Signals {
     players: Players,
     parameters: [Smoothed; MAX_PARAMETERS],
     /// Where each param stands in the record, and where it was last aimed.
@@ -119,7 +119,7 @@ pub struct Hum {
 
 enum Players {
     One(Box<Single>),
-    Many(Box<Voices<HumVoice, MAX_VOICES>>),
+    Many(Box<Voices<SignalsVoice, MAX_VOICES>>),
 }
 
 impl Players {
@@ -134,12 +134,12 @@ impl Players {
 
 /// The one voice of an effect or a source, and the keys a source follows.
 struct Single {
-    voice: HumVoice,
+    voice: SignalsVoice,
     keys: Keys,
 }
 
 #[derive(Clone)]
-struct HumVoice {
+struct SignalsVoice {
     machine: Box<Machine>,
     /// The machine of the code before. It fades out, then stays until the next new code takes
     /// it back off the audio thread.
@@ -161,7 +161,7 @@ struct Keys {
     count: u64,
 }
 
-impl Hum {
+impl Signals {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
@@ -172,7 +172,7 @@ impl Hum {
         let code = machine.code();
         let counts = counts_of(code);
         let lives = lives_of(code);
-        let voice = HumVoice {
+        let voice = SignalsVoice {
             machine,
             fading: None,
             fade_left: 0,
@@ -184,7 +184,7 @@ impl Hum {
         };
         let players = match kind {
             Kind::Instrument { voices } => {
-                let idle = HumVoice {
+                let idle = SignalsVoice {
                     always: false,
                     ..voice
                 };
@@ -251,7 +251,7 @@ impl Hum {
         }
         std::mem::swap(&mut self.automated, &mut values.automated);
         let fade_frames = self.fade_frames;
-        let swap = |voice: &mut HumVoice, machine: &mut Option<Box<Machine>>| {
+        let swap = |voice: &mut SignalsVoice, machine: &mut Option<Box<Machine>>| {
             if let Some(new) = machine.take() {
                 let old = std::mem::replace(&mut voice.machine, new);
                 // The one that faded before rides back with this update, to be dropped there.
@@ -366,7 +366,7 @@ fn velocity_of(velocity: Velocity) -> f32 {
     f32::from(velocity.value()) / 127.0
 }
 
-impl Voice for HumVoice {
+impl Voice for SignalsVoice {
     type Context = ();
 
     fn is_idle(&self) -> bool {
@@ -398,7 +398,7 @@ impl Voice for HumVoice {
     }
 }
 
-impl HumVoice {
+impl SignalsVoice {
     /// One frame of this voice. `inputs` has the note of this voice.
     fn frame(
         &mut self,
@@ -433,8 +433,8 @@ impl HumVoice {
     }
 }
 
-impl Processor for Hum {
-    type Update = HumUpdate;
+impl Processor for Signals {
+    type Update = SignalsUpdate;
 
     fn ports(&self) -> Ports {
         Ports::new()
@@ -449,25 +449,25 @@ impl Processor for Hum {
         self.fade_frames = ((FADE_SECONDS * self.sample_rate) as usize).max(1);
     }
 
-    fn update(&mut self, update: &mut HumUpdate) {
+    fn update(&mut self, update: &mut SignalsUpdate) {
         match update {
-            HumUpdate::Set {
+            SignalsUpdate::Set {
                 machines,
                 values,
                 watches,
             } => self.set(machines, values, watches),
-            HumUpdate::Live { index, value } => {
+            SignalsUpdate::Live { index, value } => {
                 let ramp = RAMP_SECONDS * self.sample_rate;
                 if let Some(live) = self.lives.get_mut(*index) {
                     live.set_target(*value, ramp);
                 }
             }
-            HumUpdate::Trigger { index, at } => {
+            SignalsUpdate::Trigger { index, at } => {
                 if *index < MAX_LIVES {
                     self.schedule(*at, Scheduled::Trigger(*index));
                 }
             }
-            HumUpdate::Note {
+            SignalsUpdate::Note {
                 pitch,
                 velocity,
                 at,
@@ -487,7 +487,7 @@ impl Processor for Hum {
                     }
                 }
             }
-            HumUpdate::Release { pitch, at } => {
+            SignalsUpdate::Release { pitch, at } => {
                 let off = NoteEvent::Off { pitch: *pitch };
                 // A full list lets go at once: a dropped release would hold the note for ever.
                 if !self.schedule(*at, Scheduled::Note(off)) {
@@ -564,7 +564,7 @@ impl Processor for Hum {
             };
             let fade_frames = self.fade_frames;
             let mut output = [0.0; CHANNELS];
-            let mut play = |voice: &mut HumVoice, inputs: &mut Inputs<'_>| {
+            let mut play = |voice: &mut SignalsVoice, inputs: &mut Inputs<'_>| {
                 inputs.note = voice.note;
                 inputs.note.frequency = frequency_hz(voice.note.pitch + self.bend);
                 let sound = voice.frame(inputs, fade_frames, quiet_limit);
