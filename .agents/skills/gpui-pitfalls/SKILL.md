@@ -156,5 +156,4 @@ fn toggles_on_click(cx: &mut gpui::TestAppContext) {
 `TestAppContext` has `update`, `read`, `set_global`, `executor()`, `notifications(&entity)`, `events(&entity)`.
 This snippet (with a `Root` that binds `cmd-up` to an `Increment` action) compiled and passed
 against the pinned version. In tests, wait with `cx.background_executor().timer(..)`, never
-`smol::Timer`, or `run_until_parked()` fails. Prefer type-level correctness and the gallery screenshot
-loop for UI; use tests for pure state (theme math, model logic) that does not need a window.
+`smol::Timer`, or `run_until_parked()` fails.
