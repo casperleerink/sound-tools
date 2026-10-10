@@ -32,6 +32,18 @@ pub fn held(sample: f32) -> f32 {
     sample.clamp(-INPUT_LIMIT, INPUT_LIMIT)
 }
 
+/// Whether every sample is silence as [`held`] takes it: zero or not a number. The idle check
+/// of an effect that holds its input.
+#[inline]
+pub fn is_held_silent(samples: &[f32]) -> bool {
+    // `abs() > 0.0` is false for exactly zero and not a number, so it says what
+    // `held(sample) != 0.0` says, also for denormals with or without flush to zero. Without an
+    // early return the loop compiles to vector compares, many times faster on a block.
+    !samples
+        .iter()
+        .fold(false, |sound, sample| sound | (sample.abs() > 0.0))
+}
+
 /// What rounds off a step at the start of a cycle, times half the step, for a phase that moves
 /// by `step` per frame (PolyBLEP): from 0 far from the step to 1 just before it and -1 just
 /// after it, so both samples next to the step meet in the middle. It takes away most of the
@@ -199,6 +211,8 @@ impl OnePole {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+
     use super::*;
 
     #[test]
@@ -211,6 +225,37 @@ mod tests {
             assert!(!taps.is_fading(), "{fade_frames}");
             assert_eq!(taps.length(0), 20.0);
         }
+    }
+
+    #[test]
+    fn the_idle_check_says_what_held_says_on_every_edge() {
+        let denormal = f32::from_bits(1);
+        let edges = [
+            0.0,
+            -0.0,
+            denormal,
+            -denormal,
+            f32::MIN_POSITIVE,
+            f32::NAN,
+            -f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            1.0,
+            -100.0,
+        ];
+        let check = || {
+            for sample in edges {
+                for block in [vec![sample], vec![0.0, sample, f32::NAN], vec![sample; 64]] {
+                    // Hidden from the compiler, which would work both out without flush to zero.
+                    let block = black_box(block);
+                    let held_silent = block.iter().all(|sample| held(*sample) == 0.0);
+                    assert_eq!(is_held_silent(&block), held_silent, "{block:?}");
+                }
+            }
+        };
+        check();
+        // SAFETY: sets only the flush-to-zero bits for the closure, as the engine does.
+        unsafe { no_denormals::no_denormals(check) };
     }
 
     #[test]
