@@ -19,12 +19,16 @@ use crate::clock::Ticks;
 use crate::parameter::Parameter;
 use crate::processor::{EventInput, ProcessContext, Timed};
 
-/// The value of one number of a device for this block, in the units of its record (Hz, dB, 0
-/// to 1). `parameter` is the place of the number in the list the device named: its
-/// [`AutomationInput`], or the numbers it named as its behaviour ran.
+/// The value one number of a device reaches at the end of this block, in the units of its
+/// record (Hz, dB, 0 to 1). `parameter` is the place of the number in the list the device
+/// named: its [`AutomationInput`], or the numbers it named as its behaviour ran.
 ///
 /// A lane sends its value every block, at offset 0, also while the project does not play. So
 /// a number that hears nothing in a block is no longer automated, and goes back to its record.
+///
+/// Where a lane bends inside a block, its owner sends every lane again at that frame, and the
+/// engine plays the device's block in pieces split there. So each piece of a device hears
+/// every lane at offset 0, and a lane bends on its frame.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Automation {
     pub parameter: u16,
@@ -172,12 +176,63 @@ pub struct Automated<S: 'static, const N: usize> {
     state: S,
     /// The value of each number in the record, which it goes back to when its lane lets go.
     record: [f32; N],
-    /// The value of each number that a lane holds.
-    lanes: [Option<f32>; N],
-    /// The frames left of the edit glide of each number.
-    gliding: [f32; N],
+    lanes: [Lane; N],
     /// Whether a block of events came yet.
     followed: bool,
+}
+
+/// How fast one automated number moves: the value its lane holds, and what is left of its
+/// edit glide. [`Automated`] keeps one per number; a device whose numbers are known only as it
+/// plays, such as a tool of the project, keeps its own.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Lane {
+    value: Option<f32>,
+    /// The frames left of the edit glide.
+    gliding: f32,
+}
+
+impl Lane {
+    /// Hears the value of the lane in a block of `block` frames, or `None` when no lane holds
+    /// the number. Gives the frames to reach the new target when it moved, `None` when it did
+    /// not. `first` is the first block of the device, `jumped` a seek or a stop, and `edit`
+    /// the frames of the device's edit glide.
+    pub fn hear(
+        &mut self,
+        heard: Option<f32>,
+        block: f32,
+        first: bool,
+        jumped: bool,
+        edit: f32,
+    ) -> Option<f32> {
+        let moved = match (self.value, heard) {
+            (None, None) => None,
+            (Some(before), Some(now)) if before == now => None,
+            (_, Some(_)) if first => {
+                self.gliding = 0.0;
+                Some(0.0)
+            }
+            (Some(_), Some(_)) if self.gliding > 0.0 && !jumped => Some(self.gliding),
+            (Some(_), Some(_)) if !jumped => Some(block),
+            // Takes over, lets go back to the record, or jumps.
+            _ => {
+                self.gliding = edit;
+                Some(edit)
+            }
+        };
+        self.gliding = (self.gliding - block).max(0.0);
+        self.value = heard;
+        moved
+    }
+
+    /// The record moved: the moves of the lane end with its glide of `edit` frames.
+    pub fn edited(&mut self, edit: f32) {
+        self.gliding = edit;
+    }
+
+    /// The value the lane holds.
+    pub fn value(&self) -> Option<f32> {
+        self.value
+    }
 }
 
 impl<S, const N: usize> std::ops::Deref for Automated<S, N> {
@@ -196,8 +251,7 @@ impl<S, const N: usize> Automated<S, N> {
             input,
             record: input.parameters.map(|parameter| (parameter.get)(&record)),
             state: record,
-            lanes: [None; N],
-            gliding: [0.0; N],
+            lanes: [Lane::default(); N],
             followed: false,
         }
     }
@@ -216,11 +270,11 @@ impl<S, const N: usize> Automated<S, N> {
     /// the lane does not cut the glide of that choice short.
     pub fn set_record(&mut self, record: &mut S, edit: f32) -> Targets<S, N> {
         std::mem::swap(&mut self.state, record);
-        self.gliding = [edit; N];
         let numbers = self.input.parameters.iter().zip(&mut self.record);
-        for ((parameter, value), lane) in numbers.zip(self.lanes) {
+        for ((parameter, value), lane) in numbers.zip(&mut self.lanes) {
+            lane.edited(edit);
             *value = (parameter.get)(&self.state);
-            if let Some(lane) = lane {
+            if let Some(lane) = lane.value() {
                 (parameter.set)(&mut self.state, lane);
             }
         }
@@ -259,32 +313,15 @@ impl<S, const N: usize> Automated<S, N> {
         let mut ramps = [edit; N];
         let mut changed = false;
         let numbers = self.input.parameters.iter().zip(self.record);
-        let numbers = numbers.zip(self.lanes.iter_mut().zip(&mut self.gliding));
-        for (((parameter, record), (lane, gliding)), (ramp, heard)) in
-            numbers.zip(ramps.iter_mut().zip(heard))
+        for (((parameter, record), lane), (ramp, heard)) in numbers
+            .zip(&mut self.lanes)
+            .zip(ramps.iter_mut().zip(heard))
         {
-            let moved = match (*lane, heard) {
-                (None, None) => None,
-                (Some(before), Some(now)) if before == now => None,
-                (_, Some(_)) if snaps => {
-                    *gliding = 0.0;
-                    Some(0.0)
-                }
-                (Some(_), Some(_)) if *gliding > 0.0 && !jumped => Some(*gliding),
-                (Some(_), Some(_)) if !jumped => Some(block),
-                // Takes over, lets go back to the record, or jumps.
-                _ => {
-                    *gliding = edit;
-                    Some(edit)
-                }
-            };
-            if let Some(moved) = moved {
+            if let Some(moved) = lane.hear(heard, block, snaps, jumped, edit) {
                 changed = true;
                 *ramp = moved;
                 (parameter.set)(&mut self.state, heard.unwrap_or(record));
             }
-            *gliding = (*gliding - block).max(0.0);
-            *lane = heard;
         }
         changed.then(|| self.targets_with(ramps, edit, snaps))
     }

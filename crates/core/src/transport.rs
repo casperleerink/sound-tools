@@ -210,7 +210,9 @@ impl TransportState {
     }
 
     /// The view for the next block of `frames` frames of a processor `lead` frames ahead of
-    /// the device. `moved` says its lead changed since its last block, which it sees as a jump.
+    /// the device, `from` frames into the sub-block: a processor may play one in pieces, and
+    /// only the first piece sees a jump or a stop. `moved` says its lead changed since its
+    /// last block, which it sees as a jump.
     ///
     /// `resume_from` is the tick after the last one this processor was given, when a tempo map
     /// change moved where its blocks are. The clock keeps the tick the device plays, not the
@@ -220,11 +222,15 @@ impl TransportState {
     /// after a slower tempo it gets an empty range until the clock has caught up.
     pub(crate) fn view(
         &self,
+        from: usize,
         frames: usize,
         lead: u64,
         moved: bool,
         resume_from: Option<Ticks>,
     ) -> Transport<'_> {
+        let first = from == 0;
+        let played = if self.playing { from as u64 } else { 0 };
+        let lead = lead.saturating_add(played);
         let advance = if self.playing { frames as u64 } else { 0 };
         // What the device has not caught up with yet comes off the front, so no range starts
         // before `position`: nothing earlier than where playback starts is played.
@@ -234,7 +240,7 @@ impl TransportState {
         };
         let start = ahead(lead);
         let end = ahead(lead.saturating_add(advance));
-        let jumped = self.jumped || self.resumed || moved;
+        let jumped = first && (self.jumped || self.resumed || moved);
         // Both ends come from the same function, so the end of this block is the start of the
         // next, whatever the block sizes and tempo changes are.
         let mut tick_range = self.clock.tick_at(start)..self.clock.tick_at(end);
@@ -243,7 +249,7 @@ impl TransportState {
         }
         Transport {
             playing: self.playing,
-            stopped_playing: self.was_playing && !self.playing,
+            stopped_playing: first && self.was_playing && !self.playing,
             jumped,
             tick_range,
             frame_range: start..end,
