@@ -1377,9 +1377,9 @@ mod tests {
         assert_eq!(Markdown::inline_code("").blocks(), []);
     }
 
-    /// Risk R7 of the agent sidebar plan: the sidebar parses the whole streaming message again
-    /// on each frame. Measured on an M-series Mac: 5.1 KB in 58 µs in release and 400 µs in a
-    /// debug build, against a 16 ms frame. Ignored so a slow CI runner cannot fail it; run
+    /// The sidebar parses the whole streaming message again on each frame. Measured on an
+    /// M-series Mac: 5.1 KB in 58 µs in release and 400 µs in a debug build, against a 16 ms
+    /// frame. Ignored so a slow CI runner cannot fail it; run
     /// `cargo test --release -p sound-ui long_answer -- --ignored --nocapture`.
     #[test]
     #[ignore]

@@ -10,26 +10,6 @@ turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
 `examples/` holds tools agents built in these runs, from one prompt each: a gravity harp page,
 a storm drone played with an XY pad, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
 `extensions/` folder of a project to try it.
-
-Earlier experiments, with their results next to this file:
-- `results-docs-vs-skills.jsonl`: the docs map against the docs as Claude Code skills. The map
-  did as well or better, without the settings skills need.
-- `results-text-vs-graph.jsonl`: a tool's sound written in a text language with a template against
-  a graph of signals built with the SDK's functions. Both passed every task; the graph cost about 10% less
-  and needs no doc of its own, so the SDK is the graph alone.
-- `results-experiments.jsonl`: a gravity harp page, a generative source and a grain cloud built from scratch,
-  and a composer that edits the pattern of a builder's acid bass; later a keyboard toy (`onKey`,
-  notes held while a key is down), a MIDI arpeggiator (`onMidi`, played ahead with `at`) and a
-  stutter of the music another app plays (`{"app": "Spotify"}`). Every run passed. Probes of
-  what a composer asks without building: playing a track from the computer keys went from
-  rebuilding the synth (0/2) to pointing at cmd-K (2/2); sending the sound to Zoom points at the
-  output device (2/2); a MIDI controller's knobs on the pad's filter builds a filter of its own
-  (0/2), as no knob of the app can learn a controller.
-- `results-ui.jsonl`: the `ui-*` scenarios, cards and pages from short prompts, with the doc
-  commit each ran on. How they look is judged from screenshots (`cargo run -p runtime --example
-  screenshot`); `fill` is the share of its page a page uses (`fill.py`). Before a page got its
-  `size`, pages drew a fixed 640 by 420 canvas and used 0.17 to 0.22 of the window; after, 0.60
-  to 0.87, at every window size.
 """
 
 import argparse

@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Usage: screenshot.sh <binary-name> <out.png> [seconds-to-wait]
-# Runs a gpui binary from the shared target dir, brings it to front, captures its window, quits it.
+# Runs a gpui binary from the target dir, brings it to front, captures its window, quits it.
 # Needs Screen Recording permission for the terminal/agent host (System Settings > Privacy & Security).
 set -e
 BIN=$1; OUT=$2; WAIT=${3:-3}
