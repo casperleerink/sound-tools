@@ -164,6 +164,14 @@ enum Stage {
     Release,
 }
 
+/// A fixed seed per voice, slot and channel, so a render is the same every time and no two
+/// noises play the same. Different indexes give different seeds, and the index that gives 0,
+/// where xorshift would stay, is in the billions.
+fn noise_seed(voice: usize, slots: u16, slot: usize, channel: usize) -> u32 {
+    let index = (voice * usize::from(slots) + slot) * CHANNELS + channel + 1;
+    0x9E37_79B9 ^ (index as u32).wrapping_mul(0x85EB_CA6B)
+}
+
 /// `$body` for the formula `$op` of a unary operation, with `$kind` that formula: matched
 /// once, and `$body` compiled for each formula with its own constant.
 macro_rules! with_unary {
@@ -198,10 +206,8 @@ impl Machine {
         let channels: [Memory; CHANNELS] = std::array::from_fn(|channel| Memory {
             histories: vec![0.0; usize::from(slots.histories)],
             phases: vec![0.0; usize::from(slots.phasors)],
-            // A fixed seed per slot and channel, so a render is the same every time and the
-            // two channels hear different noise.
-            noises: (0..u32::from(slots.noises))
-                .map(|slot| 0x9E37_79B9 ^ (slot * 2 + channel as u32 + 1).wrapping_mul(0x85EB_CA6B))
+            noises: (0..usize::from(slots.noises))
+                .map(|slot| noise_seed(0, slots.noises, slot, channel))
                 .collect(),
             delays: (slots.delays.iter())
                 .map(|ms| DelayLine::new((ms * 0.001 * sample_rate) as usize + 4))
@@ -265,6 +271,17 @@ impl Machine {
 
     pub fn code(&self) -> &Code {
         &self.code
+    }
+
+    /// Seeds the noises as those of voice `voice`. A machine is cloned for every voice, and
+    /// two voices that start on the same frame would otherwise play the same noise.
+    pub(crate) fn seed(&mut self, voice: usize) {
+        let count = self.code.slots.noises;
+        for (channel, memory) in self.channels.iter_mut().enumerate() {
+            for (slot, noise) in memory.noises.iter_mut().enumerate() {
+                *noise = noise_seed(voice, count, slot, channel);
+            }
+        }
     }
 
     /// The last value of each watch, in the order of [`Code::watches`].
