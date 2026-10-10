@@ -349,6 +349,10 @@ impl Span<'_> {
     /// Runs `operation`, whose register is `register`, over `frames` of the span. Each kind of
     /// operation has a loop of its own over the frames, so it is not matched in every frame.
     /// Inlined: a loop of a feedback calls it for every operation in every frame.
+    ///
+    /// A memory is kept in a local over the frames and put back after: left in its slot, it is
+    /// stored and loaded again in every frame, which lengthens the chain from one frame to the
+    /// next.
     #[inline(always)]
     fn run(
         &self,
@@ -424,28 +428,32 @@ impl Span<'_> {
                 });
             }
             Operation::Phasor { hz, slot } => match memory.phases.get_mut(usize::from(slot)) {
-                Some(phase) => {
+                Some(kept) => {
+                    let mut phase = *kept;
                     for (out, hz) in out.iter_mut().zip(read(hz)) {
-                        *out = *phase;
-                        let next = *phase + hz / sample_rate;
-                        *phase = if next.is_finite() {
+                        *out = phase;
+                        let next = phase + hz / sample_rate;
+                        phase = if next.is_finite() {
                             next - next.floor()
                         } else {
                             0.0
                         };
                     }
+                    *kept = phase;
                 }
                 None => out.fill(0.0),
             },
             Operation::Noise { slot } => match memory.noises.get_mut(usize::from(slot)) {
-                Some(state) => {
+                Some(kept) => {
+                    let mut state = *kept;
                     for out in out.iter_mut() {
                         // xorshift32
-                        *state ^= *state << 13;
-                        *state ^= *state >> 17;
-                        *state ^= *state << 5;
-                        *out = *state as f32 / u32::MAX as f32 * 2.0 - 1.0;
+                        state ^= state << 13;
+                        state ^= state >> 17;
+                        state ^= state << 5;
+                        *out = state as f32 / u32::MAX as f32 * 2.0 - 1.0;
                     }
+                    *kept = state;
                 }
                 None => out.fill(0.0),
             },
@@ -471,20 +479,24 @@ impl Span<'_> {
                 q,
                 slot,
             } => match memory.filters.get_mut(usize::from(slot)) {
-                Some(filter) => {
+                Some(kept) => {
+                    let mut filter = kept.clone();
                     let values = read(input).iter().zip(read(hz)).zip(read(q));
                     for (out, ((input, hz), q)) in out.iter_mut().zip(values) {
                         *out = filter.next(kind, *input, *hz, *q, sample_rate);
                     }
+                    *kept = filter;
                 }
                 None => out.fill(0.0),
             },
             Operation::Smooth { input, ms, slot } => {
                 match memory.smooths.get_mut(usize::from(slot)) {
-                    Some(smooth) => {
+                    Some(kept) => {
+                        let mut smooth = kept.clone();
                         for ((out, input), ms) in out.iter_mut().zip(read(input)).zip(read(ms)) {
                             *out = smooth.next(*input, *ms, sample_rate);
                         }
+                        *kept = smooth;
                     }
                     None => out.fill(0.0),
                 }
@@ -497,7 +509,8 @@ impl Span<'_> {
                 release,
                 slot,
             } => match memory.envelopes.get_mut(usize::from(slot)) {
-                Some(envelope) => {
+                Some(kept) => {
+                    let mut envelope = kept.clone();
                     let times = read(attack).iter().zip(read(decay)).zip(read(release));
                     let values = read(gate).iter().zip(read(sustain)).zip(times);
                     let outs = out.iter_mut().zip(frames.clone());
@@ -510,41 +523,48 @@ impl Span<'_> {
                         let sustain = finite(*sustain).clamp(0.0, 1.0);
                         *out = envelope.next(*gate > 0.0, self.onset(frame), times, sustain);
                     }
+                    *kept = envelope;
                 }
                 None => out.fill(0.0),
             },
             Operation::Hold { input, when, slot } => {
                 match memory.memories.get_mut(usize::from(slot)) {
-                    Some(held) => {
+                    Some(kept) => {
+                        let mut held = *kept;
                         for ((out, input), when) in out.iter_mut().zip(read(input)).zip(read(when))
                         {
                             if *when > 0.0 {
-                                *held = finite(*input);
+                                held = finite(*input);
                             }
-                            *out = *held;
+                            *out = held;
                         }
+                        *kept = held;
                     }
                     None => out.fill(0.0),
                 }
             }
             Operation::Rise { input, slot } => match memory.memories.get_mut(usize::from(slot)) {
-                Some(before) => {
+                Some(kept) => {
+                    let mut before = *kept;
                     for (out, now) in out.iter_mut().zip(read(input)) {
-                        let rose = *before <= 0.0 && *now > 0.0;
-                        *before = finite(*now);
+                        let rose = before <= 0.0 && *now > 0.0;
+                        before = finite(*now);
                         *out = truth(rose);
                     }
+                    *kept = before;
                 }
                 None => out.fill(0.0),
             },
             Operation::Change { input, slot } => match memory.memories.get_mut(usize::from(slot)) {
-                Some(before) => {
+                Some(kept) => {
+                    let mut before = *kept;
                     for (out, now) in out.iter_mut().zip(read(input)) {
                         let now = finite(*now);
-                        let changed = *before != now;
-                        *before = now;
+                        let changed = before != now;
+                        before = now;
                         *out = truth(changed);
                     }
+                    *kept = before;
                 }
                 None => out.fill(0.0),
             },
