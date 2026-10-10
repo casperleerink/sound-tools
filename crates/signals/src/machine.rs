@@ -429,7 +429,10 @@ impl Span<'_> {
                         None => before.get(source),
                     }
                 });
-                self.history(slot, out, frames, source.flatten(), &memory.histories);
+                let (source, set_before) = (source.flatten(), set_before(slot, memory));
+                for (out, frame) in out.iter_mut().zip(frames) {
+                    *out = self.heard(frame, set_before, source);
+                }
             }
             Operation::Unary(unary, x) => apply_unary(unary, out, read(x)),
             Operation::Binary(binary, a, b) => apply_binary(binary, out, read(a), read(b)),
@@ -655,17 +658,11 @@ impl Span<'_> {
         let sample_rate = self.sample_rate;
         let value = match operation {
             Operation::History(slot) => {
-                let source = self.feedbacks.get(usize::from(slot)).copied();
-                match source {
-                    _ if frame == self.first => {
-                        (memory.histories.get(usize::from(slot)).copied()).unwrap_or(0.0)
-                    }
-                    // As in `run`, a feedback set to its own read reads 0.
-                    Some(source) if usize::from(source) != register => {
-                        finite(value_at(registers, source, frame - 1))
-                    }
-                    _ => 0.0,
-                }
+                // As in `run`, a feedback set to its own read reads 0.
+                let source = (self.feedbacks.get(usize::from(slot)))
+                    .filter(|source| usize::from(**source) != register)
+                    .and_then(|source| registers.get(usize::from(*source)));
+                self.heard(frame, set_before(slot, memory), source)
             }
             Operation::Unary(op, x) => unary(op, at(x)),
             Operation::Binary(op, a, b) => binary(op, at(a), at(b)),
@@ -756,30 +753,30 @@ impl Span<'_> {
         }
     }
 
-    /// A feedback read: what its `source` was in the frame before, and in the first frame of the
-    /// span what was set in the span before. The source may come after it.
-    fn history(
-        &self,
-        slot: u16,
-        out: &mut [f32],
-        frames: Range<usize>,
-        source: Option<&[f32; MAX_BLOCK]>,
-        histories: &[f32],
-    ) {
-        let set_before = histories.get(usize::from(slot)).copied().unwrap_or(0.0);
-        for (out, frame) in out.iter_mut().zip(frames) {
-            *out = match source {
-                _ if frame == self.first => set_before,
-                Some(source) => finite(source.get(frame - 1).copied().unwrap_or(0.0)),
-                None => 0.0,
-            };
+    /// What a feedback reads in `frame`: what its `source` was in the frame before, and in the
+    /// first frame of the span what was `set_before`, in the span before.
+    #[inline(always)]
+    fn heard(&self, frame: usize, set_before: f32, source: Option<&[f32; MAX_BLOCK]>) -> f32 {
+        if frame == self.first {
+            return set_before;
         }
+        let before = source.and_then(|source| source.get(frame - 1));
+        before.map_or(0.0, |value| finite(*value))
     }
 
     /// Whether `frame` is the first of a note.
     fn onset(&self, frame: usize) -> bool {
         self.note.onset && frame == self.first
     }
+}
+
+/// What the feedback of `slot` was set to in the last frame of the span before.
+fn set_before(slot: u16, memory: &Memory) -> f32 {
+    memory
+        .histories
+        .get(usize::from(slot))
+        .copied()
+        .unwrap_or(0.0)
 }
 
 /// Room for a row that is not there: 0 in every frame.

@@ -29,9 +29,9 @@ pub(crate) enum Step {
 /// after what it reads, and otherwise as close to its own place as it can, so the order stays
 /// near the one the graph was written in.
 ///
-/// Loops with as many loops on the longest path to them run as one step: a path between two
-/// would put one more loop before one of them. What else has as many loops before it runs just
-/// before that step.
+/// Two loops with a path between them never have the same count of loops on the longest path
+/// to them: the path adds the first to the count of the second. So the loops of one count hear
+/// nothing of each other, and run as one step. What else has that count runs just before it.
 pub(crate) fn schedule(code: &Code, edges: &[Vec<usize>]) -> Box<[Step]> {
     let (component_of, members) = components(edges);
     // How many edges into each component are from components not run yet.

@@ -217,6 +217,24 @@ fn feedbacks_through_filters_render_over_a_whole_span_as_they_do_frame_by_frame(
 }
 
 #[test]
+fn a_loop_that_hears_another_loop_hears_it_in_the_same_frame() {
+    let mut echoes = machine(compile(|| {
+        let first = feedback();
+        let heard = input() + first.read() * 0.5;
+        first.set(heard);
+        let second = feedback();
+        let echoed = heard + second.read() * 0.5;
+        second.set(echoed);
+        echoed
+    }));
+    // `heard` halves in every frame after the click, and `echoed` is `n + 1` halved `n` times.
+    // Run before the first loop, the second would read 0 in the first frame.
+    let click = |frame: usize| if frame == 0 { 1.0 } else { 0.0 };
+    let [output, _] = render_in_spans(&mut echoes, click, 1, MAX_BLOCK);
+    assert_eq!(output[..4], [1.0, 1.0, 0.75, 0.5]);
+}
+
+#[test]
 fn a_buffer_read_hears_a_write_before_it_in_the_same_frame_and_one_after_it_a_frame_later() {
     let ramp = |frame: usize| frame as f32 * 0.01;
     let mut write_first = machine(compile(|| {
