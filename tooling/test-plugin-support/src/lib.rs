@@ -71,10 +71,14 @@ pub const SLOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SLOW";
 /// the bundle that is supposed to answer is killed when ten tests run at once.
 pub const GATE_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_GATE";
 
+/// The name of one format makes only that one wait at the gate, so a scan can have a bundle
+/// that answers next to one that waits.
+pub const GATE_FORMAT_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_GATE_FORMAT";
+
 /// How long the plugin waits at a gate nobody opens, in twentieths of a second. Longer than
-/// any deadline a test gives a bundle, so a test that forgets to open its gate fails on the
-/// deadline with the scan's own message instead of waiting here.
-const GATE_LIMIT: u32 = 600;
+/// the deadline a scan gives a bundle, a minute, so a test that forgets to open its gate fails
+/// on the deadline with the scan's own message instead of waiting here.
+const GATE_LIMIT: u32 = 1300;
 
 /// How many things to send out of every process call: CLAP events, VST 3 parameter changes. A
 /// host must have somewhere to put them that neither grows nor allocates on the audio thread.
@@ -408,7 +412,10 @@ pub fn while_listed(format: &str) {
             .arg(done)
             .spawn();
     }
-    if let Some(gate) = std::env::var_os(GATE_VARIABLE) {
+    let gated = std::env::var(GATE_FORMAT_VARIABLE).map_or(true, |only| only == format);
+    if let Some(gate) = std::env::var_os(GATE_VARIABLE)
+        && gated
+    {
         let open = PathBuf::from(format!("{}.go", Path::new(&gate).display()));
         for _ in 0..GATE_LIMIT {
             if open.exists() {

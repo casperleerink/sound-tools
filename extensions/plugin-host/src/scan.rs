@@ -16,6 +16,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -33,9 +35,14 @@ pub const SCAN_ARGUMENT: &str = "--scan-plugin";
 /// read as a plugin, or would make the whole bundle unreadable.
 const MARK: &str = "sound-tools-plugin ";
 
-/// How long one bundle may take. A working bundle costs milliseconds; this is what a plugin
-/// that never answers costs, once.
-pub(crate) const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long one bundle may take. Most cost milliseconds, but a large one may take far longer on
+/// its first load: Kontakt on Windows takes more than ten seconds. A plugin that never answers
+/// costs this once, and holds back only its own child, see [`SCANNERS`].
+pub(crate) const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How many bundles are looked at at once. A bundle that takes its whole deadline then holds
+/// back one child, and the plugins of every other bundle still turn up as they are found.
+const SCANNERS: usize = 4;
 
 /// How often the child is looked at while the deadline runs. Short enough that a normal scan
 /// pays nothing, long enough that waiting costs no thread.
@@ -251,7 +258,10 @@ impl ScanCommand {
         let text = read(output, until);
         if !status.success() {
             let errors = read(errors, until);
+            // The runtime says `Error: <bundle>: <why>`, and whoever reads this knows the bundle.
+            let named = format!("Error: {}: ", bundle.path.display());
             let message = errors.trim();
+            let message = message.strip_prefix(&named).unwrap_or(message);
             let reason = if message.is_empty() {
                 // A crash gives no message. The exit status says how it ended.
                 format!("the scanner ended with {status}")
@@ -471,8 +481,9 @@ pub fn scan_one_bundle(format: PluginFormat, bundle: &Path) -> Result<String, St
 /// plugins, and a project folder in git must not carry a list of what one laptop happens to
 /// have. A bundle is remembered with a [`Stamp`] of its binary folder, so a plugin that was
 /// installed, updated or replaced is looked at again and nothing else is. A bundle that crashed
-/// or hung is remembered as such and is not tried again on every start; `runtime --plugins`
-/// looks at everything again and writes the result, which is how one that was fixed comes back.
+/// or hung is remembered as such and is not tried again on every start. `Scan again` in a
+/// picker tries those again ([`Self::retrying_failures`]), and `runtime --plugins` looks at
+/// everything again ([`Self::refreshing`]).
 ///
 /// A cache with no file keeps the last scan in memory instead, shared by its copies. So a scan
 /// again while the app runs, which is how a plugin installed meanwhile is found, looks only at
@@ -480,12 +491,20 @@ pub fn scan_one_bundle(format: PluginFormat, bundle: &Path) -> Result<String, St
 #[derive(Clone, Debug)]
 pub struct ScanCache {
     path: Option<PathBuf>,
-    /// Whether what is remembered may be used. `false` looks at every bundle again.
-    reuse: bool,
+    reuse: Reuse,
     /// The last scan, when there is no file to keep it in.
     kept: Arc<Mutex<Vec<CachedBundle>>>,
     /// The plugin windows of every project, when there is no file to keep them in.
     kept_placements: crate::placements::Kept,
+}
+
+/// What of the last scan a scan may use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reuse {
+    Everything,
+    /// The bundles that were read, so the ones that failed are tried again.
+    Plugins,
+    Nothing,
 }
 
 /// Where the cache of this machine is kept, unless the environment says otherwise. The variable
@@ -529,7 +548,7 @@ impl ScanCache {
     fn kept_at(path: Option<PathBuf>) -> Self {
         Self {
             path,
-            reuse: true,
+            reuse: Reuse::Everything,
             kept: Arc::new(Mutex::new(Vec::new())),
             kept_placements: crate::placements::Kept::default(),
         }
@@ -538,27 +557,36 @@ impl ScanCache {
     /// Looks at every bundle again and writes what it finds. This is what `runtime --plugins`
     /// does, so a plugin that hung once can be tried again.
     pub fn refreshing(mut self) -> Self {
-        self.reuse = false;
+        self.reuse = Reuse::Nothing;
+        self
+    }
+
+    /// Looks again at the bundles that crashed or hung, and at nothing else that did not change.
+    /// This is `Scan again` in a picker.
+    pub fn retrying_failures(mut self) -> Self {
+        self.reuse = Reuse::Plugins;
         self
     }
 
     fn read(&self) -> Vec<CachedBundle> {
-        if !self.reuse {
-            return Vec::new();
-        }
-        let Some(path) = &self.path else {
-            return self
+        let mut remembered = match (self.reuse, &self.path) {
+            (Reuse::Nothing, _) => Vec::new(),
+            (_, None) => self
                 .kept
                 .lock()
                 .map(|kept| kept.clone())
-                .unwrap_or_default();
+                .unwrap_or_default(),
+            // A cache that cannot be read is no error: everything is scanned again and the file
+            // is written over. A file of an older build is such a file.
+            (_, Some(path)) => std::fs::read_to_string(path)
+                .ok()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .unwrap_or_default(),
         };
-        let Ok(text) = std::fs::read_to_string(path) else {
-            return Vec::new();
-        };
-        // A cache that cannot be read is no error: everything is scanned again and the file is
-        // written over. A file of an older build is such a file.
-        serde_json::from_str(&text).unwrap_or_default()
+        if self.reuse == Reuse::Plugins {
+            remembered.retain(|bundle: &CachedBundle| bundle.failure.is_none());
+        }
+        remembered
     }
 
     fn write(&self, bundles: &[CachedBundle]) -> Result<(), String> {
@@ -652,7 +680,7 @@ const STALE_AFTER: Duration = Duration::from_secs(60);
 /// reader sees one whole file or the other, and the last rename wins. Both are what one scan
 /// found, so either is right.
 pub(crate) fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::AtomicU64;
     static WRITES: AtomicU64 = AtomicU64::new(0);
     if let Some(folder) = path.parent() {
         std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
@@ -858,19 +886,18 @@ pub(crate) fn binary_folder(bundle: &Path) -> PathBuf {
     }
 }
 
-/// Scans every bundle under `folders`, using `cache` for the ones that have not changed, and
-/// tells `progress` after each one so a caller can show what is known while the rest runs.
+/// Scans every bundle under `folders`, [`SCANNERS`] at a time, using `cache` for the ones that
+/// have not changed, and tells `progress` after each one so a caller can show what is known
+/// while the rest runs.
 ///
 /// `stop` ends the scan between bundles, for a host that goes while its scan runs.
 pub(crate) fn scan_folders(
     folders: &[PathBuf],
     command: &ScanCommand,
     cache: &ScanCache,
-    stop: &std::sync::atomic::AtomicBool,
+    stop: &AtomicBool,
     mut progress: impl FnMut(&Scan),
 ) -> Scan {
-    use std::sync::atomic::Ordering;
-
     let bundles = bundles(folders);
     let remembered = cache.read();
     let tidied = cache.tidy();
@@ -879,56 +906,81 @@ pub(crate) fn scan_folders(
         ..Scan::default()
     };
     let mut to_remember = Vec::with_capacity(bundles.len());
-    for bundle in bundles {
-        if stop.load(Ordering::Acquire) {
-            return scan;
-        }
-        let stamp = stamp(&bundle.path);
-        let known = stamp.as_ref().and_then(|stamp| {
-            remembered.iter().find(|entry| {
-                entry.path == bundle.path && entry.format == bundle.format && entry.stamp == *stamp
-            })
-        });
-        let found = match known {
-            Some(entry) => match &entry.failure {
-                Some(message) => Err(ScanError::Bundle(message.clone())),
-                None => Ok(entry.plugins.clone()),
-            },
-            None => command.scan(&bundle),
-        };
-        // What went wrong on this side says nothing about the bundle, so it is not remembered.
-        let outcome = match &found {
-            Ok(plugins) => Some((plugins.clone(), None)),
-            Err(ScanError::Bundle(message)) => Some((Vec::new(), Some(message.clone()))),
-            Err(ScanError::Host(_)) => None,
-        };
-        if let (Some(stamp), Some((plugins, failure))) = (stamp, outcome) {
-            to_remember.push(CachedBundle {
-                path: bundle.path.clone(),
-                format: bundle.format,
-                stamp,
-                plugins,
-                failure,
-            });
-        }
-        match found {
-            Ok(plugins) => scan
-                .plugins
-                .extend(plugins.into_iter().map(|plugin| ScannedPlugin {
-                    path: bundle.path.clone(),
-                    ..plugin
-                })),
-            Err(ScanError::Bundle(message) | ScanError::Host(message)) => {
-                scan.failures.push(ScanFailure {
-                    path: bundle.path,
-                    message,
-                })
+    let next = AtomicUsize::new(0);
+    // Each scanner takes the next bundle until none is left, and hands what it found to this
+    // thread, which alone keeps the scan and tells `progress`.
+    let look = |found: Sender<_>| {
+        while !stop.load(Ordering::Acquire) {
+            let Some(bundle) = bundles.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                return;
+            };
+            if found
+                .send((bundle, look_at(bundle, command, &remembered)))
+                .is_err()
+            {
+                return;
             }
         }
-        progress(&scan);
+    };
+    std::thread::scope(|scope| {
+        let (found, receiver) = std::sync::mpsc::channel();
+        let started = (0..SCANNERS.min(bundles.len()))
+            .filter(|_| {
+                let found = found.clone();
+                let thread = std::thread::Builder::new().name("plugin-scanner".to_string());
+                thread.spawn_scoped(scope, move || look(found)).is_ok()
+            })
+            .count();
+        // A machine that cannot start a thread scans on this one.
+        match started {
+            0 => look(found),
+            _ => drop(found),
+        }
+        for (bundle, (stamp, found)) in receiver {
+            // What went wrong on this side says nothing about the bundle, so it is not
+            // remembered.
+            let outcome = match &found {
+                Ok(plugins) => Some((plugins.clone(), None)),
+                Err(ScanError::Bundle(message)) => Some((Vec::new(), Some(message.clone()))),
+                Err(ScanError::Host(_)) => None,
+            };
+            if let (Some(stamp), Some((plugins, failure))) = (stamp, outcome) {
+                to_remember.push(CachedBundle {
+                    path: bundle.path.clone(),
+                    format: bundle.format,
+                    stamp,
+                    plugins,
+                    failure,
+                });
+            }
+            match found {
+                Ok(plugins) => {
+                    scan.plugins
+                        .extend(plugins.into_iter().map(|plugin| ScannedPlugin {
+                            path: bundle.path.clone(),
+                            ..plugin
+                        }))
+                }
+                Err(ScanError::Bundle(message) | ScanError::Host(message)) => {
+                    scan.failures.push(ScanFailure {
+                        path: bundle.path.clone(),
+                        message,
+                    })
+                }
+            }
+            progress(&scan);
+        }
+    });
+    if stop.load(Ordering::Acquire) {
+        return scan;
     }
+    // Bundles end in whatever order they take, so the result is put in order: a scan is
+    // repeatable, and one that found what was remembered compares equal to it.
     scan.plugins
         .sort_by(|left, right| (left.format, &left.id).cmp(&(right.format, &right.id)));
+    scan.failures
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    to_remember.sort_by(|left, right| (&left.path, left.format).cmp(&(&right.path, right.format)));
     scan.finished = true;
     // A scan that found what was remembered writes nothing, so looking again while the app
     // runs costs no write.
@@ -941,10 +993,30 @@ pub(crate) fn scan_folders(
     scan
 }
 
+/// What one bundle holds, or why it could not be read, and its stamp to remember it by.
+type Looked = (Option<Stamp>, Result<Vec<ScannedPlugin>, ScanError>);
+
+/// Looks at one bundle: what the cache remembers of it when it has not changed, else what a
+/// child finds.
+fn look_at(bundle: &Bundle, command: &ScanCommand, remembered: &[CachedBundle]) -> Looked {
+    let stamp = stamp(&bundle.path);
+    let known = stamp.as_ref().and_then(|stamp| {
+        remembered.iter().find(|entry| {
+            entry.path == bundle.path && entry.format == bundle.format && entry.stamp == *stamp
+        })
+    });
+    let found = match known {
+        Some(entry) => match &entry.failure {
+            Some(message) => Err(ScanError::Bundle(message.clone())),
+            None => Ok(entry.plugins.clone()),
+        },
+        None => command.scan(bundle),
+    };
+    (stamp, found)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
-
     use super::*;
 
     /// A bundle as macOS lays one out, with the binary folder of this platform: the binary the

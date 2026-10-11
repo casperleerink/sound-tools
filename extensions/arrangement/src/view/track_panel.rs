@@ -184,14 +184,14 @@ fn offer_entries(
     let item = |offer: &&DeviceOffer| {
         let item = MenuItem::new(offer.key.clone(), offer.name.clone())
             .icon(offer.icon.clone())
-            .selectable(picks_one);
+            .selectable(picks_one && !offer.is_command());
         // An offer this project cannot load is shown and not taken, with why in words.
         // Enabling an extension while the project runs is refused, and the file edit that
         // does it is in the agent docs, not in front of a composer.
-        match (offer.is_enabled_in(project), &offer.needs, &offer.detail) {
-            (false, Some(needs), _) => item.disabled(true).description(needs.reason.clone()),
-            (_, _, Some(detail)) => item.description(detail.clone()),
-            _ => item,
+        match (offer.unavailable_in(project), &offer.detail) {
+            (Some(reason), _) => item.disabled(true).description(reason),
+            (None, Some(detail)) => item.description(detail.clone()),
+            (None, None) => item,
         }
     };
     let groups = sorted
@@ -773,6 +773,9 @@ impl TrackPanel {
         if !offer.is_enabled_in(self.session.read(cx).project()) {
             return;
         }
+        if offer.run() {
+            return;
+        }
         let track = self.track.clone();
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
@@ -970,6 +973,9 @@ impl TrackPanel {
         // The menu does not take a disabled row, and neither does this: the tool would not
         // load, so the edit would be refused and the composer would learn nothing.
         if !offer.is_enabled_in(self.session.read(cx).project()) {
+            return;
+        }
+        if offer.run() {
             return;
         }
         let slot = slot.clone();

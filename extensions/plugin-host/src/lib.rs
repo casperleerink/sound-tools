@@ -67,7 +67,8 @@ pub use parameters::{
     MAX_NAMED_STEPS, Parameter, ParameterValue, StepName, Steps, read_parameters,
 };
 pub use scan::{
-    SCAN_ARGUMENT, ScanCache, ScanCommand, ScannedPlugin, default_search_paths, scan_one_bundle,
+    SCAN_ARGUMENT, ScanCache, ScanCommand, ScanFailure, ScannedPlugin, default_search_paths,
+    scan_one_bundle,
 };
 
 /// The name to enable in `project.json`.

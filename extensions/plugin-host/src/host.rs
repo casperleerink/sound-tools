@@ -46,7 +46,7 @@ use crate::processor::{
 use crate::backend::{Hand, KeyDirection, LoadedPlugin, ParameterChange};
 use crate::parameters::{Parameter, ParameterValue, by_id, pin_problem, playable};
 use crate::placements::{PlacementStore, Placements};
-use crate::scan::{Scan, ScanCache, ScanCommand, ScannedPlugin, scan_folders};
+use crate::scan::{Scan, ScanCache, ScanCommand, ScanFailure, ScannedPlugin, scan_folders};
 use crate::window::{
     Placement, PluginFrame, PluginWindow, Prepared, WindowOwner, WindowRequest, WindowSize,
 };
@@ -612,6 +612,10 @@ struct Scanning {
     generation: u64,
     /// Whether the host is looking again, see [`Plugins::look_again`].
     looking_again: bool,
+    /// Whether the composer asked to try the bundles that failed again, see
+    /// [`Plugins::scan_again`], until the look that does ends. It can take as long as a scan,
+    /// so the picker says a scan runs meanwhile.
+    retrying: bool,
 }
 
 struct Inner {
@@ -840,10 +844,24 @@ impl Plugins {
         scanning(&self.0.scanned).generation
     }
 
-    /// Whether a scan is still running. The picker says so quietly while it is, and whoever
-    /// polls asks on every poll, so this copies nothing.
+    /// Whether a scan is still running, the first one or [`Self::scan_again`]. The picker says
+    /// so quietly while it is, and whoever polls asks on every poll, so this copies nothing.
     pub fn scan_is_running(&self) -> bool {
-        self.0.started.get() && !scanning(&self.0.scanned).scan.finished
+        let scanned = scanning(&self.0.scanned);
+        self.0.started.get() && (!scanned.scan.finished || scanned.retrying)
+    }
+
+    /// Looks at the plugin folders again, the bundles that crashed or hung included, which a
+    /// scan otherwise remembers and does not try again. A plugin that was too slow once, or
+    /// that the composer fixed, comes back this way. A look that runs already takes it up when
+    /// it ends. Only once the first scan is over.
+    pub fn scan_again(&self) {
+        self.look(true);
+    }
+
+    /// Every bundle the scan could not read so far, and why.
+    pub fn failures(&self) -> Vec<ScanFailure> {
+        scanning(&self.0.scanned).scan.failures.clone()
     }
 
     /// Looks at the plugin folders of this machine again, on a thread of its own, for a plugin
@@ -858,12 +876,26 @@ impl Plugins {
     /// have. Only in a host that scans in the background, once its first scan is over, and one
     /// at a time.
     fn look_again(&self) {
+        self.look(false);
+    }
+
+    /// Looks again, see [`Self::look_again`]. `retrying` asks for the look that tries the
+    /// bundles that failed again, see [`Self::scan_again`].
+    fn look(&self, retrying: bool) {
         if !self.0.in_background.get() {
             return;
         }
         {
             let mut scanned = scanning(&self.0.scanned);
-            if !scanned.scan.finished || scanned.looking_again {
+            if !scanned.scan.finished {
+                return;
+            }
+            if retrying && !scanned.retrying {
+                // The picker says a scan runs from now on.
+                scanned.retrying = true;
+                scanned.generation += 1;
+            }
+            if scanned.looking_again {
                 return;
             }
             scanned.looking_again = true;
@@ -880,16 +912,29 @@ impl Plugins {
             .name("plugin-rescan".to_string())
             .spawn(move || {
                 // Whatever ends this thread, it is not looking any more.
-                let _done = DoneLooking(scanned.clone());
-                let scan = scan_folders(&paths, &scanner, &cache, &stop, |_| {});
-                // A scan the host stopped as it went is half a list, not what this machine has.
-                if scan.finished {
+                let mut done = DoneLooking(Some(scanned.clone()));
+                loop {
+                    let retrying = scanning(&scanned).retrying;
+                    let cache = match retrying {
+                        true => cache.clone().retrying_failures(),
+                        false => cache.clone(),
+                    };
+                    let scan = scan_folders(&paths, &scanner, &cache, &stop, |_| {});
+                    // A scan the host stopped as it went is half a list, not what this machine
+                    // has.
+                    if !scan.finished {
+                        return;
+                    }
                     publish_again(&scanned, scan);
+                    if done.end_unless_asked(retrying) {
+                        return;
+                    }
                 }
             });
         if let Err(error) = spawned {
-            eprintln!("error: looking for plugins again needs a thread: {error}");
-            scanning(&self.0.scanned).looking_again = false;
+            let notice = format!("looking for plugins again needs a thread: {error}");
+            scanning(&self.0.scanned).notices.push(notice);
+            drop(DoneLooking(Some(self.0.scanned.clone())));
         }
     }
 
@@ -1972,12 +2017,40 @@ impl Drop for Over {
     }
 }
 
-/// Ends a look again, however its thread ended.
-struct DoneLooking(Arc<Mutex<Scanning>>);
+/// Ends a look again, however its thread ended. `None` once it has.
+struct DoneLooking(Option<Arc<Mutex<Scanning>>>);
+
+impl DoneLooking {
+    /// Ends the look, unless the composer asked to scan again while a look that did not ran:
+    /// then it goes on, and this says so. One lock for both, so no ask falls in between.
+    fn end_unless_asked(&mut self, retried: bool) -> bool {
+        let Some(scanned) = self.0.take() else {
+            return true;
+        };
+        let mut held = scanning(&scanned);
+        if held.retrying && !retried {
+            drop(held);
+            self.0 = Some(scanned);
+            return false;
+        }
+        end_look(&mut held);
+        true
+    }
+}
 
 impl Drop for DoneLooking {
     fn drop(&mut self) {
-        scanning(&self.0).looking_again = false;
+        if let Some(scanned) = self.0.take() {
+            end_look(&mut scanning(&scanned));
+        }
+    }
+}
+
+/// A picker that said a scan runs is filled again.
+fn end_look(held: &mut Scanning) {
+    held.looking_again = false;
+    if std::mem::take(&mut held.retrying) {
+        held.generation += 1;
     }
 }
 

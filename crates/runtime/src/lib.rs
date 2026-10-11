@@ -103,8 +103,8 @@ pub fn plugins(read_only: bool) -> Result<Plugins> {
 }
 
 /// The host `runtime --plugins` uses: it looks at every bundle again, whatever the cache of
-/// this machine remembers, and writes the result. That is how a plugin that hung or crashed
-/// once is tried again.
+/// this machine remembers, and writes the result. A plugin that hung or crashed once is tried
+/// again with it, as `Scan again` in a picker does.
 pub fn plugins_refreshing_the_cache() -> Result<Plugins> {
     with_cache(Loading::None, ScanCache::of_this_machine().refreshing())
 }
@@ -205,7 +205,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
             };
             let mut notes = Vec::new();
             if plugins.scan_is_running() {
-                notes.push("Still looking for the plugins of this Mac…".into());
+                notes.push("Still looking for the plugins of this computer…".into());
             }
             let vst3 = plugins
                 .instruments()
@@ -261,19 +261,41 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
 }
 
 /// The plugins `list` gives, as offers for a picker. Each writes the record of that plugin
-/// into the slot it is picked for, with a state file of its own.
+/// into the slot it is picked for, with a state file of its own. After them every bundle that
+/// could not be scanned, named by its file and with why, and `Scan again`, which tries those
+/// again. What a failed bundle holds is unknown, so both pickers list it.
 fn plugin_offers(
-    plugins: &WeakPlugins,
+    weak: &WeakPlugins,
     list: fn(&plugin_host::Plugins) -> Vec<plugin_host::ScannedPlugin>,
 ) -> Vec<DeviceOffer> {
-    let Some(plugins) = plugins.upgrade() else {
+    let Some(plugins) = weak.upgrade() else {
         return Vec::new();
     };
-    list(&plugins)
-        .into_iter()
-        .map(|found| {
-            let (id, name, format) = (found.id.clone(), found.name.clone(), found.format);
-            let offer = DeviceOffer::new(
+    let failures = plugins.failures();
+    let failed = failures.iter().map(|failure| {
+        let name = failure.path.file_stem().unwrap_or(failure.path.as_os_str());
+        DeviceOffer::unavailable(
+            format!("failed:{}", failure.path.display()),
+            name.to_string_lossy().into_owned(),
+            OfferGroup::Plugins,
+            format!("Could not be scanned: {}", failure.message),
+        )
+    });
+    let scan_again = (!failures.is_empty() && !plugins.scan_is_running()).then(|| {
+        let weak = weak.clone();
+        let run = move || {
+            if let Some(plugins) = weak.upgrade() {
+                plugins.scan_again();
+            }
+        };
+        DeviceOffer::command(SCAN_AGAIN, "Scan again", OfferGroup::Plugins, run)
+            .icon("search")
+            .with_detail("Try the plugins that could not be scanned")
+    });
+    let found = list(&plugins).into_iter().map(|found| {
+        let (id, name, format) = (found.id.clone(), found.name.clone(), found.format);
+        let offer =
+            DeviceOffer::new(
                 found.offer_key(),
                 found.name.clone(),
                 OfferGroup::Plugins,
@@ -302,10 +324,13 @@ fn plugin_offers(
                 plugin_host::EXTENSION,
                 "This project does not load plugins.",
             );
-            offer.with_detail(found.detail())
-        })
-        .collect()
+        offer.with_detail(found.detail())
+    });
+    found.chain(failed).chain(scan_again).collect()
 }
+
+/// The key of the `Scan again` row of a picker, see [`plugin_offers`].
+pub const SCAN_AGAIN: &str = "plugins:scan-again";
 
 /// The arrangement of the piece: the first one at the top of the project.
 pub fn main_arrangement(project: &Project) -> Option<Instance<ArrangementState>> {
