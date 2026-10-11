@@ -26,7 +26,7 @@ use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
     KeyBindingContextPredicate, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
-    WindowBounds, WindowOptions, actions, div, point, prelude::*, px, size,
+    WindowBounds, WindowControlArea, WindowOptions, actions, div, point, prelude::*, px, size,
 };
 use midi::{Latency, Lost};
 use plugin_host::{Plugins, WeakPlugins};
@@ -68,8 +68,9 @@ actions!(
     ]
 );
 
-/// Room for the traffic lights of a macOS window, left of the project menu.
-const TRAFFIC_LIGHTS_WIDTH: f32 = 80.;
+/// Room left of the panel icon: the traffic lights on macOS, where the other systems draw
+/// nothing.
+const TITLE_ROW_INSET: f32 = if cfg!(target_os = "macos") { 80. } else { 8. };
 const TOP_ROW_HEIGHT: f32 = 48.;
 /// The notices sit this far in from the right of the window and below the ruler of the main
 /// view.
@@ -535,10 +536,12 @@ impl Shell {
             }))
     }
 
-    /// The bare parts of the top row move the window, as a title bar does.
+    /// The bare parts of the top row move the window, as a title bar does. On Windows they are
+    /// its caption: Windows moves and maximizes the window itself.
     fn drag_region() -> gpui::Div {
         div()
             .h_full()
+            .window_control_area(WindowControlArea::Drag)
             .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _| {
                 if event.click_count == 2 {
                     window.titlebar_double_click();
@@ -546,6 +549,38 @@ impl Shell {
                     window.start_window_move();
                 }
             })
+    }
+
+    /// Minimize, maximize and close on Windows, where the title row takes the place of the
+    /// system's title bar. Windows presses them itself, as its own buttons.
+    fn window_controls(window: &Window) -> Option<impl IntoElement> {
+        if !cfg!(target_os = "windows") {
+            return None;
+        }
+        let maximize_icon = if window.is_maximized() {
+            "copy"
+        } else {
+            "square"
+        };
+        let button = |id: &'static str, icon: &'static str, area: WindowControlArea| {
+            Button::icon_only(id, icon)
+                .variant(ButtonVariant::Ghost)
+                .size(ButtonSize::Sm)
+                .window_control_area(area)
+                // So the drag region around it is not hit under it: the first area hit wins.
+                .occlude()
+        };
+        Some(
+            Self::drag_region()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .child(button("minimize", "minus", WindowControlArea::Min))
+                .child(button("maximize", maximize_icon, WindowControlArea::Max))
+                .child(button("close", "x", WindowControlArea::Close)),
+        )
     }
 }
 
@@ -576,7 +611,7 @@ impl Focusable for Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (background, text) = (theme.gray_100, theme.gray_950);
         let main = match &self.main {
@@ -673,12 +708,13 @@ impl Render for Shell {
                     .flex_none()
                     .items_center()
                     .h(px(TOP_ROW_HEIGHT))
-                    .child(Self::drag_region().flex_none().w(px(TRAFFIC_LIGHTS_WIDTH)))
+                    .child(Self::drag_region().flex_none().w(px(TITLE_ROW_INSET)))
                     .children(self.left_panel_icon(cx))
                     .child(div().flex_none().child(self.project_menu.clone()))
                     .child(Self::drag_region().flex_1())
                     .child(self.transport.clone())
-                    .child(Self::drag_region().flex_1()),
+                    .child(Self::drag_region().flex_1())
+                    .children(Self::window_controls(window)),
             )
             // The panel comes first, so tab reaches it before the main area, as it reads.
             .child(
@@ -1015,7 +1051,8 @@ impl Opened {
             }),
             // Only the drag regions of the title row move the window. Otherwise macOS moves it
             // on a drag anywhere in its title bar strip, such as on the tempo in the pill.
-            is_movable: false,
+            // Windows moves it only over them when it is movable.
+            is_movable: !cfg!(target_os = "macos"),
             // Linux matches the window to sound-tools.desktop by it, for the icon.
             app_id: Some(crate::app::TOOL_NAME.into()),
             ..Default::default()
