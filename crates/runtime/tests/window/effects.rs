@@ -7,9 +7,11 @@
 use arrangement::ArrangementState;
 use arrangement::view::track_panel::remove_control;
 use gpui::{AssetSource, TestAppContext};
-use plugin_host::{PluginFormat, PluginRecord};
+use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache};
+use sound_ui::components::dropdown_menu::MenuItem;
 use sound_ui::{Assets, Devices, Slot};
 
+use crate::plugin_hosts::{scanner, test_plugin_folders};
 use crate::support::{self, BAR, Opened, clip, id, note, test_plugin_id};
 
 const TRACK: &str = "arrangement/track-1";
@@ -286,6 +288,65 @@ fn a_panel_opened_while_the_scan_runs_offers_the_effects_when_it_ends(cx: &mut T
         opened.find(&plugin_item()).is_some(),
         "another track has none"
     );
+}
+
+/// A plugin that could not be scanned stays in the pickers with why, so the reason does not go
+/// with the notice. A scan remembers such a bundle and never tries it again by itself; `Scan
+/// again` does, and the plugin it then finds is offered.
+#[gpui::test]
+fn a_plugin_that_could_not_be_scanned_is_listed_until_scan_again_finds_it(cx: &mut TestAppContext) {
+    let cache = ScanCache::none();
+    let mut opened = support::open_with_plugin_host(
+        cx,
+        |root| {
+            // An earlier start, at which every bundle crashed while it was listed.
+            let crashing = scanner().with_environment(test_plugin_support::CRASH_VARIABLE, "1");
+            let folders = test_plugin_folders(root);
+            let earlier = Plugins::new(folders.clone(), crashing, cache.clone());
+            assert_eq!(earlier.scan().failures.len(), 2);
+            Plugins::new(folders, scanner(), cache)
+        },
+        |_| {},
+    );
+    let plugins = opened.plugins.upgrade().unwrap();
+    plugins.start_scanning();
+    plugins.wait_for_scan();
+    let header = opened.track_header(0);
+    opened.click(header);
+    let failures = plugins.scan().failures;
+    let bundle = failures
+        .iter()
+        .find(|failure| failure.path.ends_with("test-tone.clap"));
+    let failed = format!("failed:{}", bundle.unwrap().path.display());
+    let row = add_effect_item(&mut opened, &failed).expect("the failed bundle is listed");
+    assert_eq!(row.label(), "test-tone");
+    assert!(row.is_disabled());
+    let reason = row.description.unwrap_or_default();
+    assert!(reason.starts_with("Could not be scanned: "), "{reason}");
+    assert!(add_effect_item(&mut opened, &plugin_item()).is_none());
+
+    let trigger = opened.control(ADD_EFFECT);
+    opened.click(trigger);
+    opened.click_effect_row(&format!("menu-{}", runtime::SCAN_AGAIN));
+    // Filling the picker had the host look again already: that look takes the scan up.
+    plugins.wait_for_scan();
+    opened.settle();
+    assert!(add_effect_item(&mut opened, &plugin_item()).is_some());
+    assert!(add_effect_item(&mut opened, &failed).is_none());
+    assert!(add_effect_item(&mut opened, runtime::SCAN_AGAIN).is_none());
+    // Looking is no edit.
+    assert_eq!(opened.undo_label(), None);
+}
+
+/// The row `value` of the control that adds an effect, as its menu holds it now. `value` may
+/// carry the `menu-` of the element id of the row.
+fn add_effect_item(opened: &mut Opened<'_>, value: &str) -> Option<MenuItem> {
+    let panel = opened.track_panel().expect("the track panel is open");
+    opened.cx.read(|cx| {
+        let menu = panel.read(cx).add_effect_control().read(cx);
+        menu.item(value.strip_prefix("menu-").unwrap_or(value))
+            .cloned()
+    })
 }
 
 /// A file edit is the way to reorder, and the window follows it.

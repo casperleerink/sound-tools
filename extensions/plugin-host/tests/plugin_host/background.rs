@@ -1,7 +1,7 @@
 //! The scan on a thread of its own, and the cache of this machine.
 //!
 //! The window must never look at a plugin on the thread that draws: a bundle that hangs costs
-//! ten seconds, and this machine's real folders cost seconds even when nothing hangs. So the
+//! a minute, and this machine's real folders cost seconds even when nothing hangs. So the
 //! window starts the scan on a thread and opens the project at once, and a record whose plugin
 //! the scan has not reached yet is reported and played as soon as it turns up.
 
@@ -103,6 +103,36 @@ fn a_bundle_that_hangs_in_a_scan_in_the_background_is_reported() {
     assert_eq!(scan.failures.len(), 1, "{:?}", scan.failures);
     assert!(scan.failures[0].path.ends_with("test-tone.vst3"));
     assert_eq!(plugins.instruments(), []);
+}
+
+/// A bundle that takes long to list, as Kontakt does on its first load on Windows, holds back
+/// only itself: the plugin of the bundle after it turns up while it still runs.
+#[test]
+fn a_slow_bundle_does_not_hold_back_the_others() {
+    let folder = tempfile::tempdir().unwrap();
+    let search = vec![plugin_folder(folder.path())];
+    // The CLAP bundle comes first and waits at the gate until the VST 3 plugin is found.
+    let gate = folder.path().join("scan-gate");
+    let scanner = waiting_at(&gate).with_environment(
+        test_plugin_support::GATE_FORMAT_VARIABLE,
+        PluginFormat::Clap.as_str(),
+    );
+    let plugins = Plugins::new(search, scanner, no_cache());
+    plugins.start_scanning();
+    let (vst3, started) = (PluginFormat::Vst3, Instant::now());
+    while plugins.installed_name(vst3, plugin_id(vst3)).is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the VST 3 plugin waits for the CLAP one"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    open_the_gate(&gate);
+    plugins.wait_for_scan();
+    let scan = plugins.scan();
+    assert_eq!(scan.failures, []);
+    assert_eq!(scan.plugins.len(), 2);
 }
 
 /// A project that names a plugin the scan has not reached yet opens, says so, and plays the

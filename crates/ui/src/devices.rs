@@ -16,7 +16,8 @@ use sound_core::{Changes, InstanceId, Project, ProjectError, State};
 use crate::session::Session;
 
 /// One thing a composer can choose for a slot: a built-in instrument, or a plugin this
-/// machine has.
+/// machine has. Among them, a source may list what it cannot offer and why, such as a plugin
+/// that did not load, and a command, such as scanning the plugins again.
 #[derive(Clone)]
 pub struct DeviceOffer {
     /// Tells one offer from another in a menu and in a test. Unique in the list.
@@ -32,7 +33,18 @@ pub struct DeviceOffer {
     /// The extension whose tool this offer writes. A project that does not enable it cannot
     /// load what the offer writes, so a picker shows the offer and does not take it.
     pub needs: Option<Needs>,
-    write: Rc<dyn Fn(&Project, &InstanceId, &mut Changes) -> Result<(), ProjectError>>,
+    pick: Pick,
+}
+
+/// What picking an offer does.
+#[derive(Clone)]
+enum Pick {
+    /// Writes its record into the slot.
+    Write(Rc<dyn Fn(&Project, &InstanceId, &mut Changes) -> Result<(), ProjectError>>),
+    /// Runs a command and writes nothing.
+    Run(Rc<dyn Fn()>),
+    /// Nothing: this machine cannot have it, for this reason.
+    Unavailable(SharedString),
 }
 
 impl DeviceOffer {
@@ -44,6 +56,15 @@ impl DeviceOffer {
         group: OfferGroup,
         write: impl Fn(&Project, &InstanceId, &mut Changes) -> Result<(), ProjectError> + 'static,
     ) -> Self {
+        Self::picking(key, name, group, Pick::Write(Rc::new(write)))
+    }
+
+    fn picking(
+        key: impl Into<SharedString>,
+        name: impl Into<SharedString>,
+        group: OfferGroup,
+        pick: Pick,
+    ) -> Self {
         Self {
             key: key.into(),
             name: name.into(),
@@ -51,8 +72,42 @@ impl DeviceOffer {
             group,
             icon: "device-plugin".into(),
             needs: None,
-            write: Rc::new(write),
+            pick,
         }
+    }
+
+    /// A row that runs `run` when it is picked and writes nothing.
+    pub fn command(
+        key: impl Into<SharedString>,
+        name: impl Into<SharedString>,
+        group: OfferGroup,
+        run: impl Fn() + 'static,
+    ) -> Self {
+        Self::picking(key, name, group, Pick::Run(Rc::new(run)))
+    }
+
+    /// A row that cannot be picked, with why in words, such as a plugin that did not load.
+    pub fn unavailable(
+        key: impl Into<SharedString>,
+        name: impl Into<SharedString>,
+        group: OfferGroup,
+        reason: impl Into<SharedString>,
+    ) -> Self {
+        Self::picking(key, name, group, Pick::Unavailable(reason.into()))
+    }
+
+    /// Whether picking it runs a command, see [`Self::run`], instead of writing a record.
+    pub fn is_command(&self) -> bool {
+        matches!(self.pick, Pick::Run(_))
+    }
+
+    /// Runs the command of a [`Self::command`] row, and says whether it was one.
+    pub fn run(&self) -> bool {
+        let Pick::Run(run) = &self.pick else {
+            return false;
+        };
+        run();
+        true
     }
 
     pub fn icon(mut self, icon: impl Into<SharedString>) -> Self {
@@ -79,25 +134,37 @@ impl DeviceOffer {
         self
     }
 
-    /// Whether this project could load what the offer writes. Enabling an extension while a
-    /// project runs is refused, so an offer a project has not enabled stays out of reach until
-    /// the composer edits `project.json` and opens the project again.
-    pub fn is_enabled_in(&self, project: &Project) -> bool {
-        match &self.needs {
-            Some(needs) => extension_is_enabled(project, &needs.extension),
-            None => true,
+    /// Why the offer cannot be picked in this project, in words for a composer, or `None` when
+    /// it can. Enabling an extension while a project runs is refused, so an offer a project has
+    /// not enabled stays out of reach until the composer edits `project.json` and opens the
+    /// project again.
+    pub fn unavailable_in(&self, project: &Project) -> Option<SharedString> {
+        match (&self.pick, &self.needs) {
+            (Pick::Unavailable(reason), _) => Some(reason.clone()),
+            (_, Some(needs)) if !extension_is_enabled(project, &needs.extension) => {
+                Some(needs.reason.clone())
+            }
+            _ => None,
         }
     }
 
+    pub fn is_enabled_in(&self, project: &Project) -> bool {
+        self.unavailable_in(project).is_none()
+    }
+
     /// Puts the record of this offer into `slot`. The caller commits the group, so choosing an
-    /// instrument is one undo step. Only call it for an offer [`Self::is_enabled_in`] takes.
+    /// instrument is one undo step. Only call it for an offer [`Self::is_enabled_in`] takes
+    /// that is no command.
     pub fn write(
         &self,
         project: &Project,
         slot: &InstanceId,
         changes: &mut Changes,
     ) -> Result<(), ProjectError> {
-        (self.write)(project, slot, changes)
+        match &self.pick {
+            Pick::Write(write) => write(project, slot, changes),
+            Pick::Run(_) | Pick::Unavailable(_) => Ok(()),
+        }
     }
 }
 

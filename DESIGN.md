@@ -159,6 +159,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Track panel | the power icon of an effect card | Bypass the effect. On the limiter of the master, the output may then clip |
 | Track panel | click the name on a card | Pick another instrument or effect for that slot |
 | Track panel | Add effect, at the end of the rack | Put an effect at the end of the chain |
+| Track panel | Scan again, under the plugins of a picker | Shown when a plugin could not be scanned: such a plugin is listed by its file name with why, and is not tried again by itself. This tries those again |
 | Track panel | the close icon of an effect card | Remove it. Undo brings it back as it sounded |
 | Track panel | drag the header of an effect card onto another card | Move the effect there. On the instrument it goes first, on `Add effect` last. It keeps its bypass |
 | Track panel | cmd-left, cmd-right in an effect card | Move that effect one place |

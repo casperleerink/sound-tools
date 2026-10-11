@@ -567,8 +567,9 @@ fn analyze_file(path: &Path, options: &Options) -> Result<()> {
 /// Prints every plugin this machine has, with how long the scan took. A composer or an agent
 /// needs the plugin's own id to put it on a track, and it is in no file.
 ///
-/// It looks at every bundle again and writes what it finds, so it is also how a plugin that
-/// hung or crashed once is tried again: the cache of this machine does not try one twice.
+/// It looks at every bundle again and writes what it finds, so a plugin that hung or crashed
+/// once is tried again, as `Scan again` in a picker does: the cache of this machine does not
+/// try one twice by itself.
 fn list_plugins() -> Result<()> {
     let plugins = runtime::plugins_refreshing_the_cache()?;
     let started = std::time::Instant::now();
