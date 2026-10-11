@@ -461,11 +461,12 @@ fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext
 }
 
 /// The transport is in the middle of the room right of the project menu, and a narrow window
-/// takes the air around it first: it never covers the menu, and play stays on screen.
+/// takes the air around it first: it never covers the menu, and play stays on screen. The
+/// narrow width is below the smallest window and still holds the window buttons of Windows.
 #[gpui::test]
 fn in_a_narrow_window_the_transport_stays_beside_the_project_menu(cx: &mut TestAppContext) {
     let mut opened = open(cx);
-    for width in [1470., 900.] {
+    for width in [1470., 1000.] {
         opened.cx.simulate_resize(gpui::size(px(width), px(800.)));
         opened.cx.run_until_parked();
         let menu = opened.bounds("project-menu").unwrap();
