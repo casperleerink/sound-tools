@@ -11,6 +11,7 @@ workspace = true
 analyzer.workspace = true
 anyhow.workspace = true
 arrangement.workspace = true
+chrono.workspace = true
 compressor.workspace = true
 delay.workspace = true
 drum-pad.workspace = true
@@ -44,6 +45,9 @@ thiserror.workspace = true
 tone.workspace = true
 utility.workspace = true
 wavetable.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [

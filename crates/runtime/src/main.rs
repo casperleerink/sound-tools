@@ -33,7 +33,8 @@
 //! provisional. It is not the protocol of the outer application.
 //!
 //! On Windows it is a window program, so the app opens no console window next to its own.
-//! Started from a terminal, it prints there anyway: see `print_to_the_terminal`.
+//! Started from a terminal, it prints there anyway: see `print_to_the_terminal`. The window
+//! forms started any other way print into the log: see `runtime::log_file`.
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -662,6 +663,13 @@ fn print_to_the_terminal() {
     }
 }
 
+/// What a window form does before its window: the log first, so a failed update is in it.
+/// Whether an update started instead, which ends this process.
+fn start_window_process() -> bool {
+    runtime::log_file::start();
+    runtime::update::start_pending_update()
+}
+
 fn main() -> Result<()> {
     #[cfg(windows)]
     print_to_the_terminal();
@@ -675,7 +683,7 @@ fn main() -> Result<()> {
     match arguments {
         // What a double click in the Finder starts.
         [] => {
-            if !runtime::update::start_pending_update() {
+            if !start_window_process() {
                 runtime::window::run_app();
             }
             Ok(())
@@ -692,7 +700,7 @@ fn main() -> Result<()> {
         }
         // An unknown flag is not a project folder. Opening it would show a window named after it.
         [flag] if flag.starts_with('-') => bail!(USAGE),
-        [folder] if runtime::update::start_pending_update() => Ok(()),
+        [folder] if start_window_process() => Ok(()),
         [folder] => runtime::window::run(Path::new(folder)),
         [folder, "--headless"] => run(Path::new(folder)),
         [folder, "--inspect"] => inspect(Path::new(folder)),

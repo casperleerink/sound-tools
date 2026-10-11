@@ -4,6 +4,7 @@
 //! crate.
 
 pub mod app;
+pub mod log_file;
 pub mod recorder;
 pub mod report;
 pub mod update;

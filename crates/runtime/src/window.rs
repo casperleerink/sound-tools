@@ -1157,9 +1157,7 @@ pub fn tick(session: &Entity<Session>, plugins: &Plugins, scanned: &mut u64, cx:
         // A bundle the scan could not read. It arrives while the scan runs, on its own
         // thread, so it is taken here and not once before the window.
         for notice in plugins.take_notices() {
-            let notice = format!("plugin scan: {notice}");
-            println!("{notice}");
-            session.report(notice, cx);
+            session.report(format!("plugin scan: {notice}"), cx);
         }
         for error in errors {
             session.report(error, cx);
