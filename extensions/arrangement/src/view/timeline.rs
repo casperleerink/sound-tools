@@ -779,6 +779,12 @@ impl Timeline {
         clips.collect()
     }
 
+    /// Takes the focus for a press of the mouse: its keys work after it, with no focus ring.
+    pub(super) fn take_focus_from_press(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus_handle, cx);
+        self.keyboard_focus.pressed(cx);
+    }
+
     fn on_scroll(&mut self, event: &ScrollWheelEvent, x: f32, cx: &mut Context<Self>) {
         self.set_viewport(scrolled_or_zoomed(self.viewport, event, x), cx);
     }
@@ -887,6 +893,7 @@ impl Render for Timeline {
             ))
             .child(surface.size_full())
             .child(self.snap_corner(cx))
+            .child(self.lanes_toggle_column(cx))
             .child(self.lane_menu_column(cx))
             .children(self.rename_field(cx))
     }
@@ -907,8 +914,7 @@ fn listen(
             if hit && event.button == MouseButton::Left {
                 let position = Timeline::timeline_position(bounds, event.position);
                 timeline.update(cx, |timeline, cx| {
-                    window.focus(&timeline.focus_handle, cx);
-                    timeline.keyboard_focus.pressed(cx);
+                    timeline.take_focus_from_press(window, cx);
                     timeline.on_mouse_down(event, position, &scene, window, cx)
                 });
                 // The timeline gave the focus itself, maybe on to the name field of a track.

@@ -17,6 +17,7 @@ icons!(
     "arrow-right",
     "arrow-up",
     "audio-lines",
+    "automation",
     "bot",
     "check",
     "chevron-down",
