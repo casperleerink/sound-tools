@@ -93,6 +93,7 @@ Everything snaps to the snap setting in the corner above the track headers (1/16
 | Project menu | Reveal project folder | Show the folder in the Finder |
 | Project menu | Open terminal in project folder | A terminal in the folder, to start a coding agent there |
 | Project menu | Install command line tool | Link `sound-tools` into `/usr/local/bin`, or `~/.local/bin` when that needs an administrator. A dialog says where |
+| Project menu | Reveal log file | Show the app's log in the Finder, to send when something went wrong. Not there in a dev build or when the app was started from a terminal, which shows the log itself |
 | Transport | play, stop, record buttons | Play or pause, stop, the same as `r` |
 | Transport | click or drag on the seek strip; left, right when focused | Move the playhead. The keys move by a bar. Only when the project has an end |
 | Transport | drag the tempo up or down | The tempo at the playhead. Half a bpm per pixel in whole bpm, with shift in tenths |
