@@ -39,8 +39,8 @@
 
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Hsla, KeyDownEvent, ScrollHandle, SharedString, Task, Window, canvas, div, fill,
-    linear_color_stop, linear_gradient, prelude::*, px,
+    FontWeight, Hsla, KeyDownEvent, Modifiers, ScrollHandle, SharedString, Task, Window, canvas,
+    div, fill, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectError, ProjectEvent};
 use sound_notes::SIDECHAIN_INPUT;
@@ -887,8 +887,7 @@ impl TrackPanel {
         event: &KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
-        let modifiers = event.keystroke.modifiers;
-        if !modifiers.platform || modifiers.shift || modifiers.alt || modifiers.control {
+        if event.keystroke.modifiers != Modifiers::secondary_key() {
             return false;
         }
         let project = self.session.read(cx).project();

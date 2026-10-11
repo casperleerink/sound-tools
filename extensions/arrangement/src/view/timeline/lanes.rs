@@ -453,7 +453,7 @@ impl Timeline {
             return;
         }
         let tick = viewport.tick_at(x);
-        let tick = match event.modifiers.platform {
+        let tick = match event.modifiers.secondary() {
             true => tick,
             false => self.grid(cx).snap(tick),
         };
@@ -477,7 +477,7 @@ impl Timeline {
         cx: &mut Context<Self>,
     ) -> After {
         let viewport = self.painted.get();
-        let grid = match modifiers.platform {
+        let grid = match modifiers.secondary() {
             true => self.grid(cx).free(),
             false => self.grid(cx),
         };

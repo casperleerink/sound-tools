@@ -146,16 +146,16 @@ fn the_action_follows_the_clip_that_is_selected(cx: &mut TestAppContext) {
     assert!(pick_fit(&mut opened), "the fit was not offered");
 
     // Undo of the fit, then undo of the recording: the clip goes, and so does the selection.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     opened.settle();
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     opened.settle();
     assert_eq!(selected(&mut opened), None);
 
     // Back, and selected again by hand, then moved to another track: a delete and a create in
     // one group, which is what a drag across tracks and its undo both are. The selection goes
     // with the clip, and so does what the menu offers for it.
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     opened.settle();
     select(&mut opened, CLIP);
     opened.session.update(opened.cx, |session, cx| {
@@ -294,7 +294,7 @@ fn a_steadiness_drag_is_one_undo_step(cx: &mut TestAppContext) {
         opened.undo_label().as_deref(),
         Some(fit_tempo::STEADINESS_LABEL)
     );
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     opened.settle();
     assert_eq!(steadiness(&mut opened), Some(0.0));
     assert_eq!(map(&mut opened), fitted, "the fitted map came back");

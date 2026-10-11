@@ -211,15 +211,15 @@ fn a_file_dropped_on_the_card_is_copied_in_and_becomes_the_sample_in_one_undo_st
     // Undo, one step per file: an empty Sampler again. The copies stay, as copies of files
     // always do. The keys come last: after a key GPUI takes the pointer to hover nothing until
     // it moves, and a drag from the Finder does not move it (see the known gaps).
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(
         state(&mut opened).sample.unwrap().to_string(),
         "my-kalimba.wav"
     );
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(state(&mut opened), SamplerState::default());
     assert!(opened.path("assets/audio/my-kalimba.wav").exists());
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert_eq!(
         state(&mut opened).sample.unwrap().to_string(),
         "my-kalimba.wav"
@@ -245,7 +245,7 @@ fn choose_file_opens_the_file_panel_and_loads_what_is_chosen(cx: &mut TestAppCon
     assert_eq!(opened.undo_label().as_deref(), Some(LOAD_LABEL));
 
     // Cancelled: nothing changes.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let button = opened.control("choose-file");
     opened.click(button);
     opened.cx.simulate_path_prompt_response(|_| None);
@@ -344,7 +344,7 @@ fn every_handle_and_knob_is_one_undo_step(cx: &mut TestAppContext) {
 
     // Back to where the card began, one step per gesture.
     for _ in 0..12 {
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
     }
     assert_eq!(state(&mut opened), before);
 }

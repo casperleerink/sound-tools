@@ -44,7 +44,7 @@ impl Timeline {
         }
         let double = event.click_count == 2;
         // Shift and cmd add to the selection or take out of it, as in the Finder.
-        let (shift, cmd) = (event.modifiers.shift, event.modifiers.platform);
+        let (shift, cmd) = (event.modifiers.shift, event.modifiers.secondary());
         let adds = shift || cmd;
         let part = scene.viewport.part_at(&scene.layout, y);
         if x < 0.0 || y < 0.0 || !matches!(part, Some((_, Part::Lane(_)))) {

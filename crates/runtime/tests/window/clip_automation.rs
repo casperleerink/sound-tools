@@ -133,7 +133,7 @@ fn a_dragged_clip_takes_its_automation_along_in_one_undo_step(cx: &mut TestAppCo
     assert_eq!(cutoff[5].1, 2000.);
 
     one_undo_step(&mut opened, "Move clip", &before);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(points(&mut opened, ONE, "gain_db"), volume());
     assert_eq!(points(&mut opened, ONE, "cutoff_hz"), sweep());
 }
@@ -206,7 +206,7 @@ fn a_paste_makes_the_filter_lane_again_while_the_filter_is_there(cx: &mut TestAp
     let mut opened = open(cx);
     let part = opened.at(BAR + 960, 0);
     opened.click(part);
-    opened.keys("cmd-c");
+    opened.keys("secondary-c");
     let without_lane = |project: &mut sound_core::Project| {
         let track = project.resolve::<TrackState>(&id(ONE)).unwrap();
         let mut state = project.state(&track).unwrap().clone();
@@ -219,7 +219,7 @@ fn a_paste_makes_the_filter_lane_again_while_the_filter_is_there(cx: &mut TestAp
     let ruler = opened.ruler(5 * BAR);
     opened.click(ruler);
     opened.settle();
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     let record = FilterState::default().cutoff_hz;
     let cutoff = points(&mut opened, ONE, "cutoff_hz");
     assert_eq!(cutoff.first(), Some(&(5 * BAR - 1, record)));
@@ -229,13 +229,13 @@ fn a_paste_makes_the_filter_lane_again_while_the_filter_is_there(cx: &mut TestAp
         "{cutoff:?}"
     );
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     opened.edit(|project| {
         let mut changes = Changes::new();
         changes.delete(&id("arrangement/track-1/dark"));
         project.commit("Remove the filter", changes)
     });
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     assert_eq!(points(&mut opened, ONE, "cutoff_hz"), []);
     assert_eq!(opened.undo_label().as_deref(), Some("Paste clip"));
 }
@@ -280,12 +280,12 @@ fn a_paste_puts_the_automation_down_over_what_was_there(cx: &mut TestAppContext)
     let mut opened = open(cx);
     let part = opened.at(BAR + 960, 0);
     opened.click(part);
-    opened.keys("cmd-c");
+    opened.keys("secondary-c");
     let ruler = opened.ruler(5 * BAR);
     opened.click(ruler);
     opened.settle();
     let before = mark(&mut opened);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     assert_eq!(
         opened.selected_clip(),
         Some(id("arrangement/track-1/part-2"))
@@ -304,7 +304,7 @@ fn a_duplicate_repeats_the_automation_right_after(cx: &mut TestAppContext) {
     let part = opened.at(BAR + 960, 0);
     opened.click(part);
     let before = mark(&mut opened);
-    opened.keys("cmd-d");
+    opened.keys("secondary-d");
     let mut repeated = volume();
     repeated.pop();
     repeated.extend(dip(3 * BAR));
@@ -336,7 +336,7 @@ fn a_cut_takes_the_automation_and_a_paste_puts_it_down(cx: &mut TestAppContext) 
     let part = opened.at(BAR + 960, 0);
     opened.click(part);
     let before = mark(&mut opened);
-    opened.keys("cmd-x");
+    opened.keys("secondary-x");
     assert_eq!(opened.clip(PART), None);
     assert_eq!(points(&mut opened, ONE, "gain_db"), [(0, -6.)]);
     let cutoff = points(&mut opened, ONE, "cutoff_hz");
@@ -346,7 +346,7 @@ fn a_cut_takes_the_automation_and_a_paste_puts_it_down(cx: &mut TestAppContext) 
     let ruler = opened.ruler(5 * BAR);
     opened.click(ruler);
     opened.settle();
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     let mut pasted = vec![(0, -6.)];
     pasted.extend(dip(5 * BAR));
     pasted.push((7 * BAR, -6.));

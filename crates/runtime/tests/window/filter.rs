@@ -195,7 +195,7 @@ fn a_lane_that_arrives_during_a_knob_drag_ends_the_gesture(cx: &mut TestAppConte
     assert!(!opened.gesture_open());
     assert!((shown_cutoff(&mut opened) - 300.).abs() < 0.01);
     let label = opened.undo_label();
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_ne!(opened.undo_label(), label);
     opened.release(point(knob.x, knob.y - px(40.)));
     assert!(!opened.gesture_open());
