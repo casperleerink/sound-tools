@@ -178,7 +178,7 @@ fn the_keys_select_a_track_open_its_panel_and_close_it(cx: &mut TestAppContext) 
     opened.keys("down");
     assert_eq!(opened.selected_track(), Some(id("arrangement/track-2")));
     assert!(opened.track_panel().is_none());
-    opened.keys("cmd-down");
+    opened.keys("secondary-down");
     assert_eq!(opened.panel_track(), Some(id("arrangement/track-2")));
     opened.keys("down");
     assert_eq!(opened.panel_track(), Some(id("arrangement/track-2")));
@@ -257,7 +257,7 @@ fn a_knob_drag_is_one_undo_step_and_the_sound_follows_every_move(cx: &mut TestAp
     assert_eq!(synth(&mut opened), Some(expected));
 
     // One step: one undo puts all of it back, in the project and in the file.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened), Some(SynthState::default()));
     assert!(
         synth_file(&mut opened)
@@ -265,7 +265,7 @@ fn a_knob_drag_is_one_undo_step_and_the_sound_follows_every_move(cx: &mut TestAp
             .contains("\"cutoff_hz\": 2000.0")
     );
     assert_eq!(opened.undo_label(), None);
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert_eq!(cutoff(&mut opened), 63.2);
 }
 
@@ -345,9 +345,9 @@ fn a_double_click_on_a_knob_sets_its_default_as_one_step(cx: &mut TestAppContext
             .contains("\"release_seconds\": 0.3")
     );
     // The reset is a step of its own, after the drag.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert!(synth(&mut opened).unwrap().release_seconds > 0.3);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened), Some(SynthState::default()));
     assert_eq!(opened.undo_label(), None);
 
@@ -377,7 +377,7 @@ fn the_arrow_keys_step_the_focused_knob_and_shift_makes_the_step_fine(cx: &mut T
     assert_eq!(cutoff(&mut opened), 2_000.0);
     // Each key is a step of its own.
     for expected in [2_300.0, 2_330.0, 2_300.0, 2_000.0] {
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
         assert_eq!(cutoff(&mut opened), expected);
     }
     assert_eq!(opened.undo_label(), None);
@@ -416,11 +416,11 @@ fn the_waveform_control_switches_the_oscillator(cx: &mut TestAppContext) {
     assert_eq!(synth(&mut opened).unwrap().waveform, Waveform::Saw);
     opened.keys("left");
     assert_eq!(synth(&mut opened).unwrap().waveform, Waveform::Saw);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened).unwrap().waveform, Waveform::Square);
     opened.click(saw);
-    opened.keys("cmd-z");
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened), Some(SynthState::default()));
     assert_eq!(opened.undo_label(), None);
 }
@@ -490,7 +490,7 @@ fn an_outside_delete_of_the_instrument_during_a_knob_drag_ends_the_gesture(
 
     // The delete was the last write. Undo gives the synth back as it was before the drag,
     // and the card shows its view again.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened), Some(SynthState::default()));
     assert_eq!(cards(&mut opened), [true]);
 }
@@ -516,7 +516,7 @@ fn an_outside_delete_of_the_track_during_a_knob_drag_closes_the_panel_cleanly(
     assert!(!opened.gesture_open());
     assert_eq!(opened.notice(), None);
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened), Some(SynthState::default()));
 }
 
@@ -530,11 +530,11 @@ fn the_panel_closes_with_its_track_when_an_undo_takes_the_track_away(cx: &mut Te
     let header = opened.track_header(2);
     opened.click(header);
     assert_eq!(opened.panel_track(), Some(id("arrangement/track-3")));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert!(opened.track_panel().is_none());
     assert_eq!(opened.selected_track(), None);
     // The focus was on the timeline and stays there: its keys still work.
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     let header = opened.track_header(0);
     opened.click(header);
     opened.keys("down");
@@ -684,8 +684,8 @@ fn a_press_elsewhere_ends_a_knob_drag_whose_mouse_up_was_lost(cx: &mut TestAppCo
     opened.release(other + point(px(0.), px(-50.)));
     assert_eq!(opened.undo_label().as_deref(), Some("Change gain"));
     assert!(!opened.gesture_open());
-    opened.keys("cmd-z");
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened), Some(SynthState::default()));
 }
 
@@ -810,7 +810,7 @@ fn a_drag_of_the_volume_is_one_undo_step_and_the_level_follows_every_move(cx: &m
     assert!(track_file(&mut opened).contains(&format!("\"gain_db\": {gain:?}")));
 
     // One step: one undo puts it back, in the project, in the file and in the sound.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
     assert!(track_file(&mut opened).contains("\"gain_db\": 0.0"));
     opened.settle();
@@ -845,7 +845,7 @@ fn the_pan_knob_moves_the_track_to_one_channel(cx: &mut TestAppContext) {
     opened.render(24_000);
     let (left, right) = channels(&opened.render(12_000));
     assert_eq!(left, right);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(track(&mut opened).unwrap().pan, -1.0);
 }
 
@@ -873,9 +873,9 @@ fn the_mute_button_is_one_undo_step_and_silences_the_track(cx: &mut TestAppConte
     let again = support::peak(&opened.render(12_000));
     assert!((again - loud).abs() < loud * 0.01, "{loud} then {again}");
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(track(&mut opened).unwrap().mute, true);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(track(&mut opened).unwrap().mute, false);
     assert_eq!(opened.undo_label(), None);
     assert!(track_file(&mut opened).contains("\"mute\": false"));
@@ -915,7 +915,7 @@ fn an_outside_edit_of_the_mixer_shows_in_the_panel_and_undo_takes_it_back(cx: &m
 
     // Three steps back: the two keys and the file change. The file is what it was.
     for _ in 0..3 {
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
     }
     assert_eq!(track_file(&mut opened), before);
     assert_eq!(opened.undo_label(), None);
@@ -934,10 +934,10 @@ fn the_bottom_of_the_volume_is_silence_and_the_file_says_minus_inf(cx: &mut Test
     );
     // One step.
     assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
     assert_eq!(opened.undo_label(), None);
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
 
     // From the bottom, a press that does not move and a drag further down change nothing and
     // make no step.
@@ -946,12 +946,12 @@ fn the_bottom_of_the_volume_is_silence_and_the_file_says_minus_inf(cx: &mut Test
     opened.drag(volume, volume + point(px(0.), px(200.)));
     assert_eq!(track(&mut opened).unwrap().gain_db, f32::NEG_INFINITY);
     assert!(!opened.gesture_open());
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
     assert_eq!(opened.undo_label(), None);
 
     // And a double click is 0 dB again, as its own step.
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     opened.double_click(volume);
     assert_eq!(track(&mut opened).unwrap().gain_db, 0.0);
     assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));
@@ -996,9 +996,9 @@ fn a_handle_of_the_envelope_edits_what_its_knob_edits_as_one_undo_step(cx: &mut 
     let back = opened.control("handle-attack");
     assert!(back.x < moved.x, "the handle did not follow the knob");
     // Two steps: the key and the drag.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened).unwrap().attack_seconds, attack);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened), Some(SynthState::default()));
     assert_eq!(opened.undo_label(), None);
     assert_eq!(synth_file(&mut opened), file);
@@ -1013,7 +1013,7 @@ fn a_handle_of_the_envelope_edits_what_its_knob_edits_as_one_undo_step(cx: &mut 
         opened.undo_label().as_deref(),
         Some("Change decay and sustain")
     );
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(synth(&mut opened), Some(SynthState::default()));
 
     // A double click resets what a handle moves.
@@ -1049,7 +1049,7 @@ fn the_solo_button_is_one_undo_step_and_silences_every_other_track(cx: &mut Test
     opened.render(24_000);
     assert_eq!(support::peak(&opened.render(12_000)), 0.0);
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.undo_label(), None);
     opened.settle();
     opened.render(24_000);
@@ -1111,7 +1111,7 @@ fn the_master_panel_edits_the_volume_and_the_limiter_as_one_undo_step_each(
     let dragged = master(&mut opened).unwrap().limiter.ceiling_db;
     assert!(dragged < lowered - 3.0, "{dragged}");
     assert_eq!(opened.undo_label().as_deref(), Some("Change ceiling"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(master(&mut opened).unwrap().limiter.ceiling_db, lowered);
 
     // The power icon: off and on, one step each.
@@ -1130,7 +1130,7 @@ fn the_master_panel_edits_the_volume_and_the_limiter_as_one_undo_step_each(
 
     // Four steps back to where the project began, and the file with it.
     for _ in 0..3 {
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
     }
     assert_eq!(master(&mut opened), Some(Default::default()));
     assert_eq!(opened.undo_label(), None);

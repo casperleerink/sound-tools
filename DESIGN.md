@@ -59,7 +59,7 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 
 `Sound Tools.app`, or `cargo run -p runtime -- <project-folder>`, opens the window. It opens the last project, or the folder panel when there is none. When a project does not open, a small window says why and has **Choose folder…**.
 
-Everything snaps to the snap setting in the corner above the track headers (1/16 when the window opens). Hold cmd during a drag to ignore it. Every drag and every key that changes the piece is one undo step, and escape during a drag puts it back. The keys follow macOS.
+Everything snaps to the snap setting in the corner above the track headers (1/16 when the window opens). Hold cmd during a drag to ignore it. Every drag and every key that changes the piece is one undo step, and escape during a drag puts it back. The keys follow macOS; on Windows and Linux ctrl takes the place of cmd.
 
 | Where | Mouse or key | What it does |
 | --- | --- | --- |

@@ -1068,11 +1068,11 @@ pub(crate) fn mark(opened: &mut Opened<'_>) -> Before {
 pub(crate) fn one_undo_step(opened: &mut Opened<'_>, label: &str, before: &Before) {
     assert_eq!(opened.undo_label().as_deref(), Some(label));
     let after = files(opened.folder.path());
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.undo_label(), before.undo_label, "more than one step");
     let now = files(opened.folder.path());
     assert_eq!(now, before.files, "undo did not give the files back");
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     let now = files(opened.folder.path());
     assert_eq!(now, after, "redo did not do it again");
 }

@@ -716,24 +716,24 @@ fn keys_are_free(window: &Window) -> bool {
 
 /// The keys of the window. Space and record are [`plain_keys`], undo works outside a text
 /// field. Tab moves the focus everywhere. The computer keys are no bindings: they need the key
-/// going up as well, see the key listeners of [`Shell`].
+/// going up as well, see the key listeners of [`Shell`]. `secondary` is cmd on macOS and ctrl
+/// on Windows and Linux.
 pub fn bind_keys(cx: &mut App) {
     let (outside_text, plain) = (outside_text(), plain_keys());
     let (outside_text, plain) = (Some(outside_text.as_str()), Some(plain.as_str()));
     cx.bind_keys([
         KeyBinding::new("space", TogglePlayback, plain),
         KeyBinding::new("r", ToggleRecording, plain),
-        // Not cmd-K on Windows, where Win+K is the system's.
         KeyBinding::new("secondary-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-z", Undo, outside_text),
-        KeyBinding::new("shift-cmd-z", Redo, outside_text),
+        KeyBinding::new("secondary-z", Undo, outside_text),
+        KeyBinding::new("shift-secondary-z", Redo, outside_text),
         KeyBinding::new("tab", FocusNext, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", FocusPrevious, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-n", NewProject, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-o", OpenProject, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("secondary-l", ToggleLeftPanel, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-b", OpenCloseLeftPanel, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-n", NewProject, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-o", OpenProject, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-q", Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
 }

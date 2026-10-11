@@ -70,7 +70,7 @@ impl Timeline {
         cx: &mut Context<Self>,
     ) -> After {
         self.refresh_order(cx);
-        let grid = match modifiers.platform {
+        let grid = match modifiers.secondary() {
             true => self.grid(cx).free(),
             false => self.grid(cx),
         };

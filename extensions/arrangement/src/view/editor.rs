@@ -561,7 +561,7 @@ impl NoteEditor {
             self.toggle(note, cx);
             return;
         }
-        let cmd = modifiers.platform;
+        let cmd = modifiers.secondary();
         let several = matches!(
             kind,
             NoteDragKind::Move { .. } | NoteDragKind::Velocity { .. }
@@ -766,7 +766,7 @@ impl NoteEditor {
     /// touches. Without shift or cmd it starts from nothing selected.
     fn start_marquee(&mut self, x: f32, y: f32, modifiers: Modifiers, cx: &mut Context<Self>) {
         let at_press = self.selection.clone();
-        if !(modifiers.shift || modifiers.platform) {
+        if !(modifiers.shift || modifiers.secondary()) {
             self.select_alone(None, cx);
         }
         let viewport = self.painted.get();
@@ -1066,11 +1066,8 @@ impl NoteEditor {
     /// The keys of the focused editor. Whether the key was one of them.
     fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
         let modifiers = event.keystroke.modifiers;
-        if modifiers.control {
-            return false;
-        }
         let key = event.keystroke.key.as_str();
-        if key == "escape" && !modifiers.shift && !modifiers.platform && !modifiers.alt {
+        if key == "escape" && !modifiers.modified() {
             if !self.cancel_drag(cx) {
                 cx.emit(EditorEvent::Close);
             }
@@ -1080,15 +1077,18 @@ impl NoteEditor {
         if self.drag.is_some() || self.marquee.is_some() {
             return false;
         }
-        match (modifiers.platform, modifiers.alt) {
-            (true, false) if !modifiers.shift => self.on_command(key, cx),
-            (false, true) if !modifiers.shift => match key {
+        if modifiers == Modifiers::secondary_key() {
+            self.on_command(key, cx)
+        } else if modifiers == Modifiers::alt() {
+            match key {
                 "up" => self.change_velocity(VELOCITY_STEP, cx),
                 "down" => self.change_velocity(-VELOCITY_STEP, cx),
                 _ => false,
-            },
-            (false, false) => self.on_plain_key(key, modifiers.shift, cx),
-            _ => false,
+            }
+        } else if !modifiers.modified() || modifiers == Modifiers::shift() {
+            self.on_plain_key(key, modifiers.shift, cx)
+        } else {
+            false
         }
     }
 
@@ -1719,7 +1719,7 @@ fn listen(editor: Entity<NoteEditor>, bounds: Bounds<Pixels>, hitbox: Hitbox, wi
                 } else if editor.marquee.is_some() {
                     editor.marquee_to(x, y, cx);
                 } else {
-                    editor.drag_to(x, y, event.modifiers.platform, cx);
+                    editor.drag_to(x, y, event.modifiers.secondary(), cx);
                 }
             });
         }
