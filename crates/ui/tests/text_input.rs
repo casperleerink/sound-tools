@@ -120,16 +120,16 @@ fn cmd_z_takes_back_a_typed_word_and_shift_cmd_z_brings_it_again(cx: &mut TestAp
     let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
     cx.simulate_keystrokes("a b c left backspace");
     assert_eq!(text(&input, cx), "ac");
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(text(&input, cx), "abc");
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(text(&input, cx), "");
-    cx.simulate_keystrokes("shift-cmd-z shift-cmd-z");
+    cx.simulate_keystrokes("shift-secondary-z shift-secondary-z");
     assert_eq!(text(&input, cx), "ac");
 
     // A text the host set is a step too, so a sent message comes back.
     set_text(&input, "", cx);
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(text(&input, cx), "ac");
 }
 
@@ -138,11 +138,11 @@ fn three_backspaces_are_one_step_and_a_space_ends_a_typed_word(cx: &mut TestAppC
     let (input, cx) = open(cx, |cx| TextInput::new(cx).multi_line(4).bare(true));
     cx.simulate_keystrokes("a b space c d");
     assert_eq!(text(&input, cx), "ab cd");
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(text(&input, cx), "ab ");
     cx.simulate_keystrokes("backspace backspace backspace");
     assert_eq!(text(&input, cx), "");
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(text(&input, cx), "ab ");
 }
 
@@ -183,14 +183,14 @@ fn a_composition_keeps_its_selection_inside_the_text(cx: &mut TestAppContext) {
     assert_eq!(text(&input, cx), "ab か");
     assert_eq!(selection(&input, cx), 4..4);
     assert!(selection(&input, cx).end <= utf16_len(&input, cx));
-    cx.simulate_keystrokes("shift-left cmd-c");
+    cx.simulate_keystrokes("shift-left secondary-c");
     let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
     assert_eq!(copied.as_deref(), Some("か"));
     input.update_in(cx, |input, window, cx| {
         input.replace_text_in_range(None, "か", window, cx)
     });
     assert_eq!(text(&input, cx), "ab か");
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(text(&input, cx), "ab ");
     assert!(selection(&input, cx).end <= utf16_len(&input, cx));
 }
@@ -218,7 +218,7 @@ fn the_rows_scroll_to_the_caret_past_the_last_row_of_the_box(cx: &mut TestAppCon
 #[gpui::test]
 fn a_one_line_field_leaves_up_and_cmd_z_to_the_views_around_it(cx: &mut TestAppContext) {
     let (input, cx) = open(cx, TextInput::new);
-    cx.simulate_keystrokes("a b up cmd-z c");
+    cx.simulate_keystrokes("a b up secondary-z c");
     assert_eq!(text(&input, cx), "abc");
 }
 
@@ -227,7 +227,7 @@ fn a_one_line_field_turns_newlines_into_spaces(cx: &mut TestAppContext) {
     let (input, cx) = open(cx, TextInput::new);
     cx.simulate_keystrokes("a shift-enter");
     cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("b\r\nc\nd".into())));
-    cx.simulate_keystrokes("cmd-v");
+    cx.simulate_keystrokes("secondary-v");
     assert_eq!(text(&input, cx), "a b c d");
 }
 
@@ -255,7 +255,7 @@ fn option_moves_selects_and_deletes_by_words(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("alt-backspace");
     assert_eq!(text(&input, cx), "one ");
     // A deleted word is one undo step.
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(text(&input, cx), "one two ");
 
     set_text(&input, "one two three", cx);

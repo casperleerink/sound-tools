@@ -137,14 +137,14 @@ pub(crate) fn snapshots(
     save(cx, &opened, "agent-approval")?;
 
     // Closed while it waits: the icon carries the indicator.
-    opened.key("cmd-l", cx)?;
-    opened.key("cmd-l", cx)?;
+    opened.key("secondary-l", cx)?;
+    opened.key("secondary-l", cx)?;
     let open = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.left_panel_open()))?;
     anyhow::ensure!(!open, "the sidebar did not close");
     save(cx, &opened, "agent-closed-working")?;
 
     // Opened again: the command was denied, and the turn failed.
-    opened.key("cmd-l", cx)?;
+    opened.key("secondary-l", cx)?;
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
             sidebar.receive(

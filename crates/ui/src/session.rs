@@ -192,7 +192,7 @@ impl Session {
                 Some(value)
             }
             Err(error) => {
-                self.notice = Some((NoticeSource::Edit, error.to_string().into()));
+                self.set_notice(NoticeSource::Edit, error.to_string().into());
                 None
             }
         }
@@ -318,11 +318,21 @@ impl Session {
 
     /// Shows an error that did not come from an edit: the engine, the watcher, the system.
     pub fn report(&mut self, error: impl Display, cx: &mut Context<Self>) {
-        let notice = (NoticeSource::System, SharedString::from(error.to_string()));
-        if self.notice.as_ref() != Some(&notice) {
-            self.notice = Some(notice);
+        if self.set_notice(NoticeSource::System, error.to_string().into()) {
             cx.notify();
         }
+    }
+
+    /// Whether the notice changed. A new one is also a line on stderr, which the app's log
+    /// keeps, so a notice dismissed or gone with the app can still be read.
+    fn set_notice(&mut self, source: NoticeSource, message: SharedString) -> bool {
+        let notice = (source, message);
+        if self.notice.as_ref() == Some(&notice) {
+            return false;
+        }
+        eprintln!("notice: {}", notice.1);
+        self.notice = Some(notice);
+        true
     }
 
     pub fn dismiss_notice(&mut self, cx: &mut Context<Self>) {

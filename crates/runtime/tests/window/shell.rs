@@ -96,13 +96,13 @@ fn the_standard_keys_undo_and_redo(cx: &mut TestAppContext) {
         })
     };
     assert!(has_clip(opened.cx));
-    opened.cx.simulate_keystrokes("cmd-z");
+    opened.cx.simulate_keystrokes("secondary-z");
     assert!(!has_clip(opened.cx));
-    opened.cx.simulate_keystrokes("shift-cmd-z");
+    opened.cx.simulate_keystrokes("shift-secondary-z");
     assert!(has_clip(opened.cx));
 
     // Nothing left to redo is not an error.
-    opened.cx.simulate_keystrokes("shift-cmd-z");
+    opened.cx.simulate_keystrokes("shift-secondary-z");
     opened
         .cx
         .read(|cx| assert_eq!(session.read(cx).notice(), None));
@@ -132,7 +132,7 @@ fn a_click_selects_the_clip_under_it_and_a_click_beside_it_clears(cx: &mut TestA
 
     // A selected clip that goes away is no longer selected.
     opened.click_timeline(1.5, 0.5);
-    opened.cx.simulate_keystrokes("cmd-z");
+    opened.cx.simulate_keystrokes("secondary-z");
     assert_eq!(selected(opened.cx), None);
 }
 
@@ -200,7 +200,7 @@ fn the_add_track_button_under_the_last_track_adds_an_instrument_track(cx: &mut T
     assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument; 3]);
 
     // One undo step each.
-    opened.keys("cmd-z cmd-z");
+    opened.keys("secondary-z secondary-z");
     assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument]);
 }
 
@@ -290,7 +290,7 @@ fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppC
         window.focus(&field.focus_handle(cx), cx)
     });
     cx.run_until_parked();
-    cx.simulate_keystrokes("a space b cmd-z");
+    cx.simulate_keystrokes("a space b secondary-z");
     settle(cx);
     assert_eq!(
         field.read_with(cx, |field, _| field.text().to_string()),
@@ -303,7 +303,7 @@ fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppC
     cx.simulate_keystrokes("tab space");
     settle(cx);
     assert!(playing(cx));
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(undo_label(cx), None);
 }
 
@@ -492,11 +492,11 @@ fn cmd_z_waits_for_an_open_gesture(cx: &mut TestAppContext) {
     opened
         .cx
         .update(|_, cx| session.update(cx, |session, cx| session.begin_gesture("Drag", cx)));
-    opened.cx.simulate_keystrokes("cmd-z");
+    opened.cx.simulate_keystrokes("secondary-z");
     assert!(has_clip(opened.cx));
     opened
         .cx
         .update(|_, cx| session.update(cx, |session, cx| session.cancel_gesture(cx)));
-    opened.cx.simulate_keystrokes("cmd-z");
+    opened.cx.simulate_keystrokes("secondary-z");
     assert!(!has_clip(opened.cx));
 }

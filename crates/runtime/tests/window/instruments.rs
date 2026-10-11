@@ -178,7 +178,7 @@ fn picking_a_plugin_is_one_undo_step(format: PluginFormat, cx: &mut TestAppConte
     assert_ne!(with_plugin, with_synth);
 
     // One step back: the synth record is what it was, and so is the sound.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(card_names(&mut opened), ["Synth"]);
     assert_eq!(opened.undo_label(), None);
     let record = slot_file(&mut opened).unwrap();
@@ -187,7 +187,7 @@ fn picking_a_plugin_is_one_undo_step(format: PluginFormat, cx: &mut TestAppConte
     assert_eq!(again, with_synth);
 
     // And forward again.
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     let again = playing(&mut opened);
     assert_eq!(again, with_plugin);
@@ -397,7 +397,7 @@ fn deleting_the_track_closes_the_window(format: PluginFormat, cx: &mut TestAppCo
 
     // Undo brings the track and its plugin back, with no window: opening one is not an edit
     // and is never undone.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let header = opened.track_header(0);
     opened.click(header);
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
@@ -465,7 +465,7 @@ fn a_plugin_written_by_hand_gets_the_same_card(format: PluginFormat, cx: &mut Te
     // Back to the synth from the window. The file edit and this are two steps.
     pick(&mut opened, SYNTH_ITEM);
     assert_eq!(card_names(&mut opened), ["Synth"]);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     let record = slot_file(&mut opened).unwrap();
     assert!(record.contains(r#""state_asset": "piano""#), "{record}");
@@ -571,8 +571,8 @@ fn a_plugin_that_is_picked_never_starts_from_a_state_file_that_was_there(cx: &mu
     assert_eq!(left(&playing(&mut opened)), plain);
 
     // Two steps back is the first plugin, with the sound it had.
-    opened.keys("cmd-z");
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
+    opened.keys("secondary-z");
     let record = slot_file(&mut opened).unwrap();
     assert!(record.contains(&format!("\"{}\"", first[0])), "{record}");
     assert_eq!(left(&playing(&mut opened)), transposed);

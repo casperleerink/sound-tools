@@ -1,7 +1,8 @@
 //! Toggle: a 24 pt button that is on or off, such as M and S of a track or `Freeze` of a reverb.
 //! 28 pt wide for a letter or a glyph and as wide as its word otherwise. The arm toggle of an
 //! audio track is a 10 pt circle in a 24 pt square, the size of an icon of a card header, hollow
-//! while off and filled while on ([`Toggle::dot`]). Off it is `alpha/5` with muted text. On it
+//! while off and filled while on ([`Toggle::dot`]). The automation toggle of a track is an icon
+//! in the same square ([`Toggle::icon`]). Off it is `alpha/5` with muted text. On it
 //! is white at 10 %, or its colour at 16 % with that colour as text: mute is peach and solo
 //! yellow, the one place a control fills with colour.
 //!
@@ -17,6 +18,8 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 
+use crate::components::icon::Icon;
+use crate::components::tooltip::Tooltip;
 use crate::focus::KeyboardFocus;
 use crate::theme::ActiveTheme;
 
@@ -24,6 +27,8 @@ pub const HEIGHT: f32 = 24.;
 pub const LETTER_WIDTH: f32 = 28.;
 /// The circle of [`Toggle::dot`].
 const DOT: f32 = 10.;
+/// The glyph of [`Toggle::icon`].
+const GLYPH: f32 = 14.;
 
 type ChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 
@@ -32,15 +37,27 @@ struct ToggleState {
     keyboard_focus: KeyboardFocus,
 }
 
+/// What a toggle shows.
+enum Face {
+    Label(SharedString),
+    Dot,
+    /// An icon of `crates/ui/assets/icons`, by name, and what it is called. It shows no words,
+    /// so its name is its tooltip.
+    Icon {
+        icon: SharedString,
+        label: SharedString,
+    },
+}
+
 #[derive(IntoElement)]
 pub struct Toggle {
     base: Div,
     id: ElementId,
-    /// `None` for the circle of [`Toggle::dot`].
-    label: Option<SharedString>,
+    face: Face,
     on: bool,
     color: Option<Hsla>,
     disabled: bool,
+    tab_stop: bool,
     on_change: Option<ChangeHandler>,
 }
 
@@ -49,10 +66,11 @@ impl Toggle {
         Self {
             base: div(),
             id: id.into(),
-            label: Some(label.into()),
+            face: Face::Label(label.into()),
             on,
             color: None,
             disabled: false,
+            tab_stop: true,
             on_change: None,
         }
     }
@@ -61,7 +79,24 @@ impl Toggle {
     /// of an audio track, red when on.
     pub fn dot(id: impl Into<ElementId>, on: bool) -> Self {
         Self {
-            label: None,
+            face: Face::Dot,
+            ..Self::new(id, "", on)
+        }
+    }
+
+    /// A square toggle whose face is an icon, such as the one that shows the automation lanes
+    /// of a track. `label` is its tooltip.
+    pub fn icon(
+        id: impl Into<ElementId>,
+        icon: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        on: bool,
+    ) -> Self {
+        Self {
+            face: Face::Icon {
+                icon: icon.into(),
+                label: label.into(),
+            },
             ..Self::new(id, "", on)
         }
     }
@@ -75,6 +110,12 @@ impl Toggle {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Leaves it out of the tab order, for a toggle that a key of its view already reaches.
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
         self
     }
 
@@ -97,7 +138,11 @@ impl RenderOnce for Toggle {
             keyboard_focus: KeyboardFocus::default(),
         });
         let disabled = self.disabled;
-        let focus_handle = state.read(cx).focus_handle.clone().tab_stop(!disabled);
+        let focus_handle = state
+            .read(cx)
+            .focus_handle
+            .clone()
+            .tab_stop(self.tab_stop && !disabled);
         let ring_shows = state
             .read(cx)
             .keyboard_focus
@@ -110,10 +155,10 @@ impl RenderOnce for Toggle {
             (true, Some(color)) => (color.opacity(0.16), color),
         };
         let ring = theme.lavender;
-        let width = match &self.label {
-            None => Some(HEIGHT),
-            Some(label) if label.chars().count() == 1 => Some(LETTER_WIDTH),
-            Some(_) => None,
+        let width = match &self.face {
+            Face::Dot | Face::Icon { .. } => Some(HEIGHT),
+            Face::Label(label) if label.chars().count() == 1 => Some(LETTER_WIDTH),
+            Face::Label(_) => None,
         };
         let on = self.on;
         let on_change = self.on_change.filter(|_| !disabled);
@@ -152,9 +197,12 @@ impl RenderOnce for Toggle {
                     })
                     .on_click(move |_: &ClickEvent, window, cx| on_change(!on, window, cx))
             })
-            .map(|toggle| match self.label {
-                Some(label) => toggle.child(label),
-                None => {
+            .map(|toggle| match self.face {
+                Face::Label(label) => toggle.child(label),
+                Face::Icon { icon, label } => toggle
+                    .tooltip(move |_, cx| Tooltip::new(label.clone()).view(cx))
+                    .child(Icon::new(icon).size(GLYPH).color(text)),
+                Face::Dot => {
                     let dot = div().size(px(DOT)).rounded_full();
                     toggle.child(match on {
                         true => dot.bg(text),

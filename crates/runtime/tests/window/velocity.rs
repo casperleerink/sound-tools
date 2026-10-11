@@ -177,6 +177,6 @@ fn a_velocity_written_from_outside_shows_in_the_lane_at_once(cx: &mut TestAppCon
     opened.drag(from, to);
     assert_eq!(velocities(&mut opened), [90, 100, 100]);
     // And undo gives back what the file had.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(velocities(&mut opened), [40, 100, 100]);
 }

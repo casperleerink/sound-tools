@@ -16,8 +16,8 @@ use sound_ui::{ActiveTheme, Waveforms, typography};
 
 use crate::view::gesture::{Zone, zone_at};
 use crate::view::layout::{
-    DOT_LEFT, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT, LANES_MIDDLE, NAME_LEFT, NAME_MIDDLE,
-    RULER_HEIGHT, Rect, Rows, RulerBar, TRACK_HEIGHT, Viewport,
+    DOT_LEFT, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT, NAME_LEFT, NAME_MIDDLE, RULER_HEIGHT, Rect,
+    Rows, RulerBar, TRACK_HEIGHT, Viewport,
 };
 use crate::view::paint::{Fit, paint_ruler, paint_text, paint_track_label, placed, text_width};
 use crate::{AutomationLane, TrackKind};
@@ -38,11 +38,6 @@ pub(super) struct TrackRow {
     pub(super) armed: bool,
     /// Its header is being dragged: the ring of a drag shows where it lands.
     pub(super) lifted: bool,
-    /// Its lanes show under it, and how many it has: the toggle in its header says both.
-    pub(super) expanded: bool,
-    pub(super) automated: bool,
-    /// What the toggle says: `Automation`, and how many lanes when there are any.
-    pub(super) lanes_label: SharedString,
 }
 
 /// An automation lane under a track, as one paint shows it.
@@ -242,21 +237,6 @@ impl Scene {
 
 /// The hint near a drag of clips that takes automation along.
 const AUTOMATION_HINT: &str = "Automation moves · alt to leave it";
-/// What the toggle of the lanes of a track says.
-const AUTOMATION: &str = "Automation";
-/// The toggle of the lanes is the second line of a track header, from its edge to as far as
-/// its words reach.
-pub(super) const LANES_TOGGLE_RIGHT: f32 = 128.;
-
-/// What the toggle of the lanes says for a track with this many: `Automation`, and the count
-/// when there are any.
-pub(super) fn lanes_label(lanes: usize) -> SharedString {
-    match lanes {
-        0 => SharedString::new_static(AUTOMATION),
-        lanes => format!("{AUTOMATION} · {lanes}").into(),
-    }
-}
-
 /// Where the arm toggle of an audio track starts in its header: a 24 pt square that ends 8 pt
 /// from the edge, as the icons of a card header do. The name of an audio track ends before it.
 pub(in crate::view) const ARM_LEFT: f32 = HEADER_WIDTH - 8. - 24.;
@@ -407,7 +387,6 @@ pub(super) fn paint_scene(
             };
             let label_size = (NAME_MIDDLE, name_width);
             paint_track_label(name, row.accent, top, label_size, row.silent, window, cx);
-            paint_lanes_toggle(row, top, window, cx);
         }
         // The name of each lane, where the name of its track starts: `Filter · Cutoff`. A long
         // device name, as a plugin's often is, gives way to the number, which always shows.
@@ -574,37 +553,6 @@ pub(super) fn paint_scene(
             paint_hint(readout, timeline.origin + at, window, cx);
         }
     });
-}
-
-/// The toggle of the lanes of a track, the second line of its header: a chevron under its dot,
-/// to the right while they are folded away and down while they show, and its words under the
-/// name. Brighter when the track has lanes, so a folded track says it has automation.
-fn paint_lanes_toggle(row: &TrackRow, top: Point<Pixels>, window: &mut Window, cx: &mut App) {
-    let theme = cx.theme();
-    let color = match row.automated {
-        true => theme.gray_800,
-        false => theme.gray_700,
-    };
-    let color = color.opacity(if row.silent { 0.4 } else { 1. });
-    let (x, y) = (DOT_LEFT + 4., LANES_MIDDLE);
-    let corners = match row.expanded {
-        true => [(x - 4., y - 2.), (x, y + 2.), (x + 4., y - 2.)],
-        false => [(x - 2., y - 4.), (x + 2., y), (x - 2., y + 4.)],
-    };
-    paint_polyline(&corners, top, 1.5, color, window);
-    let origin = top + point(px(NAME_LEFT), px(LANES_MIDDLE - 9.));
-    let fit = Fit::Truncate(LANES_TOGGLE_RIGHT - NAME_LEFT);
-    let label = row.lanes_label.clone();
-    paint_text(
-        label,
-        origin,
-        12.,
-        FontWeight::NORMAL,
-        color,
-        fit,
-        window,
-        cx,
-    );
 }
 
 /// A line through `corners`, from `origin`.

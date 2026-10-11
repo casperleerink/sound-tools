@@ -153,7 +153,7 @@ fn adding_an_effect_is_one_undo_step_and_the_track_plays_through_it(cx: &mut Tes
     assert_ne!(through, plain);
 
     // One step back takes the record and the name in the list together.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME]);
     // What is left is the step before: picking the instrument of the track.
     assert_eq!(
@@ -192,7 +192,7 @@ fn removing_an_effect_is_one_undo_step_and_undo_brings_it_back_as_it_sounded(
     assert_eq!(settled(&mut opened), plain);
 
     // One step back: the effect is in the chain again, with the sound it had.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(card_names(&mut opened), [PLUGIN_NAME, PLUGIN_NAME]);
     opened.project(|project| assert_eq!(project.problems(), []));
     assert_eq!(settled(&mut opened), through);
@@ -426,9 +426,9 @@ fn the_power_icon_bypasses_an_effect_as_one_undo_step(cx: &mut TestAppContext) {
         Some("Turn on Sound Tools Test Tone")
     );
     assert_ne!(settled(&mut opened), plain);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(settled(&mut opened), plain);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert!(track_file(&mut opened).contains(r#""effects": ["sound-tools-test-tone"]"#));
 
     // A file edit of the slot shows at once, and is its own step.

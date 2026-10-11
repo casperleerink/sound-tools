@@ -27,11 +27,11 @@ use sound_ui::components::dropdown_menu::{
 };
 use sound_ui::{Session, extension_is_enabled};
 
-use crate::app;
 use crate::app::ChosenDevices;
 #[cfg(unix)]
 use crate::app::Installed;
 use crate::main_arrangement;
+use crate::{app, log_file};
 
 const FIT_TEMPO: &str = "fit-tempo";
 const EXPORT: &str = "export";
@@ -51,6 +51,7 @@ const RECENT_PROJECT: &str = "recent-project-";
 const REVEAL: &str = "reveal";
 const TERMINAL: &str = "terminal";
 const INSTALL_TOOL: &str = "install-tool";
+const LOG: &str = "log";
 
 /// The audio devices of this machine, and which the composer chose.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -273,6 +274,11 @@ impl ProjectMenu {
                 NEW_PROJECT => new_project(session, cx),
                 OPEN_PROJECT => open_another_project(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
+                LOG => {
+                    if let Some(log) = log_file::path() {
+                        cx.reveal_path(log);
+                    }
+                }
                 TERMINAL => open_terminal(session.project().root().to_path_buf(), cx),
                 _ => {}
             });
@@ -839,8 +845,9 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
 }
 
 /// The last group: a new project, another one, a recent one in a submenu, the project folder in the
-/// Finder, a terminal in it for a coding agent, and the command that agent runs. Windows has
-/// no command line tool, see `app::Installed`.
+/// Finder, a terminal in it for a coding agent, the command that agent runs, and the app's log
+/// to send us. Windows has no command line tool, see `app::Installed`. A dev build or one
+/// started from a terminal writes no log, see `log_file`.
 fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
     [
         (NEW_PROJECT, "New project…"),
@@ -849,9 +856,14 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
         (REVEAL, "Reveal project folder"),
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
+        (LOG, "Reveal log file"),
     ]
     .into_iter()
-    .filter(|(value, _)| cfg!(unix) || *value != INSTALL_TOOL)
+    .filter(|(value, _)| match *value {
+        INSTALL_TOOL => cfg!(unix),
+        LOG => log_file::path().is_some(),
+        _ => true,
+    })
     .map(|(value, label)| {
         let item = MenuItem::new(value, label).selectable(false);
         match value {

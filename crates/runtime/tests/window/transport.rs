@@ -71,12 +71,12 @@ fn a_tempo_drag_is_one_undo_step_and_the_file_follows(cx: &mut TestAppContext) {
     assert!(!opened.gesture_open());
 
     // One undo takes the whole drag back, in the window and in the file.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     opened.settle();
     assert_eq!(opened.shown_tempo(), 120.0);
     assert_eq!(opened.undo_label(), None);
     assert!(tempo_in_file(&mut opened).contains("120"));
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert_eq!(opened.shown_tempo(), 140.0);
 }
 
@@ -109,7 +109,7 @@ fn shift_makes_a_tempo_drag_finer_from_where_it_is(cx: &mut TestAppContext) {
 
     // All of it is one step.
     assert_eq!(opened.undo_label().as_deref(), Some("Change tempo"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     opened.settle();
     assert_eq!(opened.shown_tempo(), 120.0);
     assert_eq!(opened.undo_label(), None);
@@ -171,7 +171,7 @@ fn the_arrows_change_the_focused_tempo(cx: &mut TestAppContext) {
     assert_eq!(opened.shown_tempo(), 121.9);
     // Each key is one step of its own.
     assert_eq!(opened.undo_label().as_deref(), Some("Change tempo"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.shown_tempo(), 122.0);
 }
 
@@ -210,7 +210,7 @@ fn toggling_the_click_adds_no_undo_step_and_writes_no_record(cx: &mut TestAppCon
     assert_eq!(support::files(&opened.path("")), before);
 
     // cmd-z with the click on must not toggle it, and must not fail either.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert!(opened.click_is_on());
     assert_eq!(opened.notice(), None);
 
@@ -410,7 +410,7 @@ fn a_drag_ends_when_its_tempo_change_is_removed_from_outside(cx: &mut TestAppCon
     );
     // The drag left no step of its own: it ends on what the file wrote, so there is nothing
     // of the drag to undo, and undo does not bring the removed tempo change back.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.shown_tempo(), 120.0);
     assert_eq!(tempo_in_file(&mut opened), file);
 }

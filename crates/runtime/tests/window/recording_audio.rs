@@ -167,7 +167,7 @@ fn the_input_select_writes_the_channels_of_the_track(cx: &mut TestAppContext) {
     assert_eq!(opened.undo_label(), Some("Change input".to_string()));
     let record = std::fs::read_to_string(opened.path("state/arrangement/voice/instance.json"));
     assert!(record.unwrap().contains(r#""input": [1, 2]"#));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let record = std::fs::read_to_string(opened.path("state/arrangement/voice/instance.json"));
     assert!(
         !record.unwrap().contains("input"),
@@ -234,7 +234,7 @@ fn r_records_every_armed_track_as_one_undo_step(cx: &mut TestAppContext) {
     assert_eq!(samples(files[1], &mut opened), [0.5, 0.25, 0.5, 0.25]);
 
     assert_eq!(opened.undo_label(), Some("Record".to_string()));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert!(audio_clips(&mut opened, VOICE).is_empty());
     assert!(audio_clips(&mut opened, GUITAR).is_empty());
     assert_eq!(opened.clip("arrangement/track-1/take"), None);
@@ -355,7 +355,7 @@ fn stop_pause_and_seek_end_the_take(cx: &mut TestAppContext) {
     // Three recordings, three undo steps.
     for _ in 0..3 {
         assert_eq!(opened.undo_label(), Some("Record".to_string()));
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
     }
 }
 

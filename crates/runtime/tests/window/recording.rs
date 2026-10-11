@@ -63,12 +63,12 @@ fn the_record_button_records_what_is_played_into_a_clip_as_one_undo_step(
     // One step: undo takes the whole clip away and leaves the raw take.
     let take_file = opened.path("assets/takes/take-1.json");
     assert!(take_file.exists());
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(take_clip(&mut opened), None);
     assert!(take_file.exists(), "undo removed the raw take");
     assert_eq!(opened.undo_label(), None);
 
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert!(take_clip(&mut opened).is_some());
 }
 
@@ -300,7 +300,7 @@ fn a_second_take_after_an_undo_leaves_the_first_one_untouched(cx: &mut gpui::Tes
         Some("take-1")
     );
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(take_clip(&mut opened), None);
     record(&mut opened, 64);
 

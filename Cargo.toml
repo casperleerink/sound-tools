@@ -46,6 +46,9 @@ utility = { path = "extensions/utility" }
 wavetable = { path = "extensions/wavetable" }
 anyhow = "1"
 cargo_metadata = "0.23"
+# The time at the top of each session of the app's log. The version and features gpui uses.
+# MIT OR Apache-2.0.
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 # FLAC samples of instrument libraries, decoded whole on the control side. Apache-2.0.
 claxon = "0.4.3"
 # CLAP hosting, and the test plugin the repository builds for CI. MIT OR Apache-2.0.
