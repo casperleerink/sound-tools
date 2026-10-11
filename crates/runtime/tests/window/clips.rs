@@ -53,7 +53,7 @@ fn a_double_click_on_empty_track_space_adds_a_clip_of_one_bar(cx: &mut TestAppCo
     opened.double_click(place);
     assert!(opened.clip("arrangement/track-2/clip-2").is_some());
 
-    opened.keys("cmd-z cmd-z");
+    opened.keys("secondary-z secondary-z");
     assert_eq!(opened.clip(added), None);
     assert_eq!(opened.clip_file(added), None);
     assert_eq!(opened.undo_label(), None);
@@ -82,11 +82,11 @@ fn a_drag_of_the_body_moves_a_clip_in_time_as_one_undo_step(cx: &mut TestAppCont
     assert_eq!(opened.undo_label().as_deref(), Some("Move clip"));
     assert_eq!(opened.selected_clip(), Some(id(PART)));
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.undo_label(), None);
     assert!(opened.clip_file(PART).unwrap().contains("\"start\": 3840"));
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert_eq!(opened.clip(PART).unwrap().start.0, 2 * BAR);
 }
 
@@ -118,7 +118,7 @@ fn a_drag_to_another_track_moves_the_file_and_keeps_the_clip_selected(cx: &mut T
     assert!(opened.clip_file(moved).unwrap().contains("\"start\": 7680"));
     assert_eq!(opened.undo_label().as_deref(), Some("Move clip"));
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.clip(moved), None);
     assert_eq!(opened.clip_file(moved), None);
@@ -173,7 +173,7 @@ fn a_drag_of_the_right_edge_resizes_and_going_back_keeps_the_notes(cx: &mut Test
             .contains("\"length\": 11520")
     );
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.undo_label(), None);
 }
@@ -201,7 +201,7 @@ fn a_drag_of_the_left_edge_keeps_the_notes_in_place_and_stops_at_the_first(
     assert_eq!(shrunk.notes[0].start.0, 0);
     assert_eq!(shrunk.placed_notes().collect::<Vec<_>>(), placed);
 
-    opened.keys("cmd-z cmd-z");
+    opened.keys("secondary-z secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
 }
 
@@ -221,7 +221,7 @@ fn delete_and_backspace_delete_the_selected_clip(cx: &mut TestAppContext) {
         assert_eq!(opened.clip_file(PART), None);
         assert_eq!(opened.selected_clip(), None);
         assert_eq!(opened.undo_label().as_deref(), Some("Delete clip"));
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
         assert_eq!(opened.clip(PART), Some(part()));
         assert!(opened.clip_file(PART).is_some());
     }
@@ -252,7 +252,7 @@ fn arrow_keys_nudge_the_selected_clip_in_time_and_between_tracks(cx: &mut TestAp
     assert_eq!(opened.selected_clip(), Some(id(PART)));
 
     // Each key was one step: six of them changed something.
-    opened.keys("cmd-z cmd-z cmd-z cmd-z cmd-z cmd-z");
+    opened.keys("secondary-z secondary-z secondary-z secondary-z secondary-z secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.undo_label(), None);
 }
@@ -269,7 +269,7 @@ fn a_nudge_stops_at_tick_zero(cx: &mut TestAppContext) {
     opened.click(place);
     opened.keys("left left left");
     assert_eq!(opened.clip(PART).unwrap().start.0, 0);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.undo_label(), None);
 }
 
@@ -316,13 +316,13 @@ fn undo_during_a_drag_is_ignored(cx: &mut TestAppContext) {
     let (from, to) = (opened.at(BAR + 960, 0), opened.at(2 * BAR + 960, 0));
     opened.press(from);
     opened.drag_to(to);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     // The nudge is still there and the drag goes on.
     assert_eq!(opened.clip(PART).unwrap().start.0, 2 * BAR + STEP);
     assert!(opened.gesture_open());
     opened.release(to);
     assert_eq!(opened.undo_label().as_deref(), Some("Move clip"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART).unwrap().start.0, BAR + STEP);
     assert_eq!(opened.undo_label().as_deref(), Some("Nudge clip"));
 }
@@ -366,7 +366,7 @@ fn an_outside_delete_of_the_dragged_clip_ends_the_gesture_cleanly(cx: &mut TestA
     assert_eq!(opened.clip_file(PART), None);
 
     // The delete was the last write. Undo gives the clip back as it was before the drag.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
 }
 
@@ -492,7 +492,7 @@ fn a_resize_goes_on_from_the_live_clip_and_never_writes_an_old_copy(cx: &mut Tes
     // Press the edge and hold. Undo brings the note back under the press.
     let edge = opened.at(3 * BAR, 0) - point(px(2.), px(0.));
     opened.press(edge);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.redo_label().as_deref(), Some("Delete note"));
     // A move inside the snap step changes nothing, so redo is still there.
@@ -507,7 +507,7 @@ fn a_resize_goes_on_from_the_live_clip_and_never_writes_an_old_copy(cx: &mut Tes
     assert_eq!(opened.clip(PART), Some(clip(BAR, 3 * BAR, part().notes)));
     assert_eq!(opened.undo_label().as_deref(), Some("Resize clip"));
     assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 64"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
 }
 
@@ -549,7 +549,7 @@ fn a_press_then_undo_then_a_move_starts_from_the_live_clip(cx: &mut TestAppConte
     // The clip is a step later. Press it, undo the nudge under the press, then drag a bar.
     let from = opened.at(BAR + 1920, 0);
     opened.press(from);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART).unwrap().start.0, BAR);
     let to = opened.at(2 * BAR + 1920, 0);
     opened.drag_to(from + point(px(1.), px(0.)));

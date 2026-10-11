@@ -1,4 +1,5 @@
-//! Kbd: one keyboard shortcut drawn as key caps. `Kbd::new("mod+k")` renders `⌘ K`.
+//! Kbd: one keyboard shortcut drawn as key caps. `Kbd::new("mod+k")` renders `⌘ K` on macOS
+//! and `Ctrl K` on Windows and Linux, as the `secondary` of a key binding.
 
 use gpui::{App, Div, SharedString, StyleRefinement, Window, div, prelude::*, px};
 
@@ -27,14 +28,23 @@ impl Styled for Kbd {
 }
 
 fn key_label(key: &str) -> String {
-    match key.to_lowercase().as_str() {
-        "mod" | "cmd" => "⌘".into(),
-        "alt" | "option" => "⌥".into(),
-        "shift" => "⇧".into(),
-        "ctrl" => "⌃".into(),
-        "enter" => "↵".into(),
-        _ => key.to_uppercase(),
-    }
+    let label = match key.to_lowercase().as_str() {
+        "enter" => "↵",
+        modifier if cfg!(target_os = "macos") => match modifier {
+            "mod" => "⌘",
+            "alt" | "option" => "⌥",
+            "shift" => "⇧",
+            "ctrl" => "⌃",
+            _ => return key.to_uppercase(),
+        },
+        modifier => match modifier {
+            "mod" | "ctrl" => "Ctrl",
+            "alt" | "option" => "Alt",
+            "shift" => "Shift",
+            _ => return key.to_uppercase(),
+        },
+    };
+    label.into()
 }
 
 impl RenderOnce for Kbd {

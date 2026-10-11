@@ -245,7 +245,7 @@ fn a_claude_that_does_not_start_is_a_quiet_line_and_no_request(cx: &mut TestAppC
     install_sidebar(cx, machine.path());
     let mut opened = support::open_with(cx, |_| {});
     let undo_label = opened.undo_label();
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     assert!(opened.composer_focused());
     opened.cx.simulate_input("Hello");
     opened.keys("enter");
@@ -274,7 +274,7 @@ fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mu
         .update(|window, cx| window.focus(&timeline.focus_handle(cx), cx));
 
     // cmd-L focuses the composer of the open panel, escape gives the focus back.
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     assert!(opened.composer_focused());
     opened.keys("escape");
     assert!(opened.panel_open());
@@ -285,8 +285,8 @@ fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mu
     );
 
     // cmd-L again in the composer closes it, and the focus goes back.
-    opened.keys("cmd-l");
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
+    opened.keys("secondary-l");
     assert!(!opened.panel_open());
     assert!(!opened.composer_focused());
     drop(timeline);
@@ -295,7 +295,7 @@ fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mu
     // Another window, on another project: closed, as the machine remembers it.
     let mut opened = support::open_with(cx, |_| {});
     assert!(!opened.panel_open());
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     assert!(opened.panel_open());
     assert!(opened.composer_focused());
 }
@@ -316,16 +316,16 @@ fn cmd_b_opens_and_closes_the_panel_and_leaves_the_focus(cx: &mut TestAppContext
             .update(|window, cx| timeline.focus_handle(cx).is_focused(window))
     };
 
-    opened.keys("cmd-b");
+    opened.keys("secondary-b");
     assert!(!opened.panel_open());
     assert!(timeline_focused(&mut opened));
-    opened.keys("cmd-b");
+    opened.keys("secondary-b");
     assert!(opened.panel_open());
     assert!(timeline_focused(&mut opened));
 
     // From the composer, closing gives the focus back.
-    opened.keys("cmd-l");
-    opened.keys("cmd-b");
+    opened.keys("secondary-l");
+    opened.keys("secondary-b");
     assert!(!opened.panel_open());
     assert!(timeline_focused(&mut opened));
 }
@@ -402,9 +402,9 @@ fn with_no_claude_cmd_l_focuses_the_sidebar_and_closes_it_again(cx: &mut TestApp
     install_sidebar_with(cx, machine.path(), None);
     let mut opened = support::open_with(cx, |_| {});
     assert!(opened.panel_open());
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     assert!(opened.composer_focused());
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     assert!(!opened.panel_open());
 }
 
@@ -497,11 +497,11 @@ fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
         .cx
         .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
 
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     opened.cx.simulate_input("Hello");
     opened.keys("enter");
     assert!(opened.cx.read(|cx| sidebar.read(cx).is_busy()));
-    opened.keys("cmd-.");
+    opened.keys("secondary-.");
     let stop = opened.control("agent-stop");
     opened.click(stop);
 
@@ -583,7 +583,7 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
     opened
         .cx
         .update(|_, cx| sidebar.update(cx, |sidebar, _| sidebar.connect(thread)));
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     opened.cx.simulate_input("Which file was it?");
     opened.keys("enter");
     assert_eq!(
@@ -682,7 +682,7 @@ fn instructions_typed_in_the_sidebar_are_saved_in_the_project(cx: &mut TestAppCo
 
     // Opened again it shows the file; emptied and closed with escape, the file goes.
     open_instructions(&mut opened);
-    opened.keys("cmd-a backspace escape");
+    opened.keys("secondary-a backspace escape");
     opened.cx.run_until_parked();
     assert!(!file.exists());
     assert!(opened.composer_focused());
@@ -714,7 +714,7 @@ fn a_lost_session_ends_the_thread_until_plus(cx: &mut TestAppContext) {
     let mut opened = open_again(cx, folder);
     assert!(opened.find("agent-cannot-continue").is_some());
     // With no composer, cmd-L focuses the sidebar itself.
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     assert!(opened.composer_focused());
     let plus = opened.control("agent-cannot-continue");
     opened.click(plus);
@@ -764,7 +764,7 @@ fn the_real_agent_resumes_a_thread_after_the_window_closed(cx: &mut TestAppConte
 
 /// Sends `message` from the composer and gives the text of the answer once the turn ends.
 fn ask(opened: &mut Opened<'_>, message: &str) -> String {
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     opened.cx.simulate_input(message);
     opened.keys("enter");
     let sidebar = opened.sidebar();
@@ -862,7 +862,7 @@ fn up_in_the_composer_recalls_earlier_messages(cx: &mut TestAppContext) {
             outcome: TurnOutcome::Completed,
         }]);
     }
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     assert_eq!(press(&mut opened, "up"), "Make it louder");
     assert_eq!(press(&mut opened, "up"), "Add a bass line");
     assert_eq!(press(&mut opened, "down"), "Make it louder");
@@ -891,7 +891,7 @@ fn up_recalls_the_messages_of_a_thread_opened_again(cx: &mut TestAppContext) {
     let folder = opened.close();
 
     let mut opened = open_again(cx, folder);
-    opened.keys("cmd-l");
+    opened.keys("secondary-l");
     assert_eq!(press(&mut opened, "up"), MESSAGE);
 }
 

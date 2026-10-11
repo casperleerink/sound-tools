@@ -56,17 +56,11 @@ impl Timeline {
         if !self.focus_handle.is_focused(window) {
             return false;
         }
-        let Modifiers {
-            control,
-            alt,
-            shift,
-            platform,
-            ..
-        } = event.keystroke.modifiers;
+        let modifiers = event.keystroke.modifiers;
         let key = event.keystroke.key.as_str();
         // Alt-up and alt-down: the gain of the selected audio clips, and with no clip selected,
         // the place of the selected track.
-        if alt && !(control || shift || platform) && !self.dragging() {
+        if modifiers == Modifiers::alt() && !self.dragging() {
             let project = self.session.read(cx).project();
             let primary = self.clips.primary();
             let clip_selected = primary.is_some_and(|clip| is_clip_tool(project, clip));
@@ -78,10 +72,11 @@ impl Timeline {
                 _ => false,
             };
         }
-        if control || alt || shift {
+        let command = modifiers == Modifiers::secondary_key();
+        if modifiers.modified() && !command {
             return false;
         }
-        if key == "escape" && !platform {
+        if key == "escape" && !command {
             if self.cancel_drag(cx) {
                 return true;
             }
@@ -101,7 +96,7 @@ impl Timeline {
         if self.dragging() {
             return false;
         }
-        if platform {
+        if command {
             return self.on_command(key, cx);
         }
         if key == "t" {

@@ -96,9 +96,9 @@ fn a_short_piece_is_made_by_hand_and_is_there_after_closing_and_opening(cx: &mut
 
     // Undo and redo, once each.
     let with_long_note = opened.clip(BASS).unwrap();
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(BASS).unwrap().notes[3], note(2880, 960, 48));
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert_eq!(opened.clip(BASS), Some(with_long_note));
 
     let expected_melody: Vec<_> = melody

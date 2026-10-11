@@ -523,6 +523,16 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
             sample("arm", cx, Toggle::dot("arm-off", false).color(theme.red)),
             sample("armed", cx, Toggle::dot("arm-on", true).color(theme.red)),
             sample(
+                "lanes",
+                cx,
+                Toggle::icon("lanes-off", "automation", "Automation", false),
+            ),
+            sample(
+                "lanes shown",
+                cx,
+                Toggle::icon("lanes-on", "automation", "Automation", true),
+            ),
+            sample(
                 "segmented",
                 cx,
                 SegmentedControl::new("type", segment.clone())

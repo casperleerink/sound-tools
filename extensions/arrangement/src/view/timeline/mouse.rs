@@ -10,7 +10,7 @@ use sound_notes::Clip;
 use sound_ui::DragEdit;
 use sound_ui::components::audio_clip::ClipHandle;
 
-use super::scene::{Grip, LANES_TOGGLE_RIGHT, Scene};
+use super::scene::{Grip, Scene};
 use super::state::{
     ClipDrag, ClipDragKind, Edge, EdgeDrag, GainDrag, Held, LaneDragKind, Marquee, MoveDrag,
     MovedClip, OnRelease, ResizeDrag,
@@ -18,7 +18,7 @@ use super::state::{
 use super::{Timeline, TimelineEvent};
 use crate::clip_moves::range_of;
 use crate::view::gesture::{Zone, new_clip};
-use crate::view::layout::{HEADER_WIDTH, LANES_MIDDLE, Part, RULER_HEIGHT, ordered};
+use crate::view::layout::{HEADER_WIDTH, Part, RULER_HEIGHT, ordered};
 use crate::{AnyClip, AudioClip, TrackKind, TrackState, add_clip, shown_end};
 
 impl Timeline {
@@ -44,7 +44,7 @@ impl Timeline {
         }
         let double = event.click_count == 2;
         // Shift and cmd add to the selection or take out of it, as in the Finder.
-        let (shift, cmd) = (event.modifiers.shift, event.modifiers.platform);
+        let (shift, cmd) = (event.modifiers.shift, event.modifiers.secondary());
         let adds = shift || cmd;
         let part = scene.viewport.part_at(&scene.layout, y);
         if x < 0.0 || y < 0.0 || !matches!(part, Some((_, Part::Lane(_)))) {
@@ -55,19 +55,11 @@ impl Timeline {
             if y < 0.0 {
                 return;
             }
-            // The header of a track, not of its lanes. Its second line is the toggle of its
-            // lanes; elsewhere it is selected, and a double click edits its name.
+            // The header of a track, not of its lanes: it is selected, and a double click
+            // edits its name. The toggle of its lanes takes its own clicks.
             let Some((row, Part::Track)) = part else {
                 return;
             };
-            let in_row = y - scene.viewport.y_of(&scene.layout, row);
-            if in_row >= LANES_MIDDLE - 8. && x + HEADER_WIDTH < LANES_TOGGLE_RIGHT {
-                if let Some(track) = self.order.get(row).map(|track| track.id().clone()) {
-                    let shown = self.shows_lanes(&track);
-                    self.show_lanes(&track, !shown, cx);
-                }
-                return;
-            }
             if let Some(track) = self.order.get(row).cloned() {
                 self.select_track(Some(track.id().clone()), cx);
                 cx.emit(TimelineEvent::OpenTrack(track.clone()));

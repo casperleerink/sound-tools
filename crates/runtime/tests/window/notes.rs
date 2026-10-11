@@ -104,7 +104,7 @@ fn a_double_click_on_empty_space_draws_a_note_as_one_undo_step(cx: &mut TestAppC
     let file = opened.clip_file(PART).unwrap();
     assert!(file.contains(r#"{"start": 1920, "length": 960, "pitch": 67, "velocity": 100}"#));
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.undo_label(), None);
     assert!(!opened.clip_file(PART).unwrap().contains("\"pitch\": 67"));
@@ -125,7 +125,7 @@ fn a_drag_of_a_note_moves_it_in_time_and_pitch(cx: &mut TestAppContext) {
     assert_eq!(opened.undo_label().as_deref(), Some("Move note"));
     assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 63"));
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.undo_label(), None);
 }
@@ -144,7 +144,7 @@ fn a_drag_of_the_end_of_a_note_resizes_it(cx: &mut TestAppContext) {
     let to = opened.in_editor(BAR, 60);
     opened.drag(from, to);
     assert_eq!(opened.clip(PART).unwrap().notes[0], note(960, STEP, 60));
-    opened.keys("cmd-z cmd-z");
+    opened.keys("secondary-z secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
 }
 
@@ -216,7 +216,7 @@ fn notes_never_leave_their_clip(cx: &mut TestAppContext) {
     assert_eq!(last.pitch.number(), 127);
     opened.keys("right up");
     assert_eq!(*opened.clip(PART).unwrap().notes.last().unwrap(), last);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
 
     // Far before the start of the clip.
@@ -226,7 +226,7 @@ fn notes_never_leave_their_clip(cx: &mut TestAppContext) {
     assert_eq!(opened.clip(PART).unwrap().notes[0], note(0, 480, 60));
     opened.keys("left");
     assert_eq!(opened.clip(PART).unwrap().notes[0], note(0, 480, 60));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
 
     // A resize ends with the clip.
     let from = end_of(&mut opened, 2 * BAR + 1440, 64);
@@ -235,7 +235,7 @@ fn notes_never_leave_their_clip(cx: &mut TestAppContext) {
         opened.clip(PART).unwrap().notes[1],
         note(BAR + 960, BAR - 960, 64)
     );
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
 
     // A drawn note ends with the clip, and outside the clip nothing is drawn.
     let from = opened.in_editor(3 * BAR - 100, 67);
@@ -244,7 +244,7 @@ fn notes_never_leave_their_clip(cx: &mut TestAppContext) {
         opened.clip(PART).unwrap().notes[2],
         note(2 * BAR - STEP, STEP, 67)
     );
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.undo_label(), None);
     let outside = opened.in_editor(3 * BAR + 100, 67);
     opened.draw(outside, far);
@@ -302,11 +302,11 @@ fn undo_during_a_note_drag_is_ignored(cx: &mut TestAppContext) {
     );
     opened.press(from);
     opened.drag_to(to);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART).unwrap().notes[0], note(1920, 480, 61));
     opened.release(to);
     assert_eq!(opened.undo_label().as_deref(), Some("Move note"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART).unwrap().notes[0], note(960, 480, 61));
 }
 
@@ -344,7 +344,7 @@ fn the_editor_follows_the_selection_and_closes_when_its_clip_is_deleted(cx: &mut
     assert_eq!(opened.editor_clip(), None);
     assert_eq!(opened.notice(), None);
     // The keys of the window still work.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
 }
 
@@ -527,14 +527,14 @@ fn an_outside_delete_of_the_clip_during_a_note_drag_leaves_no_gesture_open(
     // Undo works at once. The delete was the last write, so it is the step on top, and it gives
     // the clip back as it was before the drag, with the nudge. The drag itself left no step.
     assert_eq!(opened.undo_label().as_deref(), Some("File change"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let back = opened.clip(PART).unwrap();
     assert_eq!(back.notes[0], note(960, 480, 61));
     assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 61"));
 
     // The second undo never lands on the middle of the drag: it takes back the nudge.
     assert_eq!(opened.undo_label().as_deref(), Some("Nudge note"));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART).unwrap().notes[0], note(960, 480, 60));
 }
 
@@ -558,7 +558,7 @@ fn closing_the_editor_during_a_note_drag_ends_the_gesture(cx: &mut TestAppContex
     assert_eq!(opened.undo_label().as_deref(), Some("Move note"));
     assert!(opened.clip_file(PART).unwrap().contains("\"pitch\": 66"));
     opened.release(to);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
 }
 
@@ -600,7 +600,7 @@ fn undo_of_a_drawn_note_leaves_nothing_selected(cx: &mut TestAppContext) {
     let place = opened.in_editor(BAR + 2000, 67);
     opened.double_click(place);
     assert_eq!(opened.selected_note(), Some(1));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.selected_note(), None);
     // Delete has no note to delete. Before, it took the old note at the index of the new one.
@@ -637,11 +637,11 @@ fn undo_of_a_move_to_another_track_keeps_the_selection_and_the_editor(cx: &mut T
     assert_eq!(opened.editor_clip(), Some(id(moved)));
     assert_eq!(opened.selected_clip(), Some(id(moved)));
 
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(PART), Some(part()));
     assert_eq!(opened.selected_clip(), Some(id(PART)));
     assert_eq!(opened.editor_clip(), Some(id(PART)));
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert_eq!(opened.clip(moved), Some(part()));
     assert_eq!(opened.selected_clip(), Some(id(moved)));
     assert_eq!(opened.editor_clip(), Some(id(moved)));
@@ -649,13 +649,13 @@ fn undo_of_a_move_to_another_track_keeps_the_selection_and_the_editor(cx: &mut T
     assert_eq!(opened.clip_file(PART), None);
 
     // The same for the arrow keys.
-    opened.keys("cmd-z up");
+    opened.keys("secondary-z up");
     assert_eq!(opened.selected_clip(), Some(id(PART)));
     let place = opened.at(BAR + 1920, 0);
     opened.click(place);
     opened.keys("down");
     assert_eq!(opened.editor_clip(), Some(id(moved)));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.selected_clip(), Some(id(PART)));
     assert_eq!(opened.editor_clip(), Some(id(PART)));
 }

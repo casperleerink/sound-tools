@@ -133,7 +133,7 @@ fn escape_during_a_track_drag_puts_the_track_back_and_undo_waits(cx: &mut TestAp
     assert_eq!(order(&mut opened), names(&[SECOND, AUDIO, FIRST]));
     assert!(opened.gesture_open());
     // Undo waits for the drag.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(order(&mut opened), names(&[SECOND, AUDIO, FIRST]));
     assert!(opened.gesture_open());
 

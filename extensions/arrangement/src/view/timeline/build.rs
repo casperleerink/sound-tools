@@ -14,7 +14,7 @@ use sound_ui::{ActiveTheme, LiveBody, LiveSound};
 use super::Timeline;
 use super::scene::{
     AudioShape, Body, ClipShape, Ghosts, LanePoint, LaneShape, PointKey, Scene, Sound, TempoMark,
-    TrackRow, lanes_label,
+    TrackRow,
 };
 use super::state::{
     ClipDragKind, DropTarget, Edge, EdgeDrag, Held, LaneDragKind, LaneGhost, MoveDrag,
@@ -132,9 +132,6 @@ impl Timeline {
                     &self.held,
                     Held::Track(drag) if drag.moving && drag.track == *track.id()
                 ),
-                expanded,
-                automated: !state.automation.is_empty(),
-                lanes_label: lanes_label(state.automation.len()),
             });
             if expanded {
                 let count = state.automation.len();

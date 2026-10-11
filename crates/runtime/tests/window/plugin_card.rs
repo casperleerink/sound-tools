@@ -8,7 +8,6 @@
 
 use std::collections::BTreeMap;
 
-use arrangement::view::layout::{LANES_MIDDLE, NAME_LEFT, TRACK_HEIGHT};
 use arrangement::view::track_lanes::LANE_BOX;
 use arrangement::{AutomationLane, AutomationValue, TrackState, travel_in};
 use gpui::{Modifiers, TestAppContext, point, px};
@@ -19,6 +18,8 @@ use sound_core::{Changes, Ticks};
 use crate::support::{self, Opened, id, mark, one_undo_step, test_plugin_record, write_outside};
 
 const TRACK: &str = "arrangement/track-1";
+/// The toggle of the lanes of the track.
+const LANES: &str = "toggle-lanes-track-1";
 const SLOT: &str = "arrangement/track-1/instrument";
 const SLOT_FILE: &str = "state/arrangement/track-1/instrument.json";
 const LIST: &str = "plugin-parameters";
@@ -223,11 +224,7 @@ fn the_select_adds_a_lane_for_a_pin(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     pick(&mut opened, "cut", test_clap_plugin::CUTOFF);
     pick(&mut opened, "wav", test_clap_plugin::WAVE);
-    let header = opened.track_header(0);
-    let toggle = point(
-        px(NAME_LEFT + 8.),
-        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
-    );
+    let toggle = opened.control(LANES);
     opened.click(toggle);
 
     let before = mark(&mut opened);
@@ -258,11 +255,7 @@ fn the_select_adds_a_lane_for_a_pin(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_select_adds_a_lane_for_a_parameter_that_is_not_pinned_and_pins_it(cx: &mut TestAppContext) {
     let mut opened = open(cx);
-    let header = opened.track_header(0);
-    let toggle = point(
-        px(NAME_LEFT + 8.),
-        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
-    );
+    let toggle = opened.control(LANES);
     opened.click(toggle);
 
     let before = mark(&mut opened);
@@ -343,11 +336,7 @@ fn set_lanes(opened: &mut Opened<'_>, lanes: &[(Option<&str>, &str, u64, f32)]) 
 
 /// Shows the lanes of the first track.
 fn show_lanes(opened: &mut Opened<'_>) {
-    let header = opened.track_header(0);
-    let toggle = point(
-        px(NAME_LEFT + 8.),
-        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
-    );
+    let toggle = opened.control(LANES);
     opened.click(toggle);
 }
 

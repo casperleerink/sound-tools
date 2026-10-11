@@ -56,10 +56,7 @@ fn shift() -> Modifiers {
 }
 
 fn cmd() -> Modifiers {
-    Modifiers {
-        platform: true,
-        ..Modifiers::default()
-    }
+    Modifiers::secondary_key()
 }
 
 /// The middle of a note of `part`, by its start in the clip and its pitch.
@@ -119,7 +116,7 @@ fn shift_cmd_and_a_rectangle_select_notes_as_for_clips(cx: &mut TestAppContext) 
     // A click on empty space selects nothing, and cmd-a every note.
     opened.click(from);
     assert_eq!(opened.selected_notes(), Vec::<usize>::new());
-    opened.keys("cmd-a");
+    opened.keys("secondary-a");
     assert_eq!(opened.selected_notes(), [0, 1, 2]);
     // Selecting is no edit.
     assert_eq!(opened.undo_label(), None);
@@ -185,7 +182,7 @@ fn delete_and_the_arrows_act_on_every_selected_note_and_undo_selects_them_again(
     assert_eq!(opened.selected_notes(), Vec::<usize>::new());
     one_undo_step(&mut opened, "Delete notes", &before);
     // Undo brings them back selected, so a second delete takes them again.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(notes(&mut opened, PART).len(), 3);
     assert_eq!(opened.selected_notes(), [0, 2]);
     opened.keys("backspace");
@@ -198,7 +195,7 @@ fn a_paste_goes_to_the_playhead_in_the_clip_or_to_the_selected_notes(cx: &mut Te
     let (first, second) = (on(&mut opened, 960, 60), on(&mut opened, 1920, 64));
     opened.click(first);
     opened.click_with(second, shift());
-    opened.keys("cmd-c");
+    opened.keys("secondary-c");
     assert_eq!(opened.undo_label(), None);
 
     // The playhead in the second bar of the clip.
@@ -207,7 +204,7 @@ fn a_paste_goes_to_the_playhead_in_the_clip_or_to_the_selected_notes(cx: &mut Te
     opened.settle();
     assert_eq!(opened.playhead().tick, Ticks(2 * BAR));
     let before = mark(&mut opened);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     let pasted = [note(BAR, 480, 60), note(BAR + 960, 480, 64)];
     let now = notes(&mut opened, PART);
     assert!(pasted.iter().all(|note| now.contains(note)), "{now:?}");
@@ -222,22 +219,22 @@ fn a_paste_goes_to_the_playhead_in_the_clip_or_to_the_selected_notes(cx: &mut Te
     one_undo_step(&mut opened, "Paste notes", &before);
 
     // The playhead outside the clip: the paste goes right after the selected notes.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let outside = opened.ruler(0);
     opened.click(outside);
     opened.settle();
     opened.keys("enter");
     let third = on(&mut opened, BAR + 960, 67);
     opened.click(third);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     let now = notes(&mut opened, PART);
     assert!(now.contains(&note(BAR + 1440, 480, 60)), "{now:?}");
     assert!(now.contains(&note(BAR + 2400, 480, 64)), "{now:?}");
     // A note that would start past the end of the clip is left out.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let end = opened.in_editor(3 * BAR - 480 + 100, 67);
     opened.double_click(end);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     let now = notes(&mut opened, PART);
     assert!(now.contains(&note(2 * BAR - 240, 480, 60)), "{now:?}");
     assert_eq!(now.len(), 5);
@@ -251,7 +248,7 @@ fn cut_and_duplicate_notes_and_a_paste_into_another_clip(cx: &mut TestAppContext
     opened.click(first);
     opened.click_with(second, shift());
     let before = mark(&mut opened);
-    opened.keys("cmd-x");
+    opened.keys("secondary-x");
     assert_eq!(notes(&mut opened, PART), [note(BAR + 960, 480, 67)]);
     one_undo_step(&mut opened, "Cut notes", &before);
 
@@ -259,7 +256,7 @@ fn cut_and_duplicate_notes_and_a_paste_into_another_clip(cx: &mut TestAppContext
     let third = on(&mut opened, BAR + 960, 67);
     opened.click(third);
     let before = mark(&mut opened);
-    opened.keys("cmd-d");
+    opened.keys("secondary-d");
     assert_eq!(
         notes(&mut opened, PART),
         [note(BAR + 960, 480, 67), note(BAR + 1440, 480, 67)]
@@ -274,7 +271,7 @@ fn cut_and_duplicate_notes_and_a_paste_into_another_clip(cx: &mut TestAppContext
     assert_eq!(opened.editor_clip(), Some(id(OTHER)));
     opened.keys("enter");
     let before = mark(&mut opened);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     assert_eq!(
         notes(&mut opened, OTHER),
         [note(0, 480, 55), note(0, 480, 60), note(960, 480, 64)]
@@ -285,7 +282,7 @@ fn cut_and_duplicate_notes_and_a_paste_into_another_clip(cx: &mut TestAppContext
     let label = opened.undo_label();
     let timeline_place = opened.at(BAR + 100, 0);
     opened.click(timeline_place);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     assert_eq!(opened.undo_label(), label);
 }
 
@@ -304,7 +301,7 @@ fn notes_written_from_outside_are_selected_and_edited_like_any_other(cx: &mut Te
     opened.drag_to(to);
     opened.release(to);
     assert_eq!(opened.selected_notes(), [0, 1]);
-    opened.keys("cmd-d");
+    opened.keys("secondary-d");
     let now = notes(&mut opened, PART);
     assert_eq!(now.len(), 4);
     assert_eq!(now[2].start, Ticks(960));
@@ -322,10 +319,10 @@ fn undo_of_a_delete_or_a_cut_of_clips_selects_them_again(cx: &mut TestAppContext
         both.sort();
         both
     };
-    for key in ["delete", "cmd-x"] {
+    for key in ["delete", "secondary-x"] {
         opened.keys(key);
         assert_eq!(opened.selected_clips(), Vec::<InstanceId>::new());
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
         assert_eq!(opened.selected_clips(), both, "{key}");
         // The one that came first comes first again.
         assert_eq!(opened.selected_clip(), Some(id(OTHER)), "{key}");
@@ -360,7 +357,7 @@ fn with_snap_off_a_double_click_adds_a_sixteenth(cx: &mut TestAppContext) {
 fn a_copy_and_a_paste_with_the_playhead_outside_never_stack_notes(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     assert_eq!(opened.playhead().tick, Ticks(0));
-    opened.keys("cmd-a cmd-c cmd-v");
+    opened.keys("secondary-a secondary-c secondary-v");
     let now = notes(&mut opened, PART);
     assert_eq!(now.len(), 5, "{now:?}");
     for (index, note) in now.iter().enumerate() {
@@ -389,7 +386,7 @@ fn an_undo_elsewhere_is_not_taken_for_one_of_this_clip(cx: &mut TestAppContext) 
         )
     };
     // Undo with nothing to undo is no undo.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     outside(&mut opened, 70);
     assert_eq!(opened.selected_notes(), [0]);
     // An undo of an edit on the other track, then notes written into this clip from outside.
@@ -401,7 +398,7 @@ fn an_undo_elsewhere_is_not_taken_for_one_of_this_clip(cx: &mut TestAppContext) 
         );
         project.commit("Resize clip", changes)
     });
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.clip(OTHER), Some(other()));
     outside(&mut opened, 72);
     assert_eq!(opened.selected_notes(), [0]);

@@ -1,11 +1,11 @@
-//! The automation lanes under a track: the toggle on the second line of its header shows them,
+//! The automation lanes under a track: the toggle under the dot of its header shows them,
 //! the select under them adds one, a click adds a point, a drag on a point moves it (with shift
 //! along one axis), delete removes the selected point, and alt and a drag erase points. Each
 //! edit is one undo step that undo gives back byte for byte. A clip dragged with its automation
 //! shows what the drop will be. `a` on the selected track shows the lanes too, and tab reaches
 //! the select.
 
-use arrangement::view::layout::{LANES_MIDDLE, NAME_LEFT, TRACK_HEIGHT};
+use arrangement::view::layout::{LANES_MIDDLE, TRACK_HEIGHT};
 use arrangement::view::track_lanes::LANE_BOX;
 use arrangement::{AutomationLane, AutomationValue, LaneMove, TrackState, moved, travel_in};
 use filter::FilterState;
@@ -17,6 +17,8 @@ use crate::support::{self, BAR, Opened, clip, files, id, mark, note, one_undo_st
 
 const PART: &str = "arrangement/track-1/part";
 const ONE: &str = "arrangement/track-1";
+/// The toggle of the lanes of the first track.
+const LANES: &str = "toggle-lanes-track-1";
 
 /// The volume of the first track: -6 dB, and under `part`, bars 2 and 3, a dip to -12 dB and a
 /// rise to 0 dB.
@@ -74,20 +76,11 @@ fn open(cx: &mut TestAppContext, shown: bool) -> Opened<'_> {
         assert_eq!(project.problems(), []);
     });
     if shown {
-        let toggle = toggle(&mut opened);
+        let toggle = opened.control(LANES);
         opened.click(toggle);
         assert!(shows_lanes(&mut opened));
     }
     opened
-}
-
-/// The toggle of the lanes of the first track, its words on the second line of its header.
-fn toggle(opened: &mut Opened<'_>) -> gpui::Point<gpui::Pixels> {
-    let header = opened.track_header(0);
-    point(
-        px(NAME_LEFT + 8.),
-        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
-    )
 }
 
 fn shows_lanes(opened: &mut Opened<'_>) -> bool {
@@ -144,7 +137,7 @@ fn dot(opened: &mut Opened<'_>, lane: usize, point: usize) -> gpui::Point<gpui::
 fn the_toggle_shows_and_folds_the_lanes(cx: &mut TestAppContext) {
     let mut opened = open(cx, false);
     let before = mark(&mut opened);
-    let place = toggle(&mut opened);
+    let place = opened.control(LANES);
     opened.click(place);
     assert!(shows_lanes(&mut opened));
     // The select that adds a lane is under them.
@@ -156,6 +149,14 @@ fn the_toggle_shows_and_folds_the_lanes(cx: &mut TestAppContext) {
     assert_eq!(files(opened.folder.path()), before.files);
     // The toggle did not select the track.
     assert_eq!(opened.selected_track(), None);
+    // The rest of the second line of the header selects it, and leaves the lanes alone.
+    let header = opened.track_header(0);
+    opened.click(point(
+        header.x,
+        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
+    ));
+    assert_eq!(opened.selected_track(), Some(id(ONE)));
+    assert!(!shows_lanes(&mut opened));
 }
 
 /// The select offers the numbers of the track and of its devices that have no lane yet, and a
@@ -260,7 +261,7 @@ fn an_undo_before_the_first_move_ends_the_drag(cx: &mut TestAppContext) {
     opened.click(added);
     let dip = dot(&mut opened, 0, 2);
     opened.press(dip);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(points(&mut opened, "gain_db"), volume());
     let to = point(dip.x + px(60.), dip.y - px(20.));
     opened.drag_to(to);
@@ -334,7 +335,7 @@ fn the_ghost_of_a_drag_is_the_drop(cx: &mut TestAppContext) {
     assert_eq!(lanes(&mut opened), expected);
 
     // Folded away, a drag takes it along the same way and says so.
-    let place = toggle(&mut opened);
+    let place = opened.control(LANES);
     opened.click(place);
     let (from, to) = (opened.at(5 * BAR + 960, 0), opened.at(7 * BAR + 960, 0));
     opened.press(from);
@@ -387,7 +388,7 @@ fn a_lane_that_holds_one_value_does_not_move(cx: &mut TestAppContext) {
         project.commit("Add clip", changes).unwrap();
         project.clear_history();
     });
-    let toggle = toggle(&mut opened);
+    let toggle = opened.control(LANES);
     opened.click(toggle);
     let select = opened.control("add-lane-track-1");
     opened.click(select);
