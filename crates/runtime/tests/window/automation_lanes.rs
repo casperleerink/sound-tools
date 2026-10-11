@@ -260,7 +260,7 @@ fn an_undo_before_the_first_move_ends_the_drag(cx: &mut TestAppContext) {
     opened.click(added);
     let dip = dot(&mut opened, 0, 2);
     opened.press(dip);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(points(&mut opened, "gain_db"), volume());
     let to = point(dip.x + px(60.), dip.y - px(20.));
     opened.drag_to(to);

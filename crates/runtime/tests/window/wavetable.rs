@@ -86,7 +86,7 @@ fn the_picker_puts_a_wavetable_with_its_card_on_the_track(cx: &mut TestAppContex
     }
     assert_eq!(opened.find("knob-osc-2-position"), None);
     // Picked from the menu, not defaulted: undo gives the synth back.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert!(
         opened.project(|project| project.resolve::<WavetableState>(&id(SLOT)).is_none()),
         "the Wavetable is still there"
@@ -184,7 +184,7 @@ fn routes_are_added_changed_and_removed_one_undo_step_each(cx: &mut TestAppConte
     support::one_undo_step(&mut opened, "Remove route", &mark);
 
     for _ in 0..4 {
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
     }
     assert_eq!(state(&mut opened).matrix, before);
     assert_eq!(opened.undo_label(), None);

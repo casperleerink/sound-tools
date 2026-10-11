@@ -186,7 +186,7 @@ fn cmd_and_the_arrows_move_the_effect_whose_card_has_the_focus(cx: &mut TestAppC
     let knob = opened.control("knob-cutoff_hz");
     opened.click(knob);
     let before = mark(&mut opened);
-    opened.keys("cmd-right");
+    opened.keys("secondary-right");
     assert_eq!(
         effects(&mut opened),
         [
@@ -196,7 +196,7 @@ fn cmd_and_the_arrows_move_the_effect_whose_card_has_the_focus(cx: &mut TestAppC
         ]
     );
     one_undo_step(&mut opened, "Move Filter", &before);
-    opened.keys("cmd-right cmd-right");
+    opened.keys("secondary-right secondary-right");
     assert_eq!(
         effects(&mut opened),
         [
@@ -206,7 +206,7 @@ fn cmd_and_the_arrows_move_the_effect_whose_card_has_the_focus(cx: &mut TestAppC
         ]
     );
     // It never goes before the instrument.
-    opened.keys("cmd-left cmd-left cmd-left cmd-left");
+    opened.keys("secondary-left secondary-left secondary-left secondary-left");
     assert_eq!(
         effects(&mut opened),
         [

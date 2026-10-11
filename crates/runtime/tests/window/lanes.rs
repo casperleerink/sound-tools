@@ -105,10 +105,7 @@ fn a_drag_draws_the_line_of_the_pointer_on_the_grid(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_drag_with_cmd_draws_off_the_grid(cx: &mut TestAppContext) {
     let mut opened = open(cx);
-    let cmd = Modifiers {
-        platform: true,
-        ..Modifiers::default()
-    };
+    let cmd = Modifiers::secondary_key();
     let (from, to) = (
         opened.in_lane_at(BAR + 1000, height(-8192)),
         opened.in_lane_at(BAR + 1700, height(8191)),
@@ -208,7 +205,7 @@ fn an_undo_before_the_first_move_draws_over_the_lane_it_gave_back(cx: &mut TestA
         opened.in_lane_at(BAR + 720, height(-4096)),
     );
     opened.press(from);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(bend(&mut opened), [(0, 0), (BAR, 4096), (BAR + 960, 0)]);
     opened.drag_to(to);
     opened.release(to);

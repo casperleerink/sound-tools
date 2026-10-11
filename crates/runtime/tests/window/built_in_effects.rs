@@ -128,7 +128,7 @@ fn add_effect_puts_every_built_in_effect_with_its_card_on_the_track(cx: &mut Tes
 
         one_undo_step(&mut opened, &format!("Add {}", offer.name), &before);
         // Off again, for the next one.
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
     }
 }
 
@@ -140,7 +140,7 @@ fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
         eprintln!("{}", offer.name);
         let slot = add(&mut opened, &offer);
         let Some(knob) = knob_of(&mut opened, &slot) else {
-            opened.keys("cmd-z");
+            opened.keys("secondary-z");
             continue;
         };
         let before = mark(&mut opened);
@@ -160,8 +160,8 @@ fn a_knob_drag_is_one_undo_step_written_once(cx: &mut TestAppContext) {
         assert_ne!(Some(&label), before.undo_label.as_ref());
         one_undo_step(&mut opened, &label, &before);
         // The drag and the effect off again, for the next one.
-        opened.keys("cmd-z");
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
+        opened.keys("secondary-z");
     }
 }
 
@@ -174,13 +174,13 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
         eprintln!("{}", offer.name);
         let slot = add(&mut opened, &offer);
         let Some(knob) = knob_of(&mut opened, &slot) else {
-            opened.keys("cmd-z");
+            opened.keys("secondary-z");
             continue;
         };
         // A record that is not the one the card shows: what a drag made, taken back.
         turn(&mut opened, &slot, knob);
         let turned = state(&mut opened, &slot);
-        opened.keys("cmd-z");
+        opened.keys("secondary-z");
         assert_ne!(state(&mut opened, &slot), turned);
 
         let record = format!(r#"{{"tool": "{}", "state": {turned}}}"#, offer.key);
@@ -194,7 +194,7 @@ fn an_outside_edit_shows_on_the_card(cx: &mut TestAppContext) {
 
         // The drag, the file change and the effect off again, for the next one.
         for _ in 0..3 {
-            opened.keys("cmd-z");
+            opened.keys("secondary-z");
         }
     }
 }

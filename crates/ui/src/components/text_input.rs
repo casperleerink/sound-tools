@@ -114,10 +114,10 @@ fn install_bindings(cx: &mut App) {
         KeyBinding::new("alt-right", WordRight, ctx),
         KeyBinding::new("shift-alt-left", SelectWordLeft, ctx),
         KeyBinding::new("shift-alt-right", SelectWordRight, ctx),
-        KeyBinding::new("cmd-a", SelectAll, ctx),
-        KeyBinding::new("cmd-c", Copy, ctx),
-        KeyBinding::new("cmd-x", Cut, ctx),
-        KeyBinding::new("cmd-v", Paste, ctx),
+        KeyBinding::new("secondary-a", SelectAll, ctx),
+        KeyBinding::new("secondary-c", Copy, ctx),
+        KeyBinding::new("secondary-x", Cut, ctx),
+        KeyBinding::new("secondary-v", Paste, ctx),
         KeyBinding::new("home", Home, ctx),
         KeyBinding::new("end", End, ctx),
         KeyBinding::new("cmd-left", Home, ctx),
@@ -143,8 +143,8 @@ fn install_bindings(cx: &mut App) {
         KeyBinding::new("shift-cmd-up", SelectToTextStart, multi_line),
         KeyBinding::new("shift-cmd-down", SelectToTextEnd, multi_line),
         KeyBinding::new("shift-enter", Newline, multi_line),
-        KeyBinding::new("cmd-z", Undo, multi_line),
-        KeyBinding::new("shift-cmd-z", Redo, multi_line),
+        KeyBinding::new("secondary-z", Undo, multi_line),
+        KeyBinding::new("shift-secondary-z", Redo, multi_line),
     ]);
 }
 

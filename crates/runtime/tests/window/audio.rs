@@ -209,7 +209,7 @@ fn the_edges_trim_the_file_and_keep_the_sound_in_place(cx: &mut TestAppContext) 
     );
     assert_eq!(long.file_end_seconds, None);
     one_undo_step(&mut opened, "Trim clip", &before);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
 
     // The right edge in by a second: the clip ends at 3 s of its file.
     let before = mark(&mut opened);
@@ -256,7 +256,7 @@ fn an_undo_before_the_first_move_of_a_trim_a_fade_or_the_gain_goes_on_from_the_u
     opened.drag(left, right(left, BAR_WIDTH / 2.));
     let left = right(opened.at(BAR + SECOND, 1), 2.);
     opened.press(left);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let to = right(left, BAR_WIDTH / 4.);
     opened.drag_to(to);
     opened.release(to);
@@ -265,25 +265,25 @@ fn an_undo_before_the_first_move_of_a_trim_a_fade_or_the_gain_goes_on_from_the_u
         (long.start, long.file_start_seconds),
         (Ticks(BAR + SECOND / 2), 0.5)
     );
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
 
     // The fade in a second long, then a quarter of a second from no fade.
     let handle = right(in_clip(&mut opened, BAR, 1, 7.), 5.);
     opened.drag(handle, right(handle, BAR_WIDTH / 2.));
     let handle = right(handle, BAR_WIDTH / 2.);
     opened.press(handle);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let to = right(handle, BAR_WIDTH / 8.);
     opened.drag_to(to);
     opened.release(to);
     assert_eq!(audio_clip(&mut opened, LONG).unwrap().fade_in_ms, 250.);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
 
     // The gain down by six decibels, then by three from 0 dB.
     let handle = in_clip(&mut opened, BAR + 2 * SECOND, 1, 7.);
     opened.drag(handle, handle + point(px(0.), px(200. / 72. * 6.)));
     opened.press(handle);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let to = handle + point(px(0.), px(200. / 72. * 3.));
     opened.drag_to(to);
     opened.release(to);
@@ -369,13 +369,13 @@ fn audio_clips_are_copied_pasted_duplicated_and_deleted(cx: &mut TestAppContext)
     let mut opened = open(cx);
     let long = opened.at(BAR + BAR / 2, 1);
     opened.click(long);
-    opened.keys("cmd-c");
+    opened.keys("secondary-c");
     // A paste at the playhead, on the track of the selected clip, over the clips there.
     let ruler = opened.ruler(8 * BAR);
     opened.click(ruler);
     opened.settle();
     let before = mark(&mut opened);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     let pasted = opened.selected_clip().unwrap();
     assert_eq!(pasted, id("arrangement/voice/long-2"));
     let clip = audio_clip(&mut opened, pasted.as_str()).unwrap();
@@ -386,7 +386,7 @@ fn audio_clips_are_copied_pasted_duplicated_and_deleted(cx: &mut TestAppContext)
     let pasted = opened.at(8 * BAR + BAR / 2, 1);
     opened.click(pasted);
     let before = mark(&mut opened);
-    opened.keys("cmd-d");
+    opened.keys("secondary-d");
     let duplicate = opened.selected_clip().unwrap();
     let clip = audio_clip(&mut opened, duplicate.as_str()).unwrap();
     assert_eq!(clip.start, Ticks(10 * BAR));
@@ -406,11 +406,11 @@ fn a_paste_onto_the_other_kind_of_track_is_refused(cx: &mut TestAppContext) {
     // A note clip, copied, and pasted with the voice selected.
     let empty = opened.at(8 * BAR, 0);
     opened.double_click(empty);
-    opened.keys("cmd-c");
+    opened.keys("secondary-c");
     let header = opened.track_header(1);
     opened.click(header);
     let before = mark(&mut opened);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     assert_eq!(opened.undo_label(), before.undo_label);
     let notes = opened.project(|project| project.children::<sound_notes::Clip>(&id(VOICE)).count());
     assert_eq!(notes, 0);
@@ -423,10 +423,10 @@ fn a_paste_onto_the_other_kind_of_track_is_refused(cx: &mut TestAppContext) {
     // An audio clip, pasted with the instrument track selected.
     let long = opened.at(BAR + BAR / 2, 1);
     opened.click(long);
-    opened.keys("cmd-c");
+    opened.keys("secondary-c");
     let header = opened.track_header(0);
     opened.click(header);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     assert_eq!(opened.undo_label(), before.undo_label);
     let audio = opened.project(|project| {
         project
@@ -627,7 +627,7 @@ fn files_dropped_on_an_audio_track_become_clips_one_after_another(cx: &mut TestA
     assert_eq!(opened.project(|project| project.problems()), []);
     // One step, and undo leaves the files: assets are never undone.
     one_undo_step(&mut opened, "Add audio clips", &before);
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert!(opened.path("assets/audio/strum-2.wav").exists());
 }
 

@@ -44,10 +44,7 @@ fn shift() -> Modifiers {
 }
 
 fn cmd() -> Modifiers {
-    Modifiers {
-        platform: true,
-        ..Modifiers::default()
-    }
+    Modifiers::secondary_key()
 }
 
 fn ids(names: &[&str]) -> Vec<InstanceId> {
@@ -237,7 +234,7 @@ fn a_drag_of_several_clips_to_other_tracks_moves_their_files_together(cx: &mut T
     assert_eq!(opened.clip_file(HOOK), None);
     one_undo_step(&mut opened, "Move clips", &before);
     // Undo put the selection back on the clips at their old ids.
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     assert_eq!(opened.selected_clips(), ids(&[PART, HOOK]));
 }
 
@@ -259,7 +256,7 @@ fn a_rectangle_on_empty_space_selects_the_clips_it_touches(cx: &mut TestAppConte
     opened.click(empty);
     assert!(opened.selected_clips().is_empty());
     // Cmd-a selects every clip.
-    opened.keys("cmd-a");
+    opened.keys("secondary-a");
     assert_eq!(opened.selected_clips(), ids(&[PART, HOOK]));
 }
 
@@ -268,7 +265,7 @@ fn delete_and_the_arrows_act_on_every_selected_clip_as_one_step(cx: &mut TestApp
     let mut opened = open(cx);
     let on_part = opened.at(BAR + 960, 0);
     opened.click(on_part);
-    opened.keys("cmd-a");
+    opened.keys("secondary-a");
 
     let before = mark(&mut opened);
     opened.keys("right");
@@ -294,7 +291,7 @@ fn copy_and_paste_puts_the_clips_at_the_playhead_on_the_selected_track(cx: &mut 
     let mut opened = open(cx);
     let on_part = opened.at(BAR + 960, 0);
     opened.click(on_part);
-    opened.keys("cmd-a cmd-c");
+    opened.keys("secondary-a secondary-c");
     // The playhead to bar 9, and the first track selected.
     let bar_nine = opened.ruler(8 * BAR);
     opened.click(bar_nine);
@@ -305,7 +302,7 @@ fn copy_and_paste_puts_the_clips_at_the_playhead_on_the_selected_track(cx: &mut 
     opened.keys("escape");
 
     let before = mark(&mut opened);
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     let (pasted_part, pasted_hook) = ("arrangement/track-1/part-2", "arrangement/track-2/hook-2");
     // The earliest start lands on the playhead, and the hook keeps its three bars and its row.
     let expected_part = clip(8 * BAR, 2 * BAR, part().notes);
@@ -322,7 +319,7 @@ fn copy_and_paste_puts_the_clips_at_the_playhead_on_the_selected_track(cx: &mut 
     let header = opened.track_header(1);
     opened.click(header);
     opened.keys("escape");
-    opened.keys("cmd-v");
+    opened.keys("secondary-v");
     assert!(opened.clip("arrangement/track-2/part").is_some());
     assert!(opened.clip("arrangement/track-2/hook-3").is_some());
 }
@@ -333,7 +330,7 @@ fn cut_takes_the_clips_away_and_paste_brings_them_back(cx: &mut TestAppContext) 
     let before = mark(&mut opened);
     let on_hook = opened.at(4 * BAR + 960, 1);
     opened.click(on_hook);
-    opened.keys("cmd-x");
+    opened.keys("secondary-x");
     assert_eq!(opened.clip(HOOK), None);
     one_undo_step(&mut opened, "Cut clip", &before);
 
@@ -341,7 +338,7 @@ fn cut_takes_the_clips_away_and_paste_brings_them_back(cx: &mut TestAppContext) 
     // last because the hook was on it.
     let header = opened.track_header(1);
     opened.click(header);
-    opened.keys("escape cmd-v");
+    opened.keys("escape secondary-v");
     assert_eq!(opened.clip(HOOK), Some(clip(0, BAR, hook().notes)));
     assert_eq!(opened.undo_label().as_deref(), Some("Paste clip"));
 }
@@ -352,7 +349,7 @@ fn duplicate_puts_a_copy_right_after_the_selection(cx: &mut TestAppContext) {
     let before = mark(&mut opened);
     let on_part = opened.at(BAR + 960, 0);
     opened.click(on_part);
-    opened.keys("cmd-d");
+    opened.keys("secondary-d");
     let copy = "arrangement/track-1/part-2";
     assert_eq!(
         opened.clip(copy),
@@ -363,7 +360,7 @@ fn duplicate_puts_a_copy_right_after_the_selection(cx: &mut TestAppContext) {
     // Again from the copy: the next one follows it.
     let on_copy = opened.at(3 * BAR + 960, 0);
     opened.click(on_copy);
-    opened.keys("cmd-d");
+    opened.keys("secondary-d");
     assert_eq!(
         opened.clip("arrangement/track-1/part-3").unwrap().start,
         Ticks(5 * BAR)
@@ -382,7 +379,7 @@ fn clips_written_or_deleted_from_outside_join_or_leave_the_selection(cx: &mut Te
     );
     let empty = opened.at(12 * BAR, 0);
     opened.click(empty);
-    opened.keys("cmd-a");
+    opened.keys("secondary-a");
     let late = "arrangement/track-2/late";
     assert_eq!(opened.selected_clips(), ids(&[PART, HOOK, late]));
     // It is on screen where the file says: a click hits it.
@@ -390,7 +387,7 @@ fn clips_written_or_deleted_from_outside_join_or_leave_the_selection(cx: &mut Te
     opened.click(on_late);
     assert_eq!(opened.selected_clips(), ids(&[late]));
 
-    opened.keys("cmd-a");
+    opened.keys("secondary-a");
     let path = opened.path("state/arrangement/track-2/hook.json");
     std::fs::remove_file(&path).unwrap();
     opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
@@ -688,10 +685,10 @@ fn undo_of_a_move_selects_the_clips_again_where_they_were(cx: &mut TestAppContex
     opened.drag(first, down);
     let moved = ["arrangement/track-2/clip-2", "arrangement/track-3/clip"];
     assert_eq!(opened.selected_clips(), ids(&moved));
-    opened.keys("cmd-z");
+    opened.keys("secondary-z");
     let back = ["arrangement/track-1/clip", "arrangement/track-2/clip"];
     assert_eq!(opened.selected_clips(), ids(&back));
-    opened.keys("shift-cmd-z");
+    opened.keys("shift-secondary-z");
     assert_eq!(opened.selected_clips(), ids(&moved));
 }
 

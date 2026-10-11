@@ -1317,14 +1317,14 @@ mod tests {
         use gpui::{KeyBinding, Modifiers, point};
         cx.update(|cx| {
             sound_ui::init(cx);
-            cx.bind_keys([KeyBinding::new("cmd-c", Copy, Some(KEY_CONTEXT))]);
+            cx.bind_keys([KeyBinding::new("secondary-c", Copy, Some(KEY_CONTEXT))]);
         });
         let source = "First **paragraph**.\n\n- Größe one\n\n```\ncode line\n```";
         let (message, cx) = cx.add_window_view(|_, _| Message(Markdown::parse(source)));
         cx.run_until_parked();
         let bounds = cx.debug_bounds("message").expect("the message is drawn");
         let copied = |cx: &mut gpui::VisualTestContext| {
-            cx.simulate_keystrokes("cmd-c");
+            cx.simulate_keystrokes("secondary-c");
             cx.read_from_clipboard().and_then(|item| item.text())
         };
 

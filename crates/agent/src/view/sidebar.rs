@@ -73,8 +73,8 @@ fn install_bindings(cx: &mut App) {
     }
     cx.set_global(BindingsInstalled);
     cx.bind_keys([
-        KeyBinding::new("cmd-.", Stop, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-c", markdown::Copy, Some(markdown::KEY_CONTEXT)),
+        KeyBinding::new("secondary-.", Stop, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-c", markdown::Copy, Some(markdown::KEY_CONTEXT)),
     ]);
 }
 
