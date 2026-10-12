@@ -18,6 +18,10 @@ pub const GROUPING_WINDOW: Duration = Duration::from_millis(100);
 pub(crate) struct Watcher {
     /// Dropping it stops the watcher thread.
     watcher: RecommendedWatcher,
+    /// What it watches: `project.json` in the project folder, `state/` and `assets/`.
+    project_file: PathBuf,
+    state: PathBuf,
+    assets: PathBuf,
     /// Whether `assets/` is watched. It is watched from when it exists, which may be after the
     /// project opened: a tool may wait for a file there, see
     /// [`ToolRegistration::rebinds_on_assets`](super::ToolRegistration::rebinds_on_assets).
@@ -31,34 +35,88 @@ pub(crate) struct Watcher {
 }
 
 impl Watcher {
+    /// Starts watching `project.json` in `root`, `state` and, once it exists, `assets`.
+    /// Events wait in a channel until [`Self::take_group`].
+    fn new(root: &Path, state: PathBuf, assets: PathBuf) -> notify::Result<Self> {
+        let (sender, events) = channel();
+        let mut watcher = notify::recommended_watcher(sender)?;
+        watcher.watch(root, RecursiveMode::NonRecursive)?;
+        watcher.watch(&state, RecursiveMode::Recursive)?;
+        Ok(Self {
+            watcher,
+            project_file: root.join(PROJECT_FILE),
+            state,
+            assets,
+            assets_watched: false,
+            events,
+            pending: BTreeSet::new(),
+            last_event: Instant::now(),
+        })
+    }
+
+    /// Collects what the system said changed. Once the folder has been quiet for
+    /// [`GROUPING_WINDOW`], returns those paths as one group, with the time its last path was
+    /// heard.
+    fn take_group(&mut self) -> notify::Result<Option<(Vec<PathBuf>, Instant)>> {
+        // `assets/` from the moment it exists. What is in it by then counts as changed, since
+        // no event said so.
+        if !self.assets_watched && self.assets.is_dir() {
+            // Tried once: a watch that fails is reported and not tried on every poll.
+            self.assets_watched = true;
+            self.watcher.watch(&self.assets, RecursiveMode::Recursive)?;
+            self.hear([self.assets.clone()]);
+        }
+        let mut rescan = false;
+        loop {
+            match self.events.try_recv() {
+                Ok(Ok(event)) if event.need_rescan() => rescan = true,
+                Ok(Ok(event)) => {
+                    // Reading a file changes nothing the project cares about.
+                    if !event.kind.is_access() {
+                        self.hear(event.paths);
+                    }
+                }
+                Ok(Err(error)) => return Err(error),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
+        // The system dropped events, such as in the burst of a branch switch, so any file may
+        // have changed. Reading them all again finds the ones that did.
+        if rescan {
+            let paths = [&self.project_file, &self.state, &self.assets];
+            self.hear(paths.map(PathBuf::clone));
+            watch_again(&mut self.watcher, &self.state)?;
+            if self.assets_watched {
+                watch_again(&mut self.watcher, &self.assets)?;
+            }
+        }
+        if self.pending.is_empty() || self.last_event.elapsed() < GROUPING_WINDOW {
+            return Ok(None);
+        }
+        let paths = std::mem::take(&mut self.pending).into_iter().collect();
+        Ok(Some((paths, self.last_event)))
+    }
+
     fn hear(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         self.pending.extend(paths);
         self.last_event = Instant::now();
     }
+}
 
-    /// Watches a folder from scratch. inotify watches every folder on its own, so a folder
-    /// made while the system dropped events is not watched until then.
-    fn watch_again(&mut self, folder: &Path) -> notify::Result<()> {
-        self.watcher.unwatch(folder)?;
-        self.watcher.watch(folder, RecursiveMode::Recursive)
-    }
+/// Watches a folder from scratch. inotify watches every folder on its own, so a folder made
+/// while the system dropped events is not watched until then.
+fn watch_again(watcher: &mut RecommendedWatcher, folder: &Path) -> notify::Result<()> {
+    watcher.unwatch(folder)?;
+    watcher.watch(folder, RecursiveMode::Recursive)
 }
 
 impl Project {
     /// Starts watching `project.json`, `state/` and `assets/`. Events wait in a channel until
     /// `poll`.
     pub fn watch(&mut self) -> Result<(), ProjectError> {
-        let (sender, events) = channel();
-        let mut watcher = notify::recommended_watcher(sender)?;
-        watcher.watch(self.storage.root(), RecursiveMode::NonRecursive)?;
-        watcher.watch(&self.storage.state_folder(), RecursiveMode::Recursive)?;
-        self.watcher = Some(Watcher {
-            watcher,
-            assets_watched: false,
-            events,
-            pending: BTreeSet::new(),
-            last_event: Instant::now(),
-        });
+        let state = self.storage.state_folder();
+        let assets = self.assets.path_of_folder();
+        self.watcher = Some(Watcher::new(self.storage.root(), state, assets)?);
         Ok(())
     }
 
@@ -76,49 +134,13 @@ impl Project {
     }
 
     fn poll_watcher(&mut self) -> Result<usize, ProjectError> {
-        let assets = self.assets().path_of_folder();
         let Some(watcher) = &mut self.watcher else {
             return Ok(0);
         };
-        // `assets/` from the moment it exists. What is in it by then counts as changed, since
-        // no event said so.
-        if !watcher.assets_watched && assets.is_dir() {
-            // Tried once: a watch that fails is reported and not tried on every poll.
-            watcher.assets_watched = true;
-            watcher.watcher.watch(&assets, RecursiveMode::Recursive)?;
-            watcher.hear([assets.clone()]);
+        match watcher.take_group()? {
+            Some((paths, heard)) => self.apply_outside_changes_at(&paths, heard),
+            None => Ok(0),
         }
-        let mut rescan = false;
-        loop {
-            match watcher.events.try_recv() {
-                Ok(Ok(event)) if event.need_rescan() => rescan = true,
-                Ok(Ok(event)) => {
-                    // Reading a file changes nothing the project cares about.
-                    if !event.kind.is_access() {
-                        watcher.hear(event.paths);
-                    }
-                }
-                Ok(Err(error)) => return Err(error.into()),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-            }
-        }
-        // The system dropped events, such as in the burst of a branch switch, so any file may
-        // have changed. Reading them all again finds the ones that did.
-        if rescan {
-            let state = self.storage.state_folder();
-            let project_file = self.storage.root().join(PROJECT_FILE);
-            watcher.hear([project_file, state.clone(), assets.clone()]);
-            watcher.watch_again(&state)?;
-            if watcher.assets_watched {
-                watcher.watch_again(&assets)?;
-            }
-        }
-        if watcher.pending.is_empty() || watcher.last_event.elapsed() < GROUPING_WINDOW {
-            return Ok(0);
-        }
-        let paths: Vec<PathBuf> = std::mem::take(&mut watcher.pending).into_iter().collect();
-        let heard = watcher.last_event;
-        self.apply_outside_changes_at(&paths, heard)
     }
 }
 
