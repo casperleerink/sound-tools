@@ -1,8 +1,8 @@
 # Arrangement: tracks, clips and notes
 
-The piece is one arrangement that owns tracks. A track owns its clips and one instrument, and it plays into the master of the arrangement by itself, which plays to the main output through a limiter. Adding music never needs a `project.json` edit.
+The piece is one arrangement that owns tracks. A track owns its clips and one instrument, and plays into the master, which plays to the main output through a limiter. Adding music never needs a `project.json` edit.
 
-This doc is about instrument tracks, which play notes. An audio track plays audio files instead and has no instrument: open `agent-docs/audio.md` for it and its clips. Everything here about `gain_db`, `pan`, `mute`, `solo` and `effects` holds for both.
+This doc is about instrument tracks. An audio track plays audio files and has no instrument: open `agent-docs/audio.md` for it. What this doc says of `gain_db`, `pan`, `mute`, `solo` and `effects` holds for every track.
 
 ```text
 state/arrangement/instance.json              the arrangement
@@ -68,8 +68,6 @@ A clip may move the bend wheel, the modulation wheel and the key pressure of its
 }
 ```
 
-This note slides up over an eighth, stays up, and comes back down in the third beat, while a vibrato grows over the second half of the bar.
-
 - `bend`, `mod_wheel`, `pressure`: each a list of points. Leave out a lane you do not use.
 - `tick`: from the start of the clip, like a note start, below its `length`. The points of a lane are in tick order, at most one per tick, else the file does not load.
 - `value` of a bend: -8192 to 8191, 0 in the middle. The built-in synth and Sampler bend two semitones either way, so a semitone up is 4096. Of a mod wheel or pressure: 0 to 127. The synth and the Sampler add a vibrato with the mod wheel; no built-in instrument uses the pressure.
@@ -97,7 +95,7 @@ This note slides up over an eighth, stays up, and comes back down in the third b
 - `name`: what the composer sees. Not empty. The folder name is the id and stays as it is when the name changes.
 - `colour`: `blue`, `sapphire`, `sky`, `teal`, `green`, `yellow`, `peach`, `red`, `maroon`, `mauve`, `pink`, `lavender`, `rosewater` or `flamingo`. `blue` when left out.
 - `order`: tracks show from the lowest to the highest, and those with the same order by id. 0 when left out.
-- `gain_db`: the volume of the track in decibels: a number up to 6, or `"-inf"` for silence. 0 when left out. -6 halves the samples, 6 doubles them. Balance the tracks here; change the sound itself in `instrument.json`.
+- `gain_db`: the volume of the track in decibels: a number up to 6, or `"-inf"` for silence. 0 when left out. -6 halves the samples, 6 doubles them.
 - `pan`: -1 to 1. -1 is hard left, 0 the middle, 1 hard right. 0 when left out. A track keeps its loudness wherever it is panned.
 - `mute`: `true` silences the track. `false` when left out.
 - `solo`: while any track has `"solo": true`, only the soloed tracks play. A muted track stays silent when it is soloed. Left out when off.
@@ -121,7 +119,7 @@ An effect is any tool with an `audio` input and an `audio` output. Today that is
 
 To turn an effect off for a while, write its slot as `{"name": "warmth", "bypass": true}`, and as `"warmth"` again to turn it on. The sound goes past it untouched, without its latency, and its record stays.
 
-An effect with a `sidechain` input, the `compressor` or the `gate`, can follow the sound of another track instead of its own: the bass ducks while the kick plays. Its slot says which track keys it. Here the drums key the compressor `duck` of the sub bass, which turns the bass down on every hit:
+An effect with a `sidechain` input, the `compressor` or the `gate`, can follow the sound of another track. Its slot says which. Here the drums key the compressor `duck` of the sub bass, so the bass ducks on every hit:
 
 ```json state/arrangement/sub/instance.json
 {
@@ -205,6 +203,56 @@ In 4/4 the filter of this track opens over bars 9 to 16, and the track fades in 
 - A lane belongs to the track, not to a clip. When you move a clip, by its `start` or to another track, move the points under it yourself if they belong to it.
 - One number has one lane. Leave `automation` out when the track has none.
 - Every built-in instrument and effect takes automation, and so do the volume and pan of every track. A whole number, such as a count of voices, takes none. A plugin takes it for the parameters its record pins, see `agent-docs/plugins.md`.
+
+## Returns and sends
+
+A return is a track with `"kind": "return"`, no instrument and no clips. It plays the sum of what other tracks send it through its `effects`, `gain_db`, `pan` and `mute` into the master, so many tracks can share one reverb.
+
+```json state/arrangement/space/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {
+    "name": "Space",
+    "kind": "return",
+    "colour": "teal",
+    "order": 0,
+    "gain_db": 0.0,
+    "pan": 0.0,
+    "mute": false,
+    "effects": ["hall"]
+  }
+}
+```
+
+```json state/arrangement/space/hall.json
+{
+  "tool": "reverb",
+  "state": {"mix": 1.0}
+}
+```
+
+A track sends with `sends`, by the folder name of each return:
+
+```json state/arrangement/choir/instance.json
+{
+  "tool": "arrangement.track",
+  "state": {
+    "name": "Choir",
+    "colour": "pink",
+    "order": 5,
+    "gain_db": 0.0,
+    "pan": 0.0,
+    "mute": false,
+    "sends": {"space": -12.0}
+  }
+}
+```
+
+- A send level is in decibels, like `gain_db`. Leave `sends` out when the track sends nothing.
+- A send takes what the track plays into the master, after its volume, pan, mute and solo. With `"pre_fader": true` in a return, the sends into it take the sound after the effects of each track, before its volume and pan; mute and solo still silence them.
+- A solo never silences a return, so a soloed track keeps its reverb. A return has no `sends` and no `solo`.
+- Give the effects of a return full wet, as `mix` 1 here, or the dry sound plays twice.
+- To delete a return, delete its folder and take its name out of every `sends`. A send to a folder that is no return is reported in `problems.txt`.
 
 ## The arrangement and its master: `arrangement`
 
