@@ -829,6 +829,11 @@ pub fn load_state(bytes: &[u8]) -> Option<SavedState> {
 /// `cargo test` builds a crate for testing but not its dynamic library, so this builds it
 /// first. That is a few tenths of a second when it is already up to date, and it means a test
 /// always loads the plugin as the source says it is.
+///
+/// It builds into a target folder of its own, next to the test executable. In the shared one,
+/// `cargo build -p <plugin>` alone unifies other features than the build of the tests, so each
+/// rebuilt the plugin and everything that depends on it after the other: about 6 s before every
+/// run of the tests.
 pub fn built_library(package: &str) -> PathBuf {
     let name = format!(
         "{}{}{}",
@@ -836,6 +841,13 @@ pub fn built_library(package: &str) -> PathBuf {
         package.replace('-', "_"),
         std::env::consts::DLL_SUFFIX
     );
+    // `target/<profile>/deps/<test>` builds into `target/<profile>/test-plugins`.
+    let executable = std::env::current_exe().expect("the path of the test executable");
+    let target = executable
+        .parent()
+        .and_then(Path::parent)
+        .expect("the test executable is in a target folder")
+        .join("test-plugins");
     // Once per package per test process: a test folder is made several times in one process.
     static BUILT: std::sync::Mutex<Option<std::collections::BTreeSet<String>>> =
         std::sync::Mutex::new(None);
@@ -844,38 +856,28 @@ pub fn built_library(package: &str) -> PathBuf {
         .get_or_insert_with(Default::default)
         .insert(package.to_string())
     {
-        build_once_per_run(package);
+        build_once_per_run(package, &target);
     }
     drop(built);
-    let mut folder = std::env::current_exe().expect("the path of the test executable");
-    while folder.pop() {
-        let candidate = folder.join(&name);
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    panic!("{name} is not built. Run `cargo build -p {package}` first");
+    target.join("debug").join(name)
 }
 
-/// Builds `package`, once per nextest run and not once per test process.
+/// Builds `package` into `target`, once per nextest run and not once per test process.
 ///
 /// Nextest runs every test in a process of its own, and even a build with nothing to do holds
 /// cargo's lock on the build folder for about 0.2 s. A hundred test processes then spent half a
 /// minute waiting on each other. So the first process of a run builds and leaves the run's id in
-/// a mark next to the test executable; the others wait for its lock and see the mark.
-fn build_once_per_run(package: &str) {
+/// a mark; the others wait for its lock and see the mark.
+fn build_once_per_run(package: &str, target: &Path) {
     let run = std::env::var("NEXTEST_RUN_ID").ok();
     let mark = run.as_ref().map(|_| {
-        let executable = std::env::current_exe().expect("the path of the test executable");
-        let folder = executable
-            .parent()
-            .expect("the folder of the test executable");
+        std::fs::create_dir_all(target).expect("the target folder of the test plugins");
         let mark = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(folder.join(format!(".{package}-built-for-run")))
+            .open(target.join(format!("{package}-built-for-run")))
             .expect("the mark of the last build");
         // Unlocked when the file is dropped, after the build and the new mark.
         mark.lock().expect("the lock on the mark");
@@ -887,7 +889,8 @@ fn build_once_per_run(package: &str) {
         return;
     }
     let output = std::process::Command::new(env!("CARGO"))
-        .args(["build", "--package", package])
+        .args(["build", "--package", package, "--target-dir"])
+        .arg(target)
         .output()
         .expect("cargo builds the test plugin");
     assert!(
