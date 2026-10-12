@@ -104,6 +104,9 @@ pub struct AutomatedNumber {
 /// The values of a number and how they spread over the travel of its knob, from 0 to 1. A knob
 /// of a [`Parameter`] and an automation lane of it both take it with [`ValueRange::of`], so
 /// they agree. Other controls, such as the axes of a display, make their own.
+///
+/// `min` is at the start of the travel and `max` at its end. A min above the max is a range
+/// that runs down, as an agent's knob may say: it turns the other way and panics nowhere.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ValueRange {
     pub min: f32,
@@ -132,7 +135,8 @@ impl ValueRange {
 
     /// Whether `value` is in the range. Not a number is not.
     pub fn contains(&self, value: f32) -> bool {
-        (self.min..=self.max).contains(&value)
+        let (low, high) = ends(self.min, self.max);
+        (low..=high).contains(&value)
     }
 
     /// Where a value is on the travel, from 0 to 1. A value outside the range is at an end.
@@ -143,13 +147,20 @@ impl ValueRange {
     /// The value at a place on the travel, with three significant digits, as a knob gives it:
     /// so a readout and a saved file stay short. The ends are exact.
     pub fn value(&self, position: f32) -> f32 {
-        three_digits(self.exact(position)).clamp(self.min, self.max)
+        let (low, high) = ends(self.min, self.max);
+        three_digits(self.exact(position)).max(low).min(high)
     }
 
     /// The value at a place on the travel, not rounded: what an automation lane plays.
     pub fn exact(&self, position: f32) -> f32 {
         self.scale.value(self.min, self.max, position)
     }
+}
+
+/// The lowest and the highest value of a range, whichever end each is at. Not `clamp` with
+/// them: it panics on a NaN.
+fn ends(min: f32, max: f32) -> (f32, f32) {
+    (min.min(max), min.max(max))
 }
 
 fn three_digits(value: f32) -> f32 {
@@ -189,10 +200,10 @@ pub enum Scale {
 
 impl Scale {
     /// Where `value` is on the travel of `min` to `max`, from 0 to 1. A value outside the
-    /// range is at an end, and not a number is at the bottom.
+    /// range is at an end, and not a number is at the lowest value.
     pub fn position(self, min: f32, max: f32, value: f32) -> f32 {
-        // Not `clamp`: it panics on a NaN, and nothing may panic on the audio thread.
-        let held = value.max(min).min(max);
+        let (low, high) = ends(min, max);
+        let held = value.max(low).min(high);
         let position = match self {
             Self::Linear => (held - min) / (max - min),
             Self::Logarithmic => (held / min).ln() / (max / min).ln(),
@@ -222,7 +233,7 @@ impl Scale {
 
 #[cfg(test)]
 mod tests {
-    use super::{Parameter, Scale};
+    use super::{Parameter, Scale, ValueRange};
 
     #[derive(Default)]
     struct Nested {
@@ -296,6 +307,30 @@ mod tests {
             assert_eq!(scale.position(min, max, f32::NAN), 0., "{scale:?}");
             assert_eq!(scale.value(min, max, f32::NAN), min, "{scale:?}");
         }
+    }
+
+    /// An agent's knob may say a min above its max. It turns the other way, and never panics.
+    #[test]
+    fn a_range_may_run_down() {
+        for range in [
+            ValueRange::linear(10., 0.),
+            ValueRange::logarithmic(1000., 10.),
+        ] {
+            let ValueRange { min, max, .. } = range;
+            assert_eq!((range.value(0.), range.value(1.)), (min, max), "{range:?}");
+            assert_eq!(
+                (range.position(min), range.position(max)),
+                (0., 1.),
+                "{range:?}"
+            );
+            assert_eq!(range.position(min * 2.), 0., "{range:?}");
+            assert_eq!(range.position(-1.), 1., "{range:?}");
+            assert!(
+                range.contains(max * 2.) && !range.contains(min * 2.),
+                "{range:?}"
+            );
+        }
+        assert_eq!(ValueRange::linear(10., 0.).value(0.25), 7.5);
     }
 
     #[test]
