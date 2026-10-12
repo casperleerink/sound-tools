@@ -2,10 +2,12 @@
 //! connects the device input, its level for the meters, and the recorder that writes the takes.
 //! The input is opened and the recorder runs on the background executor, never on the thread
 //! that draws: opening a device can take a while, and the first time macOS asks the composer
-//! whether the app may use the microphone.
+//! whether the app may use the microphone. It closes there too: Core Audio can take a while to
+//! stop a stream.
 
 use std::sync::Arc;
 
+use gpui::{App, AppContext};
 use sound_core::{
     Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InputStream, InstanceId,
     LiveInput,
@@ -109,8 +111,8 @@ impl AudioInput {
 
     /// Closes an input that was opened for a connection alone and plays nothing, because it runs
     /// at another rate than the output. It is not opened again until something new wants it.
-    pub(super) fn give_up(&mut self) {
-        self.close();
+    pub(super) fn give_up(&mut self, cx: &App) {
+        self.close(cx);
         self.failed = true;
     }
 
@@ -144,8 +146,10 @@ impl AudioInput {
         generation: u64,
         opened: Result<OpenedInput, DeviceError>,
         assets: &Assets,
+        cx: &App,
     ) -> Option<Result<(usize, LiveInput), DeviceError>> {
         if self.opening != Some(generation) {
+            stop_in_background(opened, cx);
             return None;
         }
         self.opening = None;
@@ -183,8 +187,8 @@ impl AudioInput {
 
     /// Stops the device, or forgets the opening on its way. A recorder out on a run is dropped
     /// when it comes back.
-    pub(super) fn close(&mut self) {
-        self.open = None;
+    pub(super) fn close(&mut self, cx: &App) {
+        stop_in_background(self.open.take(), cx);
         self.opening = None;
         self.commands.clear();
     }
@@ -242,6 +246,11 @@ impl AudioInput {
             open.recorder = Some(recorder);
         }
     }
+}
+
+/// Drops an input, and with it its stream, on the background executor, see the module doc.
+fn stop_in_background(input: impl Send + 'static, cx: &App) {
+    cx.background_spawn(async move { drop(input) }).detach();
 }
 
 /// One run of the recorder on the background executor.

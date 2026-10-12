@@ -701,7 +701,7 @@ impl TransportPill {
         cx: &mut Context<Self>,
     ) {
         let assets = self.session.read(cx).project().assets().clone();
-        match self.audio.opened(generation, opened, &assets) {
+        match self.audio.opened(generation, opened, &assets, cx) {
             None => {}
             Some(Ok((channels, live))) => {
                 let plays = live.sample_rate() == self.session.read(cx).project().sample_rate();
@@ -716,7 +716,7 @@ impl TransportPill {
                 let armed = self.recording.read(cx).armed().next().is_some();
                 let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
                 if !plays && !armed && !records {
-                    self.audio.give_up();
+                    self.audio.give_up(cx);
                     return;
                 }
                 self.recording.update(cx, |recording, cx| {
@@ -755,7 +755,7 @@ impl TransportPill {
         if self.audio.wants(armed, heard) && !self.audio.is_gone() {
             self.open_input(cx);
         } else if !records && self.audio.is_open_or_opening() {
-            self.audio.close();
+            self.audio.close(cx);
             self.recording
                 .update(cx, |recording, cx| recording.set_input_channels(None, cx));
             self.session.update(cx, |session, cx| {
