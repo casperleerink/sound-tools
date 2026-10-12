@@ -1,9 +1,12 @@
 //! The tempo in the transport, the click and the loop in the ruler, driven with the real mouse
-//! and keys, and the arrangement view following the playhead.
+//! and keys, the arrangement view following the playhead, and no transport without an
+//! arrangement.
 
 use arrangement::view::layout::{HEADER_WIDTH, Viewport};
 use gpui::{Point, TestAppContext, point, px};
-use sound_core::Ticks;
+use instrument::SynthState;
+use reverb::ReverbState;
+use sound_core::{Changes, Ticks};
 use sound_ui::Loop;
 
 use crate::support::{self, BAR, Opened};
@@ -531,4 +534,39 @@ fn the_arrows_keep_a_fractional_tempo(cx: &mut TestAppContext) {
     assert_eq!(opened.shown_tempo(), 94.4);
     opened.keys("down");
     assert_eq!(opened.shown_tempo(), 93.4);
+}
+
+/// With a tool in the main area and no arrangement there is no transport: no play, record or
+/// seek. Space still plays, `r` records nothing, and the computer keys show while something
+/// takes notes.
+#[gpui::test]
+fn a_project_without_an_arrangement_has_no_transport(cx: &mut TestAppContext) {
+    let mut opened = support::open_new(cx);
+    assert!(opened.find("play").is_some());
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        for (id, _) in project.instances() {
+            changes.delete(id);
+        }
+        changes.create(support::id("synth"), SynthState::default());
+        project.commit("Experiment", changes)
+    });
+    for control in ["transport", "play", "record"] {
+        assert!(opened.find(control).is_none(), "{control} is on screen");
+    }
+    assert!(opened.find("computer-keys").is_some());
+
+    opened.keys("r");
+    assert!(!opened.is_recording());
+    opened.keys("space");
+    opened.settle();
+    assert!(opened.playhead().playing);
+
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.delete(&support::id("synth"));
+        changes.create(support::id("reverb"), ReverbState::default());
+        project.commit("Reverb", changes)
+    });
+    assert!(opened.find("computer-keys").is_none());
 }

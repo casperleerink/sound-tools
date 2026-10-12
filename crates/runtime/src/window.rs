@@ -3,8 +3,9 @@
 //! and a quiet line for errors and problems top-right, under the title row.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
-//! view the installed [`Views`] has for the first instance at the top of the project. Nor does
-//! it name the agent: the left panel is whatever the installed [`LeftPanelSlot`] makes.
+//! view the installed [`Views`] has for the first instance at the top of the project, and the
+//! transport is the arrangement's, see [`crate::arrangement_wiring`]. Nor does it name the
+//! agent: the left panel is whatever the installed [`LeftPanelSlot`] makes.
 
 pub mod audio_input;
 pub mod other_apps;
@@ -628,7 +629,7 @@ impl Render for Shell {
                 .justify_center()
                 .child(EmptyState::new(
                     "Nothing to show",
-                    "This project has no arrangement at the top of state/.",
+                    "Nothing at the top of state/ has a view.",
                 ))
                 .into_any_element(),
         };

@@ -71,8 +71,9 @@ impl TransportPill {
             self.finish_recording(tick, cx);
             return;
         }
-        // The last one is still being written: its clips come first.
-        if self.take.is_some() {
+        // The last one is still being written: its clips come first. Without the arrangement
+        // in the main area there is nothing to record onto.
+        if self.take.is_some() || !self.arrangement_is_main {
             return;
         }
         let session = self.session.clone();
