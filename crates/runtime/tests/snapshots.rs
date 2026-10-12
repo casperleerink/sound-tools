@@ -97,6 +97,7 @@
 //! - `track-panel-automated.png`: knobs that lanes move, see `snapshots/automated.rs`.
 //! - `track-panel-plugin-*.png`: parameters pinned on the card of a plugin, see
 //!   `snapshots/plugin.rs`.
+//! - `returns-*.png`: the returns and the sends of a track, see `snapshots/returns.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -168,6 +169,8 @@ mod plugin;
 #[path = "shared/plugin_hosts.rs"]
 #[allow(dead_code, clippy::unwrap_used)]
 mod plugin_hosts;
+#[path = "snapshots/returns.rs"]
+mod returns;
 #[path = "snapshots/sampler.rs"]
 mod sampler;
 #[path = "snapshots/utility.rs"]
@@ -1029,7 +1032,7 @@ fn main() -> Result<()> {
     // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
     // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=agent`, `=audio`,
     // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes`, `=automation`,
-    // `=automated`, `=plugin` or `=wavetable` renders the default project and those alone.
+    // `=automated`, `=plugin`, `=returns` or `=wavetable` renders the default project and those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
     let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
     if runs("agent") {
@@ -1073,6 +1076,9 @@ fn main() -> Result<()> {
     }
     if runs("plugin") {
         plugin::snapshots(&mut cx, &save)?;
+    }
+    if runs("returns") {
+        returns::snapshots(&mut cx, &save)?;
     }
     if only.is_some() {
         return Ok(());
