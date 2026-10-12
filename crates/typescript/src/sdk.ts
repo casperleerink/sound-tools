@@ -30,7 +30,7 @@ export interface ToggleField {
 
 /**
  * One of a few options. It decides the structure of the sound, such as how many delays there
- * are, so `sound` runs again when it changes and the new sound fades in.
+ * are, so `sound` runs for each option when the tool loads, and the sound of a new one fades in.
  */
 export interface ChoiceField<Option extends string | number = string | number> {
   kind: "choice";

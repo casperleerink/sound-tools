@@ -1,12 +1,15 @@
 // Runs the project's own tools, in Bun, with the `extensions` folder of the project as its
-// working folder. One JSON message per line: the runtime asks on stdin, this answers on
-// stdout. What a tool logs goes to stderr, so it cannot break a message.
+// working folder. It loads the files once: a change of the code starts a new Bun. One JSON
+// message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
+// stderr, so it cannot break a message.
 
-import { readdirSync, watch } from "node:fs";
+import { writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec } from "./sdk";
 
 const folder = process.cwd();
+/** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
+const files = process.argv.slice(2);
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
@@ -15,6 +18,7 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 
 type Spec = ToolSpec<Fields, Controls, unknown>;
 type State = StateOf<Fields>;
+type Choices = Record<string, string | number>;
 type Watches = Record<string, number>;
 type Size = { width: number; height: number };
 /** The room of a page in the check without a window: the default window's. */
@@ -24,8 +28,6 @@ type Looped = { instance: string; tool: string; state: State; watches: Watches; 
 
 type Render = { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: Size | null };
 type Request =
-  | { type: "sound"; id: number; tool: string; choices: Record<string, string | number> }
-  | { type: "draw"; id: number; tool: string; page: boolean }
   | Render
   /** A click, or a press or a drag on a canvas `at` across and down. */
   | { type: "event"; card: number; version: number; handler: number; at: [number, number] | null }
@@ -45,24 +47,33 @@ type Sent =
 /** A click, which hears nothing, or a press or a drag on a canvas, which hears where. */
 type Handler = (x: number, y: number) => void;
 
+/** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function send(message: object) {
-  process.stdout.write(JSON.stringify(message) + "\n");
+  writeSync(1, JSON.stringify(message) + "\n");
+}
+
+/** Tells the runtime whose code runs now, so it knows what to blame when it hangs. */
+function runs(tool: string, what: string) {
+  send({ type: "runs", tool, what });
 }
 
 /** The handlers of the last trees of each card, by the version of the tree. */
 const handlers = new Map<number, Map<number, Handler[]>>();
-/** The version of the last tree drawn: a click names the tree it was on. */
-let treeVersion = 0;
+/**
+ * The version of the last tree drawn: a click names the tree it was on. From the time this Bun
+ * started, so a click on a tree an earlier Bun drew runs nothing here.
+ */
+let treeVersion = Date.now() * 1000;
 /** The trees of a card whose clicks still count: the window may still show an older one. */
 const KEPT_TREES = 8;
 /** What each card was last drawn from, so it draws again after a tick or a click. */
 const drawn = new Map<number, Render>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
-/** The tools whose tick or a click on whose card failed since the last load. */
+/** The tools whose tick or a click on whose card failed. */
 const failed = new Set<string>();
 
-/** Tells the runtime the first failure of a tool since the last load: it lists it as a problem. */
+/** Tells the runtime the first failure of a tool: it lists it as a problem. */
 function fail(tool: string, message: string) {
   if (!failed.has(tool)) {
     failed.add(tool);
@@ -70,13 +81,14 @@ function fail(tool: string, message: string) {
     send({ type: "failed", tool, message });
   }
 }
-let version = 0;
 
 const NAME = /^[a-z][a-z0-9_]*$/;
+/** The most combinations of choices a tool has: the sound of each is made when it loads. */
+const MAX_SOUNDS = 256;
 
 /**
  * What is wrong with the definition of a tool that its types do not say, so the agent that
- * wrote it can fix it. The runtime checks the name and the kinds.
+ * wrote it can fix it. The runtime checks the name, the kinds and the ranges.
  */
 function problemsOf(spec: Spec): string[] {
   const problems: string[] = [];
@@ -86,12 +98,6 @@ function problemsOf(spec: Spec): string[] {
         problems.push(`${key}: write it, it is what the composer and agents read`);
       }
     }
-    const range = (at: string, min: number, max: number, value: number) => {
-      if (!(min < max)) problems.push(`${at}: min must be below max`);
-      if (!(value >= min && value <= max)) {
-        problems.push(`${at}: default ${value} is outside [${min}, ${max}]`);
-      }
-    };
     const names = [...Object.keys(spec.state), ...Object.keys(spec.controls ?? {})];
     for (const name of names) {
       if (!NAME.test(name)) {
@@ -101,18 +107,9 @@ function problemsOf(spec: Spec): string[] {
         problems.push(`${name}: a field and a control cannot share a name`);
       }
     }
-    for (const [name, field] of Object.entries(spec.state)) {
-      if (field.kind === "knob" || field.kind === "pattern") {
-        range(`state.${name}`, field.min, field.max, field.default);
-      }
-      if (field.kind === "pattern" && !(Number.isInteger(field.length) && field.length >= 1 && field.length <= 1024)) {
-        problems.push(`state.${name}: a pattern is 1 to 1024 long`);
-      }
-    }
-    for (const [name, control] of Object.entries(spec.controls ?? {})) {
-      if (control.kind === "live") {
-        range(`controls.${name}`, control.min, control.max, control.default);
-      }
+    const sounds = choiceFields(spec).reduce((count, [, field]) => count * field.options.length, 1);
+    if (sounds > MAX_SOUNDS) {
+      problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
@@ -121,23 +118,15 @@ function problemsOf(spec: Spec): string[] {
   return problems;
 }
 
+/** Loads the files, each after it says which, so a file that hangs is known. */
 async function load() {
-  version += 1;
-  sdk.host.tools.clear();
-  // New code starts its memory again, and has failed in nothing yet.
-  memories.clear();
-  failed.clear();
-  /** The file each tool that holds comes from. */
-  const files = new Map<string, string>();
+  const tools: object[] = [];
   const errors: Array<{ file: string; message: string }> = [];
-  for (const file of readdirSync(folder).sort()) {
-    if (!/\.tsx?$/.test(file) || file === "sdk.ts" || file.endsWith(".d.ts")) {
-      continue;
-    }
+  for (const file of files) {
+    send({ type: "loading", file });
     const before = new Set(sdk.host.tools.keys());
     try {
-      // A new query is a new module, so the file is read again.
-      await import(`${join(folder, file)}?v=${version}`);
+      await import(join(folder, file));
     } catch (error) {
       // The tools it defined before it failed are its tools too.
       errors.push({ file, message: String(error) });
@@ -149,16 +138,23 @@ async function load() {
       const problems = problemsOf(spec);
       errors.push(...problems.map((problem) => ({ file, message: `tool ${name}: ${problem}` })));
       if (problems.length === 0) {
-        files.set(name, file);
+        tools.push(described(spec, file));
       }
     }
   }
-  // A function of the wrong type is called anyway, so it fails as a problem of its tool.
-  const tools = [...sdk.host.tools.values()]
-    .filter((spec) => files.has(spec.name))
-    .map((spec) => ({
+  send({ type: "loaded", tools, errors });
+}
+
+/**
+ * A tool as the runtime reads it: what it is, the sound of every combination of its choices,
+ * and its card and page at their defaults, so the runtime never waits for Bun. A function of
+ * the wrong type is called anyway, so it fails as a problem of its tool.
+ */
+function described(spec: Spec, file: string) {
+  return {
+    info: {
       name: spec.name,
-      file: files.get(spec.name),
+      file,
       title: spec.title,
       when: spec.when,
       doc: spec.doc,
@@ -169,8 +165,34 @@ async function load() {
       page: spec.page !== undefined,
       keys: spec.onKey !== undefined,
       midi: spec.onMidi !== undefined,
-    }));
-  send({ type: "loaded", tools, errors });
+    },
+    sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
+    card: made(() => draw(spec, false)),
+    page: spec.page === undefined ? null : made(() => draw(spec, true)),
+  };
+}
+
+/** What `make` gives, or why it failed, as the runtime reads a `Result`. */
+function made(make: () => unknown) {
+  try {
+    return { Ok: make() };
+  } catch (error) {
+    return { Err: String(error) };
+  }
+}
+
+type ChoiceField = Extract<Fields[string], { kind: "choice" }>;
+
+function choiceFields(spec: Spec): Array<[string, ChoiceField]> {
+  return Object.entries(spec.state).filter((entry): entry is [string, ChoiceField] => entry[1].kind === "choice");
+}
+
+/** Every combination of the choices of a tool. */
+function combinations(spec: Spec): Choices[] {
+  return choiceFields(spec).reduce<Choices[]>(
+    (all, [name, field]) => all.flatMap((choices) => field.options.map((option) => ({ ...choices, [name]: option }))),
+    [{}],
+  );
 }
 
 function specOf(tool: string): Spec {
@@ -182,8 +204,7 @@ function specOf(tool: string): Spec {
 }
 
 /** The sound graph of a tool for these choices. */
-function sound(tool: string, choices: Record<string, string | number>): Graph {
-  const spec = specOf(tool);
+function sound(spec: Spec, choices: Choices): Graph {
   const fields: Record<string, unknown> = {};
   for (const [name, field] of Object.entries(spec.state)) {
     fields[name] =
@@ -321,10 +342,11 @@ function latest({ instance, state, edits }: Looped): State {
 function render(request: Render) {
   const { card, instance, tool, state, watches, page } = request;
   drawn.set(card, request);
-  try {
-    // Such as a tool whose file does not load since a save.
+  const tree = made(() => {
+    // Such as a tool whose file this Bun runs without.
     const spec = specOf(tool);
     const kept: Handler[] = [];
+    runs(tool, page ? "page" : "card");
     const node = drawerOf(spec, page !== null)({
       state,
       watches,
@@ -333,7 +355,7 @@ function render(request: Render) {
       update: updater(instance, state),
       ...players(instance),
     });
-    const tree = serialize(node, kept);
+    const drawnTree = serialize(node, kept);
     treeVersion += 1;
     const trees = handlers.get(card) ?? new Map<number, Handler[]>();
     trees.set(treeVersion, kept);
@@ -342,24 +364,13 @@ function render(request: Render) {
       trees.delete(oldest);
     }
     handlers.set(card, trees);
-    send({ type: "tree", card, tree, version: treeVersion });
-  } catch (error) {
-    send({ type: "tree", card, error: String(error) });
-  }
-}
-
-/** Answers a question of the runtime with what `make` gives, or why it failed. */
-function answer(id: number, make: () => unknown) {
-  try {
-    send({ type: "answer", id, value: make() });
-  } catch (error) {
-    send({ type: "answer", id, error: String(error) });
-  }
+    return [treeVersion, drawnTree];
+  });
+  send({ type: "tree", card, tree });
 }
 
 /** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */
-function draw(tool: string, page: boolean): Sent {
-  const spec = specOf(tool);
+function draw(spec: Spec, page: boolean): Sent {
   const memory = spec.memory ? spec.memory() : {};
   const quiet = { set() {}, fire() {}, play() {}, release() {} };
   try {
@@ -397,6 +408,7 @@ function run(
     }
     const state = latest(looped);
     try {
+      runs(tool, what);
       call(spec, { state, watches, memory: memoryOf(instance, spec), time, update: updater(instance, state), ...players(instance) });
     } catch (error) {
       fail(tool, `its ${what} failed: ${error}`);
@@ -410,40 +422,17 @@ function run(
   }
 }
 
-/** The load that runs, so that a request waits for its tools instead of seeing half of them. */
-let loading = load();
-let reload: ReturnType<typeof setTimeout> | undefined;
-watch(folder, (_, file) => {
-  if (file === "sdk.ts" || file === "tsconfig.json") {
-    return;
-  }
-  // An editor saves in several writes.
-  clearTimeout(reload);
-  reload = setTimeout(() => {
-    loading = loading.then(load);
-  }, 50);
-});
-
-for await (const line of console) {
-  // Bun gives the end of the input after the last newline as one more, empty, line.
-  if (line === "") {
-    continue;
-  }
-  await loading;
-  const request = JSON.parse(line) as Request;
+function handle(request: Request) {
   switch (request.type) {
-    case "sound":
-      answer(request.id, () => sound(request.tool, request.choices));
-      break;
-    case "draw":
-      answer(request.id, () => draw(request.tool, request.page));
-      break;
     case "render":
       render(request);
       break;
     case "event": {
       const last = drawn.get(request.card);
       try {
+        if (last) {
+          runs(last.tool, "click handler");
+        }
         handlers.get(request.card)?.get(request.version)?.[request.handler]?.(...(request.at ?? [0, 0]));
       } catch (error) {
         if (last) {
@@ -479,6 +468,21 @@ for await (const line of console) {
       handlers.delete(request.card);
       drawn.delete(request.card);
       break;
+  }
+}
+
+await load();
+
+for await (const line of console) {
+  // Bun gives the end of the input after the last newline as one more, empty, line.
+  if (line === "") {
+    continue;
+  }
+  try {
+    handle(JSON.parse(line) as Request);
+  } finally {
+    // Bun does one thing at a time, so the runtime knows what hangs: the oldest not done.
+    send({ type: "done" });
   }
 }
 // The runtime closed stdin: it quit.

@@ -1,16 +1,19 @@
-//! The Bun process that runs `host.ts`, and the two ways to talk to it: a question that waits
-//! for its answer, such as the sound graph of a tool, and messages that come when they come, which the
-//! window reads. One JSON message per line, both ways.
+//! The Bun process that runs `host.ts`. It loads the files of `extensions/` once and says what
+//! it loaded, then hears what the window tells it and says what the tools do. A change of the
+//! code starts a new Bun. One JSON message per line, both ways.
+//!
+//! Bun does one thing at a time and says which tool's code it runs before it runs it, so a
+//! thread here that hears it knows what hangs, without the window: the window may be busy.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use sound_core::InstanceId;
 use sound_signals::Graph;
@@ -18,41 +21,35 @@ use sound_signals::Graph;
 use crate::Midi;
 use crate::tools::ToolInfo;
 
-/// How long a question, or a step of the control loops, may take before Bun counts as hung
-/// and is stopped. Bun answers in well under a millisecond; a tool whose code hangs must not
-/// hang the window.
-pub(crate) const ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long one step of a load, the start of Bun or a file, may take before Bun counts as
+/// hung. A file's step is its import, the sound of every combination of its choices and the
+/// first draw of its cards: all of it takes well under a second.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long Bun may say nothing while it has something to do before it counts as hung. It
+/// answers in well under a millisecond.
+const HANG_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The lines that may wait for Bun to read them. More, and Bun has stopped reading.
 const QUEUED_LINES: usize = 1024;
 
-/// How long the first load may take. Bun starts in a few tens of milliseconds.
-const FIRST_LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+/// What Bun said that may wait for the window to hear it. More, and the code of a tool says
+/// things in a loop that never ends: the window would not catch up.
+const MAX_EVENTS: usize = 4096;
 
-const STOPPED: &str = "the TypeScript host is not running";
+/// The files of `extensions/` Bun runs without, because their code hung or stopped it, with
+/// what to tell the composer. A change in the folder clears it.
+pub(crate) type Skipped = BTreeMap<String, String>;
 
-/// What the runtime asks or tells.
+/// What the window tells.
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Request<'a> {
-    /// The sound graph of a tool with these choices.
-    Sound {
-        id: u64,
-        tool: &'a str,
-        choices: &'a serde_json::Map<String, serde_json::Value>,
-    },
-    /// The tree of a tool's card, or its page, at its defaults after one tick: a check that
-    /// it draws, without a window.
-    Draw {
-        id: u64,
-        tool: &'a str,
-        page: bool,
-    },
     Render {
         card: u64,
         instance: &'a InstanceId,
         tool: &'a str,
-        state: serde_json::Value,
+        state: Value,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
         /// The size of the page, the whole window; `None` for a card.
@@ -104,37 +101,32 @@ pub(crate) struct PageSize {
 pub(crate) struct Looped<'a> {
     pub instance: &'a InstanceId,
     pub tool: &'a str,
-    pub state: serde_json::Value,
+    pub state: Value,
     pub watches: BTreeMap<String, f32>,
     /// How many edits of its record from Bun `state` has: fewer than Bun sent, and Bun starts
     /// from the last record it sent instead.
     pub edits: u64,
 }
 
-/// What Bun says without being asked, or as the answer to a render or a click.
+/// What the window hears of Bun after its load.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Event {
-    /// The files of `extensions/` loaded, at the start and after every save.
-    Loaded(Loaded),
     /// The control loops ran the last frame.
     Framed,
-    /// The tick of a tool, or a click on its card, failed: the first time since the last load.
+    /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
-    /// A card drew, or failed to.
+    /// A card drew, with the version of its tree, which a click on it names, so it runs a
+    /// handler of this tree and not of a newer one. Or why it did not.
     Tree {
         card: u64,
-        tree: Option<serde_json::Value>,
-        /// What a click on it names, so it runs a handler of this tree and not of a newer one.
-        #[serde(default)]
-        version: u64,
-        error: Option<String>,
+        tree: Result<(u64, Value), String>,
     },
     /// A card, a key or the MIDI keyboard changed the record of an instance.
     Edit {
         instance: InstanceId,
         label: String,
-        state: serde_json::Value,
+        state: Value,
     },
     /// A card or a control loop moved a live control of an instance, or fired a trigger when
     /// there is no value: at `at`, engine time in seconds, or at once.
@@ -160,13 +152,38 @@ pub(crate) enum Event {
         pitch: u8,
         at: Option<f64>,
     },
+    /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
+    /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as
+    /// code a timer of a tool ran.
+    #[serde(skip_deserializing)]
+    Ended { blame: Option<Runs>, why: String },
 }
 
-#[derive(Debug, Deserialize)]
+/// The code of a tool Bun runs: its tool, and which code, such as `tick`.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct Runs {
+    pub tool: String,
+    pub what: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
 #[serde(from = "SentLoad")]
 pub(crate) struct Loaded {
-    pub tools: Vec<ToolInfo>,
+    pub tools: Vec<LoadedTool>,
     pub errors: Vec<LoadError>,
+}
+
+/// A tool as Bun loaded it: everything the runtime needs of its code but its cards and loop.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LoadedTool {
+    pub info: ToolInfo,
+    /// The sound for every combination of its choices.
+    pub sounds: Vec<(Map<String, Value>, Result<Graph, String>)>,
+    /// The tree of its card at its defaults, after one tick.
+    pub card: Result<Value, String>,
+    /// The same of its page, when it has one.
+    pub page: Option<Result<Value, String>>,
 }
 
 /// A load as `host.ts` sends it. Each tool is read on its own, so one that this side cannot
@@ -174,7 +191,7 @@ pub(crate) struct Loaded {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SentLoad {
-    tools: Vec<serde_json::Value>,
+    tools: Vec<Value>,
     errors: Vec<LoadError>,
 }
 
@@ -183,13 +200,13 @@ impl From<SentLoad> for Loaded {
         let SentLoad { tools, mut errors } = sent;
         let tools = tools
             .into_iter()
-            .filter_map(|tool| match ToolInfo::deserialize(&tool) {
-                Ok(info) => Some(info),
+            .filter_map(|tool| match LoadedTool::deserialize(&tool) {
+                Ok(tool) => Some(tool),
                 Err(error) => {
-                    let text = |key| tool.get(key).and_then(serde_json::Value::as_str);
+                    let text = |key| tool["info"][key].as_str().unwrap_or_default();
                     errors.push(LoadError {
-                        file: text("file").unwrap_or_default().to_string(),
-                        message: format!("tool {}: {error}", text("name").unwrap_or_default()),
+                        file: text("file").to_string(),
+                        message: format!("tool {}: {error}", text("name")),
                     });
                     None
                 }
@@ -210,71 +227,88 @@ pub(crate) struct LoadError {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Line {
-    /// The answer to a question, see [`Bun::ask`].
-    Answer {
-        id: u64,
-        value: Option<serde_json::Value>,
-        error: Option<String>,
+    /// It loads this file now.
+    Loading {
+        file: String,
     },
+    Loaded(Loaded),
+    /// It runs this code of a tool now.
+    Runs(Runs),
+    /// It did the oldest thing it was told and had not done.
+    Done,
     #[serde(untagged)]
     Event(Event),
 }
 
-/// The questions that wait for their answer, by id. `None` once Bun stopped, so a question
-/// fails at once and does not wait for its timeout.
-type Waiting = Arc<Mutex<Option<HashMap<u64, mpsc::Sender<Result<serde_json::Value, String>>>>>>;
+/// Why Bun did not load, and the file it was loading then, which is to blame.
+pub(crate) struct LoadFailure {
+    pub file: Option<String>,
+    pub why: String,
+}
+
+/// What Bun has to do, for the thread that hears it.
+struct Busy {
+    /// How many things it was told and has not done.
+    pending: usize,
+    /// When it last took a step: started the code of a tool, finished what it was told, or was
+    /// told something when it had nothing to do.
+    since: Instant,
+    /// The code it runs now.
+    runs: Option<Runs>,
+}
 
 pub(crate) struct Bun {
     /// Lines on their way to Bun, which a thread of their own writes: a Bun that stops reading
     /// does not block the window.
     lines: mpsc::SyncSender<String>,
-    waiting: Waiting,
-    next_id: AtomicU64,
+    busy: Arc<Mutex<Busy>>,
     events: smol::channel::Receiver<Event>,
-    /// Ended when it hangs, or when the runtime lets go of it.
-    child: Mutex<Child>,
-    /// It hung and was stopped: once is enough.
-    stopped: AtomicBool,
+    /// Ended when the runtime lets go of it.
+    child: Child,
 }
 
 impl Bun {
-    /// Starts Bun on `host_script` in `folder`, and waits for the first load of its files.
+    /// Starts Bun on `host_script` in `folder`, to load `files` of it, and waits for its load.
+    /// Blocks for as long as the load takes: never call it on the thread that draws.
     pub(crate) fn start(
         program: &Path,
         host_script: &Path,
         folder: &Path,
-    ) -> Result<(Self, Loaded), String> {
-        // Before the project opens and before any window: its tools are registered from what
-        // Bun loads first, so there is nothing to draw while it starts.
+        files: &[&str],
+    ) -> Result<(Self, Loaded), LoadFailure> {
+        let failure = |why: String| LoadFailure { file: None, why };
         #[allow(clippy::disallowed_methods)]
         let mut child = sound_core::process::background_command(program)
             .arg(host_script)
+            .args(files)
             .current_dir(folder)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .map_err(|error| format!("bun did not start: {error}"))?;
+            .map_err(|error| failure(format!("did not start: {error}")))?;
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-            return Err("bun started without pipes".to_string());
+            return Err(failure("started without pipes".to_string()));
         };
-        let waiting: Waiting = Arc::new(Mutex::new(Some(HashMap::new())));
         let (events, received) = smol::channel::unbounded();
-        let (first, first_load) = mpsc::channel();
+        let (said, heard) = mpsc::channel();
         let (lines, to_write) = mpsc::sync_channel::<String>(QUEUED_LINES);
+        let busy = Arc::new(Mutex::new(Busy {
+            pending: 0,
+            since: Instant::now(),
+            runs: None,
+        }));
         // From here a failure drops it, which ends the process.
         let bun = Self {
             lines,
-            waiting: waiting.clone(),
-            next_id: AtomicU64::new(0),
+            busy: busy.clone(),
             events: received,
-            child: Mutex::new(child),
-            stopped: AtomicBool::new(false),
+            child,
         };
         std::thread::Builder::new()
             .name("bun".into())
-            .spawn(move || read(stdout, &waiting, first, &events))
-            .map_err(|error| error.to_string())?;
+            .spawn(move || read(stdout, &said))
+            .map_err(|error| failure(error.to_string()))?;
         std::thread::Builder::new()
             .name("bun-input".into())
             .spawn(move || {
@@ -290,96 +324,59 @@ impl Bun {
                     }
                 }
             })
-            .map_err(|error| error.to_string())?;
-        let loaded = first_load
-            .recv_timeout(FIRST_LOAD_TIMEOUT)
-            .map_err(|error| match error {
-                mpsc::RecvTimeoutError::Timeout => {
-                    format!("bun did not load extensions/ within {FIRST_LOAD_TIMEOUT:?}")
+            .map_err(|error| failure(error.to_string()))?;
+        let mut file = None;
+        let why = loop {
+            match heard.recv_timeout(LOAD_TIMEOUT) {
+                Ok(Line::Loading { file: next }) => file = Some(next),
+                Ok(Line::Loaded(loaded)) => {
+                    std::thread::Builder::new()
+                        .name("bun-events".into())
+                        .spawn(move || hear(&heard, &busy, &events))
+                        .map_err(|error| failure(error.to_string()))?;
+                    return Ok((bun, loaded));
                 }
-                mpsc::RecvTimeoutError::Disconnected => "bun stopped before it loaded".to_string(),
-            })?;
-        Ok((bun, loaded))
+                // Bun runs no tool and does nothing it is told before its load.
+                Ok(Line::Runs(_) | Line::Done | Line::Event(_)) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    break format!("did not finish loading within {LOAD_TIMEOUT:?}");
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break "stopped Bun".to_string(),
+            }
+        };
+        Err(LoadFailure { file, why })
     }
 
-    /// What Bun says on its own after its first load, in order.
+    /// What Bun says after its load, in order, up to [`Event::Ended`].
     pub(crate) fn events(&self) -> smol::channel::Receiver<Event> {
         self.events.clone()
     }
 
-    /// The sound graph of `tool` with these choices. Waits for Bun.
-    pub(crate) fn sound(
-        &self,
-        tool: &str,
-        choices: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<Graph, String> {
-        let graph = self.ask(|id| Request::Sound { id, tool, choices })?;
-        serde_json::from_value(graph).map_err(|error| error.to_string())
-    }
-
-    /// The tree of the card of `tool`, or of its page, at its defaults. Waits for Bun.
-    pub(crate) fn draw(&self, tool: &str, page: bool) -> Result<serde_json::Value, String> {
-        self.ask(|id| Request::Draw { id, tool, page })
-    }
-
-    /// Asks Bun and waits for the answer, at most [`ANSWER_TIMEOUT`].
-    fn ask<'a>(
-        &self,
-        request: impl FnOnce(u64) -> Request<'a>,
-    ) -> Result<serde_json::Value, String> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (answer, wait) = mpsc::channel();
-        {
-            let mut waiting = self.waiting.lock().map_err(|_| STOPPED.to_string())?;
-            let waiting = waiting.as_mut().ok_or_else(|| STOPPED.to_string())?;
-            waiting.insert(id, answer);
-        }
-        self.send(&request(id));
-        match wait.recv_timeout(ANSWER_TIMEOUT) {
-            Ok(answer) => answer,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                let message = format!("took longer than {ANSWER_TIMEOUT:?} to answer");
-                self.stop(&message);
-                Err(format!("the TypeScript host {message}"))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(STOPPED.to_string()),
-        }
-    }
-
-    /// Tells Bun something and does not wait.
+    /// Tells Bun something and does not wait. Nothing when Bun stopped reading, which the
+    /// thread that hears it finds hung, or stopped.
     pub(crate) fn send(&self, request: &Request) {
         let line = match serde_json::to_string(request) {
             Ok(json) => json + "\n",
             Err(error) => return eprintln!("error: {error}"),
         };
-        // A stopped host reads nothing: its stop was reported by the reader.
-        if let Err(mpsc::TrySendError::Full(_)) = self.lines.try_send(line) {
-            self.stop("stopped reading");
+        let lock = || self.busy.lock().unwrap_or_else(PoisonError::into_inner);
+        // Counted before it goes, so its done never comes before it is counted.
+        {
+            let mut busy = lock();
+            if busy.pending == 0 {
+                busy.since = Instant::now();
+            }
+            busy.pending += 1;
         }
-    }
-
-    /// Stops a Bun that hangs. The reader then hears it end, every question fails at once,
-    /// and the window says the tools stopped.
-    pub(crate) fn stop(&self, why: &str) {
-        if self.stopped.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        eprintln!("error: the TypeScript host {why}, so it is stopped");
-        if let Ok(mut child) = self.child.lock() {
-            child.kill().ok();
+        if self.lines.try_send(line).is_err() {
+            let mut busy = lock();
+            busy.pending = busy.pending.saturating_sub(1);
         }
     }
 }
 
-/// Reads what Bun says until it stops: an answer goes to the question that waits for it, the
-/// first load to `first`, and every other event to `events`.
-fn read(
-    stdout: ChildStdout,
-    waiting: &Waiting,
-    first: mpsc::Sender<Loaded>,
-    events: &smol::channel::Sender<Event>,
-) {
-    let mut first = Some(first);
+/// Reads what Bun says until it stops, and passes it on to `said`.
+fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     for line in BufReader::new(stdout).lines() {
         let line = match line {
             Ok(line) => line,
@@ -389,43 +386,64 @@ fn read(
             }
         };
         match serde_json::from_str::<Line>(&line) {
-            Ok(Line::Answer { id, value, error }) => {
-                let answer = value.ok_or_else(|| error.unwrap_or_default());
-                let waiter =
-                    (waiting.lock().ok()).and_then(|mut waiting| waiting.as_mut()?.remove(&id));
-                // The question timed out and nobody waits any more.
-                if let Some(waiter) = waiter {
-                    waiter.send(answer).ok();
+            Ok(line) => {
+                if said.send(line).is_err() {
+                    break;
                 }
             }
-            Ok(Line::Event(Event::Loaded(loaded))) if first.is_some() => {
-                if let Some(first) = first.take() {
-                    first.send(loaded).ok();
-                }
+            Err(error) => eprintln!("error: the TypeScript host said something unknown: {error}"),
+        }
+    }
+}
+
+/// Hears what Bun says after its load and passes its events on to `events`, until it hangs or
+/// stops, which [`Event::Ended`] says.
+fn hear(heard: &mpsc::Receiver<Line>, busy: &Mutex<Busy>, events: &smol::channel::Sender<Event>) {
+    let lock = || busy.lock().unwrap_or_else(PoisonError::into_inner);
+    let ended = |why: String| {
+        let blame = lock().runs.take();
+        // Outside the window nobody hears it.
+        events.try_send(Event::Ended { blame, why }).ok();
+    };
+    loop {
+        match heard.recv_timeout(HANG_TIMEOUT / 4) {
+            // A step: code of a tool starts, or what it was told is done.
+            Ok(Line::Runs(runs)) => {
+                let mut busy = lock();
+                busy.since = Instant::now();
+                busy.runs = Some(runs);
             }
-            // Outside the window nobody reads them, and Bun sends nothing unasked there but a
-            // load after a save.
+            Ok(Line::Done) => {
+                let mut busy = lock();
+                busy.since = Instant::now();
+                busy.pending = busy.pending.saturating_sub(1);
+                busy.runs = None;
+            }
+            // Code that says things in a loop that never ends says more than the window hears.
+            Ok(Line::Event(_)) if events.len() >= MAX_EVENTS => {
+                return ended(format!("said more than {MAX_EVENTS} things at once"));
+            }
             Ok(Line::Event(event)) => {
                 events.try_send(event).ok();
             }
-            Err(error) => {
-                eprintln!("error: the TypeScript host said something unknown: {error}");
-            }
+            // Bun loads once.
+            Ok(Line::Loading { .. } | Line::Loaded(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped Bun".to_string()),
         }
-    }
-    // Every question still waiting, and every later one, hears that Bun is gone.
-    if let Ok(mut waiting) = waiting.lock() {
-        *waiting = None;
+        // Also while it says things: a loop that never ends may.
+        let busy = lock();
+        if busy.pending > 0 && busy.since.elapsed() > HANG_TIMEOUT {
+            drop(busy);
+            return ended(format!("took longer than {HANG_TIMEOUT:?}"));
+        }
     }
 }
 
 impl Drop for Bun {
     fn drop(&mut self) {
         // Already ended, or never to be waited for: nothing to report on the way out.
-        if let Ok(child) = self.child.get_mut() {
-            child.kill().ok();
-            child.wait().ok();
-        }
+        self.child.kill().ok();
+        self.child.wait().ok();
     }
 }
 
@@ -437,10 +455,13 @@ mod tests {
     fn a_tool_this_side_cannot_read_is_an_error_of_its_file_and_the_others_load() {
         let tool = |name: &str, unit: &str| {
             serde_json::json!({
-                "name": name, "file": format!("{name}.ts"), "title": name, "when": "w", "doc": "d",
-                "kind": "effect", "tick": false, "page": false, "keys": false, "midi": false,
-                "controls": {},
-                "fields": { "rate": { "kind": "knob", "min": 0, "max": 1, "default": 0, "unit": unit } }
+                "info": {
+                    "name": name, "file": format!("{name}.ts"), "title": name, "when": "w",
+                    "doc": "d", "kind": "effect", "tick": false, "page": false, "keys": false,
+                    "midi": false, "controls": {},
+                    "fields": { "rate": { "kind": "knob", "min": 0, "max": 1, "default": 0, "unit": unit } }
+                },
+                "sounds": [], "card": { "Err": "no card" }, "page": null
             })
         };
         let line = serde_json::json!({
@@ -448,10 +469,12 @@ mod tests {
             "tools": [tool("good", "hz"), tool("bad", "seconds")],
             "errors": [{ "file": "broken.ts", "message": "SyntaxError" }]
         });
-        let Ok(Line::Event(Event::Loaded(loaded))) = serde_json::from_value(line) else {
+        let Ok(Line::Loaded(loaded)) = serde_json::from_value(line) else {
             panic!("a load with one bad tool is no load");
         };
-        let names: Vec<&str> = loaded.tools.iter().map(|info| info.name.as_str()).collect();
+        let names: Vec<&str> = (loaded.tools.iter())
+            .map(|tool| tool.info.name.as_str())
+            .collect();
         assert_eq!(names, ["good"]);
         let files: Vec<&str> = loaded
             .errors

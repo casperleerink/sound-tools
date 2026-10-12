@@ -6278,6 +6278,7 @@ dependencies = [
  "dunce",
  "gpui",
  "hound",
+ "notify",
  "serde",
  "serde_json",
  "smol",

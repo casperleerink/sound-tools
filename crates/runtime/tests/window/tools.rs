@@ -14,7 +14,7 @@ use midi::Played;
 use plugin_host::{Plugins, ScanCache};
 use runtime::window::{DeviceAccess, Shell, bind_keys};
 use runtime::{OFFLINE, views};
-use sound_core::{Changes, Engine};
+use sound_core::{Changes, Engine, Problem};
 use sound_notes::{Pitch, Velocity};
 use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
@@ -283,6 +283,11 @@ impl Window<'_> {
             .read(|cx| session.read(cx).project().state_json(&id(instance)))
             .unwrap();
         serde_json::from_str(&state).unwrap()
+    }
+
+    fn problems(&mut self) -> Vec<Problem> {
+        let session = self.session.clone();
+        self.cx.read(|cx| session.read(cx).project().problems())
     }
 }
 
@@ -575,4 +580,213 @@ fn a_save_of_a_tool_keeps_its_sample_playing_and_does_not_read_it_again(cx: &mut
     window.until("the saved tool at half the level", |window| {
         (window.loudest(4_800) - 0.25).abs() < 0.02
     });
+}
+
+/// An effect `name` that keeps the last note of the MIDI keyboard in its record and plays at
+/// half the level with `half`. When it `hangs`, its tick hangs once the engine runs: its check
+/// at load runs at time 0, so it loads.
+fn noted(name: &str, hangs: bool) -> String {
+    let tick = if hangs {
+        "tick: ({ time }) => { while (time > 0) {} },"
+    } else {
+        ""
+    };
+    format!(
+        r#"import {{ choice, input, knob, tool }} from "./sdk";
+
+tool({{
+  name: "{name}",
+  title: "{name}",
+  when: "You want to know the last note played",
+  doc: "Keeps the last note.",
+  state: {{ last: knob({{ min: 0, max: 127, default: 0 }}), mode: choice({{ options: ["full", "half"], default: "full" }}) }},
+  sound: ({{ mode }}) => (mode === "half" ? input.times(0.5) : input),
+  {tick}
+  onMidi: ({{ update }}, message) => {{
+    if (message.type !== "noteOn") return;
+    update("Keep the note", (state) => {{
+      state.last = message.pitch;
+    }});
+  }},
+}});
+"#
+    )
+}
+
+#[gpui::test]
+fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_back(
+    cx: &mut TestAppContext,
+) {
+    let (_, project) = ONLY_THE_TOOL[0];
+    let (heard, stuck) = (noted("heard", false), noted("stuck", true));
+    let files = [
+        ("project.json", project),
+        ("state/heard.json", r#"{"tool": "heard", "state": {}}"#),
+        ("state/stuck.json", r#"{"tool": "stuck", "state": {}}"#),
+        ("extensions/heard.ts", heard.as_str()),
+        ("extensions/stuck.ts", stuck.as_str()),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let root = window._folder.path().to_path_buf();
+    // The engine runs and the loops tick: Bun hangs in the tick of `stuck`.
+    window.wait_for_bun();
+
+    // The window does not wait for Bun: a new choice plays a sound Bun sent with its load.
+    let started = Instant::now();
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        let mode = |state: &mut serde_json::Value| state["mode"] = "half".into();
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut edit = project.begin("Half");
+                project.update_json(&mut edit, &id("heard"), mode)?;
+                project.finish(edit)
+            })
+        })
+    });
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert_eq!(window.problems(), []);
+
+    window.until("the hang among the problems", |window| {
+        let problems = window.problems();
+        problems
+            .iter()
+            .any(|problem| problem.path == "extensions/stuck.ts")
+    });
+    // A new Bun runs the other tools.
+    window.play_midi(64);
+    window.until("the note in the other tool", |window| {
+        window.record("heard")["last"] == 64
+    });
+
+    write(&root, "extensions/stuck.ts", &noted("stuck", false));
+    window.until("the fix", |window| window.problems().is_empty());
+    window.play_midi(65);
+    window.until("the note in the fixed tool", |window| {
+        window.record("stuck")["last"] == 65
+    });
+}
+
+#[gpui::test]
+fn a_change_of_a_file_a_tool_imports_changes_its_sound(cx: &mut TestAppContext) {
+    let project = r#"{"format": 1, "extensions": [],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": [{"from": {"instance": "hum", "port": "audio"}, "to": {"device_output": 0}}]}"#;
+    let hum = r#"import { sine, tool } from "./sdk";
+import { LEVEL } from "./lib/level";
+
+tool({
+  name: "hum",
+  title: "Hum",
+  when: "You want a hum",
+  doc: "A sine at the level of lib/level.ts.",
+  kind: "source",
+  state: {},
+  sound: () => sine(441).times(LEVEL),
+});
+"#;
+    let files = [
+        ("project.json", project),
+        ("state/hum.json", r#"{"tool": "hum", "state": {}}"#),
+        ("extensions/hum.ts", hum),
+        ("extensions/lib/level.ts", "export const LEVEL = 0.5;\n"),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let level = window.loudest(4_800);
+    assert!((level - 0.5).abs() < 0.02, "{level}");
+
+    let root = window._folder.path().to_path_buf();
+    write(
+        &root,
+        "extensions/lib/level.ts",
+        "export const LEVEL = 0.25;\n",
+    );
+    window.until("the hum at the new level", |window| {
+        (window.loudest(4_800) - 0.25).abs() < 0.02
+    });
+}
+
+/// A loop that never ends but keeps saying things, here moving a live control, is a hang of
+/// its tool too.
+#[gpui::test]
+fn a_tick_that_never_ends_while_it_plays_is_a_problem(cx: &mut TestAppContext) {
+    let flood = r#"import { input, live, tool } from "./sdk";
+
+tool({
+  name: "flood",
+  title: "Flood",
+  when: "You want a flood",
+  doc: "Its loop never ends and moves a control all the time.",
+  state: {},
+  controls: { x: live({ min: 0, max: 1, default: 0 }) },
+  sound: ({ x }) => input.times(x),
+  tick: ({ time, set }) => {
+    while (time > 0) set("x", 0);
+  },
+});
+"#;
+    let (_, project) = ONLY_THE_TOOL[0];
+    let files = [
+        ("project.json", project),
+        ("state/flood.json", r#"{"tool": "flood", "state": {}}"#),
+        ("extensions/flood.ts", flood),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.until("the flood among the problems", |window| {
+        let problems = window.problems();
+        problems
+            .iter()
+            .any(|problem| problem.path == "extensions/flood.ts")
+    });
+}
+
+/// Code a timer of a tool runs between two requests hangs Bun: the request that waits then is
+/// not to blame, and no tool is.
+#[gpui::test]
+fn a_hang_in_code_a_timer_runs_blames_no_tool(cx: &mut TestAppContext) {
+    let timer = r#"import { input, tool } from "./sdk";
+
+tool({
+  name: "timer",
+  title: "Timer",
+  when: "You want a timer",
+  doc: "Its loop starts a timer that never ends.",
+  state: {},
+  memory: () => ({ armed: false }),
+  sound: () => input,
+  tick: ({ memory, time }) => {
+    if (time > 0 && !memory.armed) {
+      memory.armed = true;
+      setTimeout(() => { while (true) {} }, 0);
+    }
+  },
+});
+"#;
+    let (_, project) = ONLY_THE_TOOL[0];
+    let heard = noted("heard", false);
+    let files = [
+        ("project.json", project),
+        ("state/heard.json", r#"{"tool": "heard", "state": {}}"#),
+        ("state/timer.json", r#"{"tool": "timer", "state": {}}"#),
+        ("extensions/heard.ts", heard.as_str()),
+        ("extensions/timer.ts", timer),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.until("the hang among the problems", |window| {
+        !window.problems().is_empty()
+    });
+    let problems = window.problems();
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert_eq!(problem.path, "extensions/");
+    assert!(problem.message.contains("no tool to blame"), "{problem:?}");
 }

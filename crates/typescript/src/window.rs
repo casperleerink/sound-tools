@@ -1,25 +1,30 @@
-//! The tools of `extensions/` while the window is open: a save of a file defines the tools
-//! again and draws every card again, the pickers offer the tools, and the cards play their
-//! live controls and triggers and follow their watches.
+//! The tools of `extensions/` while the window is open: Bun runs their cards and control loops,
+//! the pickers offer them, and the cards play their live controls and triggers and follow their
+//! watches.
+//!
+//! Any change in `extensions/`, a crash or a hang of Bun starts a new Bun, which loads every
+//! file again, so a helper a tool imports is read again too, and every `memory` starts again.
+//! A tool whose code hung or stopped Bun is left out of the new one until the folder changes.
+//! Nothing here waits for Bun: what it says comes as events.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
-use sound_core::{InstanceId, Problem, Project};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
+use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
 use sound_notes::{Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
-use crate::bun::{ANSWER_TIMEOUT, Bun, Event, Loaded, Looped, PageSize, Request};
+use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped};
 use crate::card::TypeScriptCard;
-use crate::tools::{Control, ToolInfo, ToolKind};
+use crate::tools::{Control, Sounds, ToolInfo, ToolKind};
 use crate::tree::Node;
-use crate::{Extensions, FOLDER, Midi};
+use crate::{Extensions, FOLDER, Launched, Midi, OWNED};
 
 /// How often the cards look at their watches and the control loops run: often enough for a
 /// step light, a meter or a moving drawing.
@@ -27,8 +32,11 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 /// The tools and cards of the project in the window. One per window.
 pub(crate) struct Live {
-    bun: Arc<Bun>,
+    /// The `extensions/` folder of the project.
+    folder: PathBuf,
     session: WeakEntity<Session>,
+    host: Host,
+    skipped: Skipped,
     /// The tools of the last load, shared with the pickers.
     tools: Rc<RefCell<Vec<ToolInfo>>>,
     /// Goes up when the tools do, so the pickers fill themselves again.
@@ -38,17 +46,46 @@ pub(crate) struct Live {
     /// Where each live control was put last, by instance: the processor keeps it on the audio
     /// side, and a control on the card shows it.
     played: HashMap<InstanceId, BTreeMap<String, f32>>,
-    /// How many edits of each record Bun sent and the window heard, so Bun knows when a record
-    /// it gets misses its last edit. Never counted down: Bun counts on.
+    /// How many edits of each record this Bun sent and the window heard, so Bun knows when a
+    /// record it gets misses its last edit. Never counted down: Bun counts on.
     edits: HashMap<InstanceId, u64>,
     /// When the control loops last ran.
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
-    /// When the frame Bun has not finished yet was sent. One at a time, so a slow loop does
-    /// not pile frames up.
-    frame_out: Option<Instant>,
+    /// Hears the changes in `extensions/`.
+    _watcher: Option<RecommendedWatcher>,
+    /// What it cannot hear, a problem of its own.
+    watch_problem: Option<Problem>,
+    changed: smol::channel::Sender<()>,
     _tasks: [Task<()>; 2],
+}
+
+/// The Bun of the window.
+enum Host {
+    Running {
+        bun: Bun,
+        /// A step of the control loops is out. One at a time, so a slow loop does not pile
+        /// steps up.
+        ticking: bool,
+        /// Hears what Bun says, until it ends.
+        _hearing: Task<()>,
+    },
+    /// A new Bun starts and loads on a thread of its own. `again`: `extensions/` changed
+    /// meanwhile, so another starts once this one has loaded.
+    Starting { again: bool },
+    /// No Bun runs, until the folder changes: it has no tool, Bun cannot start, or Bun stopped
+    /// with no tool to blame.
+    Stopped,
+}
+
+impl Host {
+    /// Tells Bun something. Nothing while no Bun runs: the next one draws every card again.
+    fn send(&mut self, request: &Request) {
+        if let Self::Running { bun, .. } = self {
+            bun.send(request);
+        }
+    }
 }
 
 struct Card {
@@ -56,10 +93,9 @@ struct Card {
     /// The name of its tool, which a card keeps for its life.
     tool: String,
     surface: Surface,
-    /// The last tree, or why there is none. `None` until the first one arrives.
-    tree: Option<Result<Rc<Node>, String>>,
-    /// The version of the last tree, which a click on it names.
-    version: u64,
+    /// The last tree with its version, which a click on it names, or why there is none. `None`
+    /// until the first one arrives.
+    tree: Option<Result<(u64, Rc<Node>), String>>,
     /// The watches the last tree was drawn with, which native elements read too.
     watches: BTreeMap<String, f32>,
     /// A render was asked for and its tree has not come yet.
@@ -77,33 +113,25 @@ pub(crate) enum Surface {
     Page(Option<PageSize>),
 }
 
-/// The live part of the tools once Bun runs. Until then the cards and pickers have no tools.
-type Slot = Rc<RefCell<Option<Entity<Live>>>>;
+/// The tools of the window, for what the window hears: the MIDI keyboard.
+struct WindowTools(Entity<Live>);
 
-/// The live part of the tools of the window, for what the window hears: the MIDI keyboard.
-struct Running(Slot);
-
-impl Global for Running {}
+impl Global for WindowTools {}
 
 /// Gives what the MIDI keyboard played to the tools that hear it: those on `track`, the track
-/// it played into, and those at the top of the project. Nothing while no tool runs.
+/// it played into, and those at the top of the project.
 pub fn hear_midi(track: Option<&InstanceId>, messages: &[Midi], cx: &mut App) {
     if messages.is_empty() {
         return;
     }
-    let running = cx.try_global::<Running>();
-    let Some(live) = running.and_then(|running| running.0.borrow().clone()) else {
+    let Some(live) = cx.try_global::<WindowTools>().map(|tools| tools.0.clone()) else {
         return;
     };
     live.update(cx, |live, cx| live.midi(track, messages, cx));
 }
 
-/// How often a window whose project has no tool yet looks for the first one.
-const WAIT_INTERVAL: Duration = Duration::from_secs(1);
-
 /// Starts the live part of `extensions` for the window of `session`: the cards of its tools in
-/// `views`, and its tools in the pickers of `devices`. A project with no tool yet starts Bun
-/// when the first tool file comes.
+/// `views`, and its tools in the pickers of `devices`.
 pub fn start_window(
     extensions: Extensions,
     session: &Entity<Session>,
@@ -113,28 +141,15 @@ pub fn start_window(
 ) {
     let tools = Rc::new(RefCell::new(Vec::new()));
     let generation = Rc::new(Cell::new(0));
-    let slot = Slot::default();
-    cx.set_global(Running(slot.clone()));
-    match extensions.running {
-        Some((bun, loaded)) => {
-            *tools.borrow_mut() = loaded.tools;
-            *slot.borrow_mut() = Some(Live::start(bun, session, &tools, &generation, cx));
-        }
-        // Bun did not start for tools that are there: the problems of the project say why.
-        None if crate::has_tools(&extensions.folder) => {}
-        None => {
-            let waiting = (tools.clone(), generation.clone(), slot.clone());
-            wait_for_tools(extensions.folder, session.downgrade(), waiting, cx);
-        }
-    }
+    let live = Live::start(extensions, session, &tools, &generation, cx);
+    cx.set_global(WindowTools(live.clone()));
 
     views.set_other_cards({
-        let (tools, slot) = (tools.clone(), slot.clone());
+        let (tools, live) = (tools.clone(), live.clone());
         move |session, id, frame, window, cx| {
             let tool = session.read(cx).project().tool_of(id)?;
             find(&tools.borrow(), tool)?;
-            let live = slot.borrow().clone()?;
-            let (session, id) = (session.clone(), id.clone());
+            let (live, session, id) = (live.clone(), session.clone(), id.clone());
             let card = cx.new(|cx| TypeScriptCard::new(live, session, id, Some(frame), window, cx));
             Some(card.into())
         }
@@ -145,8 +160,7 @@ pub fn start_window(
             move |tool| find(&tools.borrow(), tool).is_some_and(|info| info.page)
         },
         move |session, id, window, cx| {
-            let live = slot.borrow().clone()?;
-            let (session, id) = (session.clone(), id.clone());
+            let (live, session, id) = (live.clone(), session.clone(), id.clone());
             let page = cx.new(|cx| TypeScriptCard::new(live, session, id, None, window, cx));
             Some(page.into())
         },
@@ -170,74 +184,107 @@ pub fn start_window(
     });
 }
 
-/// Looks for the first tool file in `folder` while the window is open, then starts Bun on it
-/// and defines its tools, as a save would. An open project with no tool runs no Bun.
-fn wait_for_tools(
-    folder: PathBuf,
-    session: WeakEntity<Session>,
-    (tools, generation, slot): (Rc<RefCell<Vec<ToolInfo>>>, Rc<Cell<u64>>, Slot),
-    cx: &mut App,
-) {
-    cx.spawn(async move |cx| {
-        loop {
-            cx.background_executor().timer(WAIT_INTERVAL).await;
-            if session.upgrade().is_none() {
-                return;
-            }
-            let looked = folder.clone();
-            let found = (cx.background_executor())
-                .spawn(async move { crate::has_tools(&looked) })
-                .await;
-            if found {
-                break;
-            }
-        }
-        // Up to the timeout of the first load, so not on the thread that draws.
-        let launched = (cx.background_executor())
-            .spawn(async move { crate::launch(&folder) })
-            .await;
-        cx.update(|cx| {
-            let Some(session) = session.upgrade() else {
-                return;
-            };
-            match launched {
-                Ok((bun, loaded)) => {
-                    let live = Live::start(bun, &session, &tools, &generation, cx);
-                    *slot.borrow_mut() = Some(live.clone());
-                    live.update(cx, |live, cx| live.loaded(loaded, cx));
-                }
-                Err(message) => session.update(cx, |session, cx| {
-                    session.background(cx, |project| {
-                        let problems = vec![crate::folder_problem(message)];
-                        project.set_problems_in(&format!("{FOLDER}/"), problems);
-                    });
-                }),
-            }
+/// Watches `folder` and its folders but `node_modules`, and says on `changed` when a file
+/// that may be imported changes, or a folder. Not hidden files, such as an editor's. With
+/// what it cannot watch, which is a problem.
+fn watch(
+    folder: &Path,
+    changed: smol::channel::Sender<()>,
+) -> (Option<RecommendedWatcher>, Option<Problem>) {
+    let not_heard = |path: &Path, error: notify::Error| {
+        let message = format!("changes in {} are not heard: {error}", path.display());
+        Some(crate::folder_problem(message))
+    };
+    let skipped = |name: &str| name.starts_with('.') || name == "node_modules";
+    // The paths of events are the real ones.
+    let root = dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    let counts = move |path: &Path, removed: bool| {
+        let inside = path.strip_prefix(&root).unwrap_or(path);
+        let hidden = (inside.components()).any(|part| skipped(&part.as_os_str().to_string_lossy()));
+        let importable = (path.extension()).is_some_and(|extension| {
+            ["ts", "tsx", "mts", "js", "jsx", "mjs", "cjs", "json"]
+                .iter()
+                .any(|known| extension == *known)
         });
-    })
-    .detach();
+        // A folder that is gone is no folder any more.
+        let folder = path.is_dir() || (removed && path.extension().is_none());
+        let owned = OWNED.iter().any(|owned| inside == Path::new(owned));
+        !hidden && !owned && (importable || folder)
+    };
+    let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let event = match event {
+            Ok(event) => event,
+            Err(error) => return eprintln!("error: watching {FOLDER}/: {error}"),
+        };
+        // An event with no paths asks to look again at everything, as after a lost event.
+        let (paths, removed) = (&event.paths, event.kind.is_remove());
+        if !event.kind.is_access()
+            && (paths.is_empty() || paths.iter().any(|path| counts(path, removed)))
+        {
+            changed.try_send(()).ok();
+        }
+    });
+    let mut watcher = match watcher {
+        Ok(watcher) => watcher,
+        Err(error) => return (None, not_heard(folder, error)),
+    };
+    let entries = std::fs::read_dir(folder).into_iter().flatten().flatten();
+    let folders = (entries.map(|entry| entry.path()))
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| skipped(&name.to_string_lossy()))
+        })
+        .map(|path| (path, RecursiveMode::Recursive));
+    // The first that fails says so; the others are watched all the same.
+    let mut problem = None;
+    for (path, mode) in
+        std::iter::once((folder.to_path_buf(), RecursiveMode::NonRecursive)).chain(folders)
+    {
+        if let Err(error) = watcher.watch(&path, mode) {
+            problem = problem.or_else(|| not_heard(&path, error));
+        }
+    }
+    (Some(watcher), problem)
 }
 
 impl Live {
-    /// The live part of the tools of `bun` for the window of `session`: it hears Bun and runs
-    /// the control loops.
+    /// The live part of the tools of `extensions` for the window of `session`: it hears Bun and
+    /// the folder, and runs the control loops.
     fn start(
-        bun: Arc<Bun>,
+        extensions: Extensions,
         session: &Entity<Session>,
         tools: &Rc<RefCell<Vec<ToolInfo>>>,
         generation: &Rc<Cell<u64>>,
         cx: &mut App,
     ) -> Entity<Self> {
+        let Extensions {
+            folder,
+            bun,
+            tools: loaded,
+            skipped,
+            problems,
+        } = extensions;
+        *tools.borrow_mut() = loaded;
         cx.new(|cx: &mut Context<Live>| {
-            let events = bun.events();
-            let hearing = cx.spawn(async move |live, cx| {
-                while let Ok(event) = events.recv().await {
-                    if live.update(cx, |live, cx| live.heard(event, cx)).is_err() {
+            let (changed, changes) = smol::channel::unbounded();
+            let (watcher, watch_problem) = watch(&folder, changed.clone());
+            let hearing_changes = cx.spawn(async move |live, cx| {
+                while changes.recv().await.is_ok() {
+                    // Until it is quiet: an editor saves in several writes, an agent several
+                    // files.
+                    loop {
+                        cx.background_executor().timer(GROUPING_WINDOW).await;
+                        if changes.is_empty() {
+                            break;
+                        }
+                        while changes.try_recv().is_ok() {}
+                    }
+                    if live.update(cx, |live, cx| live.changed(cx)).is_err() {
                         return;
                     }
                 }
-                // Bun is gone: what plays was built and plays on, but nothing new can be built.
-                live.update(cx, |live, cx| live.stopped(cx)).ok();
             });
             let framing = cx.spawn(async move |live, cx| {
                 loop {
@@ -247,9 +294,15 @@ impl Live {
                     }
                 }
             });
-            Live {
-                bun,
+            let host = match bun {
+                Some(bun) => Live::running(bun, cx),
+                None => Host::Stopped,
+            };
+            let live = Live {
+                folder,
                 session: session.downgrade(),
+                host,
+                skipped,
                 tools: tools.clone(),
                 generation: generation.clone(),
                 cards: HashMap::new(),
@@ -257,11 +310,35 @@ impl Live {
                 played: HashMap::new(),
                 edits: HashMap::new(),
                 last_frame: Instant::now(),
-                problems: Vec::new(),
-                frame_out: None,
-                _tasks: [hearing, framing],
+                problems,
+                _watcher: watcher,
+                watch_problem,
+                changed,
+                _tasks: [hearing_changes, framing],
+            };
+            // Only the watcher's problem is new.
+            if live.watch_problem.is_some() {
+                live.report(cx);
             }
+            live
         })
+    }
+
+    /// `bun` as the Bun of the window, heard until it ends.
+    fn running(bun: Bun, cx: &mut Context<Self>) -> Host {
+        let events = bun.events();
+        let hearing = cx.spawn(async move |live, cx| {
+            while let Ok(event) = events.recv().await {
+                if live.update(cx, |live, cx| live.heard(event, cx)).is_err() {
+                    return;
+                }
+            }
+        });
+        Host::Running {
+            bun,
+            ticking: false,
+            _hearing: hearing,
+        }
     }
 }
 
@@ -344,8 +421,8 @@ fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffe
 }
 
 impl Live {
-    /// The last tree of a card. `None` until it first drew.
-    pub(crate) fn tree(&self, card: u64) -> Option<&Result<Rc<Node>, String>> {
+    /// The last tree of a card, with its version. `None` until it first drew.
+    pub(crate) fn tree(&self, card: u64) -> Option<&Result<(u64, Rc<Node>), String>> {
         self.cards.get(&card)?.tree.as_ref()
     }
 
@@ -392,7 +469,6 @@ impl Live {
             tool,
             surface,
             tree: None,
-            version: 0,
             watches: BTreeMap::new(),
             asked: false,
             stale: false,
@@ -404,7 +480,7 @@ impl Live {
 
     pub(crate) fn remove(&mut self, card: u64) {
         self.cards.remove(&card);
-        self.bun.send(&Request::Drop { card });
+        self.host.send(&Request::Drop { card });
     }
 
     /// Asks for the tree of the card again, from the record and the watches as they are now.
@@ -433,14 +509,15 @@ impl Live {
             return;
         };
         entry.asked = true;
-        self.bun.send(&Request::Render {
+        let request = Request::Render {
             card,
             instance: &entry.id,
             tool,
             state,
             watches: &entry.watches,
             page,
-        });
+        };
+        self.host.send(&request);
     }
 
     /// The page was laid out at `size`: it draws again when that is new.
@@ -455,18 +532,24 @@ impl Live {
         self.render(card, cx);
     }
 
-    /// A click on an element of the card, or a press or a drag on a canvas `at` across and
-    /// down, 0 to 1.
-    pub(crate) fn event(&self, card: u64, handler: usize, at: Option<(f32, f32)>) {
-        let Some(entry) = self.cards.get(&card) else {
-            return;
-        };
-        self.bun.send(&Request::Event {
-            card,
-            version: entry.version,
-            handler,
-            at,
-        });
+    /// A click on an element of the tree of `version` of the card, or a press or a drag on a
+    /// canvas `at` across and down, 0 to 1.
+    pub(crate) fn event(
+        &mut self,
+        card: u64,
+        version: u64,
+        handler: usize,
+        at: Option<(f32, f32)>,
+    ) {
+        if self.cards.contains_key(&card) {
+            let request = Request::Event {
+                card,
+                version,
+                handler,
+                at,
+            };
+            self.host.send(&request);
+        }
     }
 
     /// Sends what `update` makes for the tool of instance `id` to its processor, as the
@@ -562,12 +645,13 @@ impl Live {
         let Some(tool) = project.tool_of(&entry.id) else {
             return;
         };
-        self.bun.send(&Request::Key {
+        let request = Request::Key {
             time,
             instance: looped(project, &self.edits, &entry.id, tool),
             key,
             down,
-        });
+        };
+        self.host.send(&request);
     }
 
     /// What the MIDI keyboard played, for every instance whose tool hears it: on `track` or at
@@ -587,25 +671,17 @@ impl Live {
             .map(|(id, tool)| looped(project, &self.edits, id, tool))
             .collect();
         if !instances.is_empty() {
-            self.bun.send(&Request::Midi {
+            let request = Request::Midi {
                 time,
                 instances,
                 messages,
-            });
+            };
+            self.host.send(&request);
         }
     }
 
-    fn stopped(&mut self, cx: &mut Context<Self>) {
-        let Some(session) = self.session.upgrade() else {
-            return;
-        };
-        let message = "The tools of extensions/ stopped running: what plays goes on as it is, but cards, control loops and new sounds wait until the project opens again";
-        session.update(cx, |session, cx| session.report(message, cx));
-    }
-
-    /// One frame of the window: the control loops run, a card whose watches moved draws
-    /// again, and every instance whose sample was read on its thread runs again, so it plays
-    /// it.
+    /// One frame of the window: the control loops run, a card whose watches moved draws again,
+    /// and every instance whose sample was read on its thread runs again, so it plays it.
     fn frame(&mut self, cx: &mut Context<Self>) {
         self.run_loops(cx);
         self.look_at_watches(cx);
@@ -623,13 +699,9 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        if let Some(sent) = self.frame_out {
-            if sent.elapsed() > ANSWER_TIMEOUT {
-                let message = format!("ran a control loop for longer than {ANSWER_TIMEOUT:?}");
-                self.bun.stop(&message);
-            }
+        let Host::Running { ticking: false, .. } = self.host else {
             return;
-        }
+        };
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
         let time = engine_time(&session, cx);
@@ -637,17 +709,20 @@ impl Live {
         let project = session.read(cx).project();
         // An instance that is gone, which an undo may bring back at its defaults.
         self.played.retain(|id, _| project.tool_of(id).is_some());
-        let looped: Vec<Looped> = (project.instances())
+        let instances: Vec<Looped> = (project.instances())
             .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.tick))
             .map(|(id, tool)| looped(project, &self.edits, id, tool))
             .collect();
-        if !looped.is_empty() {
-            self.bun.send(&Request::Frame {
+        if !instances.is_empty() {
+            let request = Request::Frame {
                 dt,
                 time,
-                instances: looped,
-            });
-            self.frame_out = Some(Instant::now());
+                instances,
+            };
+            self.host.send(&request);
+            if let Host::Running { ticking, .. } = &mut self.host {
+                *ticking = true;
+            }
         }
     }
 
@@ -683,8 +758,13 @@ impl Live {
 
     fn heard(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
-            Event::Loaded(loaded) => self.loaded(loaded, cx),
-            Event::Framed => self.frame_out = None,
+            Event::Framed => {
+                if let Host::Running { ticking, .. } = &mut self.host {
+                    *ticking = false;
+                }
+                return;
+            }
+            Event::Ended { blame, why } => return self.failed(blame, &why, cx),
             Event::Failed { tool, message } => {
                 let problem = find(&self.tools.borrow(), &tool).map(|info| info.problem(message));
                 if let Some(problem) = problem {
@@ -692,23 +772,15 @@ impl Live {
                     self.report(cx);
                 }
             }
-            Event::Tree {
-                card,
-                tree,
-                version,
-                error,
-            } => {
+            Event::Tree { card, tree } => {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
                 entry.asked = false;
-                entry.version = version;
-                entry.tree = Some(match (tree, error) {
-                    (Some(tree), _) => serde_json::from_value(tree)
-                        .map(Rc::new)
-                        .map_err(|error| error.to_string()),
-                    (None, error) => Err(error.unwrap_or_default()),
-                });
+                entry.tree = Some(tree.and_then(|(version, tree)| {
+                    let node = serde_json::from_value(tree).map_err(|error| error.to_string())?;
+                    Ok((version, Rc::new(node)))
+                }));
                 if std::mem::take(&mut entry.stale) {
                     self.render(card, cx);
                 }
@@ -763,14 +835,110 @@ impl Live {
         cx.notify();
     }
 
-    /// A file of `extensions/` was saved: every tool is defined again, and every card draws
-    /// again.
-    fn loaded(&mut self, mut loaded: Loaded, cx: &mut Context<Self>) {
+    /// Something changed in `extensions/`: maybe a fix, so every file runs again.
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        self.skipped.clear();
+        // A new folder is watched too.
+        (self._watcher, self.watch_problem) = watch(&self.folder, self.changed.clone());
+        self.restart(cx);
+    }
+
+    /// Bun hung or stopped: the code it ran then is to blame, and the file of that tool runs
+    /// no more until the folder changes, while a new Bun runs the others. With nothing to
+    /// blame, such as code a timer ran, no Bun runs until the folder changes: it may stop again
+    /// at once, for ever.
+    fn failed(&mut self, blame: Option<Runs>, why: &str, cx: &mut Context<Self>) {
+        let info =
+            (blame.as_ref()).and_then(|runs| find(&self.tools.borrow(), &runs.tool).cloned());
+        let (Some(info), Some(runs)) = (info, blame) else {
+            // Ending a Bun waits for it: not on the thread that draws.
+            if let Host::Running { bun, .. } = std::mem::replace(&mut self.host, Host::Stopped) {
+                cx.background_executor()
+                    .spawn(async move { drop(bun) })
+                    .detach();
+            }
+            let message = format!(
+                "the TypeScript host {why} with no tool to blame, so the tools do not run: fix them and save"
+            );
+            self.problems.push(crate::folder_problem(message));
+            return self.report(cx);
+        };
+        let problem = info.problem(format!(
+            "its {} {why}, so the tools run without this file: fix it and save",
+            runs.what
+        ));
+        self.skipped.insert(info.file, problem.message);
+        self.restart(cx);
+    }
+
+    /// Ends Bun, if one runs, and starts a new one on the files of `extensions/` as they are now.
+    fn restart(&mut self, cx: &mut Context<Self>) {
+        match std::mem::replace(&mut self.host, Host::Starting { again: false }) {
+            Host::Starting { .. } => self.host = Host::Starting { again: true },
+            Host::Running { bun, .. } => self.launch(Some(bun), cx),
+            Host::Stopped => self.launch(None, cx),
+        }
+    }
+
+    /// Starts a new Bun on a thread of its own, once `old` ended there.
+    fn launch(&mut self, old: Option<Bun>, cx: &mut Context<Self>) {
+        let (folder, skipped) = (self.folder.clone(), self.skipped.clone());
+        cx.spawn(async move |live, cx| {
+            // Ending a Bun waits for it, and a load up to a timeout of each step: not on the
+            // thread that draws.
+            let launched = (cx.background_executor())
+                .spawn(async move {
+                    drop(old);
+                    crate::launch(&folder, skipped)
+                })
+                .await;
+            live.update(cx, |live, cx| live.launched(launched, cx)).ok();
+        })
+        .detach();
+    }
+
+    /// A new Bun loaded, or why none runs.
+    fn launched(&mut self, launched: Result<Option<Launched>, String>, cx: &mut Context<Self>) {
+        if let Host::Starting { again: true } = self.host {
+            self.host = Host::Starting { again: false };
+            let bun = launched.ok().flatten().map(|launched| launched.bun);
+            return self.launch(bun, cx);
+        }
+        // The new Bun counts the edits it sends from none, and its first frame from now.
+        self.edits.clear();
+        self.last_frame = Instant::now();
+        match launched {
+            Ok(Some(Launched {
+                bun,
+                sounds,
+                skipped,
+                problems,
+            })) => {
+                self.skipped = skipped;
+                self.host = Self::running(bun, cx);
+                self.loaded(sounds, problems, cx);
+            }
+            // The last tool file is gone.
+            Ok(None) => {
+                self.host = Host::Stopped;
+                self.loaded(Vec::new(), Vec::new(), cx);
+            }
+            Err(message) => {
+                self.host = Host::Stopped;
+                self.problems = vec![crate::folder_problem(message)];
+                self.report(cx);
+            }
+        }
+    }
+
+    /// A new Bun loaded `sounds`, with these `problems`: every tool is defined again, and every
+    /// card draws again.
+    fn loaded(&mut self, sounds: Vec<Sounds>, mut problems: Vec<Problem>, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        // Every tool, changed or not: its file was saved, so its `sound` may make another graph.
-        let mut problems = crate::define(&self.bun, &mut loaded, |tools| {
+        // Every tool, changed or not: a file it imports may have changed its sound.
+        let tools = crate::define(sounds, &mut problems, |tools| {
             let names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
             let defined = session.update(cx, |session, cx| {
                 session.background(cx, |project| project.define_json_tools(tools))
@@ -779,25 +947,33 @@ impl Live {
                 Ok(refused) => (refused.into_iter())
                     .map(|(name, error)| (name, error.to_string()))
                     .collect(),
-                // The folder did not read: no tool of the save plays.
+                // The folder did not read: no tool of the load plays.
                 Err(error) => (names.into_iter())
                     .map(|name| (name, error.to_string()))
                     .collect(),
             }
         });
         let gone: Vec<ToolInfo> = (self.tools.borrow().iter())
-            .filter(|info| find(&loaded.tools, &info.name).is_none())
+            .filter(|info| find(&tools, &info.name).is_none())
             .cloned()
             .collect();
-        problems.extend(gone.iter().map(|info| {
+        // A file Bun runs without says why already.
+        let unexplained = gone
+            .iter()
+            .filter(|info| !self.skipped.contains_key(&info.file));
+        problems.extend(unexplained.map(|info| {
             info.problem("it is gone from the code; its records play as they did until the project opens again")
         }));
         self.problems = problems;
         self.report(cx);
-        *self.tools.borrow_mut() = gone.into_iter().chain(loaded.tools).collect();
+        *self.tools.borrow_mut() = gone.into_iter().chain(tools).collect();
         self.generation.set(self.generation.get() + 1);
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
+            // A tree asked of the Bun before never comes.
+            if let Some(entry) = self.cards.get_mut(&card) {
+                entry.asked = false;
+            }
             self.render(card, cx);
         }
     }
@@ -807,7 +983,8 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let problems = self.problems.clone();
+        let watched = self.watch_problem.clone();
+        let problems = self.problems.iter().cloned().chain(watched).collect();
         session.update(cx, |session, cx| {
             session.background(cx, |project| {
                 project.set_problems_in(&format!("{FOLDER}/"), problems);
