@@ -288,6 +288,15 @@ impl TrackState {
         self.mute || (soloing && !self.solo && self.kind != TrackKind::Return)
     }
 
+    /// How loud the track sends into the return of folder `to`, in decibels: `-inf` takes the
+    /// send out, so a send turned all the way down leaves no trace in the record.
+    pub fn set_send(&mut self, to: &str, gain_db: f32) {
+        match gain_db == f32::NEG_INFINITY {
+            true => self.sends.remove(to),
+            false => self.sends.insert(to.to_string(), gain_db),
+        };
+    }
+
     /// Whether the effect in the child `name` is bypassed. `None` when the list does not
     /// name it.
     pub fn bypassed(&self, name: &str) -> Option<bool> {
@@ -1008,21 +1017,6 @@ pub fn remove_return(project: &Project, changes: &mut Changes, track: &Instance<
         }
     }
     changes.delete(track.id());
-}
-
-/// Sets how loud `track` sends into the return `to`, in decibels, to a group of changes.
-pub fn set_send(
-    project: &Project,
-    changes: &mut Changes,
-    track: &Instance<TrackState>,
-    to: &Instance<TrackState>,
-    gain_db: f32,
-) -> Result<(), ProjectError> {
-    let missing = || ProjectError::MissingInstance(track.id().clone());
-    let mut state = project.state(track).ok_or_else(missing)?.clone();
-    state.sends.insert(to.id().name().to_string(), gain_db);
-    changes.set(track, state);
-    Ok(())
 }
 
 /// Adds an audio clip to a track, to a group of changes, over every clip the track has: its

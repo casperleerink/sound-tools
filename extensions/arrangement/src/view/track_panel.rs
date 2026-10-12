@@ -23,7 +23,12 @@
 //! header column under the name of the track, on the rows of the cards, and the panel edits it
 //! itself: those values are in the track record. The meter of the volume shows what the track
 //! sends to the master, and the input of an armed audio track. An audio track also has the
-//! input select under mute and solo: which channels of the input it records.
+//! input select under mute and solo: which channels of the input it records. A return has no
+//! solo, and in the place of the input select `Pre fader`: where its sends take the sound.
+//!
+//! While the arrangement has returns, the rack of every other track ends with the Sends card,
+//! after a hairline: a knob for each return. It is last because a send takes the sound after
+//! the effects.
 //!
 //! The panel is 216 pt: 12 above the cards, a card of 192, 12 below. The rack scrolls sideways
 //! with two fingers, and a fade at its right edge says when cards go past it.
@@ -47,7 +52,7 @@ use sound_notes::SIDECHAIN_INPUT;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::cell::{CONTROL_HEIGHT, ROW_HEIGHT, VALUE_LINE};
 use sound_ui::components::device_card::{
-    BORDER, CARD_HEIGHT, CardFrame, HEADER_HEIGHT, PLAIN_CARD_WIDTH,
+    BORDER, CARD_HEIGHT, CardFrame, Column, DeviceCard, HEADER_HEIGHT, PLAIN_CARD_WIDTH,
 };
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -55,7 +60,7 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, pan_readout};
 use sound_ui::components::toggle::{self, Toggle};
-use sound_ui::components::volume::Volume;
+use sound_ui::components::volume::{self, Volume};
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, InputLevels, Lanes, Metering,
     Recording, Session, Slot, Views, every_poll, weak_action, weak_callback,
@@ -96,6 +101,9 @@ const SOLO_LEFT: f32 = PAN_LEFT + toggle::LETTER_WIDTH + 4.;
 pub(super) const VOLUME_LABEL: &str = "Change volume";
 const PAN_LABEL: &str = "Change pan";
 const INPUT_LABEL: &str = "Change input";
+const SEND_LABEL: &str = "Change send";
+/// How many letters of the name of a return the label of its send knob shows.
+const SEND_NAME_LETTERS: usize = 8;
 /// The input select under mute and solo ends on the value line of the second row.
 const INPUT_TOP: f32 = ROW_TOP + ROW_HEIGHT + VALUE_LINE + 14. - 24.;
 /// How many channels the input select offers while the input has not been opened.
@@ -1043,6 +1051,21 @@ impl TrackPanel {
                 let set = |track: &mut TrackState, solo| track.solo = solo;
                 panel.edit.apply(session, track, label, change, set, cx);
             }));
+        // A return has no solo, and says where its sends take the sound where an audio track
+        // has its input.
+        let pre_fader = Toggle::new("pre_fader", "Pre fader", track.pre_fader).on_change(
+            weak_callback(cx, |panel, pre_fader: bool, cx| {
+                let label = match pre_fader {
+                    true => "Send pre fader",
+                    false => "Send post fader",
+                };
+                let change = ValueChange::Set(pre_fader);
+                let (session, track) = (&panel.session, &panel.track);
+                let set = |track: &mut TrackState, pre_fader| track.pre_fader = pre_fader;
+                panel.edit.apply(session, track, label, change, set, cx);
+            }),
+        );
+        let is_return = track.kind == TrackKind::Return;
         let at = |left: f32, top: f32| div().absolute().left(px(left)).top(px(top));
         // A toggle sits on the line of the middle of a knob.
         let toggle_top = ROW_TOP + ROW_HEIGHT + (CONTROL_HEIGHT - toggle::HEIGHT) / 2.;
@@ -1050,15 +1073,66 @@ impl TrackPanel {
             .input_select
             .clone()
             .map(|select| at(PAN_LEFT, INPUT_TOP).child(select));
+        let solo = (!is_return).then(|| at(SOLO_LEFT, toggle_top).child(solo));
+        let pre_fader = is_return.then(|| at(PAN_LEFT, INPUT_TOP).child(pre_fader));
         [
             at(VOLUME_LEFT, ROW_TOP).child(volume),
             at(PAN_LEFT, ROW_TOP).child(pan),
             at(PAN_LEFT, toggle_top).child(mute),
-            at(SOLO_LEFT, toggle_top).child(solo),
         ]
         .into_iter()
+        .chain(solo)
         .chain(input)
+        .chain(pre_fader)
         .collect()
+    }
+
+    /// The Sends card: a knob for each return of the arrangement, two to a column. `None` for a
+    /// return and while the arrangement has none.
+    fn sends_card(&self, track: &TrackState, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if track.kind == TrackKind::Return {
+            return None;
+        }
+        let project = self.session.read(cx).project();
+        let arrangement = self.track.id().parent()?;
+        let returns: Vec<(String, String)> = crate::returns(project, &arrangement)
+            .into_iter()
+            .map(|(to, state)| (to.id().name().to_string(), state.name.clone()))
+            .collect();
+        if returns.is_empty() {
+            return None;
+        }
+        let knobs: Vec<Knob> = returns
+            .into_iter()
+            .map(|(to, name)| {
+                let gain_db = track.sends.get(&to).copied().unwrap_or(f32::NEG_INFINITY);
+                Knob::new(SharedString::from(format!("send-{to}")))
+                    .range(KnobRange::of(&GAIN))
+                    .value(gain_db)
+                    .default_value(f32::NEG_INFINITY)
+                    .label(short_name(&name))
+                    .readout(volume::readout(gain_db))
+                    .on_change(weak_callback(cx, move |panel, change, cx| {
+                        let (session, track) = (&panel.session, &panel.track);
+                        let set = |track: &mut TrackState, db: f32| {
+                            track.set_send(&to, volume_db(db, TrackState::MAX_GAIN_DB));
+                        };
+                        panel
+                            .edit
+                            .apply(session, track, SEND_LABEL, change, set, cx);
+                    }))
+            })
+            .collect();
+        let mut card = DeviceCard::new("sends", card_title("Sends"));
+        let mut knobs = knobs.into_iter();
+        while let Some(top) = knobs.next() {
+            let column = Column::new().top(top);
+            card = card.column(match knobs.next() {
+                Some(bottom) => column.bottom(bottom),
+                None => column,
+            });
+        }
+        Some(card.into_any_element())
     }
 }
 
@@ -1069,6 +1143,23 @@ pub(super) fn volume_db(db: f32, most: f32) -> f32 {
         true => f32::NEG_INFINITY,
         false => db.min(most),
     }
+}
+
+/// The name of a return as the label of a send knob shows it: cut after a few letters, so
+/// labels of neighbouring knobs do not run into each other.
+fn short_name(name: &str) -> String {
+    match name.chars().count() > SEND_NAME_LETTERS {
+        true => {
+            let kept: String = name.chars().take(SEND_NAME_LETTERS - 1).collect();
+            format!("{}…", kept.trim_end())
+        }
+        false => name.to_string(),
+    }
+}
+
+/// The title of a card that is no device, plain.
+fn card_title(text: &'static str) -> impl IntoElement {
+    div().font_weight(FontWeight::MEDIUM).child(text)
 }
 
 impl Focusable for TrackPanel {
@@ -1203,6 +1294,19 @@ impl Render for TrackPanel {
             .map(|track| self.mixer_strip(track, cx))
             .into_iter()
             .flatten();
+        // The hairline before the Sends card, as after the Clip card: the card acts on where
+        // the track goes, not on its sound.
+        let sends = track
+            .as_ref()
+            .and_then(|track| self.sends_card(track, cx))
+            .map(|card| {
+                let divider = div()
+                    .flex_none()
+                    .w(px(DIVIDER_WIDTH))
+                    .h(px(CARD_HEIGHT))
+                    .bg(divider);
+                [divider.into_any_element(), card]
+            });
         // The header column: the dot and the name of the track on the line of the card
         // titles, the close icon at its right, and the mixer strip on the rows of the cards.
         let header = div()
@@ -1282,7 +1386,8 @@ impl Render for TrackPanel {
                             .px(px(RACK_LEFT))
                             .children(clip_card.into_iter().flatten())
                             .children(cards)
-                            .child(add_effect),
+                            .child(add_effect)
+                            .children(sends.into_iter().flatten()),
                     )
                     .child(fade(scroll, background)),
             )
