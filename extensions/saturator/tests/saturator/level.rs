@@ -3,8 +3,9 @@
 //! 2.1 dB that a square wave's first harmonic has over its peak.
 
 use saturator::{Curve, DRIVE, SaturatorState};
+use sound_core::testing::amplitude_at;
 
-use crate::support::{Rig, SAMPLE_RATE, amplitude_at, peak, sine};
+use crate::support::{Rig, SAMPLE_RATE, peak, sine};
 
 #[test]
 fn a_sine_at_minus_twelve_dbfs_keeps_its_level_at_every_drive() {
