@@ -271,6 +271,38 @@ impl Default for Oversampler {
     }
 }
 
+/// One channel of sound that waits as long as the way up and down, [`Oversampler::DELAY_FRAMES`]:
+/// for a processor that reports that latency also while it does not oversample, so its sound
+/// stays in time when it starts or stops. `Copy` and free to make, like [`Oversampler`].
+#[derive(Clone, Copy)]
+pub struct OversamplerDelay {
+    frames: [f32; Oversampler::DELAY_FRAMES],
+    next: usize,
+}
+
+impl OversamplerDelay {
+    pub const fn new() -> Self {
+        Self {
+            frames: [0.0; Oversampler::DELAY_FRAMES],
+            next: 0,
+        }
+    }
+
+    /// Takes a frame and gives the one that came [`Oversampler::DELAY_FRAMES`] before it.
+    #[inline]
+    pub fn next(&mut self, frame: f32) -> f32 {
+        let late = std::mem::replace(&mut self.frames[self.next], frame);
+        self.next = (self.next + 1) % Oversampler::DELAY_FRAMES;
+        late
+    }
+}
+
+impl Default for OversamplerDelay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

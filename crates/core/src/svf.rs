@@ -20,6 +20,13 @@
 //! weight for each ([`FilterType::taps`]), so a processor can glide from one type to another,
 //! and from one slope to the other ([`FilterSlope::weight`]) by running both sections and
 //! gliding from the output of the first to the output of the second.
+//!
+//! The warm character ([`SvfSection::next_warm`]) bends the first section inside its loop: its
+//! damping rises with the square of its band pass, as in a Van der Pol oscillator. A loud
+//! resonance damps itself, so its peak grows far slower than the sound that drives it, and at
+//! the top of the resonance the damping starts below 0, so the filter rings on its own at a
+//! level the bend holds, whatever the cutoff. A bend makes harmonics, so a processor runs a
+//! warm section at four times the sample rate ([`crate::Oversampler`]).
 
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
@@ -97,6 +104,30 @@ impl TryFrom<u8> for FilterSlope {
     }
 }
 
+/// How a filter behaves when it is pushed. Saved as `"clean"` or `"warm"`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FilterCharacter {
+    /// Linear at every level: the same peak for a quiet and a loud sound.
+    #[default]
+    Clean,
+    /// A loud resonance compresses itself, and full resonance rings on its own.
+    Warm,
+}
+
+impl FilterCharacter {
+    pub const ALL: [Self; 2] = [Self::Clean, Self::Warm];
+
+    /// 0 for clean, 1 for warm: how much of the bend a section takes, for
+    /// [`SvfSection::next_warm`]. A value between is a glide from one to the other.
+    pub fn warmth(self) -> f32 {
+        match self {
+            Self::Clean => 0.0,
+            Self::Warm => 1.0,
+        }
+    }
+}
+
 impl From<FilterSlope> for u8 {
     fn from(slope: FilterSlope) -> Self {
         slope.db_per_octave()
@@ -107,6 +138,14 @@ impl From<FilterSlope> for u8 {
 /// low and high pass, the peak at the cutoff is +11.5 dB at 12 dB per octave and +8.8 dB at 24.
 /// It rings, and it never runs away.
 pub const SVF_MAX_Q: f32 = 20.0;
+
+/// How far a warm first section lowers its damping, `1 / Q`, at full resonance: past the
+/// `1 / SVF_MAX_Q` it has, so it rings on its own. It lowers it by this times the resonance to
+/// the eighth, so up to about 0.8 a warm filter has the peaks of a clean one.
+const WARM_UNDAMPING: f32 = 0.07;
+/// How fast the damping of a warm section rises with the square of its band pass. With
+/// [`WARM_UNDAMPING`] it sets the level of the ring at full resonance.
+const WARM_DAMPING: f32 = 0.01;
 
 /// The Q of one section at resonance 0: a second order Butterworth filter.
 const BUTTERWORTH_Q: f32 = FRAC_1_SQRT_2;
@@ -196,10 +235,13 @@ fn multiply(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
 /// The factors of one section for one cutoff and Q.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SvfFactors {
+    g: f32,
     k: f32,
     a1: f32,
     a2: f32,
     a3: f32,
+    /// What a warm section takes off `k`.
+    undamping: f32,
 }
 
 impl SvfFactors {
@@ -209,10 +251,12 @@ impl SvfFactors {
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
         Self {
+            g,
             k,
             a1,
             a2,
             a3: g * a2,
+            undamping: 0.0,
         }
     }
 
@@ -234,32 +278,59 @@ impl SvfFactors {
     ) -> ([Self; 2], f32) {
         let g = Self::cutoff_factor(cutoff_hz, sample_rate);
         let (q, level) = first_section(resonance, slope);
-        ([Self::new(g, 1.0 / q), Self::new(g, 1.0 / SECOND_Q)], level)
+        let first = Self {
+            undamping: WARM_UNDAMPING * resonance.powi(8),
+            ..Self::new(g, 1.0 / q)
+        };
+        ([first, Self::new(g, 1.0 / SECOND_Q)], level)
     }
 }
 
-/// The memory of one section: the two integrators.
+/// The memory of one section: the two integrators, and the band pass of the last frame, which
+/// a warm section damps itself by.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SvfSection {
     ic1: f32,
     ic2: f32,
+    band: f32,
 }
 
 impl SvfSection {
     /// One frame. Returns the mix of low, band and high pass and notch that `taps` asks for,
     /// with the low and the high pass at `level`.
     #[inline]
-    pub fn next(
+    pub fn next(&mut self, factors: &SvfFactors, taps: [f32; 4], level: f32, input: f32) -> f32 {
+        let (v1, v2) = self.band_and_low(factors, input);
+        mix(factors, taps, level, input, factors.k, v1, v2)
+    }
+
+    /// One frame of a first section between clean, `warmth` 0, and warm, 1: [`Self::next`]
+    /// with a damping that rises with the band pass of the last frame. The factors depend on
+    /// the damping, so they are worked out for every frame: a division more than `next`.
+    #[inline]
+    pub fn next_warm(
         &mut self,
         factors: &SvfFactors,
-        [low, band, high, notch]: [f32; 4],
+        taps: [f32; 4],
         level: f32,
         input: f32,
+        warmth: f32,
     ) -> f32 {
-        let (v1, v2) = self.band_and_low(factors, input);
-        let high_pass = input - factors.k * v1 - v2;
-        let band_pass = factors.k * v1;
-        level * (low * v2 + high * high_pass) + band * band_pass + notch * (input - band_pass)
+        let bend = WARM_DAMPING * self.band * self.band - factors.undamping;
+        let damping = factors.k + warmth * bend;
+        let g = factors.g;
+        let a1 = 1.0 / (1.0 + g * (g + damping));
+        let a2 = g * a1;
+        let warm = SvfFactors {
+            k: damping,
+            a1,
+            a2,
+            a3: g * a2,
+            ..*factors
+        };
+        let (v1, v2) = self.band_and_low(&warm, input);
+        self.band = v1;
+        mix(factors, taps, level, input, damping, v1, v2)
     }
 
     /// One frame, before any mix: the band pass and the low pass, from which every other output
@@ -278,7 +349,7 @@ impl SvfSection {
     /// Lets go of a memory too small to hear, so a filter whose input went silent comes to
     /// rest. Call it after a block of silent input.
     pub fn settle(&mut self) {
-        for memory in [&mut self.ic1, &mut self.ic2] {
+        for memory in [&mut self.ic1, &mut self.ic2, &mut self.band] {
             if memory.abs() < REST {
                 *memory = 0.0;
             }
@@ -288,6 +359,24 @@ impl SvfSection {
     pub fn is_silent(&self) -> bool {
         self.ic1 == 0.0 && self.ic2 == 0.0
     }
+}
+
+/// The mix of low, band and high pass and notch that `taps` asks for, from the band pass `v1`
+/// and the low pass `v2` of a section whose loop damps by `damping`. The band pass is scaled
+/// by the `k` of the factors, so its peak is 1 at the Q of the resonance.
+#[inline]
+fn mix(
+    factors: &SvfFactors,
+    [low, band, high, notch]: [f32; 4],
+    level: f32,
+    input: f32,
+    damping: f32,
+    v1: f32,
+    v2: f32,
+) -> f32 {
+    let high_pass = input - damping * v1 - v2;
+    let band_pass = factors.k * v1;
+    level * (low * v2 + high * high_pass) + band * band_pass + notch * (input - band_pass)
 }
 
 #[cfg(test)]
