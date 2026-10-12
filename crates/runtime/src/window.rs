@@ -585,23 +585,34 @@ impl Shell {
 }
 
 /// A newer release: Restart installs it, or Download opens its page when this app's folder
-/// cannot take it.
+/// cannot take it or it did not install.
 fn update_notice(ready: &update::Ready) -> Notice {
     let version = ready.version;
-    let notice = Notice::new("update", format!("Sound Tools {version} is ready"))
-        .tone(NoticeTone::Info)
-        .max_w_full();
-    match &ready.action {
-        update::Action::Restart => notice
-            .action(Button::new("update-restart", "Restart").on_click(|_, _, cx| start_again(cx))),
-        update::Action::Download { page } => {
-            let page = page.clone();
-            notice.action(
-                Button::new("update-download", "Download")
-                    .on_click(move |_, _, cx| cx.open_url(&page)),
-            )
-        }
-    }
+    let download = |page: &str| {
+        let page = page.to_string();
+        Button::new("update-download", "Download").on_click(move |_, _, cx| cx.open_url(&page))
+    };
+    let (message, tone, button) = match &ready.action {
+        update::Action::Restart => (
+            format!("Sound Tools {version} is ready"),
+            NoticeTone::Info,
+            Button::new("update-restart", "Restart").on_click(|_, _, cx| start_again(cx)),
+        ),
+        update::Action::Download { page } => (
+            format!("Sound Tools {version} is ready"),
+            NoticeTone::Info,
+            download(page),
+        ),
+        update::Action::Failed { reason, page } => (
+            format!("Sound Tools {version} did not install: {reason}"),
+            NoticeTone::Error,
+            download(page),
+        ),
+    };
+    Notice::new("update", message)
+        .tone(tone)
+        .action(button)
+        .max_w_full()
 }
 
 impl Focusable for Shell {
