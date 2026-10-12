@@ -35,12 +35,14 @@ fn key_label(key: &str) -> String {
             "alt" | "option" => "⌥",
             "shift" => "⇧",
             "ctrl" => "⌃",
+            "backspace" => "⌫",
             _ => return key.to_uppercase(),
         },
         modifier => match modifier {
             "mod" | "ctrl" => "Ctrl",
             "alt" | "option" => "Alt",
             "shift" => "Shift",
+            "delete" => "Del",
             _ => return key.to_uppercase(),
         },
     };

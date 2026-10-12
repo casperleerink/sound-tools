@@ -819,6 +819,40 @@ impl Opened<'_> {
         self.cx.run_until_parked();
     }
 
+    /// A press and a release of the right button. The menu of a clip opens at the press on
+    /// macOS and Linux and at the release on Windows.
+    pub(crate) fn right_click(&mut self, position: Point<Pixels>) {
+        self.right_press(position);
+        self.right_release(position);
+    }
+
+    pub(crate) fn right_press(&mut self, position: Point<Pixels>) {
+        let modifiers = Modifiers::default();
+        self.cx.simulate_mouse_move(position, None, modifiers);
+        self.cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers,
+            button: MouseButton::Right,
+            click_count: 1,
+            first_mouse: false,
+        });
+        self.cx.run_until_parked();
+    }
+
+    /// The release of a right press, moved to `position` first.
+    pub(crate) fn right_release(&mut self, position: Point<Pixels>) {
+        let modifiers = Modifiers::default();
+        self.cx
+            .simulate_mouse_move(position, MouseButton::Right, modifiers);
+        self.cx.simulate_event(MouseUpEvent {
+            position,
+            modifiers,
+            button: MouseButton::Right,
+            click_count: 1,
+        });
+        self.cx.run_until_parked();
+    }
+
     /// A click with keys held, such as shift or cmd.
     pub(crate) fn click_with(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
         self.press_with(position, 1, modifiers);

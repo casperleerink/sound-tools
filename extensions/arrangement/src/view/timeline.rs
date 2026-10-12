@@ -16,11 +16,13 @@
 //! - `drag`: the mouse moves of a drag of clips or of a track.
 //! - `keys`: the keys, and deleting and renaming a track.
 //! - `clipboard`: copy, paste, duplicate, delete and nudge.
+//! - `clip_menu`: the menu of a right click on a clip.
 //! - `file_drop`: audio files dropped from the Finder.
 //! - `lanes`: the automation lanes, their add menus and their points.
 //! - `loop_bar`: the loop in the ruler.
 
 mod build;
+mod clip_menu;
 mod clipboard;
 mod drag;
 mod file_drop;
@@ -32,6 +34,7 @@ mod mouse;
 mod scene;
 mod state;
 
+pub use clip_menu::FitTempo;
 pub(super) use header::ARM_LEFT;
 pub(super) use scene::{ARMED_METER_HEIGHT, ARMED_METER_LEFT, paint_takes};
 pub use scene::{ClipShape, Scene};
@@ -172,6 +175,10 @@ pub struct Timeline {
     snap: SharedSnap,
     /// The snap setting, in the corner above the track headers.
     snap_menu: Entity<DropdownMenu>,
+    clip_menu: Entity<DropdownMenu>,
+    /// A right press on a clip, on Windows, whose menu opens at the release.
+    clip_menu_held: bool,
+    fit_tempo: FitTempo,
     /// What the cursor says of a drag from where the pointer is: that it resizes, trims, fades
     /// or changes the gain.
     hover_cursor: Option<CursorStyle>,
@@ -193,6 +200,7 @@ impl Timeline {
         session: Entity<Session>,
         arrangement: Instance<ArrangementState>,
         (snap, clipboard): (SharedSnap, SharedClipboard),
+        fit_tempo: FitTempo,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle().tab_stop(true);
@@ -324,6 +332,15 @@ impl Timeline {
             }
         })
         .detach();
+        let clip_menu = cx.new(|cx| {
+            DropdownMenu::new("Clip", Vec::new(), cx)
+                .trigger(Trigger::Pointer)
+                .width(240.)
+        });
+        cx.subscribe(&clip_menu, |timeline, _, picked: &MenuPicked, cx| {
+            timeline.on_clip_menu(&picked.0, cx);
+        })
+        .detach();
         Self {
             session,
             playhead,
@@ -355,6 +372,9 @@ impl Timeline {
             rename: None,
             snap,
             snap_menu,
+            clip_menu,
+            clip_menu_held: false,
+            fit_tempo,
             hover_cursor: None,
             hovered: None,
             incoming: None,
@@ -645,9 +665,8 @@ impl Timeline {
     }
 
     /// The selected clips go to the session too, the first one first, as the selected track
-    /// does: the window offers to fit the project tempo to the take of the selected clip and to
-    /// export the time the selected clips cover, and the arrangement knows nothing of takes,
-    /// fitting or exports.
+    /// does: the window offers to export the time the selected clips cover, and the arrangement
+    /// knows nothing of exports.
     fn publish_selection(&self, cx: &mut Context<Self>) {
         let primary = self.clips.primary();
         let others = self.clips.iter().filter(|id| Some(*id) != primary);
@@ -904,6 +923,7 @@ impl Render for Timeline {
             .child(self.header_toggles(cx))
             .child(self.lane_menu_column(cx))
             .children(self.rename_field(cx))
+            .child(self.clip_menu.clone())
     }
 }
 
@@ -919,7 +939,14 @@ fn listen(
         let (timeline, hitbox, scene) = (timeline.clone(), hitbox.clone(), scene.clone());
         move |event: &MouseDownEvent, phase, window, cx| {
             let hit = phase == DispatchPhase::Bubble && hitbox.is_hovered(window);
-            if hit && event.button == MouseButton::Left {
+            if hit && clip_menu::opens_menu(event) {
+                let position = Timeline::timeline_position(bounds, event.position);
+                timeline.update(cx, |timeline, cx| {
+                    timeline.take_focus_from_press(window, cx);
+                    timeline.press_for_clip_menu(position, event.position, &scene, window, cx);
+                });
+                window.prevent_default();
+            } else if hit && event.button == MouseButton::Left {
                 let position = Timeline::timeline_position(bounds, event.position);
                 timeline.update(cx, |timeline, cx| {
                     timeline.take_focus_from_press(window, cx);
@@ -989,14 +1016,15 @@ fn listen(
     });
     window.on_mouse_event({
         let timeline = timeline.clone();
-        move |event: &MouseUpEvent, phase, _, cx| {
-            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
-                timeline.update(cx, |timeline, cx| {
-                    if timeline.dragging() {
-                        timeline.end_drag(cx);
-                    }
-                });
+        move |event: &MouseUpEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
             }
+            timeline.update(cx, |timeline, cx| match event.button {
+                MouseButton::Left if timeline.dragging() => timeline.end_drag(cx),
+                MouseButton::Right => timeline.release_for_clip_menu(event.position, window, cx),
+                _ => {}
+            });
         }
     });
     window.on_mouse_event({

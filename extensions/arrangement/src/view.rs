@@ -63,11 +63,10 @@ use recording_overlay::RecordingOverlay;
 use roll::EDITOR_HEIGHT;
 use snap::SharedSnap;
 use timeline::scrolled_or_zoomed;
-pub use timeline::{ClipShape, DropTarget, Scene, Timeline, TimelineEvent};
+pub use timeline::{ClipShape, DropTarget, FitTempo, Scene, Timeline, TimelineEvent};
 pub use track_panel::TrackPanel;
 use track_panel::TrackPanelEvent;
 
-/// Registers the view of the `arrangement` tool. Its add track button calls `add_track`.
 /// The undo label for one thing or several.
 fn plural(count: usize, one: &'static str, several: &'static str) -> &'static str {
     match count {
@@ -76,9 +75,11 @@ fn plural(count: usize, one: &'static str, several: &'static str) -> &'static st
     }
 }
 
-pub fn register(views: &mut Views, add_track: AddTrack) {
+/// Registers the view of the `arrangement` tool. Its add track button calls `add_track`, and
+/// the menu of a recorded clip offers `fit_tempo`.
+pub fn register(views: &mut Views, add_track: AddTrack, fit_tempo: FitTempo) {
     views.register(move |session, arrangement, window, cx| {
-        ArrangementView::new(session, arrangement, add_track, window, cx)
+        ArrangementView::new(session, arrangement, add_track, fit_tempo, window, cx)
     });
 }
 
@@ -133,6 +134,7 @@ impl ArrangementView {
         session: Entity<Session>,
         arrangement: Instance<ArrangementState>,
         add_track: AddTrack,
+        fit_tempo: FitTempo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -140,7 +142,7 @@ impl ArrangementView {
         let (snap, clipboard) = (SharedSnap::default(), SharedClipboard::default());
         let timeline = cx.new(|cx| {
             let shared = (snap.clone(), clipboard.clone());
-            Timeline::new(session.clone(), arrangement.clone(), shared, cx)
+            Timeline::new(session.clone(), arrangement.clone(), shared, fit_tempo, cx)
         });
         let painted = timeline.read(cx).painted();
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));

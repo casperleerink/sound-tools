@@ -1,4 +1,4 @@
-//! Fitting the tempo from the window: the action in the project menu, and the steadiness
+//! Fitting the tempo from the window: the action in the menu of a clip, and the steadiness
 //! control in the transport, driven with the real mouse and keys.
 
 use fit_tempo::FitState;
@@ -27,12 +27,19 @@ fn recorded(cx: &mut TestAppContext) -> Opened<'_> {
     })
 }
 
-fn select(opened: &mut Opened<'_>, clip: &str) {
-    let clip = id(clip);
-    opened.timeline.update(opened.cx, |timeline, cx| {
-        timeline.select_clip(Some(clip), cx)
-    });
+/// Right-clicks a clip on the first track, and picks `Fit tempo to take` when its menu offers
+/// it. Gives whether it was offered: an item that cannot run does nothing when it is clicked.
+fn pick_fit(opened: &mut Opened<'_>, clip: &str) -> bool {
+    let start = opened.clip(clip).expect("the clip").start.0;
+    let on_clip = opened.at(start + 100, 0);
+    opened.right_click(on_clip);
+    let row = opened.find("menu-fit-tempo");
+    match row {
+        Some(row) => opened.click(row),
+        None => opened.keys("escape"),
+    }
     opened.settle();
+    row.is_some()
 }
 
 /// Writes the fit record from outside and applies it, as an agent's edit arrives.
@@ -42,23 +49,6 @@ fn write_fit(opened: &mut Opened<'_>, state: &str) {
     std::fs::write(&path, record).unwrap();
     opened.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
     opened.settle();
-}
-
-/// Opens the project menu and picks `Fit tempo to take`. Gives whether the project has a fit
-/// afterwards: an item that cannot run does nothing when it is clicked.
-fn pick_fit(opened: &mut Opened<'_>) -> bool {
-    let menu = opened.cx.read(|cx| {
-        let shell = opened.shell.read(cx);
-        shell.project_menu().read(cx).menu().clone()
-    });
-    opened
-        .cx
-        .update(|window, cx| menu.update(cx, |menu, cx| menu.open(window, cx)));
-    opened.cx.run_until_parked();
-    let row = opened.control("menu-fit-tempo");
-    opened.click(row);
-    opened.settle();
-    fit_state(opened).is_some()
 }
 
 fn fit_state(opened: &mut Opened<'_>) -> Option<FitState> {
@@ -96,105 +86,28 @@ fn fit(opened: &mut Opened<'_>) {
     opened.settle();
 }
 
-/// The action is offered for a clip that has a take, and for nothing else.
+/// The menu of a clip that has a take offers the fit, and the menu of any other clip does not.
 #[gpui::test]
 fn the_fit_is_offered_for_a_clip_that_was_recorded(cx: &mut TestAppContext) {
     let mut opened = recorded(cx);
-    // Nothing is selected: the item is there and cannot run.
-    assert!(!pick_fit(&mut opened), "a fit was made with no clip");
-
-    // A clip that was drawn by hand has no take to follow.
+    let drawn = "arrangement/track-1/drawn";
     opened.session.update(opened.cx, |session, cx| {
         session.edit(cx, |project| {
             let mut changes = Changes::new();
-            changes.create(
-                id("arrangement/track-1/drawn"),
-                support::clip(0, 3840, vec![]),
-            );
+            changes.create(id(drawn), support::clip(40 * 3840, 3840, vec![]));
             project.commit("Add clip", changes)
         });
     });
-    select(&mut opened, "arrangement/track-1/drawn");
-    assert!(!pick_fit(&mut opened), "a fit was made from a drawn clip");
+    opened.settle();
+    assert!(!pick_fit(&mut opened, drawn), "a drawn clip offers the fit");
+    assert!(fit_state(&mut opened).is_none());
 
     // The clip of the take: the fit happens, as one undo step.
-    select(&mut opened, CLIP);
-    assert!(pick_fit(&mut opened));
+    assert!(pick_fit(&mut opened, CLIP));
+    assert!(fit_state(&mut opened).is_some());
     assert_eq!(opened.undo_label().as_deref(), Some(fit_tempo::FIT_LABEL));
     assert_eq!(steadiness(&mut opened), Some(0.0));
     assert_eq!(opened.project(|project| project.problems().len()), 0);
-}
-
-/// The action follows the clip that is shown as selected, through an undo and through a move
-/// to another track. What the timeline shows and what the rest of the window offers for it are
-/// one thing, because one path changes both.
-#[gpui::test]
-fn the_action_follows_the_clip_that_is_selected(cx: &mut TestAppContext) {
-    let mut opened = recorded(cx);
-    select(&mut opened, CLIP);
-    let selected = |opened: &mut Opened<'_>| {
-        let shown = opened
-            .timeline
-            .read_with(opened.cx, |timeline, _| timeline.selected_clip().cloned());
-        let session = opened
-            .session
-            .read_with(opened.cx, |session, _| session.selected_clip().cloned());
-        assert_eq!(session, shown, "the session and the timeline disagree");
-        shown
-    };
-    assert_eq!(selected(&mut opened), Some(id(CLIP)));
-    assert!(pick_fit(&mut opened), "the fit was not offered");
-
-    // Undo of the fit, then undo of the recording: the clip goes, and so does the selection.
-    opened.keys("secondary-z");
-    opened.settle();
-    opened.keys("secondary-z");
-    opened.settle();
-    assert_eq!(selected(&mut opened), None);
-
-    // Back, and selected again by hand, then moved to another track: a delete and a create in
-    // one group, which is what a drag across tracks and its undo both are. The selection goes
-    // with the clip, and so does what the menu offers for it.
-    opened.keys("shift-secondary-z");
-    opened.settle();
-    select(&mut opened, CLIP);
-    opened.session.update(opened.cx, |session, cx| {
-        session.edit(cx, |project| {
-            let arrangement = runtime::main_arrangement(project).unwrap();
-            let mut changes = Changes::new();
-            arrangement::add_track(
-                project,
-                &mut changes,
-                arrangement.id(),
-                "Second",
-                arrangement::Colour::Peach,
-                instrument::SynthState::default(),
-            )?;
-            project.commit("Add track", changes)
-        });
-        session.edit(cx, |project| {
-            let arrangement = runtime::main_arrangement(project).unwrap();
-            let next = arrangement::AnyClip::read(project, &id(CLIP)).unwrap();
-            let step = arrangement::ClipMove {
-                clip: id(CLIP),
-                home: id(CLIP),
-                was: next.start()..next.end(project),
-                to: project
-                    .resolve::<arrangement::TrackState>(&id("arrangement/second"))
-                    .unwrap(),
-                next,
-            };
-            let mut changes = Changes::new();
-            arrangement::move_clips(project, &mut changes, arrangement.id(), vec![step])?;
-            project.commit("Move clip", changes)
-        });
-    });
-    opened.settle();
-    assert_eq!(selected(&mut opened), Some(id("arrangement/second/take")));
-    assert!(
-        pick_fit(&mut opened),
-        "the fit was not offered after the move"
-    );
 }
 
 /// A project made before the fit existed does not list `fit-tempo` in `extensions`. The action
@@ -216,10 +129,12 @@ fn the_fit_says_why_it_is_off_in_a_project_without_the_extension(cx: &mut TestAp
             project.commit("Record", changes).unwrap();
         },
     );
-    select(&mut opened, CLIP);
+    assert!(
+        pick_fit(&mut opened, CLIP),
+        "the menu does not offer the fit"
+    );
     let item = opened.cx.read(|cx| {
-        let shell = opened.shell.read(cx);
-        let menu = shell.project_menu().read(cx).menu().clone();
+        let menu = opened.timeline.read(cx).clip_menu().clone();
         menu.read(cx).item("fit-tempo").cloned()
     });
     let item = item.expect("the menu offers the fit");
@@ -229,8 +144,8 @@ fn the_fit_says_why_it_is_off_in_a_project_without_the_extension(cx: &mut TestAp
         // Why, in words. The file edit is for an agent, in the agent docs.
         Some("This project does not include the tempo fit.")
     );
-    // And picking it anyway changes nothing and reports nothing.
-    assert!(!pick_fit(&mut opened));
+    // And picking it anyway changed nothing and reported nothing.
+    assert!(fit_state(&mut opened).is_none());
     assert_eq!(opened.notice(), None);
 }
 

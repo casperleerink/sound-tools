@@ -58,6 +58,14 @@ impl Timeline {
         }
         let modifiers = event.keystroke.modifiers;
         let key = event.keystroke.key.as_str();
+        let menu_key = match key {
+            "menu" => !modifiers.modified(),
+            "f10" => modifiers == Modifiers::shift(),
+            _ => false,
+        };
+        if menu_key && !self.dragging() {
+            return self.open_clip_menu(window, cx);
+        }
         // Alt-up and alt-down: the gain of the selected audio clips, and with no clip selected,
         // the place of the selected track.
         if modifiers == Modifiers::alt() && !self.dragging() {
@@ -144,11 +152,7 @@ impl Timeline {
             "c" => {
                 self.copy(cx);
             }
-            "x" => {
-                if let Some(copied) = self.copy(cx) {
-                    self.delete_clips("Cut clip", "Cut clips", Some(&copied), cx);
-                }
-            }
+            "x" => self.cut(cx),
             "v" => self.paste(cx),
             "d" => self.duplicate(cx),
             "down" => {

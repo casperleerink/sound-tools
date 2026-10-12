@@ -13,7 +13,7 @@
 //!   top-right.
 //! - `scale.png`: 100 tracks of 100 clips, scrolled to the middle.
 //! - `menu.png`: the project menu, open, after one edit.
-//! - `fit-action.png`: the project menu over a recorded take, with `Fit tempo to take`.
+//! - `fit-action.png`: the menu of a recorded take, with `Fit tempo to take`.
 //! - `fitted.png`: the same project after the fit, with the steadiness control in the
 //!   transport and the clip of the take on the grid the playing made.
 //! - `fit-steady.png`: the same with the steadiness at 60 %.
@@ -72,8 +72,8 @@
 //! - `track-panel-effect-missing.png`: an effect whose plugin this machine does not have.
 //! - `track-panel-picker-disabled.png`: the picker of a project that does not enable the
 //!   plugin host, where every plugin says what the one edit is.
-//! - `fit-action-disabled.png`: the project menu of a project made before the fit existed,
-//!   where the fit says what the one edit is.
+//! - `fit-action-disabled.png`: the same in a project made before the fit existed, where the
+//!   fit says why it is off.
 //! - `arrangement-selection.png`: the piece with two tempo changes in the ruler and three clips
 //!   selected on two tracks.
 //! - `arrangement-tempo.png`: the same with the tempo change of bar 5 clicked: selected, and the
@@ -1368,8 +1368,8 @@ fn main() -> Result<()> {
     save(&mut cx, &meters, "editor-time-signatures")?;
     drop(meters);
 
-    // A recorded take: the project menu offers to fit the tempo to it once its clip is
-    // selected, and the transport grows a steadiness control once the fit is there.
+    // A recorded take: the menu of its clip offers to fit the tempo to it, and the transport
+    // grows a steadiness control once the fit is there.
     let mut opened = Opened::new(&mut cx, recorded)?;
     let timeline = opened.timeline_view(&mut cx)?;
     let take_clip = InstanceId::new("arrangement/track-1/take")?;
@@ -1379,15 +1379,12 @@ fn main() -> Result<()> {
         })
     });
     cx.run_until_parked();
-    let menu = cx.update(|cx| {
-        let shell = opened.window.read(cx)?;
-        anyhow::Ok(shell.project_menu().read(cx).menu().clone())
-    })?;
     cx.update_window(opened.window.into(), |_, window, cx| {
-        menu.update(cx, |menu, cx| menu.open(window, cx));
+        timeline.update(cx, |timeline, cx| timeline.open_clip_menu(window, cx))
     })?;
     cx.run_until_parked();
     save(&mut cx, &opened, "fit-action")?;
+    let menu = cx.update(|cx| timeline.read(cx).clip_menu().clone());
     cx.update_window(opened.window.into(), |_, window, cx| {
         menu.update(cx, |menu, cx| menu.close(window, cx));
     })?;
@@ -1442,12 +1439,8 @@ fn main() -> Result<()> {
     let take_clip = InstanceId::new("arrangement/track-1/take")?;
     cx.update(|cx| timeline.update(cx, |timeline, cx| timeline.select_clip(Some(take_clip), cx)));
     cx.run_until_parked();
-    let menu = cx.update(|cx| {
-        let shell = opened.window.read(cx)?;
-        anyhow::Ok(shell.project_menu().read(cx).menu().clone())
-    })?;
     cx.update_window(opened.window.into(), |_, window, cx| {
-        menu.update(cx, |menu, cx| menu.open(window, cx));
+        timeline.update(cx, |timeline, cx| timeline.open_clip_menu(window, cx))
     })?;
     cx.run_until_parked();
     save(&mut cx, &opened, "fit-action-disabled")?;

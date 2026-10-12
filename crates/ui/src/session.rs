@@ -158,7 +158,7 @@ impl Session {
     ///
     /// Two fields and not one, because the two are read for different things and both are
     /// wanted at once: a keyboard plays into the instrument of the selected track while the
-    /// project menu offers to fit the tempo to the take of the selected clip.
+    /// Clip card of that track shows the selected clip.
     pub fn selected_clip(&self) -> Option<&InstanceId> {
         self.selected_clips.first()
     }

@@ -15,6 +15,10 @@
 //! the menus of other apps. The pointer opens it, and so do right and enter; left and escape
 //! close it. A search does not look inside it.
 //!
+//! [`Trigger::Pointer`] makes it a context menu: no trigger, and [`DropdownMenu::open_at`] opens
+//! it where a right click was. It flips up or left at the edge of the window, as a system menu
+//! does, and closing it gives the focus back to what had it.
+//!
 //! [`DropdownMenu::searchable`] puts a field above the rows, for a list too long to read
 //! through, such as the parameters of a plugin. What is typed keeps the rows whose label or
 //! value holds it, so a plugin parameter is found by its id too, and the first of them is highlighted, so enter picks it. Up and down move from there and
@@ -25,9 +29,9 @@ use std::rc::Rc;
 
 use gpui::{
     App, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    HoverListenerMode, Hsla, IntoElement, KeyDownEvent, MouseDownEvent, Render, RenderOnce,
-    SharedString, Stateful, StyleRefinement, Styled, Window, anchored, deferred, div, point,
-    prelude::*, px,
+    HoverListenerMode, Hsla, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent,
+    Pixels, Point, Render, RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window,
+    anchored, deferred, div, point, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
@@ -408,12 +412,22 @@ impl RenderOnce for MenuList {
                                             cx,
                                         ))
                                     }),
+                                // A row picks at the release, as in a system menu: a press
+                                // held from where a context menu opened, with the right
+                                // button or ctrl-left on macOS, picks the row it is let go on.
                                 _ => element.when_some(
                                     on_select.clone().filter(|_| enabled),
                                     |d, f| {
-                                        d.on_click(move |_, window, cx| {
+                                        let (released, picked) = (f.clone(), value.clone());
+                                        d.on_mouse_up(MouseButton::Left, move |_, window, cx| {
                                             f(value.clone(), window, cx)
                                         })
+                                        .on_mouse_up(
+                                            MouseButton::Right,
+                                            move |_, window, cx| {
+                                                released(picked.clone(), window, cx)
+                                            },
+                                        )
                                     },
                                 ),
                             }
@@ -623,6 +637,8 @@ pub enum Trigger {
     /// Only a chevron, 24 pt high and rounded on the right: the menu half of a split button.
     /// The label is its tooltip, since it shows no words.
     Chevron,
+    /// None: a context menu, see [`DropdownMenu::open_at`].
+    Pointer,
 }
 
 /// A select: 24 pt, 12 pt medium type, 6 pt corners, as a toggle or a segmented control.
@@ -739,6 +755,10 @@ pub struct DropdownMenu {
     debug_name: Option<SharedString>,
     /// The field above the rows of a menu that is searched, see [`Self::searchable`].
     search: Option<Search>,
+    /// Where a [`Trigger::Pointer`] menu opened, in the window.
+    position: Point<Pixels>,
+    /// What had the focus before [`Self::open_at`], which gets it back.
+    focus_before: Option<FocusHandle>,
 }
 
 struct Search {
@@ -777,6 +797,8 @@ impl DropdownMenu {
             icon: None,
             debug_name: None,
             search: None,
+            position: Point::default(),
+            focus_before: None,
         }
     }
 
@@ -981,12 +1003,29 @@ impl DropdownMenu {
         cx.notify();
     }
 
+    /// Opens a [`Trigger::Pointer`] menu with a corner at `position`, in window coordinates.
+    pub fn open_at(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.position = position;
+        self.highlighted = usize::MAX;
+        self.set_submenu(None, cx);
+        if !self.open {
+            self.focus_before = window.focused(cx);
+        }
+        self.open(window, cx);
+    }
+
     pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = false;
         self.highlighted = usize::MAX;
         self.set_submenu(None, cx);
         // The open menu held the focus. Without this it would be nowhere, and keys with it.
-        window.focus(&self.trigger_focus, cx);
+        let back = self.focus_before.take();
+        window.focus(back.as_ref().unwrap_or(&self.trigger_focus), cx);
         cx.notify();
     }
 
@@ -1114,12 +1153,75 @@ impl DropdownMenu {
     }
 }
 
+impl DropdownMenu {
+    /// The press that opened a context menu, let go off it once moved away, cancels it, as in
+    /// a system menu. Let go where it opened, the menu stays open.
+    fn cancel_held(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let moved = event.position - self.position;
+        if !self.pointer_in_submenu && (moved.x.abs() > px(4.) || moved.y.abs() > px(4.)) {
+            self.close(window, cx);
+        }
+    }
+
+    /// The open menu: the search field and the rows.
+    fn panel(&self, cx: &mut Context<Self>) -> Div {
+        let search = self.search.as_ref().map(|search| {
+            div()
+                .px(px(8.))
+                .pt(px(8.))
+                .pb(px(4.))
+                .child(search.input.clone())
+        });
+        surface(cx)
+            .track_focus(&self.focus_handle)
+            .w(px(self.width))
+            .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                if !this.pointer_in_submenu {
+                    this.close(window, cx)
+                }
+            }))
+            .when(self.trigger == Trigger::Pointer, |d| {
+                d.on_mouse_up_out(MouseButton::Right, cx.listener(Self::cancel_held))
+                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::cancel_held))
+            })
+            .on_key_down(
+                cx.listener(|this, ev: &KeyDownEvent, window, cx| this.on_key(ev, window, cx)),
+            )
+            .children(search)
+            .child(
+                MenuList::new(self.shown().to_vec())
+                    .selected(self.selected.clone())
+                    .highlighted(self.highlighted)
+                    .max_height(self.max_height)
+                    .submenu(OpenSubmenu {
+                        value: self.submenu.clone(),
+                        highlighted: self.submenu_highlighted,
+                        on_open: Rc::new(cx.processor(
+                            |this, value: Option<SharedString>, _, cx| this.set_submenu(value, cx),
+                        )),
+                        on_hover: Rc::new(cx.processor(|this, hovered: bool, _, _| {
+                            this.pointer_in_submenu = hovered
+                        })),
+                    })
+                    .on_select(cx.processor(|this, value: SharedString, window, cx| {
+                        this.pick(value, window, cx)
+                    })),
+            )
+    }
+}
+
 impl Render for DropdownMenu {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (side, align, width) = (self.side, self.align, self.width);
+        if self.trigger == Trigger::Pointer {
+            let open = self.open.then(|| {
+                deferred(anchored().position(self.position).child(self.panel(cx))).with_priority(1)
+            });
+            return div().children(open).into_any_element();
+        }
+        let (side, align) = (self.side, self.align);
         let (trigger_width, trigger_height) = (self.trigger_width, self.trigger_height);
         let trigger_element = match self.trigger {
-            Trigger::Outline => trigger("dropdown-trigger", cx),
+            Trigger::Outline | Trigger::Pointer => trigger("dropdown-trigger", cx),
             Trigger::Ghost => {
                 let hover = cx.theme().alpha_at(0.05);
                 ghost_trigger("dropdown-trigger", Hsla::transparent_black(), hover, cx)
@@ -1141,7 +1243,9 @@ impl Render for DropdownMenu {
                     12.,
                 )
             }
-            Trigger::Outline | Trigger::Ghost | Trigger::Subtle => (self.label.clone(), None, 14.),
+            Trigger::Outline | Trigger::Ghost | Trigger::Subtle | Trigger::Pointer => {
+                (self.label.clone(), None, 14.)
+            }
             // The glyph of the icons beside it.
             Trigger::Title => (self.label.clone(), None, 12.),
             Trigger::Chevron => (self.label.clone(), None, 12.),
@@ -1198,54 +1302,8 @@ impl Render for DropdownMenu {
                         }
                     })),
             )
-            .when(self.open, |d| {
-                let search = self.search.as_ref().map(|search| {
-                    div()
-                        .px(px(8.))
-                        .pt(px(8.))
-                        .pb(px(4.))
-                        .child(search.input.clone())
-                });
-                d.child(anchor(
-                    side,
-                    align,
-                    surface(cx)
-                        .track_focus(&self.focus_handle)
-                        .w(px(width))
-                        .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                            if !this.pointer_in_submenu {
-                                this.close(window, cx)
-                            }
-                        }))
-                        .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                            this.on_key(ev, window, cx)
-                        }))
-                        .children(search)
-                        .child(
-                            MenuList::new(self.shown().to_vec())
-                                .selected(self.selected.clone())
-                                .highlighted(self.highlighted)
-                                .max_height(self.max_height)
-                                .submenu(OpenSubmenu {
-                                    value: self.submenu.clone(),
-                                    highlighted: self.submenu_highlighted,
-                                    on_open: Rc::new(cx.processor(
-                                        |this, value: Option<SharedString>, _, cx| {
-                                            this.set_submenu(value, cx)
-                                        },
-                                    )),
-                                    on_hover: Rc::new(cx.processor(|this, hovered: bool, _, _| {
-                                        this.pointer_in_submenu = hovered
-                                    })),
-                                })
-                                .on_select(cx.processor(
-                                    |this, value: SharedString, window, cx| {
-                                        this.pick(value, window, cx)
-                                    },
-                                )),
-                        ),
-                ))
-            })
+            .when(self.open, |d| d.child(anchor(side, align, self.panel(cx))))
+            .into_any_element()
     }
 }
 
