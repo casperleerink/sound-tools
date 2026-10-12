@@ -12,6 +12,7 @@ use sound_notes::Clip;
 use sound_ui::DragEdit;
 use sound_ui::components::text_input::TextInput;
 
+use super::loop_bar::LoopDrag;
 use crate::view::layout::Rows;
 use crate::{AudioClip, AutomationLane, TrackKind, TrackState};
 
@@ -250,13 +251,14 @@ pub(super) enum Held {
     Marquee(Marquee),
     Track(TrackDrag),
     Lane(LaneDrag),
+    Loop(LoopDrag),
 }
 
 impl Held {
     /// The gesture of the session it may have opened, which then ends with it.
     pub(super) fn edit(&mut self) -> Option<&mut DragEdit> {
         match self {
-            Held::Nothing | Held::Marquee(_) => None,
+            Held::Nothing | Held::Marquee(_) | Held::Loop(_) => None,
             Held::Clips(drag, _) => Some(&mut drag.edit),
             Held::Track(drag) => Some(&mut drag.edit),
             Held::Lane(drag) => Some(&mut drag.edit),

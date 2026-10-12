@@ -4,6 +4,7 @@
 use std::any::Any;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::clock::{Clock, TempoMap, Ticks};
@@ -183,6 +184,12 @@ impl EngineControl {
     /// old and the new position is replayed. Processors see a jump.
     pub fn seek(&mut self, position: Ticks) {
         self.send(Command::Transport(TransportCommand::Seek(position)));
+    }
+
+    /// Playback goes back to the start of `range` each time it reaches its end, or plays on
+    /// with `None`. Going back is a seek. An empty range is no loop.
+    pub fn set_loop(&mut self, range: Option<Range<Ticks>>) {
+        self.send(Command::Transport(TransportCommand::Loop(range)));
     }
 
     /// Replaces the tempo map. Playback keeps its musical position: the tick sequence goes on

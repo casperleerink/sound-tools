@@ -114,7 +114,8 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Time signatures are runs of whole bars, so a change can only fall on a bar line. Rejected: changes at ticks, which could fall inside a bar.
 - Changing the time signatures moves bar lines, never notes. Keeping bar positions would need a derive that moves every clip, and it would go wrong for clips placed off the bar lines.
 - Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
-- The core holds no scheduled events. Timeline processors make their events block by block from the transport, so a seek has nothing to invalidate and timing never depends on the control thread. Seeking does not replay skipped events.
+- The core holds no scheduled events. Timeline processors make their events block by block from the transport, so a seek has nothing to invalidate and timing never depends on the control thread.
+- The loop goes back by a seek on the frame of its end, so processors need no loop code. With latency that leaves a gap as long as the latency. Rejected: wrapping each processor ahead of the device, far more transport code.
 - The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.
 - A routing edit keeps the state of surviving processors. Removing a processor is a hard switch, no crossfade.
 - The graph has no cycles. A connection that closes one is left out and reported, and the rest plays. Which one is left out is fixed, so the same one goes on every open and a sidechain mistake usually mutes only a detector.

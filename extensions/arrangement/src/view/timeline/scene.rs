@@ -14,6 +14,7 @@ use sound_ui::components::audio_clip::{
 };
 use sound_ui::{ActiveTheme, Waveforms, typography};
 
+use super::loop_bar::{LoopBar, paint_loop_bar};
 use crate::view::gesture::{Zone, zone_at};
 use crate::view::layout::{
     DOT_LEFT, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT, NAME_LEFT, NAME_MIDDLE, RULER_HEIGHT, Rect,
@@ -184,6 +185,7 @@ pub struct Scene {
     /// Where each tempo change is in the ruler, across: filled by the paint, which measures
     /// the labels, and hit by a press.
     pub(super) tempo_zones: Vec<(Ticks, Range<f32>)>,
+    pub(super) loop_bar: LoopBar,
     /// The rectangle of a drag on empty space.
     pub(super) marquee: Option<Rect>,
     /// Where dropped files would go.
@@ -341,8 +343,10 @@ pub(super) fn paint_scene(
         size(ruler.size.width, headers.size.height),
     );
 
-    // The ruler: a short mark and a number per bar, and the tempo changes. No grid below it.
+    // The ruler: a short mark and a number per bar, the loop and the tempo changes. No grid
+    // below it.
     paint_ruler(&scene.bars, ruler, window, cx);
+    paint_loop_bar(&scene.loop_bar, ruler, window, cx);
     scene.tempo_zones = paint_tempo_marks(&scene.tempo, &scene.bars, ruler, window, cx);
 
     window.with_content_mask(Some(ContentMask { bounds: headers }), |window| {

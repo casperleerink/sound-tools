@@ -1,9 +1,10 @@
-//! The tempo in the transport and the click, driven with the real mouse and keys, and the
-//! arrangement view following the playhead.
+//! The tempo in the transport, the click and the loop in the ruler, driven with the real mouse
+//! and keys, and the arrangement view following the playhead.
 
 use arrangement::view::layout::{HEADER_WIDTH, Viewport};
 use gpui::{Point, TestAppContext, point, px};
 use sound_core::Ticks;
+use sound_ui::Loop;
 
 use crate::support::{self, BAR, Opened};
 
@@ -221,6 +222,68 @@ fn toggling_the_click_adds_no_undo_step_and_writes_no_record(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn the_loop_is_dragged_on_the_grid_a_click_turns_it_on_and_playback_goes_round(
+    cx: &mut TestAppContext,
+) {
+    let mut opened = open(cx);
+    let before = support::files(&opened.path(""));
+    let off = |bars: std::ops::Range<u64>| Loop {
+        range: Ticks(bars.start * BAR)..Ticks(bars.end * BAR),
+        on: false,
+    };
+    assert_eq!(looped(&mut opened), off(0..4));
+
+    // The body by two bars, then each edge by one, a little inside it.
+    let (from, to) = (
+        loop_bar(&mut opened, 2 * BAR),
+        loop_bar(&mut opened, 4 * BAR),
+    );
+    opened.drag(from, to);
+    assert_eq!(looped(&mut opened), off(2..6));
+    let inside = point(px(2.), px(0.));
+    let (from, to) = (
+        loop_bar(&mut opened, 6 * BAR),
+        loop_bar(&mut opened, 7 * BAR),
+    );
+    opened.drag(from - inside, to - inside);
+    assert_eq!(looped(&mut opened), off(2..7));
+    let (from, to) = (
+        loop_bar(&mut opened, 2 * BAR),
+        loop_bar(&mut opened, 3 * BAR),
+    );
+    opened.drag(from + inside, to + inside);
+    assert_eq!(looped(&mut opened), off(3..7));
+
+    let middle = loop_bar(&mut opened, 5 * BAR);
+    opened.click(middle);
+    assert_eq!(
+        looped(&mut opened),
+        Loop {
+            on: true,
+            ..off(3..7)
+        }
+    );
+
+    // Half a bar before its end, a bar of playback ends half a bar after its start.
+    opened.session.update(opened.cx, |session, _| {
+        session.engine().seek(Ticks(6 * BAR + BAR / 2));
+        session.engine().play();
+    });
+    opened.render(96_000);
+    opened.settle();
+    let tick = opened.playhead().tick.0;
+    assert!(
+        (3 * BAR + BAR / 2..3 * BAR + BAR / 2 + 10).contains(&tick),
+        "{tick}"
+    );
+
+    opened.click(middle);
+    assert_eq!(looped(&mut opened), off(3..7));
+    assert_eq!(opened.undo_label(), None, "the loop is not an edit");
+    assert_eq!(support::files(&opened.path("")), before);
+}
+
+#[gpui::test]
 fn the_view_pages_forward_while_playing_and_a_jump_brings_the_playhead_back(
     cx: &mut TestAppContext,
 ) {
@@ -275,6 +338,18 @@ fn scrolling_the_playhead_off_screen_stops_the_following_until_the_next_jump(
     opened.settle();
     assert!(scroll(&mut opened) > 0.0);
     assert!(shows_playhead(&mut opened));
+}
+
+/// A place on the loop bar, at the bottom of the ruler, at `tick`.
+fn loop_bar(opened: &mut Opened<'_>, tick: u64) -> Point<gpui::Pixels> {
+    opened.ruler(tick) + point(px(0.), px(10.))
+}
+
+fn looped(opened: &mut Opened<'_>) -> Loop {
+    let session = opened.session.clone();
+    opened
+        .cx
+        .read(|cx| session.read(cx).looped().read(cx).clone())
 }
 
 fn play(opened: &mut Opened<'_>) {

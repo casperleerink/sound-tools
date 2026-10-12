@@ -3,7 +3,7 @@
 //! resized, copied, pasted and deleted here with the mouse and the keys, an audio clip is
 //! trimmed, faded and turned up or down from its handles, audio files are dropped in from the
 //! Finder, a track is renamed in its header and deleted with backspace, tempo changes are added
-//! and removed in the ruler, and the snap setting sits in the corner. Under a track its
+//! and removed in the ruler, the loop is set there, and the snap setting sits in the corner. Under a track its
 //! automation lanes show at the toggle in its header, where lanes are added and their points
 //! added, moved, deleted and erased ([`super::track_lanes`]).
 //!
@@ -18,6 +18,7 @@
 //! - `clipboard`: copy, paste, duplicate, delete and nudge.
 //! - `file_drop`: audio files dropped from the Finder.
 //! - `lanes`: the automation lanes, their add menus and their points.
+//! - `loop_bar`: the loop in the ruler.
 
 mod build;
 mod clipboard;
@@ -25,6 +26,7 @@ mod drag;
 mod file_drop;
 mod keys;
 mod lanes;
+mod loop_bar;
 mod mouse;
 mod scene;
 mod state;
@@ -204,6 +206,8 @@ impl Timeline {
         // here.
         let recording = session.read(cx).recording().clone();
         cx.observe(&recording, |_, _, cx| cx.notify()).detach();
+        let looped = session.read(cx).looped().clone();
+        cx.observe(&looped, |_, _, cx| cx.notify()).detach();
         // A waveform whose overview was being made is drawn when it is ready.
         let waveforms = Waveforms::entity(cx);
         cx.observe(&waveforms, |_, _, cx| cx.notify()).detach();
@@ -263,7 +267,7 @@ impl Timeline {
                         // So is the track of a lane being drawn.
                         Held::Track(drag) => drag.track == *id,
                         Held::Lane(drag) => drag.track.id() == id,
-                        Held::Nothing | Held::Marquee(_) => false,
+                        Held::Nothing | Held::Marquee(_) | Held::Loop(_) => false,
                     };
                     if ends {
                         timeline.end_drag(cx);
@@ -420,10 +424,12 @@ impl Timeline {
 
     fn clamped(&self, viewport: Viewport, width: f32, height: f32, cx: &App) -> Viewport {
         // The playhead runs past the end of the piece, and the view follows it there, so the
-        // scroll room reaches at least that far. Playback does not stop at the end yet.
+        // scroll room reaches at least that far, and as far as the loop. Playback does not stop
+        // at the end yet.
         let end = self.ends.values().max().copied().unwrap_or_default();
+        let looped = self.session.read(cx).looped().read(cx).range.end;
         let extent = Extent {
-            end: end.max(self.playhead.read(cx).tick),
+            end: end.max(self.playhead.read(cx).tick).max(looped),
             height: self.rows(cx).height(),
         };
         viewport.clamped(extent, self.time_signatures(cx), width, height)

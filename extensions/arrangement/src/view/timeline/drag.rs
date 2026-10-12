@@ -44,6 +44,7 @@ impl Timeline {
             }
             Held::Track(drag) => self.drag_track(drag, y, cx),
             Held::Lane(drag) => self.drag_lane(drag, x, y, modifiers, cx),
+            Held::Loop(drag) => self.drag_loop(drag, x, modifiers, cx),
         };
         self.settle(held, after, cx);
     }
@@ -99,7 +100,7 @@ impl Timeline {
         let again = match &self.held {
             Held::Clips(_, kind) => matches!(kind, ClipDragKind::Move(_)),
             Held::Lane(drag) => matches!(drag.kind, LaneDragKind::Point { moving: true, .. }),
-            Held::Nothing | Held::Marquee(_) | Held::Track(_) => false,
+            Held::Nothing | Held::Marquee(_) | Held::Track(_) | Held::Loop(_) => false,
         };
         if again {
             self.drag_held(x, y, modifiers, cx);
