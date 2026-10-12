@@ -87,7 +87,7 @@ How the engine keeps to that:
 - Recording is tested with a simulated input device and output timing. No test needs real hardware.
 - The two snapshot tests render the component gallery and the window to PNGs without a display. Look at the PNGs after a UI change. `WINDOW_SNAPSHOT_ONLY` picks a subset of window states.
 - A file under `tests/` with helper functions starts with `#![allow(clippy::unwrap_used)]`, because `allow-unwrap-in-tests` covers only `#[test]` functions.
-- While working, test the crates you changed: `cargo nextest run -p <crate>`. Run the whole workspace once, before the PR. A workspace run takes about a minute; most of it is compiling and linking.
+- Test the crates you changed and the crates that use what you changed: `cargo nextest run -p <crate>`. Don't run the whole workspace locally: the pull request's Linux job runs every test, and main runs them on all three systems.
 
 CI runs the commands of [README.md](README.md), "Checks", with the realtime sanitizer on for the macOS tests. The jobs (lint, test, Linux, Windows) run side by side. Lint and test run on macOS; the Linux and Windows jobs build and run the tests on Ubuntu and Windows. A pull request runs only lint, the Linux tests and clippy on Windows, to stay fast; main runs everything, and a release needs main green on its commit. Add Miri for new unsafe code.
 
