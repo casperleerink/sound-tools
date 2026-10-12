@@ -998,3 +998,32 @@ fn a_streamed_flac_file_plays_from_a_wav_decoded_next_to_it_once() {
     let again = std::fs::metadata(&decoded).unwrap().modified().unwrap();
     assert_eq!(again, written);
 }
+
+/// The regions of a library instrument load on every core at once, and several may name one
+/// FLAC file that was never decoded.
+#[test]
+fn a_flac_file_streamed_from_several_threads_at_once_plays_whole_on_each() {
+    let (_, expected) = read_all(&fixture("stereo-16"));
+    let threads = 8;
+    for round in 0..20 {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("stereo-16.flac");
+        std::fs::copy(fixture("stereo-16"), &path).unwrap();
+        let start = std::sync::Barrier::new(threads);
+        std::thread::scope(|scope| {
+            let loads: Vec<_> = (0..threads)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        sound_media::load_streamed(&path, "streamed")
+                    })
+                })
+                .collect();
+            for load in loads {
+                let audio = load.join().unwrap();
+                let audio = audio.unwrap_or_else(|error| panic!("round {round}: {error}"));
+                assert_eq!(read_in_blocks(&audio), expected, "round {round}");
+            }
+        });
+    }
+}

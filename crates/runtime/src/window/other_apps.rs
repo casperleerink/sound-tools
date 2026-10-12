@@ -8,8 +8,7 @@
 //! they are looked at again, and the tap opens again when they changed: the app started or
 //! quit, or a helper came to play its sound, as a browser starts one.
 //!
-//! A tap closes on the background executor too: Core Audio can take a while to stop its stream
-//! and remove it.
+//! A tap closes on the background executor too, see [`super::drop_in_background`].
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -18,6 +17,8 @@ use std::time::Duration;
 use gpui::{AppContext, Context, Entity, Task};
 use sound_core::{AppSound, DeviceError, InputDevice, LiveInput, ProjectEvent};
 use sound_ui::Session;
+
+use super::drop_in_background;
 
 /// How often the processes of the apps are looked at again.
 const CHECK_INTERVAL: Duration = Duration::from_secs(2);
@@ -55,11 +56,6 @@ struct Tapped {
     processes: Vec<u32>,
     /// `None` for a tap at another rate than the output, which closed.
     _stream: Option<Box<dyn Send>>,
-}
-
-/// Drops a tap or its stream on the background executor, see the module doc.
-fn close(tap: impl Send + 'static, cx: &mut Context<OtherApps>) {
-    cx.background_spawn(async move { drop(tap) }).detach();
 }
 
 pub struct OtherApps {
@@ -133,7 +129,7 @@ impl OtherApps {
                 session.background(cx, |project| project.set_app_sound(app, None))
             });
         }
-        close(gone, cx);
+        drop_in_background(gone, cx);
         self.opening.retain(|app, _| heard.contains(app));
         for app in heard {
             if !self.taps.contains_key(&app) && !self.opening.contains_key(&app) {
@@ -175,7 +171,7 @@ impl OtherApps {
     ) {
         if self.opening.get(&app) != Some(&opening) {
             if let Ok((stream, _)) = opened {
-                close(stream, cx);
+                drop_in_background(stream, cx);
             }
             return;
         }
@@ -184,7 +180,7 @@ impl OtherApps {
         let (stream, sound) = match opened {
             Ok((stream, live)) if live.sample_rate() == rate => (Some(stream), Ok(live)),
             Ok((stream, live)) => {
-                close(stream, cx);
+                drop_in_background(stream, cx);
                 (None, Ok(live))
             }
             Err(error) => (None, Err(error.to_string())),
@@ -194,7 +190,7 @@ impl OtherApps {
             _stream: stream,
         };
         if let Some(before) = self.taps.insert(app.clone(), tapped) {
-            close(before, cx);
+            drop_in_background(before, cx);
         }
         self.session.update(cx, |session, cx| {
             session.background(cx, |project| project.set_app_sound(&app, Some(sound)))
