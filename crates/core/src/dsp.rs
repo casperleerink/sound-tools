@@ -197,6 +197,7 @@ impl<const N: usize> Taps<N> {
 
 /// The next state of a xorshift32 generator: a fixed sequence of numbers that looks random, for
 /// noise that is the same on every render. A state of 0 stays 0, so a seed must not be 0.
+#[inline]
 pub fn xorshift32(mut state: u32) -> u32 {
     state ^= state << 13;
     state ^= state >> 17;
