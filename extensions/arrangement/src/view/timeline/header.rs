@@ -17,7 +17,7 @@ const AUTOMATION: &str = "Automation";
 /// inside it, 4 pt apart.
 const LANES_LEFT: f32 = HEADER_INSET + 4.;
 const SOLO_LEFT: f32 = HEADER_WIDTH - HEADER_INSET - 4. - toggle::LETTER_WIDTH;
-const MUTE_LEFT: f32 = SOLO_LEFT - 4. - toggle::LETTER_WIDTH;
+pub(in crate::view) const MUTE_LEFT: f32 = SOLO_LEFT - 4. - toggle::LETTER_WIDTH;
 pub(in crate::view) const ARM_LEFT: f32 = MUTE_LEFT - 4. - toggle::HEIGHT;
 
 /// What a mute or solo toggle sets, and its undo steps when it turns off and on.
