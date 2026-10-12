@@ -12,6 +12,7 @@ use sound_notes::Clip;
 use sound_ui::DragEdit;
 use sound_ui::components::text_input::TextInput;
 
+use super::loop_bar::LoopDrag;
 use crate::view::layout::Rows;
 use crate::{AudioClip, AutomationLane, TrackKind, TrackState};
 
@@ -64,6 +65,8 @@ pub(super) struct MoveDrag {
     pub(super) lanes_written: BTreeSet<InstanceId>,
     /// Where the clips that take automation along put it, as the last mouse move wrote it.
     pub(super) ghosts: Vec<LaneGhost>,
+    /// Alt held at the press: the drag moves copies, see `Timeline::drag_move`.
+    pub(super) copy: bool,
 }
 
 /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:
@@ -250,13 +253,14 @@ pub(super) enum Held {
     Marquee(Marquee),
     Track(TrackDrag),
     Lane(LaneDrag),
+    Loop(LoopDrag),
 }
 
 impl Held {
     /// The gesture of the session it may have opened, which then ends with it.
     pub(super) fn edit(&mut self) -> Option<&mut DragEdit> {
         match self {
-            Held::Nothing | Held::Marquee(_) => None,
+            Held::Nothing | Held::Marquee(_) | Held::Loop(_) => None,
             Held::Clips(drag, _) => Some(&mut drag.edit),
             Held::Track(drag) => Some(&mut drag.edit),
             Held::Lane(drag) => Some(&mut drag.edit),

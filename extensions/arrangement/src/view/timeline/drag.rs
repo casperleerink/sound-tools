@@ -44,6 +44,7 @@ impl Timeline {
             }
             Held::Track(drag) => self.drag_track(drag, y, cx),
             Held::Lane(drag) => self.drag_lane(drag, x, y, modifiers, cx),
+            Held::Loop(drag) => self.drag_loop(drag, x, modifiers, cx),
         };
         self.settle(held, after, cx);
     }
@@ -59,8 +60,7 @@ impl Timeline {
 
     /// One mouse move of a drag: the clips become what the pointer says, through the gesture
     /// of the session, so sound and every other view follow. Cmd held is no snap. Shift held
-    /// moves the gain ten times finer. Alt held leaves the automation where it is when a clip
-    /// moves.
+    /// moves the gain ten times finer, and leaves the automation where it is when a clip moves.
     fn drag_to(
         &mut self,
         drag: &mut ClipDrag,
@@ -76,7 +76,7 @@ impl Timeline {
         };
         match kind {
             ClipDragKind::Move(moving) => {
-                self.drag_move(drag, moving, (x, y), grid, modifiers.alt, cx)
+                self.drag_move(drag, moving, (x, y), grid, modifiers.shift, cx)
             }
             ClipDragKind::Resize(resize) => self.drag_resize(drag, resize, x, grid, cx),
             ClipDragKind::Trim(trim) => self.drag_trim(drag, trim, x, grid, cx),
@@ -85,7 +85,7 @@ impl Timeline {
         }
     }
 
-    /// Alt pressed or let go during a move of clips, or shift or cmd during a move of a point:
+    /// Shift pressed or let go during a move of clips, or shift or cmd during a move of a point:
     /// the move again where the pointer is, so the automation goes along or stays, or the point
     /// takes its axis or the grid, at once and not at the next mouse move.
     pub(super) fn modifiers_changed(
@@ -99,7 +99,7 @@ impl Timeline {
         let again = match &self.held {
             Held::Clips(_, kind) => matches!(kind, ClipDragKind::Move(_)),
             Held::Lane(drag) => matches!(drag.kind, LaneDragKind::Point { moving: true, .. }),
-            Held::Nothing | Held::Marquee(_) | Held::Track(_) => false,
+            Held::Nothing | Held::Marquee(_) | Held::Track(_) | Held::Loop(_) => false,
         };
         if again {
             self.drag_held(x, y, modifiers, cx);
@@ -228,6 +228,9 @@ impl Timeline {
     /// audio clip on audio tracks only: over a track one of them cannot go on, they stay on
     /// the rows where they last could. Each clip takes the automation under it along, and
     /// with `alone` it leaves it where it is.
+    ///
+    /// A copy moves copies of the clips, which it makes at the first move, and the clips stay.
+    /// Back where they were, the copies go again.
     fn drag_move(
         &mut self,
         drag: &mut ClipDrag,
@@ -245,8 +248,13 @@ impl Timeline {
             tracks,
             lanes_written,
             ghosts,
+            copy,
         } = moving;
-        let label = plural(clips.len(), "Move clip", "Move clips");
+        let copy = *copy;
+        let label = match copy {
+            true => plural(clips.len(), "Copy clip", "Copy clips"),
+            false => plural(clips.len(), "Move clip", "Move clips"),
+        };
         let project = self.session.read(cx).project();
         // A clip deleted from outside is left out of the move. When it is the one under the
         // pointer, the drag ends: the delete was the last write.
@@ -322,10 +330,12 @@ impl Timeline {
         if steps.len() != moves.len() {
             return After::Keep;
         }
-        let taken = match alone {
-            true => Moved::default(),
-            false => moved(tracks, &steps, &travel_in(project)),
+        let taken = match (alone, copy) {
+            (true, _) => Moved::default(),
+            (false, false) => moved(tracks, &steps, &travel_in(project)),
+            (false, true) => automation::copied(tracks, &steps, &travel_in(project)),
         };
+        let uncopy = copy && delta == 0 && row_delta == 0;
         let mut lanes = taken.lanes;
         // A track the drag wrote before and leaves now goes back to how it was.
         for track in lanes_written.iter() {
@@ -341,10 +351,13 @@ impl Timeline {
             state.is_none_or(|state| state.automation == *automation)
         });
         let unchanged = same_lanes
-            && moves.iter().all(|step| {
-                step.clip.parent().as_ref() == Some(step.to.id())
-                    && AnyClip::read(project, &step.clip).map(|live| live.start())
-                        == Some(step.next.start())
+            && moves.iter().all(|step| match uncopy {
+                true => step.clip == step.home,
+                false => {
+                    step.clip.parent().as_ref() == Some(step.to.id())
+                        && AnyClip::read(project, &step.clip).map(|live| live.start())
+                            == Some(step.next.start())
+                }
             });
         if unchanged {
             return After::Keep;
@@ -353,7 +366,10 @@ impl Timeline {
             .edit
             .publish(&self.session, label, cx, |project, edit| {
                 let mut changes = Changes::new();
-                let moved = move_records(project, &mut changes, moves)?;
+                let moved = match uncopy {
+                    true => uncopied(&mut changes, moves),
+                    false => move_records(project, &mut changes, moves, copy)?,
+                };
                 automation::write(project, &mut changes, lanes);
                 project.publish(edit, changes)?;
                 Ok(moved)
@@ -612,4 +628,13 @@ impl Timeline {
         }
         After::Keep
     }
+}
+
+/// Deletes the copies of a copy that came back to where it began. Gives the clips it copied.
+fn uncopied(changes: &mut Changes, moves: Vec<ClipMove>) -> Vec<InstanceId> {
+    let copies = moves.iter().filter(|step| step.clip != step.home);
+    for step in copies {
+        changes.delete(&step.clip);
+    }
+    moves.into_iter().map(|step| step.home).collect()
 }

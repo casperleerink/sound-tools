@@ -802,7 +802,12 @@ impl Opened<'_> {
         self.press_with(position, click_count, Modifiers::default());
     }
 
-    fn press_with(&mut self, position: Point<Pixels>, click_count: usize, modifiers: Modifiers) {
+    pub(crate) fn press_with(
+        &mut self,
+        position: Point<Pixels>,
+        click_count: usize,
+        modifiers: Modifiers,
+    ) {
         self.cx.simulate_mouse_move(position, None, modifiers);
         self.cx.simulate_event(MouseDownEvent {
             position,

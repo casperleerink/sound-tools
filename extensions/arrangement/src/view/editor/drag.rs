@@ -109,6 +109,7 @@ impl NoteEditor {
                 grab,
                 grab_pitch,
                 grabbed,
+                ..
             } => {
                 let semitones = i32::from(nearest_pitch(&viewport, y).number())
                     - i32::from(grab_pitch.number());
@@ -130,6 +131,15 @@ impl NoteEditor {
             }
             NoteDragKind::DrawVelocity { .. } | NoteDragKind::Expression { .. } => Vec::new(),
         };
+        if let NoteDragKind::Move {
+            copy: true,
+            grabbed,
+            ..
+        } = drag.kind
+        {
+            self.drag = Some(drag);
+            return self.copy_to(next, grabbed, cx);
+        }
         let changes: Vec<(usize, Note, Note)> = indices
             .into_iter()
             .zip(&drag.notes)
@@ -158,6 +168,67 @@ impl NoteEditor {
         }
         self.drag = Some(drag);
         self.write(changes, cx);
+        if let Some(note) = sounds {
+            self.preview(note.pitch, note.velocity, cx);
+        }
+    }
+
+    /// One mouse move of a copy: the notes stay, and their copies become `next`. Back where
+    /// the notes are, the copies go again. The copy of `grabbed` sounds when its pitch changes.
+    fn copy_to(&mut self, next: Vec<Note>, grabbed: Note, cx: &mut Context<Self>) {
+        let Some(drag) = &mut self.drag else {
+            return;
+        };
+        let back = drag
+            .notes
+            .iter()
+            .zip(&next)
+            .all(|(tracked, next)| tracked.origin == *next);
+        // Every note moves by the same distance, so there are copies of all of them or of none.
+        let copied = drag
+            .notes
+            .iter()
+            .any(|tracked| tracked.written != tracked.origin);
+        let had: Vec<Note> = match copied {
+            true => drag.notes.iter().map(|tracked| tracked.written).collect(),
+            false => Vec::new(),
+        };
+        let wanted = match back {
+            true => Vec::new(),
+            false => next,
+        };
+        if had == wanted {
+            return;
+        }
+        let label = drag.kind.label(drag.notes.len());
+        let instance = self.clip.clone();
+        let added = wanted.clone();
+        let published = drag
+            .edit
+            .publish(&self.session, label, cx, |project, edit| {
+                project.update(edit, &instance, |clip| {
+                    let mut gone: Vec<usize> = located(clip, had).into_iter().flatten().collect();
+                    gone.sort_unstable_by(|a, b| b.cmp(a));
+                    for index in gone {
+                        clip.notes.remove(index);
+                    }
+                    clip.notes.extend(added);
+                })
+            });
+        if published.is_none() {
+            return;
+        }
+        let mut pairs = Vec::new();
+        let mut sounds = None;
+        for (index, tracked) in drag.notes.iter_mut().enumerate() {
+            let now = wanted.get(index).copied().unwrap_or(tracked.origin);
+            if tracked.origin == grabbed && now.pitch != tracked.written.pitch {
+                sounds = Some(now);
+            }
+            pairs.push((tracked.written, now));
+            tracked.written = now;
+        }
+        self.follow_selection(&pairs, cx);
         if let Some(note) = sounds {
             self.preview(note.pitch, note.velocity, cx);
         }

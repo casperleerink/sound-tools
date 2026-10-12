@@ -322,8 +322,8 @@ fn the_ghost_of_a_drag_is_the_drop(cx: &mut TestAppContext) {
     opened.drag_to(to);
     assert!(automation_moves(&mut opened));
     assert_eq!(lanes(&mut opened), expected);
-    // Alt leaves the automation, and the hint goes.
-    opened.drag_to_with(to, alt());
+    // Shift leaves the automation, and the hint goes.
+    opened.drag_to_with(to, shift());
     assert!(!automation_moves(&mut opened));
     opened.drag_to(to);
     assert!(automation_moves(&mut opened));

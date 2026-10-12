@@ -78,6 +78,7 @@
 //!   selected on two tracks.
 //! - `arrangement-tempo.png`: the same with the tempo change of bar 5 clicked: selected, and the
 //!   playhead and the transport on it.
+//! - `arrangement-loop.png`: the same with the loop on, over bars 3 to 6.
 //! - `arrangement-snap.png`: the snap setting open in the corner above the track headers.
 //! - `arrangement-rename.png`: the name field open in the header of the bass.
 //! - `arrangement-time-signatures.png`: the piece with a time signature that changes almost
@@ -140,7 +141,7 @@ use sound_core::{
     Ticks, TimeSignature,
 };
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
-use sound_ui::{Assets, Session};
+use sound_ui::{Assets, Loop, Session};
 use tempfile::TempDir;
 
 use plugin_hosts::test_plugin_host;
@@ -1282,6 +1283,22 @@ fn main() -> Result<()> {
         "the tempo mark was not hit"
     );
     save(&mut cx, &editing, "arrangement-tempo")?;
+
+    let set_loop = |on: bool, cx: &mut HeadlessAppContext| {
+        let looped = Loop {
+            range: Ticks(2 * BAR)..Ticks(6 * BAR),
+            on,
+        };
+        cx.update(|cx| {
+            editing
+                .session
+                .update(cx, |session, cx| session.set_loop(looped, cx))
+        });
+        cx.run_until_parked();
+    };
+    set_loop(true, &mut cx);
+    save(&mut cx, &editing, "arrangement-loop")?;
+    set_loop(false, &mut cx);
 
     // The snap setting open in the corner above the track headers.
     let corner = point(px(HEADER_WIDTH - 40.), px(48. + RULER_HEIGHT / 2.));

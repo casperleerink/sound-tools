@@ -12,6 +12,7 @@ use sound_ui::components::audio_clip::ClipHandle;
 use sound_ui::{ActiveTheme, LiveBody, LiveSound};
 
 use super::Timeline;
+use super::loop_bar::LoopBar;
 use super::scene::{
     AudioShape, Body, ClipShape, Ghosts, LanePoint, LaneShape, PointKey, Scene, Sound, TempoMark,
     TrackRow,
@@ -55,6 +56,7 @@ impl Timeline {
         let theme = cx.theme();
         let tempo_map = &project.project_file().tempo_map;
         let time_signatures = tempo_map.time_signatures();
+        let looped = self.session.read(cx).looped().read(cx);
         // Clamped again for this size: the window may have grown since the last scroll.
         let viewport = self.clamped(self.viewport, width, height, cx);
         let visible_ticks = viewport.visible_ticks(width);
@@ -98,6 +100,10 @@ impl Timeline {
             bars: viewport.ruler_bars(time_signatures, width),
             tempo,
             tempo_zones: Vec::new(),
+            loop_bar: LoopBar {
+                x: viewport.x_of(looped.range.start)..viewport.x_of(looped.range.end),
+                on: looped.on,
+            },
             marquee,
             ghosts: self.ghosts(&viewport, &layout, project),
             assets: project.assets().clone(),

@@ -25,9 +25,10 @@ pub struct Transport<'a> {
     /// The previous block played and this one does not: a pause or a stop. Set for one block.
     /// The ranges are empty from here on, so release held notes now or they sound forever.
     pub stopped_playing: bool,
-    /// The position moved by a seek or a stop since the previous block, or the latency after
-    /// this processor changed, which moves where its blocks are, or a play from rest in a
-    /// project with latency. Set for one block. `EngineStatus::jumps` counts only seeks and stops. Nothing
+    /// The position moved by a seek, a stop or a loop back since the previous block, or the
+    /// latency after this processor changed, which moves where its blocks are, or a play from
+    /// rest in a project with latency. Set for one block. `EngineStatus::jumps` counts only
+    /// seeks, stops and loop backs. Nothing
     /// between the old and the new position is replayed. Each processor decides what to do,
     /// for example release its held notes.
     pub jumped: bool,
@@ -82,12 +83,13 @@ impl Transport<'_> {
 }
 
 /// The transport operations, as messages to the audio thread.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum TransportCommand {
     Play,
     Pause,
     Stop,
     Seek(Ticks),
+    Loop(Option<Range<Ticks>>),
 }
 
 pub(crate) struct TransportState {
@@ -116,6 +118,8 @@ pub(crate) struct TransportState {
     latency: u64,
     /// The tick of `position` at the start of the block, for [`Transport::heard_tick`].
     heard_tick: Ticks,
+    /// When the device reaches the end of this range, playback seeks to its start. Never empty.
+    looped: Option<Range<Ticks>>,
     clock: Arc<Clock>,
 }
 
@@ -132,11 +136,12 @@ impl TransportState {
             resumed: false,
             latency: 0,
             heard_tick: Ticks(0),
+            looped: None,
             clock,
         }
     }
 
-    pub(crate) fn apply(&mut self, command: TransportCommand) {
+    pub(crate) fn apply(&mut self, command: &TransportCommand) {
         match command {
             TransportCommand::Play => {
                 self.started |= !self.playing;
@@ -147,7 +152,10 @@ impl TransportState {
                 self.playing = false;
                 self.jump_to(Frames(0));
             }
-            TransportCommand::Seek(tick) => self.jump_to(self.clock.frame_of(tick)),
+            TransportCommand::Seek(tick) => self.jump_to(self.clock.frame_of(*tick)),
+            TransportCommand::Loop(range) => {
+                self.looped = range.clone().filter(|range| !range.is_empty());
+            }
         }
     }
 
@@ -174,12 +182,26 @@ impl TransportState {
         self.latency
     }
 
-    /// A seek or a stop since the last block: what the engine status counts as a jump.
+    /// Frames the device plays before playback reaches the end of the loop, so a sub-block can
+    /// end there. `None` with no loop, while stopped, and from the end of the loop on: a seek
+    /// past it plays on. Call after [`Self::begin_block`], which sets the preroll.
+    pub(crate) fn frames_to_loop_end(&self) -> Option<u64> {
+        let looped = self.looped.as_ref().filter(|_| self.playing)?;
+        let end = self.clock.frame_of(looped.end);
+        let left = end
+            .0
+            .checked_sub(self.position.0)
+            .filter(|left| *left > 0)?;
+        Some(left.saturating_add(self.preroll))
+    }
+
+    /// A seek, a stop or a loop back since the last block: what the engine status counts as a
+    /// jump.
     pub(crate) fn seek_or_stop(&self) -> bool {
         self.jumped
     }
 
-    /// Call once per block, before any [`Self::view`].
+    /// Call once per sub-block, before any [`Self::view`].
     ///
     /// A play from rest in a project with latency starts like a seek to where the project
     /// stands: the tracks with latency went quiet when it stopped, and would otherwise miss
@@ -260,14 +282,25 @@ impl TransportState {
 
     /// Call after the block ran, with the frames it had. Returns how many of them the device
     /// played while it waited after a play or a seek.
+    ///
+    /// A block that reaches the end of the loop seeks to its start, also one that starts right
+    /// on it, where a tempo change can put the position. With latency that waits like any
+    /// seek, so the loop has a gap as long as the latency.
     pub(crate) fn finish_block(&mut self, frames: usize) -> u64 {
         let advance = if self.playing { frames as u64 } else { 0 };
         let waited = advance.min(self.preroll);
         self.preroll -= waited;
+        let before = self.position;
         self.position = Frames(self.position.0.saturating_add(advance - waited));
         self.was_playing = self.playing;
         self.jumped = false;
         self.resumed = false;
+        if let Some(looped) = &self.looped {
+            let end = self.clock.frame_of(looped.end);
+            if before <= end && self.position >= end && self.position > before {
+                self.jump_to(self.clock.frame_of(looped.start));
+            }
+        }
         waited
     }
 }
