@@ -1,7 +1,7 @@
 //! Watches the project folder and groups what changed together.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
@@ -34,6 +34,13 @@ impl Watcher {
     fn hear(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         self.pending.extend(paths);
         self.last_event = Instant::now();
+    }
+
+    /// Watches a folder from scratch. inotify watches every folder on its own, so a folder
+    /// made while the system dropped events is not watched until then.
+    fn watch_again(&mut self, folder: &Path) -> notify::Result<()> {
+        self.watcher.unwatch(folder)?;
+        self.watcher.watch(folder, RecursiveMode::Recursive)
     }
 }
 
@@ -79,17 +86,12 @@ impl Project {
             // Tried once: a watch that fails is reported and not tried on every poll.
             watcher.assets_watched = true;
             watcher.watcher.watch(&assets, RecursiveMode::Recursive)?;
-            watcher.hear([assets]);
+            watcher.hear([assets.clone()]);
         }
+        let mut rescan = false;
         loop {
             match watcher.events.try_recv() {
-                // The system dropped events, such as in the burst of a branch switch, so any
-                // file may have changed. Reading them all again finds the ones that did.
-                Ok(Ok(event)) if event.need_rescan() => watcher.hear([
-                    self.storage.root().join(PROJECT_FILE),
-                    self.storage.state_folder(),
-                    self.assets.path_of_folder(),
-                ]),
+                Ok(Ok(event)) if event.need_rescan() => rescan = true,
                 Ok(Ok(event)) => {
                     // Reading a file changes nothing the project cares about.
                     if !event.kind.is_access() {
@@ -98,6 +100,17 @@ impl Project {
                 }
                 Ok(Err(error)) => return Err(error.into()),
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
+        // The system dropped events, such as in the burst of a branch switch, so any file may
+        // have changed. Reading them all again finds the ones that did.
+        if rescan {
+            let state = self.storage.state_folder();
+            let project_file = self.storage.root().join(PROJECT_FILE);
+            watcher.hear([project_file, state.clone(), assets.clone()]);
+            watcher.watch_again(&state)?;
+            if watcher.assets_watched {
+                watcher.watch_again(&assets)?;
             }
         }
         if watcher.pending.is_empty() || watcher.last_event.elapsed() < GROUPING_WINDOW {
