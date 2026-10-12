@@ -414,27 +414,16 @@ fn apply(state: &SamplerState, context: &mut BehaviourContext<'_>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    use sound_core::{check_doc_ranges, check_parameter_ranges};
+
     use super::*;
 
     /// The agent doc gives the ranges to agents, and the defaults in an example that another test
     /// loads. They are checked against the one definition, so they cannot drift from it.
     #[test]
     fn the_docs_give_the_range_of_every_parameter() {
-        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
-        for (name, doc) in docs {
-            for Parameter {
-                field, min, max, ..
-            } in PARAMETERS
-            {
-                let row = format!("| `{field}` |");
-                let row = doc.lines().find(|line| line.starts_with(&row));
-                let row = row.unwrap_or_else(|| panic!("{name} has no row for {field}"));
-                assert!(
-                    row.contains(&format!("| {min} to {max} |")),
-                    "{name}: {row}"
-                );
-            }
-        }
+        let doc = include_str!("../agent-doc.md");
+        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
     }
 
     /// The library doc lists every instrument of the catalog with the disk it takes,
@@ -455,20 +444,11 @@ mod tests {
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {
-        for parameter in PARAMETERS {
-            for value in [parameter.min, parameter.default, parameter.max] {
-                let mut state = SamplerState::default();
-                (parameter.set)(&mut state, value);
-                assert_eq!((parameter.get)(&state), value);
-                assert_eq!(state.validate(), Ok(()));
-            }
-        }
-        for (field, value) in [("attack_seconds", 20.0), ("gain_db", 30.0)] {
-            let mut state = SamplerState::default();
-            let parameter = PARAMETERS.iter().find(|p| p.field == field).unwrap();
-            (parameter.set)(&mut state, value);
-            assert!(state.validate().is_err_and(|error| error.contains(field)));
-        }
+        let state = SamplerState::default();
+        assert_eq!(
+            check_parameter_ranges(&state, &PARAMETERS, |state| state),
+            Ok(())
+        );
     }
 
     #[test]

@@ -319,6 +319,8 @@ fn apply(state: &EqState, context: &mut BehaviourContext<'_>) -> Result<(), Beha
 
 #[cfg(test)]
 mod tests {
+    use sound_core::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+
     use super::*;
 
     fn row<'a>(name: &str, doc: &'a str, field: &str) -> &'a str {
@@ -338,23 +340,13 @@ mod tests {
             .map(|parameter| parameter.default.to_string());
         let shapes = SHAPES.map(|shape| format!("`\"{}\"`", snake_case(shape)));
         for (name, doc) in docs {
-            let ranges = [&FREQUENCIES[0], &GAIN, &Q].map(|parameter| {
-                let (field, min, max) = (parameter.field, parameter.min, parameter.max);
-                (field, format!("| {min} to {max} |"))
-            });
-            let output = (OUTPUT_GAIN.field, {
-                let (min, max) = (OUTPUT_GAIN.min, OUTPUT_GAIN.max);
-                format!("| {min} to {max} |")
-            });
-            for (field, range) in ranges.into_iter().chain([output]) {
-                let row = row(name, doc, field);
-                assert!(row.contains(&range), "{name}: {row}");
-            }
+            let band = [&FREQUENCIES[0], &GAIN, &Q];
+            assert_eq!(check_doc_ranges(doc, &band), Ok(()), "{name}");
+            assert_eq!(check_doc_ranges(doc, &[&OUTPUT_GAIN]), Ok(()), "{name}");
+            assert_eq!(check_doc_defaults(doc, &[&GAIN, &Q]), Ok(()), "{name}");
+            assert_eq!(check_doc_defaults(doc, &[&OUTPUT_GAIN]), Ok(()), "{name}");
             let defaults = [
                 (FREQUENCIES[0].field, frequencies.join(", ")),
-                (GAIN.field, GAIN.default.to_string()),
-                (Q.field, Q.default.to_string()),
-                (OUTPUT_GAIN.field, OUTPUT_GAIN.default.to_string()),
                 ("shape", shapes.join(", ")),
             ];
             for (field, default) in defaults {
@@ -378,29 +370,21 @@ mod tests {
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {
+        let state = EqState::default();
         for index in 0..BANDS {
-            for parameter in band_parameters(index) {
-                for value in [parameter.min, parameter.default, parameter.max] {
-                    let mut state = EqState::default();
-                    (parameter.set)(&mut state.bands[index], value);
-                    assert_eq!((parameter.get)(&state.bands[index]), value);
-                    assert_eq!(state.validate(), Ok(()));
-                }
-                let mut state = EqState::default();
-                (parameter.set)(&mut state.bands[index], parameter.max * 2.0 + 1.0);
-                let error = state.validate().unwrap_err();
-                assert!(error.contains(parameter.field), "{error}");
-                assert!(
-                    error.starts_with(&format!("band {}: ", index + 1)),
-                    "{error}"
-                );
-            }
+            let parameters = band_parameters(index);
+            let checked =
+                check_parameter_ranges(&state, &parameters, |state| &mut state.bands[index]);
+            assert_eq!(checked, Ok(()));
         }
-        for value in [OUTPUT_GAIN.min, OUTPUT_GAIN.default, OUTPUT_GAIN.max] {
-            let mut state = EqState::default();
-            (OUTPUT_GAIN.set)(&mut state, value);
-            assert_eq!(state.validate(), Ok(()));
-        }
+        assert_eq!(
+            check_parameter_ranges(&state, &[&OUTPUT_GAIN], |state| state),
+            Ok(())
+        );
+        let mut state = EqState::default();
+        (GAIN.set)(&mut state.bands[1], f32::NAN);
+        let error = state.validate().unwrap_err();
+        assert!(error.starts_with("band 2: "), "{error}");
     }
 
     fn parse(json: &str) -> Result<EqState, String> {

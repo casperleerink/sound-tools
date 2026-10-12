@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use crate::State;
+
 /// One number of the saved state `S`: its field, its range, its default and its scale. A tool
 /// writes one constant per number and nothing else says them again: `validate`, `Default`, the
 /// knobs of its view, what a double click resets to, an automation lane and a test of its docs
@@ -229,6 +231,86 @@ impl Scale {
             Self::Fader => (FADER_DECADE * (position / FADER_UNITY).log10()).min(FADER_TOP_DB),
         }
     }
+}
+
+/// For a tool's tests: whether `validate` of `record` takes the default and both ends of every
+/// parameter, and refuses a value past the top with an error that names the field. So a
+/// default outside its range, or a parameter that `validate` forgets, fails. `of` is the object
+/// of `record` that the parameters belong to, such as one band of an EQ.
+pub fn check_parameter_ranges<R: State, S>(
+    record: &R,
+    parameters: &[&Parameter<S>],
+    of: impl Fn(&mut R) -> &mut S,
+) -> Result<(), String> {
+    for parameter in parameters {
+        let Parameter {
+            field,
+            min,
+            max,
+            default,
+            get,
+            set,
+            ..
+        } = parameter;
+        let with = |value| {
+            let mut record = record.clone();
+            set(of(&mut record), value);
+            record
+        };
+        for value in [*min, *default, *max] {
+            let refused = |error| format!("{field} {value} is refused: {error}");
+            with(value).validate().map_err(refused)?;
+        }
+        let past = max.abs() * 2.0 + 1.0;
+        let mut record = with(past);
+        // A field whose type cannot hold a value past the top, such as a pitch, needs no check.
+        if ValueRange::of(parameter).contains(get(of(&mut record))) {
+            continue;
+        }
+        match record.validate() {
+            Err(error) if error.contains(field) => {}
+            Err(error) => {
+                return Err(format!(
+                    "the error for {field} {past} does not name it: {error}"
+                ));
+            }
+            Ok(()) => return Err(format!("{field} {past} is taken, past the top")),
+        }
+    }
+    Ok(())
+}
+
+/// For a tool's tests: whether the table of an agent doc gives the range of every parameter,
+/// `| min to max |`, in the row that starts with its field.
+pub fn check_doc_ranges<S>(doc: &str, parameters: &[&Parameter<S>]) -> Result<(), String> {
+    check_doc_rows(doc, parameters, |parameter| {
+        format!("| {} to {} |", parameter.min, parameter.max)
+    })
+}
+
+/// [`check_doc_ranges`] for the defaults: `| default |` in the row of every parameter.
+pub fn check_doc_defaults<S>(doc: &str, parameters: &[&Parameter<S>]) -> Result<(), String> {
+    check_doc_rows(doc, parameters, |parameter| {
+        format!("| {} |", parameter.default)
+    })
+}
+
+fn check_doc_rows<S>(
+    doc: &str,
+    parameters: &[&Parameter<S>],
+    cell: impl Fn(&Parameter<S>) -> String,
+) -> Result<(), String> {
+    for parameter in parameters {
+        let field = parameter.field;
+        let start = format!("| `{field}` |");
+        let row = doc.lines().find(|line| line.starts_with(&start));
+        let row = row.ok_or_else(|| format!("the doc has no row for {field}"))?;
+        let cell = cell(parameter);
+        if !row.contains(&cell) {
+            return Err(format!("the row of {field} does not say {cell}: {row}"));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

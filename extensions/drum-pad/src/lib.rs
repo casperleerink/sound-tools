@@ -586,6 +586,8 @@ fn apply(state: &DrumPadState, context: &mut BehaviourContext<'_>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    use sound_core::{check_doc_ranges, check_parameter_ranges};
+
     use super::*;
 
     fn parse(json: &str) -> Result<DrumPadState, String> {
@@ -676,24 +678,17 @@ mod tests {
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {
-        for pad in 0..PADS {
-            for parameter in &PARAMETERS[pad] {
-                for value in [parameter.min, parameter.default, parameter.max] {
-                    let mut state = DrumPadState::default();
-                    (parameter.set)(&mut state.pads[pad], value);
-                    assert_eq!((parameter.get)(&state.pads[pad]), value);
-                    assert_eq!(state.validate(), Ok(()));
-                }
-                let mut state = DrumPadState::default();
-                (parameter.set)(&mut state.pads[pad], parameter.max * 2.0 + 1.0);
-                let error = state.validate().unwrap_err();
-                assert!(error.contains(parameter.field), "{error}");
-                assert!(
-                    error.starts_with(&format!("pad \"{}\": ", note_of(pad))),
-                    "{error}"
-                );
-            }
+        let state = DrumPadState::default();
+        for (pad, parameters) in PARAMETERS.iter().enumerate() {
+            let checked = check_parameter_ranges(&state, &parameters.each_ref(), |state| {
+                &mut state.pads[pad]
+            });
+            assert_eq!(checked, Ok(()));
         }
+        let mut state = DrumPadState::default();
+        (PARAMETERS[1][0].set)(&mut state.pads[1], f32::NAN);
+        let error = state.validate().unwrap_err();
+        assert!(error.starts_with("pad \"37\": "), "{error}");
     }
 
     /// The runtime writes every pad that differs from the kit, each with every field, so an
@@ -733,14 +728,11 @@ mod tests {
     fn the_docs_give_the_kit_and_the_range_of_every_field() {
         let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
         for (name, doc) in docs {
-            for parameter in &PARAMETERS[0] {
-                let row = format!("| `{}` |", parameter.field);
-                let row = doc.lines().find(|line| line.starts_with(&row));
-                let row =
-                    row.unwrap_or_else(|| panic!("{name} has no row for {}", parameter.field));
-                let range = format!("| {} to {} |", parameter.min, parameter.max);
-                assert!(row.contains(&range), "{name}: {row}");
-            }
+            assert_eq!(
+                check_doc_ranges(doc, &PARAMETERS[0].each_ref()),
+                Ok(()),
+                "{name}"
+            );
             for (pad, kit) in KIT.iter().enumerate() {
                 let choke = if kit.choke { "yes" } else { "no" };
                 let row = format!(

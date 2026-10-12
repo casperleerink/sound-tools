@@ -63,6 +63,7 @@ pub use limiter::PeakLimiter;
 pub use oversampling::{Oversampler, OversamplingFilters};
 pub use parameter::{
     AutomatedNumber, FADER_TOP_DB, FADER_UNITY, Parameter, ParameterInfo, Scale, ValueRange,
+    check_doc_defaults, check_doc_ranges, check_parameter_ranges,
 };
 pub use peaks::Peaks;
 pub use processor::{
