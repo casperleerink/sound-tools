@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 
+use super::storage::PROJECT_FILE;
 use super::{Project, ProjectError};
 
 /// File changes with less than this between them apply together, as one undo step. The group
@@ -82,6 +83,13 @@ impl Project {
         }
         loop {
             match watcher.events.try_recv() {
+                // The system dropped events, such as in the burst of a branch switch, so any
+                // file may have changed. Reading them all again finds the ones that did.
+                Ok(Ok(event)) if event.need_rescan() => watcher.hear([
+                    self.storage.root().join(PROJECT_FILE),
+                    self.storage.state_folder(),
+                    self.assets.path_of_folder(),
+                ]),
                 Ok(Ok(event)) => {
                     // Reading a file changes nothing the project cares about.
                     if !event.kind.is_access() {
@@ -98,5 +106,48 @@ impl Project {
         let paths: Vec<PathBuf> = std::mem::take(&mut watcher.pending).into_iter().collect();
         let heard = watcher.last_event;
         self.apply_outside_changes_at(&paths, heard)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::sync::mpsc::channel;
+
+    use notify::event::{Event, EventKind, Flag};
+    use serde::{Deserialize, Serialize};
+
+    use super::GROUPING_WINDOW;
+    use crate::{Engine, EngineConfig, Project, Registry, State};
+
+    #[derive(Clone, PartialEq, Serialize, Deserialize)]
+    struct Note {
+        pitch: u8,
+    }
+
+    impl State for Note {
+        const TOOL: &'static str = "test.note";
+    }
+
+    #[test]
+    fn files_whose_events_the_system_dropped_apply_on_its_rescan() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut registry = Registry::new();
+        registry.tool::<Note>("test").unwrap();
+        let (control, _engine) = Engine::new(EngineConfig::new(48_000, 1));
+        let mut project = Project::open(folder.path(), registry, control).unwrap();
+        project.watch().unwrap();
+        // From here only the test speaks for the system, which drops the event of the write.
+        let (system, events) = channel();
+        project.watcher.as_mut().unwrap().events = events;
+
+        let record = r#"{"tool": "test.note", "state": {"pitch": 60}}"#;
+        std::fs::write(project.root().join("state/note.json"), record).unwrap();
+        let rescan = Event::new(EventKind::Other).set_flag(Flag::Rescan);
+        system.send(Ok(rescan)).unwrap();
+        let heard = project.poll().unwrap();
+        std::thread::sleep(GROUPING_WINDOW);
+        assert_eq!(heard + project.poll().unwrap(), 1);
     }
 }
