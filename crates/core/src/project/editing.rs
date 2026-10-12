@@ -120,8 +120,8 @@ pub struct Edit {
 }
 
 /// Every record of `changes` is one its tool accepts.
-fn validate(changes: &Changes) -> Result<(), ProjectError> {
-    for change in &changes.changes {
+pub(super) fn validate(changes: &[Change]) -> Result<(), ProjectError> {
+    for change in changes {
         if let Change::Set(id, record) = change {
             record
                 .state
@@ -171,7 +171,7 @@ impl Project {
     /// Applies changes now, as one group. Sound and views follow, no file is written. Call it
     /// as often as the gesture moves. On an error nothing of the group is applied.
     pub fn publish(&mut self, edit: &mut Edit, changes: Changes) -> Result<(), ProjectError> {
-        validate(&changes)?;
+        validate(&changes.changes)?;
         // A derive may rewrite the tempo map, so a change to a record that has one touches
         // `project.json` as surely as a tempo edit does.
         let touches_project_file = changes.changes.iter().any(|change| match change {
@@ -195,7 +195,7 @@ impl Project {
         if !self.read_only {
             return Err(ProjectError::WritesFiles);
         }
-        validate(&changes)?;
+        validate(&changes.changes)?;
         self.apply(changes.changes, Source::Load)?;
         Ok(())
     }

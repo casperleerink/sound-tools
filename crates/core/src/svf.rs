@@ -1,4 +1,4 @@
-//! The state variable filter of the built-in Filter effect and the Wavetable synth: low, band,
+//! The state variable filter of the built-in Filter effect, the Synth and the Wavetable: low, band,
 //! high pass and notch, at 12 or 24 dB per octave, with resonance. The EQ and the Utility mix
 //! its raw outputs in their own shapes ([`SvfSection::band_and_low`]). Next to
 //! [`Smoothed`](crate::Smoothed), a helper a processor uses per frame. The core itself filters

@@ -3,12 +3,10 @@
 //! Everything is allocated with the processor. A voice that is not in use costs one comparison
 //! per block, and a synth with no voice in use returns before it touches its output.
 
-use std::f32::consts::{PI, SQRT_2};
-
 use sound_core::{
     AudioOutput, Automated, AutomationInput, Envelope, EnvelopeState, EventInput,
-    HIGHEST_PHASE_STEP, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
-    poly_blep,
+    HIGHEST_PHASE_STEP, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors,
+    SvfSection, Targets, poly_blep,
 };
 use sound_notes::{NoteEvent, Velocity, Voice as _, Voices, Wheels, frequency_hz};
 
@@ -22,9 +20,6 @@ pub const VOICES: usize = 16;
 
 /// How long gain, cutoff and resonance take to reach a new value.
 const RAMP_SECONDS: f32 = 0.05;
-
-/// The filter peak at resonance 1, as a Q factor. Resonance 0 is Q 0.707, which has no peak.
-const HIGHEST_Q: f32 = 16.0;
 
 /// A new voice starts here in its cycle. Both waveforms are far from a step at this phase, so
 /// the very first frame of a note already gives output.
@@ -41,41 +36,19 @@ fn envelope(state: &SynthState, sample_rate: f32) -> Envelope {
     )
 }
 
-/// A state variable low-pass filter in the trapezoidal form (Simper, "Solving the continuous
-/// SVF equations using trapezoidal integration"). It stays stable when the cutoff moves fast,
-/// and all voices share one set of factors.
-///
-/// Simper's steps are multiplied out here, so the next state is one sum of products of the
-/// old state and the input. The result is the same. The chain of operations from one frame to
-/// the next is half as long, and that chain is what limits the speed of a voice.
-#[derive(Default)]
-struct FilterFactors {
-    /// The next `[ic1, ic2]` from `[ic1, ic2, input]`.
-    next_state: [[f32; 3]; 2],
-    /// The low-pass output from `[ic1, ic2, input]`.
-    output: [f32; 3],
+/// The low pass of the shared state variable filter at 12 dB per octave, as the Filter and the
+/// Wavetable play it, so a resonance sounds the same in all three. All voices share it.
+#[derive(Copy, Clone, Default)]
+struct Filter {
+    factors: SvfFactors,
+    /// What resonance leaves of the level of the low pass.
+    level: f32,
 }
 
-impl FilterFactors {
+impl Filter {
     fn new(cutoff_hz: f32, resonance: f32, sample_rate: f32) -> Self {
-        // Below Nyquist with a margin, also at low sample rates.
-        let cutoff_hz = cutoff_hz.min(0.45 * sample_rate);
-        let g = (PI * cutoff_hz / sample_rate).tan();
-        // 1/Q, from 1/0.707 at resonance 0 to 1/HIGHEST_Q at resonance 1, in even ratios.
-        let k = SQRT_2 * (1.0 / (SQRT_2 * HIGHEST_Q)).powf(resonance);
-        let a1 = 1.0 / (1.0 + g * (g + k));
-        let a2 = g * a1;
-        let a3 = g * a2;
-        // The peak adds level: a partial on the cutoff comes out Q times louder. The input is
-        // turned down by the square root of that, so resonance does not overload the output.
-        let input = (k / SQRT_2).sqrt();
-        Self {
-            next_state: [
-                [2.0 * a1 - 1.0, -2.0 * a2, 2.0 * a2 * input],
-                [2.0 * a2, 1.0 - 2.0 * a3, 2.0 * a3 * input],
-            ],
-            output: [a2, 1.0 - a3, a3 * input],
-        }
+        let ([factors, _], level) = SvfFactors::sections(cutoff_hz, resonance, 0.0, sample_rate);
+        Self { factors, level }
     }
 }
 
@@ -88,7 +61,7 @@ struct Voice {
     /// From the velocity.
     amplitude: f32,
     envelope: EnvelopeState,
-    filter_state: [f32; 2],
+    filter: SvfSection,
 }
 
 /// The naive sawtooth steps from 1 to -1 where the phase wraps, rounded off there.
@@ -116,7 +89,7 @@ impl sound_notes::Voice for Voice {
         let amplitude = (f32::from(velocity.value()) / 127.0).powi(2);
         if self.is_idle() {
             self.phase = START_PHASE;
-            self.filter_state = [0.0; 2];
+            self.filter = SvfSection::default();
             self.envelope.level = 0.0;
         } else {
             // A voice taken from another note keeps its phase and filter state, and its
@@ -136,27 +109,29 @@ impl sound_notes::Voice for Voice {
 }
 
 impl Voice {
-    const IDLE: Self = Self {
-        phase: 0.0,
-        key_step: 0.0,
-        amplitude: 0.0,
-        envelope: EnvelopeState::IDLE,
-        filter_state: [0.0; 2],
-    };
+    fn idle() -> Self {
+        Self {
+            phase: 0.0,
+            key_step: 0.0,
+            amplitude: 0.0,
+            envelope: EnvelopeState::IDLE,
+            filter: SvfSection::default(),
+        }
+    }
 
     /// Adds this voice to `output`, at `pitch_ratio` times the pitch of its key. `SQUARE` picks
     /// the waveform at compile time, so the frame loop has no waveform branch.
     fn render<const SQUARE: bool>(
         &mut self,
         output: &mut [f32],
-        filter: &FilterFactors,
+        filter: &Filter,
         envelope: &Envelope,
         pitch_ratio: f32,
     ) {
         let phase_step = (self.key_step * pitch_ratio).min(HIGHEST_PHASE_STEP);
-        let [mut ic1, mut ic2] = self.filter_state;
         // Only an event changes the envelope between frames, and events end the frames.
         let still = self.envelope.is_still(envelope);
+        let gain = filter.level * self.amplitude;
         for sample in output {
             let mut oscillator = sawtooth(self.phase, phase_step);
             if SQUARE {
@@ -170,9 +145,7 @@ impl Voice {
                 self.phase -= 1.0;
             }
 
-            let mix = |[a, b, c]: [f32; 3]| (a * ic1 + b * ic2) + c * oscillator;
-            let filtered = mix(filter.output);
-            [ic1, ic2] = filter.next_state.map(mix);
+            let (_, low_pass) = self.filter.band_and_low(&filter.factors, oscillator);
 
             // An idle voice ended on the frame before: nothing of it is added any more.
             if self.envelope.is_idle() {
@@ -182,9 +155,8 @@ impl Voice {
                 true => self.envelope.level,
                 false => self.envelope.next(envelope),
             } as f32;
-            *sample += filtered * level * self.amplitude;
+            *sample += low_pass * level * gain;
         }
-        self.filter_state = [ic1, ic2];
     }
 }
 
@@ -198,7 +170,7 @@ pub struct Synth {
     cutoff_octaves: Smoothed,
     resonance: Smoothed,
     /// For the current cutoff and resonance. The tangent in it is worth keeping between blocks.
-    filter: FilterFactors,
+    filter: Filter,
     gain: Smoothed,
     voices: Voices<Voice, VOICES>,
     /// The bend and the vibrato of every voice. At rest after every `AllOff`, like the pedal.
@@ -218,9 +190,9 @@ impl Synth {
             envelope: Envelope::default(),
             cutoff_octaves: Smoothed::new(state.cutoff_hz.log2()),
             resonance: Smoothed::new(state.resonance),
-            filter: FilterFactors::default(),
+            filter: Filter::default(),
             gain: Smoothed::new(state.gain),
-            voices: Voices::new(Voice::IDLE, VOICES),
+            voices: Voices::new(Voice::idle(), VOICES),
             wheels: Wheels::default(),
         }
     }
@@ -232,7 +204,7 @@ impl Synth {
 
     /// Moves cutoff and resonance along their ramps and works out the filter for where they are.
     fn move_filter(&mut self, frames: usize) {
-        self.filter = FilterFactors::new(
+        self.filter = Filter::new(
             self.cutoff_octaves.advance(frames).exp2(),
             self.resonance.advance(frames),
             self.sample_rate,

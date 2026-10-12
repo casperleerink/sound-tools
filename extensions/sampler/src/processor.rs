@@ -18,7 +18,7 @@ use std::sync::Arc;
 use sound_core::{
     AudioOutput, Automated, AutomationInput, Envelope, EnvelopeStage, EnvelopeState, EventInput,
     MAX_BLOCK, Peaks, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
-    amplitude, pan_gains,
+    amplitude, pan_gains, xorshift32,
 };
 use sound_media::{ReadAhead, SCRATCH_FRAMES, Varispeed, varispeed};
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice as _, Voices, Wheels};
@@ -679,10 +679,7 @@ struct Random(u32);
 
 impl Random {
     fn next(&mut self) -> f32 {
-        // xorshift32.
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 17;
-        self.0 ^= self.0 << 5;
+        self.0 = xorshift32(self.0);
         (self.0 >> 8) as f32 / (1 << 24) as f32
     }
 }

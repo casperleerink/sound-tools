@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use super::binding::EngineChange;
-use super::editing::{Applied, Change, Derived, RecordChange};
+use super::editing::{self, Applied, Change, Derived, RecordChange};
 use super::instance::InstanceId;
 use super::registry::DerivedFrom;
 use super::storage::{self, RecordOnDisk};
@@ -182,17 +182,7 @@ impl Project {
         for id in stale {
             self.derive_problems.remove(&id);
         }
-        for change in &changes {
-            if let Change::Set(id, record) = change {
-                record
-                    .state
-                    .validate()
-                    .map_err(|message| ProjectError::InvalidState {
-                        id: id.clone(),
-                        message,
-                    })?;
-            }
-        }
+        editing::validate(&changes)?;
         let before = records.len();
         self.stage(changes, source, records)?;
         derived.extend(records[before..].iter().map(|change| change.id.clone()));

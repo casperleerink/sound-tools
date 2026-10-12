@@ -21,8 +21,10 @@
 
 use std::sync::LazyLock;
 
+use sound_core::bessel_i0;
+
 use crate::file::Audio;
-use crate::resample::{SincTable, bessel_i0, kaiser, sinc};
+use crate::resample::{SincTable, kaiser, sinc};
 
 /// Taps each side of a place.
 const HALF: usize = 16;

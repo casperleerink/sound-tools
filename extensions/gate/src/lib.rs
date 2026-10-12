@@ -174,6 +174,8 @@ fn apply(state: &GateState, context: &mut BehaviourContext<'_>) -> Result<(), Be
 
 #[cfg(test)]
 mod tests {
+    use sound_core::testing::{check_doc_defaults, check_doc_ranges};
+
     use super::*;
 
     /// The agent doc gives the ranges and the defaults to agents. They are checked against the
@@ -181,14 +183,7 @@ mod tests {
     #[test]
     fn the_doc_gives_the_range_and_the_default_of_every_parameter() {
         let doc = include_str!("../agent-doc.md");
-        for parameter in PARAMETERS {
-            let field = parameter.field;
-            let row = format!("| `{field}` |");
-            let row = doc.lines().find(|line| line.starts_with(&row));
-            let row = row.unwrap_or_else(|| panic!("the doc has no row for {field}"));
-            let (min, max) = (parameter.min, parameter.max);
-            assert!(row.contains(&format!("| {min} to {max} |")), "{row}");
-            assert!(row.contains(&format!("| {} |", parameter.default)), "{row}");
-        }
+        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
+        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
     }
 }

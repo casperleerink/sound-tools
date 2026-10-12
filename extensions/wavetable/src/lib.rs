@@ -84,7 +84,8 @@ fn apply(state: &WavetableState, context: &mut BehaviourContext<'_>) -> Result<(
 #[cfg(test)]
 mod tests {
     use serde::Serialize;
-    use sound_core::{FilterType, LfoShape, Parameter, State};
+    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::{FilterType, LfoShape, Parameter};
 
     use super::*;
     use crate::state::{
@@ -93,52 +94,26 @@ mod tests {
 
     const DOC: &str = include_str!("../agent-doc.md");
 
-    /// The field, the range and the default of each parameter of an object type.
-    fn rows<S>(parameters: &[&Parameter<S>]) -> Vec<(&'static str, f32, f32, f32)> {
-        let row = |parameter: &&Parameter<S>| {
-            let Parameter {
-                field,
-                min,
-                max,
-                default,
-                ..
-            } = **parameter;
-            (field, min, max, default)
-        };
-        parameters.iter().map(row).collect()
-    }
-
-    /// Every parameter of every object type, under the heading of the doc that describes it.
-    fn sections() -> Vec<(&'static str, Vec<(&'static str, f32, f32, f32)>)> {
-        vec![
-            ("## Oscillators", rows(&Oscillator::PARAMETERS)),
-            ("## Sub", rows(&Sub::PARAMETERS)),
-            ("## Unison", rows(&Unison::PARAMETERS)),
-            ("## Filters", rows(&Filter::PARAMETERS)),
-            ("## Envelopes", rows(&Adsr::PARAMETERS)),
-            ("## LFOs", rows(&LfoSettings::PARAMETERS)),
-            ("## Voicing", rows(&Voicing::PARAMETERS)),
-            ("## Matrix", rows(&Route::PARAMETERS)),
-            ("## Output", rows(&WavetableState::PARAMETERS)),
-        ]
-    }
-
     /// The agent doc gives the ranges and the defaults to agents. They are checked against the
     /// one definition, so they cannot drift from it.
     #[test]
     fn the_doc_gives_the_range_and_the_default_of_every_parameter() {
-        for (heading, rows) in sections() {
+        fn check<S>(heading: &str, parameters: &[&Parameter<S>]) {
             let start = DOC.find(&format!("{heading}\n")).expect(heading);
             let section = &DOC[start + heading.len()..];
             let section = &section[..section.find("\n## ").unwrap_or(section.len())];
-            for (field, min, max, default) in rows {
-                let row = format!("| `{field}` |");
-                let row = section.lines().find(|line| line.starts_with(&row));
-                let row = row.unwrap_or_else(|| panic!("{heading} has no row for {field}"));
-                assert!(row.contains(&format!("| {min} to {max} |")), "{row}");
-                assert!(row.ends_with(&format!("| {default} |")), "{row}");
-            }
+            assert_eq!(check_doc_ranges(section, parameters), Ok(()), "{heading}");
+            assert_eq!(check_doc_defaults(section, parameters), Ok(()), "{heading}");
         }
+        check("## Oscillators", &Oscillator::PARAMETERS);
+        check("## Sub", &Sub::PARAMETERS);
+        check("## Unison", &Unison::PARAMETERS);
+        check("## Filters", &Filter::PARAMETERS);
+        check("## Envelopes", &Adsr::PARAMETERS);
+        check("## LFOs", &LfoSettings::PARAMETERS);
+        check("## Voicing", &Voicing::PARAMETERS);
+        check("## Matrix", &Route::PARAMETERS);
+        check("## Output", &WavetableState::PARAMETERS);
     }
 
     /// Every name a record can hold is in the doc, as it is saved.
@@ -185,18 +160,7 @@ mod tests {
             state: &WavetableState,
             of: fn(&mut WavetableState) -> &mut S,
         ) {
-            for parameter in parameters {
-                for value in [parameter.min, parameter.default, parameter.max] {
-                    let mut state = state.clone();
-                    (parameter.set)(of(&mut state), value);
-                    assert_eq!((parameter.get)(of(&mut state)), value);
-                    assert_eq!(state.validate(), Ok(()));
-                }
-                let mut state = state.clone();
-                (parameter.set)(of(&mut state), parameter.max * 2.0 + 1.0);
-                let error = state.validate().unwrap_err();
-                assert!(error.contains(parameter.field), "{error}");
-            }
+            assert_eq!(check_parameter_ranges(state, parameters, of), Ok(()));
         }
         let state = WavetableState {
             matrix: vec![Route {
