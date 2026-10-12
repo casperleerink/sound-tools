@@ -20,6 +20,8 @@ UninstallDisplayIcon={app}\sound-tools.exe
 ; data is in %LOCALAPPDATA%\Sound Tools, which the uninstaller never touches.
 DefaultDirName={localappdata}\Programs\Sound Tools
 DisableDirPage=yes
+; The folder exists when install.ps1 of an older release made it.
+DirExistsWarning=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -47,6 +49,8 @@ Filename: "{app}\sound-tools.exe"; Description: "Open Sound Tools"; Flags: nowai
 [UninstallDelete]
 ; What an update moved aside and the app did not remove yet.
 Type: files; Name: "{app}\*.old"
+; The uninstaller removes only a folder its setup made, and install.ps1 may have made this one.
+Type: dirifempty; Name: "{app}"
 
 [Code]
 var
@@ -123,6 +127,7 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if CurUninstallStep = usPostUninstall then
+  { Before the files go: after them, Windows was already told of the old PATH. }
+  if CurUninstallStep = usUninstall then
     RemoveFromPath(ExpandConstant('{app}'));
 end;
