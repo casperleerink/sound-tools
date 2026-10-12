@@ -12,6 +12,7 @@ use std::ops::Range;
 
 use sound_core::{
     CHANNELS, DelayLine, MAX_BLOCK, SVF_MAX_Q, SvfFactors, SvfSection, amplitude, soft_clip,
+    xorshift32,
 };
 
 use crate::code::{
@@ -511,10 +512,7 @@ impl Span<'_> {
                 Some(kept) => {
                     let mut state = *kept;
                     for out in out.iter_mut() {
-                        // xorshift32
-                        state ^= state << 13;
-                        state ^= state >> 17;
-                        state ^= state << 5;
+                        state = xorshift32(state);
                         *out = state as f32 / u32::MAX as f32 * 2.0 - 1.0;
                     }
                     *kept = state;
@@ -1047,6 +1045,11 @@ impl Filter {
         }
         let input = finite(input);
         let (band, low) = self.section.band_and_low(&self.factors, input);
+        if !(band.is_finite() && low.is_finite()) {
+            // A feedback ran away through it. Its memory would stay so for good: it starts
+            // again from silence, as a feedback without a filter does.
+            self.section = SvfSection::default();
+        }
         let k = self.k;
         match kind {
             FilterKind::LowPass => low,

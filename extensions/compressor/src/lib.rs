@@ -264,51 +264,26 @@ fn apply(
 
 #[cfg(test)]
 mod tests {
+    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+
     use super::*;
 
     /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
     /// definition, so they cannot drift from it.
     #[test]
     fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
-        for (name, doc) in docs {
-            for Parameter {
-                field,
-                min,
-                max,
-                default,
-                ..
-            } in PARAMETERS
-            {
-                let row = format!("| `{field}` |");
-                let row = doc.lines().find(|line| line.starts_with(&row));
-                let row = row.unwrap_or_else(|| panic!("{name} has no row for {field}"));
-                assert!(
-                    row.contains(&format!("| {min} to {max} |")),
-                    "{name}: {row}"
-                );
-                assert!(row.contains(&format!("| {default} |")), "{name}: {row}");
-            }
-        }
+        let doc = include_str!("../agent-doc.md");
+        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
+        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
     }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {
-        for parameter in PARAMETERS {
-            for value in [parameter.min, parameter.default, parameter.max] {
-                let mut state = CompressorState::default();
-                (parameter.set)(&mut state, value);
-                assert_eq!((parameter.get)(&state), value);
-                assert_eq!(state.validate(), Ok(()));
-            }
-            let mut state = CompressorState::default();
-            (parameter.set)(&mut state, parameter.max.abs() * 2.0 + 1.0);
-            assert!(
-                state
-                    .validate()
-                    .is_err_and(|error| error.contains(parameter.field))
-            );
-        }
+        let state = CompressorState::default();
+        assert_eq!(
+            check_parameter_ranges(&state, &PARAMETERS, |state| state),
+            Ok(())
+        );
     }
 
     #[test]

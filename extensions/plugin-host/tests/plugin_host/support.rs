@@ -423,6 +423,13 @@ pub(crate) fn tell_the_plugin_to_go_silent() {
     unsafe { std::env::set_var(test_plugin_support::SILENT_VARIABLE, "1") };
 }
 
+/// Makes the VST 3 test plugin answer `setProcessing` as the SDK's default does: not
+/// implemented. Same rules as [`tell_the_plugin`].
+pub(crate) fn tell_the_plugin_not_to_implement_set_processing() {
+    // SAFETY: as in `tell_the_plugin_to_go_silent`.
+    unsafe { std::env::set_var(test_plugin_support::NO_SET_PROCESSING_VARIABLE, "1") };
+}
+
 /// Makes the VST 3 test plugin ask to be loaded and started again every time it is given its
 /// state while it loads. Same rules as [`tell_the_plugin`].
 pub(crate) fn tell_the_plugin_to_ask_for_a_reload_as_it_loads() {
