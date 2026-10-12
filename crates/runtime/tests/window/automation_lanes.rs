@@ -5,7 +5,7 @@
 //! shows what the drop will be. `a` on the selected track shows the lanes too, and tab reaches
 //! the select.
 
-use arrangement::view::layout::{LANES_MIDDLE, TRACK_HEIGHT};
+use arrangement::view::layout::{NAME_MIDDLE, TOGGLES_MIDDLE};
 use arrangement::view::track_lanes::LANE_BOX;
 use arrangement::{AutomationLane, AutomationValue, LaneMove, TrackState, moved, travel_in};
 use filter::FilterState;
@@ -151,10 +151,7 @@ fn the_toggle_shows_and_folds_the_lanes(cx: &mut TestAppContext) {
     assert_eq!(opened.selected_track(), None);
     // The rest of the second line of the header selects it, and leaves the lanes alone.
     let header = opened.track_header(0);
-    opened.click(point(
-        header.x,
-        header.y + px(LANES_MIDDLE - TRACK_HEIGHT / 2.),
-    ));
+    opened.click(point(header.x, header.y + px(TOGGLES_MIDDLE - NAME_MIDDLE)));
     assert_eq!(opened.selected_track(), Some(id(ONE)));
     assert!(!shows_lanes(&mut opened));
 }

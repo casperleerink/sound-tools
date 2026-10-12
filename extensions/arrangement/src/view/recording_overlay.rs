@@ -17,7 +17,7 @@ use sound_ui::components::meter::Meter;
 use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::{ActiveTheme, InputLevels, LiveNotes, Metering, Recording, Session};
 
-use super::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT};
+use super::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TOGGLES_MIDDLE};
 use super::timeline::{ARM_LEFT, ARMED_METER_HEIGHT, ARMED_METER_LEFT, Timeline, paint_takes};
 use crate::TrackState;
 
@@ -111,7 +111,7 @@ impl Render for RecordingOverlay {
             let at = |left: f32, top: f32| div().absolute().left(px(left)).top(px(top));
             // The toggle takes its own clicks: the header under it is not pressed.
             controls.push(
-                at(ARM_LEFT, top + (TRACK_HEIGHT - toggle::HEIGHT) / 2.)
+                at(ARM_LEFT, top + TOGGLES_MIDDLE - toggle::HEIGHT / 2.)
                     .occlude()
                     .child(arm)
                     .into_any_element(),
