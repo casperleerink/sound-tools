@@ -1,5 +1,5 @@
 //! The card of the filter: the response curve with its handle and the type at its top, then
-//! Cutoff, Resonance, Drive and Mix, and behind expand the slope and the LFO. The rack gives the
+//! Cutoff, Resonance, Drive and Mix, and behind expand the slope, the character and the LFO. The rack gives the
 //! view a [`CardFrame`]: the picker of the slot as the title, and the close icon.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change goes
@@ -26,8 +26,8 @@ use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
-    CUTOFF, DRIVE, Filter, FilterState, FilterType, LFO_DEPTH, LFO_RATE, MIX, RESONANCE, Slope,
-    response,
+    CUTOFF, DRIVE, Filter, FilterCharacter, FilterState, FilterType, LFO_DEPTH, LFO_RATE, MIX,
+    RESONANCE, Slope, response,
 };
 
 /// The name the rack puts on the card of a filter.
@@ -81,6 +81,11 @@ const TYPES: [(FilterType, &str, &str); 4] = [
 
 const SLOPES: [(Slope, &str, &str); 2] =
     [(Slope::Twelve, "12", "12"), (Slope::TwentyFour, "24", "24")];
+
+const CHARACTERS: [(FilterCharacter, &str, &str); 2] = [
+    (FilterCharacter::Clean, "clean", "Clean"),
+    (FilterCharacter::Warm, "warm", "Warm"),
+];
 
 /// A depth in octaves: `2 oct`.
 fn octaves_readout(octaves: f32) -> String {
@@ -225,6 +230,25 @@ impl FilterView {
             }));
         Cell::new(slopes).label("Slope").value("dB / oct")
     }
+
+    fn character(&self, state: &FilterState, cx: &mut Context<Self>) -> Cell {
+        let selected = CHARACTERS
+            .iter()
+            .find(|(character, ..)| *character == state.character);
+        let selected = selected.map_or("", |(_, value, _)| value);
+        let characters = SegmentedControl::new("character", selected)
+            .options(CHARACTERS.map(|(_, value, label)| (value, label)))
+            .on_change(weak_callback(cx, |view, value: SharedString, cx| {
+                let picked = CHARACTERS
+                    .iter()
+                    .find(|(_, name, _)| *name == value.as_ref());
+                if let Some((character, ..)) = picked {
+                    let set = |state: &mut FilterState, character| state.character = character;
+                    view.change("Change character", ValueChange::Set(*character), set, cx);
+                }
+            }));
+        Cell::new(characters).label("Character")
+    }
 }
 
 impl Render for FilterView {
@@ -243,7 +267,9 @@ impl Render for FilterView {
                 .bottom(knob(MIX_KNOB, cx)),
         ];
         let hidden = [
-            Column::new().top(self.slope(&state, cx)),
+            Column::new()
+                .top(self.slope(&state, cx))
+                .bottom(self.character(&state, cx)),
             Column::new()
                 .top(knob(RATE_KNOB, cx))
                 .bottom(knob(DEPTH_KNOB, cx)),

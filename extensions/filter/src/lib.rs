@@ -1,7 +1,7 @@
 //! Filter: the built-in filter effect. It goes in an effect slot of a track, like an effect
 //! plugin, and bends the sound that passes through it: low pass, band pass, high pass or notch,
-//! with resonance, a slope of 12 or 24 dB per octave, drive, a dry and wet mix and an LFO on the
-//! cutoff.
+//! with resonance, a slope of 12 or 24 dB per octave, drive, a clean or warm character, a dry
+//! and wet mix and an LFO on the cutoff.
 //!
 //! A record on disk, `<name>.json` in a track folder, named in the track's `effects`:
 //!
@@ -14,6 +14,7 @@
 //!     "resonance": 0.2,
 //!     "slope": 12,
 //!     "drive_db": 0.0,
+//!     "character": "clean",
 //!     "mix": 1.0,
 //!     "lfo_rate_hz": 1.0,
 //!     "lfo_depth_octaves": 0.0
@@ -37,7 +38,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
-pub use processor::{Filter, response};
+pub use processor::{Filter, LATENCY, response};
 pub use sound_core::SVF_MAX_Q as MAX_Q;
 
 /// The name to enable in `project.json`.
@@ -45,7 +46,7 @@ pub const EXTENSION: &str = "filter";
 
 /// The type and the slope are those of the state variable filter of the SDK, which the
 /// Wavetable synth plays too. `Slope` is the name this record has always used.
-pub use sound_core::{FilterSlope as Slope, FilterType};
+pub use sound_core::{FilterCharacter, FilterSlope as Slope, FilterType};
 
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets. The
 /// filter's memory and the phase of its LFO are runtime state and are not saved.
@@ -63,6 +64,9 @@ pub struct FilterState {
     pub slope: Slope,
     /// Gain into a soft saturation before the filter. 0 is clean.
     pub drive_db: f32,
+    /// Warm saturates inside the filter, so a loud resonance compresses and full resonance
+    /// rings on its own.
+    pub character: FilterCharacter,
     /// 0 is the sound as it came in, 1 is the filtered sound only.
     pub mix: f32,
     /// How fast the LFO moves the cutoff up and down.
@@ -140,6 +144,7 @@ impl Default for FilterState {
             resonance: RESONANCE.default,
             slope: Slope::Twelve,
             drive_db: DRIVE.default,
+            character: FilterCharacter::Clean,
             mix: MIX.default,
             lfo_rate_hz: LFO_RATE.default,
             lfo_depth_octaves: LFO_DEPTH.default,

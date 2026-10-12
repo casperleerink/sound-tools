@@ -1,9 +1,8 @@
 //! Every setting is stable: no blow-up at full resonance, nothing that is not a number, the
 //! filter comes to rest, and a render is the same every time.
 
-use filter::{FilterState, FilterType, LFO_DEPTH, LFO_RATE, Slope};
+use filter::{FilterCharacter, FilterState, FilterType, LFO_DEPTH, LFO_RATE, Slope};
 use proptest::prelude::*;
-use sound_core::Processor;
 
 use crate::support::{Rig, SAMPLE_RATE, Signal, noise, peak, sine};
 
@@ -37,16 +36,20 @@ fn full_resonance_at_every_type_slope_and_end_of_the_range_stays_bounded() {
     for kind in FilterType::ALL {
         for slope in Slope::ALL {
             for cutoff_hz in [20.0, 1_000.0, 20_000.0] {
-                for drive_db in [0.0, 24.0] {
+                let records =
+                    FilterCharacter::ALL.map(|character| [(0.0, character), (24.0, character)]);
+                for (drive_db, character) in records.into_iter().flatten() {
                     let state = FilterState {
                         kind,
                         slope,
                         cutoff_hz,
                         resonance: 1.0,
                         drive_db,
+                        character,
                         ..FilterState::default()
                     };
-                    let label = format!("{kind:?} {slope:?} {cutoff_hz} Hz drive {drive_db}");
+                    let label =
+                        format!("{kind:?} {slope:?} {cutoff_hz} Hz drive {drive_db} {character:?}");
                     let bound = if drive_db > 0.0 { DRIVEN_BOUND } else { BOUND };
                     let mut rig = Rig::new(state, square(f64::from(cutoff_hz) / 3.0));
                     assert_bounded(&label, bound, &rig.render(SAMPLE_RATE as usize));
@@ -200,9 +203,31 @@ fn renders_are_the_same_every_time_to_the_byte() {
     assert_eq!(render(), render());
 }
 
+/// A quiet sound, which the drive only turns up, comes out of the filter at four times the rate
+/// as it does at the sample rate, in time: so the latency the filter reports holds for both,
+/// and a drive that glides across 0 makes no comb.
 #[test]
-fn the_filter_has_no_latency() {
-    assert_eq!(filter::Filter::new(FilterState::default()).latency(), 0);
+fn the_oversampled_filter_is_in_time_with_the_plain_one() {
+    let render = |drive_db| {
+        let state = FilterState {
+            resonance: 0.6,
+            drive_db,
+            ..FilterState::default()
+        };
+        // Half a cycle in the latency, where a sound out of time would be the furthest off.
+        let mut rig = Rig::new(state, sine(375.0, 0.05));
+        let [left, _] = rig.render(SAMPLE_RATE as usize / 2);
+        left[SAMPLE_RATE as usize / 4..].to_vec()
+    };
+    let (plain, driven) = (render(0.0), render(1.0));
+    let gain = 10_f32.powf(1.0 / 20.0);
+    let loudest = peak(&plain);
+    for (plain, driven) in plain.iter().zip(&driven) {
+        assert!(
+            (driven - gain * plain).abs() < 0.01 * loudest,
+            "{plain} {driven}"
+        );
+    }
 }
 
 fn any_state() -> impl Strategy<Value = FilterState> {
@@ -212,12 +237,23 @@ fn any_state() -> impl Strategy<Value = FilterState> {
         20.0_f32..=20_000.0,
         0.0_f32..=1.0,
         0.0_f32..=24.0,
+        any::<bool>(),
         0.0_f32..=1.0,
         0.05_f32..=20.0,
         0.0_f32..=4.0,
     )
         .prop_map(
-            |(kind, steep, cutoff_hz, resonance, drive_db, mix, lfo_rate_hz, lfo_depth_octaves)| {
+            |(
+                kind,
+                steep,
+                cutoff_hz,
+                resonance,
+                drive_db,
+                warm,
+                mix,
+                lfo_rate_hz,
+                lfo_depth_octaves,
+            )| {
                 FilterState {
                     kind: FilterType::ALL[kind],
                     slope: if steep {
@@ -228,6 +264,7 @@ fn any_state() -> impl Strategy<Value = FilterState> {
                     cutoff_hz,
                     resonance,
                     drive_db,
+                    character: FilterCharacter::ALL[usize::from(warm)],
                     mix,
                     lfo_rate_hz,
                     lfo_depth_octaves,
