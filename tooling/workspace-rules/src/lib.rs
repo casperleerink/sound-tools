@@ -4,7 +4,8 @@
 //! contract crates, never on each other. This keeps the build wide and parallel, which
 //! protects the extension edit loop.
 //!
-//! The core depends on no other crate of the workspace, so it knows no music.
+//! The core depends on no other crate of the workspace, so it knows no music. The runtime names
+//! the arrangement only where it registers it and in its arrangement wiring.
 //!
 //! The top-level docs stay within a word limit, and code never points at them.
 
@@ -127,28 +128,37 @@ mod tests {
         Ok(())
     }
 
+    /// Every file under `folders`, outside build output and hidden folders.
+    fn files(folders: &[&str]) -> anyhow::Result<Vec<PathBuf>> {
+        let mut pending: Vec<PathBuf> = folders
+            .iter()
+            .map(|folder| workspace_root().join(folder))
+            .collect();
+        let mut files = Vec::new();
+        while let Some(path) = pending.pop() {
+            if !path.is_dir() {
+                files.push(path);
+                continue;
+            }
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if name == "target" || name == "node_modules" || name.starts_with('.') {
+                continue;
+            }
+            for entry in fs::read_dir(&path)? {
+                pending.push(entry?.path());
+            }
+        }
+        Ok(files)
+    }
+
     /// Code that names a doc section breaks silently when the doc is cut or renamed. Docs
     /// point at code instead.
     #[test]
     fn code_does_not_point_at_docs() -> anyhow::Result<()> {
         // Named without the extension here, so this file does not match itself.
         let docs = DOCS.map(|(doc, _)| format!("{doc}.md"));
-        let mut pending: Vec<PathBuf> = ["crates", "extensions", "tooling"]
-            .iter()
-            .map(|folder| workspace_root().join(folder))
-            .collect();
         let mut violations = Vec::new();
-        while let Some(path) = pending.pop() {
-            if path.is_dir() {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if name == "target" || name == "node_modules" || name.starts_with('.') {
-                    continue;
-                }
-                for entry in fs::read_dir(&path)? {
-                    pending.push(entry?.path());
-                }
-                continue;
-            }
+        for path in files(&["crates", "extensions", "tooling"])? {
             if path.extension().is_some_and(|extension| extension == "md") {
                 continue;
             }
@@ -165,6 +175,52 @@ mod tests {
             "code must not point at the top-level docs: {violations:?}"
         );
         Ok(())
+    }
+
+    /// Whether `code` uses the `arrangement` crate: a path that starts with it, and not one
+    /// such as `crate::arrangement_wiring` or `main_arrangement`.
+    fn names_the_arrangement(code: &str) -> bool {
+        code.match_indices("arrangement::").any(|(at, _)| {
+            let before = code[..at].chars().next_back();
+            !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':')
+        })
+    }
+
+    /// The arrangement is the one extension the app may know, and in one place, so it is
+    /// never a second core. Every other extension the runtime only registers.
+    #[test]
+    fn the_runtime_names_the_arrangement_in_one_place() -> anyhow::Result<()> {
+        let source = workspace_root().join("crates/runtime/src");
+        let allowed =
+            ["lib.rs", "arrangement_wiring.rs", "arrangement_wiring"].map(|path| source.join(path));
+        let mut violations = Vec::new();
+        for path in files(&["crates/runtime/src"])? {
+            if allowed.iter().any(|allowed| path.starts_with(allowed)) {
+                continue;
+            }
+            if names_the_arrangement(&fs::read_to_string(&path)?) {
+                violations.push(path);
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "only the registration in lib.rs and arrangement_wiring may use the arrangement: {violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn finds_a_use_of_the_arrangement_crate() {
+        assert!(names_the_arrangement("use arrangement::TrackState;"));
+        assert!(names_the_arrangement(
+            "let end = arrangement::end(project, id);"
+        ));
+        assert!(!names_the_arrangement(
+            "use crate::arrangement_wiring::recording;"
+        ));
+        assert!(!names_the_arrangement(
+            "crate::arrangement::X; main_arrangement::Y"
+        ));
     }
 
     #[test]
