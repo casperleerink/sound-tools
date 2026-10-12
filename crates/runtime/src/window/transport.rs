@@ -697,13 +697,18 @@ impl TransportPill {
     fn input_opened(
         &mut self,
         generation: u64,
-        opened: Result<OpenedInput, sound_core::DeviceError>,
+        mut opened: Result<OpenedInput, sound_core::DeviceError>,
         cx: &mut Context<Self>,
     ) {
         let assets = self.session.read(cx).project().assets().clone();
+        let notice = opened.as_mut().ok().and_then(|input| input.notice.take());
         match self.audio.opened(generation, opened, &assets, cx) {
             None => {}
             Some(Ok((channels, live))) => {
+                if let Some(notice) = notice {
+                    self.session
+                        .update(cx, |session, cx| session.report(notice, cx));
+                }
                 let plays = live.sample_rate() == self.session.read(cx).project().sample_rate();
                 // The engine reads it while the input is open, whether a connection hears it
                 // or not, so it never falls behind.

@@ -292,6 +292,7 @@ impl SimulatedInput {
                 stream: Some(Box::new(stream)),
                 reader,
                 live,
+                notice: None,
             })
         })
     }

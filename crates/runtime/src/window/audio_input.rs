@@ -23,6 +23,9 @@ pub struct OpenedInput {
     pub stream: Option<Box<dyn Send>>,
     pub reader: CaptureReader,
     pub live: LiveInput,
+    /// Says so when this is not the input the composer chose: that one is not there or did not
+    /// open.
+    pub notice: Option<String>,
 }
 
 /// How the window opens its input: an input device of the system, or a simulated one. It is
@@ -30,11 +33,16 @@ pub struct OpenedInput {
 pub type OpenInput = Arc<dyn Fn() -> Result<OpenedInput, DeviceError> + Send + Sync>;
 
 /// The input device the composer chose on this machine, by its id, or the default input of the
-/// system when there is no choice or that device is not there.
+/// system when there is no choice or that device is not there or does not open. The default
+/// then says so: a take must not come from another microphone unnoticed.
 pub fn system_input(choice: Option<String>) -> OpenInput {
     Arc::new(move || {
         let device = InputDevice::open(choice.as_deref())?;
         let name = device.name()?;
+        let chosen = choice.is_none() || device.id().ok() == choice;
+        let notice = (!chosen).then(|| {
+            format!("The chosen audio input is not there or did not open, so {name} is used.")
+        });
         let (stream, reader, live) = device.start()?;
         println!(
             "audio in: {name}, {} Hz, {} channels",
@@ -45,6 +53,7 @@ pub fn system_input(choice: Option<String>) -> OpenInput {
             stream: Some(Box::new(stream)),
             reader,
             live,
+            notice,
         })
     })
 }
@@ -160,6 +169,7 @@ impl AudioInput {
             stream,
             reader,
             live,
+            ..
         } = match opened {
             Ok(opened) => opened,
             Err(error) => {
