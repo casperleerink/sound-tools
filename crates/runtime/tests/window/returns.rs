@@ -282,3 +282,46 @@ fn many_open_returns_scroll_and_keep_the_master_row_in_the_window(cx: &mut TestA
     let last = opened.bounds("return-return-20").unwrap();
     assert!(last.bottom() <= master.top(), "{last:?} is not in view");
 }
+
+/// An agent deletes a return while the volume of a track is dragged. The drag goes on as one
+/// gesture, so one undo takes all of it back.
+#[gpui::test]
+fn a_volume_drag_stays_one_undo_step_when_a_return_is_deleted(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let header = opened.track_header(0);
+    opened.click(header);
+    let knob = opened.control("volume-gain_db");
+    opened.press(knob);
+    opened.drag_to(knob + point(px(0.), px(20.)));
+
+    let folder = opened.path("state/arrangement/space");
+    std::fs::remove_dir_all(&folder).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[folder]));
+    assert!(opened.gesture_open());
+    opened.drag_to(knob + point(px(0.), px(50.)));
+    opened.release(knob + point(px(0.), px(50.)));
+    assert_eq!(opened.undo_label().as_deref(), Some("Change volume"));
+
+    opened.keys("secondary-z");
+    let gain = opened.project(|project| {
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        project.state(&track).unwrap().gain_db
+    });
+    assert_eq!(gain, 0.);
+    assert_ne!(opened.undo_label().as_deref(), Some("Change volume"));
+}
+
+/// An agent deletes a return while its name is edited. The focus goes to the timeline, so the
+/// keys of the arrangement work on.
+#[gpui::test]
+fn deleting_a_return_during_its_rename_gives_the_focus_to_the_timeline(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    select_space(&mut opened);
+    opened.keys("enter");
+    let folder = opened.path("state/arrangement/space");
+    std::fs::remove_dir_all(&folder).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[folder]));
+    assert_eq!(returns(&mut opened), Vec::<String>::new());
+    opened.keys("secondary-a");
+    assert_eq!(opened.selected_clips(), [id(PART)]);
+}

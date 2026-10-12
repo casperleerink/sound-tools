@@ -387,8 +387,10 @@ pub struct TrackPanel {
     /// Mac on a thread of its own, so a panel opened at the start of a session holds a part of
     /// the list and the quiet line that says so. Every menu is filled again when this changes.
     offers: u64,
-    /// The gesture of a drag of the volume or the pan.
+    /// The gesture of a drag of the volume, the pan or a send.
     edit: ControlEdit,
+    /// The folder name of the return whose send knob is being dragged.
+    send_drag: Option<String>,
     /// What the lanes of the track play into its volume and pan, which then do not drag.
     lanes: Entity<Lanes<Mix>>,
     /// Not a tab stop. It tells whether the focus is inside the panel.
@@ -441,7 +443,9 @@ impl TrackPanel {
             // Another track came, went or was renamed: a sidechain picker names the tracks. A
             // return that goes takes its send knob along, and the knob its end of a drag.
             if id != panel.track.id() && id.parent() == panel.track.id().parent() {
-                if matches!(event, ProjectEvent::Deleted(_)) {
+                if matches!(event, ProjectEvent::Deleted(_))
+                    && panel.send_drag.as_deref() == Some(id.name())
+                {
                     panel.end_drag(cx);
                 }
                 cx.notify();
@@ -522,6 +526,7 @@ impl TrackPanel {
             add_effect,
             offers,
             edit: ControlEdit::default(),
+            send_drag: None,
             lanes,
             focus_handle: cx.focus_handle(),
             close_focus: cx.focus_handle().tab_stop(true),
@@ -863,6 +868,7 @@ impl TrackPanel {
     }
 
     fn end_drag(&mut self, cx: &mut Context<Self>) {
+        self.send_drag = None;
         self.edit.finish(&self.session, cx);
     }
 
@@ -1121,6 +1127,8 @@ impl TrackPanel {
                     .label(short_name(&name))
                     .readout(volume::readout(gain_db))
                     .on_change(weak_callback(cx, move |panel, change, cx| {
+                        panel.send_drag =
+                            matches!(change, ValueChange::Drag(_)).then(|| to.clone());
                         let (session, track) = (&panel.session, &panel.track);
                         let set = |track: &mut TrackState, db: f32| {
                             track.set_send(&to, volume_db(db, TrackState::MAX_GAIN_DB));

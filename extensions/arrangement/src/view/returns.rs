@@ -101,7 +101,7 @@ impl Returns {
                 // Else the focus would fall out of the arrangement, and its keys with it.
                 ProjectEvent::Deleted(_) => {
                     if let Some(row) = returns.rows.remove(id.name())
-                        && row.focus_handle.is_focused(window)
+                        && row.focus_handle.contains_focused(window, cx)
                     {
                         window.focus(&returns.timeline.focus_handle(cx), cx);
                     }
