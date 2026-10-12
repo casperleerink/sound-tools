@@ -255,6 +255,7 @@ fn an_update_that_does_not_install_says_why_once_and_is_not_downloaded_again() {
     let Action::Failed { reason, .. } = failed.action else {
         panic!("{failed:?}");
     };
+    assert!(!reason.is_empty());
     // PowerShell words a thrown error its own way.
     #[cfg(unix)]
     assert!(reason.contains("cannot remove sound-tools.old"), "{reason}");
