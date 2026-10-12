@@ -844,15 +844,7 @@ pub fn built_library(package: &str) -> PathBuf {
         .get_or_insert_with(Default::default)
         .insert(package.to_string())
     {
-        let output = std::process::Command::new(env!("CARGO"))
-            .args(["build", "--package", package])
-            .output()
-            .expect("cargo builds the test plugin");
-        assert!(
-            output.status.success(),
-            "cargo build -p {package} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        build_once_per_run(package);
     }
     drop(built);
     let mut folder = std::env::current_exe().expect("the path of the test executable");
@@ -863,6 +855,51 @@ pub fn built_library(package: &str) -> PathBuf {
         }
     }
     panic!("{name} is not built. Run `cargo build -p {package}` first");
+}
+
+/// Builds `package`, once per nextest run and not once per test process.
+///
+/// Nextest runs every test in a process of its own, and even a build with nothing to do holds
+/// cargo's lock on the build folder for about 0.2 s. A hundred test processes then spent half a
+/// minute waiting on each other. So the first process of a run builds and leaves the run's id in
+/// a mark next to the test executable; the others wait for its lock and see the mark.
+fn build_once_per_run(package: &str) {
+    let run = std::env::var("NEXTEST_RUN_ID").ok();
+    let mark = run.as_ref().map(|_| {
+        let executable = std::env::current_exe().expect("the path of the test executable");
+        let folder = executable
+            .parent()
+            .expect("the folder of the test executable");
+        let mark = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(folder.join(format!(".{package}-built-for-run")))
+            .expect("the mark of the last build");
+        // Unlocked when the file is dropped, after the build and the new mark.
+        mark.lock().expect("the lock on the mark");
+        mark
+    });
+    if let (Some(run), Some(mark)) = (&run, &mark)
+        && std::io::read_to_string(mark).is_ok_and(|built_for| built_for == *run)
+    {
+        return;
+    }
+    let output = std::process::Command::new(env!("CARGO"))
+        .args(["build", "--package", package])
+        .output()
+        .expect("cargo builds the test plugin");
+    assert!(
+        output.status.success(),
+        "cargo build -p {package} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if let (Some(run), Some(mark)) = (run, mark) {
+        mark.set_len(0).expect("the old mark is cleared");
+        std::io::Seek::rewind(&mut &mark).expect("the mark is rewound");
+        std::io::Write::write_all(&mut &mark, run.as_bytes()).expect("the mark is written");
+    }
 }
 
 /// Copies a built library into `folder` as a bundle of `extension`, and gives back the bundle.
@@ -915,11 +952,17 @@ pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str
     bundle
 }
 
-/// Copies `library` to `to` as a new file put in place, never by writing into the file that is
+/// Puts `library` at `to` as a new file put in place, never by writing into the file that is
 /// there. A test that installs a plugin again, on a reopen, would otherwise change the code of
 /// the copy this process has loaded under it, which crashes it on Linux.
 ///
-/// A copy that is there already with the same bytes is left alone: this process may have
+/// Outside Windows the new file is a link to the built library and not a copy. macOS checks
+/// the code of every file it has not loaded before, about a quarter of a second each, and
+/// only one at a time for the whole machine: with a fresh copy per test folder, ten tests at
+/// once waited on each other for most of their time. A link loads the file macOS checked once
+/// per build. So a test must never write into an installed binary; it replaces it instead.
+///
+/// A file that is there already with the same bytes is left alone: this process may have
 /// loaded it, and Windows refuses to replace a loaded library.
 fn put_copy(library: &Path, to: &Path) {
     if let (Ok(there), Ok(built)) = (std::fs::read(to), std::fs::read(library))
@@ -929,6 +972,9 @@ fn put_copy(library: &Path, to: &Path) {
     }
     let mut next = to.as_os_str().to_owned();
     next.push(".next");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(library, &next).expect("a link to the test plugin");
+    #[cfg(not(unix))]
     std::fs::copy(library, &next).expect("a copy of the test plugin");
     std::fs::rename(&next, to).expect("the copy in place");
 }
