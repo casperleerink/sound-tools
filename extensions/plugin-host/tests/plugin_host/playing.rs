@@ -6,7 +6,8 @@ use sound_core::MAX_BLOCK;
 use test_plugin_support::Wheel;
 
 use crate::support::{
-    FORMATS, Harness, Played, record, tell_the_plugin, tell_the_plugin_to_go_silent,
+    FORMATS, Harness, Played, record, tell_the_plugin,
+    tell_the_plugin_not_to_implement_set_processing, tell_the_plugin_to_go_silent,
     tell_the_plugin_to_map_no_wheels, tell_the_plugin_to_show,
 };
 
@@ -360,6 +361,23 @@ fn a_pedal_that_moves_more_often_than_a_block_holds_still_ends_where_it_was_play
         "the pedal is still down after the block: {:?}",
         &right[MAX_BLOCK..MAX_BLOCK + 8]
     );
+}
+
+/// The VST 3 SDK's own default for `setProcessing` answers that it is not implemented. Other
+/// hosts play such a plugin, so this one does too.
+#[test]
+fn a_plugin_that_does_not_implement_set_processing_plays() {
+    tell_the_plugin_not_to_implement_set_processing();
+    let mut harness = Harness::new();
+    harness.add_track(
+        record(PluginFormat::Vst3, "piano"),
+        vec![Played::On {
+            frame: 0,
+            pitch: 60,
+            velocity: 100,
+        }],
+    );
+    assert_ne!(harness.play(MAX_BLOCK).left()[0], 0.0);
 }
 
 /// VST 3 lets a plugin say its output is silent and leave the buffer as it is. A host that

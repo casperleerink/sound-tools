@@ -81,15 +81,14 @@ const SCRIPT_OS: &str = "linux";
 #[cfg(windows)]
 const SCRIPT_OS: &str = "windows";
 
-/// The release of 0.2.0 with an install script in `root/served`. The script writes
-/// `installed`.
-fn script_release(root: &Path, installed: &Path) -> PathBuf {
+/// The release of 0.2.0 with the install `script` in `root/served`.
+fn script_release(root: &Path, script: &str) -> PathBuf {
     let source = root.join("source");
     let name = format!("sound-tools-0.2.0-{SCRIPT_OS}-x86_64");
     let folder = source.join(&name);
     fs::create_dir_all(&folder).unwrap();
     fs::write(folder.join(app::program_file_name()), "0.2.0").unwrap();
-    write_install_script(&folder, installed);
+    fs::write(folder.join(INSTALL_SCRIPT), script).unwrap();
     let served = root.join("served");
     fs::create_dir_all(&served).unwrap();
     let archive = served.join(asset_name(version("0.2.0"), SCRIPT_OS, "x86_64").unwrap());
@@ -104,19 +103,29 @@ fn script_release(root: &Path, installed: &Path) -> PathBuf {
 }
 
 #[cfg(unix)]
-fn write_install_script(folder: &Path, installed: &Path) {
-    let script = format!("#!/bin/sh\ncp sound-tools '{}'\n", installed.display());
-    fs::write(folder.join("install.sh"), script).unwrap();
+const INSTALL_SCRIPT: &str = "install.sh";
+#[cfg(windows)]
+const INSTALL_SCRIPT: &str = "install.ps1";
+
+/// An install script that writes `installed`.
+#[cfg(unix)]
+fn copying_script(installed: &Path) -> String {
+    format!("#!/bin/sh\ncp sound-tools '{}'\n", installed.display())
 }
 
 #[cfg(windows)]
-fn write_install_script(folder: &Path, installed: &Path) {
-    let script = format!(
+fn copying_script(installed: &Path) -> String {
+    format!(
         "Copy-Item -LiteralPath sound-tools.exe -Destination '{}'\n",
         installed.display()
-    );
-    fs::write(folder.join("install.ps1"), script).unwrap();
+    )
 }
+
+/// An install script that stops, as `install.ps1` does when it cannot remove an old program.
+#[cfg(unix)]
+const FAILING_SCRIPT: &str = "#!/bin/sh\necho 'cannot remove sound-tools.old' >&2\nexit 1\n";
+#[cfg(windows)]
+const FAILING_SCRIPT: &str = "throw 'cannot remove sound-tools.old'\n";
 
 #[cfg(unix)]
 fn pack(archive: &Path) -> Command {
@@ -192,7 +201,7 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     let installed = root.join("installed");
-    let archive = script_release(root, &installed);
+    let archive = script_release(root, &copying_script(&installed));
     publish(&root.join("served"), "v0.2.0", &archive);
     let program = root.join("home/.local/lib/sound-tools/sound-tools");
     let updater = updater(
@@ -224,11 +233,42 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
     assert_eq!(updater.install_pending().unwrap(), None);
 }
 
+/// It would fail the same way at every start, with Restart offered again after each.
+#[test]
+fn an_update_that_does_not_install_says_why_once_and_is_not_downloaded_again() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let archive = script_release(root, FAILING_SCRIPT);
+    publish(&root.join("served"), "v0.2.0", &archive);
+    let updater = updater(
+        root,
+        SCRIPT_OS,
+        "x86_64",
+        Place::Script {
+            program: root.join("program"),
+        },
+    );
+    assert_eq!(check(&updater).unwrap().unwrap().action, Action::Restart);
+
+    let failed = updater.install_pending().unwrap_err();
+    assert_eq!(failed.version, version("0.2.0"));
+    let Action::Failed { reason, .. } = failed.action else {
+        panic!("{failed:?}");
+    };
+    assert!(!reason.is_empty());
+    // PowerShell words a thrown error its own way.
+    #[cfg(unix)]
+    assert!(reason.contains("cannot remove sound-tools.old"), "{reason}");
+    assert!(updater.pending().is_none());
+    assert_eq!(check(&updater).unwrap(), None);
+    assert!(!updater.version_folder(version("0.2.0")).exists());
+}
+
 #[test]
 fn a_damaged_download_is_never_ready() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
-    let archive = script_release(root, &root.join("installed"));
+    let archive = script_release(root, &copying_script(&root.join("installed")));
     publish(&root.join("served"), "v0.2.0", &archive);
     // One byte changes after the checksums were written.
     let mut bytes = fs::read(&archive).unwrap();

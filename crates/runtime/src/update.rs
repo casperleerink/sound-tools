@@ -14,6 +14,8 @@
 //! the zip's `install.ps1` into `%LOCALAPPDATA%\Programs\Sound Tools`.
 //!
 //! A failed check or download is quiet: one line on stderr, and the next check tries again.
+//! An update that does not install is shown once, with why and **Download**, and that version
+//! is not downloaded again: it would fail the same way at every start.
 //! A dev build and the command line forms never check.
 //!
 //! In the support folder:
@@ -21,6 +23,7 @@
 //! ```text
 //! updates/sound-tools/<version>/sound-tools   the archive of the release, checked
 //! updates/sound-tools/<version>/unpacked/     what is in it, once whole
+//! updates/sound-tools/<version>.failed        why it did not install
 //! ```
 
 use std::ffi::{OsStr, OsString};
@@ -28,7 +31,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -44,6 +47,9 @@ use crate::app::{self, TOOL_NAME};
 /// The JSON of the latest release. GitHub leaves drafts and prereleases out of it.
 const LATEST_RELEASE: &str =
     "https://api.github.com/repos/casperleerink/sound-tools/releases/latest";
+
+/// Where an update that did not install can be downloaded by hand.
+const RELEASES: &str = "https://github.com/casperleerink/sound-tools/releases/latest";
 
 /// The asset of every release with the sha256 of the others, as `sha256sum` writes it.
 const SUMS: &str = "SHA256SUMS";
@@ -106,7 +112,12 @@ pub enum Action {
     Restart,
     /// The app's folder cannot be written. The release page, to install it by hand.
     Download { page: String },
+    /// It was downloaded, and did not install at this start. Why, and the release page.
+    Failed { reason: String, page: String },
 }
+
+/// The update that did not install at the start of this process, for the window to show.
+static FAILED: OnceLock<Ready> = OnceLock::new();
 
 /// The file of a release for this computer, as `tooling/bundle-*.sh` names it. `None` where
 /// there is no build, such as an Intel Mac.
@@ -219,6 +230,14 @@ impl Updater {
         self.folder.join(TOOL_NAME).join(version.to_string())
     }
 
+    /// Says that `version` did not install, and why. `sound_agent::install` removes it with
+    /// the other versions when a newer one downloads.
+    fn failed(&self, version: Version) -> PathBuf {
+        self.folder
+            .join(TOOL_NAME)
+            .join(format!("{version}.failed"))
+    }
+
     /// Looks for a newer release, and downloads it.
     async fn check(&self) -> Result<Option<Ready>> {
         let release: Release = serde_json::from_slice(&fetch(&self.latest).await?)
@@ -234,6 +253,9 @@ impl Updater {
         let Some(name) = asset_name(version, self.os, self.arch) else {
             return Ok(None);
         };
+        if self.failed(version).exists() {
+            return Ok(None);
+        }
         let asset = release.asset(&name)?;
         if let Place::Bundle(bundle) = &self.place
             && !can_replace(bundle)
@@ -277,31 +299,42 @@ impl Updater {
             .filter_map(|entry| {
                 let version = Version::parse(entry.file_name().to_str()?)?;
                 let unpacked = entry.path().join(UNPACKED);
-                (version > self.current && unpacked.is_dir()).then_some((version, unpacked))
+                // One that failed stays here when its folder could not be removed.
+                let installs = unpacked.is_dir() && !self.failed(version).exists();
+                (version > self.current && installs).then_some((version, unpacked))
             })
             .max_by_key(|(version, _)| *version)
     }
 
     /// Puts the pending update in the place of this app, and gives the program to start. The
-    /// update goes either way: one that fails is not tried at every launch, the next check
-    /// downloads it again.
-    fn install_pending(&self) -> Result<Option<PathBuf>> {
+    /// update goes either way: one that fails is not tried at every launch, and marked
+    /// [`Self::failed`] so no check downloads it again.
+    fn install_pending(&self) -> Result<Option<PathBuf>, Ready> {
         let Some((version, unpacked)) = self.pending() else {
             return Ok(None);
         };
-        let installed = match &self.place {
-            Place::Bundle(bundle) => replace_bundle(bundle, &only_entry(&unpacked)?)
-                .map(|()| bundle.join("Contents/MacOS").join(TOOL_NAME)),
-            Place::Script { program } => {
-                run_install_script(&only_entry(&unpacked)?).map(|()| program.clone())
+        let installed = only_entry(&unpacked).and_then(|new| match &self.place {
+            Place::Bundle(bundle) => {
+                replace_bundle(bundle, &new).map(|()| bundle.join("Contents/MacOS").join(TOOL_NAME))
             }
-        };
+            Place::Script { program } => run_install_script(&new).map(|()| program.clone()),
+        });
         if let Err(error) = fs::remove_dir_all(self.version_folder(version)) {
             eprintln!("error: could not remove the update {version}: {error}");
         }
-        installed
-            .with_context(|| format!("Sound Tools {version} did not install"))
-            .map(Some)
+        let reason = match installed {
+            Ok(program) => return Ok(Some(program)),
+            Err(error) => format!("{error:#}"),
+        };
+        eprintln!("error: Sound Tools {version} did not install: {reason}");
+        if let Err(error) = fs::write(self.failed(version), &reason) {
+            eprintln!("error: {error}");
+        }
+        let page = RELEASES.to_string();
+        Err(Ready {
+            version,
+            action: Action::Failed { reason, page },
+        })
     }
 
     /// Removes the programs an update moved aside. `install.ps1` renames the running
@@ -492,12 +525,20 @@ fn run_install_script(folder: &Path) -> Result<()> {
         .stdout(Stdio::null()))
 }
 
+/// Runs `command`. A failure says the first line it wrote to stderr, which is why, and the log
+/// gets all of it.
 fn run(command: &mut Command) -> Result<()> {
-    let status = command
-        .status()
+    let output = command
+        .output()
         .with_context(|| format!("could not run {:?}", command.get_program()))?;
-    if !status.success() {
-        bail!("{:?} failed: {status}", command.get_program());
+    if !output.status.success() {
+        let said = String::from_utf8_lossy(&output.stderr);
+        eprint!("{said}");
+        let first = said.lines().map(str::trim).find(|line| !line.is_empty());
+        let why = first.map_or_else(|| output.status.to_string(), str::to_string);
+        let program = Path::new(command.get_program()).file_name();
+        let program = program.unwrap_or_default().to_string_lossy();
+        bail!("{program} failed: {why}");
     }
     Ok(())
 }
@@ -517,7 +558,7 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 
 /// At the start of the windowed app, before any window: installs an update that was
 /// downloaded and starts it with the same arguments. True when it did, and this process ends.
-/// A failure is a line on stderr, and the app that is installed starts.
+/// After a failure the app that is installed starts, and its window says why.
 pub fn start_pending_update() -> bool {
     let Some(updater) = app::support_folder()
         .ok()
@@ -529,8 +570,8 @@ pub fn start_pending_update() -> bool {
     let program = match updater.install_pending() {
         Ok(Some(program)) => program,
         Ok(None) => return false,
-        Err(error) => {
-            eprintln!("error: {error:#}");
+        Err(failed) => {
+            FAILED.get_or_init(|| failed);
             return false;
         }
     };
@@ -544,8 +585,12 @@ pub fn start_pending_update() -> bool {
 }
 
 /// Checks for an update in the background, now and every day while the app is open, and
-/// sets [`Ready`] when there is one. Quiet when a check fails: the next one tries again.
+/// sets [`Ready`] when there is one, or when [`start_pending_update`] could not install one at
+/// this start. Quiet when a check fails: the next one tries again.
 pub fn check_in_background(support: &Path, cx: &mut App) {
+    if let Some(failed) = FAILED.get() {
+        cx.set_global(failed.clone());
+    }
     let Some(updater) = Updater::of_this_app(support) else {
         return;
     };
