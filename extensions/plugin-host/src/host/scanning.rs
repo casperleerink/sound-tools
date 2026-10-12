@@ -289,7 +289,6 @@ impl Plugins {
         }
         let known = self.known();
         let mut waiting = self.0.waiting.borrow_mut();
-        let mut retries = self.0.retries.borrow_mut();
         waiting.retain(|id| {
             // A record that is gone, or no longer a plugin, waits for nothing.
             let Some(instance) = project.resolve::<PluginRecord>(id) else {
@@ -300,9 +299,7 @@ impl Plugins {
             };
             let found = known.find(record.format, &record.plugin_id).is_some();
             if found || known.finished {
-                if !retries.contains(id) {
-                    retries.push(id.clone());
-                }
+                self.retry(id);
                 return false;
             }
             true
@@ -372,14 +369,15 @@ fn end_look(held: &mut Scanning) {
 /// already knew. Only then is the change counted, so a look that found nothing new fills no
 /// picker again and tries no waiting record again, and nothing looks again because of it.
 fn publish_again(scanned: &Mutex<Scanning>, scan: Scan) {
-    let mut held = scanning(scanned);
+    let mut guard = scanning(scanned);
+    // One borrow of the guard, so its notices and its scan can be borrowed apart.
+    let held = &mut *guard;
     if held.scan.plugins == scan.plugins && held.scan.failures == scan.failures {
         return;
     }
     let new = scan.failures.iter();
     let new = new.filter(|failure| !held.scan.failures.contains(failure));
-    let notices: Vec<String> = new.map(notice).collect();
-    held.notices.extend(notices);
+    held.notices.extend(new.map(notice));
     held.notices.extend(scan.cache_error.clone());
     held.scan = scan;
     held.generation += 1;

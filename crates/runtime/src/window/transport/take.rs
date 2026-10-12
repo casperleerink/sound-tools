@@ -9,14 +9,30 @@ use sound_core::{Changes, Clock, Instance, InstanceId, Ticks};
 use sound_media::Imported;
 use sound_ui::{LiveBody, LiveSound, LiveTake, Playhead};
 
-use super::{AudioTake, Ended, Take, TransportPill};
-use crate::recorder::{Placement, RecorderCommand, RecorderReport, TakeRequest, take_seconds_at};
+use super::{Take, TransportPill};
+use crate::recorder::{
+    Placement, RecorderCommand, RecorderReport, StartedTake, TakeRequest, take_seconds_at,
+};
 use crate::window::audio_input::OpenedInput;
 use crate::window::recording;
 
 /// Polls a finished recording waits for its audio files to hold what was heard up to its end,
 /// about two seconds, before it closes them with what they have.
 const FINISH_POLLS: u32 = 120;
+
+pub(super) struct AudioTake {
+    placement: Placement,
+    started: Vec<StartedTake>,
+    /// The waveforms of the takes are lined up with the timeline.
+    shown: bool,
+}
+
+pub(super) struct Ended {
+    end: Ticks,
+    /// The raw MIDI take, already on disk, and its name, for the clip.
+    midi: Option<(Instance<TrackState>, midi::Take, Option<String>)>,
+    polls: u32,
+}
 
 impl TransportPill {
     /// The notes of the MIDI take so far, a held key up to the playhead, for the timeline.

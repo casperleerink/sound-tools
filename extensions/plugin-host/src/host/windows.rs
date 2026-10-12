@@ -25,7 +25,7 @@ impl Table {
     }
 
     /// Notes where the window of `id` is now.
-    pub(super) fn place(&mut self, id: &InstanceId, placement: Placement) {
+    fn place(&mut self, id: &InstanceId, placement: Placement) {
         if self.placements.get(id) != Some(&placement) {
             self.placements.insert(id.clone(), placement);
             self.placements_changed = true;

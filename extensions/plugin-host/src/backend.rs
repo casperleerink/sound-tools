@@ -1,7 +1,7 @@
 //! What the host needs of a plugin, whatever its format.
 //!
-//! `host.rs` holds the table, the saving rule, the problems and the windows and knows no
-//! format. One backend per format fills these in: `clap.rs` and `vst3/`. A format that cannot
+//! `host.rs` and `host/` hold the table, the saving rule, the problems and the windows and know
+//! no format. One backend per format fills these in: `clap.rs` and `vst3/`. A format that cannot
 //! do something says so here rather than in the table: [`LoadedPlugin::gui`] is `None` for a
 //! plugin that can have no window at all, and the card then says so.
 

@@ -47,9 +47,9 @@ use sound_ui::{
     weak_action, weak_callback,
 };
 
+use self::take::{AudioTake, Ended};
 use super::audio_input::{AudioInput, OpenInput};
 use super::{recording, steadiness, tempo};
-use crate::recorder::{Placement, StartedTake};
 
 /// A recording of the record control, from its start to its clips.
 struct Take {
@@ -65,20 +65,6 @@ struct Take {
     audio: Option<AudioTake>,
     /// It ended, and waits for its audio files.
     ended: Option<Ended>,
-}
-
-struct AudioTake {
-    placement: Placement,
-    started: Vec<StartedTake>,
-    /// The waveforms of the takes are lined up with the timeline.
-    shown: bool,
-}
-
-struct Ended {
-    end: Ticks,
-    /// The raw MIDI take, already on disk, and its name, for the clip.
-    midi: Option<(Instance<TrackState>, midi::Take, Option<String>)>,
-    polls: u32,
 }
 
 /// The height of the pill, in the 48 pt title row.

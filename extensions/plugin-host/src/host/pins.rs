@@ -116,7 +116,7 @@ impl PinGesture {
 impl Hosted {
     /// The pins of `record` whose value the plugin takes, in the order of their ids, and kept
     /// as the pins the next start of the plugin gets. An automation lane may move those whose
-    /// parameter [`Parameter::takes_lane`].
+    /// parameter [`crate::parameters::Parameter::takes_lane`].
     pub(super) fn automated(&mut self, record: &PluginRecord) -> Vec<AutomatedPin> {
         let mut pins = Vec::new();
         if !record.parameters.is_empty() {

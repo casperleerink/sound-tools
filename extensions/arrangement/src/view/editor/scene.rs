@@ -83,7 +83,7 @@ impl NoteEditor {
     }
 }
 
-/// What one paint of the editor shows, in the coordinates of [`super::roll`].
+/// What one paint of the editor shows, in the coordinates of [`crate::view::roll`].
 pub(super) struct RollScene {
     pub(super) viewport: Viewport,
     pub(super) width: f32,
