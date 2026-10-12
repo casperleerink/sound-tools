@@ -655,8 +655,8 @@ fn add_eq(project: &mut Project, track: &str) -> Result<()> {
 }
 
 /// Puts a reverb after the instrument of a track, as `Add effect` does, with the values of the
-/// mockup.
-fn add_reverb(project: &mut Project, track: &str) -> Result<()> {
+/// mockup and `mix`.
+fn add_reverb(project: &mut Project, track: &str, mix: f32) -> Result<()> {
     let id = InstanceId::new(&format!("arrangement/{track}"))?;
     let track = project
         .resolve::<TrackState>(&id)
@@ -667,7 +667,7 @@ fn add_reverb(project: &mut Project, track: &str) -> Result<()> {
         decay_seconds: 2.4,
         size: 0.6,
         low_cut_hz: 200.0,
-        mix: 0.25,
+        mix,
         ..ReverbState::default()
     };
     changes.create(slot, sound);
@@ -1666,7 +1666,7 @@ fn main() -> Result<()> {
     // The built-in reverb after the synth, then expanded.
     let opened = Opened::new(&mut cx, |project| {
         piece(project)?;
-        add_reverb(project, "bass")
+        add_reverb(project, "bass", 0.25)
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel-reverb")?;
@@ -1833,7 +1833,7 @@ fn main() -> Result<()> {
         };
         add_compressor(project, "bass", sound)?;
         add_eq(project, "bass")?;
-        add_reverb(project, "bass")
+        add_reverb(project, "bass", 0.25)
     })?;
     opened.click_track_header(1., &mut cx)?;
     save(&mut cx, &opened, "track-panel-all-effects")?;

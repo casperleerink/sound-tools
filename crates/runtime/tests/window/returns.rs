@@ -26,16 +26,10 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
 }
 
 fn add_space(project: &mut Project) {
-    let arrangement = runtime::main_arrangement(project).unwrap();
+    let mut space = TrackState::new("Space", Colour::Teal, 0);
+    space.kind = TrackKind::Return;
     let mut changes = Changes::new();
-    arrangement::add_return(
-        project,
-        &mut changes,
-        arrangement.id(),
-        "Space",
-        Colour::Teal,
-    )
-    .unwrap();
+    changes.create(id("arrangement/space"), space);
     project.commit("Add return", changes).unwrap();
 }
 

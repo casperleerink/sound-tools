@@ -984,21 +984,24 @@ pub fn add_audio_track(
     Ok(changes.create(id, state))
 }
 
-/// Adds a return after the last one to a group of changes: no sends into it yet, no effects.
-/// The id comes from the name, as for [`add_track`].
+/// Adds `Return <n>` after the last return to a group of changes: no sends into it yet, no
+/// effects. The id comes from the name, as for [`add_track`]. Returns take the palette from
+/// its end and tracks from its start, so the first of each do not share a colour.
 pub fn add_return(
     project: &Project,
     changes: &mut Changes,
     arrangement: &InstanceId,
-    name: &str,
-    colour: Colour,
 ) -> Result<Instance<TrackState>, ProjectError> {
-    let id = project.free_id(&arrangement.child(&id_name(name, "return"))?)?;
-    let last = returns(project, arrangement)
-        .last()
-        .map(|(_, track)| track.order);
+    let returns = returns(project, arrangement);
+    let name = format!("Return {}", returns.len() + 1);
+    let colour = Colour::ALL
+        .iter()
+        .rev()
+        .nth(returns.len() % Colour::ALL.len());
+    let id = project.free_id(&arrangement.child(&id_name(&name, "return"))?)?;
+    let last = returns.last().map(|(_, track)| track.order);
     let order = last.map_or(0, |order| order.saturating_add(1));
-    let mut state = TrackState::new(name, colour, order);
+    let mut state = TrackState::new(name, colour.copied().unwrap_or_default(), order);
     state.kind = TrackKind::Return;
     Ok(changes.create(id, state))
 }

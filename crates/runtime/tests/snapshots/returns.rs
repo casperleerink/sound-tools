@@ -8,7 +8,7 @@
 //!   panel with the reverb, no solo, and `Pre fader` where an audio track has its input.
 
 use anyhow::{Context as _, Result};
-use arrangement::{Colour, TrackState};
+use arrangement::{Colour, TrackKind, TrackState};
 use gpui::{HeadlessAppContext, point, px};
 use sound_core::{Changes, InstanceId, Project};
 
@@ -21,13 +21,18 @@ const MASTER_ROW_HEIGHT: f32 = arrangement::view::MASTER_ROW_HEIGHT;
 fn with_returns(project: &mut Project) -> Result<()> {
     piece(project)?;
     let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
-    // One commit each: a return goes after the returns the project has.
-    for (name, colour) in [("Space", Colour::Teal), ("Echo", Colour::Mauve)] {
-        let mut changes = Changes::new();
-        arrangement::add_return(project, &mut changes, arrangement.id(), name, colour)?;
-        project.commit("Add return", changes)?;
+    let mut changes = Changes::new();
+    let returns = [
+        ("space", "Space", Colour::Teal, 0),
+        ("echo", "Echo", Colour::Mauve, 1),
+    ];
+    for (folder, name, colour, order) in returns {
+        let mut state = TrackState::new(name, colour, order);
+        state.kind = TrackKind::Return;
+        changes.create(arrangement.id().child(folder)?, state);
     }
-    add_reverb(project, "space")?;
+    project.commit("Add returns", changes)?;
+    add_reverb(project, "space", 1.0)?;
     add_delay(project, "echo")?;
     let bass = InstanceId::new("arrangement/bass")?;
     let bass = project.resolve::<TrackState>(&bass).context("no bass")?;

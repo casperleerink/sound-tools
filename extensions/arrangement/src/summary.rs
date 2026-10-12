@@ -32,9 +32,8 @@ pub(crate) fn of_arrangement(
         }
         let instrument = track.id().child(INSTRUMENT).ok();
         let instrument = instrument.and_then(|id| project.tool_of(&id));
-        let effects = effects(project, &track, state);
         lines.push(format!(
-            "  track `{}` {:?}: colour {}, order {}, {}{effects}",
+            "  track `{}` {:?}: colour {}, order {}, {}{}{}",
             track.id(),
             state.name,
             state.colour.name(),
@@ -43,6 +42,8 @@ pub(crate) fn of_arrangement(
                 Some(tool) => format!("instrument {tool}"),
                 None => format!("no instrument, so it is silent: add {INSTRUMENT}.json"),
             },
+            effects(project, &track, state),
+            sends(state),
         ));
         let clips = clips(project, track.id());
         if clips.is_empty() {
@@ -67,11 +68,12 @@ pub(crate) fn of_arrangement(
     }
     for (track, state) in returns {
         lines.push(format!(
-            "  return `{}` {:?}: colour {}, order {}{}",
+            "  return `{}` {:?}: colour {}, order {}{}{}",
             track.id(),
             state.name,
             state.colour.name(),
             state.order,
+            if state.pre_fader { ", pre fader" } else { "" },
             effects(project, &track, state),
         ));
     }
@@ -95,6 +97,17 @@ fn effects(project: &Project, track: &Instance<TrackState>, state: &TrackState) 
     }
 }
 
+/// How loud a track sends into each return, by the folder name of the return.
+fn sends(state: &TrackState) -> String {
+    let sends: Vec<String> = (state.sends.iter())
+        .map(|(to, gain_db)| format!("{to} {gain_db} dB"))
+        .collect();
+    match sends.is_empty() {
+        true => String::new(),
+        false => format!(", sends {}", sends.join(", ")),
+    }
+}
+
 /// An audio track and its clips: the file of each, where it plays in the piece and which part
 /// of the file it plays.
 fn audio_track(
@@ -105,11 +118,12 @@ fn audio_track(
 ) {
     let time_signatures = project.project_file().tempo_map.time_signatures();
     lines.push(format!(
-        "  track `{}` {:?}: colour {}, order {}, audio track",
+        "  track `{}` {:?}: colour {}, order {}, audio track{}",
         track.id(),
         state.name,
         state.colour.name(),
         state.order,
+        sends(state),
     ));
     let clips = audio_clips(project, track.id());
     if clips.is_empty() {

@@ -4,7 +4,7 @@
 //! every sample says how much went straight to the master and how much through the return.
 
 use arrangement::decibels::amplitude;
-use arrangement::{Colour, TrackState, add_return, remove_return};
+use arrangement::{TrackState, add_return, remove_return};
 use sound_core::Changes;
 
 use crate::support::{Harness, TICK, clip, id, level_changes, note};
@@ -93,6 +93,20 @@ fn the_volume_of_the_track_turns_down_a_post_fader_send_and_not_a_pre_fader_one(
     let mut pre = project(piano, r#", "pre_fader": true"#);
     assert_eq!(pre.problems(), Vec::<String>::new());
     assert_eq!(settled(&mut pre), PIANO * THROUGH_SPACE);
+}
+
+/// The piano doubles itself with an effect and is turned down to silence: a send before the
+/// fader takes it after the effect.
+#[test]
+fn a_pre_fader_send_takes_the_sound_after_the_effects_of_the_track() {
+    let piano = r#", "gain_db": "-inf", "effects": ["double"], "sends": {"space": 0.0}"#;
+    let mut harness = project(piano, r#", "pre_fader": true"#);
+    harness.write_and_apply(
+        "state/arrangement/piano/double.json",
+        r#"{"tool": "test.trim", "state": {"gain": 2.0}}"#,
+    );
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    assert_eq!(settled(&mut harness), 2.0 * PIANO * THROUGH_SPACE);
 }
 
 #[test]
@@ -225,14 +239,7 @@ fn a_track_without_sends_and_a_return_save_only_what_they_use() {
     harness.add_track("piano", 1.0);
     let mut changes = Changes::new();
     let arrangement = id("arrangement");
-    add_return(
-        &harness.project,
-        &mut changes,
-        &arrangement,
-        "Space",
-        Colour::Teal,
-    )
-    .unwrap();
+    add_return(&harness.project, &mut changes, &arrangement).unwrap();
     harness.project.commit("Add return", changes).unwrap();
     let read = |file: &str| std::fs::read_to_string(harness.path(file)).unwrap();
     assert_eq!(
@@ -244,13 +251,13 @@ fn a_track_without_sends_and_a_return_save_only_what_they_use() {
 "#
     );
     assert_eq!(
-        read(SPACE_FILE),
+        read("state/arrangement/return-1/instance.json"),
         r#"{
   "tool": "arrangement.track",
   "state": {
-    "name": "Space",
+    "name": "Return 1",
     "kind": "return",
-    "colour": "teal",
+    "colour": "flamingo",
     "order": 0,
     "gain_db": 0.0,
     "pan": 0.0,
