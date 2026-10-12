@@ -6,12 +6,15 @@
 //! ARCHITECTURE.md "Project storage" and "Editing and system services". `README.md` in this
 //! crate is the guide for extension authors.
 
+mod apply;
 mod assets;
 mod binding;
 mod editing;
 mod file;
 mod generated;
+mod history;
 mod instance;
+mod live;
 mod outside;
 mod registry;
 mod storage;
@@ -22,13 +25,14 @@ use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
-pub use editing::{Changes, Derived, Edit, OUTSIDE_UNDO_WINDOW};
+pub use editing::{Changes, Derived, Edit};
 pub use file::{
     FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
 };
 pub use generated::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, INSTRUCTIONS_FILE, NO_PROBLEMS, PROBLEMS_FILE,
 };
+pub use history::OUTSIDE_UNDO_WINDOW;
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
     AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration, Was,
@@ -36,21 +40,19 @@ pub use registry::{
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
 
-use binding::{BindError, Bindings, EngineChange};
-use editing::{Applied, Change, History, RecordChange};
+use binding::{BindError, Bindings};
+use editing::{Change, RecordChange};
+use history::History;
 use instance::Record;
+use live::LiveSources;
 use outside::NotApplied;
-use registry::DerivedFrom;
 use storage::{Form, Locked, RecordOnDisk, Storage};
 use watcher::Watcher;
 
-use crate::apps::AppSound;
 use crate::automation::PlayedLanes;
-use crate::clock::{Clock, Ticks, TimeSignatures};
+use crate::clock::{Clock, Ticks};
 use crate::control::EngineControl;
-use crate::device::DeviceError;
 use crate::graph::GraphError;
-use crate::input::{InputId, LiveInput};
 use crate::parameter::AutomatedNumber;
 use crate::peaks::Peaks;
 use crate::processor::Processor;
@@ -178,12 +180,7 @@ pub struct Project {
     /// The generated files may no longer match the project. See `generated.rs`.
     generated_are_stale: bool,
     watcher: Option<Watcher>,
-    /// The sample rate and channels of the live input, while one is given. See
-    /// [`Self::set_live_input`].
-    live_input: Option<(u32, usize)>,
-    /// The sample rate of the sound of each app that was given, or why it is not heard. See
-    /// [`Self::set_app_sound`].
-    app_sounds: BTreeMap<AppSound, Result<u32, String>>,
+    live_sources: LiveSources,
 }
 
 impl Project {
@@ -241,8 +238,7 @@ impl Project {
             not_applied: Vec::new(),
             generated_are_stale: true,
             watcher: None,
-            live_input: None,
-            app_sounds: BTreeMap::new(),
+            live_sources: LiveSources::default(),
         };
         let mut changes = Vec::new();
         match project.storage.read_project_file()? {
@@ -312,111 +308,6 @@ impl Project {
     /// The sample rate of the engine, which is that of the output device.
     pub fn sample_rate(&self) -> u32 {
         self.engine.config().sample_rate
-    }
-
-    /// Whether a `project.json` connection from the device input is in the graph, so the input
-    /// has to be open. One whose instance or port is missing needs no input.
-    pub fn hears_device_input(&self) -> bool {
-        let connections = self.project_file.connections.iter();
-        connections
-            .filter(|connection| matches!(connection.from, SavedSource::DeviceInput(_)))
-            .any(|connection| self.bindings.is_bound(connection))
-    }
-
-    /// The apps whose sound a `project.json` connection in the graph starts at, so each has to
-    /// be tapped.
-    pub fn app_sounds(&self) -> BTreeSet<AppSound> {
-        let connections = self.project_file.connections.iter();
-        let bound = connections.filter(|connection| self.bindings.is_bound(connection));
-        (bound.filter_map(|connection| match &connection.from {
-            SavedSource::App(app) => Some(app.clone()),
-            _ => None,
-        }))
-        .collect()
-    }
-
-    /// Plays the input of a device into the `device_input` connections of `project.json`, or
-    /// silence with `None`, which is what they hear until an input is given. An input at another
-    /// sample rate than the engine stays silent, and each of those connections is a problem that
-    /// says why, as is one from a channel the input does not have. That stays so until the next
-    /// call, also when the device itself was closed, as it is when it plays nothing.
-    pub fn set_live_input(&mut self, input: Option<LiveInput>) {
-        let before = self.live_input_problems();
-        self.live_input = (input.as_ref()).map(|input| (input.sample_rate(), input.channels()));
-        self.engine.set_live_input(InputId::DEVICE, input);
-        if before != self.live_input_problems() {
-            self.push_event(ProjectEvent::ProblemsChanged);
-        }
-    }
-
-    /// Plays the sound of `app` into the `app` connections of `project.json` that name it, or
-    /// silence with `None`. `Err` says why it is not heard, and each of those connections then
-    /// says so as a problem, as does one when the sound comes at another rate than the output.
-    pub fn set_app_sound(&mut self, app: &AppSound, sound: Option<Result<LiveInput, String>>) {
-        let before = self.live_input_problems();
-        let live = match sound {
-            None => {
-                self.app_sounds.remove(app);
-                None
-            }
-            Some(Ok(live)) => {
-                self.app_sounds.insert(app.clone(), Ok(live.sample_rate()));
-                Some(live)
-            }
-            Some(Err(why)) => {
-                self.app_sounds.insert(app.clone(), Err(why));
-                None
-            }
-        };
-        self.engine.set_live_input(app.input(), live);
-        if before != self.live_input_problems() {
-            self.push_event(ProjectEvent::ProblemsChanged);
-        }
-    }
-
-    /// Why a `device_input` or `app` connection is silent with what was given.
-    fn live_input_problems(&self) -> Vec<String> {
-        let connections = self.project_file.connections.iter().enumerate();
-        connections
-            .filter_map(|(index, connection)| {
-                let why = match &connection.from {
-                    SavedSource::DeviceInput(channel) => self.device_input_problem(*channel)?,
-                    SavedSource::App(app) => self.app_sound_problem(app)?,
-                    SavedSource::Output(_) => return None,
-                };
-                Some(format!("connections[{index}]: not heard, because {why}"))
-            })
-            .collect()
-    }
-
-    fn app_sound_problem(&self, app: &AppSound) -> Option<String> {
-        if !cfg!(target_os = "macos") {
-            return Some(DeviceError::AppsOnlyOnMacos.to_string());
-        }
-        let output_rate = self.engine.config().sample_rate;
-        match self.app_sounds.get(app)? {
-            Err(why) => Some(why.clone()),
-            Ok(rate) if *rate != output_rate => Some(format!(
-                "the sound of other apps comes at {rate} Hz and the output runs at {output_rate} Hz. Set the output device to {rate} Hz in Audio MIDI Setup"
-            )),
-            Ok(_) => None,
-        }
-    }
-
-    fn device_input_problem(&self, channel: usize) -> Option<String> {
-        let (input_rate, channels) = self.live_input?;
-        let output_rate = self.engine.config().sample_rate;
-        if input_rate != output_rate {
-            return Some(format!(
-                "the audio input runs at {input_rate} Hz and the output at {output_rate} Hz. Live input needs both at one rate: set them to the same rate in the sound settings of the system (Audio MIDI Setup on macOS)"
-            ));
-        }
-        let has = match channels {
-            1 => "one channel".to_string(),
-            channels => format!("{channels} channels"),
-        };
-        (channel >= channels)
-            .then(|| format!("the audio input has {has}, counted from 0, and no channel {channel}"))
     }
 
     /// The input port that the behaviour of `instance` named, for code below the tools that
@@ -708,338 +599,6 @@ impl Project {
                 })
             })
             .collect()
-    }
-
-    /// The one state application. Interface edits, file changes, loading, undo, redo and
-    /// cancel all come through here. The group applies whole, as one engine batch, or not at
-    /// all. It writes nothing: the caller knows whether files need writing.
-    pub(crate) fn apply(
-        &mut self,
-        changes: Vec<Change>,
-        source: Source,
-    ) -> Result<Applied, ProjectError> {
-        if self.read_only && source != Source::Load {
-            return Err(ProjectError::ReadOnly);
-        }
-        // A group that brings `project.json` itself is the one that makes it load again, so a
-        // derive in it is not writing into a file the runtime has lost track of.
-        let project_file_arrives = changes
-            .iter()
-            .any(|change| matches!(change, Change::ProjectFile(_)));
-        let project_file_before = self.project_file.clone();
-        let derive_problems_before = self.derive_problems.clone();
-        let problems_before = self.bindings.connection_problems().to_vec();
-        let live_input_problems_before = self.live_input_problems();
-        // What behaviours said last time, so that `problems.txt` and the views follow a
-        // behaviour that starts or stops reporting. Empty in a project with nothing to report.
-        let instance_problems_before = self.instance_problems();
-        let mut records = Vec::new();
-        let mut derived = Vec::new();
-        let result = self
-            .stage(changes, source, &mut records)
-            .and_then(|()| {
-                self.stage_derived(
-                    source,
-                    project_file_before.tempo_map.time_signatures(),
-                    project_file_arrives,
-                    &mut records,
-                    &mut derived,
-                )
-            })
-            .and_then(|()| self.bind(&records));
-        if let Err(error) = result {
-            for change in records.into_iter().rev() {
-                match change.before {
-                    Some(before) => self.instances.insert(change.id, before),
-                    None => self.instances.remove(&change.id),
-                };
-            }
-            self.project_file = project_file_before;
-            self.derive_problems = derive_problems_before;
-            return Err(error);
-        }
-
-        for change in &records {
-            let id = change.id.clone();
-            self.events.push(match (&change.before, &change.after) {
-                (None, _) => ProjectEvent::Created(id),
-                (_, None) => ProjectEvent::Deleted(id),
-                _ => ProjectEvent::Changed(id),
-            });
-        }
-        for change in &mut records {
-            self.history.note_committed(change, source);
-        }
-        let mut project_file = (project_file_before != self.project_file)
-            .then(|| (project_file_before, self.project_file.clone()));
-        self.history
-            .note_committed_project_file(&mut project_file, source);
-        if project_file.is_some() {
-            self.push_event(ProjectEvent::ProjectFileChanged);
-        }
-        if problems_before != self.bindings.connection_problems()
-            || live_input_problems_before != self.live_input_problems()
-            || instance_problems_before != self.instance_problems()
-        {
-            self.push_event(ProjectEvent::ProblemsChanged);
-        }
-        Ok(Applied {
-            records,
-            project_file,
-            derived,
-        })
-    }
-
-    /// Runs the derives this group asks for and stages what they give, as part of the same
-    /// group. See [`ToolRegistration::derive`].
-    ///
-    /// A derive runs when a record of its tool changed in this group, or when the project's
-    /// time signatures changed. What a derive gives is staged and nothing more: it starts no
-    /// second round, so this cannot loop. It does not run while the project loads, nor for
-    /// undo, redo or a cancel, because the files and the undo step already hold what it would
-    /// compute. So a read-only project never derives and never writes.
-    fn stage_derived(
-        &mut self,
-        source: Source,
-        time_signatures_before: &TimeSignatures,
-        project_file_arrives: bool,
-        records: &mut Vec<RecordChange>,
-        derived: &mut Vec<InstanceId>,
-    ) -> Result<(), ProjectError> {
-        if !matches!(source, Source::Interface | Source::Outside) {
-            return Ok(());
-        }
-        let derives = |project: &Self, id: &InstanceId| {
-            let tool = project.instances.get(id)?.tool;
-            project.registry.definition(tool)?.derive.as_ref()?;
-            Some(())
-        };
-        let signature_changed =
-            self.project_file.tempo_map.time_signatures() != time_signatures_before;
-        let mut ids: BTreeSet<InstanceId> = BTreeSet::new();
-        if signature_changed {
-            let live = self.instances.keys();
-            ids.extend(live.filter(|id| derives(self, id).is_some()).cloned());
-        }
-        let changed = records.iter().map(|change| &change.id);
-        ids.extend(changed.filter(|id| derives(self, id).is_some()).cloned());
-        let Some(first) = ids.first().cloned() else {
-            return Ok(());
-        };
-        // A derive writes its record and the tempo map together, and `project.json` is not
-        // written while it holds an outside change that did not load. Applying the record
-        // alone would leave a project that plays one thing and opens as another, because a
-        // derive does not run on load. So the whole group waits for that file.
-        if !project_file_arrives && !self.project_file_on_disk_is_known() {
-            return Err(ProjectError::DerivesIntoAStaleProjectFile {
-                id: first,
-                path: storage::PROJECT_FILE.to_string(),
-            });
-        }
-
-        let mut changes = Vec::new();
-        let mut reported = Vec::new();
-        for id in ids {
-            // Both borrows are shared: the definition and the project the derive reads.
-            let Some(tool) = self.instances.get(&id).map(|record| record.tool) else {
-                continue;
-            };
-            let derive = self
-                .registry
-                .definition(tool)
-                .and_then(|it| it.derive.as_ref());
-            let Some(derive) = derive else { continue };
-            // What the record was, so a derive can write only what really moved.
-            let from = match records.iter().find(|change| change.id == id) {
-                None => DerivedFrom::Unchanged,
-                Some(change) => match &change.before {
-                    None => DerivedFrom::Created,
-                    Some(record) => DerivedFrom::Changed(record),
-                },
-            };
-            let mut result = Derived::default();
-            derive(self, &id, from, &mut result);
-            changes.extend(result.changes.changes);
-            reported.push((id, result.problems));
-        }
-        for (id, problems) in reported {
-            match problems.is_empty() {
-                true => self.derive_problems.remove(&id),
-                false => self.derive_problems.insert(id, problems),
-            };
-        }
-        // What a derive said about an instance that is gone, or that is now a record of
-        // another tool, would otherwise be shown on that record's path for ever.
-        let stale: Vec<InstanceId> = self
-            .derive_problems
-            .keys()
-            .filter(|id| derives(self, id).is_none())
-            .cloned()
-            .collect();
-        for id in stale {
-            self.derive_problems.remove(&id);
-        }
-        editing::validate(&changes)?;
-        let before = records.len();
-        self.stage(changes, source, records)?;
-        derived.extend(records[before..].iter().map(|change| change.id.clone()));
-        Ok(())
-    }
-
-    /// Changes `instances` and `project_file`, and notes every record change so that a
-    /// failure can be rolled back.
-    fn stage(
-        &mut self,
-        changes: Vec<Change>,
-        source: Source,
-        records: &mut Vec<RecordChange>,
-    ) -> Result<(), ProjectError> {
-        for change in changes {
-            match change {
-                Change::Set(id, record) => {
-                    self.check_tool(record.tool)?;
-                    let owner = id.parent().and_then(|parent| self.instances.get(&parent));
-                    let owner = owner.map(|owner| owner.tool);
-                    if let Some(message) = record.place.refuses(record.tool, &id, owner)
-                        && id.parent().is_none_or(|_| owner.is_some())
-                    {
-                        return Err(ProjectError::WrongPlace { id, message });
-                    }
-                    if !self.instances.contains_key(&id) {
-                        if let Some(parent) = id.parent() {
-                            let Some(parent) = self.instances.get(&parent) else {
-                                return Err(ProjectError::MissingParent(id));
-                            };
-                            if !parent.owns_children {
-                                return Err(ProjectError::ParentOwnsNoChildren {
-                                    id,
-                                    parent_tool: parent.tool,
-                                });
-                            }
-                        }
-                        // A file the runtime did not load may sit at this id: a record of an
-                        // unknown tool, or one with an error. Undo must not write over it
-                        // either. A file the runtime knows is its own, from before a delete
-                        // that is not written yet.
-                        let writes = matches!(source, Source::Interface | Source::History);
-                        if writes
-                            && self.storage.observed(&id).is_none()
-                            && !matches!(
-                                self.storage.read_record(&id, None)?,
-                                RecordOnDisk::Missing
-                            )
-                        {
-                            return Err(ProjectError::IdTaken(id));
-                        }
-                    }
-                    // The id now belongs to a tool that owns nothing: what it owned goes.
-                    if !record.owns_children {
-                        self.stage_delete_inside(&id, records);
-                    }
-                    let before = self.instances.insert(id.clone(), record.clone());
-                    let unchanged = before.as_ref().is_some_and(|before| before.equals(&record));
-                    if !unchanged {
-                        records.push(RecordChange {
-                            id,
-                            before,
-                            after: Some(record),
-                        });
-                    }
-                }
-                Change::Delete(id) => {
-                    self.stage_delete_inside(&id, records);
-                    if let Some(before) = self.instances.remove(&id) {
-                        records.push(RecordChange {
-                            id: id.clone(),
-                            before: Some(before),
-                            after: None,
-                        });
-                    }
-                    self.project_file
-                        .connections
-                        .retain(|connection| !connection.touches(&id));
-                }
-                Change::ProjectFile(project_file) => self.project_file = project_file,
-                Change::TempoMap(tempo_map) => self.project_file.tempo_map = tempo_map,
-                Change::Connect(connection) => {
-                    if !self.project_file.connections.contains(&connection) {
-                        self.project_file.connections.push(connection);
-                    }
-                }
-                Change::Disconnect(connection) => self
-                    .project_file
-                    .connections
-                    .retain(|saved| *saved != connection),
-            }
-        }
-        Ok(())
-    }
-
-    /// Removes everything `id` owns, children before parents, and the saved connections that
-    /// name them.
-    fn stage_delete_inside(&mut self, id: &InstanceId, records: &mut Vec<RecordChange>) {
-        let inside = id.inside(&self.instances);
-        let inside: Vec<InstanceId> = inside.map(|(id, _)| id.clone()).collect();
-        for id in inside.into_iter().rev() {
-            self.project_file
-                .connections
-                .retain(|connection| !connection.touches(&id));
-            if let Some(before) = self.instances.remove(&id) {
-                records.push(RecordChange {
-                    id,
-                    before: Some(before),
-                    after: None,
-                });
-            }
-        }
-    }
-
-    /// Whether the records of this tool decide state of their own, see
-    /// [`ToolRegistration::derive`].
-    pub(crate) fn derives(&self, tool: &'static str) -> bool {
-        let definition = self.registry.definition(tool);
-        definition.is_some_and(|definition| definition.derive.is_some())
-    }
-
-    fn check_tool(&self, tool: &'static str) -> Result<(), ProjectError> {
-        let enabled = self
-            .registry
-            .definition(tool)
-            .is_some_and(|definition| definition.is_enabled_in(&self.project_file.extensions));
-        if enabled {
-            Ok(())
-        } else {
-            Err(ProjectError::UnknownTool(tool))
-        }
-    }
-
-    /// Runs the behaviours the change concerns: each changed instance and all its owners.
-    fn bind(&mut self, records: &[RecordChange]) -> Result<(), ProjectError> {
-        let mut dirty = BTreeSet::new();
-        let mut unbound = Vec::new();
-        for change in records {
-            let tool_changed = match (&change.before, &change.after) {
-                (Some(before), Some(after)) => before.tool != after.tool,
-                (Some(_), None) => true,
-                (None, _) => false,
-            };
-            if tool_changed {
-                unbound.push(change.id.clone());
-            }
-            dirty.extend(change.id.ancestors());
-            dirty.insert(change.id.clone());
-        }
-        let change = EngineChange {
-            registry: &self.registry,
-            instances: &self.instances,
-            unbound: &unbound,
-            dirty,
-            connections: &self.project_file.connections,
-            tempo_map: &self.project_file.tempo_map,
-        };
-        Ok(self
-            .bindings
-            .apply(&mut self.engine, &self.assets, change)?)
     }
 
     /// Makes the files of these instances match the live state: parents before children, then
