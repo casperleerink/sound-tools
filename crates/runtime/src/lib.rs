@@ -485,10 +485,7 @@ pub fn open_with_extensions(
 /// The registry, with the tools of the project in `folder` when it has its own.
 fn registry_of(folder: &Path, plugins: Plugins) -> Result<(Registry, Option<Extensions>)> {
     let mut registry = registry(plugins)?;
-    let mut extensions = Extensions::start(folder);
-    if let Some(extensions) = &mut extensions {
-        extensions.register(&mut registry);
-    }
+    let extensions = Extensions::start(folder, &mut registry);
     Ok((registry, extensions))
 }
 

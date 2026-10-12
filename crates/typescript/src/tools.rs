@@ -2,15 +2,14 @@
 //! the check of its records from its fields, its doc for agents, and a behaviour that plays
 //! the sound graph its code builds as an effect, an instrument or a source.
 //!
-//! The check runs in Rust, from the fields Bun sent once, so a record loads, and an agent
-//! hears what is wrong with it, without asking Bun. Only a new combination of choices asks Bun
-//! for a graph; a knob, a toggle or a pattern only moves a value of the sound that plays.
+//! The check runs in Rust, from the fields Bun sent with its load, and so does the sound: Bun
+//! sent the graph of every combination of choices then. Nothing here waits for Bun. A choice
+//! picks another graph; a knob, a toggle or a pattern only moves a value of the sound that
+//! plays.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::rc::Rc;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -21,11 +20,10 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
 use sound_signals::{
-    ArraySpec, Code, ControlSpec, Declarations, Kind, Machine, ParameterSpec, Signals,
+    ArraySpec, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec, Signals,
     SignalsUpdate, Values,
 };
 
-use crate::bun::Bun;
 use crate::{FOLDER, samples};
 
 /// A tool as `host.ts` sends it.
@@ -395,20 +393,22 @@ impl ToolInfo {
         state
     }
 
-    /// The choices of a record, each at its default when the record leaves it out: what the
-    /// sound of a record depends on.
-    fn choices(&self, state: &Value) -> Map<String, Value> {
+    fn has_choices(&self) -> bool {
+        (self.fields.0.iter()).any(|(_, field)| matches!(field, Field::Choice { .. }))
+    }
+
+    /// The choices of a record, each at its default when the record leaves it out, as JSON:
+    /// what picks its sound. A record and Bun may write an option apart, `4.0` and `4`.
+    fn sound_key(&self, state: &Value) -> String {
         let mut choices = Map::new();
         for (name, field) in &self.fields.0 {
             if let Field::Choice { default, .. } = field {
-                let value = state
-                    .get(name)
-                    .cloned()
-                    .unwrap_or_else(|| default.to_value());
+                let choice = state.get(name).and_then(Choice::of);
+                let value = choice.as_ref().unwrap_or(default).to_value();
                 choices.insert(name.clone(), value);
             }
         }
-        choices
+        Value::Object(choices).to_string()
     }
 
     /// The doc an agent reads to use the tool: what its author wrote, where its record goes,
@@ -479,46 +479,71 @@ impl ToolInfo {
             defaults.join(", "),
         )
     }
-
-    /// The tool for the core. `bun` builds its sound.
-    pub(crate) fn json_tool(&self, bun: &Arc<Bun>) -> JsonTool {
-        let sounds = Sounds::new(self, bun);
-        let info = sounds.info.clone();
-        JsonTool {
-            name: self.name.clone(),
-            check: Arc::new(move |state: &Value| info.check(state)),
-            behaviour: Box::new(move |state, context| sounds.apply(state, context)),
-            doc: Some(JsonToolDoc {
-                when: self.when.clone(),
-                markdown: self.doc(),
-            }),
-            // A sample its record names may come after the record, as an audio clip's may.
-            asset_folders: vec![sound_media::AUDIO_FOLDER],
-        }
-    }
 }
 
 /// Where the samples of an instance are read: its assets, the rate of the engine and itself,
 /// which waits for a sample read on its thread.
 type Read<'a> = (&'a Assets, u32, &'a InstanceId);
 
-/// The behaviour of a tool: its sound per combination of choices, asked of Bun once each.
+/// The behaviour of a tool: its sound per combination of choices.
 pub(crate) struct Sounds {
     info: Arc<ToolInfo>,
-    declarations: Declarations,
-    bun: Arc<Bun>,
-    /// By the choices as JSON. A failure is kept too, so a record that cannot play does not
-    /// ask again on every turn of a knob. A tool defined again starts empty.
-    compiled: RefCell<HashMap<String, Result<Rc<Code>, String>>>,
+    /// Compiled, by [`ToolInfo::sound_key`], or why that sound does not build.
+    sounds: HashMap<String, Result<Arc<Code>, String>>,
 }
 
 impl Sounds {
-    pub(crate) fn new(info: &ToolInfo, bun: &Arc<Bun>) -> Self {
+    /// The behaviour of `info`, with the graph Bun sent for each combination of its choices
+    /// compiled. Takes as long as compiling them all: not on the thread that draws.
+    pub(crate) fn new(
+        info: &ToolInfo,
+        graphs: Vec<(Map<String, Value>, Result<Graph, String>)>,
+    ) -> Self {
+        let declarations = info.declarations();
+        let sounds = (graphs.into_iter())
+            .map(|(choices, graph)| {
+                let key = info.sound_key(&Value::Object(choices));
+                let code = graph.and_then(|graph| {
+                    (graph.compile(&declarations).map(Arc::new)).map_err(|error| error.to_string())
+                });
+                let code = code.map_err(|error| match info.has_choices() {
+                    true => format!("its sound with the choices {key} does not build: {error}"),
+                    false => format!("its sound does not build: {error}"),
+                });
+                (key, code)
+            })
+            .collect();
         Self {
             info: Arc::new(info.clone()),
-            declarations: info.declarations(),
-            bun: bun.clone(),
-            compiled: RefCell::default(),
+            sounds,
+        }
+    }
+
+    pub(crate) fn info(&self) -> &ToolInfo {
+        &self.info
+    }
+
+    /// Why each sound that does not build does not.
+    pub(crate) fn failures(&self) -> impl Iterator<Item = &String> {
+        self.sounds.values().filter_map(|code| code.as_ref().err())
+    }
+
+    /// The tool for the core.
+    pub(crate) fn json_tool(self) -> JsonTool {
+        let info = self.info.clone();
+        JsonTool {
+            name: info.name.clone(),
+            check: Arc::new({
+                let info = info.clone();
+                move |state: &Value| info.check(state)
+            }),
+            doc: Some(JsonToolDoc {
+                when: info.when.clone(),
+                markdown: info.doc(),
+            }),
+            behaviour: Box::new(move |state, context| self.apply(state, context)),
+            // A sample its record names may come after the record, as an audio clip's may.
+            asset_folders: vec![sound_media::AUDIO_FOLDER],
         }
     }
 
@@ -539,19 +564,11 @@ impl Sounds {
     }
 
     /// The compiled sound for the choices of `state`.
-    pub(crate) fn code(&self, state: &Value) -> Result<Rc<Code>, String> {
-        let choices = self.info.choices(state);
-        let key = Value::Object(choices.clone()).to_string();
-        if let Some(code) = self.compiled.borrow().get(&key) {
-            return code.clone();
-        }
-        let code = self.bun.sound(&self.info.name, &choices).and_then(|graph| {
-            let file = &self.info.file;
-            (graph.compile(&self.declarations).map(Rc::new))
-                .map_err(|error| format!("the sound of extensions/{file} does not build: {error}"))
-        });
-        self.compiled.borrow_mut().insert(key, code.clone());
-        code
+    fn code(&self, state: &Value) -> Result<Arc<Code>, String> {
+        let key = self.info.sound_key(state);
+        // A checked record has one of the options of each choice, and Bun sent each combination.
+        (self.sounds.get(&key).cloned())
+            .unwrap_or_else(|| Err(format!("Bun sent no sound for the choices {key}")))
     }
 
     /// Where the params and lists of `code` stand in `state`: a knob or a toggle by the name of

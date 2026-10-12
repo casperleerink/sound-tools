@@ -154,9 +154,10 @@ impl TypeScriptCard {
             .update(cx, |live, cx| live.control(&id, name, value, None, cx));
     }
 
-    /// A handler of the tree, with where the pointer is on a canvas.
-    fn event(&mut self, handler: usize, at: Option<(f32, f32)>, cx: &mut Context<Self>) {
-        self.live.read(cx).event(self.card, handler, at);
+    /// A handler of the tree of `version`, with where the pointer is on a canvas.
+    fn event(&mut self, version: u64, handler: usize, at: Option<(f32, f32)>, cx: &mut App) {
+        let card = self.card;
+        (self.live).update(cx, |live, _| live.event(card, version, handler, at));
     }
 }
 
@@ -169,6 +170,8 @@ struct Drawing<'a, 'b> {
     state: Value,
     watches: BTreeMap<String, f32>,
     card: u64,
+    /// The version of the tree, which its handlers name: the one on screen, not a newer one.
+    version: u64,
     cx: &'a mut Context<'b, TypeScriptCard>,
 }
 
@@ -197,11 +200,13 @@ impl Drawing<'_, '_> {
                     return element.into_any_element();
                 };
                 let path: Vec<String> = index.iter().map(usize::to_string).collect();
+                let version = self.version;
                 element
                     .id(ElementId::Name(format!("div-{}", path.join("-")).into()))
                     .cursor_pointer()
                     .on_click(
-                        (self.cx).listener(move |view, _, _, cx| view.event(handler, None, cx)),
+                        (self.cx)
+                            .listener(move |view, _, _, cx| view.event(version, handler, None, cx)),
                     )
                     .into_any_element()
             }
@@ -426,7 +431,7 @@ impl Drawing<'_, '_> {
         let background = node.background.map_or(theme.gray_200, |color| color.0);
         let shapes = node.shapes.clone();
         let view = self.cx.entity().downgrade();
-        let (on_press, on_drag) = (node.on_press, node.on_drag);
+        let (on_press, on_drag, version) = (node.on_press, node.on_drag, self.version);
         canvas(
             |_, _, _| {},
             move |bounds: Bounds<Pixels>, (), window: &mut Window, _: &mut App| {
@@ -438,7 +443,7 @@ impl Drawing<'_, '_> {
                     let held = Held::Canvas(on_drag);
                     follow_pointer(window, bounds, view, held, move |view, at, pressed, cx| {
                         if let Some(handler) = if pressed { on_press } else { on_drag } {
-                            view.event(handler, Some(at), cx);
+                            view.event(version, handler, Some(at), cx);
                         }
                     });
                 }
@@ -603,13 +608,14 @@ impl Render for TypeScriptCard {
         let tree = live.tree(self.card).cloned();
         let watches = live.watches(self.card).cloned().unwrap_or_default();
         let body = match tree {
-            Some(Ok(node)) => {
+            Some(Ok((version, node))) => {
                 let mut drawing = Drawing {
                     live: self.live.clone(),
                     info,
                     state,
                     watches,
                     card: self.card,
+                    version,
                     cx,
                 };
                 drawing.draw(&node, &[])
