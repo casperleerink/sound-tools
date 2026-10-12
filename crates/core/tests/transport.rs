@@ -206,6 +206,41 @@ fn quarter_notes_land_on_exact_engine_frames_for_every_device_buffer_size() {
 }
 
 #[test]
+fn a_loop_goes_back_on_the_frame_of_its_end_for_every_device_buffer_size() {
+    for device_buffer in [1, 63, 64, 65, 480, 513] {
+        let mut beats = BeatEngine::new(48_000, 960);
+        // Quarter notes 1 and 2, 24000 frames each at 120 bpm.
+        beats.control.set_loop(Some(Ticks(960)..Ticks(2880)));
+        beats.control.play();
+        beats.render(150_000, &[device_buffer]);
+
+        let expected = [(0, 0), (24_000, 1), (48_000, 2)];
+        let looped = [(72_000, 1), (96_000, 2), (120_000, 1), (144_000, 2)];
+        let expected: Vec<_> = (expected.into_iter().chain(looped))
+            .map(|(frame, beat)| (frame, impulse(beat)))
+            .collect();
+        assert_eq!(beats.impulses(), expected, "device buffer {device_buffer}");
+        assert_eq!(beats.broken_promises.load(Ordering::Relaxed), 0);
+        assert_eq!(beats.control.poll().unwrap().jumps, 2);
+    }
+}
+
+#[test]
+fn a_seek_past_the_loop_plays_on_and_no_loop_plays_through() {
+    let mut beats = BeatEngine::new(48_000, 960);
+    beats.control.set_loop(Some(Ticks(960)..Ticks(2880)));
+    beats.control.seek(Ticks(2880));
+    beats.control.play();
+    beats.render(30_000, &[64]);
+    beats.control.set_loop(None);
+    beats.control.seek(Ticks(960));
+    beats.render(60_000, &[64]);
+
+    let frames: Vec<_> = beats.impulses().iter().map(|(frame, _)| *frame).collect();
+    assert_eq!(frames, [0, 24_000, 30_000, 54_000, 78_000]);
+}
+
+#[test]
 fn a_tempo_change_inside_a_block_moves_the_next_beat() {
     // Tick 1 is at frame 25. From there a tick lasts 50 frames, so tick 2 is at frame 75,
     // inside the second engine block, and tick 3 at frame 125.

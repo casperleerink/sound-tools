@@ -1,5 +1,5 @@
-//! The mouse on the timeline: what a press takes, the ruler and its tempo changes, the
-//! marquee, the end of a drag, hover and the cursor.
+//! The mouse on the timeline: what a press takes, the ruler with its tempo changes and the
+//! loop, the marquee, the end of a drag, hover and the cursor.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,7 +72,10 @@ impl Timeline {
             return;
         }
         if y < 0.0 {
-            self.on_ruler(x, double, scene, cx);
+            match scene.loop_zone_at(x, y + RULER_HEIGHT) {
+                Some(zone) => self.start_loop_drag(zone, x, cx),
+                None => self.on_ruler(x, double, scene, cx),
+            }
             return;
         }
         match part {
@@ -418,12 +421,14 @@ impl Timeline {
         let finished = held
             .edit()
             .is_some_and(|edit| edit.finish(&self.session, cx));
-        if !finished && let Held::Clips(drag, _) = held {
-            match drag.on_release {
+        match held {
+            Held::Clips(drag, _) if !finished => match drag.on_release {
                 Some(OnRelease::SelectAlone(pressed)) => self.select_clip(Some(pressed), cx),
                 Some(OnRelease::Toggle(pressed)) => self.toggle_clip(pressed, cx),
                 None => {}
-            }
+            },
+            Held::Loop(drag) => self.end_loop_drag(drag, cx),
+            _ => {}
         }
         cx.notify();
     }
@@ -442,6 +447,7 @@ impl Timeline {
                 self.set_clips(clips, primary, cx);
             }
             Held::Track(_) => {}
+            Held::Loop(drag) => self.cancel_loop_drag(drag, cx),
             // The point goes back, or away when the press added it: it is not selected any more.
             Held::Lane(_) => self.selected_point = None,
             Held::Clips(_, kind) => {
@@ -460,7 +466,13 @@ impl Timeline {
     /// its handles.
     pub(super) fn hover(&mut self, x: f32, y: f32, scene: &Scene, cx: &mut Context<Self>) {
         let inside = x >= 0.0 && y >= 0.0;
+        let in_ruler = x >= 0.0 && y < 0.0;
+        let loop_zone = scene.loop_zone_at(x, y + RULER_HEIGHT).filter(|_| in_ruler);
         let zone = scene.zone_at(x, y).filter(|_| inside);
+        let loop_cursor = loop_zone.map(|zone| match zone {
+            Zone::Body => CursorStyle::PointingHand,
+            Zone::LeftEdge | Zone::RightEdge => CursorStyle::ResizeLeftRight,
+        });
         let cursor = zone.and_then(|(_, grip)| match grip {
             Grip::Zone(Zone::Body) => None,
             Grip::Zone(Zone::LeftEdge | Zone::RightEdge) => Some(CursorStyle::ResizeLeftRight),
@@ -479,7 +491,7 @@ impl Timeline {
         let cursor = match (inside && in_lane, &point) {
             (true, Some(_)) => Some(CursorStyle::PointingHand),
             (true, None) => Some(CursorStyle::Crosshair),
-            (false, _) => cursor,
+            (false, _) => cursor.or(loop_cursor),
         };
         if self.hover_cursor != cursor || self.hovered != hovered || self.hovered_point != point {
             (self.hover_cursor, self.hovered) = (cursor, hovered);
@@ -507,6 +519,10 @@ impl Timeline {
                 LaneDragKind::Point { .. } => CursorStyle::PointingHand,
             }),
             Held::Clips(_, kind) => kind.cursor(),
+            Held::Loop(drag) => match drag.zone {
+                Zone::Body => None,
+                Zone::LeftEdge | Zone::RightEdge => Some(CursorStyle::ResizeLeftRight),
+            },
             Held::Nothing | Held::Marquee(_) | Held::Track(_) => self.hover_cursor,
         }
     }

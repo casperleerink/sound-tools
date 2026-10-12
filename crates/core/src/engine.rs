@@ -110,13 +110,13 @@ pub struct EngineStatus {
     /// anything above zero is a bug in that processor.
     pub port_misuses: u64,
     pub playing: bool,
-    /// Blocks in which the project position jumped: one per seek and per stop. It only grows,
-    /// so a control side that keeps the last value knows whether a jump happened since, also
-    /// when it polls less often than the engine runs. A view uses it to tell a jump from the
+    /// Blocks in which the project position jumped: one per seek, per stop and per loop back.
+    /// It only grows, so a control side that keeps the last value knows whether a jump happened
+    /// since, also when it polls less often than the engine runs. A view uses it to tell a jump from the
     /// position moving with playback.
     pub jumps: u64,
-    /// The project position in frames. It advances only while playing. A seek, a stop and a
-    /// tempo map change move it.
+    /// The project position in frames. It advances only while playing. A seek, a stop, a loop
+    /// back and a tempo map change move it.
     pub playhead_frame: Frames,
     /// The project position in ticks: the first tick at or after `playhead_frame`.
     ///
@@ -230,11 +230,21 @@ impl Engine {
                     self.status.live_input_dropped += dropped;
                     self.status.live_input_underruns += u64::from(short);
                 }
-                for sub_block in frames.chunks_mut(MAX_BLOCK * self.channels.max(1)) {
+                let channels = self.channels.max(1);
+                let mut rest = frames;
+                while !rest.is_empty() {
                     if self.apply_batches() {
                         self.find_leads();
                     }
+                    // A sub-block ends where the loop does, so playback goes back on its frame.
+                    let length = self
+                        .transport
+                        .frames_to_loop_end()
+                        .map_or(MAX_BLOCK, |left| left.min(MAX_BLOCK as u64) as usize);
+                    let split = (length * channels).min(rest.len());
+                    let (sub_block, after) = std::mem::take(&mut rest).split_at_mut(split);
                     self.run(sub_block);
+                    rest = after;
                 }
                 self.status.blocks += 1;
                 self.status_writer.write(self.status);
@@ -286,7 +296,7 @@ impl Engine {
                     Command::SetSchedule(schedule) => {
                         std::mem::swap(schedule, &mut self.schedule);
                     }
-                    Command::Transport(command) => self.transport.apply(*command),
+                    Command::Transport(command) => self.transport.apply(command),
                     Command::SetClock(clock) => {
                         // The clock keeps the tick the device plays. A processor ahead of it
                         // goes on from the tick after its last block instead.
@@ -567,7 +577,7 @@ impl Engine {
         self.status.port_misuses += port_misuses.get();
         self.status.event_overflows += dropped_events.get();
         self.status.playing = heard.playing;
-        // `jumped` is set for one block, so this counts one per seek and per stop.
+        // `jumped` is set for one block, so this counts one per seek, stop and loop back.
         self.status.jumps += u64::from(self.transport.seek_or_stop());
         self.status.playhead_frame = heard.frame_range.end;
         self.status.playhead_tick = heard.tick_range.end;

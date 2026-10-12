@@ -6,6 +6,7 @@
 //! no copy of saved state. `README.md` in this crate is the guide for view authors.
 
 use std::fmt::Display;
+use std::ops::Range;
 use std::time::Duration;
 
 use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
@@ -26,10 +27,18 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
 pub struct Playhead {
     pub playing: bool,
     pub tick: Ticks,
-    /// Jumps of the project position since the engine started: one per seek and per stop. A
-    /// view that keeps the last value knows whether the position jumped or moved with
-    /// playback, which it cannot tell from the tick alone.
+    /// Jumps of the project position since the engine started: one per seek, per stop and per
+    /// loop back. A view that keeps the last value knows whether the position jumped or moved
+    /// with playback, which it cannot tell from the tick alone.
     pub jumps: u64,
+}
+
+/// The part of the timeline that plays again and again while it is on. Its own entity, like
+/// the playhead, so what shows it hears a change from anywhere.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Loop {
+    pub range: Range<Ticks>,
+    pub on: bool,
 }
 
 /// Where a notice came from decides what clears it.
@@ -60,6 +69,8 @@ pub struct Session {
     engine_stopped: bool,
     /// See [`Self::history_moves`].
     history_moves: u64,
+    /// See [`Self::looped`].
+    looped: Entity<Loop>,
     _polling: Task<()>,
 }
 
@@ -81,7 +92,13 @@ impl Session {
                 }
             }
         });
+        let time_signatures = project.project_file().tempo_map.time_signatures();
+        let bar_five = time_signatures.bar(5).map_or(Ticks(0), |bar| bar.start);
         Self {
+            looped: cx.new(|_| Loop {
+                range: Ticks(0)..bar_five,
+                on: false,
+            }),
             project,
             playhead: cx.new(|_| Playhead::default()),
             recording: cx.new(|_| Recording::default()),
@@ -162,6 +179,23 @@ impl Session {
     /// [`Playhead`] after the next poll. Change the tempo map through [`Self::edit`].
     pub fn engine(&mut self) -> &mut EngineControl {
         self.project.engine()
+    }
+
+    /// The loop. It is interface state, like the click: nothing is saved and there is no undo
+    /// step. A project opens with it off, over bars 1 to 4.
+    pub fn looped(&self) -> &Entity<Loop> {
+        &self.looped
+    }
+
+    pub fn set_loop(&mut self, looped: Loop, cx: &mut Context<Self>) {
+        if *self.looped.read(cx) != looped {
+            let range = looped.on.then(|| looped.range.clone());
+            self.engine().set_loop(range);
+            self.looped.update(cx, |current, cx| {
+                *current = looped;
+                cx.notify();
+            });
+        }
     }
 
     pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
