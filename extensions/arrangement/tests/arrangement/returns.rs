@@ -7,7 +7,7 @@ use arrangement::decibels::amplitude;
 use arrangement::{Colour, TrackState, add_return, remove_return};
 use sound_core::Changes;
 
-use crate::support::{Harness, clip, id, note};
+use crate::support::{Harness, TICK, clip, id, level_changes, note};
 
 const BAR: u64 = 3840;
 const PIANO: f32 = 60.0;
@@ -258,5 +258,53 @@ fn a_track_without_sends_and_a_return_save_only_what_they_use() {
   }
 }
 "#
+    );
+}
+
+/// The piano sends a short note into a return whose effect plays it 300 frames late. The engine
+/// leads the piano by that much and holds back its straight path to the master, so the note
+/// through the return and the note straight from the piano start on one frame, and so does the
+/// bass, which plays 64 and sends nothing. Without the hold-back, the straight path of the
+/// piano would start 300 frames early.
+#[test]
+fn a_return_with_latency_plays_in_time_with_the_track_that_sends_and_one_that_does_not() {
+    const LATE: usize = 300;
+    let mut harness = Harness::new();
+    harness.add_track("piano", 1.0);
+    harness.add_track("bass", 1.0);
+    let mut changes = Changes::new();
+    changes.create(
+        id("arrangement/piano/hit"),
+        clip(960, 960, vec![note(0, 4, 60)]),
+    );
+    changes.create(
+        id("arrangement/bass/hit"),
+        clip(960, 960, vec![note(0, 4, 64)]),
+    );
+    harness.project.commit("Add clips", changes).unwrap();
+    harness.write_and_apply(
+        "state/arrangement/space/late.json",
+        &format!(r#"{{"tool": "test.late", "state": {{"frames": {LATE}}}}}"#),
+    );
+    harness.write_and_apply(
+        "state/arrangement/space/wide.json",
+        &format!(r#"{{"tool": "test.trim", "state": {{"gain": {THROUGH_SPACE}}}}}"#),
+    );
+    harness.write_and_apply(
+        SPACE_FILE,
+        r#"{"tool": "arrangement.track", "state": {"name": "space", "kind": "return", "effects": ["late", "wide"]}}"#,
+    );
+    write_piano(&mut harness, r#", "sends": {"space": 0.0}"#);
+    assert_eq!(harness.problems(), Vec::<String>::new());
+
+    let render = harness.play(LATE + 2 * 960 * TICK);
+    assert_eq!(harness.engine.preroll_frames(), LATE as u64);
+    let start = LATE + 960 * TICK;
+    assert_eq!(
+        level_changes(&render),
+        [
+            (start, PIANO + 64.0 + PIANO * THROUGH_SPACE),
+            (start + 4 * TICK, 0.0)
+        ]
     );
 }
