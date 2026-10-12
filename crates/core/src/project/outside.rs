@@ -17,12 +17,18 @@ use super::{Project, ProjectError, ProjectEvent, ProjectFile, Source};
 /// The undo label of a group of outside changes.
 const OUTSIDE_LABEL: &str = "File change";
 
-/// What rejected groups would have changed. The next group that touches any of it takes all
+/// What a rejected group would have changed. The next group that touches any of it takes all
 /// of it along, so fixing the file that failed applies the rest.
 #[derive(Default)]
 pub(crate) struct NotApplied {
     records: BTreeSet<InstanceId>,
     project_file: bool,
+}
+
+impl NotApplied {
+    fn touched_by(&self, queue: &BTreeMap<InstanceId, Option<Form>>, project_file: bool) -> bool {
+        (project_file && self.project_file) || self.records.iter().any(|id| queue.contains_key(id))
+    }
 }
 
 impl Project {
@@ -85,15 +91,13 @@ impl Project {
                 PathTarget::Ignored => {}
             }
         }
-        let touches_not_applied = (project_file_changed && self.not_applied.project_file)
-            || (self.not_applied.records.iter()).any(|id| queue.contains_key(id));
-        if touches_not_applied {
-            let NotApplied {
-                records,
-                project_file,
-            } = std::mem::take(&mut self.not_applied);
-            project_file_changed |= project_file;
-            for id in records {
+        let (touched, untouched) = std::mem::take(&mut self.not_applied)
+            .into_iter()
+            .partition(|group| group.touched_by(&queue, project_file_changed));
+        self.not_applied = untouched;
+        for group in touched {
+            project_file_changed |= group.project_file;
+            for id in group.records {
                 queue.entry(id).or_insert(None);
             }
         }
@@ -236,14 +240,16 @@ impl Project {
                 // window still removes them and they read as changed again.
                 let set = observed.into_iter().map(|(id, _, path)| (id, path));
                 let message = format!("not applied: {error}");
+                let mut not_applied = NotApplied::default();
                 for (id, path) in set.chain(deleted) {
                     self.report_problem(path, message.clone());
-                    self.not_applied.records.insert(id);
+                    not_applied.records.insert(id);
                 }
                 if outside_project_file.is_some() {
                     self.report_problem(PROJECT_FILE.to_string(), message);
-                    self.not_applied.project_file = true;
+                    not_applied.project_file = true;
                 }
+                self.not_applied.push(not_applied);
                 return Err(error);
             }
         };
@@ -411,6 +417,8 @@ impl Project {
         };
         let fingerprint = storage::fingerprint(&bytes);
         if self.storage.project_file_fingerprint() == Some(fingerprint) {
+            // Back to what the runtime knows, such as after a rejected change was undone by hand.
+            self.clear_problem(PROJECT_FILE);
             return None;
         }
         match storage::decode_json::<ProjectFile>(&bytes) {

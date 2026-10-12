@@ -173,7 +173,8 @@ pub struct Project {
     /// What the derive of an instance could not compute, by instance. It stays until that
     /// derive runs again, like what a behaviour reports about its own instance.
     derive_problems: BTreeMap<InstanceId, Vec<String>>,
-    not_applied: NotApplied,
+    /// Rejected groups of outside changes, see [`NotApplied`].
+    not_applied: Vec<NotApplied>,
     /// The generated files may no longer match the project. See `generated.rs`.
     generated_are_stale: bool,
     watcher: Option<Watcher>,
@@ -237,7 +238,7 @@ impl Project {
             events: Vec::new(),
             file_problems: BTreeMap::new(),
             derive_problems: BTreeMap::new(),
-            not_applied: NotApplied::default(),
+            not_applied: Vec::new(),
             generated_are_stale: true,
             watcher: None,
             live_input: None,

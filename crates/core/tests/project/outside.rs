@@ -304,6 +304,42 @@ fn a_rejected_group_applies_whole_once_its_failing_file_is_fixed() {
 }
 
 #[test]
+fn a_project_file_put_back_by_hand_after_a_rejected_group_has_no_problem() {
+    let mut harness = one_dc();
+    let original = harness.read("project.json");
+    let paths = [
+        harness.write("state/reporter.json", &reporter_record("fail")),
+        harness.write("project.json", &project_file(&dc_to_device("dc"))),
+    ];
+    harness.apply_outside_changes(&paths).unwrap_err();
+    assert!(harness.problem_at("project.json").is_some());
+
+    let paths = [
+        harness.write("state/reporter.json", &reporter_record("fixed")),
+        harness.write("project.json", &original),
+    ];
+    harness.apply_outside_changes(&paths).unwrap();
+    assert_eq!(harness.problem_at("project.json"), None);
+}
+
+#[test]
+fn a_rejected_group_waits_only_for_its_own_failing_file() {
+    let mut harness = one_dc();
+    let first = [
+        harness.write("state/second.json", &dc_record(0.125)),
+        harness.write("state/first.json", &reporter_record("fail")),
+    ];
+    harness.apply_outside_changes(&first).unwrap_err();
+    let other = [harness.write("state/other.json", &reporter_record("fail"))];
+    harness.apply_outside_changes(&other).unwrap_err();
+
+    harness.write_and_apply("state/first.json", &reporter_record("fixed"));
+    assert!(harness.project.resolve::<Dc>(&id("second")).is_some());
+    let problem = harness.problem_at("state/other.json").unwrap();
+    assert!(problem.starts_with("not applied"), "{problem}");
+}
+
+#[test]
 fn deleting_an_instance_after_its_outside_edit_was_rejected_removes_its_file() {
     let mut harness = one_dc();
     let mut changes = Changes::new();
