@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError, Weak};
@@ -63,9 +63,11 @@ fn decoded(path: &Path) -> Result<PathBuf, StreamError> {
     let name = name.unwrap_or_default();
     let target = path.with_file_name(format!("{name}.wav"));
     let modified = |path: &Path| fs::metadata(path).and_then(|metadata| metadata.modified());
-    if let (Ok(decoded), Ok(source)) = (modified(&target), modified(path))
-        && decoded >= source
-    {
+    let fresh = || match (modified(&target), modified(path)) {
+        (Ok(decoded), Ok(source)) => decoded >= source,
+        _ => false,
+    };
+    if fresh() {
         return Ok(target);
     }
     let bytes = fs::read(path).map_err(StreamError::Io)?;
@@ -75,17 +77,25 @@ fn decoded(path: &Path) -> Result<PathBuf, StreamError> {
             "FLAC of 8-bit samples".to_string(),
         ))
     })?;
-    let temporary = path.with_file_name(format!(".{name}.{}.decoding", std::process::id()));
-    let written = fs::write(&temporary, wav).and_then(|()| fs::rename(&temporary, &target));
-    if let Err(error) = written {
-        match fs::remove_file(&temporary) {
-            Ok(()) => {}
-            // The failure that brought us here is the one to report.
-            Err(_) => {}
-        }
-        return Err(StreamError::Io(error));
+    // A name of its own for each decoding, as several threads may decode one file at once. It
+    // is removed when anything fails.
+    let folder = path.parent().unwrap_or(Path::new("."));
+    let written = tempfile::Builder::new()
+        .prefix(&format!(".{name}."))
+        .suffix(".decoding")
+        .tempfile_in(folder)
+        .and_then(|mut temporary| {
+            temporary.write_all(&wav)?;
+            temporary.persist(&target)?;
+            Ok(())
+        });
+    match written {
+        Ok(()) => Ok(target),
+        // Another thread put its decoded file there first, and maps it, which Windows does not
+        // let a rename replace.
+        Err(_) if fresh() => Ok(target),
+        Err(error) => Err(StreamError::Io(error)),
     }
-    Ok(target)
 }
 
 /// A WAV file of the decoded samples of a FLAC file. `None` for 8-bit samples, which WAV holds
