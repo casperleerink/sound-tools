@@ -58,7 +58,7 @@ fn peak(samples: &[f32]) -> f32 {
 #[test]
 fn the_whole_project_renders_to_the_end_of_the_last_clip_and_its_tail() {
     let mut harness = chord_through_reverb();
-    let end = runtime::project_end(&harness.project).unwrap();
+    let end = harness.project.end().unwrap();
     assert_eq!(end, Ticks(2 * BAR_TICKS));
 
     let rendered = export(&mut harness, Ticks(0), end);
@@ -96,5 +96,5 @@ fn a_range_renders_from_its_start_and_stops_the_notes_at_its_end() {
 #[test]
 fn a_project_without_clips_has_no_end() {
     let harness = Harness::new();
-    assert_eq!(runtime::project_end(&harness.project), None);
+    assert_eq!(harness.project.end(), None);
 }

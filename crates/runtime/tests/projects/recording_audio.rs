@@ -9,8 +9,8 @@
 use std::time::Duration;
 
 use arrangement::AudioClip;
+use runtime::arrangement_wiring::recording::{add_audio_take_clips, take_clips};
 use runtime::recorder::{Placement, Recorder, RecorderCommand, RecorderReport, TakeRequest};
-use runtime::window::recording::add_audio_take_clips;
 use sound_core::{CaptureWriter, Changes, EngineStatus, InstanceId, StreamTiming, Ticks, capture};
 use sound_media::Imported;
 
@@ -248,7 +248,7 @@ impl Studio {
         }
         let finished = finished.expect("the recording finished");
         let project = &mut self.harness.project;
-        let clips = placement.clips(&finished, end, Some(&self.timing));
+        let clips = take_clips(&placement, &finished, end, Some(&self.timing));
         assert_eq!(clips.len(), 2);
         let mut changes = Changes::new();
         add_audio_take_clips(project, &mut changes, clips).unwrap();

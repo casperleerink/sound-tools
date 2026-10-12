@@ -4,9 +4,9 @@
 //! Three threads and no waiting, as for MIDI. The device thread puts what it captured into a
 //! ring, stamped with when it was captured ([`sound_core::capture`]). A [`Recorder`] takes it
 //! from there away from the thread that draws and writes one WAV file per armed track. The
-//! thread that draws then places each take ([`take_clip`]): the moment a frame was captured is
-//! the moment the composer played it, the timing of the output device says which engine frame
-//! was sounding then, and the engine status says which project frame that engine frame was.
+//! thread that draws then places each take as a clip: the moment a frame was captured is the
+//! moment the composer played it, the timing of the output device says which engine frame was
+//! sounding then, and the engine status says which project frame that engine frame was.
 //! Nothing of this is on the audio thread, and the recorder plays nothing.
 
 use std::ops::Range;
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use sound_core::{
     Assets, CaptureReader, Clock, EngineStatus, Frames, InstanceId, StreamTiming, Ticks,
 };
-use sound_media::{AudioAsset, Imported, Info, MediaError, TakeFile, TakeOverview};
+use sound_media::{AudioAsset, Imported, MediaError, TakeFile, TakeOverview};
 
 /// One armed track of a recording: which channels of the input it records, and the name its
 /// file is made from, such as `voice-take`, which becomes `voice-take-1.wav`.
@@ -362,38 +362,6 @@ pub fn take_seconds_at(head: i128, frame: Frames, clock: &Clock) -> f64 {
     (i128::from(frame.0) - head) as f64 / f64::from(clock.sample_rate())
 }
 
-/// The clip of a take: where the composer heard it, from `start`, the playhead the recording
-/// began at, up to `end`, where it ended. What the file holds before `start` and after `end`
-/// is trimmed away, so the clip plays what was heard in the recording and nothing else.
-/// `None` when the file holds nothing of that stretch.
-///
-/// A take that began before `start` was heard starts at `start`. One whose first frame came
-/// later starts at the first tick of its sound. Either way the frame of the file that the
-/// clip plays at its start is the one captured when that frame was heard.
-pub fn take_clip(
-    asset: AudioAsset,
-    file: &Info,
-    head: i128,
-    (start, end): (Ticks, Ticks),
-    clock: &Clock,
-) -> Option<arrangement::AudioClip> {
-    let start_frame = i128::from(clock.frame_of(start).0);
-    let start = match head <= start_frame {
-        true => start,
-        false => clock.tick_at(Frames(u64::try_from(head).ok()?)),
-    };
-    let file_start = take_seconds_at(head, clock.frame_of(start), clock);
-    let file_end = take_seconds_at(head, clock.frame_of(end), clock);
-    let seconds = file.seconds();
-    if start >= end || file_start >= seconds.min(file_end) {
-        return None;
-    }
-    let mut clip = arrangement::AudioClip::new(asset, start);
-    clip.file_start_seconds = file_start;
-    clip.file_end_seconds = (file_end < seconds).then_some(file_end);
-    Some(clip)
-}
-
 /// A recording on the thread that draws: where it began, the clock it began under, and what
 /// ties it to the timeline once it is known. The window keeps one while it records, and a test
 /// that plays the part of the window does the same.
@@ -460,26 +428,5 @@ impl Placement {
         let rate = i128::from(clock.sample_rate().max(1));
         let frames = (heard * i128::from(input_rate) + rate - 1) / rate;
         u64::try_from(frames).ok()
-    }
-
-    /// The clip of each finished take, up to `end`. A take that holds nothing heard in the
-    /// recording gets none, and neither does any while the recording is not tied to the
-    /// timeline, which takes two polls of the engine while it plays.
-    pub fn clips(
-        &self,
-        takes: &[(InstanceId, Imported)],
-        end: Ticks,
-        timing: Option<&StreamTiming>,
-    ) -> Vec<(InstanceId, arrangement::AudioClip)> {
-        let clock = &self.clock;
-        let Some(head) = self.head(timing) else {
-            return Vec::new();
-        };
-        let clips = takes.iter().filter_map(|(track, take)| {
-            let file = take.audio.info();
-            let clip = take_clip(take.asset.clone(), &file, head, (self.start, end), clock)?;
-            Some((track.clone(), clip))
-        });
-        clips.collect()
     }
 }

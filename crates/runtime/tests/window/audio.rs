@@ -126,8 +126,9 @@ fn a_keyboard_never_plays_into_an_audio_track(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let (selected, first) = opened.project(|project| {
         let voice = project.resolve::<TrackState>(&id(VOICE)).unwrap();
-        let selected = runtime::window::recording::target_track(project, Some(voice.id()));
-        let first = runtime::window::recording::target_track(project, None);
+        let selected =
+            runtime::arrangement_wiring::recording::target_track(project, Some(voice.id()));
+        let first = runtime::arrangement_wiring::recording::target_track(project, None);
         (
             selected.map(|track| track.id().clone()),
             first.map(|track| track.id().clone()),

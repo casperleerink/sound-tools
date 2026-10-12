@@ -2,16 +2,22 @@
 //!
 //! This is the whole meeting point of MIDI input and the arrangement. The MIDI extension knows
 //! nothing of tracks and the arrangement nothing of MIDI: they share the note contract, and
-//! the window puts the two together here, as it does for views.
+//! the runtime puts the two together here, as it does for views. So does a finished audio take,
+//! which the recorder places in time and this makes a clip.
 
 use anyhow::Result;
 use arrangement::{AudioClip, TrackKind, TrackState};
 use midi::{Played, Take};
-use sound_core::{Changes, Clock, InputEndpoint, Instance, InstanceId, Project, ProjectError};
+use sound_core::{
+    Changes, Clock, Frames, InputEndpoint, Instance, InstanceId, Project, ProjectError,
+    StreamTiming, Ticks,
+};
+use sound_media::{AudioAsset, Imported, Info};
 use sound_notes::NOTES_INPUT;
 use sound_typescript::Midi;
 
-use crate::main_arrangement;
+use super::main_arrangement;
+use crate::recorder::{Placement, take_seconds_at};
 
 /// The label of the undo step a recording makes.
 pub const LABEL: &str = "Record";
@@ -148,4 +154,58 @@ pub fn add_audio_take_clips(
         .map(|((track, name), clip)| (track, name.as_str(), clip));
     arrangement::add_audio_clips(project, changes, placed)?;
     Ok(())
+}
+
+/// The clip of a take: where the composer heard it, from `start`, the playhead the recording
+/// began at, up to `end`, where it ended. What the file holds before `start` and after `end`
+/// is trimmed away, so the clip plays what was heard in the recording and nothing else.
+/// `None` when the file holds nothing of that stretch.
+///
+/// A take that began before `start` was heard starts at `start`. One whose first frame came
+/// later starts at the first tick of its sound. Either way the frame of the file that the
+/// clip plays at its start is the one captured when that frame was heard.
+pub fn take_clip(
+    asset: AudioAsset,
+    file: &Info,
+    head: i128,
+    (start, end): (Ticks, Ticks),
+    clock: &Clock,
+) -> Option<AudioClip> {
+    let start_frame = i128::from(clock.frame_of(start).0);
+    let start = match head <= start_frame {
+        true => start,
+        false => clock.tick_at(Frames(u64::try_from(head).ok()?)),
+    };
+    let file_start = take_seconds_at(head, clock.frame_of(start), clock);
+    let file_end = take_seconds_at(head, clock.frame_of(end), clock);
+    let seconds = file.seconds();
+    if start >= end || file_start >= seconds.min(file_end) {
+        return None;
+    }
+    let mut clip = AudioClip::new(asset, start);
+    clip.file_start_seconds = file_start;
+    clip.file_end_seconds = (file_end < seconds).then_some(file_end);
+    Some(clip)
+}
+
+/// The clip of each finished take of a recording placed by `placement`, up to `end`. A take
+/// that holds nothing heard in the recording gets none, and neither does any while the
+/// recording is not tied to the timeline, which takes two polls of the engine while it plays.
+pub fn take_clips(
+    placement: &Placement,
+    takes: &[(InstanceId, Imported)],
+    end: Ticks,
+    timing: Option<&StreamTiming>,
+) -> Vec<(InstanceId, AudioClip)> {
+    let clock = placement.clock();
+    let Some(head) = placement.head(timing) else {
+        return Vec::new();
+    };
+    let start = placement.start;
+    let clips = takes.iter().filter_map(|(track, take)| {
+        let file = take.audio.info();
+        let clip = take_clip(take.asset.clone(), &file, head, (start, end), clock)?;
+        Some((track.clone(), clip))
+    });
+    clips.collect()
 }
