@@ -18,7 +18,8 @@ use sound_core::{
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "tone";
 
-/// The name of the mono audio output, for connections in `project.json`.
+/// The name of the audio output, for connections in `project.json`. Like every audio port it is
+/// stereo; the tone plays the same samples in both channels.
 pub const AUDIO_OUTPUT: &str = "audio";
 
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets.

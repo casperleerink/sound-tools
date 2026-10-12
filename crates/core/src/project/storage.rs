@@ -1,9 +1,9 @@
 //! The project folder on disk: where records live, reading, atomic writing and the JSON layout.
 //!
-//! The file naming rule, see ARCHITECTURE.md "Project storage": the instance `a/b` of a tool
-//! that owns no children is the file `state/a/b.json`. The instance of a tool that owns
-//! children is the folder `state/a/b/` with its record in `instance.json` and its children next
-//! to it. The tool decides the form. The runtime never moves a record between the two.
+//! The file naming rule: the instance `a/b` of a tool that owns no children is the file
+//! `state/a/b.json`. The instance of a tool that owns children is the folder `state/a/b/` with
+//! its record in `instance.json` and its children next to it. The tool decides the form. The
+//! runtime never moves a record between the two.
 
 use std::collections::BTreeMap;
 use std::fs;

@@ -391,7 +391,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
 }
 
 /// The palette: every token with its hex value, the greys on the window and the colours with
-/// what they mean. See DESIGN.md, "Colour".
+/// what they mean.
 fn palette(cx: &App) -> impl IntoElement {
     let theme: &Theme = cx.theme();
     let (window, label) = (theme.gray_100, theme.gray_800);

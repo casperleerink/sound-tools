@@ -158,7 +158,7 @@ The two snapshot tests render the UI components and the window to PNGs without o
 - [CONCEPT.md](CONCEPT.md): what the product is for.
 - [ARCHITECTURE.md](ARCHITECTURE.md): the technical decisions and why.
 - [ENGINEERING.md](ENGINEERING.md): how to work in this code: audio thread rules, testing, rules for agents.
-- [DESIGN.md](DESIGN.md): the look, and every mouse action and key of the app.
+- [DESIGN.md](DESIGN.md): the look and the interaction rules.
 - [crates/core/README.md](crates/core/README.md) and [crates/ui/README.md](crates/ui/README.md): how to write an extension and its view.
 - `extensions/*/agent-doc.md`: the docs the app writes into each project for the agent.
 

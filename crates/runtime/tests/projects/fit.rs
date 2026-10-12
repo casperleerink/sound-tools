@@ -464,9 +464,9 @@ fn the_same_take_gives_the_same_project_file_every_time() {
 
 /// What a take of ten minutes costs. `cargo nextest run -p runtime --run-ignored only -- long`
 ///
-/// It prints and asserts little: the numbers go into the pull request and into
-/// ARCHITECTURE.md. What it does hold is that a map of that size still plays and still
-/// answers a steadiness drag inside one display frame.
+/// It prints and asserts little: the numbers go into the pull request. What it does hold is
+/// that a map of that size still plays and still answers a steadiness drag inside one display
+/// frame.
 #[test]
 #[ignore = "prints numbers and takes a few seconds"]
 fn a_long_take_of_ten_minutes() {

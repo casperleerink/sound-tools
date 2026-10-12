@@ -1,7 +1,7 @@
 //! What a VST 3 plugin asks of its host with `restartComponent`, and what this host does about
-//! it. ARCHITECTURE.md has the table of every flag; these are the flags that need the host to
-//! do something, each made to happen by the repository's own VST 3 plugin. `kLatencyChanged`
-//! is in `lifecycle.rs` and in the latency tests of the runtime.
+//! it. `restartComponent` in `vst3/context.rs` lists every flag; these are the flags that need
+//! the host to do something, each made to happen by the repository's own VST 3 plugin.
+//! `kLatencyChanged` is in `lifecycle.rs` and in the latency tests of the runtime.
 //!
 //! The plugin is told by a note on a key it does not play (`PRESET_KEY` and the keys after it
 //! in `test_plugin_support`), as it is told to change its latency: its processor reports the

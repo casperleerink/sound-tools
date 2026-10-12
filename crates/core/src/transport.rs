@@ -6,7 +6,6 @@
 //! The position is what the device plays. A processor whose output reaches the device later,
 //! because something after it has latency, sees its blocks that much earlier on the timeline:
 //! its lead. So a track with latency plays ahead and reaches the device in time with the rest.
-//! See ARCHITECTURE.md, "Latency compensation".
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -82,7 +81,7 @@ impl Transport<'_> {
     }
 }
 
-/// The transport operations of ARCHITECTURE.md, as messages to the audio thread.
+/// The transport operations, as messages to the audio thread.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum TransportCommand {
     Play,

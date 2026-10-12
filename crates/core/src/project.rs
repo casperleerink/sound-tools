@@ -2,9 +2,8 @@
 //! storage that follows every finished edit, a watcher for outside changes, and the binding
 //! that turns instance state into engine processors.
 //!
-//! The project lives on one thread, the control thread. Nothing here locks. The rules are in
-//! ARCHITECTURE.md "Project storage" and "Editing and system services". `README.md` in this
-//! crate is the guide for extension authors.
+//! The project lives on one thread, the control thread. Nothing here locks. `README.md` in
+//! this crate is the guide for extension authors.
 
 mod apply;
 mod assets;
@@ -445,12 +444,11 @@ impl Project {
     /// Runs the behaviour of one instance again, with the record it already has.
     ///
     /// It is not an edit: nothing is written, nothing is undoable, and the record is untouched.
-    /// It is for a service outside the project that can do more later than it could before, so
-    /// far only the plugin host: a scan that was still running when a plugin record was applied
-    /// has found the plugin, and the behaviour now hands the engine that plugin and stops
-    /// reporting it; or a plugin asked to be unloaded and loaded again, and the behaviour saves
-    /// it on its way out and loads a new one. A behaviour that fails here leaves the instance as
-    /// it was, as any failed group does.
+    /// It is for when something outside the record is ready now that was not before: the plugin
+    /// scan found a plugin a record waited for, or a plugin asked to be loaded again; a Drum
+    /// pad's sounds finished rendering; a Sampler's instrument or a sample finished loading; an
+    /// asset folder a tool watches changed; the code of a project tool changed. A behaviour that
+    /// fails here leaves the instance as it was, as any failed group does.
     ///
     /// `Ok(false)` says there is no such instance, which is what a record that went away while
     /// something waited for it looks like.

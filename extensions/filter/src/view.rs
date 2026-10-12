@@ -33,8 +33,7 @@ use crate::{
 /// The name the rack puts on the card of a filter.
 pub const NAME: &str = "Filter";
 
-/// The width of the display. With it and two columns of cells the card is 352 pt, as DESIGN.md
-/// gives the filter.
+/// The width of the display. With it and two columns of cells the card is 352 pt.
 const DISPLAY_WIDTH: f32 = 200.;
 
 /// Registers the view of the `filter` tool, what a rack calls one and its offer in a picker.

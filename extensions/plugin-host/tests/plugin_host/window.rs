@@ -138,7 +138,7 @@ fn a_window_is_made_once(format: PluginFormat, cx: &mut TestAppContext) {
     assert!(!harness.plugins.window_is_open(&slot));
     // What each format costs to find out whether the plugin has a window at all. CLAP asks,
     // which is one cheap call. VST 3 has no way of asking but to build the plugin's whole
-    // interface, so it asks nothing and offers the window; see ARCHITECTURE.md.
+    // interface, so it asks nothing and offers the window.
     let asked = window_calls(&log);
     let expected: &[&str] = match format {
         PluginFormat::Clap => &["gui_is_api_supported"],
@@ -306,7 +306,7 @@ fn a_plugin_sizes_its_own_window(format: PluginFormat, cx: &mut TestAppContext) 
 /// When the card knows differs by format, and that is the one place where the two do. CLAP is
 /// asked while the plugin loads, so the card never offers a window it cannot open. VST 3 has no
 /// way of being asked but to build the plugin's whole interface, so the card offers one and the
-/// answer arrives the first time the composer asks for it. See ARCHITECTURE.md.
+/// answer arrives the first time the composer asks for it.
 #[gpui::test]
 fn a_plugin_with_no_window_of_its_own_is_offered_none(cx: &mut TestAppContext) {
     for format in FORMATS {
@@ -342,7 +342,7 @@ fn no_window_is_offered(format: PluginFormat, cx: &mut TestAppContext) {
 
 /// Loading a VST 3 plugin asks it nothing about a window, in any mode. Building a plugin's
 /// interface to find out whether it has one costs up to a second of the thread that draws, and
-/// `--render`, `--inspect` and `--headless` can open no window at all. See ARCHITECTURE.md.
+/// `--render`, `--inspect` and `--headless` can open no window at all.
 #[test]
 fn loading_a_vst3_plugin_makes_no_view_call_at_all() {
     let folder = log_folder();

@@ -213,9 +213,10 @@ impl<V: ExpressionValue> PlayedLane<V> {
 
 /// Sorts pedal moves by tick and keeps one per tick, the most pressed of them.
 ///
-/// A record may hold any number of moves on one tick, and clips that overlap add more. Only
-/// the last of them can apply, so only it is kept, and the work of a block is then bounded by
-/// the ticks it covers, whatever a record holds.
+/// A record may hold any number of moves on one tick, and clips that overlap add more. They
+/// land on the same frame with no order among them, so the most pressed wins: a clip that
+/// starts with the pedal down where another clip ends keeps it down. One per tick also bounds
+/// the work of a block by the ticks it covers, whatever a record holds.
 fn one_per_tick(pedal: &mut Vec<PlacedPedal>) {
     pedal.sort_unstable_by_key(|change| (change.start, change.value));
     pedal.dedup_by(|later, earlier| {

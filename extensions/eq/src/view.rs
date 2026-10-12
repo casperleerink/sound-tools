@@ -38,8 +38,7 @@ use crate::{
 /// The name the rack puts on the card of an EQ.
 pub const NAME: &str = "EQ";
 
-/// The width of the display. With it and two columns of cells the card is 464 pt, as DESIGN.md
-/// gives the EQ.
+/// The width of the display. With it and two columns of cells the card is 464 pt.
 const DISPLAY_WIDTH: f32 = 312.;
 
 /// The display shows gains from here to there, in dB: the ±15 dB of a band with room for its

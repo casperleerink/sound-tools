@@ -2,7 +2,8 @@
 //! its top right, and a tooltip that says why it does not drag. The knob and the volume use it.
 //!
 //! The dot is in the grey of a label and not in the colour of the track: no control takes a
-//! track colour (DESIGN.md, "Colour").
+//! track colour, because the track colours include green, yellow, peach and red, which mean
+//! something on a control.
 
 use gpui::{App, Div, Stateful, div, prelude::*, px};
 
