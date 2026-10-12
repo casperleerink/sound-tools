@@ -2,25 +2,22 @@
 //! drag that add, move, erase and delete points.
 
 use gpui::{
-    App, Context, Div, Entity, Modifiers, MouseDownEvent, SharedString, Subscription, div,
-    prelude::*, px,
+    App, Context, Entity, Modifiers, MouseDownEvent, SharedString, Subscription, div, prelude::*,
+    px,
 };
 use sound_core::{Changes, InstanceId, Ticks};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::toggle::{self, Toggle};
-use sound_ui::{ActiveTheme, Devices, DragEdit};
+use sound_ui::{Devices, DragEdit};
 
 use super::Timeline;
+use super::header::header_column;
 use super::scene::{PointKey, Scene};
 use super::state::{After, Held, LaneDrag, LaneDragKind};
 use crate::automation::{devices, free_lanes};
 use crate::view::lanes::{DRAG_THRESHOLD, erase_range};
-use crate::view::layout::{
-    ADD_LANE_HEIGHT, DOT_LEFT, HEADER_INSET, HEADER_WIDTH, LANES_MIDDLE, Part, RULER_HEIGHT,
-    shifted,
-};
+use crate::view::layout::{ADD_LANE_HEIGHT, HEADER_INSET, HEADER_WIDTH, Part, shifted};
 use crate::view::track_lanes::{self, LANE_BOX};
 use crate::{AutomationLane, AutomationValue, TrackState, travel_in};
 
@@ -42,10 +39,6 @@ pub(super) struct LaneMenu {
 
 /// What the select that adds a lane says.
 const ADD_LANE: &str = "Add lane";
-/// The tooltip of the toggle of the lanes of a track.
-const AUTOMATION: &str = "Automation";
-/// The toggle of the lanes is under the dot of the track.
-const LANES_TOGGLE_LEFT: f32 = DOT_LEFT + 4. - toggle::HEIGHT / 2.;
 /// The select that adds a lane is as wide as the shape of a selected header, and this tall.
 const ADD_LANE_BUTTON_HEIGHT: f32 = 24.;
 
@@ -333,60 +326,6 @@ impl Timeline {
             .children(selects)
     }
 
-    /// The toggle of the lanes of each track, under its dot on the second line of its
-    /// header, with how many lanes the track has beside it when it has any. Small, so a press
-    /// on the rest of the header selects the track.
-    pub(super) fn lanes_toggle_column(&self, cx: &Context<Self>) -> impl IntoElement {
-        let project = self.session.read(cx).project();
-        let count_color = cx.theme().gray_700;
-        let rows = self.rows(cx);
-        let (width, height) = self.painted_size.get();
-        let viewport = self.clamped(self.viewport, width, height, cx);
-        let mut toggles = Vec::new();
-        // Every track, and the column clips them: the height of the last paint may be old.
-        for (index, track) in self.order.iter().enumerate() {
-            let Some(state) = project.state(track) else {
-                continue;
-            };
-            let id = track.id().clone();
-            let name = SharedString::from(format!("lanes-{}", id.name()));
-            let timeline = cx.weak_entity();
-            // Out of the tab order: `a` reaches it. A click gives the focus to the timeline, as a
-            // click on the rest of the header does, so its keys work after it.
-            let toggle = Toggle::icon(name, "automation", AUTOMATION, self.shows_lanes(&id))
-                .tab_stop(false)
-                .on_change(move |shown, window, cx| {
-                    // Released: there is nothing left to show.
-                    timeline
-                        .update(cx, |timeline, cx| {
-                            timeline.take_focus_from_press(window, cx);
-                            timeline.show_lanes(&id, shown, cx);
-                        })
-                        .ok();
-                });
-            let count = (!state.automation.is_empty()).then(|| {
-                div()
-                    .text_size(px(12.))
-                    .text_color(count_color)
-                    .child(state.automation.len().to_string())
-            });
-            let top = viewport.y_of(&rows, index) + LANES_MIDDLE - toggle::HEIGHT / 2.;
-            toggles.push(
-                div()
-                    .absolute()
-                    .top(px(top))
-                    .left(px(LANES_TOGGLE_LEFT))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    // The toggle takes its own clicks: the header under it is not pressed.
-                    .child(div().occlude().child(toggle))
-                    .children(count),
-            );
-        }
-        header_column().overflow_hidden().children(toggles)
-    }
-
     /// A press in an automation lane, at `y` in the timeline area. On the dot of a point it
     /// selects the point, and a drag moves it. Anywhere else it adds a point there, on the grid
     /// unless cmd is held, selected, and a drag goes on to move it. With alt a drag erases the
@@ -652,14 +591,4 @@ impl Timeline {
         });
         true
     }
-}
-
-/// The header column under the ruler, where the controls over the painted headers go.
-fn header_column() -> Div {
-    div()
-        .absolute()
-        .top(px(RULER_HEIGHT))
-        .bottom_0()
-        .left_0()
-        .w(px(HEADER_WIDTH - 1.))
 }

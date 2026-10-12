@@ -23,13 +23,15 @@ mod build;
 mod clipboard;
 mod drag;
 mod file_drop;
+mod header;
 mod keys;
 mod lanes;
 mod mouse;
 mod scene;
 mod state;
 
-pub(super) use scene::{ARM_LEFT, ARMED_METER_HEIGHT, ARMED_METER_LEFT, paint_takes};
+pub(super) use header::ARM_LEFT;
+pub(super) use scene::{ARMED_METER_HEIGHT, ARMED_METER_LEFT, paint_takes};
 pub use scene::{ClipShape, Scene};
 pub use state::DropTarget;
 pub(crate) use state::{FADE_IN_LABEL, FADE_OUT_LABEL, GAIN_LABEL};
@@ -893,7 +895,7 @@ impl Render for Timeline {
             ))
             .child(surface.size_full())
             .child(self.snap_corner(cx))
-            .child(self.lanes_toggle_column(cx))
+            .child(self.header_toggles(cx))
             .child(self.lane_menu_column(cx))
             .children(self.rename_field(cx))
     }

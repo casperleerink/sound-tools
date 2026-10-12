@@ -533,6 +533,11 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
                 Toggle::icon("lanes-on", "automation", "Automation", true),
             ),
             sample(
+                "lanes, 2",
+                cx,
+                Toggle::icon("lanes-count", "automation", "Automation", false).count(2),
+            ),
+            sample(
                 "segmented",
                 cx,
                 SegmentedControl::new("type", segment.clone())

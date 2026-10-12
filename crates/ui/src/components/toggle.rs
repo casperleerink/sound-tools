@@ -2,9 +2,9 @@
 //! 28 pt wide for a letter or a glyph and as wide as its word otherwise. The arm toggle of an
 //! audio track is a 10 pt circle in a 24 pt square, the size of an icon of a card header, hollow
 //! while off and filled while on ([`Toggle::dot`]). The automation toggle of a track is an icon
-//! in the same square ([`Toggle::icon`]). Off it is `alpha/5` with muted text. On it
-//! is white at 10 %, or its colour at 16 % with that colour as text: mute is peach and solo
-//! yellow, the one place a control fills with colour.
+//! in the same square ([`Toggle::icon`]), wider when it holds a count. Off it is `alpha/5` with
+//! muted text. On it is white at 10 %, or its colour at 16 % with that colour as text: mute is
+//! peach and solo yellow, the one place a control fills with colour.
 //!
 //! Controlled: the caller gives `on` and hears the new state. A click toggles it, and so do
 //! enter and space on the focused toggle, through GPUI's keyboard click. In the window space
@@ -46,6 +46,8 @@ enum Face {
     Icon {
         icon: SharedString,
         label: SharedString,
+        /// A number after the icon, such as how many lanes a track has. None at 0.
+        count: usize,
     },
 }
 
@@ -96,9 +98,18 @@ impl Toggle {
             face: Face::Icon {
                 icon: icon.into(),
                 label: label.into(),
+                count: 0,
             },
             ..Self::new(id, "", on)
         }
+    }
+
+    /// A number after the icon of [`Toggle::icon`], inside the button. 0 shows none.
+    pub fn count(mut self, count: usize) -> Self {
+        if let Face::Icon { count: shown, .. } = &mut self.face {
+            *shown = count;
+        }
+        self
     }
 
     /// The colour it has when on, for a toggle whose state is a colour meaning: peach for mute,
@@ -156,6 +167,7 @@ impl RenderOnce for Toggle {
         };
         let ring = theme.lavender;
         let width = match &self.face {
+            Face::Icon { count, .. } if *count > 0 => None,
             Face::Dot | Face::Icon { .. } => Some(HEIGHT),
             Face::Label(label) if label.chars().count() == 1 => Some(LETTER_WIDTH),
             Face::Label(_) => None,
@@ -175,6 +187,9 @@ impl RenderOnce for Toggle {
             .h(px(HEIGHT))
             .map(|toggle| match width {
                 Some(width) => toggle.w(px(width)),
+                None if matches!(self.face, Face::Icon { .. }) => {
+                    toggle.pl(px((HEIGHT - GLYPH) / 2.)).pr(px(8.)).gap(px(4.))
+                }
                 None => toggle.px(px(10.)),
             })
             .rounded(px(6.))
@@ -199,9 +214,10 @@ impl RenderOnce for Toggle {
             })
             .map(|toggle| match self.face {
                 Face::Label(label) => toggle.child(label),
-                Face::Icon { icon, label } => toggle
+                Face::Icon { icon, label, count } => toggle
                     .tooltip(move |_, cx| Tooltip::new(label.clone()).view(cx))
-                    .child(Icon::new(icon).size(GLYPH).color(text)),
+                    .child(Icon::new(icon).size(GLYPH).color(text))
+                    .when(count > 0, |toggle| toggle.child(count.to_string())),
                 Face::Dot => {
                     let dot = div().size(px(DOT)).rounded_full();
                     toggle.child(match on {

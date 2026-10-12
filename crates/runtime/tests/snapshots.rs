@@ -107,7 +107,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
+use arrangement::view::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor};
 use arrangement::{Colour, TrackState};
@@ -417,12 +417,12 @@ impl Opened {
         editor.context("the editor did not open")
     }
 
-    /// A real click on the header of a track row, which selects the track and opens its
+    /// A real click on the name line of a track header, which selects the track and opens its
     /// panel. The focus is then on the timeline, from the mouse, so no ring shows.
     fn click_track_header(&self, row: f32, cx: &mut HeadlessAppContext) -> Result<()> {
         let position = point(
             px(HEADER_WIDTH / 2.),
-            px(48. + RULER_HEIGHT + TRACK_HEIGHT * (row + 0.5)),
+            px(48. + RULER_HEIGHT + TRACK_HEIGHT * row + NAME_MIDDLE),
         );
         self.drag(position, point(px(0.), px(0.)), 0, cx)?;
         let view = self.arrangement_view(cx)?;
@@ -1308,7 +1308,7 @@ fn main() -> Result<()> {
     let header = |row: f32| {
         point(
             px(HEADER_WIDTH / 2.),
-            px(48. + RULER_HEIGHT + TRACK_HEIGHT * (row + 0.5)),
+            px(48. + RULER_HEIGHT + TRACK_HEIGHT * row + NAME_MIDDLE),
         )
     };
     editing.press_and_move(header(0.), header(2.), &mut cx)?;

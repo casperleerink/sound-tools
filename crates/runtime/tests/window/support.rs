@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use arrangement::view::layout::{HEADER_WIDTH, RULER_HEIGHT, TRACK_HEIGHT};
+use arrangement::view::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
@@ -674,9 +674,9 @@ impl Opened<'_> {
         )
     }
 
-    /// The middle of the header of a track row of the arrangement.
+    /// The name line of the header of a track row of the arrangement, clear of its toggles.
     pub(crate) fn track_header(&mut self, track: usize) -> Point<Pixels> {
-        let y = self.at(0, track).y;
+        let y = self.at(0, track).y + px(NAME_MIDDLE - TRACK_HEIGHT / 2.);
         point(px(HEADER_WIDTH / 2.), y)
     }
 
