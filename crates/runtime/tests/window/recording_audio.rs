@@ -122,13 +122,15 @@ fn the_arm_toggle_opens_the_input_and_shows_its_level(cx: &mut TestAppContext) {
     // Arming is no edit: nothing to undo, and no file changed.
     assert_eq!(opened.undo_label(), None);
 
-    // Disarmed, the input closes, and the level goes.
+    // Disarmed, the input closes, and the level goes. Core Audio can take a while to stop a
+    // stream, so the input stops off the thread that draws.
     arm(&mut opened, "voice");
     assert!(!armed(&mut opened, VOICE));
     assert_eq!(
         opened.cx.read(|cx| recording.read(cx).input_channels()),
         None
     );
+    assert_eq!(input.closed_on_ui_thread(), [false]);
 }
 
 /// The input select offers the channels of the input, each alone, then pairs, and a pick is

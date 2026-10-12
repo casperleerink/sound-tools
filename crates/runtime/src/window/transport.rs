@@ -697,13 +697,18 @@ impl TransportPill {
     fn input_opened(
         &mut self,
         generation: u64,
-        opened: Result<OpenedInput, sound_core::DeviceError>,
+        mut opened: Result<OpenedInput, sound_core::DeviceError>,
         cx: &mut Context<Self>,
     ) {
         let assets = self.session.read(cx).project().assets().clone();
-        match self.audio.opened(generation, opened, &assets) {
+        let notice = opened.as_mut().ok().and_then(|input| input.notice.take());
+        match self.audio.opened(generation, opened, &assets, cx) {
             None => {}
             Some(Ok((channels, live))) => {
+                if let Some(notice) = notice {
+                    self.session
+                        .update(cx, |session, cx| session.report(notice, cx));
+                }
                 let plays = live.sample_rate() == self.session.read(cx).project().sample_rate();
                 // The engine reads it while the input is open, whether a connection hears it
                 // or not, so it never falls behind.
@@ -716,7 +721,7 @@ impl TransportPill {
                 let armed = self.recording.read(cx).armed().next().is_some();
                 let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
                 if !plays && !armed && !records {
-                    self.audio.give_up();
+                    self.audio.give_up(cx);
                     return;
                 }
                 self.recording.update(cx, |recording, cx| {
@@ -755,7 +760,7 @@ impl TransportPill {
         if self.audio.wants(armed, heard) && !self.audio.is_gone() {
             self.open_input(cx);
         } else if !records && self.audio.is_open_or_opening() {
-            self.audio.close();
+            self.audio.close(cx);
             self.recording
                 .update(cx, |recording, cx| recording.set_input_channels(None, cx));
             self.session.update(cx, |session, cx| {

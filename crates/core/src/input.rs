@@ -83,6 +83,11 @@ impl InputDevice {
         Ok(self.device.description()?.name().to_string())
     }
 
+    /// The id a choice of this device keeps, see [`DeviceChoice`](crate::DeviceChoice).
+    pub fn id(&self) -> Result<String, DeviceError> {
+        Ok(self.device.id()?.to_string())
+    }
+
     pub fn sample_rate(&self) -> u32 {
         self.config.sample_rate
     }

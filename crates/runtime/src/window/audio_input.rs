@@ -2,14 +2,17 @@
 //! connects the device input, its level for the meters, and the recorder that writes the takes.
 //! The input is opened and the recorder runs on the background executor, never on the thread
 //! that draws: opening a device can take a while, and the first time macOS asks the composer
-//! whether the app may use the microphone.
+//! whether the app may use the microphone. It closes there too, see
+//! [`super::drop_in_background`].
 
 use std::sync::Arc;
 
+use gpui::App;
 use sound_core::{
-    Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InputStream, InstanceId,
-    LiveInput,
+    Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InstanceId, LiveInput,
 };
+
+use super::drop_in_background;
 
 use crate::recorder::{Recorder, RecorderCommand, RecorderReport};
 
@@ -17,9 +20,12 @@ use crate::recorder::{Recorder, RecorderCommand, RecorderReport};
 /// reader of what it captures, and the live input for the engine. A test gives one with no
 /// device and writes into it itself.
 pub struct OpenedInput {
-    pub stream: Option<InputStream>,
+    pub stream: Option<Box<dyn Send>>,
     pub reader: CaptureReader,
     pub live: LiveInput,
+    /// Says so when this is not the input the composer chose: that one is not there or did not
+    /// open.
+    pub notice: Option<String>,
 }
 
 /// How the window opens its input: an input device of the system, or a simulated one. It is
@@ -27,11 +33,16 @@ pub struct OpenedInput {
 pub type OpenInput = Arc<dyn Fn() -> Result<OpenedInput, DeviceError> + Send + Sync>;
 
 /// The input device the composer chose on this machine, by its id, or the default input of the
-/// system when there is no choice or that device is not there.
+/// system when there is no choice or that device is not there or does not open. The default
+/// then says so: a take must not come from another microphone unnoticed.
 pub fn system_input(choice: Option<String>) -> OpenInput {
     Arc::new(move || {
         let device = InputDevice::open(choice.as_deref())?;
         let name = device.name()?;
+        let chosen = choice.is_none() || device.id().ok() == choice;
+        let notice = (!chosen).then(|| {
+            format!("The chosen audio input is not there or did not open, so {name} is used.")
+        });
         let (stream, reader, live) = device.start()?;
         println!(
             "audio in: {name}, {} Hz, {} channels",
@@ -39,9 +50,10 @@ pub fn system_input(choice: Option<String>) -> OpenInput {
             reader.channels()
         );
         Ok(OpenedInput {
-            stream: Some(stream),
+            stream: Some(Box::new(stream)),
             reader,
             live,
+            notice,
         })
     })
 }
@@ -51,7 +63,7 @@ pub fn system_input(choice: Option<String>) -> OpenInput {
 const SILENT_POLLS: u32 = 125;
 
 struct Open {
-    _stream: Option<InputStream>,
+    _stream: Option<Box<dyn Send>>,
     /// Polls in a row whose level was exactly zero on every channel, and whether that was told.
     silent_polls: u32,
     /// The input went away, and that was told.
@@ -109,8 +121,8 @@ impl AudioInput {
 
     /// Closes an input that was opened for a connection alone and plays nothing, because it runs
     /// at another rate than the output. It is not opened again until something new wants it.
-    pub(super) fn give_up(&mut self) {
-        self.close();
+    pub(super) fn give_up(&mut self, cx: &App) {
+        self.close(cx);
         self.failed = true;
     }
 
@@ -144,8 +156,12 @@ impl AudioInput {
         generation: u64,
         opened: Result<OpenedInput, DeviceError>,
         assets: &Assets,
+        cx: &App,
     ) -> Option<Result<(usize, LiveInput), DeviceError>> {
         if self.opening != Some(generation) {
+            if let Ok(input) = opened {
+                drop_in_background(input, cx);
+            }
             return None;
         }
         self.opening = None;
@@ -153,6 +169,7 @@ impl AudioInput {
             stream,
             reader,
             live,
+            ..
         } = match opened {
             Ok(opened) => opened,
             Err(error) => {
@@ -183,8 +200,10 @@ impl AudioInput {
 
     /// Stops the device, or forgets the opening on its way. A recorder out on a run is dropped
     /// when it comes back.
-    pub(super) fn close(&mut self) {
-        self.open = None;
+    pub(super) fn close(&mut self, cx: &App) {
+        if let Some(open) = self.open.take() {
+            drop_in_background(open, cx);
+        }
         self.opening = None;
         self.commands.clear();
     }
