@@ -247,7 +247,7 @@ impl FilterView {
                     view.change("Change character", ValueChange::Set(*character), set, cx);
                 }
             }));
-        Cell::new(characters).label("Character")
+        Cell::new(characters).span(2).label("Character")
     }
 }
 
@@ -268,6 +268,7 @@ impl Render for FilterView {
         ];
         let hidden = [
             Column::new()
+                .span(2)
                 .top(self.slope(&state, cx))
                 .bottom(self.character(&state, cx)),
             Column::new()

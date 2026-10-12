@@ -256,7 +256,7 @@ impl SynthView {
                         .apply(session, synth, "Change character", change, set, cx);
                 }
             }));
-        Cell::new(characters).label("Character")
+        Cell::new(characters).span(2).label("Character")
     }
 }
 
@@ -273,6 +273,7 @@ impl Render for SynthView {
                 .top(knob(CUTOFF_KNOB, cx))
                 .bottom(knob(GAIN_KNOB, cx)),
             Column::new()
+                .span(2)
                 .top(knob(RESONANCE_KNOB, cx))
                 .bottom(self.character(&state, cx)),
         ];
