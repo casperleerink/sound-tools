@@ -1,6 +1,7 @@
 //! The filters of a voice: each type and slope holds to the exact response of the filter of
 //! the SDK, the routings send each oscillator where they say, and the drive bends.
 
+use sound_core::testing::Spectrum;
 use sound_core::{FilterSlope, FilterType, svf_response};
 use wavetable::WavetableState;
 use wavetable::state::{Filter, Oscillator, Routing};
@@ -189,6 +190,33 @@ fn the_drive_adds_harmonics_and_turning_it_on_does_not_click() {
         largest_step(&after)
     );
     assert!(after.iter().all(|sample| sample.abs() < 0.2));
+}
+
+/// Bright sines, A7 and A8, at the most drive. The drive runs at four times the rate, so most
+/// of what it makes above the Nyquist frequency is gone before it can fold back. Each tone is a
+/// whole number of cycles in a window of 0.1 s, see [`Spectrum`].
+#[test]
+fn the_drive_is_oversampled_so_little_folds_back() {
+    for (pitch, most) in [(105, -54.0), (117, -42.0)] {
+        let state = WavetableState {
+            filter_1: Filter {
+                cutoff_hz: 20_000.0,
+                resonance: 0.0,
+                drive_db: 24.0,
+                ..Filter::default()
+            },
+            ..plain(Oscillator {
+                position: 0.0,
+                ..Oscillator::default()
+            })
+        };
+        let mut harness = Harness::with_notes(vec![note(0, ticks(2.0), pitch, 127)], state);
+        let left = harness.play_left(frames(0.6));
+        let bin = 44 * 2_usize.pow(u32::from(pitch - 69) / 12);
+        let folded = Spectrum::of(&left[frames(0.5)..], bin, SAMPLE_RATE).out_of_tune_db;
+        println!("{} Hz: out of tune {folded:.1} dB", bin * 10);
+        assert!(folded < most, "{pitch}: {folded}");
+    }
 }
 
 /// Two low passes side by side, one with a little drive that the level never reaches: the
