@@ -100,7 +100,7 @@ impl Timeline {
         }
         let grab = self.painted.get().tick_at(x);
         let kind = match grip {
-            Grip::Zone(Zone::Body) => self.start_move(&id, cmd, cx),
+            Grip::Zone(Zone::Body) => self.start_move(&id, cmd, event.modifiers.alt, cx),
             Grip::Zone(zone @ (Zone::LeftEdge | Zone::RightEdge)) => {
                 let edge = match zone {
                     Zone::LeftEdge => Edge::Left,
@@ -225,12 +225,13 @@ impl Timeline {
 
     /// A press on the body of a clip: a move of it, or of every selected clip when it is one of
     /// them. With cmd held (`keeps`) the selection stays as it is until the first move, and the
-    /// clip moves with it. A selected clip that the project no longer has is left out. `None`
-    /// when the pressed clip is gone.
+    /// clip moves with it. With alt held (`copy`) it moves copies. A selected clip that the
+    /// project no longer has is left out. `None` when the pressed clip is gone.
     fn start_move(
         &mut self,
         pressed: &InstanceId,
         keeps: bool,
+        copy: bool,
         cx: &mut Context<Self>,
     ) -> Option<ClipDragKind> {
         self.refresh_order(cx);
@@ -272,6 +273,7 @@ impl Timeline {
             tracks: BTreeMap::new(),
             lanes_written: BTreeSet::new(),
             ghosts: Vec::new(),
+            copy,
         }))
     }
 
