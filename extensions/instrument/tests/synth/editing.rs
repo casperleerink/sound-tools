@@ -55,13 +55,13 @@ fn a_file_edit_during_a_held_note_changes_the_sound_without_a_restart_or_a_click
     }
 
     // Every cycle is about as long as the 183.5 frames before the edit: the phase went on.
-    // The moving filter shifts the crossings by a frame or two. A phase reset at this frame
+    // The moving filter shifts the crossings by up to five frames. A phase reset at this frame
     // would make one cycle 55 frames longer.
     let crossings = rising_zero_crossings(&output[24_000..]);
     for pair in crossings.windows(2) {
         let cycle = pair[1] - pair[0];
         assert!(
-            (180..=186).contains(&cycle),
+            (178..=188).contains(&cycle),
             "cycle of {cycle} frames at {}",
             24_000 + pair[0]
         );

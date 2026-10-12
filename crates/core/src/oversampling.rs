@@ -18,7 +18,7 @@
 
 use std::f64::consts::PI;
 
-use crate::MAX_BLOCK;
+use crate::{MAX_BLOCK, bessel_i0};
 
 /// The middle tap of the first stage, from its start. The filter is twice this plus one long,
 /// and delays by this many samples of its rate. Odd, so the taps at its ends are not zero.
@@ -65,17 +65,6 @@ impl<const MIDDLE: usize, const TAPS: usize> HalfBand<MIDDLE, TAPS> {
         let taps = taps.map(|tap| (tap * 0.5 / sum) as f32);
         Self { taps }
     }
-}
-
-/// The modified Bessel function of the first kind and order zero, by its series.
-fn bessel_i0(x: f64) -> f64 {
-    let (mut sum, mut term, mut index) = (1.0, 1.0, 1.0);
-    while term > 1e-12 * sum {
-        term *= (x / (2.0 * index)).powi(2);
-        sum += term;
-        index += 1.0;
-    }
-    sum
 }
 
 /// The sum of the products of two runs of numbers in eight lanes, which the compiler does
