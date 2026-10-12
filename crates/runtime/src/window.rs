@@ -810,6 +810,12 @@ fn show_recent_projects(window: gpui::WindowHandle<Shell>, cx: &mut App) {
     .detach();
 }
 
+/// Drops a stream, or what holds one, on the background executor: Core Audio can take a while
+/// to stop a stream and remove a tap, and the thread that draws must not wait for it.
+fn drop_in_background(stream: impl Send + 'static, cx: &App) {
+    cx.background_spawn(async move { drop(stream) }).detach();
+}
+
 /// The audio devices of this machine for the device menus of the app's window. A test window
 /// lists none, so a snapshot does not show this machine's devices.
 fn list_devices(chosen: ChosenDevices) -> ListDevices {

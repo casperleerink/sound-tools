@@ -2,16 +2,17 @@
 //! connects the device input, its level for the meters, and the recorder that writes the takes.
 //! The input is opened and the recorder runs on the background executor, never on the thread
 //! that draws: opening a device can take a while, and the first time macOS asks the composer
-//! whether the app may use the microphone. It closes there too: Core Audio can take a while to
-//! stop a stream.
+//! whether the app may use the microphone. It closes there too, see
+//! [`super::drop_in_background`].
 
 use std::sync::Arc;
 
-use gpui::{App, AppContext};
+use gpui::App;
 use sound_core::{
-    Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InputStream, InstanceId,
-    LiveInput,
+    Assets, CaptureReader, CaptureStatus, DeviceError, InputDevice, InstanceId, LiveInput,
 };
+
+use super::drop_in_background;
 
 use crate::recorder::{Recorder, RecorderCommand, RecorderReport};
 
@@ -19,7 +20,7 @@ use crate::recorder::{Recorder, RecorderCommand, RecorderReport};
 /// reader of what it captures, and the live input for the engine. A test gives one with no
 /// device and writes into it itself.
 pub struct OpenedInput {
-    pub stream: Option<InputStream>,
+    pub stream: Option<Box<dyn Send>>,
     pub reader: CaptureReader,
     pub live: LiveInput,
 }
@@ -41,7 +42,7 @@ pub fn system_input(choice: Option<String>) -> OpenInput {
             reader.channels()
         );
         Ok(OpenedInput {
-            stream: Some(stream),
+            stream: Some(Box::new(stream)),
             reader,
             live,
         })
@@ -53,7 +54,7 @@ pub fn system_input(choice: Option<String>) -> OpenInput {
 const SILENT_POLLS: u32 = 125;
 
 struct Open {
-    _stream: Option<InputStream>,
+    _stream: Option<Box<dyn Send>>,
     /// Polls in a row whose level was exactly zero on every channel, and whether that was told.
     silent_polls: u32,
     /// The input went away, and that was told.
@@ -149,7 +150,9 @@ impl AudioInput {
         cx: &App,
     ) -> Option<Result<(usize, LiveInput), DeviceError>> {
         if self.opening != Some(generation) {
-            stop_in_background(opened, cx);
+            if let Ok(input) = opened {
+                drop_in_background(input, cx);
+            }
             return None;
         }
         self.opening = None;
@@ -188,7 +191,9 @@ impl AudioInput {
     /// Stops the device, or forgets the opening on its way. A recorder out on a run is dropped
     /// when it comes back.
     pub(super) fn close(&mut self, cx: &App) {
-        stop_in_background(self.open.take(), cx);
+        if let Some(open) = self.open.take() {
+            drop_in_background(open, cx);
+        }
         self.opening = None;
         self.commands.clear();
     }
@@ -246,11 +251,6 @@ impl AudioInput {
             open.recorder = Some(recorder);
         }
     }
-}
-
-/// Drops an input, and with it its stream, on the background executor, see the module doc.
-fn stop_in_background(input: impl Send + 'static, cx: &App) {
-    cx.background_spawn(async move { drop(input) }).detach();
 }
 
 /// One run of the recorder on the background executor.
