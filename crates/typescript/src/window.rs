@@ -196,10 +196,17 @@ fn watch(
         Some(crate::folder_problem(message))
     };
     let skipped = |name: &str| name.starts_with('.') || name == "node_modules";
-    // The paths of events are the real ones.
-    let root = dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    // FSEvents gives the real path of a change, Windows the path as it was watched, which may
+    // have short names (`RUNNER~1`). Only what is inside counts: the folder itself may be in a
+    // hidden one, such as a temporary folder.
+    let roots = [
+        dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf()),
+        folder.to_path_buf(),
+    ];
     let counts = move |path: &Path, removed: bool| {
-        let inside = path.strip_prefix(&root).unwrap_or(path);
+        let inside = (roots.iter())
+            .find_map(|root| path.strip_prefix(root).ok())
+            .unwrap_or_else(|| Path::new(path.file_name().unwrap_or_default()));
         let hidden = (inside.components()).any(|part| skipped(&part.as_os_str().to_string_lossy()));
         let importable = (path.extension()).is_some_and(|extension| {
             ["ts", "tsx", "mts", "js", "jsx", "mjs", "cjs", "json"]
