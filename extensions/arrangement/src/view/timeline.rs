@@ -424,10 +424,12 @@ impl Timeline {
 
     fn clamped(&self, viewport: Viewport, width: f32, height: f32, cx: &App) -> Viewport {
         // The playhead runs past the end of the piece, and the view follows it there, so the
-        // scroll room reaches at least that far. Playback does not stop at the end yet.
+        // scroll room reaches at least that far, and as far as the loop. Playback does not stop
+        // at the end yet.
         let end = self.ends.values().max().copied().unwrap_or_default();
+        let looped = self.session.read(cx).looped().read(cx).range.end;
         let extent = Extent {
-            end: end.max(self.playhead.read(cx).tick),
+            end: end.max(self.playhead.read(cx).tick).max(looped),
             height: self.rows(cx).height(),
         };
         viewport.clamped(extent, self.time_signatures(cx), width, height)

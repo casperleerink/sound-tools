@@ -184,7 +184,7 @@ impl TransportState {
 
     /// Frames the device plays before playback reaches the end of the loop, so a sub-block can
     /// end there. `None` with no loop, while stopped, and from the end of the loop on: a seek
-    /// past it plays on.
+    /// past it plays on. Call after [`Self::begin_block`], which sets the preroll.
     pub(crate) fn frames_to_loop_end(&self) -> Option<u64> {
         let looped = self.looped.as_ref().filter(|_| self.playing)?;
         let end = self.clock.frame_of(looped.end);
@@ -201,7 +201,7 @@ impl TransportState {
         self.jumped
     }
 
-    /// Call once per block, before any [`Self::view`].
+    /// Call once per sub-block, before any [`Self::view`].
     ///
     /// A play from rest in a project with latency starts like a seek to where the project
     /// stands: the tracks with latency went quiet when it stopped, and would otherwise miss
@@ -283,8 +283,9 @@ impl TransportState {
     /// Call after the block ran, with the frames it had. Returns how many of them the device
     /// played while it waited after a play or a seek.
     ///
-    /// A block that reaches the end of the loop seeks to its start. With latency that waits
-    /// like any seek, so the loop has a gap as long as the latency.
+    /// A block that reaches the end of the loop seeks to its start, also one that starts right
+    /// on it, where a tempo change can put the position. With latency that waits like any
+    /// seek, so the loop has a gap as long as the latency.
     pub(crate) fn finish_block(&mut self, frames: usize) -> u64 {
         let advance = if self.playing { frames as u64 } else { 0 };
         let waited = advance.min(self.preroll);
@@ -296,7 +297,7 @@ impl TransportState {
         self.resumed = false;
         if let Some(looped) = &self.looped {
             let end = self.clock.frame_of(looped.end);
-            if before < end && self.position >= end {
+            if before <= end && self.position >= end && self.position > before {
                 self.jump_to(self.clock.frame_of(looped.start));
             }
         }

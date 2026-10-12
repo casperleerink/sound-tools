@@ -226,10 +226,23 @@ fn a_loop_goes_back_on_the_frame_of_its_end_for_every_device_buffer_size() {
 }
 
 #[test]
+fn a_tempo_change_that_puts_the_position_on_the_loop_end_still_goes_back() {
+    let mut beats = BeatEngine::new(48_000, 960);
+    beats.control.set_loop(Some(Ticks(960)..Ticks(2880)));
+    beats.control.play();
+    // One frame before the end, whose next tick is the end. Twice as fast keeps that tick.
+    beats.render(71_999, &[64]);
+    beats.control.set_tempo_map(tempo_map(&[(0, 240.0)]));
+    beats.render(1_000, &[64]);
+    let tick = beats.control.poll().unwrap().playhead_tick;
+    assert!((Ticks(960)..Ticks(1100)).contains(&tick), "{tick:?}");
+}
+
+#[test]
 fn a_seek_past_the_loop_plays_on_and_no_loop_plays_through() {
     let mut beats = BeatEngine::new(48_000, 960);
     beats.control.set_loop(Some(Ticks(960)..Ticks(2880)));
-    beats.control.seek(Ticks(2880));
+    beats.control.seek(Ticks(3840));
     beats.control.play();
     beats.render(30_000, &[64]);
     beats.control.set_loop(None);

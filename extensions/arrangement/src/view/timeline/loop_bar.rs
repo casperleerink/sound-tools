@@ -42,7 +42,7 @@ pub(super) struct LoopDrag {
     pub(super) origin: Loop,
     /// The tick under the pointer at mouse down.
     pub(super) grab: Ticks,
-    /// A press that changed nothing is a click: it turns the loop on or off.
+    /// A press that moved less than a grid step is a click: it turns the loop on or off.
     pub(super) moved: bool,
 }
 
@@ -93,6 +93,8 @@ impl Timeline {
             Zone::LeftEdge => shifted(start, delta)..end,
             Zone::RightEdge => start..shifted(end, delta),
         };
+        // An end dragged past the other one in a single move is still no click.
+        drag.moved |= delta != 0;
         if range.is_empty() {
             return After::Keep;
         }
@@ -100,7 +102,6 @@ impl Timeline {
             range,
             on: drag.origin.on,
         };
-        drag.moved |= looped != drag.origin;
         self.session
             .update(cx, |session, cx| session.set_loop(looped, cx));
         After::Keep

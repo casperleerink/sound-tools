@@ -236,6 +236,7 @@ impl Engine {
                     if self.apply_batches() {
                         self.find_leads();
                     }
+                    self.transport.begin_block();
                     // A sub-block ends where the loop does, so playback goes back on its frame.
                     let length = self
                         .transport
@@ -438,7 +439,6 @@ impl Engine {
             }
         }
 
-        self.transport.begin_block();
         // What the device plays in this block. Every processor with no latency after it sees
         // exactly this, so a project without latency builds it once per block, as it always did.
         let heard = self.transport.view(0, frames, 0, false, None);
