@@ -15,7 +15,7 @@ These are the defaults. A field you leave out takes its default, so `"state": {}
 
 | Field | Meaning | Values | Default |
 | --- | --- | --- | --- |
-| `curve` | The shape. `soft` rounds off evenly. `tape` is gentler and never flattens. `tube` leans to one side and adds even harmonics, the warmest. `clip` is clean up to a ceiling and then flat: the drive lowers the ceiling. | `"soft"`, `"tape"`, `"tube"`, `"clip"` | `"soft"` |
+| `curve` | The shape. `soft` rounds off evenly. `tape` is gentler and never flattens. `tube` leans to one side and adds even harmonics, the warmest. `clip` is clean up to a ceiling, then bends round and levels off at most half again above it: the drive lowers the ceiling. | `"soft"`, `"tape"`, `"tube"`, `"clip"` | `"soft"` |
 | `drive_db` | How hard the sound goes into the curve. The output is turned down by what the drive adds to a sine at -12 dBFS, so the level stays. | 0 to 36 | 6 |
 | `tone_db` | A tilt after the curve, around 1 kHz. Above 0 the highs go up and the lows down by half of it each: brighter. Below 0 darker. | -12 to 12 | 0 |
 | `output_db` | Gain on the saturated sound. | -12 to 12 | 0 |

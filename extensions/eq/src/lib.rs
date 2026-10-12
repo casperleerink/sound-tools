@@ -40,7 +40,7 @@ pub use processor::{Eq, SHELF_MAX_Q, band_response, response};
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "eq";
 
-/// How many bands the EQ has. Four, as DESIGN.md draws it: a cut and two or three moves are
+/// How many bands the EQ has. Four: a cut and two or three moves are
 /// what most tracks need, four numbered handles stay apart on the display of a laptop, and the
 /// file stays short for an agent. A list with fewer bands loads, so more bands later would not
 /// break a saved project.

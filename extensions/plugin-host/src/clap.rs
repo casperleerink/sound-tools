@@ -107,8 +107,9 @@ impl<'a> SharedHandler<'a> for SharedCallbacks {
 /// The window callbacks. A plugin may make them from any thread, so they only note what
 /// happened; the poll does the work on the main thread.
 impl HostGuiImpl for SharedCallbacks {
-    /// Only about resizing an embedded window by dragging its edge, which this host does not
-    /// offer. The plugin says how big it is through `request_resize`.
+    /// Whether the composer may drag the window's edge is asked once, when the window is made,
+    /// so a plugin that changes its hints while open keeps its first answer. The plugin says how
+    /// big it wants to be through `request_resize`.
     fn resize_hints_changed(&self) {}
 
     fn request_resize(&self, new_size: GuiSize) -> Result<(), HostError> {

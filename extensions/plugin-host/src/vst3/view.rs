@@ -9,7 +9,7 @@
 //! - The view comes from the plugin's edit controller, `createView(ViewType::kEditor)`. A
 //!   controller that has no window answers with nothing, and then the card stops offering one.
 //!   No view is ever made outside the composer's open: asking a plugin whether it has a window
-//!   means building its whole interface, which is up to a second, see ARCHITECTURE.md.
+//!   means building its whole interface, which is up to a second.
 //! - `isPlatformTypeSupported(kPlatformTypeNSView)` is how a host asks whether the plugin can
 //!   put its view in a Cocoa view of ours, and `kPlatformTypeHWND` in a Win32 window of ours.
 //!   On macOS the coordinates of a `ViewRect` are logical; on Windows they are physical pixels,
@@ -122,7 +122,7 @@ impl PluginGui for Vst3Gui {
     /// interface: up to a second for one of the pianos this was measured on, on the thread that
     /// draws, for every load in every mode, including the ones that can open no window at all.
     /// Nearly every instrument has a window, so the card offers one and a plugin that turns out
-    /// to have none says so once and is not offered one again this session. See ARCHITECTURE.md.
+    /// to have none says so once and is not offered one again this session.
     fn is_offered(&mut self) -> bool {
         true
     }

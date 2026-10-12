@@ -38,7 +38,7 @@ use crate::{
 pub const NAME: &str = "Compressor";
 
 /// The curve shows levels from here to there, in dBFS: the range of the threshold. With the
-/// display and two columns of cells the card is 288 pt, as DESIGN.md gives the compressor.
+/// display and two columns of cells the card is 288 pt.
 const LEVELS: Levels = Levels {
     bottom_db: -60.,
     top_db: 0.,

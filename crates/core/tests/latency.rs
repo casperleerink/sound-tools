@@ -2,7 +2,7 @@
 //!
 //! Two chains play the same beats into the device, one of them through a processor that
 //! reports latency. What reaches the device must line up to the frame, whatever the latency
-//! is and when it changes. See ARCHITECTURE.md, "Latency compensation".
+//! is and when it changes.
 
 // Clippy allows unwrap inside `#[test]` functions only, not in the helpers next to them.
 #![allow(clippy::unwrap_used)]

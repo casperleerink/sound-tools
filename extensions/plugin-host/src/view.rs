@@ -8,14 +8,13 @@
 //! taller. A dropdown spans two cells, so the names of its steps fit. The rack gives the
 //! frame of the card, whose title is the name of the plugin and where another one is picked.
 //! Nothing is hidden, so there is no expand. The power and close icons of an effect come from
-//! the rack, in the frame, because the rack keeps whether a slot is on. DESIGN.md says what
-//! each control of a pin is and does.
+//! the rack, in the frame, because the rack keeps whether a slot is on.
 //!
 //! A stepped parameter is driven by the number of its step, never by its value, so what a
 //! control writes is always the plugin's own value of a step.
 //!
 //! The knob of a pin an automation lane moves shows what the lane plays and does not drag, as
-//! every automated knob (DESIGN.md), with the plugin's text for that value.
+//! every automated knob does, with the plugin's text for that value.
 //!
 //! The list of parameters and the plugin's text both call into the plugin, which a frame may
 //! not do. So the view asks when the session tells it something changed, and draws from what it

@@ -1,11 +1,11 @@
 //! What the automation lanes of a track play into the numbers of one device, for its view.
 //!
-//! The knob of an automated number shows the value that plays, with a mark, and does not drag
-//! (DESIGN.md). The view keeps a [`Lanes`] of its instance, with the numbers the device takes
-//! automation for. It works the values out at the playhead from the lanes the owner of the
-//! instance shows ([`Project::lanes`]), with the math of the player, and tells the view only
-//! when one of them changed: while the project plays, when the playhead moves while it stands,
-//! and when the lanes change. So a device with no lanes costs one look per frame while the
+//! The knob of an automated number shows the value that plays, with a mark, and does not drag: the
+//! lane decides that value, not the composer. The view keeps a [`Lanes`] of its instance, with the
+//! numbers the device takes automation for. It works the values out at the playhead from the lanes
+//! the owner of the instance shows ([`Project::lanes`]), with the math of the player, and tells the
+//! view only when one of them changed: while the project plays, when the playhead moves while it
+//! stands, and when the lanes change. So a device with no lanes costs one look per frame while the
 //! project plays, and nothing while it stands, and a look allocates nothing.
 //!
 //! [`Project::lanes`]: sound_core::Project::lanes

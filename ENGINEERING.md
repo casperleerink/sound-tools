@@ -7,7 +7,7 @@ How to work in this codebase: the rules for code, the audio thread, and testing.
 Rules are traps to avoid, not general advice. Add a rule only when it is non-obvious, happened more than once and is actionable.
 
 - Correctness and clarity first. Optimize only the audio path or measured hot spots.
-- Comments explain why, never restate the code.
+- Comments and docs: see [AGENTS.md](AGENTS.md), "Docs and comments".
 - No `unwrap()` or panicking indexing outside tests. Propagate with `?`.
 - Never discard errors with `let _ =`. Use `?`, `.log_err()` or an explicit `match`. Errors from background work must reach the UI.
 - Full-word variable names.
@@ -51,7 +51,7 @@ How the engine keeps to that:
 - The audio thread takes a batch only when the return ring has room, so a full ring never forces a drop. The control side keeps batches that did not fit and sends them later, in order. Edits are never lost.
 - Every `Arc` the audio thread might release must come back the same way.
 - A whole edit is validated and compiled before anything is sent. A half-applied edit never reaches the engine.
-- Status and counters (blocks, overflows, playhead) go out through a triple buffer and only grow, so reading the latest never misses a count. Meters use `Peaks`, an atomic maximum per channel, so a meter sees the loudest block since it last looked.
+- Status (counters, playhead) goes out through a triple buffer. The counters only grow, so reading the latest never misses a count; a seek counts as a jump, so a reader can tell a playhead that moved back from one that played on. Meters use `Peaks`, an atomic maximum per channel, so a meter sees the loudest block since it last looked.
 - Events are `Copy` types in preallocated per-port buffers. Overflow is counted, never allocated.
 - Processors have two phases, from Pd: `prepare` on the control thread may allocate; `update` and `process` on the audio thread may not. `update` swaps values out of its message and never drops them.
 - Processors live in a slot table. A routing change sends a new schedule and every surviving processor keeps its state.

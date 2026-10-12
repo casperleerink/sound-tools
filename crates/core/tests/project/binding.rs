@@ -339,7 +339,7 @@ fn a_behaviour_reports_a_problem_about_its_instance_without_failing_the_edit() {
 /// The project used to be `Send`. It is not since the plugin host: a behaviour may keep
 /// control-side state that belongs to the thread the project lives on, because CLAP requires a
 /// plugin's main-thread calls on the application's main thread. The project has always lived on
-/// one thread. See ARCHITECTURE.md "Hosting plugins".
+/// one thread.
 #[test]
 fn a_behaviour_may_keep_state_of_its_own_that_cannot_move_to_another_thread() {
     let runs = std::rc::Rc::new(std::cell::Cell::new(0));

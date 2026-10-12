@@ -121,7 +121,7 @@ impl State for ArrangementState {
 /// messages and the design token cannot drift apart.
 macro_rules! colours {
     ($($variant:ident => $name:literal),+ $(,)?) => {
-        /// The accents of the DESIGN.md palette. A track shows its colour on dots and clip edges.
+        /// The accents of the theme palette. A track shows its colour on dots and clip edges.
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
         pub enum Colour {
             $(#[serde(rename = $name)] $variant,)+

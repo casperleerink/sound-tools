@@ -9,8 +9,8 @@ use crate::State;
 /// knobs of its view, what a double click resets to, an automation lane and a test of its docs
 /// all read the constant.
 ///
-/// This is the small part of the declarative parameters of ARCHITECTURE.md that the synth and
-/// the built-in effects need. Units and labels are the view's business.
+/// It holds only what the built-in instruments and effects need. Units and labels are the
+/// view's business.
 pub struct Parameter<S> {
     /// The name of the field in the record, for messages and docs.
     pub field: &'static str,

@@ -472,7 +472,7 @@ impl IComponentHandlerTrait for Handler {
     }
 
     /// Every flag of `ivsteditcontroller.h` is noted here and acted on at the next poll, on
-    /// the host's thread. ARCHITECTURE.md holds the table of what each one gets.
+    /// the host's thread. What each one gets:
     ///
     /// - [`RESTART`]: deactivate, read the latency and the buses again, activate.
     /// - `kReloadComponent`, "The host has to unload completely the plug-in (controller/
@@ -656,7 +656,7 @@ mod tests {
         );
     }
 
-    /// Every flag of the format, each with what ARCHITECTURE.md says this host does about it.
+    /// Every flag of the format, each with what `restartComponent` says this host does about it.
     /// Nothing is left out: the twelve below are the whole `RestartFlags` enum of
     /// `ivsteditcontroller.h`.
     #[test]
