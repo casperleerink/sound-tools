@@ -283,6 +283,7 @@ fn wrong_track(track: &InstanceId, name: &str, kind: TrackKind) -> ProjectError 
             "a note clip goes on an instrument track, and this is an audio track"
         }
         TrackKind::Audio => "an audio clip goes on an audio track, and this is an instrument track",
+        TrackKind::Return => "a return track plays no clips",
     };
     let id = track.child(name).unwrap_or_else(|_| track.clone());
     ProjectError::WrongPlace {

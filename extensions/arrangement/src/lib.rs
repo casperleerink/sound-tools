@@ -3,10 +3,11 @@
 //! Four tools. An `arrangement` owns tracks and is the master: it mixes every track, solo
 //! included, and plays the sum through its volume and limiter to the main output. An
 //! `arrangement.track` owns clips and its effects, and plays its clips through them to its
-//! arrangement. It is an instrument track or an audio track, chosen when it is made. An
-//! instrument track plays note clips through one instrument, the child named `instrument`. An
-//! `arrangement.clip` is plain data: the [`Clip`] of the note contract crate. An audio track
-//! plays [`AudioClip`]s, `arrangement.audio_clip`, stretches of files under `assets/audio/`.
+//! arrangement. It is an instrument track, an audio track or a return, chosen when it is made.
+//! An instrument track plays note clips through one instrument, the child named `instrument`.
+//! An `arrangement.clip` is plain data: the [`Clip`] of the note contract crate. An audio track
+//! plays [`AudioClip`]s, `arrangement.audio_clip`, stretches of files under `assets/audio/`. A
+//! return plays what the `sends` of other tracks send it.
 //!
 //! ```text
 //! state/arrangement/instance.json            the arrangement
@@ -15,6 +16,7 @@
 //! state/arrangement/piano/verse-a.json       a note clip
 //! state/arrangement/vocal/instance.json      an audio track, `"kind": "audio"`
 //! state/arrangement/vocal/verse-take.json    an audio clip
+//! state/arrangement/space/instance.json      a return, `"kind": "return"`
 //! ```
 //!
 //! This crate depends on no instrument and no effect. A track finds its instrument by the child
@@ -48,7 +50,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AgentDoc, BehaviourContext, BehaviourError, Changes, InputEndpoint, Instance, InstanceId,
+    AgentDoc, BehaviourContext, BehaviourError, Changes, InputEndpoint, Instance, InstanceId, Node,
     OutputEndpoint, Peaks, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
 use sound_notes::{
@@ -83,6 +85,11 @@ const PLAYER: &str = "player";
 /// this, and the master.
 const MIXER: &str = "mixer/";
 const MASTER: &str = "master";
+/// The send of each track into each return, by `<track>/<return>` after this.
+const SEND: &str = "send/";
+/// The input of a return, where the sends arrive, and the processor of the return that sums
+/// them.
+const SENDS: &str = "sends";
 /// The ports a track exposes for sidechains: the sound before its effects, and the `sidechain`
 /// input of each keyed effect, by the name of its slot after this.
 const PRE_FX: &str = "pre_fx";
@@ -174,6 +181,8 @@ pub enum TrackKind {
     Instrument,
     /// Audio clips, and no instrument.
     Audio,
+    /// No clips and no instrument: it plays what other tracks send it.
+    Return,
 }
 
 impl TrackKind {
@@ -213,6 +222,10 @@ pub struct TrackState {
     /// same bytes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub solo: bool,
+    /// Of a return: its sends take the sound of each track after its effects, before its volume
+    /// and pan. Off, and left out, takes it after them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pre_fader: bool,
     /// The effects of the track, by the name of the child that holds each one, in the order
     /// the sound goes through them: instrument, then these, then the gain, pan and mute. Each
     /// slot may be bypassed.
@@ -222,6 +235,14 @@ pub struct TrackState {
     /// before effects existed loads unchanged and gives the same bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<EffectSlot>,
+    /// How loud the track sends into each return, by the folder name of the return. Left out
+    /// when empty, so a track of before returns gives the same bytes.
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        with = "decibels::by_name"
+    )]
+    pub sends: BTreeMap<String, f32>,
     /// The channels of the default input an audio track records. Channel 1 alone when left
     /// out, and a record that leaves it out is written back without it. An instrument track
     /// records notes, not audio, and does nothing with it.
@@ -252,16 +273,19 @@ impl TrackState {
             pan: 0.0,
             mute: false,
             solo: false,
+            pre_fader: false,
             effects: Vec::new(),
+            sends: BTreeMap::new(),
             input: InputChannels::FIRST,
             automation: Vec::new(),
         }
     }
 
     /// Whether the track makes no sound: it is muted, or another track is soloed and it is
-    /// not. `soloing` is whether any track of its arrangement is soloed.
+    /// not. `soloing` is whether any track of its arrangement is soloed. A solo never silences
+    /// a return, so a soloed track keeps its reverb.
     pub fn is_silent(&self, soloing: bool) -> bool {
-        self.mute || (soloing && !self.solo)
+        self.mute || (soloing && !self.solo && self.kind != TrackKind::Return)
     }
 
     /// Whether the effect in the child `name` is bypassed. `None` when the list does not
@@ -314,6 +338,26 @@ impl State for TrackState {
                     "effects[{index}] is {name:?}, which the list already has. One effect is one child record: copy the file under another name to use it twice"
                 ));
             }
+        }
+        for (to, gain_db) in &self.sends {
+            if !is_child_name(to) {
+                return Err(format!(
+                    "sends must name each return by its folder name: lowercase letters, digits, `-` and `_`, not {to:?}"
+                ));
+            }
+            decibels::check(&format!("sends.{to}"), *gain_db, Self::MAX_GAIN_DB)?;
+        }
+        match self.kind {
+            TrackKind::Return if !self.sends.is_empty() => {
+                return Err("a return track must not have `sends`: a return cannot send into another return yet. Send into each return from the tracks that play".to_string());
+            }
+            TrackKind::Return if self.solo => {
+                return Err("a return track cannot be soloed: a solo never silences a return, so solo the tracks that send into it instead".to_string());
+            }
+            TrackKind::Instrument | TrackKind::Audio if self.pre_fader => {
+                return Err("pre_fader is for a return track, where it says where its sends take the sound. Take it out".to_string());
+            }
+            _ => {}
         }
         AutomationLane::check_all(&self.automation)
     }
@@ -369,17 +413,20 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 ///
 /// The path of an instrument track is sequencer, instrument, the effects in the order of the
 /// record that are not bypassed, and out through its `audio` output, which its arrangement
-/// mixes. An audio track has its player where the other has sequencer and instrument. Every
-/// processor keeps what it holds: a note goes on sounding through an edit of a clip. For its
-/// arrangement to wire sidechains, it also exposes its sound before the effects and the
-/// `sidechain` input of each keyed effect.
+/// mixes. An audio track has its player where the other has sequencer and instrument, and a
+/// return the sum of the sends into it, which is its input. Every processor keeps what it
+/// holds: a note goes on sounding through an edit of a clip. For its arrangement to wire
+/// sidechains, it also exposes its sound before the effects and the `sidechain` input of each
+/// keyed effect.
 fn apply_track(
     track: &TrackState,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
+    report_misplaced(track.kind, context);
     let source = match track.kind {
         TrackKind::Instrument => play_notes(context)?,
         TrackKind::Audio => play_audio(context)?,
+        TrackKind::Return => Some(take_sends(context)?),
     };
 
     // The chain, from the instrument or the player through the effects. A slot that is not
@@ -447,15 +494,6 @@ fn play_notes(
     if let Some(notes) = context.child_input(INSTRUMENT, NOTES_INPUT) {
         context.connect(OutputEndpoint::new(sequencer, Sequencer::NOTES).to(notes))?;
     }
-    let audio_clips: Vec<String> = context
-        .children::<AudioClip>()
-        .map(|(name, _)| name.to_string())
-        .collect();
-    for name in audio_clips {
-        context.problem(format!(
-            "{name}.json is an audio clip, and this is an instrument track, which plays note clips only, so it is silent. Move it into an audio track"
-        ));
-    }
     Ok(context.child_output(INSTRUMENT, AUDIO_OUTPUT))
 }
 
@@ -466,31 +504,63 @@ fn play_audio(
     let rate = context.prepare_config().sample_rate;
     let (snapshot, problems) =
         audio::snapshot(context.children::<AudioClip>(), context.assets(), rate);
-    let note_clips: Vec<String> = context
-        .children::<Clip>()
-        .map(|(name, _)| name.to_string())
-        .collect();
-    let has_instrument = context.child_names().any(|name| name == INSTRUMENT);
     for problem in problems {
         context.problem(problem);
-    }
-    for name in note_clips {
-        context.problem(format!(
-            "{name}.json is a note clip, and this is an audio track, which plays audio clips only, so it is silent. Move it into an instrument track"
-        ));
-    }
-    if has_instrument {
-        context.problem(format!(
-            "an audio track has no instrument, so {INSTRUMENT}.json is not played. Delete it, or put it in an instrument track"
-        ));
     }
     let player = context.processor(PLAYER, AudioPlayer::new)?;
     context.update(player, AudioUpdate::new(snapshot))?;
     Ok(Some(OutputEndpoint::new(player, AudioPlayer::OUTPUT)))
 }
 
+/// The sends into a return: one sum at unity, exposed as its input for the arrangement to
+/// wire. Gives where the sum comes out.
+fn take_sends(context: &mut BehaviourContext<'_>) -> Result<OutputEndpoint, BehaviourError> {
+    let unity = Mix {
+        gain_db: 0.0,
+        pan: 0.0,
+        silent: false,
+    };
+    let sum = context.processor(SENDS, || Mixer::new(unity, Peaks::new()))?;
+    context.input(SENDS, InputEndpoint::new(sum, Mixer::INPUT));
+    Ok(OutputEndpoint::new(sum, Mixer::OUTPUT))
+}
+
+/// Says which children a track of `kind` does not play: clips of another kind, and an
+/// instrument where it has none.
+fn report_misplaced(kind: TrackKind, context: &mut BehaviourContext<'_>) {
+    let (this, plays) = match kind {
+        TrackKind::Instrument => ("an instrument track", "note clips only"),
+        TrackKind::Audio => ("an audio track", "audio clips only"),
+        TrackKind::Return => ("a return track", "no clips"),
+    };
+    let mut problems = Vec::new();
+    if kind != TrackKind::Instrument {
+        for (name, _) in context.children::<Clip>() {
+            problems.push(format!(
+                "{name}.json is a note clip, and this is {this}, which plays {plays}, so it is silent. Move it into an instrument track"
+            ));
+        }
+        if context.child_names().any(|name| name == INSTRUMENT) {
+            problems.push(format!(
+                "{this} has no instrument, so {INSTRUMENT}.json is not played. Delete it, or put it in an instrument track"
+            ));
+        }
+    }
+    if kind != TrackKind::Audio {
+        for (name, _) in context.children::<AudioClip>() {
+            problems.push(format!(
+                "{name}.json is an audio clip, and this is {this}, which plays {plays}, so it is silent. Move it into an audio track"
+            ));
+        }
+    }
+    for problem in problems {
+        context.problem(problem);
+    }
+}
+
 /// Runs when the arrangement record or anything below it changes: the mixer of every track,
-/// with solo worked out across the tracks, into the master, and the master to the main output.
+/// with solo worked out across the tracks, into the master, the sends into the returns, and
+/// the master to the main output.
 ///
 /// Solo is decided here and not in a track, because it is about all of them. While any track is
 /// soloed, every track that is not gets the gains of a muted one, so soloing a track sounds
@@ -515,6 +585,20 @@ fn apply_arrangement(
                     ..Mix::of(track)
                 },
             )
+        })
+        .collect();
+    let sends: Vec<(String, String, Mix)> = context
+        .children::<TrackState>()
+        .flat_map(|(name, track)| {
+            let silent = track.is_silent(soloing);
+            track.sends.iter().map(move |(to, gain_db)| {
+                let mix = Mix {
+                    gain_db: *gain_db,
+                    pan: 0.0,
+                    silent,
+                };
+                (name.to_string(), to.clone(), mix)
+            })
         })
         .collect();
     // Only the slots whose track exposed a sidechain input: not one that is bypassed, has no
@@ -550,6 +634,9 @@ fn apply_arrangement(
         }
         let into_master = InputEndpoint::new(master, Master::INPUT);
         context.connect(OutputEndpoint::new(mixer, Mixer::OUTPUT).to(into_master))?;
+    }
+    for (name, to, mix) in sends {
+        send(context, &mixers, &name, &to, mix)?;
     }
     for (name, slot, Sidechain { track, tap }, key) in &keys {
         let falls_back = format!("so {slot:?} in track {name:?} follows its own sound");
@@ -593,6 +680,52 @@ fn apply_arrangement(
         context.connect(OutputEndpoint::new(master, Master::OUTPUT).to_device(0))?;
     }
     Ok(())
+}
+
+/// The send of track `name` into the return `to`: its own gain stage, so a change ramps. It
+/// takes the sound after the mixer of the track, or with `pre_fader` before it; the stage is
+/// silent whenever the mixer is, so a muted track sends nothing either way.
+fn send(
+    context: &mut BehaviourContext<'_>,
+    mixers: &BTreeMap<String, Node<Mixer>>,
+    name: &str,
+    to: &str,
+    mix: Mix,
+) -> Result<(), BehaviourError> {
+    let pre_fader = match context.child::<TrackState>(to) {
+        Some(TrackState {
+            kind: TrackKind::Return,
+            pre_fader,
+            ..
+        }) => *pre_fader,
+        Some(_) => {
+            context.problem(format!(
+                "track {name:?} sends to {to:?}, which is not a return track, so it sends nothing there. Send to a track with \"kind\": \"return\", or take {to:?} out of `sends`"
+            ));
+            return Ok(());
+        }
+        None => {
+            context.problem(format!(
+                "track {name:?} sends to {to:?}, and this arrangement has no {to}/instance.json, so it sends nothing there. Name the folder of a return track, or take {to:?} out of `sends`"
+            ));
+            return Ok(());
+        }
+    };
+    let sound = match pre_fader {
+        true => context.child_output(name, AUDIO_OUTPUT),
+        false => mixers
+            .get(name)
+            .map(|mixer| OutputEndpoint::new(*mixer, Mixer::OUTPUT)),
+    };
+    let (Some(sound), Some(input)) = (sound, context.child_input(to, SENDS)) else {
+        return Ok(());
+    };
+    let stage = context.processor(&format!("{SEND}{name}/{to}"), || {
+        Mixer::new(mix, Peaks::new())
+    })?;
+    context.update(stage, mix)?;
+    context.connect(sound.to(InputEndpoint::new(stage, Mixer::INPUT)))?;
+    context.connect(OutputEndpoint::new(stage, Mixer::OUTPUT).to(input))
 }
 
 /// A sidechain of a slot that can take it: the track of the slot, the slot, what keys it, and
@@ -667,12 +800,30 @@ fn unlisted_effects(track: &TrackState, context: &BehaviourContext<'_>) -> Vec<S
     unlisted.map(str::to_string).collect()
 }
 
-/// The tracks of an arrangement as people see them: by `order`, then by id.
+/// The tracks of an arrangement that play clips, as people see them: by `order`, then by id.
+/// The returns are in [`returns`].
 pub fn tracks<'a>(
     project: &'a Project,
     arrangement: &InstanceId,
 ) -> Vec<(Instance<TrackState>, &'a TrackState)> {
-    let mut tracks: Vec<_> = project.children::<TrackState>(arrangement).collect();
+    sorted(project, arrangement, |kind| kind != TrackKind::Return)
+}
+
+/// The return tracks of an arrangement, as people see them: by `order`, then by id.
+pub fn returns<'a>(
+    project: &'a Project,
+    arrangement: &InstanceId,
+) -> Vec<(Instance<TrackState>, &'a TrackState)> {
+    sorted(project, arrangement, |kind| kind == TrackKind::Return)
+}
+
+fn sorted<'a>(
+    project: &'a Project,
+    arrangement: &InstanceId,
+    kinds: impl Fn(TrackKind) -> bool,
+) -> Vec<(Instance<TrackState>, &'a TrackState)> {
+    let tracks = project.children::<TrackState>(arrangement);
+    let mut tracks: Vec<_> = tracks.filter(|(_, state)| kinds(state.kind)).collect();
     tracks.sort_by(|(a, a_state), (b, b_state)| {
         (a_state.order, a.id()).cmp(&(b_state.order, b.id()))
     });
@@ -824,6 +975,56 @@ pub fn add_audio_track(
     Ok(changes.create(id, state))
 }
 
+/// Adds a return after the last one to a group of changes: no sends into it yet, no effects.
+/// The id comes from the name, as for [`add_track`].
+pub fn add_return(
+    project: &Project,
+    changes: &mut Changes,
+    arrangement: &InstanceId,
+    name: &str,
+    colour: Colour,
+) -> Result<Instance<TrackState>, ProjectError> {
+    let id = project.free_id(&arrangement.child(&id_name(name, "return"))?)?;
+    let last = returns(project, arrangement)
+        .last()
+        .map(|(_, track)| track.order);
+    let order = last.map_or(0, |order| order.saturating_add(1));
+    let mut state = TrackState::new(name, colour, order);
+    state.kind = TrackKind::Return;
+    Ok(changes.create(id, state))
+}
+
+/// Deletes a return and every send into it, to a group of changes, so it is one undo step and
+/// undo brings the sends back too.
+pub fn remove_return(project: &Project, changes: &mut Changes, track: &Instance<TrackState>) {
+    let name = track.id().name();
+    if let Some(arrangement) = track.id().parent() {
+        for (sender, state) in project.children::<TrackState>(&arrangement) {
+            if state.sends.contains_key(name) {
+                let mut state = state.clone();
+                state.sends.remove(name);
+                changes.set(&sender, state);
+            }
+        }
+    }
+    changes.delete(track.id());
+}
+
+/// Sets how loud `track` sends into the return `to`, in decibels, to a group of changes.
+pub fn set_send(
+    project: &Project,
+    changes: &mut Changes,
+    track: &Instance<TrackState>,
+    to: &Instance<TrackState>,
+    gain_db: f32,
+) -> Result<(), ProjectError> {
+    let missing = || ProjectError::MissingInstance(track.id().clone());
+    let mut state = project.state(track).ok_or_else(missing)?.clone();
+    state.sends.insert(to.id().name().to_string(), gain_db);
+    changes.set(track, state);
+    Ok(())
+}
+
 /// Adds an audio clip to a track, to a group of changes, over every clip the track has: its
 /// layer is one above theirs, so where it overlaps them it is heard. The id comes from `name`,
 /// as for a note clip.
@@ -887,10 +1088,10 @@ pub fn device_slots(
     let Some(state) = project.state(track) else {
         return Ok(vec![instrument]);
     };
-    // An audio track has no instrument, so its rack starts with its first effect.
+    // An audio track or a return has no instrument, so its rack starts with its first effect.
     let mut slots = match state.kind {
         TrackKind::Instrument => vec![instrument],
-        TrackKind::Audio => Vec::new(),
+        TrackKind::Audio | TrackKind::Return => Vec::new(),
     };
     for slot in &state.effects {
         slots.push(track.id().child(&slot.name)?);
