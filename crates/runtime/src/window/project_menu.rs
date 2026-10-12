@@ -1,5 +1,4 @@
-//! The project menu: the project name top-left as a quiet menu. Fit the tempo to a take,
-//! export the project or the selected clips as a WAV, undo and redo with what they would do,
+//! The project menu: the project name top-left as a quiet menu. Export the project or the selected clips as a WAV, undo and redo with what they would do,
 //! the output and the input device, a new, recent or another project, the project folder in the
 //! Finder or in a terminal, the command line tool, and the app version. The terminal is where
 //! the composer starts a coding agent on the project, and the tool is what that agent runs to
@@ -20,12 +19,11 @@ use gpui::{
 };
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use smol::stream::StreamExt;
-use sound_core::{Changes, DeviceChoice, InstanceId};
-use sound_notes::Clip;
+use sound_core::DeviceChoice;
+use sound_ui::Session;
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::{Session, extension_is_enabled};
 
 use crate::app::ChosenDevices;
 #[cfg(unix)]
@@ -33,7 +31,6 @@ use crate::app::Installed;
 use crate::main_arrangement;
 use crate::{app, log_file};
 
-const FIT_TEMPO: &str = "fit-tempo";
 const EXPORT: &str = "export";
 const EXPORT_SELECTION: &str = "export-selection";
 const UNDO: &str = "undo";
@@ -91,12 +88,6 @@ pub struct ProjectMenu {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Shown {
     has_arrangement: bool,
-    /// The selected clip, when it was recorded and its take can be fitted to.
-    fit_clip: Option<InstanceId>,
-    /// Why the fit is out of reach, when the project does not enable the extension it needs. A
-    /// project made before the fit existed is such a project. The file edit that enables it is
-    /// in the agent docs.
-    fit_needs: Option<&'static str>,
     has_selection: bool,
     exporting: bool,
     undo: Option<String>,
@@ -108,25 +99,12 @@ impl Shown {
         let project = session.project();
         Self {
             has_arrangement: main_arrangement(project).is_some(),
-            fit_clip: recorded_clip(session).map(|(id, _)| id),
-            fit_needs: (!extension_is_enabled(project, fit_tempo::EXTENSION))
-                .then_some("This project does not include the tempo fit."),
             has_selection: !session.selected_clips().is_empty(),
             exporting,
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
         }
     }
-}
-
-/// The selected clip and its state, when it names a raw take. Fitting the tempo needs a
-/// performance to follow, so a clip that was drawn by hand offers nothing.
-fn recorded_clip(session: &Session) -> Option<(InstanceId, &Clip)> {
-    let project = session.project();
-    let clip = project.resolve::<Clip>(session.selected_clip()?)?;
-    let state = project.state(&clip)?;
-    state.take.as_ref()?;
-    Some((clip.id().clone(), state))
 }
 
 impl ProjectMenu {
@@ -268,7 +246,6 @@ impl ProjectMenu {
         // An error from any of these shows as the notice of the session.
         self.session
             .update(cx, |session, cx| match picked.0.as_ref() {
-                FIT_TEMPO => fit_tempo_to_take(session, cx),
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
                 NEW_PROJECT => new_project(session, cx),
@@ -308,23 +285,6 @@ fn switch_devices(chosen: ChosenDevices, cx: &mut Context<Session>) {
         }
     })
     .detach();
-}
-
-/// Fits the project tempo to the take of the selected clip, as one undo step. The tempo map
-/// and the clip follow in the same group, through the derive of the fit record.
-fn fit_tempo_to_take(session: &mut Session, cx: &mut Context<Session>) {
-    let Some(clip) = recorded_clip(session).map(|(_, clip)| clip.clone()) else {
-        return;
-    };
-    // The item is at 40 % in that case and says what to add, so a click cannot get here.
-    if !extension_is_enabled(session.project(), fit_tempo::EXTENSION) {
-        return;
-    }
-    session.edit(cx, |project| {
-        let mut changes = Changes::new();
-        fit_tempo::fit_take(project, &mut changes, &clip)?;
-        project.commit(fit_tempo::FIT_LABEL, changes)
-    });
 }
 
 /// What the export runs after `<folder> --render <wav>`: nothing for the whole project, which
@@ -743,24 +703,6 @@ fn entries(
             .disabled(label.is_none())
     };
     vec![
-        MenuEntry::Group(
-            MenuGroup::new().items([
-                // The fit belongs to the whole project: it rewrites the tempo map every other
-                // part follows. So it sits here and not on the clip, and it is offered only for a
-                // clip that came from a recording.
-                match &shown.fit_needs {
-                    // Why, in words, as an instrument picker says it of an offer a project
-                    // cannot take. Enabling an extension is a file edit and a reopen, which the
-                    // agent docs say.
-                    Some(reason) => command(FIT_TEMPO, "Fit tempo to take".to_string())
-                        .disabled(true)
-                        .description(*reason),
-                    None => command(FIT_TEMPO, "Fit tempo to take".to_string())
-                        .disabled(shown.fit_clip.is_none()),
-                },
-            ]),
-        ),
-        MenuEntry::Separator,
         MenuEntry::Group(
             MenuGroup::new().items([
                 command(EXPORT, "Export audio…".to_string())

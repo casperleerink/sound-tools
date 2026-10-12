@@ -26,7 +26,7 @@ use sound_core::{
     ProjectError, Registry, SavedDestination, SavedSource, State, Ticks,
 };
 use sound_typescript::Extensions;
-use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
+use sound_ui::{DeviceOffer, Devices, OfferGroup, Views, extension_is_enabled};
 use window::{LeftPanel, LeftPanelSlot};
 
 const PROJECT_FILE: &str = "project.json";
@@ -175,7 +175,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
 pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();
-    arrangement::view::register(&mut views, add_track_of_kind);
+    arrangement::view::register(&mut views, add_track_of_kind, FIT_TEMPO);
     // The order here is the order of a picker: the instruments, then the effects group by
     // group, and the plugins of this Mac after the built-in devices.
     instrument::view::register(&mut views, &mut devices);
@@ -428,6 +428,21 @@ pub fn add_audio_track(
     arrangement::add_audio_track(project, &mut changes, arrangement.id(), &name, colour)?;
     project.commit("Add audio track", changes)
 }
+
+/// What the menu of a recorded clip calls. The arrangement knows no fit, so the window hands it
+/// this. A project made before the fit existed does not enable it; the file edit that does is
+/// in the agent docs.
+const FIT_TEMPO: arrangement::view::FitTempo = arrangement::view::FitTempo {
+    unavailable: |project| {
+        (!extension_is_enabled(project, fit_tempo::EXTENSION))
+            .then_some("This project does not include the tempo fit.")
+    },
+    fit: |project, clip| {
+        let mut changes = Changes::new();
+        fit_tempo::fit_take(project, &mut changes, clip)?;
+        project.commit(fit_tempo::FIT_LABEL, changes)
+    },
+};
 
 /// [`add_track`] or [`add_audio_track`]: what the add track button of the arrangement calls.
 /// The arrangement knows no instrument, so the window hands it this.

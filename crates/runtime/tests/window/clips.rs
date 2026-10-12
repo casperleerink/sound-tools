@@ -575,3 +575,83 @@ fn a_timeline_that_goes_away_during_a_drag_leaves_no_gesture_open(cx: &mut TestA
     assert!(!opened.gesture_open());
     assert_eq!(opened.notice(), None);
 }
+
+/// A right click on a selected clip keeps the selection, and the menu works on all of it. On a
+/// clip that is not selected it selects that clip alone. Off a clip it opens nothing.
+#[gpui::test]
+fn a_right_click_opens_the_menu_of_the_clips_it_selects(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let other = "arrangement/track-2/other";
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.create(id(other), clip(BAR, BAR, vec![]));
+        project.commit("Add clip", changes)
+    });
+    opened.settle();
+    let (on_part, on_other) = (opened.at(BAR + 100, 0), opened.at(BAR + 100, 1));
+    opened.click(on_part);
+    opened.click_with(on_other, gpui::Modifiers::secondary_key());
+
+    opened.right_click(on_other);
+    assert_eq!(opened.selected_clips(), [id(PART), id(other)]);
+    let duplicate = opened.control("menu-duplicate");
+    opened.click(duplicate);
+    assert_eq!(opened.undo_label().as_deref(), Some("Duplicate clips"));
+    assert!(
+        opened.find("menu-duplicate").is_none(),
+        "the menu stayed open"
+    );
+    opened.keys("secondary-z");
+
+    opened.click(on_other);
+    opened.right_click(on_part);
+    assert_eq!(opened.selected_clips(), [id(PART)]);
+    let delete = opened.control("menu-delete");
+    opened.click(delete);
+    assert_eq!(opened.clip(PART), None);
+    assert_eq!(opened.undo_label().as_deref(), Some("Delete clip"));
+
+    let empty = opened.at(8 * BAR, 0);
+    opened.right_click(empty);
+    assert!(
+        opened.find("menu-copy").is_none(),
+        "a menu opened off a clip"
+    );
+}
+
+/// Escape closes the menu and gives the keys back to the timeline. Shift-F10 opens it at the
+/// selected clip, and the arrows and enter pick a row.
+#[gpui::test]
+fn the_clip_menu_works_from_the_keys(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let on_part = opened.at(BAR + 100, 0);
+    opened.right_click(on_part);
+    opened.keys("escape");
+    assert!(
+        opened.find("menu-copy").is_none(),
+        "escape left the menu open"
+    );
+    opened.keys("backspace");
+    assert_eq!(opened.clip(PART), None, "the timeline lost the keys");
+    opened.keys("secondary-z");
+
+    opened.click(on_part);
+    opened.keys("shift-f10");
+    assert!(
+        opened.find("menu-cut").is_some(),
+        "shift-F10 opened no menu"
+    );
+    opened.keys("down enter");
+    assert_eq!(opened.undo_label().as_deref(), Some("Cut clip"));
+}
+
+/// Ctrl-click is the right click of macOS.
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn a_ctrl_click_opens_the_clip_menu_on_macos(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let on_part = opened.at(BAR + 100, 0);
+    opened.click_with(on_part, gpui::Modifiers::control());
+    assert!(opened.find("menu-copy").is_some());
+    assert_eq!(opened.selected_clips(), [id(PART)]);
+}

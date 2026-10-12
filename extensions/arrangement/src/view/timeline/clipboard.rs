@@ -40,6 +40,13 @@ impl Timeline {
         Some(copied)
     }
 
+    /// Cmd-x: a copy, then a delete that takes the automation under the clips along.
+    pub(super) fn cut(&mut self, cx: &mut Context<Self>) {
+        if let Some(copied) = self.copy(cx) {
+            self.delete_clips("Cut clip", "Cut clips", Some(&copied), cx);
+        }
+    }
+
     /// Cmd-v: the copied clips at the playhead, the top one on the track of the first selected
     /// clip, else on the selected track, else on the first track. One undo step.
     pub(super) fn paste(&mut self, cx: &mut Context<Self>) {
