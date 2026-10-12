@@ -204,10 +204,14 @@ fn a_bundle_that_has_not_changed_is_not_looked_at_again() {
     assert_eq!(scan.plugins.len(), 2);
 
     // The binary of one bundle changes, so that bundle is looked at again and this one fails.
+    // A new file replaces it, as an installer does: the installed one is a link to the built
+    // library, which other tests load, so nothing writes into it.
     let binary = folder.path().join("plugins/test-tone.clap");
-    let bytes = std::fs::read(&binary).unwrap();
-    std::fs::write(&binary, bytes).unwrap();
-    filetime_now(&binary);
+    let mut bytes = std::fs::read(&binary).unwrap();
+    bytes.push(0);
+    let next = folder.path().join("test-tone.clap.next");
+    std::fs::write(&next, bytes).unwrap();
+    std::fs::rename(&next, &binary).unwrap();
     let plugins = Plugins::new(search, broken, cache);
     let scan = plugins.scan();
     assert_eq!(scan.failures.len(), 1, "{:?}", scan.failures);
@@ -238,19 +242,6 @@ fn a_bundle_that_crashed_is_remembered_and_not_tried_again() {
     let scan = plugins.scan();
     assert_eq!(scan.failures, []);
     assert_eq!(scan.plugins.len(), 1);
-}
-
-/// Touches a file so that its modified time is now, whatever it was. Writing the same bytes
-/// does that on macOS, but not with enough resolution to be sure inside one test.
-fn filetime_now(path: &std::path::Path) {
-    let file = std::fs::OpenOptions::new()
-        .append(true)
-        .open(path)
-        .expect("the binary");
-    // One byte more is a different binary, which is exactly what the cache is keyed on.
-    use std::io::Write as _;
-    let mut file = file;
-    file.write_all(&[0]).expect("the binary is touched");
 }
 
 /// A plugin installed while the app runs is found without a restart, when a picker asks what

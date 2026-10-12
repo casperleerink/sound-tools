@@ -858,7 +858,7 @@ pub fn built_library() -> std::path::PathBuf {
     support::built_library("test-clap-plugin")
 }
 
-/// Copies the built library into `folder` as a bundle a CLAP scan finds, and gives back the
+/// Puts the built library into `folder` as a bundle a CLAP scan finds, and gives back the
 /// bundle. A plain file with a `.clap` name is a valid bundle on every platform.
 pub fn install_into(folder: &std::path::Path) -> std::path::PathBuf {
     support::install_bundle(folder, &built_library(), "test-tone", "clap")

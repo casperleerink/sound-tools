@@ -80,9 +80,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      # Before the tests: they load the repository's own CLAP and VST 3 plugins, which are
-      # dynamic libraries that `cargo test` does not build.
-      - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
       # With the realtime sanitizer on: any test that allocates, locks or makes a system call
       # inside Engine::process_block aborts.
       - run: cargo nextest run --workspace --locked
@@ -118,7 +115,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
       - run: cargo nextest run --workspace --locked
 
   # Windows lints, and on main builds and runs the tests. Nobody here has a Windows computer, so
@@ -149,7 +145,5 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - if: github.event_name == 'push'
-        run: cargo build -p test-clap-plugin -p test-vst3-plugin --locked
       - if: github.event_name == 'push'
         run: cargo nextest run --workspace --locked --no-fail-fast

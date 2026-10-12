@@ -829,6 +829,11 @@ pub fn load_state(bytes: &[u8]) -> Option<SavedState> {
 /// `cargo test` builds a crate for testing but not its dynamic library, so this builds it
 /// first. That is a few tenths of a second when it is already up to date, and it means a test
 /// always loads the plugin as the source says it is.
+///
+/// It builds into a target folder of its own, next to the test executable. In the shared one,
+/// `cargo build -p <plugin>` alone unifies other features than the build of the tests, so each
+/// rebuilt the plugin and everything that depends on it after the other: about 6 s before every
+/// run of the tests.
 pub fn built_library(package: &str) -> PathBuf {
     let name = format!(
         "{}{}{}",
@@ -836,6 +841,13 @@ pub fn built_library(package: &str) -> PathBuf {
         package.replace('-', "_"),
         std::env::consts::DLL_SUFFIX
     );
+    // `target/<profile>/deps/<test>` builds into `target/<profile>/test-plugins`.
+    let executable = std::env::current_exe().expect("the path of the test executable");
+    let target = executable
+        .parent()
+        .and_then(Path::parent)
+        .expect("the test executable is in a target folder")
+        .join("test-plugins");
     // Once per package per test process: a test folder is made several times in one process.
     static BUILT: std::sync::Mutex<Option<std::collections::BTreeSet<String>>> =
         std::sync::Mutex::new(None);
@@ -844,28 +856,60 @@ pub fn built_library(package: &str) -> PathBuf {
         .get_or_insert_with(Default::default)
         .insert(package.to_string())
     {
-        let output = std::process::Command::new(env!("CARGO"))
-            .args(["build", "--package", package])
-            .output()
-            .expect("cargo builds the test plugin");
-        assert!(
-            output.status.success(),
-            "cargo build -p {package} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        build_once_per_run(package, &target);
     }
     drop(built);
-    let mut folder = std::env::current_exe().expect("the path of the test executable");
-    while folder.pop() {
-        let candidate = folder.join(&name);
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    panic!("{name} is not built. Run `cargo build -p {package}` first");
+    target.join("debug").join(name)
 }
 
-/// Copies a built library into `folder` as a bundle of `extension`, and gives back the bundle.
+/// Builds `package` into `target`, once per nextest run and not once per test process.
+///
+/// Nextest runs every test in a process of its own, and even a build with nothing to do holds
+/// cargo's lock on the build folder for about 0.2 s. A hundred test processes then spent half a
+/// minute waiting on each other. So the first process of a run builds and leaves the run's id in
+/// a mark; the others wait for its lock and see the mark.
+///
+/// It also keeps the library still while tests run. Even a build with nothing to do puts a new
+/// file in its place, which every test folder links to, and a scan cache would then see every
+/// bundle as changed.
+fn build_once_per_run(package: &str, target: &Path) {
+    let run = std::env::var("NEXTEST_RUN_ID").ok();
+    let mark = run.as_ref().map(|_| {
+        std::fs::create_dir_all(target).expect("the target folder of the test plugins");
+        let mark = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(target.join(format!("{package}-built-for-run")))
+            .expect("the mark of the last build");
+        // Unlocked when the file is dropped, after the build and the new mark.
+        mark.lock().expect("the lock on the mark");
+        mark
+    });
+    if let (Some(run), Some(mark)) = (&run, &mark)
+        && std::io::read_to_string(mark).is_ok_and(|built_for| built_for == *run)
+    {
+        return;
+    }
+    let output = std::process::Command::new(env!("CARGO"))
+        .args(["build", "--package", package, "--target-dir"])
+        .arg(target)
+        .output()
+        .expect("cargo builds the test plugin");
+    assert!(
+        output.status.success(),
+        "cargo build -p {package} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if let (Some(run), Some(mark)) = (run, mark) {
+        mark.set_len(0).expect("the old mark is cleared");
+        std::io::Seek::rewind(&mut &mark).expect("the mark is rewound");
+        std::io::Write::write_all(&mut &mark, run.as_bytes()).expect("the mark is written");
+    }
+}
+
+/// Puts a built library into `folder` as a bundle of `extension`, and gives back the bundle.
 /// CLAP takes a plain file. VST 3 wants a real bundle: on macOS with its `Info.plist`, which is
 /// what `CFBundle` needs to find the binary, and elsewhere with the library in the folder of
 /// the architecture, as the plugin host's `scan::binary_folder` says: `<name>.so` on Linux, and
@@ -874,7 +918,7 @@ pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str
     let bundle = folder.join(format!("{name}.{extension}"));
     if extension == "clap" {
         std::fs::create_dir_all(folder).expect("the plugin folder");
-        put_copy(library, &bundle);
+        put_library(library, &bundle);
         return bundle;
     }
     let contents = bundle.join("Contents");
@@ -885,17 +929,17 @@ pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str
         };
         let binaries = contents.join(format!("{architecture}-win"));
         std::fs::create_dir_all(&binaries).expect("the bundle folder");
-        put_copy(library, &binaries.join(format!("{name}.{extension}")));
+        put_library(library, &binaries.join(format!("{name}.{extension}")));
         return bundle;
     }
     if cfg!(not(target_os = "macos")) {
         let binaries = contents.join(format!("{}-linux", std::env::consts::ARCH));
         std::fs::create_dir_all(&binaries).expect("the bundle folder");
-        put_copy(library, &binaries.join(format!("{name}.so")));
+        put_library(library, &binaries.join(format!("{name}.so")));
         return bundle;
     }
     std::fs::create_dir_all(contents.join("MacOS")).expect("the bundle folder");
-    put_copy(library, &contents.join("MacOS").join(name));
+    put_library(library, &contents.join("MacOS").join(name));
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -915,13 +959,19 @@ pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str
     bundle
 }
 
-/// Copies `library` to `to` as a new file put in place, never by writing into the file that is
+/// Puts `library` at `to` as a new file put in place, never by writing into the file that is
 /// there. A test that installs a plugin again, on a reopen, would otherwise change the code of
 /// the copy this process has loaded under it, which crashes it on Linux.
 ///
-/// A copy that is there already with the same bytes is left alone: this process may have
+/// Outside Windows the new file is a link to the built library and not a copy. macOS checks
+/// the code of every file it has not loaded before, about a quarter of a second each, and
+/// only one at a time for the whole machine: with a fresh copy per test folder, ten tests at
+/// once waited on each other for most of their time. A link loads the file macOS checked once
+/// per build. So a test must never write into an installed binary; it replaces it instead.
+///
+/// A file that is there already with the same bytes is left alone: this process may have
 /// loaded it, and Windows refuses to replace a loaded library.
-fn put_copy(library: &Path, to: &Path) {
+fn put_library(library: &Path, to: &Path) {
     if let (Ok(there), Ok(built)) = (std::fs::read(to), std::fs::read(library))
         && there == built
     {
@@ -929,6 +979,9 @@ fn put_copy(library: &Path, to: &Path) {
     }
     let mut next = to.as_os_str().to_owned();
     next.push(".next");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(library, &next).expect("a link to the test plugin");
+    #[cfg(not(unix))]
     std::fs::copy(library, &next).expect("a copy of the test plugin");
-    std::fs::rename(&next, to).expect("the copy in place");
+    std::fs::rename(&next, to).expect("the library in place");
 }
