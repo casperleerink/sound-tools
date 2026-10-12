@@ -6,7 +6,8 @@
 //!
 //! The chain holds plugins and built-in effects alike: the repository's test plugin with a
 //! latency and an offset of its own, the Compressor with a lookahead of 10 ms, which is a
-//! latency of 480 frames, the Filter, and a second test plugin that is bypassed.
+//! latency of 480 frames, the Filter with the latency of its oversampling, and a second test
+//! plugin that is bypassed.
 
 use arrangement::{EffectSlot, TrackState};
 use plugin_host::PluginFormat;
@@ -21,9 +22,9 @@ const LATE: i32 = 300;
 const HELD: i32 = 700;
 /// The lookahead of the compressor, 10 ms at 48 kHz.
 const SQUEEZE: u64 = 480;
-/// The latency of the chain: the plugin that is on and the compressor, and not the bypassed
-/// plugin, which is longer than either alone and shorter than both.
-const CHAIN: u64 = LATE as u64 + SQUEEZE;
+/// The latency of the chain: the plugin that is on, the compressor and the filter, and not the
+/// bypassed plugin, which is longer than either of the first two alone and shorter than both.
+const CHAIN: u64 = LATE as u64 + SQUEEZE + filter::LATENCY as u64;
 
 /// The order written first, and the order the reorder makes: `late` from the front to the end.
 const FIRST: &str = r#"["late", "squeeze", "filter", {"name": "held", "bypass": true}]"#;
