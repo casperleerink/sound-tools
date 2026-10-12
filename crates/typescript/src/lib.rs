@@ -96,23 +96,17 @@ impl Extensions {
         if !folder.is_dir() {
             return None;
         }
-        let mut extensions = Self {
-            folder,
-            bun: None,
-            tools: Vec::new(),
-            skipped: Skipped::new(),
-            problems: Vec::new(),
-        };
-        let launched = write_sdk(&extensions.folder)
+        let launched = write_sdk(&folder)
             .map_err(|error| error.to_string())
-            .and_then(|()| launch(&extensions.folder, Skipped::new()));
-        match launched {
+            .and_then(|()| launch(&folder, Skipped::new()));
+        let none = |problems| (None, Vec::new(), Skipped::new(), problems);
+        let (bun, tools, skipped, problems) = match launched {
             Ok(Some(Launched {
                 bun,
                 loaded,
                 skipped,
             })) => {
-                (extensions.tools, extensions.problems) = define(loaded, &skipped, |tools| {
+                let (tools, problems) = define(loaded, &skipped, |tools| {
                     (tools.into_iter())
                         .filter_map(|tool| {
                             let name = tool.name.clone();
@@ -121,13 +115,18 @@ impl Extensions {
                         })
                         .collect()
                 });
-                extensions.bun = Some(bun);
-                extensions.skipped = skipped;
+                (Some(bun), tools, skipped, problems)
             }
-            Ok(None) => {}
-            Err(message) => extensions.problems = vec![folder_problem(message)],
-        }
-        Some(extensions)
+            Ok(None) => none(Vec::new()),
+            Err(message) => none(vec![folder_problem(message)]),
+        };
+        Some(Self {
+            folder,
+            bun,
+            tools,
+            skipped,
+            problems,
+        })
     }
 
     /// Lists what is wrong with `extensions/` among the problems of the project.
@@ -196,18 +195,23 @@ fn drawn(tree: Result<serde_json::Value, String>) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-/// Whether `extensions` has a file of a tool: one that is not the runtime's.
-fn has_tools(extensions: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(extensions) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        (name.ends_with(".ts") || name.ends_with(".tsx"))
-            && !OWNED.contains(&name.as_ref())
-            && !name.ends_with(".d.ts")
-    })
+/// The files of tools in `extensions`, by name, in order: those that are not the runtime's.
+/// A file they import may be anywhere under it.
+fn tool_files(extensions: &Path) -> Vec<String> {
+    let entries = std::fs::read_dir(extensions)
+        .into_iter()
+        .flatten()
+        .flatten();
+    let mut files: Vec<String> = entries
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| {
+            (name.ends_with(".ts") || name.ends_with(".tsx"))
+                && !OWNED.contains(&name.as_str())
+                && !name.ends_with(".d.ts")
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 /// A Bun that loaded.
@@ -223,7 +227,8 @@ struct Launched {
 /// A file whose code hangs or stops Bun while it loads is skipped too, and Bun starts again
 /// without it. `None` when the folder has no tool file. Blocks for as long as the load takes.
 fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, String> {
-    if !has_tools(extensions) {
+    let files = tool_files(extensions);
+    if files.is_empty() {
         return Ok(None);
     }
     let program = bun_program().ok_or_else(|| {
@@ -234,7 +239,10 @@ fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, S
     std::fs::write(&host, HOST).map_err(|error| error.to_string())?;
     // Ends: a file is blamed at most once, as Bun never loads a skipped one.
     loop {
-        match Bun::start(&program, &host, extensions, skipped.keys()) {
+        let loading: Vec<&String> = (files.iter())
+            .filter(|file| !skipped.contains_key(*file))
+            .collect();
+        match Bun::start(&program, &host, extensions, &loading) {
             Ok((bun, loaded)) => {
                 return Ok(Some(Launched {
                     bun,
@@ -320,6 +328,6 @@ mod tests {
         assert!(extensions.problems.is_empty(), "{:?}", extensions.problems);
         assert!(project.path().join(FOLDER).join("sdk.ts").is_file());
         // The runtime's own files are no tool.
-        assert!(!has_tools(&project.path().join(FOLDER)));
+        assert!(tool_files(&project.path().join(FOLDER)).is_empty());
     }
 }

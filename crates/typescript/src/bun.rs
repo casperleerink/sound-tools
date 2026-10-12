@@ -2,7 +2,7 @@
 //! it loaded, then hears what the window tells it and says what the tools do. A change of the
 //! code starts a new Bun. One JSON message per line, both ways.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
@@ -104,14 +104,11 @@ pub(crate) enum Event {
     Done,
     /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
-    /// A card drew, or failed to.
+    /// A card drew, with the version of its tree, which a click on it names, so it runs a
+    /// handler of this tree and not of a newer one. Or why it did not.
     Tree {
         card: u64,
-        tree: Option<Value>,
-        /// What a click on it names, so it runs a handler of this tree and not of a newer one.
-        #[serde(default)]
-        version: u64,
-        error: Option<String>,
+        tree: Result<(u64, Value), String>,
     },
     /// A card, a key or the MIDI keyboard changed the record of an instance.
     Edit {
@@ -215,12 +212,6 @@ enum Line {
     Event(Event),
 }
 
-/// A step of the load, for [`Bun::start`].
-enum Step {
-    Loading(String),
-    Loaded(Loaded),
-}
-
 /// Why Bun did not load, and the file it was loading then, which is to blame.
 pub(crate) struct LoadFailure {
     pub file: Option<String>,
@@ -237,19 +228,19 @@ pub(crate) struct Bun {
 }
 
 impl Bun {
-    /// Starts Bun on `host_script` in `folder`, without the `skipped` files, and waits for its
-    /// load. Blocks for as long as the load takes: never call it on the thread that draws.
-    pub(crate) fn start<'a>(
+    /// Starts Bun on `host_script` in `folder`, to load `files` of it, and waits for its load.
+    /// Blocks for as long as the load takes: never call it on the thread that draws.
+    pub(crate) fn start(
         program: &Path,
         host_script: &Path,
         folder: &Path,
-        skipped: impl IntoIterator<Item = &'a String>,
+        files: &[&String],
     ) -> Result<(Self, Loaded), LoadFailure> {
         let failure = |why: String| LoadFailure { file: None, why };
         #[allow(clippy::disallowed_methods)]
         let mut child = sound_core::process::background_command(program)
             .arg(host_script)
-            .args(skipped)
+            .args(files)
             .current_dir(folder)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -291,21 +282,16 @@ impl Bun {
         let mut file = None;
         loop {
             let why = match load.recv_timeout(LOAD_TIMEOUT) {
-                Ok(Step::Loading(next)) => {
+                Ok(Line::Loading { file: next }) => {
                     file = Some(next);
                     continue;
                 }
-                Ok(Step::Loaded(loaded)) => return Ok((bun, loaded)),
-                Err(mpsc::RecvTimeoutError::Timeout) if file.is_some() => {
+                Ok(Line::Loaded(loaded)) => return Ok((bun, loaded)),
+                Ok(Line::Event(_)) => continue,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
                     format!("did not finish loading within {LOAD_TIMEOUT:?}")
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    format!("did not start within {LOAD_TIMEOUT:?}")
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) if file.is_some() => {
-                    "stopped Bun".to_string()
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => "stopped before it loaded".to_string(),
+                Err(mpsc::RecvTimeoutError::Disconnected) => "stopped Bun".to_string(),
             };
             return Err(LoadFailure { file, why });
         }
@@ -322,20 +308,15 @@ impl Bun {
             Ok(json) => json + "\n",
             Err(error) => return eprintln!("error: {error}"),
         };
-        match self.lines.try_send(line) {
-            Ok(()) => {}
-            // It never says done, so the window finds it hung and starts another.
-            Err(mpsc::TrySendError::Full(_)) => {}
-            // It stopped, which its events say.
-            Err(mpsc::TrySendError::Disconnected(_)) => {}
-        }
+        // A Bun that stopped reading never says done, so the window finds it hung; one that
+        // stopped says so with the end of its events.
+        self.lines.try_send(line).ok();
     }
 }
 
-/// Reads what Bun says until it stops: the steps of its load to `steps`, and every event after
-/// to `events`.
-fn read(stdout: ChildStdout, steps: mpsc::Sender<Step>, events: &smol::channel::Sender<Event>) {
-    let mut steps = Some(steps);
+/// Reads what Bun says until it stops: the steps of its load to `steps`, which nobody hears
+/// after it, and every event to `events`.
+fn read(stdout: ChildStdout, steps: mpsc::Sender<Line>, events: &smol::channel::Sender<Event>) {
     for line in BufReader::new(stdout).lines() {
         let line = match line {
             Ok(line) => line,
@@ -344,25 +325,15 @@ fn read(stdout: ChildStdout, steps: mpsc::Sender<Step>, events: &smol::channel::
                 break;
             }
         };
-        let step = match serde_json::from_str::<Line>(&line) {
-            Ok(Line::Loading { file }) => Step::Loading(file),
-            Ok(Line::Loaded(loaded)) => Step::Loaded(loaded),
+        match serde_json::from_str::<Line>(&line) {
             // Outside the window nobody reads them, and Bun says nothing unasked.
             Ok(Line::Event(event)) => {
                 events.try_send(event).ok();
-                continue;
             }
-            Err(error) => {
-                eprintln!("error: the TypeScript host said something unknown: {error}");
-                continue;
+            Ok(step) => {
+                steps.send(step).ok();
             }
-        };
-        let last = matches!(step, Step::Loaded(_));
-        if let Some(sender) = &steps {
-            sender.send(step).ok();
-        }
-        if last {
-            steps = None;
+            Err(error) => eprintln!("error: the TypeScript host said something unknown: {error}"),
         }
     }
 }
@@ -372,61 +343,6 @@ impl Drop for Bun {
         // Already ended, or never to be waited for: nothing to report on the way out.
         self.child.kill().ok();
         self.child.wait().ok();
-    }
-}
-
-/// What the window told Bun and Bun has not said done yet, oldest first. Bun does one thing at
-/// a time, so the oldest is what hangs or what stopped it.
-#[derive(Default)]
-pub(crate) struct Pending(VecDeque<Sent>);
-
-pub(crate) struct Sent {
-    /// The tool whose code it runs, and which code, to blame when it hangs.
-    pub blame: Option<(String, Runs)>,
-    pub at: std::time::Instant,
-}
-
-/// The code of a tool a request runs.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Runs {
-    Tick,
-    Card,
-    Click,
-    Key,
-    Midi,
-}
-
-impl Runs {
-    pub(crate) fn word(self) -> &'static str {
-        match self {
-            Self::Tick => "tick",
-            Self::Card => "card",
-            Self::Click => "click handler",
-            Self::Key => "onKey",
-            Self::Midi => "onMidi",
-        }
-    }
-}
-
-impl Pending {
-    pub(crate) fn push(&mut self, blame: Option<(&str, Runs)>) {
-        let blame = blame.map(|(tool, runs)| (tool.to_string(), runs));
-        let at = std::time::Instant::now();
-        self.0.push_back(Sent { blame, at });
-    }
-
-    pub(crate) fn done(&mut self) {
-        self.0.pop_front();
-    }
-
-    pub(crate) fn oldest(&self) -> Option<&Sent> {
-        self.0.front()
-    }
-
-    /// Whether a step of a control loop is not done yet. One at a time, so a slow loop does
-    /// not pile steps up.
-    pub(crate) fn ticking(&self) -> bool {
-        (self.0.iter()).any(|sent| matches!(sent.blame, Some((_, Runs::Tick))))
     }
 }
 

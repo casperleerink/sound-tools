@@ -3,13 +3,12 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec } from "./sdk";
 
 const folder = process.cwd();
-/** The files whose code hung or stopped Bun before: this Bun runs without them. */
-const skipped = new Set(process.argv.slice(2));
+/** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
+const files = process.argv.slice(2);
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
@@ -109,14 +108,11 @@ function problemsOf(spec: Spec): string[] {
   return problems;
 }
 
-/** Loads the files of the folder, each after it says which, so a file that hangs is known. */
+/** Loads the files, each after it says which, so a file that hangs is known. */
 async function load() {
   const tools: object[] = [];
   const errors: Array<{ file: string; message: string }> = [];
-  for (const file of readdirSync(folder).sort()) {
-    if (!/\.tsx?$/.test(file) || file === "sdk.ts" || file.endsWith(".d.ts") || skipped.has(file)) {
-      continue;
-    }
+  for (const file of files) {
     send({ type: "loading", file });
     const before = new Set(sdk.host.tools.keys());
     try {
@@ -336,7 +332,7 @@ function latest({ instance, state, edits }: Looped): State {
 function render(request: Render) {
   const { card, instance, tool, state, watches, page } = request;
   drawn.set(card, request);
-  try {
+  const tree = made(() => {
     // Such as a tool whose file this Bun runs without.
     const spec = specOf(tool);
     const kept: Handler[] = [];
@@ -348,7 +344,7 @@ function render(request: Render) {
       update: updater(instance, state),
       ...players(instance),
     });
-    const tree = serialize(node, kept);
+    const drawnTree = serialize(node, kept);
     treeVersion += 1;
     const trees = handlers.get(card) ?? new Map<number, Handler[]>();
     trees.set(treeVersion, kept);
@@ -357,10 +353,9 @@ function render(request: Render) {
       trees.delete(oldest);
     }
     handlers.set(card, trees);
-    send({ type: "tree", card, tree, version: treeVersion });
-  } catch (error) {
-    send({ type: "tree", card, error: String(error) });
-  }
+    return [treeVersion, drawnTree];
+  });
+  send({ type: "tree", card, tree });
 }
 
 /** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */

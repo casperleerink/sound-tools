@@ -617,9 +617,7 @@ tool({{
 fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_back(
     cx: &mut TestAppContext,
 ) {
-    let project = r#"{"format": 1, "extensions": [],
-  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-  "connections": []}"#;
+    let (_, project) = ONLY_THE_TOOL[0];
     let (heard, stuck) = (noted("heard", false), noted("stuck", true));
     let files = [
         ("project.json", project),

@@ -8,19 +8,19 @@
 //! Nothing here waits for Bun: what it says comes as events.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
-use sound_core::{InstanceId, Problem, Project};
+use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
 use sound_notes::{Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
-use crate::bun::{Bun, Event, Loaded, Looped, PageSize, Pending, Request, Runs, Skipped};
+use crate::bun::{Bun, Event, Loaded, Looped, PageSize, Request, Skipped};
 use crate::card::TypeScriptCard;
 use crate::tools::{Control, ToolInfo, ToolKind};
 use crate::tree::Node;
@@ -33,14 +33,6 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 /// How long one request may take before Bun counts as hung. Bun answers in well under a
 /// millisecond.
 const HANG_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// How long `extensions/` waits for more changes before Bun starts again: an editor saves in
-/// several writes, an agent several files.
-const QUIET: Duration = Duration::from_millis(100);
-
-/// A Bun that stops or hangs with nothing to blame starts again, unless it ran shorter than
-/// this: it would stop again at once, for ever.
-const SHORTEST_RUN: Duration = Duration::from_secs(10);
 
 /// The tools and cards of the project in the window. One per window.
 pub(crate) struct Live {
@@ -74,16 +66,46 @@ pub(crate) struct Live {
 enum Host {
     Running {
         bun: Bun,
-        since: Instant,
-        pending: Pending,
+        /// What it was told and has not said done yet, oldest first. Bun does one thing at a
+        /// time, so the oldest is what hangs or what stopped it.
+        pending: VecDeque<Sent>,
         /// Hears what Bun says, until it ends.
         _hearing: Task<()>,
     },
     /// A new Bun starts and loads on a thread of its own. `again`: `extensions/` changed
     /// meanwhile, so another starts once this one has loaded.
     Starting { again: bool },
-    /// No Bun runs: the folder has no tool, Bun cannot start, or it stopped right after a start.
+    /// No Bun runs: the folder has no tool, Bun cannot start, or it stopped with nothing to
+    /// blame, until the folder changes.
     Stopped,
+}
+
+struct Sent {
+    /// The tool whose code it runs, and which code, to blame when it hangs.
+    blame: Option<(String, Runs)>,
+    at: Instant,
+}
+
+/// The code of a tool a request runs.
+#[derive(Clone, Copy, PartialEq)]
+enum Runs {
+    Tick,
+    Card,
+    Click,
+    Key,
+    Midi,
+}
+
+impl Runs {
+    fn word(self) -> &'static str {
+        match self {
+            Self::Tick => "tick",
+            Self::Card => "card",
+            Self::Click => "click handler",
+            Self::Key => "onKey",
+            Self::Midi => "onMidi",
+        }
+    }
 }
 
 impl Host {
@@ -92,7 +114,11 @@ impl Host {
     fn send(&mut self, blame: Option<(&str, Runs)>, request: &Request) {
         if let Self::Running { bun, pending, .. } = self {
             bun.send(request);
-            pending.push(blame);
+            let blame = blame.map(|(tool, runs)| (tool.to_string(), runs));
+            pending.push_back(Sent {
+                blame,
+                at: Instant::now(),
+            });
         }
     }
 }
@@ -241,8 +267,15 @@ impl Live {
                 .ok();
             let hearing_changes = cx.spawn(async move |live, cx| {
                 while changes.recv().await.is_ok() {
-                    cx.background_executor().timer(QUIET).await;
-                    while changes.try_recv().is_ok() {}
+                    // Until it is quiet: an editor saves in several writes, an agent several
+                    // files.
+                    loop {
+                        cx.background_executor().timer(GROUPING_WINDOW).await;
+                        if changes.is_empty() {
+                            break;
+                        }
+                        while changes.try_recv().is_ok() {}
+                    }
                     if live.update(cx, |live, cx| live.changed(cx)).is_err() {
                         return;
                     }
@@ -293,8 +326,7 @@ impl Live {
         });
         Host::Running {
             bun,
-            since: Instant::now(),
-            pending: Pending::default(),
+            pending: VecDeque::new(),
             _hearing: hearing,
         }
     }
@@ -658,7 +690,7 @@ impl Live {
     /// runs again, so it plays it.
     fn frame(&mut self, cx: &mut Context<Self>) {
         if let Host::Running { pending, .. } = &self.host
-            && (pending.oldest()).is_some_and(|sent| sent.at.elapsed() > HANG_TIMEOUT)
+            && (pending.front()).is_some_and(|sent| sent.at.elapsed() > HANG_TIMEOUT)
         {
             self.failed(&format!("took longer than {HANG_TIMEOUT:?}"), cx);
         }
@@ -678,9 +710,12 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        if let Host::Running { pending, .. } = &self.host
-            && pending.ticking()
-        {
+        // One step at a time, so a slow loop does not pile steps up.
+        let Host::Running { pending, .. } = &self.host else {
+            return;
+        };
+        let ticking = |sent: &Sent| matches!(sent.blame, Some((_, Runs::Tick)));
+        if pending.iter().any(ticking) {
             return;
         }
         let dt = self.last_frame.elapsed().as_secs_f32();
@@ -734,10 +769,12 @@ impl Live {
 
     fn heard(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
+            // Nothing to draw.
             Event::Done => {
                 if let Host::Running { pending, .. } = &mut self.host {
-                    pending.done();
+                    pending.pop_front();
                 }
+                return;
             }
             Event::Failed { tool, message } => {
                 let problem = find(&self.tools.borrow(), &tool).map(|info| info.problem(message));
@@ -746,22 +783,15 @@ impl Live {
                     self.report(cx);
                 }
             }
-            Event::Tree {
-                card,
-                tree,
-                version,
-                error,
-            } => {
+            Event::Tree { card, tree } => {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
                 entry.asked = false;
-                entry.tree = Some(match (tree, error) {
-                    (Some(tree), _) => serde_json::from_value(tree)
-                        .map(|node| (version, Rc::new(node)))
-                        .map_err(|error| error.to_string()),
-                    (None, error) => Err(error.unwrap_or_default()),
-                });
+                entry.tree = Some(tree.and_then(|(version, tree)| {
+                    let node = serde_json::from_value(tree).map_err(|error| error.to_string())?;
+                    Ok((version, Rc::new(node)))
+                }));
                 if std::mem::take(&mut entry.stale) {
                     self.render(card, cx);
                 }
@@ -823,33 +853,27 @@ impl Live {
     }
 
     /// Bun hung or stopped: what it ran last is to blame, and the file of that tool runs no
-    /// more until the folder changes. With nothing to blame it starts again as it was, unless
-    /// it ran only a moment.
+    /// more until the folder changes, while a new Bun runs the others. With nothing to blame,
+    /// such as code a timer ran, no Bun runs until the folder changes: it may stop again at
+    /// once, for ever.
     fn failed(&mut self, why: &str, cx: &mut Context<Self>) {
-        let Host::Running { since, pending, .. } = &self.host else {
+        let Host::Running { pending, .. } = &self.host else {
             return;
         };
-        let blame = pending.oldest().and_then(|sent| sent.blame.clone());
-        let file = blame
-            .as_ref()
-            .and_then(|(tool, _)| find(&self.tools.borrow(), tool).map(|info| info.file.clone()));
-        match (blame, file) {
-            (Some((tool, runs)), Some(file)) => {
-                let message = format!(
-                    "tool {tool}: its {} {why}, so the tools run without this file: fix it and save",
-                    runs.word()
-                );
-                self.skipped.insert(file, message);
-            }
-            _ if since.elapsed() < SHORTEST_RUN => {
-                self.host = Host::Stopped;
-                let message = "the TypeScript host stopped or hung right after it started, so the tools do not run: fix them and save";
-                self.problems
-                    .push(crate::folder_problem(message.to_string()));
-                return self.report(cx);
-            }
-            _ => {}
-        }
+        let blamed = (pending.front().and_then(|sent| sent.blame.as_ref()))
+            .and_then(|(tool, runs)| Some((find(&self.tools.borrow(), tool)?.clone(), *runs)));
+        let Some((info, runs)) = blamed else {
+            self.host = Host::Stopped;
+            let message = "the TypeScript host stopped or hung with no tool to blame, so the tools do not run: fix them and save";
+            self.problems
+                .push(crate::folder_problem(message.to_string()));
+            return self.report(cx);
+        };
+        let problem = info.problem(format!(
+            "its {} {why}, so the tools run without this file: fix it and save",
+            runs.word()
+        ));
+        self.skipped.insert(info.file, problem.message);
         self.restart(cx);
     }
 
