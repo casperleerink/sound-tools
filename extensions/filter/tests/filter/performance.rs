@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use filter::{Filter, FilterState, Slope};
+use filter::{Filter, FilterCharacter, FilterState, Slope};
 use sound_core::{Connection, Engine, EngineConfig};
 
 use crate::support::{SAMPLE_RATE, Source, noise};
@@ -15,7 +15,14 @@ const SECONDS: usize = 10;
 #[test]
 #[ignore = "a measurement, not a check; run it locally and read the printed ratio"]
 fn realtime_ratio_of_one_hundred_filters() {
-    for (label, lfo) in [("still", 0.0), ("with the LFO moving", 2.0)] {
+    let filters = [
+        ("still", 0.0, 0.0, FilterCharacter::Clean),
+        ("with the LFO moving", 2.0, 0.0, FilterCharacter::Clean),
+        ("with drive", 0.0, 12.0, FilterCharacter::Clean),
+        ("warm", 0.0, 0.0, FilterCharacter::Warm),
+        ("warm with the LFO moving", 2.0, 0.0, FilterCharacter::Warm),
+    ];
+    for (label, lfo, drive_db, character) in filters {
         let (mut control, mut engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
         let mut edit = control.edit();
         for index in 0..FILTERS {
@@ -25,6 +32,8 @@ fn realtime_ratio_of_one_hundred_filters() {
             let state = FilterState {
                 slope: Slope::TwentyFour,
                 resonance: 0.5,
+                drive_db,
+                character,
                 lfo_depth_octaves: lfo,
                 ..FilterState::default()
             };

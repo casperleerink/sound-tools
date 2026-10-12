@@ -321,24 +321,39 @@ fn bend<const WARM: bool>(
     one + slope * (two - one)
 }
 
-/// The frames of one channel through both sections at four times the rate, in place.
+/// The frames of both channels through both sections at four times the rate, in place. The
+/// channels take turns at each sample, so the processor works on both at once.
 fn oversample<const WARM: bool>(
-    channel: &mut Channel,
+    channels: &mut [&mut Channel; CHANNELS],
     filters: &OversamplingFilters,
     factors: &[SvfFactors; 2],
     slope: f32,
     moves: &[Frame],
-    frames: &mut [f32],
+    frames: &mut [[f32; FACTOR_FRAMES]; CHANNELS],
 ) {
-    let mut four = [0.0; Oversampler::FACTOR * FACTOR_FRAMES];
-    let four = &mut four[..Oversampler::FACTOR * frames.len()];
-    channel.oversampler.up(filters, frames, four);
-    for (samples, frame) in four.chunks_exact_mut(Oversampler::FACTOR).zip(moves) {
-        for sample in samples {
-            *sample = bend::<WARM>(&mut channel.oversampled, factors, slope, frame, *sample);
+    let length = Oversampler::FACTOR * moves.len();
+    let mut four = [[0.0; Oversampler::FACTOR * FACTOR_FRAMES]; CHANNELS];
+    for ((channel, frames), four) in channels.iter_mut().zip(&*frames).zip(&mut four) {
+        channel
+            .oversampler
+            .up(filters, &frames[..moves.len()], &mut four[..length]);
+    }
+    let [left, right] = &mut four;
+    let samples = left
+        .chunks_exact_mut(Oversampler::FACTOR)
+        .zip(right.chunks_exact_mut(Oversampler::FACTOR));
+    let [first, second] = channels;
+    for ((left, right), frame) in samples.zip(moves) {
+        for (left, right) in left.iter_mut().zip(right) {
+            *left = bend::<WARM>(&mut first.oversampled, factors, slope, frame, *left);
+            *right = bend::<WARM>(&mut second.oversampled, factors, slope, frame, *right);
         }
     }
-    channel.oversampler.down(filters, four, frames);
+    for ((channel, frames), four) in channels.iter_mut().zip(frames).zip(&four) {
+        channel
+            .oversampler
+            .down(filters, &four[..length], &mut frames[..moves.len()]);
+    }
 }
 
 impl Processor for Filter {
@@ -412,42 +427,52 @@ impl Processor for Filter {
             let warm = moves.iter().any(|frame| frame.warmth > 0.0);
             let [plain, four] = self.factors;
             let [left, right] = &mut self.channels;
-            for (channel, input, output) in
-                [(left, left_in, left_out), (right, right_in, right_out)]
-            {
-                let mut bent = [0.0; FACTOR_FRAMES];
-                let bent = &mut bent[..length];
-                for (bent, input) in bent.iter_mut().zip(input) {
-                    *bent = held(*input);
+            let mut channels = [left, right];
+            let mut dry = [[0.0; FACTOR_FRAMES]; CHANNELS];
+            for (dry, input) in dry.iter_mut().zip([left_in, right_in]) {
+                for (dry, input) in dry.iter_mut().zip(input) {
+                    *dry = held(*input);
                 }
-                // The way at the sample rate, as the filter always was, then the delay.
-                let mut late = [0.0; FACTOR_FRAMES];
-                for ((late, dry), frame) in late.iter_mut().zip(&*bent).zip(&*moves) {
-                    let mixed = match ways[0] {
-                        true => {
-                            let wet =
-                                bend::<false>(&mut channel.sections, &plain, slope, frame, *dry);
-                            dry + frame.mix * (wet - dry)
-                        }
-                        false => 0.0,
-                    };
-                    *late = channel.late.next(mixed);
+            }
+            // The way at the sample rate, as the filter always was, then the delay.
+            let mut late = [[0.0; FACTOR_FRAMES]; CHANNELS];
+            if ways[0] {
+                for (index, frame) in moves.iter().enumerate() {
+                    let channels = channels.iter_mut().zip(&mut late).zip(&dry);
+                    for ((channel, late), dry) in channels {
+                        let dry = dry[index];
+                        let wet = bend::<false>(&mut channel.sections, &plain, slope, frame, dry);
+                        late[index] = dry + frame.mix * (wet - dry);
+                    }
                 }
-                let mut late_dry = [0.0; FACTOR_FRAMES];
-                for (late_dry, dry) in late_dry.iter_mut().zip(&*bent) {
-                    *late_dry = channel.late_dry.next(*dry);
-                }
-                if !ways[1] {
+            }
+            for (channel, late) in channels.iter_mut().zip(&mut late) {
+                channel.late.delay(&mut late[..length]);
+            }
+            let outputs = [left_out, right_out];
+            if !ways[1] {
+                for (output, late) in outputs.into_iter().zip(&late) {
                     output.copy_from_slice(&late[..length]);
-                    continue;
                 }
-                let filters = &self.filters;
-                match warm {
-                    true => oversample::<true>(channel, filters, &four, slope, moves, bent),
-                    false => oversample::<false>(channel, filters, &four, slope, moves, bent),
+                continue;
+            }
+            let mut wet = dry;
+            match warm {
+                true => {
+                    oversample::<true>(&mut channels, &self.filters, &four, slope, moves, &mut wet)
                 }
-                let frames = output.iter_mut().zip(&*bent).zip(late.iter().zip(late_dry));
-                for (((output, wet), (late, dry)), frame) in frames.zip(&*moves) {
+                false => {
+                    oversample::<false>(&mut channels, &self.filters, &four, slope, moves, &mut wet)
+                }
+            }
+            let mut late_dry = dry;
+            let sides = channels.iter_mut().zip(&mut late_dry).zip(outputs);
+            for (((channel, late_dry), output), (wet, late)) in sides.zip(wet.iter().zip(&late)) {
+                channel.late_dry.delay(&mut late_dry[..length]);
+                let frames = output
+                    .iter_mut()
+                    .zip(wet.iter().zip(late.iter().zip(&*late_dry)));
+                for ((output, (wet, (late, dry))), frame) in frames.zip(&*moves) {
                     let oversampled = dry + frame.mix * (wet - dry);
                     *output = late + frame.oversampled * (oversampled - late);
                 }
