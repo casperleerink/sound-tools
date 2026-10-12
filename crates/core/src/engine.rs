@@ -10,6 +10,7 @@ use std::sync::Arc;
 use rtsan_standalone::nonblocking;
 
 use crate::clock::{Clock, Frames, Ticks};
+use crate::compensation::{Compensation, MAX_COMPENSATION};
 use crate::graph::Schedule;
 use crate::input::{InputId, LiveInput};
 use crate::peaks::{Peaks, loudest};
@@ -128,6 +129,10 @@ pub struct EngineStatus {
     /// The longest latency from any processor to the device, in frames: how long the playhead
     /// waits after a play or a seek. Zero in a project where nothing reports latency.
     pub latency: u64,
+    /// How many frames early the earliest path reaches the device, because it needed a longer
+    /// delay than the engine makes up for: one output feeds paths whose latency differs by
+    /// more than a second at 48 kHz. Zero while every path is in time.
+    pub uncompensated_latency: u64,
     /// Frames of the live inputs left out because too many waited, see [`LiveInput`].
     pub live_input_dropped: u64,
     /// Device blocks in which a live input was silence because too few frames had come.
@@ -296,6 +301,10 @@ impl Engine {
                     }
                     Command::SetSchedule(schedule) => {
                         std::mem::swap(schedule, &mut self.schedule);
+                        carry_over(
+                            &mut self.schedule.compensations,
+                            &mut schedule.compensations,
+                        );
                     }
                     Command::Transport(command) => self.transport.apply(command),
                     Command::SetClock(clock) => {
@@ -348,7 +357,8 @@ impl Engine {
 
     /// Works out how far ahead of the device every processor runs: the latency of everything
     /// between its input and the device, along the slowest way there. A processor that feeds
-    /// several others runs as far ahead as the one of them that needs the most.
+    /// several others runs as far ahead as the one of them that needs the most, and its
+    /// compensations delay its audio for the others.
     ///
     /// Runs after every batch, which is the only way a latency changes: a processor arrives or
     /// goes, the routing changes, or an update changes what a processor reports. It walks the
@@ -360,9 +370,14 @@ impl Engine {
             audio_producers,
             event_producers,
             needed,
+            compensations,
+            compensation_of,
             ..
         } = &mut *self.schedule;
         needed.fill(0);
+        for compensation in compensations.iter_mut() {
+            compensation.least_lead = if compensation.to_device { 0 } else { u64::MAX };
+        }
         let mut longest = 0;
         for (index, step) in steps.iter().enumerate().rev() {
             let Some(slot) = self.slots.get_mut(step.slot) else {
@@ -382,19 +397,25 @@ impl Engine {
             longest = longest.max(lead);
             // What feeds a side input is not led for this processor, see
             // `Ports::side_audio_input`.
-            let feeders = step
+            let led = step
                 .audio_sources
                 .iter()
                 .enumerate()
                 .filter(|(input, _)| !step.side_audio_inputs.contains(input))
-                .flat_map(|(_, sources)| sources)
-                .filter_map(|buffer| audio_producers.get(*buffer))
-                .chain(
-                    step.event_sources
-                        .iter()
-                        .flatten()
-                        .filter_map(|buffer| event_producers.get(*buffer)),
-                );
+                .flat_map(|(_, sources)| sources);
+            for buffer in led.clone() {
+                if let Some(compensation) =
+                    compensation_mut(compensations, compensation_of, *buffer)
+                {
+                    compensation.least_lead = compensation.least_lead.min(lead);
+                }
+            }
+            let feeders = led.filter_map(|buffer| audio_producers.get(*buffer)).chain(
+                step.event_sources
+                    .iter()
+                    .flatten()
+                    .filter_map(|buffer| event_producers.get(*buffer)),
+            );
             for feeder in feeders {
                 if let Some(need) = needed.get_mut(*feeder) {
                     *need = (*need).max(lead);
@@ -402,6 +423,16 @@ impl Engine {
             }
         }
         self.transport.set_latency(longest);
+        let mut uncompensated = 0;
+        for compensation in compensations.iter_mut() {
+            let producer = audio_producers.get(compensation.buffer);
+            compensation.ahead = producer
+                .and_then(|step| needed.get(*step))
+                .map_or(0, |ahead| *ahead);
+            let delay = compensation.longest_delay();
+            uncompensated = uncompensated.max(delay.saturating_sub(MAX_COMPENSATION));
+        }
+        self.status.uncompensated_latency = uncompensated;
     }
 
     /// Runs the schedule once for a sub-block of at most `MAX_BLOCK` frames.
@@ -416,6 +447,8 @@ impl Engine {
             event_inputs,
             device_sources,
             live_inputs,
+            compensations,
+            compensation_of,
             ..
         } = &mut *self.schedule;
 
@@ -445,9 +478,23 @@ impl Engine {
         let port_misuses = Cell::new(0);
         let dropped_events = Cell::new(0);
         for step in steps.iter() {
-            for (input, sources) in audio_scratch.iter_mut().zip(&step.audio_sources) {
+            let step_lead = (self.slots.get(step.slot)).and_then(|slot| slot.lead);
+            let step_lead = step_lead.unwrap_or_default();
+            for (index, (input, sources)) in audio_scratch
+                .iter_mut()
+                .zip(&step.audio_sources)
+                .enumerate()
+            {
                 input.iter_mut().for_each(|channel| channel.fill(0.0));
-                for source in sources.iter().filter_map(|index| audio_outputs.get(*index)) {
+                let side = step.side_audio_inputs.contains(&index);
+                for buffer in sources {
+                    let delayed = (!side)
+                        .then(|| compensation(compensations, compensation_of, *buffer))
+                        .flatten()
+                        .and_then(|compensation| compensation.heard(step_lead, frames));
+                    let Some(source) = delayed.as_ref().or(audio_outputs.get(*buffer)) else {
+                        continue;
+                    };
                     for (sum_channel, source_channel) in input.iter_mut().zip(source) {
                         for (sum, sample) in sum_channel.iter_mut().zip(source_channel) {
                             *sum += sample;
@@ -550,6 +597,12 @@ impl Engine {
                     }
                 }
             }
+            for (buffer, block) in step.audio_outputs.clone().zip(step_audio_outputs.iter()) {
+                if let Some(compensation) = compensation_mut(compensations, compensation_of, buffer)
+                {
+                    compensation.write(block, frames);
+                }
+            }
             for buffer in step_event_outputs {
                 self.status.event_overflows += buffer.take_overflow();
             }
@@ -559,7 +612,12 @@ impl Engine {
         // A connection names the first device channel of its stereo port. The right channel
         // goes to the next one, and is left out on a device that does not have it.
         for (first, sources) in device_sources.iter().enumerate().take(channels) {
-            for source in sources.iter().filter_map(|index| audio_outputs.get(*index)) {
+            for buffer in sources {
+                let delayed = compensation(compensations, compensation_of, *buffer)
+                    .and_then(|compensation| compensation.heard(0, frames));
+                let Some(source) = delayed.as_ref().or(audio_outputs.get(*buffer)) else {
+                    continue;
+                };
                 for (channel, source_channel) in (first..channels).zip(source) {
                     let samples = output.iter_mut().skip(channel).step_by(channels);
                     for (sum, sample) in samples.zip(source_channel) {
@@ -583,5 +641,35 @@ impl Engine {
         self.status.playhead_tick = heard.tick_range.end;
         self.status.latency = self.transport.latency();
         self.preroll_frames += self.transport.finish_block(frames);
+    }
+}
+
+fn compensation<'a>(
+    compensations: &'a [Compensation],
+    compensation_of: &[Option<usize>],
+    buffer: usize,
+) -> Option<&'a Compensation> {
+    let index = compensation_of.get(buffer).copied().flatten()?;
+    compensations.get(index)
+}
+
+fn compensation_mut<'a>(
+    compensations: &'a mut [Compensation],
+    compensation_of: &[Option<usize>],
+    buffer: usize,
+) -> Option<&'a mut Compensation> {
+    let index = compensation_of.get(buffer).copied().flatten()?;
+    compensations.get_mut(index)
+}
+
+/// Gives each compensation of a new schedule the past of the same output in the schedule
+/// before. Both are in key order, so one walk through both finds every pair.
+fn carry_over(new: &mut [Compensation], before: &mut [Compensation]) {
+    let mut before = before.iter_mut().peekable();
+    for compensation in new {
+        while before.next_if(|old| old.key < compensation.key).is_some() {}
+        if let Some(old) = before.next_if(|old| old.key == compensation.key) {
+            compensation.carry_over(old);
+        }
     }
 }

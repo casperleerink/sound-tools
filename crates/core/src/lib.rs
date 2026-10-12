@@ -7,6 +7,7 @@
 mod apps;
 mod automation;
 mod clock;
+mod compensation;
 mod control;
 mod delay_line;
 mod detector;
