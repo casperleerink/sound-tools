@@ -119,9 +119,9 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.
 - A routing edit keeps the state of surviving processors. Removing a processor is a hard switch, no crossfade.
 - The graph has no cycles. A connection that closes one is left out and reported, and the rest plays. Which one is left out is fixed, so the same one goes on every open and a sidechain mistake usually mutes only a detector.
-- Latency compensation leads instead of delaying: each processor sees the transport ahead by the latency after it. No delay lines and no maximum. Delaying after a track would also delay a keyboard played into it; leading keeps live playing at the cost of only that track's own chain.
+- Latency compensation leads instead of delaying: each processor sees the transport ahead by the latency after it. Delaying would also delay a keyboard played into a track; with leading it waits only for that track's chain.
 - A side input (such as a sidechain) is skipped by the lead, so its source is not led by another track's chain. The detector hears it a little early or late instead.
-- A send to a bus, when it comes, will need a delay on the shorter path: the one exception to "no delay lines".
+- An output feeding paths of different latency (a send) is delayed on faster ones: at most a second at 48 kHz, more shows in `EngineStatus`. Rejected: no maximum, which would allocate on the audio thread.
 - Levels leave the audio thread through `Peaks` (atomics), sound through a `Scope` (a ring of atomics). Views measure on their own thread. Rejected: measuring on the audio thread, an FFT per card in every block.
 - Every render is deterministic: the same project gives the same bytes. Nothing random; anything that looks random takes a seed. The click is attached only by the window.
 
