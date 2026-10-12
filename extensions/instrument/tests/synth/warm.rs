@@ -1,7 +1,8 @@
 //! The warm character: at full resonance a held note rings at the cutoff on top of its own
-//! sound, and at no resonance it sounds as the clean filter does, in time with it.
+//! sound, and at no resonance it sounds as the clean filter does, as late as the oversampling.
 
 use instrument::{FilterCharacter, SynthState, Waveform};
+use sound_core::Oversampler;
 
 use crate::support::{Harness, SAMPLE_RATE, level_at, note, peak};
 
@@ -34,16 +35,17 @@ fn at_full_resonance_a_warm_voice_rings_at_the_cutoff() {
     }
 }
 
-/// Without resonance the warm filter barely bends, so it sounds as the clean one: in time, and
-/// so the delay that keeps clean voices in time with warm ones is the oversampling.
+/// Without resonance the warm filter barely bends, so it sounds as the clean one, as late as
+/// the way up and down: the synth reports no latency for it.
 #[test]
-fn without_resonance_a_warm_voice_sounds_as_a_clean_one_in_time() {
+fn without_resonance_a_warm_voice_sounds_as_a_clean_one_as_late_as_the_oversampling() {
     let clean = held(2_000.0, 0.0, FilterCharacter::Clean);
     let warm = held(2_000.0, 0.0, FilterCharacter::Warm);
     let loudest = peak(&clean);
+    let late = warm[Oversampler::DELAY_FRAMES..].iter();
     let largest = clean
         .iter()
-        .zip(&warm)
+        .zip(late)
         .fold(0.0_f32, |largest, (clean, warm)| {
             largest.max((clean - warm).abs())
         });

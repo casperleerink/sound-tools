@@ -179,7 +179,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Shared DSP lives in the SDK (`sound_core`), not in copies: devices kept copying filters, envelopes and helpers. A gain in dB and the pan law are there too, so a pan means the same everywhere.
 - Each effect has an exact response function, and tests hold the measured sound to it.
 - A time that follows the tempo saves the note, not the seconds, and follows a tempo change while playing.
-- A latency is a choice, not a knob: a latency that moves with a drag would make every track jump.
+- A latency is a choice, not a knob: one that moves with a drag would make every track jump. A filter that drives or is warm runs at four times the rate. The Filter reports that latency always, so a drive automated across 0 stays in phase with its dry mix. An instrument reports none: a bent voice sounds 1.3 ms late, but loops and live keys get no gap.
 - The Drum pad's default kit is not written into records, so changing the kit changes existing projects. Treat it like a change to a saved format.
 - The metronome is not project state: a tool would mean a file in `state/`, and turning the click on would rewrite a musical record.
 

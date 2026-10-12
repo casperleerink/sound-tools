@@ -4,14 +4,16 @@
 //! per block, and a synth with no voice in use returns before it touches its output.
 //!
 //! The warm character bends the sound inside the filter, so a warm voice runs its filter at four
-//! times the sample rate, between the two stages of an [`Oversampler`]. A clean voice runs it at
-//! the sample rate, as it always has, and the synth delays what the clean voices make by as
-//! long. So the latency it reports never moves, and a change of character glides in time.
+//! times the sample rate, between the two stages of an [`Oversampler`], and sounds
+//! [`Oversampler::DELAY_FRAMES`] later. The synth reports no latency for it: an instrument has
+//! no dry sound to stay in phase with, and a reported latency would leave a gap at every loop
+//! and delay live keys also while the synth is clean. A clean voice runs at the sample rate,
+//! as it always has.
 
 use sound_core::{
     AudioOutput, Automated, AutomationInput, Envelope, EnvelopeState, EventInput,
-    HIGHEST_PHASE_STEP, MAX_BLOCK, Oversampler, OversamplerDelay, OversamplingFilters, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, poly_blep,
+    HIGHEST_PHASE_STEP, MAX_BLOCK, Oversampler, OversamplingFilters, Ports, PrepareConfig,
+    ProcessContext, Processor, Smoothed, SvfFactors, SvfSection, Targets, poly_blep,
 };
 use sound_notes::{NoteEvent, Velocity, Voice as _, Voices, Wheels, frequency_hz};
 
@@ -22,9 +24,6 @@ type SynthTargets = Targets<SynthState, { PARAMETERS.len() }>;
 
 /// Notes that sound at once. One more note takes over a voice in place, as [`Voices`] picks it.
 pub const VOICES: usize = 16;
-
-/// How many frames the synth delays its sound, at every sample rate: 1.3 ms at 48 kHz.
-pub const LATENCY: u32 = Oversampler::DELAY_FRAMES as u32;
 
 /// The low pass of the first section, as [`SvfSection::next`] takes it.
 const LOW_PASS: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
@@ -297,10 +296,6 @@ pub struct Synth {
     /// The way down of the warm voices together, and what they add up to before it.
     down: Oversampler,
     four: [f32; Oversampler::FACTOR * MAX_BLOCK],
-    /// What the clean voices make, on its way to the output.
-    late: OversamplerDelay,
-    /// Frames since the last voice ended, up to the latency: then the delay is empty.
-    quiet: usize,
 }
 
 impl Synth {
@@ -325,8 +320,6 @@ impl Synth {
             oversamplers: [Oversampler::new(); VOICES],
             down: Oversampler::new(),
             four: [0.0; Oversampler::FACTOR * MAX_BLOCK],
-            late: OversamplerDelay::new(),
-            quiet: Oversampler::DELAY_FRAMES,
         }
     }
 
@@ -449,38 +442,27 @@ impl Processor for Synth {
         self.aim(&targets);
     }
 
-    fn latency(&self) -> u32 {
-        LATENCY
-    }
-
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         if let Some(targets) = self.state.follow(context, self.ramp_frames()) {
             self.aim(&targets);
         }
         let events = context.event_inputs.get(Self::NOTES);
-        let idle = events.is_empty() && self.voices.is_idle();
-        if idle && self.quiet >= Oversampler::DELAY_FRAMES {
+        if events.is_empty() && self.voices.is_idle() {
             return;
         }
         // The synth is one voice bank in the middle. It renders once, the clean voices into the
-        // left channel and the warm ones into the right, then delays the clean ones, adds the
-        // two and copies that to the right. Where the track puts it is the track's business.
+        // left channel and the warm ones into the right, adds the two and copies that to the
+        // right. Where the track puts it is the track's business.
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
         let warm = self.warmth.current() != 0.0 || self.warmth.is_moving();
-        if idle {
-            self.quiet += left.len();
-        } else {
-            self.quiet = 0;
-            let mut rendered = 0;
-            for timed in events {
-                let offset = timed.offset.clamp(rendered, left.len());
-                self.render([&mut left[rendered..offset], &mut right[rendered..offset]]);
-                rendered = offset;
-                self.handle(timed.event);
-            }
-            self.render([&mut left[rendered..], &mut right[rendered..]]);
+        let mut rendered = 0;
+        for timed in events {
+            let offset = timed.offset.clamp(rendered, left.len());
+            self.render([&mut left[rendered..offset], &mut right[rendered..offset]]);
+            rendered = offset;
+            self.handle(timed.event);
         }
-        self.late.delay(left);
+        self.render([&mut left[rendered..], &mut right[rendered..]]);
         if warm {
             left.iter_mut()
                 .zip(&*right)

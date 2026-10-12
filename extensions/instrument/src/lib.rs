@@ -32,7 +32,7 @@ use sound_core::{
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
 pub use sound_core::FilterCharacter;
-pub use synth::{LATENCY, Synth, VOICES};
+pub use synth::{Synth, VOICES};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "instrument";

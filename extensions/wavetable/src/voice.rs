@@ -224,15 +224,8 @@ impl Voice {
         self.oscillators[index].oversamplers = [Oversampler::new(); 2];
     }
 
-    /// Adds this voice to `output`, left and right, over the frames of `block`: what its filters
-    /// make at the sample rate, and to `late` what they make at four times it, which is
-    /// already [`Oversampler::DELAY_FRAMES`] late.
-    pub(crate) fn render(
-        &mut self,
-        output: [&mut [f32]; 2],
-        late: [&mut [f32]; 2],
-        block: &Block<'_>,
-    ) {
+    /// Adds this voice to `output`, left and right, over the frames of `block`.
+    pub(crate) fn render(&mut self, output: [&mut [f32]; 2], block: &Block<'_>) {
         let frames = block.frames;
         let mut levels = [0.0; MAX_BLOCK];
         let (sounding, envelope_levels) = self.advance_envelopes(block, &mut levels[..frames]);
@@ -280,25 +273,19 @@ impl Voice {
 
         let mixed = self.filter(block, &oscillators, &sub, [&last, &targets], channels);
 
+        let [left, right] = output;
         let right_channel = channels - 1;
         let [output_from, output_to] = [last.output, targets.output];
-        let ways = ways(block.oversampled);
-        for (([left, right], mixed), runs) in [output, late].into_iter().zip(&mixed).zip(ways) {
-            if !runs {
-                continue;
-            }
-            let frames_out = left[..sounding]
-                .iter_mut()
-                .zip(&mut right[..sounding])
-                .zip(&levels[..sounding])
-                .enumerate();
-            for (frame, ((left, right), level)) in frames_out {
-                let at = (frame + 1) as f32 / frames as f32;
-                let side =
-                    |side: usize| output_from[side] + (output_to[side] - output_from[side]) * at;
-                *left += mixed[0][frame] * level * side(0);
-                *right += mixed[right_channel][frame] * level * side(1);
-            }
+        let frames_out = left[..sounding]
+            .iter_mut()
+            .zip(&mut right[..sounding])
+            .zip(&levels[..sounding])
+            .enumerate();
+        for (frame, ((left, right), level)) in frames_out {
+            let at = (frame + 1) as f32 / frames as f32;
+            let side = |side: usize| output_from[side] + (output_to[side] - output_from[side]) * at;
+            *left += mixed[0][frame] * level * side(0);
+            *right += mixed[right_channel][frame] * level * side(1);
         }
         self.last = targets;
     }
@@ -410,8 +397,10 @@ impl Voice {
     }
 
     /// The oscillators and the sub through the filters, as the routing weighs them: at the
-    /// sample rate, and at four times it, which comes out [`Oversampler::DELAY_FRAMES`] late.
-    /// Each is weighed by its part while the patch glides from one to the other.
+    /// sample rate, or at four times it, which comes out [`Oversampler::DELAY_FRAMES`] late, and
+    /// a blend of the two while the patch glides from one to the other. The synth reports no
+    /// latency for it: it has no dry sound to stay in phase with, and a reported latency would
+    /// leave a gap at every loop and delay live keys also while nothing bends.
     fn filter(
         &mut self,
         block: &Block<'_>,
@@ -419,7 +408,7 @@ impl Voice {
         sub: &[f32; MAX_BLOCK],
         [last, targets]: [&Targets; 2],
         channels: usize,
-    ) -> [Buffer; 2] {
+    ) -> Buffer {
         let frames = block.frames;
         let weights = &block.routing;
         let mut one = [[0.0; MAX_BLOCK]; 2];
@@ -532,16 +521,20 @@ impl Voice {
                 filters.oversamplers[1] = filters.oversamplers[0];
             }
         }
-        if oversampled.from != oversampled.to {
-            for channel in 0..channels {
-                for frame in 0..frames {
-                    let part = oversampled.at(frame, frames);
-                    mixed[0][channel][frame] *= 1.0 - part;
-                    mixed[1][channel][frame] *= part;
+        let [plain, late] = mixed;
+        match ways {
+            [true, false] => plain,
+            [false, _] => late,
+            [true, true] => {
+                let mut blend = plain;
+                for (blend, late) in blend.iter_mut().zip(&late).take(channels) {
+                    for (frame, (blend, late)) in blend.iter_mut().zip(late).enumerate() {
+                        *blend += oversampled.at(frame, frames) * (late - *blend);
+                    }
                 }
+                blend
             }
         }
-        mixed
     }
 }
 

@@ -253,18 +253,10 @@ impl Harness {
         [channel(0), channel(1)]
     }
 
-    /// Plays from the start and renders, without the wait for the latency, as a render of the
-    /// project leaves it out: tick 0 is the first frame. Left and right.
+    /// Plays from the start and renders. Left and right.
     pub(crate) fn play(&mut self, frames: usize) -> [Vec<f32>; 2] {
         self.project.engine().play();
-        let before = self.engine.preroll_frames();
-        let mut output = self.render(frames + wavetable::LATENCY as usize);
-        let waited = usize::try_from(self.engine.preroll_frames() - before).unwrap();
-        for channel in &mut output {
-            channel.drain(..waited);
-            channel.truncate(frames);
-        }
-        output
+        self.render(frames)
     }
 
     /// Plays from the start and renders the left channel.
