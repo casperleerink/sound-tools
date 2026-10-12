@@ -1745,7 +1745,7 @@ pub fn built_library() -> std::path::PathBuf {
     support::built_library("test-vst3-plugin")
 }
 
-/// Copies the built library into `folder` as a VST 3 bundle a scan finds, and gives back the
+/// Puts the built library into `folder` as a VST 3 bundle a scan finds, and gives back the
 /// bundle.
 pub fn install_into(folder: &std::path::Path) -> std::path::PathBuf {
     support::install_bundle(folder, &built_library(), "test-tone", "vst3")

@@ -868,6 +868,10 @@ pub fn built_library(package: &str) -> PathBuf {
 /// cargo's lock on the build folder for about 0.2 s. A hundred test processes then spent half a
 /// minute waiting on each other. So the first process of a run builds and leaves the run's id in
 /// a mark; the others wait for its lock and see the mark.
+///
+/// It also keeps the library still while tests run. Even a build with nothing to do puts a new
+/// file in its place, which every test folder links to, and a scan cache would then see every
+/// bundle as changed.
 fn build_once_per_run(package: &str, target: &Path) {
     let run = std::env::var("NEXTEST_RUN_ID").ok();
     let mark = run.as_ref().map(|_| {
@@ -905,7 +909,7 @@ fn build_once_per_run(package: &str, target: &Path) {
     }
 }
 
-/// Copies a built library into `folder` as a bundle of `extension`, and gives back the bundle.
+/// Puts a built library into `folder` as a bundle of `extension`, and gives back the bundle.
 /// CLAP takes a plain file. VST 3 wants a real bundle: on macOS with its `Info.plist`, which is
 /// what `CFBundle` needs to find the binary, and elsewhere with the library in the folder of
 /// the architecture, as the plugin host's `scan::binary_folder` says: `<name>.so` on Linux, and
@@ -914,7 +918,7 @@ pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str
     let bundle = folder.join(format!("{name}.{extension}"));
     if extension == "clap" {
         std::fs::create_dir_all(folder).expect("the plugin folder");
-        put_copy(library, &bundle);
+        put_library(library, &bundle);
         return bundle;
     }
     let contents = bundle.join("Contents");
@@ -925,17 +929,17 @@ pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str
         };
         let binaries = contents.join(format!("{architecture}-win"));
         std::fs::create_dir_all(&binaries).expect("the bundle folder");
-        put_copy(library, &binaries.join(format!("{name}.{extension}")));
+        put_library(library, &binaries.join(format!("{name}.{extension}")));
         return bundle;
     }
     if cfg!(not(target_os = "macos")) {
         let binaries = contents.join(format!("{}-linux", std::env::consts::ARCH));
         std::fs::create_dir_all(&binaries).expect("the bundle folder");
-        put_copy(library, &binaries.join(format!("{name}.so")));
+        put_library(library, &binaries.join(format!("{name}.so")));
         return bundle;
     }
     std::fs::create_dir_all(contents.join("MacOS")).expect("the bundle folder");
-    put_copy(library, &contents.join("MacOS").join(name));
+    put_library(library, &contents.join("MacOS").join(name));
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -967,7 +971,7 @@ pub fn install_bundle(folder: &Path, library: &Path, name: &str, extension: &str
 ///
 /// A file that is there already with the same bytes is left alone: this process may have
 /// loaded it, and Windows refuses to replace a loaded library.
-fn put_copy(library: &Path, to: &Path) {
+fn put_library(library: &Path, to: &Path) {
     if let (Ok(there), Ok(built)) = (std::fs::read(to), std::fs::read(library))
         && there == built
     {
@@ -979,5 +983,5 @@ fn put_copy(library: &Path, to: &Path) {
     std::os::unix::fs::symlink(library, &next).expect("a link to the test plugin");
     #[cfg(not(unix))]
     std::fs::copy(library, &next).expect("a copy of the test plugin");
-    std::fs::rename(&next, to).expect("the copy in place");
+    std::fs::rename(&next, to).expect("the library in place");
 }
