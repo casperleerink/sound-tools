@@ -4,11 +4,9 @@
 //! Three threads and no waiting, as for MIDI. The device thread puts what it captured into a
 //! ring, stamped with when it was captured ([`sound_core::capture`]). A [`Recorder`] takes it
 //! from there away from the thread that draws and writes one WAV file per armed track. The
-//! thread that draws then places each take
-//! ([`take_clip`](crate::arrangement_wiring::recording::take_clip)): the moment a frame was
-//! captured is the moment the composer played it, the timing of the output device says which
-//! engine frame was sounding then, and the engine status says which project frame that engine
-//! frame was.
+//! thread that draws then places each take as a clip: the moment a frame was captured is the
+//! moment the composer played it, the timing of the output device says which engine frame was
+//! sounding then, and the engine status says which project frame that engine frame was.
 //! Nothing of this is on the audio thread, and the recorder plays nothing.
 
 use std::ops::Range;

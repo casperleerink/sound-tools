@@ -177,12 +177,20 @@ mod tests {
         Ok(())
     }
 
-    /// Whether `code` uses the `arrangement` crate: a path that starts with it, and not one
-    /// such as `crate::arrangement_wiring` or `main_arrangement`.
+    /// Whether `code` uses the `arrangement` crate: a path that starts with it, or a `use` of
+    /// it, and not a name such as `crate::arrangement_wiring` or `main_arrangement`.
     fn names_the_arrangement(code: &str) -> bool {
-        code.match_indices("arrangement::").any(|(at, _)| {
-            let before = code[..at].chars().next_back();
-            !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':')
+        let ident = |c: char| c.is_alphanumeric() || c == '_';
+        code.match_indices("arrangement").any(|(at, word)| {
+            let (before, after) = (&code[..at], &code[at + word.len()..]);
+            // `::arrangement` is the crate too, `crate::arrangement` is not.
+            let before = before
+                .strip_suffix("::")
+                .filter(|rest| !rest.ends_with(ident))
+                .unwrap_or(before);
+            let alone =
+                !before.ends_with(ident) && !before.ends_with(':') && !after.starts_with(ident);
+            alone && (after.starts_with("::") || before.trim_end().ends_with("use"))
         })
     }
 
@@ -215,6 +223,9 @@ mod tests {
         assert!(names_the_arrangement(
             "let end = arrangement::end(project, id);"
         ));
+        assert!(names_the_arrangement("use ::arrangement::TrackState;"));
+        assert!(names_the_arrangement("use arrangement as timeline;"));
+        assert!(!names_the_arrangement("// the arrangement is the home"));
         assert!(!names_the_arrangement(
             "use crate::arrangement_wiring::recording;"
         ));

@@ -19,8 +19,6 @@
 //! `impl TransportPill`:
 //! - `take`: the record control, a take from its start to its clips, and the audio input.
 //! - `strip`: the seek strip.
-//!
-//! `tempo` and `steadiness` there hold the numbers of those two controls.
 
 mod steadiness;
 mod strip;
@@ -95,8 +93,7 @@ pub struct TransportPill {
     /// The fit of the project, when it has one. Finding it walks every instance, and this is
     /// read on every frame, so it is kept between events like the end of the project.
     fit: Option<Instance<FitState>>,
-    /// Whether the main area shows the arrangement. Without it there is no transport, see
-    /// `without_arrangement`. Kept between events like the end of the project.
+    /// Whether the main area shows the arrangement.
     arrangement_is_main: bool,
     /// Whether something takes the notes of the keyboard, as of the last poll.
     takes_notes: bool,

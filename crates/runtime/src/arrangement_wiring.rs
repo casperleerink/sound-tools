@@ -2,9 +2,6 @@
 //! arrangement. The arrangement is the home of the product, so the app may know it, one way:
 //! what it must not know, such as the default instrument or the tempo fit, is handed in from
 //! here. Every other extension the runtime names only where it registers it.
-//!
-//! - `transport`: the pill of the title row, with its takes.
-//! - `recording`: where a keyboard plays and what a finished take becomes.
 
 pub mod recording;
 pub mod transport;

@@ -499,9 +499,9 @@ impl Shell {
         let error = session.notice().cloned();
         // Top-right, under the title row: clear of the transport, and of the left panel and the
         // left edge of the main view, where an arrangement has its track headers. Not in the
-        // title row: there are the window buttons on Windows. A definite width, so that a message wraps
-        // at the width it gets and the box is as tall as its lines: with only a largest width
-        // the text was measured on one line and then painted on three. A notice is as wide as
+        // title row: there are the window buttons on Windows. A definite width, so that a
+        // message wraps at the width it gets and the box is as tall as its lines: with only a
+        // largest width the text was measured on one line and then painted on three. A notice is as wide as
         // its text up to this width.
         div()
             .absolute()
