@@ -65,6 +65,8 @@ pub(super) struct MoveDrag {
     pub(super) lanes_written: BTreeSet<InstanceId>,
     /// Where the clips that take automation along put it, as the last mouse move wrote it.
     pub(super) ghosts: Vec<LaneGhost>,
+    /// Alt held at the press: the drag moves copies, see `Timeline::drag_move`.
+    pub(super) copy: bool,
 }
 
 /// Only a resize keeps a whole clip, because `Clip::set_length` drops notes for good:

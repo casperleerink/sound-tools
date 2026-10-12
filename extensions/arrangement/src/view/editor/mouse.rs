@@ -69,6 +69,7 @@ impl NoteEditor {
                     grab: pointer,
                     grab_pitch: pitch,
                     grabbed: note,
+                    copy: event.modifiers.alt,
                 },
             };
             self.press_note(note, kind, event.modifiers, cx);

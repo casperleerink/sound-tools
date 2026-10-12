@@ -25,7 +25,7 @@ use sound_notes::{LaneValue, Point, check_order, value_at};
 
 pub(crate) use moves::write;
 pub use moves::{Carried, LaneMove, Moved, Travel, moved, travel_in};
-pub(crate) use moves::{clear, positions};
+pub(crate) use moves::{clear, copied, positions};
 
 use crate::TrackState;
 use crate::decibels;

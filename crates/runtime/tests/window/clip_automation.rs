@@ -1,6 +1,6 @@
 //! The automation under a clip goes along when the clip is dragged, nudged, cut, copied, pasted
-//! or duplicated, and alt-drag leaves it. Each is one undo step with the clip, which undo gives
-//! back byte for byte.
+//! or duplicated, and shift during a drag leaves it. Each is one undo step with the clip, which
+//! undo gives back byte for byte.
 
 use arrangement::{AutomationLane, AutomationValue, TrackState};
 use filter::FilterState;
@@ -96,6 +96,13 @@ fn ticks(points: &[(u64, f32)]) -> Vec<u64> {
     points.iter().map(|(tick, _)| *tick).collect()
 }
 
+fn shift() -> Modifiers {
+    Modifiers {
+        shift: true,
+        ..Modifiers::default()
+    }
+}
+
 #[gpui::test]
 fn a_dragged_clip_takes_its_automation_along_in_one_undo_step(cx: &mut TestAppContext) {
     let mut opened = open(cx);
@@ -138,35 +145,63 @@ fn a_dragged_clip_takes_its_automation_along_in_one_undo_step(cx: &mut TestAppCo
     assert_eq!(points(&mut opened, ONE, "cutoff_hz"), sweep());
 }
 
+/// Alt held at the press drags a copy, which takes a copy of the automation along. The clip and
+/// its automation stay.
 #[gpui::test]
-fn an_alt_drag_moves_the_clip_alone(cx: &mut TestAppContext) {
+fn an_alt_drag_copies_the_clip_with_its_automation(cx: &mut TestAppContext) {
     let mut opened = open(cx);
-    let before = mark(&mut opened);
     let (from, to) = (opened.at(BAR + 960, 0), opened.at(5 * BAR + 960, 0));
     let alt = Modifiers {
         alt: true,
         ..Modifiers::default()
     };
+    // To the second track and back where it began: the copy goes again.
+    let copy = format!("{TWO}/part");
+    opened.press_with(from, 1, alt);
+    let down = opened.at(5 * BAR + 960, 1);
+    opened.drag_to_with(down, alt);
+    assert_eq!(opened.clip(&copy).unwrap().start, Ticks(5 * BAR));
+    opened.drag_to_with(from, alt);
+    opened.release(from);
+    assert_eq!(opened.clip(&copy), None);
+    assert_eq!(points(&mut opened, ONE, "gain_db"), volume());
+
+    let before = mark(&mut opened);
     opened.drag_with(from, to, alt);
+    assert_eq!(opened.clip(PART).unwrap().start, Ticks(BAR));
+    let copy = format!("{PART}-2");
+    assert_eq!(opened.clip(&copy).unwrap().start, Ticks(5 * BAR));
+    assert_eq!(opened.selected_clips(), [id(&copy)]);
+    let mut copied = volume();
+    copied.extend(dip(5 * BAR));
+    copied.push((7 * BAR, -6.));
+    assert_eq!(points(&mut opened, ONE, "gain_db"), copied);
+    one_undo_step(&mut opened, "Copy clip", &before);
+}
+
+#[gpui::test]
+fn a_drag_with_shift_moves_the_clip_alone(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let before = mark(&mut opened);
+    let (from, to) = (opened.at(BAR + 960, 0), opened.at(5 * BAR + 960, 0));
+    opened.press(from);
+    opened.drag_to_with(to, shift());
+    opened.release(to);
     assert_eq!(opened.clip(PART).unwrap().start, Ticks(5 * BAR));
     assert_eq!(points(&mut opened, ONE, "gain_db"), volume());
     assert_eq!(points(&mut opened, ONE, "cutoff_hz"), sweep());
     one_undo_step(&mut opened, "Move clip", &before);
 }
 
-/// Alt pressed during the drag puts the automation back, and let go takes it along again.
+/// Shift pressed during the drag puts the automation back, and let go takes it along again.
 #[gpui::test]
-fn alt_during_a_drag_flips_whether_the_automation_goes(cx: &mut TestAppContext) {
+fn shift_during_a_drag_flips_whether_the_automation_goes(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let (from, to) = (opened.at(BAR + 960, 0), opened.at(5 * BAR + 960, 0));
-    let alt = Modifiers {
-        alt: true,
-        ..Modifiers::default()
-    };
     opened.press(from);
     opened.drag_to(to);
     assert_ne!(points(&mut opened, ONE, "gain_db"), volume());
-    opened.drag_to_with(to, alt);
+    opened.drag_to_with(to, shift());
     assert_eq!(points(&mut opened, ONE, "gain_db"), volume());
     assert_eq!(points(&mut opened, ONE, "cutoff_hz"), sweep());
     opened.drag_to(to);
@@ -175,20 +210,16 @@ fn alt_during_a_drag_flips_whether_the_automation_goes(cx: &mut TestAppContext) 
     assert_eq!(opened.undo_label().as_deref(), Some("Move clip"));
 }
 
-/// Alt pressed or let go with the pointer still flips it at once.
+/// Shift pressed or let go with the pointer still flips it at once.
 #[gpui::test]
-fn alt_flips_it_without_a_mouse_move(cx: &mut TestAppContext) {
+fn shift_flips_it_without_a_mouse_move(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let (from, to) = (opened.at(BAR + 960, 0), opened.at(5 * BAR + 960, 0));
-    let alt = Modifiers {
-        alt: true,
-        ..Modifiers::default()
-    };
     opened.press(from);
     opened.drag_to(to);
     let moved = points(&mut opened, ONE, "gain_db");
     assert_ne!(moved, volume());
-    opened.cx.simulate_modifiers_change(alt);
+    opened.cx.simulate_modifiers_change(shift());
     opened.cx.run_until_parked();
     assert_eq!(points(&mut opened, ONE, "gain_db"), volume());
     assert_eq!(opened.clip(PART).unwrap().start, Ticks(5 * BAR));

@@ -238,7 +238,7 @@ impl Scene {
 }
 
 /// The hint near a drag of clips that takes automation along.
-const AUTOMATION_HINT: &str = "Automation moves · alt to leave it";
+const AUTOMATION_HINT: &str = "Automation moves · shift to leave it";
 /// Where the arm toggle of an audio track starts in its header: a 24 pt square that ends 8 pt
 /// from the edge, as the icons of a card header do. The name of an audio track ends before it.
 pub(in crate::view) const ARM_LEFT: f32 = HEADER_WIDTH - 8. - 24.;

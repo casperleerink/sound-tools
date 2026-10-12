@@ -127,7 +127,7 @@ pub fn move_clips(
     moves: Vec<ClipMove>,
 ) -> Result<Vec<InstanceId>, ProjectError> {
     move_lanes(project, changes, arrangement, &moves);
-    move_records(project, changes, moves)
+    move_records(project, changes, moves, false)
 }
 
 /// What `moves` are for the automation they take along, see [`moved`].
@@ -191,13 +191,22 @@ pub(crate) fn range_of(project: &Project, clip: &AnyClip) -> Range<Ticks> {
 
 /// The clips of [`move_clips`] alone, without the automation: only for a drag, which writes
 /// the lanes itself, from the tracks as they were when it began.
+///
+/// With `copies` the moves are of copies, and each `home` stays where it is: a move whose clip
+/// is still its home makes a new copy, and a copy never takes the id of its home.
 pub(crate) fn move_records(
     project: &Project,
     changes: &mut Changes,
     mut moves: Vec<ClipMove>,
+    copies: bool,
 ) -> Result<Vec<InstanceId>, ProjectError> {
-    put_on_top(project, &mut moves);
+    put_on_top(project, &mut moves, copies);
     let mut free = FreeIds::default();
+    if copies {
+        // Else a copy that took the id of a deleted home would be copied again at every move.
+        free.given
+            .extend(moves.iter().map(|step| step.home.clone()));
+    }
     let mut moved = Vec::new();
     for ClipMove {
         clip,
@@ -207,15 +216,18 @@ pub(crate) fn move_records(
         ..
     } in moves
     {
-        if clip.parent().as_ref() == Some(to.id()) {
+        let new_copy = copies && clip == home;
+        if !new_copy && clip.parent().as_ref() == Some(to.id()) {
             next.write(changes, clip.clone());
             moved.push(clip);
             continue;
         }
-        changes.delete(&clip);
+        if !new_copy {
+            changes.delete(&clip);
+        }
         // Back on the track of its home it takes its home again, else its name there without
         // a number, so down and up again gives the first id back.
-        let id = match home.parent().as_ref() == Some(to.id()) {
+        let id = match !copies && home.parent().as_ref() == Some(to.id()) {
             true => home,
             false => free.take(project, &to.id().child(unnumbered(home.name()))?)?,
         };
@@ -227,8 +239,11 @@ pub(crate) fn move_records(
 
 /// The layers of moved audio clips: one above every clip of the track they go to that does not
 /// move, in the order they had.
-fn put_on_top(project: &Project, moves: &mut [ClipMove]) {
-    let moving: Vec<InstanceId> = moves.iter().map(|step| step.clip.clone()).collect();
+fn put_on_top(project: &Project, moves: &mut [ClipMove], copies: bool) {
+    let moving = moves
+        .iter()
+        .filter(|step| !(copies && step.clip == step.home));
+    let moving: Vec<InstanceId> = moving.map(|step| step.clip.clone()).collect();
     let mut order: Vec<usize> = (0..moves.len()).collect();
     let layer = |step: &ClipMove| match &step.next {
         AnyClip::Audio(clip) => clip.layer,

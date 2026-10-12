@@ -59,6 +59,13 @@ fn cmd() -> Modifiers {
     Modifiers::secondary_key()
 }
 
+fn alt() -> Modifiers {
+    Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    }
+}
+
 /// The middle of a note of `part`, by its start in the clip and its pitch.
 fn on(opened: &mut Opened<'_>, start: u64, pitch: u8) -> Point<Pixels> {
     opened.in_editor(BAR + start + 100, pitch)
@@ -149,6 +156,37 @@ fn a_drag_of_several_notes_moves_them_all_as_one_undo_step(cx: &mut TestAppConte
     opened.drag(from, far);
     let moved = notes(&mut opened, PART);
     assert_eq!(moved[..2], [note(0, 480, 62), note(960, 480, 66)]);
+}
+
+/// Alt held at the press drags copies, and the notes stay. Back where they began, there are no
+/// copies.
+#[gpui::test]
+fn an_alt_drag_copies_the_notes_as_one_undo_step(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let (first, second) = (on(&mut opened, 960, 60), on(&mut opened, 1920, 64));
+    opened.click(first);
+    opened.click_with(second, shift());
+    let before = mark(&mut opened);
+    let to = opened.in_editor(BAR + 960 + 100 + 960, 62);
+    opened.press_with(first, 1, alt());
+    opened.drag_to_with(to, alt());
+    opened.drag_to_with(first, alt());
+    opened.release(first);
+    assert_eq!(notes(&mut opened, PART), part().notes);
+
+    opened.drag_with(first, to, alt());
+    assert_eq!(
+        notes(&mut opened, PART),
+        [
+            note(960, 480, 60),
+            note(1920, 480, 62),
+            note(1920, 480, 64),
+            note(2880, 480, 66),
+            note(BAR + 960, 480, 67)
+        ]
+    );
+    assert_eq!(opened.selected_notes(), [1, 3]);
+    one_undo_step(&mut opened, "Copy notes", &before);
 }
 
 #[gpui::test]

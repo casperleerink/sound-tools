@@ -65,10 +65,10 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.
 - The arrangement and the note editor select and edit the same way: click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes. They share one clipboard.
 - Double click on empty space makes what lives there: a clip, a note, a tempo change. On a control it sets the default.
-- Alt-drag across a lane erases its points.
+- Alt-drag copies clips and notes, and across a lane erases its points.
 - Adding something never changes the sound. A new tempo change keeps the tempo that played there; a new automation lane holds the value its number plays now.
 - A drag shows what it will do before the drop: a lavender ring where it lands, and the automation a clip takes along. What shows is what drops.
-- A clip drag takes the automation under the clip along. Alt leaves it.
+- A clip drag takes the automation under the clip along. Shift leaves it.
 
 ### Keys
 

@@ -215,6 +215,24 @@ pub fn moved(
     moves: &[LaneMove],
     travel: &Travel<'_>,
 ) -> Moved {
+    carry(tracks, moves, travel, true)
+}
+
+/// [`moved`] for copies of the clips: the line under each clip also stays where it was.
+pub(crate) fn copied(
+    tracks: &BTreeMap<InstanceId, TrackState>,
+    moves: &[LaneMove],
+    travel: &Travel<'_>,
+) -> Moved {
+    carry(tracks, moves, travel, false)
+}
+
+fn carry(
+    tracks: &BTreeMap<InstanceId, TrackState>,
+    moves: &[LaneMove],
+    travel: &Travel<'_>,
+    leaves: bool,
+) -> Moved {
     let under = |step: &LaneMove| {
         let moves = step.from != step.to || step.range.start != step.start;
         let state = tracks.get(&step.from).filter(|_| moves)?;
@@ -244,7 +262,8 @@ pub fn moved(
         .map(|(carried, step)| (*carried, &step.to))
         .collect();
     let mut after = BTreeMap::new();
-    let left: BTreeSet<&InstanceId> = carried.iter().map(|(_, step)| &step.from).collect();
+    let left = carried.iter().filter(|_| leaves);
+    let left: BTreeSet<&InstanceId> = left.map(|(_, step)| &step.from).collect();
     for track in left {
         if let Some(state) = working(&mut after, tracks, track) {
             clear(track, state, &taken, travel);

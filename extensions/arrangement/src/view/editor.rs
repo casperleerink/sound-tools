@@ -61,11 +61,13 @@ enum NoteDragKind {
     /// Draws a new note from where it started at mouse down, on the grid.
     Draw { down: Ticks },
     /// Moves the notes in time and pitch, as a whole. The tick and the pitch under the pointer
-    /// at mouse down, and the note under it, which sounds when its pitch changes.
+    /// at mouse down, and the note under it, which sounds when its pitch changes. With `copy`,
+    /// alt held at the press, it moves copies and the notes stay.
     Move {
         grab: Ticks,
         grab_pitch: Pitch,
         grabbed: Note,
+        copy: bool,
     },
     /// Moves the end of one note.
     Resize { grab: Ticks },
@@ -88,6 +90,7 @@ impl NoteDragKind {
     fn label(&self, count: usize) -> &'static str {
         match self {
             Self::Draw { .. } => "Draw note",
+            Self::Move { copy: true, .. } => plural(count, "Copy note", "Copy notes"),
             Self::Move { .. } => plural(count, "Move note", "Move notes"),
             Self::Resize { .. } => "Resize note",
             Self::Velocity { .. } => plural(count, "Change velocity", "Change velocities"),
