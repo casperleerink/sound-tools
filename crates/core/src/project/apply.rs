@@ -94,7 +94,7 @@ impl Project {
     }
 
     /// Runs the derives this group asks for and stages what they give, as part of the same
-    /// group. See [`ToolRegistration::derive`].
+    /// group. See [`ToolRegistration::derive`](super::ToolRegistration::derive).
     ///
     /// A derive runs when a record of its tool changed in this group, or when the project's
     /// time signatures changed. What a derive gives is staged and nothing more: it starts no
@@ -308,7 +308,7 @@ impl Project {
     }
 
     /// Whether the records of this tool decide state of their own, see
-    /// [`ToolRegistration::derive`].
+    /// [`ToolRegistration::derive`](super::ToolRegistration::derive).
     pub(crate) fn derives(&self, tool: &'static str) -> bool {
         let definition = self.registry.definition(tool);
         definition.is_some_and(|definition| definition.derive.is_some())
