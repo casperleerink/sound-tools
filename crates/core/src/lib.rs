@@ -28,6 +28,7 @@ mod project;
 mod saturation;
 mod scope;
 mod svf;
+pub mod testing;
 mod transport;
 mod watch;
 
@@ -84,8 +85,3 @@ pub use scope::Scope;
 pub use svf::{FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response};
 pub use transport::Transport;
 pub use watch::Watch;
-
-/// Checks for the tests of a tool: its parameters against `validate` and its agent doc.
-pub mod testing {
-    pub use crate::parameter::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
-}

@@ -7,8 +7,9 @@
 //! `transfer` sample by sample, shows what the oversampling takes away.
 
 use saturator::{Curve, SaturatorState, transfer};
+use sound_core::testing::Spectrum;
 
-use crate::support::{Rig, SAMPLE_RATE, Spectrum, sine};
+use crate::support::{Rig, SAMPLE_RATE, sine};
 
 const WINDOW: usize = SAMPLE_RATE as usize / 10;
 /// The frequencies of the window are 10 Hz apart.
