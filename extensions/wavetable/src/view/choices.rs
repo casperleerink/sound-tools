@@ -5,7 +5,7 @@
 use std::fmt::Debug;
 
 use gpui::SharedString;
-use sound_core::{FilterSlope, FilterType, LfoShape};
+use sound_core::{FilterCharacter, FilterSlope, FilterType, LfoShape};
 use sound_notes::{Division, Feel};
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 
@@ -124,6 +124,17 @@ impl Choice for FilterSlope {
         match self {
             Self::Twelve => "12",
             Self::TwentyFour => "24",
+        }
+    }
+}
+
+impl Choice for FilterCharacter {
+    const ALL: &'static [Self] = &FilterCharacter::ALL;
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Clean => "Clean",
+            Self::Warm => "Warm",
         }
     }
 }
