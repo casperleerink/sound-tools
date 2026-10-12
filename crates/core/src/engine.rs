@@ -10,7 +10,7 @@ use std::sync::Arc;
 use rtsan_standalone::nonblocking;
 
 use crate::clock::{Clock, Frames, Ticks};
-use crate::compensation::{Compensation, MAX_COMPENSATION};
+use crate::compensation::Compensation;
 use crate::graph::Schedule;
 use crate::input::{InputId, LiveInput};
 use crate::peaks::{Peaks, loudest};
@@ -129,10 +129,6 @@ pub struct EngineStatus {
     /// The longest latency from any processor to the device, in frames: how long the playhead
     /// waits after a play or a seek. Zero in a project where nothing reports latency.
     pub latency: u64,
-    /// How many frames early the earliest path reaches the device, because it needed a longer
-    /// delay than the engine makes up for: one output feeds paths whose latency differs by
-    /// more than a second at 48 kHz. Zero while every path is in time.
-    pub uncompensated_latency: u64,
     /// Frames of the live inputs left out because too many waited, see [`LiveInput`].
     pub live_input_dropped: u64,
     /// Device blocks in which a live input was silence because too few frames had come.
@@ -423,16 +419,13 @@ impl Engine {
             }
         }
         self.transport.set_latency(longest);
-        let mut uncompensated = 0;
         for compensation in compensations.iter_mut() {
             let producer = audio_producers.get(compensation.buffer);
             compensation.ahead = producer
                 .and_then(|step| needed.get(*step))
                 .map_or(0, |ahead| *ahead);
-            let delay = compensation.longest_delay();
-            uncompensated = uncompensated.max(delay.saturating_sub(MAX_COMPENSATION));
+            compensation.retime();
         }
-        self.status.uncompensated_latency = uncompensated;
     }
 
     /// Runs the schedule once for a sub-block of at most `MAX_BLOCK` frames.

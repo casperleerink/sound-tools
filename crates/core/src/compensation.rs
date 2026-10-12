@@ -6,17 +6,14 @@
 //! delayed: an event connection to a faster path arrives early, and a live input is not led, so
 //! it is never early.
 
+use crate::delay_line::DelayLine;
 use crate::graph::NodeId;
 use crate::processor::{AudioBuffer, CHANNELS, MAX_BLOCK};
 
 /// The longest delay the engine makes up for, in frames: one second at 48 kHz, half at 96 kHz.
-/// That is more than a chain of linear phase equalizers and lookahead limiters reports, and the
-/// memory is fixed, under 400 KB for each output that feeds paths of different latency. A longer
-/// delay is made up to this much, and the rest shows as `EngineStatus::uncompensated_latency`.
-pub(crate) const MAX_COMPENSATION: u64 = 48_000;
-
-/// The frames one block reads back at most: the longest delay, and the block itself.
-const HISTORY: usize = MAX_COMPENSATION as usize + MAX_BLOCK;
+/// That is more than a chain of linear phase equalizers and lookahead limiters reports, and it
+/// keeps the memory of each delayed output fixed. A longer delay is made up to this much.
+const MAX_COMPENSATION: u64 = 48_000;
 
 /// One audio output of a processor that feeds two or more others, or another and the device.
 /// Built when the schedule compiles; its delays are worked out on the audio thread, because
@@ -37,8 +34,9 @@ pub(crate) struct Compensation {
 /// What an output played lately. It is written only while a listener needs a delay, so a
 /// project in time without one costs nothing.
 struct History {
-    channels: [Vec<f32>; CHANNELS],
-    /// Frames written since it started this time.
+    /// Room for the longest delay and the block itself.
+    lines: [DelayLine; CHANNELS],
+    /// Frames written since it started this time: where the next frame goes.
     written: u64,
     active: bool,
     /// The `ahead` it was written under. Kept here, not read from the `Compensation`, because
@@ -49,6 +47,7 @@ struct History {
 impl Compensation {
     /// Allocates: make it on the control thread.
     pub(crate) fn new(key: (NodeId, usize), buffer: usize, to_device: bool) -> Self {
+        let frames = MAX_COMPENSATION as usize + MAX_BLOCK;
         Self {
             key,
             buffer,
@@ -56,7 +55,7 @@ impl Compensation {
             ahead: 0,
             least_lead: 0,
             history: History {
-                channels: std::array::from_fn(|_| vec![0.0; HISTORY]),
+                lines: std::array::from_fn(|_| DelayLine::new(frames)),
                 written: 0,
                 active: false,
                 ahead: 0,
@@ -64,19 +63,18 @@ impl Compensation {
         }
     }
 
-    /// The delay the listener that needs most needs, from `ahead` and `least_lead`. Starts
-    /// writing when it is no longer zero, so no listener hears a past from before. A new
-    /// `ahead` starts over too: the producer jumped, and what it played before is on another
-    /// timeline. A new `least_lead` does not; that listener jumps itself.
-    pub(crate) fn longest_delay(&mut self) -> u64 {
-        let longest = self.ahead.saturating_sub(self.least_lead);
+    /// Takes in new `ahead` and `least_lead`. The history starts over when a listener comes
+    /// to need a delay, so no listener hears a past from before. A new `ahead` starts it over
+    /// too: the producer jumped, and what it played before is on another timeline. A new
+    /// `least_lead` does not; that listener jumps itself.
+    pub(crate) fn retime(&mut self) {
+        let delayed = self.ahead > self.least_lead;
         let history = &mut self.history;
-        if longest > 0 && (!history.active || history.ahead != self.ahead) {
+        if delayed && (!history.active || history.ahead != self.ahead) {
             history.written = 0;
         }
-        history.active = longest > 0;
+        history.active = delayed;
         history.ahead = self.ahead;
-        longest
     }
 
     /// Takes over the past of the same output in the schedule before, by swapping, so nothing
@@ -91,17 +89,11 @@ impl Compensation {
         if !history.active {
             return;
         }
-        let start = (history.written % HISTORY as u64) as usize;
-        for (line, channel) in history.channels.iter_mut().zip(block) {
-            let Some((front, back)) = line.split_at_mut_checked(start) else {
-                continue;
-            };
-            for (kept, sample) in back
-                .iter_mut()
-                .chain(front)
-                .zip(channel.iter().take(frames))
-            {
-                *kept = *sample;
+        // The line wraps by its length, a power of two, so a count that wraps loses nothing.
+        let start = history.written as usize;
+        for (line, channel) in history.lines.iter_mut().zip(block) {
+            for (offset, sample) in channel.iter().take(frames).enumerate() {
+                line.write(start.wrapping_add(offset), *sample);
             }
         }
         history.written += frames as u64;
@@ -115,19 +107,15 @@ impl Compensation {
         if delay == 0 || !history.active {
             return None;
         }
-        let reach = delay + frames as u64;
+        let reach = delay as usize + frames;
         // Frames from before the history started are silence.
-        let silent = reach.saturating_sub(history.written).min(frames as u64);
-        let start = (history.written + silent).saturating_sub(reach) % HISTORY as u64;
+        let silent = (reach as u64).saturating_sub(history.written) as usize;
+        let end = history.written as usize;
         let mut heard = [[0.0; MAX_BLOCK]; CHANNELS];
-        for (channel, line) in heard.iter_mut().zip(&history.channels) {
-            let Some((front, back)) = line.split_at_checked(start as usize) else {
-                continue;
-            };
-            let samples = back.iter().chain(front);
-            let channel = channel.iter_mut().take(frames).skip(silent as usize);
-            for (sample, kept) in channel.zip(samples) {
-                *sample = *kept;
+        for (channel, line) in heard.iter_mut().zip(&history.lines) {
+            let channel = channel.iter_mut().enumerate().take(frames).skip(silent);
+            for (frame, sample) in channel {
+                *sample = line.read(end, reach - frame);
             }
         }
         Some(heard)

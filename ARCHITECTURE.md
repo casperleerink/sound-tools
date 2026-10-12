@@ -121,7 +121,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - The graph has no cycles. A connection that closes one is left out and reported, and the rest plays. Which one is left out is fixed, so the same one goes on every open and a sidechain mistake usually mutes only a detector.
 - Latency compensation leads instead of delaying: each processor sees the transport ahead by the latency after it. Delaying would also delay a keyboard played into a track; with leading it waits only for that track's chain.
 - A side input (such as a sidechain) is skipped by the lead, so its source is not led by another track's chain. The detector hears it a little early or late instead.
-- An output feeding paths of different latency (a send) is delayed on faster ones: at most a second at 48 kHz, more shows in `EngineStatus`. Rejected: no maximum, which would allocate on the audio thread.
+- An output feeding paths of different latency (a send) is delayed on faster ones: at most a second at 48 kHz. Rejected: no maximum, which would allocate on the audio thread.
 - Levels leave the audio thread through `Peaks` (atomics), sound through a `Scope` (a ring of atomics). Views measure on their own thread. Rejected: measuring on the audio thread, an FFT per card in every block.
 - Every render is deterministic: the same project gives the same bytes. Nothing random; anything that looks random takes a seed. The click is attached only by the window.
 

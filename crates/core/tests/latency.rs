@@ -611,7 +611,6 @@ fn an_output_that_feeds_paths_of_different_latency_is_heard_once_on_every_path()
             .collect();
         assert_eq!(impulses(&mixed), doubled, "latency {latency}");
         assert_eq!(impulses(&other), expected(6), "latency {latency}");
-        assert_eq!(control.poll().unwrap().uncompensated_latency, 0);
     }
 }
 
@@ -678,10 +677,10 @@ fn a_latency_change_on_the_slow_path_never_replays_the_fast_one() {
 }
 
 /// Paths whose latency differs by more than the engine makes up for: the faster one is delayed
-/// by the most it can be, and the status says how early it still is.
+/// by the most it can be, a second at 48 kHz.
 #[test]
-fn a_delay_over_the_maximum_shows_in_the_status() {
-    for (latency, uncompensated) in [(48_000, 0), (50_000, 2_000)] {
+fn a_delay_over_the_maximum_is_made_up_to_the_maximum() {
+    for latency in [48_000, 50_000] {
         let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, CHANNELS));
         let mut edit = control.edit();
         let ramp = edit.add_processor("ramp", Ramp).unwrap();
@@ -698,8 +697,6 @@ fn a_delay_over_the_maximum_shows_in_the_status() {
         }
         edit.commit().unwrap();
         let [direct, _] = render(&mut control, &mut engine, 49_000);
-        let status = control.poll().unwrap();
-        assert_eq!(status.uncompensated_latency, uncompensated);
         assert_eq!(direct.last(), Some(&1_000.0), "latency {latency}");
     }
 }
