@@ -15,19 +15,18 @@ use sound_ui::components::audio_clip::{
 use sound_ui::{ActiveTheme, Waveforms, typography};
 
 use super::loop_bar::{LoopBar, paint_loop_bar};
+use crate::AutomationLane;
 use crate::view::gesture::{Zone, zone_at};
 use crate::view::layout::{
     DOT_LEFT, HEADER_INSET, HEADER_WIDTH, LANE_HEIGHT, NAME_LEFT, NAME_MIDDLE, RULER_HEIGHT, Rect,
     Rows, RulerBar, TRACK_HEIGHT, Viewport,
 };
 use crate::view::paint::{Fit, paint_ruler, paint_text, paint_track_label, placed, text_width};
-use crate::{AutomationLane, TrackKind};
 
 pub(super) struct TrackRow {
     pub(super) y: f32,
     pub(super) name: SharedString,
     pub(super) accent: Hsla,
-    pub(super) kind: TrackKind,
     pub(super) selected: bool,
     /// A track that does not sound, muted or left out by a solo, has its name, dot, clips and
     /// lanes at 40 %.
@@ -239,12 +238,9 @@ impl Scene {
 
 /// The hint near a drag of clips that takes automation along.
 const AUTOMATION_HINT: &str = "Automation moves · shift to leave it";
-/// Where the arm toggle of an audio track starts in its header: a 24 pt square that ends 8 pt
-/// from the edge, as the icons of a card header do. The name of an audio track ends before it.
-pub(in crate::view) const ARM_LEFT: f32 = HEADER_WIDTH - 8. - 24.;
 /// Where the meter of the input of an armed track starts in its header, on the line of its
-/// name: 45 pt, to 133.
-pub(in crate::view) const ARMED_METER_LEFT: f32 = 88.;
+/// name: 45 pt, ending where the solo toggle under it ends.
+pub(in crate::view) const ARMED_METER_LEFT: f32 = HEADER_WIDTH - HEADER_INSET - 4. - 45.;
 /// The meter is the master meter of the transport, 45 x 8.
 pub(in crate::view) const ARMED_METER_HEIGHT: f32 = 8.;
 /// What the header of the track a drop would make says.
@@ -377,12 +373,10 @@ pub(super) fn paint_scene(
                 let solid = BorderStyle::Solid;
                 window.paint_quad(quad(inside, px(6.), clear, px(2.), drop_ring, solid));
             }
-            // An audio track keeps the room of its arm toggle, from 144 pt: its name ends 8 pt
-            // before it, and before the meter of its input, from 88 pt, while it is armed.
-            let name_width = match (row.kind, row.armed) {
-                (TrackKind::Instrument, _) => HEADER_WIDTH - NAME_LEFT - 2. * HEADER_INSET,
-                (TrackKind::Audio, false) => ARM_LEFT - 8. - NAME_LEFT,
-                (TrackKind::Audio, true) => ARMED_METER_LEFT - 8. - NAME_LEFT,
+            // The name of an armed track ends 8 pt before the meter of its input.
+            let name_width = match row.armed {
+                false => HEADER_WIDTH - NAME_LEFT - 2. * HEADER_INSET,
+                true => ARMED_METER_LEFT - 8. - NAME_LEFT,
             };
             // The field over the header shows the name that is being edited.
             let name = match row.renaming {

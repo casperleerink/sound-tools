@@ -129,7 +129,6 @@ impl Timeline {
                 y: viewport.y_of(&layout, index),
                 name: state.name.clone().into(),
                 accent,
-                kind: state.kind,
                 selected: self.selected_track.as_ref() == Some(track.id()),
                 silent: state.is_silent(soloing),
                 renaming: renaming == Some(track.id()),

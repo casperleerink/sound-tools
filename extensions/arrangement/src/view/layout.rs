@@ -31,11 +31,12 @@ pub const DOT_LEFT: f32 = 20.0;
 /// Where the name of a track starts in its header, 8 pt after its dot, and every word lined up
 /// with it.
 pub const NAME_LEFT: f32 = 36.0;
-/// A track header has two lines: its dot and name, and under them the toggle of its lanes.
-/// The middle of the first, from the top of the track.
-pub const NAME_MIDDLE: f32 = 23.0;
-/// The middle of the second line, the toggle of the lanes.
-pub const LANES_MIDDLE: f32 = 43.0;
+/// A track header has two lines: its dot and name, and under them its toggles. The middle of
+/// the first, from the top of the track.
+pub const NAME_MIDDLE: f32 = 18.0;
+/// The middle of the second line, the toggles: the lanes at the left; arm, mute and solo at
+/// the right.
+pub const TOGGLES_MIDDLE: f32 = 41.0;
 /// Tick 0 sits this far into the timeline area, so the start of the piece, its bar number and
 /// the playhead at rest are clear of the track headers.
 pub const LEAD_IN: f32 = 8.0;

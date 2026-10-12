@@ -5,6 +5,7 @@
 //! Backspace on the selected track deletes it after a question.
 
 use arrangement::TrackState;
+use arrangement::view::layout::{NAME_MIDDLE, TOGGLES_MIDDLE};
 use gpui::{Pixels, Point, TestAppContext, point, px};
 use sound_core::Changes;
 
@@ -93,7 +94,8 @@ fn a_header_dragged_down_moves_its_track_with_everything_it_has(cx: &mut TestApp
     assert!(armed(&mut opened, AUDIO));
     let toggle = opened.control("toggle-arm-track-3");
     let row = opened.track_header(0);
-    assert!((toggle.y - row.y).abs() < px(8.), "{toggle:?} {row:?}");
+    let toggles = row.y + px(TOGGLES_MIDDLE - NAME_MIDDLE);
+    assert!((toggle.y - toggles).abs() < px(8.), "{toggle:?} {row:?}");
     one_undo_step(&mut opened, "Move track", &before);
 }
 
@@ -269,4 +271,27 @@ fn backspace_on_a_selected_track_deletes_it_after_asking(cx: &mut TestAppContext
     assert_eq!(opened.clip(PART), None);
     assert_eq!(opened.selected_track(), None);
     one_undo_step(&mut opened, "Delete track", &before);
+}
+
+/// M and S in a header edit their own track, one undo step each, and leave the selection
+/// alone.
+#[gpui::test]
+fn the_header_mutes_and_solos_its_track(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let state = |opened: &mut Opened<'_>, track: &str| {
+        opened.project(|project| {
+            let track = project.resolve::<TrackState>(&id(track)).unwrap();
+            project.state(&track).cloned().unwrap()
+        })
+    };
+    let mute = opened.control("toggle-mute-track-2");
+    opened.click(mute);
+    assert!(state(&mut opened, SECOND).mute);
+    assert!(!state(&mut opened, FIRST).mute);
+    assert_eq!(opened.undo_label().as_deref(), Some("Mute track"));
+    let solo = opened.control("toggle-solo-track-3");
+    opened.click(solo);
+    assert!(state(&mut opened, AUDIO).solo);
+    assert_eq!(opened.undo_label().as_deref(), Some("Solo track"));
+    assert_eq!(opened.selected_track(), None);
 }
