@@ -68,6 +68,8 @@ A clip may move the bend wheel, the modulation wheel and the key pressure of its
 }
 ```
 
+This note slides up over an eighth, stays up, and comes back down in the third beat, while a vibrato grows over the second half of the bar.
+
 - `bend`, `mod_wheel`, `pressure`: each a list of points. Leave out a lane you do not use.
 - `tick`: from the start of the clip, like a note start, below its `length`. The points of a lane are in tick order, at most one per tick, else the file does not load.
 - `value` of a bend: -8192 to 8191, 0 in the middle. The built-in synth and Sampler bend two semitones either way, so a semitone up is 4096. Of a mod wheel or pressure: 0 to 127. The synth and the Sampler add a vibrato with the mod wheel; no built-in instrument uses the pressure.
@@ -95,7 +97,7 @@ A clip may move the bend wheel, the modulation wheel and the key pressure of its
 - `name`: what the composer sees. Not empty. The folder name is the id and stays as it is when the name changes.
 - `colour`: `blue`, `sapphire`, `sky`, `teal`, `green`, `yellow`, `peach`, `red`, `maroon`, `mauve`, `pink`, `lavender`, `rosewater` or `flamingo`. `blue` when left out.
 - `order`: tracks show from the lowest to the highest, and those with the same order by id. 0 when left out.
-- `gain_db`: the volume of the track in decibels: a number up to 6, or `"-inf"` for silence. 0 when left out. -6 halves the samples, 6 doubles them.
+- `gain_db`: the volume of the track in decibels: a number up to 6, or `"-inf"` for silence. 0 when left out. -6 halves the samples, 6 doubles them. Balance the tracks here; change the sound itself in `instrument.json`.
 - `pan`: -1 to 1. -1 is hard left, 0 the middle, 1 hard right. 0 when left out. A track keeps its loudness wherever it is panned.
 - `mute`: `true` silences the track. `false` when left out.
 - `solo`: while any track has `"solo": true`, only the soloed tracks play. A muted track stays silent when it is soloed. Left out when off.
