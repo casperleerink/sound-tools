@@ -311,24 +311,30 @@ impl Timeline {
                 .map(|rename| rename.input.read(cx).text().to_string());
             timeline.finish_rename(text, window, cx);
         });
+        let focus_before = window.focused(cx);
         window.focus(&focus, cx);
         self.rename = Some(Rename {
             track,
             input,
             focus,
+            focus_before,
             _blur: blur,
         });
         cx.notify();
     }
 
     /// Enter or a click elsewhere gives the name, one undo step; escape gives nothing. A name of
-    /// only spaces is no name, and the track keeps the one it had.
+    /// only spaces is no name, and the track keeps the one it had. Enter and escape give the
+    /// focus back to where it was, so the keys of a return work on after its rename.
     fn finish_rename(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(rename) = self.rename.take() else {
             return;
         };
         if rename.focus.is_focused(window) {
-            window.focus(&self.focus_handle, cx);
+            let back = rename
+                .focus_before
+                .unwrap_or_else(|| self.focus_handle.clone());
+            window.focus(&back, cx);
         }
         let project = self.session.read(cx).project();
         let state = project.state(&rename.track).cloned();

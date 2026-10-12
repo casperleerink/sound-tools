@@ -7,11 +7,13 @@ use arrangement::{Colour, TrackKind, TrackState};
 use gpui::{TestAppContext, point, px};
 use sound_core::{Changes, Project};
 
-use crate::support::{self, Opened, files, id, mark, one_undo_step};
+use crate::support::{self, BAR, Opened, clip, files, id, mark, note, one_undo_step};
 
 const TRACK: &str = "arrangement/track-1";
+const PART: &str = "arrangement/track-1/part";
 
-/// `Track 1` and a return, `Space`, that the track sends to at -12 dB.
+/// `Track 1` with the clip `part` in bars 2 and 3, and a return, `Space`, that the track sends
+/// to at -12 dB.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     support::open_with(cx, |project| {
         add_space(project);
@@ -20,8 +22,25 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
         state.set_send("space", -12.);
         let mut changes = Changes::new();
         changes.set(&track, state);
+        changes.create(id(PART), clip(BAR, 2 * BAR, vec![note(0, 480, 60)]));
         project.commit("Send", changes).unwrap();
         project.clear_history();
+    })
+}
+
+/// Opens the section and selects `Space`, whose row then has the focus.
+fn select_space(opened: &mut Opened<'_>) {
+    let header = opened.control("returns-header");
+    opened.click(header);
+    let row = opened.control("return-space");
+    opened.click(row);
+    assert_eq!(opened.panel_track(), Some(id("arrangement/space")));
+}
+
+fn clips(opened: &mut Opened<'_>) -> usize {
+    opened.project(|project| {
+        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
+        arrangement::clips(project, track.id()).len()
     })
 }
 
@@ -131,11 +150,7 @@ fn a_send_knob_drag_is_one_undo_step_and_a_double_click_takes_the_send_out(
 #[gpui::test]
 fn deleting_a_return_takes_the_sends_into_it_in_one_undo_step(cx: &mut TestAppContext) {
     let mut opened = open(cx);
-    let header = opened.control("returns-header");
-    opened.click(header);
-    let row = opened.control("return-space");
-    opened.click(row);
-    assert_eq!(opened.panel_track(), Some(id("arrangement/space")));
+    select_space(&mut opened);
     let before = mark(&mut opened);
     opened.keys("backspace");
     opened.cx.simulate_prompt_answer("Delete");
@@ -144,4 +159,126 @@ fn deleting_a_return_takes_the_sends_into_it_in_one_undo_step(cx: &mut TestAppCo
     assert_eq!(sends(&mut opened), BTreeMap::new());
     assert_eq!(opened.track_panel().map(|_| ()), None);
     one_undo_step(&mut opened, "Delete return", &before);
+}
+
+/// The focus was on the row of the return. It goes to the timeline, so the keys of the
+/// arrangement work on.
+#[gpui::test]
+fn deleting_the_focused_return_gives_the_focus_to_the_timeline(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    select_space(&mut opened);
+    opened.keys("backspace");
+    opened.cx.simulate_prompt_answer("Delete");
+    opened.cx.run_until_parked();
+    assert_eq!(returns(&mut opened), Vec::<String>::new());
+    opened.keys("secondary-a");
+    assert_eq!(opened.selected_clips(), [id(PART)]);
+}
+
+/// Enter gives the focus back to the row: its keys work on, and cmd-v there pastes nothing on
+/// the first track, where the timeline puts a paste when no track of its own is selected.
+#[gpui::test]
+fn after_a_rename_the_return_keeps_the_focus_and_its_keys(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let part = opened.at(2 * BAR, 0);
+    opened.click(part);
+    opened.keys("secondary-c");
+    select_space(&mut opened);
+    opened.keys("enter");
+    opened.cx.simulate_input("Hall");
+    opened.keys("enter");
+    assert_eq!(returns(&mut opened), ["Hall"]);
+    opened.keys("secondary-v");
+    assert_eq!(clips(&mut opened), 1);
+    assert_eq!(opened.undo_label().as_deref(), Some("Rename track"));
+    opened.keys("backspace");
+    opened.cx.simulate_prompt_answer("Delete");
+    opened.cx.run_until_parked();
+    assert_eq!(returns(&mut opened), Vec::<String>::new());
+}
+
+/// An agent deletes a return while its send knob is dragged. The knob goes, and the gesture
+/// ends with it: nothing is left open to hold undo back.
+#[gpui::test]
+fn deleting_a_return_during_a_drag_of_its_send_ends_the_gesture(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let header = opened.track_header(0);
+    opened.click(header);
+    let knob = opened.control("knob-send-space");
+    opened.press(knob);
+    opened.drag_to(knob + point(px(0.), px(-40.)));
+    assert!(opened.gesture_open());
+
+    let folder = opened.path("state/arrangement/space");
+    std::fs::remove_dir_all(&folder).unwrap();
+    opened.edit(|project| project.apply_outside_changes(&[folder]));
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.find("knob-send-space"), None);
+    opened.drag_to(knob + point(px(0.), px(-80.)));
+    opened.release(knob + point(px(0.), px(-80.)));
+    assert!(!opened.gesture_open());
+    assert_eq!(opened.notice(), None);
+
+    // Undo takes the drag back, then brings the return back.
+    opened.keys("secondary-z");
+    assert_eq!(
+        sends(&mut opened),
+        BTreeMap::from([("space".to_string(), -12.)])
+    );
+    opened.keys("secondary-z");
+    assert_eq!(returns(&mut opened), ["Space"]);
+}
+
+/// A click on empty space in the timeline keeps the return selected, and cmd-v there is
+/// refused: a return plays no clips, and the first track is not what is selected.
+#[gpui::test]
+fn a_paste_with_a_return_selected_lands_on_no_track(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let part = opened.at(2 * BAR, 0);
+    opened.click(part);
+    opened.keys("secondary-c");
+    select_space(&mut opened);
+    let empty = opened.at(8 * BAR, 0);
+    opened.click(empty);
+    assert_eq!(opened.selected_track(), Some(id("arrangement/space")));
+    let before = mark(&mut opened);
+    opened.keys("secondary-v");
+    assert_eq!(clips(&mut opened), 1);
+    assert_eq!(opened.undo_label(), before.undo_label);
+    let notice = opened.notice().unwrap_or_default();
+    assert!(notice.contains("a return track plays no clips"), "{notice}");
+}
+
+/// Twenty returns open, with the panel of a track: the section scrolls inside a few rows, so
+/// the master row and the panel stay in the window, and tab scrolls the row it reaches into
+/// view.
+#[gpui::test]
+fn many_open_returns_scroll_and_keep_the_master_row_in_the_window(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let arrangement = runtime::main_arrangement(project).unwrap();
+        for _ in 0..20 {
+            runtime::add_track_of_kind(project, &arrangement, TrackKind::Return).unwrap();
+        }
+        project.clear_history();
+    });
+    let header = opened.track_header(0);
+    opened.click(header);
+    let header = opened.control("returns-header");
+    opened.click(header);
+    let height = opened.cx.update(|window, _| window.viewport_size().height);
+    let panel = opened.bounds("track-panel").unwrap();
+    assert!(panel.bottom() <= height, "{panel:?} in {height:?}");
+    let master = opened.bounds("master-row").unwrap();
+    let last = opened.bounds("return-return-20").unwrap();
+    assert!(last.top() >= master.top(), "{last:?} is not hidden");
+
+    let first = opened.control("return-return-1");
+    opened.click(first);
+    // A view hears the focus move only in the window in front.
+    opened.cx.update(|window, _| window.activate_window());
+    for _ in 1..20 {
+        opened.keys("tab");
+    }
+    let last = opened.bounds("return-return-20").unwrap();
+    assert!(last.bottom() <= master.top(), "{last:?} is not in view");
 }

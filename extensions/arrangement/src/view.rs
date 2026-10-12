@@ -61,7 +61,7 @@ pub use editor::NoteEditor;
 use layout::HEADER_WIDTH;
 pub use master_panel::MasterPanel;
 use master_panel::{MASTER_NAME, MasterPanelEvent};
-use paint::PlayheadLine;
+use paint::{PlayheadLine, header_shape};
 use recording_overlay::RecordingOverlay;
 pub use returns::Returns;
 use returns::ReturnsEvent;
@@ -169,7 +169,14 @@ impl ArrangementView {
 
         let returns = cx.new(|cx| {
             let (session, arrangement) = (session.clone(), arrangement.clone());
-            Returns::new(session, arrangement, timeline.clone(), add_track, cx)
+            Returns::new(
+                session,
+                arrangement,
+                timeline.clone(),
+                add_track,
+                window,
+                cx,
+            )
         });
         cx.subscribe_in(&returns, window, |view, _, event, window, cx| {
             let ReturnsEvent::Open(track) = event;
@@ -423,15 +430,10 @@ impl ArrangementView {
     /// or enter when it has the focus, opens the panel of the master.
     fn master_row(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = cx.theme();
-        let (hairline, ring, text, selected, focus) = (
-            theme.alpha_at(0.05),
-            theme.gray_800,
-            theme.gray_900,
-            theme.alpha_at(0.05),
-            theme.lavender,
-        );
+        let (hairline, ring, text) = (theme.alpha_at(0.05), theme.gray_800, theme.gray_900);
         let open = self.master_panel().is_some();
         let keyboard_ring = self.master_keyboard.shows_ring(&self.master_focus, window);
+        let shape = header_shape(MASTER_ROW_HEIGHT, open, keyboard_ring, theme);
         let header = div()
             .id("master-row")
             .debug_selector(|| "master-row".to_string())
@@ -448,22 +450,7 @@ impl ArrangementView {
                 cx.listener(|view, _, _, cx| view.master_keyboard.pressed(cx)),
             )
             .on_click(cx.listener(|view, _, window, cx| view.open_master_panel(window, cx)))
-            .child(
-                // The fill of a selected track header, in the same place.
-                div()
-                    .absolute()
-                    .left(px(8.))
-                    .top(px(4.))
-                    .w(px(HEADER_WIDTH - 16.))
-                    .h(px(MASTER_ROW_HEIGHT - 8.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(match keyboard_ring {
-                        true => focus,
-                        false => gpui::transparent_black(),
-                    })
-                    .when(open, |fill| fill.bg(selected)),
-            )
+            .child(shape)
             .child(
                 div()
                     .absolute()

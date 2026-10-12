@@ -289,6 +289,8 @@ pub(super) struct Rename {
     pub(super) input: Entity<TextInput>,
     /// Kept apart from the field, because the field is being updated when it submits.
     pub(super) focus: FocusHandle,
+    /// What had the focus before, which gets it back: the timeline, or the row of a return.
+    pub(super) focus_before: Option<FocusHandle>,
     /// A click anywhere else finishes the edit, as in the Finder.
     pub(super) _blur: Subscription,
 }

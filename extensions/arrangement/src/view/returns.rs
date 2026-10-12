@@ -5,13 +5,18 @@
 //! track panel. Whether the section is open is interface state; a new return opens it.
 //!
 //! Selecting, renaming and deleting go through the timeline, as for a track, so the track
-//! panel, the keys and the name field work the same.
+//! panel, the keys and the name field work the same. A name is edited with enter only: a
+//! press opens the panel below, which moves the section up, so a double press would land on
+//! the panel.
+
+use std::collections::BTreeMap;
 
 use gpui::{
-    AnyElement, Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla, KeyDownEvent,
-    Modifiers, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px,
+    AnyElement, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
+    KeyDownEvent, Modifiers, MouseButton, ScrollHandle, SharedString, Subscription, Window, div,
+    prelude::*, px,
 };
-use sound_core::{Changes, Instance, ProjectEvent};
+use sound_core::{Instance, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::icon::Icon;
 use sound_ui::components::toggle::{self, Toggle};
@@ -19,14 +24,17 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 
 use super::AddTrack;
 use super::layout::{DOT_LEFT, HEADER_INSET, HEADER_WIDTH, NAME_LEFT};
-use super::paint::accent;
-use super::timeline::{MUTE_LEFT, RENAME_HEIGHT, RENAME_LEFT, Timeline};
+use super::paint::{accent, header_shape};
+use super::timeline::{MUTE, MUTE_LEFT, RENAME_HEIGHT, RENAME_LEFT, Timeline};
 use crate::{ArrangementState, TrackKind, TrackState, returns};
 
 /// The row that folds the section.
-pub const RETURNS_HEADER_HEIGHT: f32 = 32.;
+const RETURNS_HEADER_HEIGHT: f32 = 32.;
 /// A return, as tall as the master row.
 pub const RETURN_ROW_HEIGHT: f32 = super::MASTER_ROW_HEIGHT;
+/// How many rows the open section shows before it scrolls. The half row says there are more,
+/// as the arrangement has no scrollbars.
+const SHOWN_ROWS: f32 = 4.5;
 /// How wide a name gets in the folded row before it is cut.
 const FOLDED_NAME_WIDTH: f32 = 120.;
 
@@ -36,10 +44,12 @@ pub enum ReturnsEvent {
     Open(Instance<TrackState>),
 }
 
-/// What a row keeps of itself, in element state under its id.
+/// What the row of a return keeps of itself.
 struct RowState {
     focus_handle: FocusHandle,
     keyboard_focus: KeyboardFocus,
+    /// Scrolls the row into view when tab brings it the focus.
+    _focus: Subscription,
 }
 
 pub struct Returns {
@@ -51,6 +61,10 @@ pub struct Returns {
     header_focus: FocusHandle,
     header_keyboard: KeyboardFocus,
     add_focus: FocusHandle,
+    /// By the folder name of each return. Kept here, so the focus of a row that goes can move
+    /// on before the row is gone.
+    rows: BTreeMap<String, RowState>,
+    rows_scroll: ScrollHandle,
 }
 
 impl EventEmitter<ReturnsEvent> for Returns {}
@@ -61,11 +75,12 @@ impl Returns {
         arrangement: Instance<ArrangementState>,
         timeline: Entity<Timeline>,
         add_track: AddTrack,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         // The selection and the name field of a rename are the timeline's.
         cx.observe(&timeline, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&session, |returns, _, event, cx| {
+        cx.subscribe_in(&session, window, |returns, _, event, window, cx| {
             let (ProjectEvent::Created(id) | ProjectEvent::Changed(id) | ProjectEvent::Deleted(id)) =
                 event
             else {
@@ -74,13 +89,24 @@ impl Returns {
             if id.parent().as_ref() != Some(returns.arrangement.id()) {
                 return;
             }
-            if matches!(event, ProjectEvent::Created(_)) {
-                let project = returns.session.read(cx).project();
-                let track = project.resolve::<TrackState>(id);
-                let state = track.as_ref().and_then(|track| project.state(track));
-                if state.is_some_and(|state| state.kind == TrackKind::Return) {
-                    returns.expanded = true;
+            match event {
+                ProjectEvent::Created(_) => {
+                    let project = returns.session.read(cx).project();
+                    let track = project.resolve::<TrackState>(id);
+                    let state = track.as_ref().and_then(|track| project.state(track));
+                    if state.is_some_and(|state| state.kind == TrackKind::Return) {
+                        returns.expanded = true;
+                    }
                 }
+                // Else the focus would fall out of the arrangement, and its keys with it.
+                ProjectEvent::Deleted(_) => {
+                    if let Some(row) = returns.rows.remove(id.name())
+                        && row.focus_handle.is_focused(window)
+                    {
+                        window.focus(&returns.timeline.focus_handle(cx), cx);
+                    }
+                }
+                _ => {}
             }
             cx.notify();
         })
@@ -94,6 +120,8 @@ impl Returns {
             header_focus: cx.focus_handle().tab_stop(true),
             header_keyboard: KeyboardFocus::default(),
             add_focus: cx.focus_handle().tab_stop(true),
+            rows: BTreeMap::new(),
+            rows_scroll: ScrollHandle::new(),
         }
     }
 
@@ -117,35 +145,11 @@ impl Returns {
         });
     }
 
-    fn set_mute(&mut self, track: &Instance<TrackState>, mute: bool, cx: &mut Context<Self>) {
-        let Some(mut state) = self.session.read(cx).project().state(track).cloned() else {
-            return;
-        };
-        state.mute = mute;
-        let label = if mute { "Mute track" } else { "Unmute track" };
-        self.session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                changes.set(track, state);
-                project.commit(label, changes)
-            })
-        });
-    }
-
-    /// A press on a return selects it and shows its panel; a double press edits its name.
-    fn press_row(
-        &mut self,
-        track: &Instance<TrackState>,
-        event: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// A press on a return selects it and shows its panel.
+    fn press_row(&mut self, track: &Instance<TrackState>, cx: &mut Context<Self>) {
         let track = track.clone();
         self.timeline.update(cx, |timeline, cx| {
             timeline.select_track(Some(track.id().clone()), cx);
-            if event.click_count == 2 {
-                timeline.start_rename(track.clone(), window, cx);
-            }
         });
         cx.emit(ReturnsEvent::Open(track));
     }
@@ -164,10 +168,7 @@ impl Returns {
         let track = track.clone();
         match (key, modifiers) {
             ("down", modifiers) if modifiers == Modifiers::secondary_key() => {
-                self.timeline.update(cx, |timeline, cx| {
-                    timeline.select_track(Some(track.id().clone()), cx);
-                });
-                cx.emit(ReturnsEvent::Open(track));
+                self.press_row(&track, cx);
             }
             ("enter", modifiers) if !modifiers.modified() => {
                 self.timeline.update(cx, |timeline, cx| {
@@ -184,6 +185,38 @@ impl Returns {
         true
     }
 
+    /// The row of each return that has none yet.
+    fn add_rows(&mut self, names: &[String], window: &mut Window, cx: &mut Context<Self>) {
+        for name in names {
+            if self.rows.contains_key(name) {
+                continue;
+            }
+            let focus_handle = cx.focus_handle().tab_stop(true);
+            let focus = cx.on_focus(&focus_handle, window, {
+                let name = name.clone();
+                move |returns, _, cx| returns.scroll_to(&name, cx)
+            });
+            let row = RowState {
+                focus_handle,
+                keyboard_focus: KeyboardFocus::default(),
+                _focus: focus,
+            };
+            self.rows.insert(name.clone(), row);
+        }
+    }
+
+    fn scroll_to(&self, name: &str, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project();
+        let shown = returns(project, self.arrangement.id());
+        if let Some(index) = shown
+            .iter()
+            .position(|(track, _)| track.id().name() == name)
+        {
+            self.rows_scroll.scroll_to_item(index);
+            cx.notify();
+        }
+    }
+
     /// The row that folds the section: the chevron and the word where a track has its dot and
     /// name, the count, the plus at the right of the header column, and folded, the names.
     fn header(
@@ -193,14 +226,10 @@ impl Returns {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
-        let (hairline, text, muted, ring) = (
-            theme.alpha_at(0.05),
-            theme.gray_900,
-            theme.gray_700,
-            theme.lavender,
-        );
+        let (hairline, text, muted) = (theme.alpha_at(0.05), theme.gray_900, theme.gray_700);
         let count = names.len();
         let keyboard_ring = self.header_keyboard.shows_ring(&self.header_focus, window);
+        let shape = header_shape(RETURNS_HEADER_HEIGHT, false, keyboard_ring, theme);
         let chevron = match self.expanded {
             true => "chevron-down",
             false => "chevron-right",
@@ -218,20 +247,7 @@ impl Returns {
             .h_full()
             .border_r_1()
             .border_color(hairline)
-            .child(
-                div()
-                    .absolute()
-                    .left(px(HEADER_INSET))
-                    .top(px(4.))
-                    .w(px(HEADER_WIDTH - 2. * HEADER_INSET))
-                    .h(px(RETURNS_HEADER_HEIGHT - 8.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(match keyboard_ring {
-                        true => ring,
-                        false => gpui::transparent_black(),
-                    }),
-            )
+            .child(shape)
             .child(
                 Icon::new(chevron)
                     .size(14.)
@@ -307,29 +323,19 @@ impl Returns {
             .into_any_element()
     }
 
-    /// The row of a return: the fill of a selected header, the dot, the name and M. The name
+    /// The row of a return: the shape of a selected header, the dot, the name and M. The name
     /// field of a rename takes the place of the name.
     fn row(
         &self,
         track: &Instance<TrackState>,
         state: &TrackState,
-        window: &mut Window,
+        window: &Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Option<AnyElement> {
         let name = track.id().name().to_string();
-        let row_state = window.use_keyed_state(
-            SharedString::from(format!("return-row-{name}")),
-            cx,
-            |_, cx| RowState {
-                focus_handle: cx.focus_handle().tab_stop(true),
-                keyboard_focus: KeyboardFocus::default(),
-            },
-        );
-        let focus_handle = row_state.read(cx).focus_handle.clone();
-        let keyboard_ring = row_state
-            .read(cx)
-            .keyboard_focus
-            .shows_ring(&focus_handle, window);
+        let row = self.rows.get(&name)?;
+        let focus_handle = row.focus_handle.clone();
+        let keyboard_ring = row.keyboard_focus.shows_ring(&focus_handle, window);
         let timeline = self.timeline.read(cx);
         let selected = timeline.selected_track() == Some(track.id());
         let rename = timeline
@@ -337,13 +343,8 @@ impl Returns {
             .filter(|(renamed, _)| renamed.id() == track.id())
             .map(|(_, input)| input.clone());
         let theme = cx.theme();
-        let (selected_fill, text, ring, peach) = (
-            theme.alpha_at(0.05),
-            theme.gray_950,
-            theme.lavender,
-            theme.peach,
-        );
-        let hairline = theme.alpha_at(0.05);
+        let (text, peach, hairline) = (theme.gray_950, theme.peach, theme.alpha_at(0.05));
+        let shape = header_shape(RETURN_ROW_HEIGHT, selected, keyboard_ring, theme);
         let dot = accent(state.colour, theme);
         let opacity = if state.mute { 0.4 } else { 1. };
         let middle = RETURN_ROW_HEIGHT / 2.;
@@ -351,10 +352,10 @@ impl Returns {
             .color(peach)
             .tab_stop(false)
             .on_change({
-                let (returns, track) = (cx.weak_entity(), track.clone());
+                let (timeline, track) = (self.timeline.downgrade(), track.clone());
                 move |mute, _, cx| {
-                    returns
-                        .update(cx, |returns, cx| returns.set_mute(&track, mute, cx))
+                    timeline
+                        .update(cx, |timeline, cx| timeline.switch(&track, MUTE, mute, cx))
                         .ok();
                 }
             });
@@ -385,21 +386,7 @@ impl Returns {
             .h_full()
             .border_r_1()
             .border_color(hairline)
-            .child(
-                div()
-                    .absolute()
-                    .left(px(HEADER_INSET))
-                    .top(px(4.))
-                    .w(px(HEADER_WIDTH - 2. * HEADER_INSET))
-                    .h(px(RETURN_ROW_HEIGHT - 8.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(match keyboard_ring {
-                        true => ring,
-                        false => gpui::transparent_black(),
-                    })
-                    .when(selected, |fill| fill.bg(selected_fill)),
-            )
+            .child(shape)
             .child(
                 div()
                     .absolute()
@@ -420,9 +407,12 @@ impl Returns {
                     .child(mute),
             );
         let (pressed, keyed) = (track.clone(), track.clone());
-        div()
+        let element = div()
             .id(SharedString::from(format!("return-{name}")))
-            .debug_selector(move || format!("return-{name}"))
+            .debug_selector({
+                let name = name.clone();
+                move || format!("return-{name}")
+            })
             .track_focus(&focus_handle)
             .flex_none()
             .h(px(RETURN_ROW_HEIGHT))
@@ -430,10 +420,12 @@ impl Returns {
             .cursor_pointer()
             .on_mouse_down(MouseButton::Left, {
                 let focus_handle = focus_handle.clone();
-                cx.listener(move |returns, event: &MouseDownEvent, window, cx| {
-                    row_state.update(cx, |row, cx| row.keyboard_focus.pressed(cx));
+                cx.listener(move |returns, _, window, cx| {
+                    if let Some(row) = returns.rows.get(&name) {
+                        row.keyboard_focus.pressed(cx);
+                    }
                     window.focus(&focus_handle, cx);
-                    returns.press_row(&pressed, event, window, cx);
+                    returns.press_row(&pressed, cx);
                 })
             })
             .on_key_down(
@@ -444,8 +436,8 @@ impl Returns {
                     }
                 }),
             )
-            .child(header)
-            .into_any_element()
+            .child(header);
+        Some(element.into_any_element())
     }
 }
 
@@ -467,13 +459,23 @@ impl Render for Returns {
             .map(|(_, state)| (state.name.clone().into(), accent(state.colour, theme)))
             .collect();
         let header = self.header(names, window, cx);
-        let rows: Vec<_> = match self.expanded {
-            true => shown
-                .iter()
-                .map(|(track, state)| self.row(track, state, window, cx))
-                .collect(),
-            false => Vec::new(),
-        };
+        let rows = self.expanded.then(|| {
+            let folders: Vec<String> = (shown.iter())
+                .map(|(track, _)| track.id().name().to_string())
+                .collect();
+            self.add_rows(&folders, window, cx);
+            let rows: Vec<AnyElement> = (shown.iter())
+                .filter_map(|(track, state)| self.row(track, state, window, cx))
+                .collect();
+            div()
+                .id("return-rows")
+                .track_scroll(&self.rows_scroll)
+                .max_h(px(SHOWN_ROWS * RETURN_ROW_HEIGHT))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .children(rows)
+        });
         div()
             .flex_none()
             .flex()

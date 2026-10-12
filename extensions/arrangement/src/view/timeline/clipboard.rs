@@ -48,7 +48,8 @@ impl Timeline {
     }
 
     /// Cmd-v: the copied clips at the playhead, the top one on the track of the first selected
-    /// clip, else on the selected track, else on the first track. One undo step.
+    /// clip, else on the selected track, else on the first track. One undo step. A selected
+    /// return refuses it.
     pub(super) fn paste(&mut self, cx: &mut Context<Self>) {
         let copied = match self.clipboard.borrow().as_ref() {
             Some(Copied::Clips(copied)) => copied.clone(),
@@ -59,7 +60,18 @@ impl Timeline {
             Some(clip) => clip.parent(),
             None => self.selected_track.clone(),
         };
-        let top = track.and_then(|track| self.row_of(&track)).unwrap_or(0);
+        let top = match track {
+            Some(track) => match self.row_of(&track) {
+                Some(row) => row,
+                None => {
+                    let error = wrong_track(track, TrackKind::Return);
+                    self.session
+                        .update(cx, |session, cx| session.edit(cx, |_| Err::<(), _>(error)));
+                    return;
+                }
+            },
+            None => 0,
+        };
         let at = self.playhead.read(cx).tick;
         let label = plural(copied.len(), "Paste clip", "Paste clips");
         self.add_copies(&copied, at, top, label, cx);
@@ -95,12 +107,18 @@ impl Timeline {
         let wrong = placed.iter().find_map(|(row, name, clip, _)| {
             let track = order.get(*row)?;
             let kind = project.state(track)?.kind;
-            (kind != clip.kind()).then(|| (track.id().clone(), name.to_string(), clip.kind()))
+            (kind != clip.kind()).then(|| {
+                let id = track
+                    .id()
+                    .child(name)
+                    .unwrap_or_else(|_| track.id().clone());
+                (id, clip.kind())
+            })
         });
         let added = self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
-                if let Some((track, name, kind)) = wrong {
-                    return Err(wrong_track(&track, &name, kind));
+                if let Some((id, kind)) = wrong {
+                    return Err(wrong_track(id, kind));
                 }
                 let mut changes = Changes::new();
                 change_lanes(project, &mut changes, &arrangement, |tracks, travel| {
@@ -276,8 +294,9 @@ impl Timeline {
     }
 }
 
-/// Why a clip cannot go where a paste would put it.
-fn wrong_track(track: &InstanceId, name: &str, kind: TrackKind) -> ProjectError {
+/// Why a clip of `kind` cannot go where a paste would put it, as `id`, or why nothing goes on a
+/// return.
+fn wrong_track(id: InstanceId, kind: TrackKind) -> ProjectError {
     let message = match kind {
         TrackKind::Instrument => {
             "a note clip goes on an instrument track, and this is an audio track"
@@ -285,7 +304,6 @@ fn wrong_track(track: &InstanceId, name: &str, kind: TrackKind) -> ProjectError 
         TrackKind::Audio => "an audio clip goes on an audio track, and this is an instrument track",
         TrackKind::Return => "a return track plays no clips",
     };
-    let id = track.child(name).unwrap_or_else(|_| track.clone());
     ProjectError::WrongPlace {
         id,
         message: message.to_string(),
