@@ -1,6 +1,6 @@
 //! Saved state edits: a file written during a held note, and states that are not valid.
 
-use instrument::{SynthState, Waveform};
+use instrument::{FilterCharacter, SynthState, Waveform};
 use sound_core::{ProjectError, State};
 
 use crate::support::{Harness, id, largest_step, note, peak, rising_zero_crossings};
@@ -11,6 +11,7 @@ const BEFORE: SynthState = SynthState {
     waveform: Waveform::Saw,
     cutoff_hz: 200.0,
     resonance: 0.0,
+    character: FilterCharacter::Clean,
     attack_seconds: 0.2,
     decay_seconds: 0.1,
     sustain: 0.8,
@@ -231,6 +232,7 @@ fn the_default_state_saves_as_the_documented_record() {
     "waveform": "saw",
     "cutoff_hz": 2000.0,
     "resonance": 0.2,
+    "character": "clean",
     "attack_seconds": 0.005,
     "decay_seconds": 0.2,
     "sustain": 0.7,

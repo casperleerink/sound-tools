@@ -9,6 +9,7 @@
     "waveform": "saw",
     "cutoff_hz": 2000.0,
     "resonance": 0.2,
+    "character": "clean",
     "attack_seconds": 0.005,
     "decay_seconds": 0.2,
     "sustain": 0.7,
@@ -25,13 +26,14 @@ These are the defaults. A field you leave out takes its default, so `"state": {}
 | `waveform` | The oscillator. `"saw"` is bright and full, `"square"` is hollow. | `"saw"`, `"square"` |
 | `cutoff_hz` | The filter lets through what is below this frequency. Lower is darker. | 20 to 20000 |
 | `resonance` | A peak at the cutoff. 0 is none, 1 is a strong ringing peak. | 0 to 1 |
+| `character` | `"warm"` saturates inside the filter: a loud resonance compresses instead of whistling, and `resonance` near 1 rings on its own, a steady tone at the cutoff. `"clean"` stays the same at every level. | `"clean"`, `"warm"` |
 | `attack_seconds` | From note on to full level. | 0.001 to 10 |
 | `decay_seconds` | From full level down to the sustain level. | 0.001 to 10 |
 | `sustain` | The level a held note settles at. 0 makes every note a pluck. | 0 to 1 |
 | `release_seconds` | From note off to silence. | 0.001 to 10 |
 | `gain` | Linear output gain. Tracks add up into the master, whose limiter keeps the output from clipping but squashes it when pushed, so keep it near 0.15, and lower for thick chords. Set the level of a track with its `gain_db`. | 0 to 1 |
 
-Starting points: a bass is `cutoff_hz` 300 to 800 with `resonance` near 0.4. A pluck is `sustain` 0 with `decay_seconds` 0.15 to 0.4. A pad is `attack_seconds` 0.5 or more and `release_seconds` 1 or more.
+Starting points: a bass is `cutoff_hz` 300 to 800 with `resonance` near 0.4, `"warm"` for a rounder one. A pluck is `sustain` 0 with `decay_seconds` 0.15 to 0.4. A pad is `attack_seconds` 0.5 or more and `release_seconds` 1 or more.
 
 Every number here can move over time with an automation lane of the track: see `agent-docs/arrangement.md`.
 

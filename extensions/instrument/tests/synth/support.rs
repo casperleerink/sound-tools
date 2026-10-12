@@ -220,10 +220,16 @@ impl Harness {
         output
     }
 
-    /// Plays from the start and renders.
+    /// Plays from the start and renders, without the wait for the latency, as a render of the
+    /// project leaves it out: tick 0 is the first frame.
     pub(crate) fn play(&mut self, frames: usize) -> Vec<f32> {
         self.project.engine().play();
-        self.render(frames)
+        let before = self.engine.preroll_frames();
+        let mut output = self.render(frames + instrument::LATENCY as usize);
+        let waited = self.engine.preroll_frames() - before;
+        output.drain(..usize::try_from(waited).unwrap());
+        output.truncate(frames);
+        output
     }
 }
 

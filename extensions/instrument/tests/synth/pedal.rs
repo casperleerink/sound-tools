@@ -1,7 +1,7 @@
 //! The sustain pedal: while it is down a note off does not release, and the note sounds until
 //! the pedal comes up. Nothing may hang: an `AllOff` puts the pedal up as well.
 
-use instrument::{SynthState, Waveform};
+use instrument::{FilterCharacter, SynthState, Waveform};
 use sound_core::Ticks;
 
 use crate::support::{Harness, SAMPLE_RATE, Track, id, note, peak, pedal};
@@ -15,6 +15,7 @@ fn plain() -> SynthState {
         waveform: Waveform::Saw,
         cutoff_hz: 2_000.0,
         resonance: 0.0,
+        character: FilterCharacter::Clean,
         attack_seconds: 0.005,
         decay_seconds: 0.05,
         sustain: 1.0,
