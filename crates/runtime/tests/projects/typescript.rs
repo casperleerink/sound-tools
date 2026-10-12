@@ -172,6 +172,32 @@ tool({
 });
 "#;
 
+#[test]
+fn a_file_that_hangs_as_it_loads_is_a_problem_and_the_other_tools_load() {
+    if !sound_typescript::has_bun() {
+        return eprintln!("skipped: Bun is not installed");
+    }
+    let folder = tempfile::tempdir().unwrap();
+    crate::support::write(folder.path(), "extensions/level.ts", LEVEL);
+    crate::support::write(folder.path(), "extensions/stuck.ts", "while (true) {}\n");
+    crate::support::write(
+        folder.path(),
+        "state/level.json",
+        r#"{"tool": "level", "state": {}}"#,
+    );
+    let harness = Harness::open(folder);
+    // The record of `level` loaded: its tool is there.
+    let problems = harness.project.problems();
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert_eq!(problem.path, "extensions/stuck.ts");
+    assert!(
+        problem.message.contains("did not finish loading"),
+        "{problem:?}"
+    );
+}
+
 /// A lane of a tool of the project bends on its frame, as one of a built-in device does: the
 /// level opens from 0 to 1 in 50 frames, and is silent before and full after.
 #[test]
