@@ -88,7 +88,7 @@ my-piece/
 
 ## The live folder and editing
 
-Built in `crates/core/src/project` (`editing.rs`, `outside.rs`, `watcher.rs`).
+Built in `crates/core/src/project` (`editing.rs`, `history.rs`, `outside.rs`, `watcher.rs`).
 
 - There is one state application. Window edits, file changes, loading, undo, redo and cancel all call it with a group of changes, and it applies the group whole or not at all. Loading is applying from empty.
 - `Project::apply_in_memory` applies a group like loading does: no write, no derive, no undo step. Only a read-only project takes it, for a render that plays other than its files say, such as `--solo`. A project that writes refuses, so the folder stays the truth.

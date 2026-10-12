@@ -1,14 +1,15 @@
-//! The editing service: staged changes, edits with gestures, and undo history.
+//! The editing service: staged changes, edits with gestures, and undo and redo. The steps
+//! themselves are kept in `history.rs`.
 //!
 //! Interface edits, file changes, undo and redo all end in `Project::apply`. This module
 //! holds what they need around it.
 
-use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::file::{ProjectFile, SavedConnection};
+use super::history::{Side, Step};
 use super::instance::{Instance, InstanceId, Record, State};
-use super::{GROUPING_WINDOW, Project, ProjectError, Source};
+use super::{Project, ProjectError, Source};
 use crate::clock::TempoMap;
 
 #[derive(Clone)]
@@ -110,231 +111,6 @@ pub(crate) struct Applied {
     pub derived: Vec<InstanceId>,
 }
 
-/// Everything one undo step touched, with the state before the first change and after the
-/// last. Undo applies the before side as one group, redo the after side.
-#[derive(Default)]
-pub(crate) struct Step {
-    pub label: String,
-    pub records: BTreeMap<InstanceId, (Option<Record>, Option<Record>)>,
-    pub project_file: Option<(ProjectFile, ProjectFile)>,
-}
-
-impl Step {
-    pub(super) fn absorb(&mut self, applied: Applied) {
-        for change in applied.records {
-            let entry = self
-                .records
-                .entry(change.id)
-                .or_insert((change.before, None));
-            entry.1 = change.after;
-        }
-        if let Some((before, after)) = applied.project_file {
-            let entry = self.project_file.get_or_insert((before, after.clone()));
-            entry.1 = after;
-        }
-    }
-
-    /// Forgets what ended where it began, for example a record that was made and deleted.
-    fn drop_unchanged(&mut self) {
-        self.records
-            .retain(|_, (before, after)| match (before, after) {
-                (Some(before), Some(after)) => !before.equals(after),
-                (None, None) => false,
-                _ => true,
-            });
-        self.project_file.take_if(|(before, after)| before == after);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.records.is_empty() && self.project_file.is_none()
-    }
-
-    /// The changes that bring back one side of the step.
-    fn changes(&self, side: Side) -> Vec<Change> {
-        let mut changes = Vec::new();
-        if let Some((before, after)) = &self.project_file {
-            changes.push(Change::ProjectFile(match side {
-                Side::Before => before.clone(),
-                Side::After => after.clone(),
-            }));
-        }
-        for (id, (before, after)) in &self.records {
-            let record = match side {
-                Side::Before => before,
-                Side::After => after,
-            };
-            changes.push(match record {
-                Some(record) => Change::Set(id.clone(), record.clone()),
-                None => Change::Delete(id.clone()),
-            });
-        }
-        changes
-    }
-}
-
-#[derive(Copy, Clone)]
-enum Side {
-    Before,
-    After,
-}
-
-/// Groups of outside file changes that follow each other within this time are one undo step,
-/// when no request is open (see [`Project::begin_request`]).
-///
-/// An agent writes the files of one request seconds apart, far more than the quiet window
-/// that groups them for live apply. Without this, undo of a track that an agent added takes
-/// one step per file. It is a heuristic for an agent that cannot say where its request begins
-/// and ends, such as one in a terminal.
-pub const OUTSIDE_UNDO_WINDOW: Duration = Duration::from_secs(15);
-
-/// A request of [`Project::begin_request`], until the watcher is quiet after its end.
-struct Request {
-    label: String,
-    /// When [`Project::end_request`] was called.
-    ended: Option<Instant>,
-}
-
-#[derive(Default)]
-pub(crate) struct History {
-    undo: Vec<Step>,
-    redo: Vec<Step>,
-    /// When the step on top of `undo` is an outside step and nothing came after it: when its
-    /// last group was heard, see [`Project::apply_outside_changes_at`]. An interface edit, an
-    /// undo and a redo all clear it.
-    last_outside: Option<Instant>,
-    request: Option<Request>,
-    /// The committed state of every record that an open edit has published over: what it was
-    /// before the first publish, or what a file change, an undo or a redo made of it since.
-    /// The live state of such a record is the middle of a gesture, which no undo step may
-    /// hold: nobody ever saw it as a result.
-    committed: BTreeMap<InstanceId, Option<Record>>,
-    /// The same for `project.json`, which a tempo drag changes per mouse move.
-    committed_project_file: Option<ProjectFile>,
-}
-
-impl History {
-    /// Keeps `committed` current after a state application. A change from a file or from
-    /// history to a record under an open edit gets the committed state as its before side, in
-    /// place of the state in the middle of the gesture.
-    pub(super) fn note_committed(&mut self, change: &mut RecordChange, source: Source) {
-        match source {
-            Source::Load => {}
-            Source::Interface => {
-                let before = || change.before.clone();
-                self.committed
-                    .entry(change.id.clone())
-                    .or_insert_with(before);
-            }
-            Source::Outside | Source::History => {
-                if let Some(committed) = self.committed.get_mut(&change.id) {
-                    change.before = std::mem::replace(committed, change.after.clone());
-                }
-            }
-        }
-    }
-
-    /// The same for `project.json`. A tempo drag publishes a whole tempo map per mouse move,
-    /// so without this a file change during the drag would take the tempo of one mouse move as
-    /// its before side, and undo would land there.
-    pub(super) fn note_committed_project_file(
-        &mut self,
-        change: &mut Option<(ProjectFile, ProjectFile)>,
-        source: Source,
-    ) {
-        let Some((before, after)) = change else {
-            return;
-        };
-        match source {
-            Source::Load => {}
-            Source::Interface => {
-                self.committed_project_file
-                    .get_or_insert_with(|| before.clone());
-            }
-            Source::Outside | Source::History => {
-                if let Some(committed) = &mut self.committed_project_file {
-                    *before = std::mem::replace(committed, after.clone());
-                }
-            }
-        }
-    }
-
-    /// The edit of `step` ends. Its before side becomes what was committed under it, so that
-    /// the step starts where the step before it ended.
-    fn close(&mut self, step: &mut Step) {
-        for (id, (before, _)) in &mut step.records {
-            if let Some(committed) = self.committed.remove(id) {
-                *before = committed;
-            }
-        }
-        if let Some((before, _)) = &mut step.project_file
-            && let Some(committed) = self.committed_project_file.take()
-        {
-            *before = committed;
-        }
-    }
-
-    /// A new step. What was undone before can no longer be redone.
-    pub(super) fn push(&mut self, step: Step) {
-        self.last_outside = None;
-        if !step.is_empty() {
-            self.undo.push(step);
-            self.redo.clear();
-        }
-    }
-
-    /// A group of outside changes, heard at `at`. It joins the step on top when that is an
-    /// outside step with nothing in between, of the open request or from less than
-    /// [`OUTSIDE_UNDO_WINDOW`] before. The joined step keeps its older before side and takes
-    /// the newer after side.
-    pub(super) fn push_outside(&mut self, label: &str, applied: Applied, at: Instant) {
-        let quiet_since_end = self
-            .request
-            .as_ref()
-            .and_then(|request| request.ended)
-            .is_some_and(|ended| at.saturating_duration_since(ended) >= GROUPING_WINDOW);
-        if quiet_since_end {
-            self.request = None;
-            self.last_outside = None;
-        }
-        let recent = self.last_outside.is_some_and(|last| {
-            self.request.is_some() || at.saturating_duration_since(last) < OUTSIDE_UNDO_WINDOW
-        });
-        match self.undo.last_mut().filter(|_| recent) {
-            Some(step) => {
-                step.absorb(applied);
-                step.drop_unchanged();
-                self.last_outside = Some(at);
-                // An agent that takes back what it just wrote leaves nothing to undo.
-                if step.is_empty() {
-                    self.undo.pop();
-                    self.last_outside = None;
-                }
-            }
-            None => {
-                let label = self
-                    .request
-                    .as_ref()
-                    .map_or(label, |request| request.label.as_str());
-                let mut step = Step {
-                    label: label.to_string(),
-                    ..Step::default()
-                };
-                step.absorb(applied);
-                // A file may bring back what was committed under an open edit.
-                step.drop_unchanged();
-                let is_empty = step.is_empty();
-                self.push(step);
-                // An empty group is no step, and then the top is not known to be an outside one.
-                self.last_outside = (!is_empty).then_some(at);
-            }
-        }
-    }
-
-    pub(super) fn clear(&mut self) {
-        *self = Self::default();
-    }
-}
-
 /// An edit in progress: a drag, or any other group of changes that becomes one undo step.
 /// It remembers the state before its first change, so finishing and cancelling need no
 /// reverse operation from the tool. Several edits can be open at once; last write wins.
@@ -366,17 +142,13 @@ impl Project {
     /// changes of the request after it make a new step with the same label. A request that is
     /// still open is replaced.
     pub fn begin_request(&mut self, label: &str) {
-        self.history.request = Some(Request {
-            label: label.to_string(),
-            ended: None,
-        });
-        // The request starts its own step, even right after other outside changes.
-        self.history.last_outside = None;
+        self.history.begin_request(label);
     }
 
-    /// Ends the request. Outside changes heard less than [`GROUPING_WINDOW`] later still join
-    /// its step, because the watcher may hear the last write of a request only after the
-    /// request has ended. Later changes follow [`OUTSIDE_UNDO_WINDOW`] again, in a new step.
+    /// Ends the request. Outside changes heard less than
+    /// [`GROUPING_WINDOW`](super::GROUPING_WINDOW) later still join its step, because the
+    /// watcher may hear the last write of a request only after the request has ended. Later
+    /// changes follow [`OUTSIDE_UNDO_WINDOW`](super::OUTSIDE_UNDO_WINDOW) again, in a new step.
     pub fn end_request(&mut self) {
         self.end_request_at(Instant::now());
     }
@@ -386,18 +158,13 @@ impl Project {
     /// The first end counts: an end said again later, such as when the agent's process exits
     /// long after its turn, must not let the outside changes of that moment join the step.
     pub fn end_request_at(&mut self, at: Instant) {
-        if let Some(request) = &mut self.history.request {
-            request.ended.get_or_insert(at);
-        }
+        self.history.end_request_at(at);
     }
 
     /// Begins an edit. `label` names the undo step, for example "Change frequency".
     pub fn begin(&self, label: &str) -> Edit {
         Edit {
-            step: Step {
-                label: label.to_string(),
-                ..Step::default()
-            },
+            step: Step::new(label),
         }
     }
 
@@ -551,28 +318,24 @@ impl Project {
     /// Undoes the last step and writes the records. Returns its label, or `None` when there
     /// is nothing to undo. A step that can no longer apply is dropped with the error.
     pub fn undo(&mut self) -> Result<Option<String>, ProjectError> {
-        let Some(step) = self.history.undo.pop() else {
-            return Ok(None);
-        };
-        self.sync_project_file();
-        self.history.last_outside = None;
-        let applied = self.apply(step.changes(Side::Before), Source::History)?;
-        let written = self.write_step(&step, &applied);
-        let label = step.label.clone();
-        self.history.redo.push(step);
-        written.map(|()| Some(label))
+        self.bring_back(Side::Before)
     }
 
     pub fn redo(&mut self) -> Result<Option<String>, ProjectError> {
-        let Some(step) = self.history.redo.pop() else {
+        self.bring_back(Side::After)
+    }
+
+    /// Applies one side of the next step of undo (before) or redo (after) and writes it.
+    fn bring_back(&mut self, side: Side) -> Result<Option<String>, ProjectError> {
+        let Some(step) = self.history.take(side) else {
             return Ok(None);
         };
         self.sync_project_file();
-        self.history.last_outside = None;
-        let applied = self.apply(step.changes(Side::After), Source::History)?;
+        self.history.end_outside_step();
+        let applied = self.apply(step.changes(side), Source::History)?;
         let written = self.write_step(&step, &applied);
         let label = step.label.clone();
-        self.history.undo.push(step);
+        self.history.put_back(side, step);
         written.map(|()| Some(label))
     }
 
@@ -592,10 +355,10 @@ impl Project {
 
     /// The label of the step that `undo` would undo.
     pub fn undo_label(&self) -> Option<&str> {
-        self.history.undo.last().map(|step| step.label.as_str())
+        self.history.label(Side::Before)
     }
 
     pub fn redo_label(&self) -> Option<&str> {
-        self.history.redo.last().map(|step| step.label.as_str())
+        self.history.label(Side::After)
     }
 }

@@ -11,6 +11,7 @@ mod binding;
 mod editing;
 mod file;
 mod generated;
+mod history;
 mod instance;
 mod live;
 mod outside;
@@ -23,13 +24,14 @@ use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
-pub use editing::{Changes, Derived, Edit, OUTSIDE_UNDO_WINDOW};
+pub use editing::{Changes, Derived, Edit};
 pub use file::{
     FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
 };
 pub use generated::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, INSTRUCTIONS_FILE, NO_PROBLEMS, PROBLEMS_FILE,
 };
+pub use history::OUTSIDE_UNDO_WINDOW;
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
     AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration, Was,
@@ -38,7 +40,8 @@ pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
 
 use binding::{BindError, Bindings, EngineChange};
-use editing::{Applied, Change, History, RecordChange};
+use editing::{Applied, Change, RecordChange};
+use history::History;
 use instance::Record;
 use live::LiveSources;
 use outside::NotApplied;
