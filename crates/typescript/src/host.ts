@@ -3,6 +3,7 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
+import { writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec } from "./sdk";
 
@@ -46,8 +47,14 @@ type Sent =
 /** A click, which hears nothing, or a press or a drag on a canvas, which hears where. */
 type Handler = (x: number, y: number) => void;
 
+/** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function send(message: object) {
-  process.stdout.write(JSON.stringify(message) + "\n");
+  writeSync(1, JSON.stringify(message) + "\n");
+}
+
+/** Tells the runtime whose code runs now, so it knows what to blame when it hangs. */
+function runs(tool: string, what: string) {
+  send({ type: "runs", tool, what });
 }
 
 /** The handlers of the last trees of each card, by the version of the tree. */
@@ -339,6 +346,7 @@ function render(request: Render) {
     // Such as a tool whose file this Bun runs without.
     const spec = specOf(tool);
     const kept: Handler[] = [];
+    runs(tool, page ? "page" : "card");
     const node = drawerOf(spec, page !== null)({
       state,
       watches,
@@ -400,6 +408,7 @@ function run(
     }
     const state = latest(looped);
     try {
+      runs(tool, what);
       call(spec, { state, watches, memory: memoryOf(instance, spec), time, update: updater(instance, state), ...players(instance) });
     } catch (error) {
       fail(tool, `its ${what} failed: ${error}`);
@@ -421,6 +430,9 @@ function handle(request: Request) {
     case "event": {
       const last = drawn.get(request.card);
       try {
+        if (last) {
+          runs(last.tool, "click handler");
+        }
         handlers.get(request.card)?.get(request.version)?.[request.handler]?.(...(request.at ?? [0, 0]));
       } catch (error) {
         if (last) {
@@ -438,6 +450,7 @@ function handle(request: Request) {
       run(request.time, request.instances, "tick", (spec, { update: _, ...tool }) =>
         spec.tick?.({ ...tool, dt: request.dt }),
       );
+      send({ type: "framed" });
       break;
     case "key": {
       const key = { key: request.key, down: request.down };

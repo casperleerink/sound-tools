@@ -8,7 +8,7 @@
 //! Nothing here waits for Bun: what it says comes as events.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -20,23 +20,15 @@ use sound_notes::{Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
-use crate::bun::{Bun, Event, Loaded, Looped, PageSize, Request, Skipped};
+use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped};
 use crate::card::TypeScriptCard;
-use crate::tools::{Control, ToolInfo, ToolKind};
+use crate::tools::{Control, Sounds, ToolInfo, ToolKind};
 use crate::tree::Node;
 use crate::{Extensions, FOLDER, Launched, Midi, OWNED};
 
 /// How often the cards look at their watches and the control loops run: often enough for a
 /// step light, a meter or a moving drawing.
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
-
-/// How long one request may take before Bun counts as hung. Bun answers in well under a
-/// millisecond.
-const HANG_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// A Bun that stops or hangs with nothing to blame starts again, unless it ran shorter than
-/// this.
-const SHORTEST_RUN: Duration = Duration::from_secs(10);
 
 /// The tools and cards of the project in the window. One per window.
 pub(crate) struct Live {
@@ -61,8 +53,9 @@ pub(crate) struct Live {
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
-    /// Hears the changes in `extensions/`. `None` when it could not, which is a problem.
-    _watcher: Option<RecommendedWatcher>,
+    /// Hears the changes in `extensions/`, or why it cannot, which is a problem of its own.
+    watcher: Result<RecommendedWatcher, Problem>,
+    changed: smol::channel::Sender<()>,
     _tasks: [Task<()>; 2],
 }
 
@@ -70,77 +63,25 @@ pub(crate) struct Live {
 enum Host {
     Running {
         bun: Bun,
-        started: Instant,
-        /// What it was told and has not said done yet, oldest first, by the tool whose code
-        /// it runs and which code. Bun does one thing at a time, so the oldest is what hangs or
-        /// what stopped it.
-        pending: VecDeque<Option<(String, Runs)>>,
-        /// Since when Bun runs the oldest of `pending`.
-        oldest_since: Instant,
+        /// A step of the control loops is out. One at a time, so a slow loop does not pile
+        /// steps up.
+        ticking: bool,
         /// Hears what Bun says, until it ends.
         _hearing: Task<()>,
     },
     /// A new Bun starts and loads on a thread of its own. `again`: `extensions/` changed
     /// meanwhile, so another starts once this one has loaded.
     Starting { again: bool },
-    /// No Bun runs: the folder has no tool, Bun cannot start, or it stopped twice with nothing
-    /// to blame, until the folder changes.
+    /// No Bun runs, until the folder changes: it has no tool, Bun cannot start, or Bun stopped
+    /// with no tool to blame.
     Stopped,
 }
 
-/// The code of a tool a request runs.
-#[derive(Clone, Copy, PartialEq)]
-enum Runs {
-    Tick,
-    Card,
-    Click,
-    Key,
-    Midi,
-}
-
-impl Runs {
-    fn word(self) -> &'static str {
-        match self {
-            Self::Tick => "tick",
-            Self::Card => "card",
-            Self::Click => "click handler",
-            Self::Key => "onKey",
-            Self::Midi => "onMidi",
-        }
-    }
-}
-
 impl Host {
-    /// Tells Bun something, which runs the code `blame` names. Nothing while no Bun runs: the
-    /// next one draws every card again.
-    fn send(&mut self, blame: Option<(&str, Runs)>, request: &Request) {
-        let Self::Running {
-            bun,
-            pending,
-            oldest_since,
-            ..
-        } = self
-        else {
-            return;
-        };
-        if bun.send(request) {
-            if pending.is_empty() {
-                *oldest_since = Instant::now();
-            }
-            pending.push_back(blame.map(|(tool, runs)| (tool.to_string(), runs)));
-        }
-    }
-
-    /// Bun finished the oldest thing it was told.
-    fn done(&mut self) {
-        if let Self::Running {
-            pending,
-            oldest_since,
-            ..
-        } = self
-        {
-            pending.pop_front();
-            *oldest_since = Instant::now();
+    /// Tells Bun something. Nothing while no Bun runs: the next one draws every card again.
+    fn send(&mut self, request: &Request) {
+        if let Self::Running { bun, .. } = self {
+            bun.send(request);
         }
     }
 }
@@ -241,23 +182,49 @@ pub fn start_window(
     });
 }
 
-/// Watches `folder` and everything in it, and says that something changed on `changed`.
-fn watch(folder: &Path, changed: smol::channel::Sender<()>) -> notify::Result<RecommendedWatcher> {
+/// Watches `folder` and its folders but `node_modules`, and says on `changed` when a file
+/// that may be imported changes, or a folder. Not hidden files, such as an editor's.
+fn watch(folder: &Path, changed: smol::channel::Sender<()>) -> Result<RecommendedWatcher, Problem> {
+    let not_heard = |error: notify::Error| {
+        crate::folder_problem(format!("changes in {FOLDER}/ are not heard: {error}"))
+    };
+    let skipped = |name: &str| name.starts_with('.') || name == "node_modules";
+    // The paths of events are the real ones.
+    let root = dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    let counts = move |path: &Path| {
+        let inside = path.strip_prefix(&root).unwrap_or(path);
+        let hidden = (inside.components()).any(|part| skipped(&part.as_os_str().to_string_lossy()));
+        let importable = (path.extension()).is_some_and(|extension| {
+            ["ts", "tsx", "js", "mjs", "json"]
+                .iter()
+                .any(|known| extension == *known)
+        });
+        let owned = OWNED.iter().any(|owned| inside == Path::new(owned));
+        !hidden && !owned && (importable || path.is_dir())
+    };
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let event = match event {
             Ok(event) => event,
             Err(error) => return eprintln!("error: watching {FOLDER}/: {error}"),
         };
-        // Reading a file changes nothing, and the runtime writes its own files only before
-        // the window opens.
-        let owned = |path: &PathBuf| {
-            (path.file_name()).is_some_and(|name| OWNED.iter().any(|owned| name == *owned))
-        };
-        if !event.kind.is_access() && !event.paths.iter().all(owned) {
+        // An event with no paths asks to look again at everything, as after a lost event.
+        let paths = &event.paths;
+        if !event.kind.is_access() && (paths.is_empty() || paths.iter().any(|path| counts(path))) {
             changed.try_send(()).ok();
         }
-    })?;
-    watcher.watch(folder, RecursiveMode::Recursive)?;
+    })
+    .map_err(not_heard)?;
+    watcher
+        .watch(folder, RecursiveMode::NonRecursive)
+        .map_err(not_heard)?;
+    let entries = std::fs::read_dir(folder).into_iter().flatten().flatten();
+    for entry in entries.filter(|entry| entry.path().is_dir()) {
+        if !skipped(&entry.file_name().to_string_lossy()) {
+            watcher
+                .watch(&entry.path(), RecursiveMode::Recursive)
+                .map_err(not_heard)?;
+        }
+    }
     Ok(watcher)
 }
 
@@ -276,17 +243,12 @@ impl Live {
             bun,
             tools: loaded,
             skipped,
-            mut problems,
+            problems,
         } = extensions;
         *tools.borrow_mut() = loaded;
         cx.new(|cx: &mut Context<Live>| {
             let (changed, changes) = smol::channel::unbounded();
-            let watcher = watch(&folder, changed)
-                .inspect_err(|error| {
-                    let message = format!("changes in {FOLDER}/ are not heard: {error}");
-                    problems.push(crate::folder_problem(message));
-                })
-                .ok();
+            let watcher = watch(&folder, changed.clone());
             let hearing_changes = cx.spawn(async move |live, cx| {
                 while changes.recv().await.is_ok() {
                     // Until it is quiet: an editor saves in several writes, an agent several
@@ -315,7 +277,7 @@ impl Live {
                 Some(bun) => Live::running(bun, cx),
                 None => Host::Stopped,
             };
-            Live {
+            let live = Live {
                 folder,
                 session: session.downgrade(),
                 host,
@@ -328,9 +290,15 @@ impl Live {
                 edits: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
-                _watcher: watcher,
+                watcher,
+                changed,
                 _tasks: [hearing_changes, framing],
+            };
+            // Only the watcher's problem is new.
+            if live.watcher.is_err() {
+                live.report(cx);
             }
+            live
         })
     }
 
@@ -343,14 +311,10 @@ impl Live {
                     return;
                 }
             }
-            live.update(cx, |live, cx| live.failed("stopped Bun", cx))
-                .ok();
         });
         Host::Running {
             bun,
-            started: Instant::now(),
-            pending: VecDeque::new(),
-            oldest_since: Instant::now(),
+            ticking: false,
             _hearing: hearing,
         }
     }
@@ -404,20 +368,6 @@ fn looped<'a>(
             .collect(),
         edits: edits.get(id).copied().unwrap_or(0),
     }
-}
-
-/// The instances of `project` whose tool `hears`, as their code gets them, by tool.
-fn looped_by_tool<'a>(
-    project: &'a Project,
-    edits: &HashMap<InstanceId, u64>,
-    hears: impl Fn(&InstanceId, &str) -> bool,
-) -> BTreeMap<&'a str, Vec<Looped<'a>>> {
-    let mut by_tool: BTreeMap<&str, Vec<Looped>> = BTreeMap::new();
-    for (id, tool) in project.instances().filter(|(id, tool)| hears(id, tool)) {
-        let instance = looped(project, edits, id, tool);
-        by_tool.entry(tool).or_default().push(instance);
-    }
-    by_tool
 }
 
 /// Where the engine is now, in seconds: the clock `at` counts on.
@@ -508,7 +458,7 @@ impl Live {
 
     pub(crate) fn remove(&mut self, card: u64) {
         self.cards.remove(&card);
-        self.host.send(None, &Request::Drop { card });
+        self.host.send(&Request::Drop { card });
     }
 
     /// Asks for the tree of the card again, from the record and the watches as they are now.
@@ -545,7 +495,7 @@ impl Live {
             watches: &entry.watches,
             page,
         };
-        self.host.send(Some((tool, Runs::Card)), &request);
+        self.host.send(&request);
     }
 
     /// The page was laid out at `size`: it draws again when that is new.
@@ -569,16 +519,15 @@ impl Live {
         handler: usize,
         at: Option<(f32, f32)>,
     ) {
-        let Some(entry) = self.cards.get(&card) else {
-            return;
-        };
-        let request = Request::Event {
-            card,
-            version,
-            handler,
-            at,
-        };
-        self.host.send(Some((&entry.tool, Runs::Click)), &request);
+        if self.cards.contains_key(&card) {
+            let request = Request::Event {
+                card,
+                version,
+                handler,
+                at,
+            };
+            self.host.send(&request);
+        }
     }
 
     /// Sends what `update` makes for the tool of instance `id` to its processor, as the
@@ -680,7 +629,7 @@ impl Live {
             key,
             down,
         };
-        self.host.send(Some((tool, Runs::Key)), &request);
+        self.host.send(&request);
     }
 
     /// What the MIDI keyboard played, for every instance whose tool hears it: on `track` or at
@@ -690,39 +639,28 @@ impl Live {
             return;
         };
         let time = engine_time(&session, cx);
-        let in_reach = |id: &InstanceId| {
+        let hears = |id: &InstanceId| {
             id.parent().is_none() || track.is_some_and(|track| id == track || id.is_inside(track))
         };
         let tools = self.tools.borrow();
-        let hears = |id: &InstanceId, tool: &str| {
-            in_reach(id) && find(&tools, tool).is_some_and(|info| info.midi)
-        };
         let project = session.read(cx).project();
-        // One request a tool, so the one that hangs is known.
-        for (tool, instances) in looped_by_tool(project, &self.edits, hears) {
+        let instances: Vec<Looped> = (project.instances())
+            .filter(|(id, tool)| hears(id) && find(&tools, tool).is_some_and(|info| info.midi))
+            .map(|(id, tool)| looped(project, &self.edits, id, tool))
+            .collect();
+        if !instances.is_empty() {
             let request = Request::Midi {
                 time,
                 instances,
                 messages,
             };
-            self.host.send(Some((tool, Runs::Midi)), &request);
+            self.host.send(&request);
         }
     }
 
-    /// One frame of the window: Bun is stopped when it hangs, the control loops run, a card
-    /// whose watches moved draws again, and every instance whose sample was read on its thread
-    /// runs again, so it plays it.
+    /// One frame of the window: the control loops run, a card whose watches moved draws again,
+    /// and every instance whose sample was read on its thread runs again, so it plays it.
     fn frame(&mut self, cx: &mut Context<Self>) {
-        if let Host::Running {
-            pending,
-            oldest_since,
-            ..
-        } = &self.host
-            && !pending.is_empty()
-            && oldest_since.elapsed() > HANG_TIMEOUT
-        {
-            self.failed(&format!("took longer than {HANG_TIMEOUT:?}"), cx);
-        }
         self.run_loops(cx);
         self.look_at_watches(cx);
         let Some(session) = self.session.upgrade() else {
@@ -739,13 +677,9 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        // One step at a time, so a slow loop does not pile steps up.
-        let Host::Running { pending, .. } = &self.host else {
+        let Host::Running { ticking: false, .. } = self.host else {
             return;
         };
-        if (pending.iter()).any(|sent| matches!(sent, Some((_, Runs::Tick)))) {
-            return;
-        }
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
         let time = engine_time(&session, cx);
@@ -753,15 +687,20 @@ impl Live {
         let project = session.read(cx).project();
         // An instance that is gone, which an undo may bring back at its defaults.
         self.played.retain(|id, _| project.tool_of(id).is_some());
-        let ticks = |_: &InstanceId, tool: &str| find(&tools, tool).is_some_and(|info| info.tick);
-        // One request a tool, so the one that hangs is known.
-        for (tool, instances) in looped_by_tool(project, &self.edits, ticks) {
+        let instances: Vec<Looped> = (project.instances())
+            .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.tick))
+            .map(|(id, tool)| looped(project, &self.edits, id, tool))
+            .collect();
+        if !instances.is_empty() {
             let request = Request::Frame {
                 dt,
                 time,
                 instances,
             };
-            self.host.send(Some((tool, Runs::Tick)), &request);
+            self.host.send(&request);
+            if let Host::Running { ticking, .. } = &mut self.host {
+                *ticking = true;
+            }
         }
     }
 
@@ -797,11 +736,13 @@ impl Live {
 
     fn heard(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
-            // Nothing to draw.
-            Event::Done => {
-                self.host.done();
+            Event::Framed => {
+                if let Host::Running { ticking, .. } = &mut self.host {
+                    *ticking = false;
+                }
                 return;
             }
+            Event::Ended { blame, why } => return self.failed(blame, &why, cx),
             Event::Failed { tool, message } => {
                 let problem = find(&self.tools.borrow(), &tool).map(|info| info.problem(message));
                 if let Some(problem) = problem {
@@ -875,35 +816,29 @@ impl Live {
     /// Something changed in `extensions/`: maybe a fix, so every file runs again.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.skipped.clear();
+        // A new folder is watched too.
+        self.watcher = watch(&self.folder, self.changed.clone());
         self.restart(cx);
     }
 
-    /// Bun hung or stopped: what it ran last is to blame, and the file of that tool runs no
-    /// more until the folder changes, while a new Bun runs the others. With nothing to blame,
-    /// such as code a timer ran, a new Bun runs as it was, unless this one ran only a moment:
-    /// then it would stop again at once, for ever, and none runs until the folder changes.
-    fn failed(&mut self, why: &str, cx: &mut Context<Self>) {
-        let Host::Running {
-            pending, started, ..
-        } = &self.host
-        else {
-            return;
-        };
-        let blamed = (pending.front().and_then(Option::as_ref))
-            .and_then(|(tool, runs)| Some((find(&self.tools.borrow(), tool)?.clone(), *runs)));
-        let Some((info, runs)) = blamed else {
-            if started.elapsed() >= SHORTEST_RUN {
-                return self.restart(cx);
-            }
+    /// Bun hung or stopped: the code it ran then is to blame, and the file of that tool runs
+    /// no more until the folder changes, while a new Bun runs the others. With nothing to
+    /// blame, such as code a timer ran, no Bun runs until the folder changes: it may stop again
+    /// at once, for ever.
+    fn failed(&mut self, blame: Option<Runs>, why: &str, cx: &mut Context<Self>) {
+        let info =
+            (blame.as_ref()).and_then(|runs| find(&self.tools.borrow(), &runs.tool).cloned());
+        let (Some(info), Some(runs)) = (info, blame) else {
             self.host = Host::Stopped;
-            let message = "the TypeScript host stopped or hung with no tool to blame, so the tools do not run: fix them and save";
-            self.problems
-                .push(crate::folder_problem(message.to_string()));
+            let message = format!(
+                "the TypeScript host {why} with no tool to blame, so the tools do not run: fix them and save"
+            );
+            self.problems.push(crate::folder_problem(message));
             return self.report(cx);
         };
         let problem = info.problem(format!(
             "its {} {why}, so the tools run without this file: fix it and save",
-            runs.word()
+            runs.what
         ));
         self.skipped.insert(info.file, problem.message);
         self.restart(cx);
@@ -942,22 +877,24 @@ impl Live {
             let bun = launched.ok().flatten().map(|launched| launched.bun);
             return self.launch(bun, cx);
         }
-        // The new Bun counts the edits it sends from none.
+        // The new Bun counts the edits it sends from none, and its first frame from now.
         self.edits.clear();
+        self.last_frame = Instant::now();
         match launched {
             Ok(Some(Launched {
                 bun,
-                loaded,
+                sounds,
                 skipped,
+                problems,
             })) => {
                 self.skipped = skipped;
                 self.host = Self::running(bun, cx);
-                self.loaded(loaded, cx);
+                self.loaded(sounds, problems, cx);
             }
             // The last tool file is gone.
             Ok(None) => {
                 self.host = Host::Stopped;
-                self.loaded(Loaded::default(), cx);
+                self.loaded(Vec::new(), Vec::new(), cx);
             }
             Err(message) => {
                 self.host = Host::Stopped;
@@ -967,13 +904,14 @@ impl Live {
         }
     }
 
-    /// A new Bun loaded: every tool is defined again, and every card draws again.
-    fn loaded(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
+    /// A new Bun loaded `sounds`, with these `problems`: every tool is defined again, and every
+    /// card draws again.
+    fn loaded(&mut self, sounds: Vec<Sounds>, mut problems: Vec<Problem>, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
         // Every tool, changed or not: a file it imports may have changed its sound.
-        let (tools, mut problems) = crate::define(loaded, &self.skipped, |tools| {
+        let tools = crate::define(sounds, &mut problems, |tools| {
             let names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
             let defined = session.update(cx, |session, cx| {
                 session.background(cx, |project| project.define_json_tools(tools))
@@ -1018,7 +956,8 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let problems = self.problems.clone();
+        let watcher = self.watcher.as_ref().err().cloned();
+        let problems = self.problems.iter().cloned().chain(watcher).collect();
         session.update(cx, |session, cx| {
             session.background(cx, |project| {
                 project.set_problems_in(&format!("{FOLDER}/"), problems);

@@ -8,7 +8,7 @@ To play a track from the computer keyboard, write nothing: tell the composer to 
 
 One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card. Make the folder if it is not there, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
 
-The runtime runs them with Bun, which the app ships and puts on your `PATH`; a build from source uses the one installed from https://bun.sh. While the app has the project open, any change in `extensions/` starts the tools again in a moment: every file loads again, also a helper a tool imports, every record plays the new sound, every `memory` starts again, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
+The runtime runs them with Bun, which the app ships and puts on your `PATH`; a build from source uses the one installed from https://bun.sh. While the app has the project open, a save of a `.ts`, `.tsx`, `.js`, `.mjs` or `.json` file in `extensions/` starts the tools again in a moment: every file loads again, also a helper a tool imports, every record plays the new sound, every `memory` starts again, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 
 ## A tool
 

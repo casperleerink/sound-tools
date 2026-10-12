@@ -709,3 +709,48 @@ tool({
         (window.loudest(4_800) - 0.25).abs() < 0.02
     });
 }
+
+/// Code a timer of a tool runs between two requests hangs Bun: the request that waits then is
+/// not to blame, and no tool is.
+#[gpui::test]
+fn a_hang_in_code_a_timer_runs_blames_no_tool(cx: &mut TestAppContext) {
+    let timer = r#"import { input, tool } from "./sdk";
+
+tool({
+  name: "timer",
+  title: "Timer",
+  when: "You want a timer",
+  doc: "Its loop starts a timer that never ends.",
+  state: {},
+  memory: () => ({ armed: false }),
+  sound: () => input,
+  tick: ({ memory, time }) => {
+    if (time > 0 && !memory.armed) {
+      memory.armed = true;
+      setTimeout(() => { while (true) {} }, 0);
+    }
+  },
+});
+"#;
+    let (_, project) = ONLY_THE_TOOL[0];
+    let heard = noted("heard", false);
+    let files = [
+        ("project.json", project),
+        ("state/heard.json", r#"{"tool": "heard", "state": {}}"#),
+        ("state/timer.json", r#"{"tool": "timer", "state": {}}"#),
+        ("extensions/heard.ts", heard.as_str()),
+        ("extensions/timer.ts", timer),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.until("the hang among the problems", |window| {
+        !window.problems().is_empty()
+    });
+    let problems = window.problems();
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert_eq!(problem.path, "extensions/");
+    assert!(problem.message.contains("no tool to blame"), "{problem:?}");
+}

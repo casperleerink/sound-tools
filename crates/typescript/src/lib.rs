@@ -103,10 +103,11 @@ impl Extensions {
         let (bun, tools, skipped, problems) = match launched {
             Ok(Some(Launched {
                 bun,
-                loaded,
+                sounds,
                 skipped,
+                mut problems,
             })) => {
-                let (tools, problems) = define(loaded, &skipped, |tools| {
+                let tools = define(sounds, &mut problems, |tools| {
                     (tools.into_iter())
                         .filter_map(|tool| {
                             let name = tool.name.clone();
@@ -135,15 +136,10 @@ impl Extensions {
     }
 }
 
-/// Defines the tools of `loaded` with `define`, which answers the ones it refused and why.
-/// Gives the tools it kept, and what is wrong: the errors of the files, the files Bun runs
-/// without, the tools `define` refused, and every tool whose sound, card or page fails at its
-/// defaults.
-fn define(
-    loaded: Loaded,
-    skipped: &Skipped,
-    define: impl FnOnce(Vec<JsonTool>) -> Vec<(String, String)>,
-) -> (Vec<ToolInfo>, Vec<Problem>) {
+/// The tools of `loaded` with their sounds compiled, and what is wrong: the errors of the
+/// files, the files Bun runs without, and every tool whose fields, sounds, card or page fail.
+/// Takes as long as compiling every sound: not on the thread that draws.
+fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<Problem>) {
     let file_problem = |file: &str, message: &str| Problem {
         path: format!("{FOLDER}/{file}"),
         message: message.to_string(),
@@ -152,7 +148,6 @@ fn define(
         .map(|error| file_problem(&error.file, &error.message))
         .chain(skipped.iter().map(|(file, why)| file_problem(file, why)))
         .collect();
-    let mut infos = Vec::new();
     let mut tools = Vec::new();
     for tool in loaded.tools {
         let LoadedTool {
@@ -167,22 +162,35 @@ fn define(
             continue;
         }
         let sounds = Sounds::new(&info, sounds);
-        let failed = [
-            sounds.code(&serde_json::json!({})).map(drop),
-            drawn(card).map_err(|error| format!("its card does not draw: {error}")),
-            (page.map_or(Ok(()), drawn))
-                .map_err(|error| format!("its page does not draw: {error}")),
-        ];
-        problems.extend(
-            failed
-                .into_iter()
-                .filter_map(Result::err)
-                .map(|message| info.problem(message)),
-        );
-        tools.push(sounds.json_tool());
-        infos.push(info);
+        // One problem a file: a list keeps one.
+        let failed: Vec<String> = (sounds.failures().cloned())
+            .chain(
+                drawn(card)
+                    .err()
+                    .map(|error| format!("its card does not draw: {error}")),
+            )
+            .chain(
+                page.and_then(|page| drawn(page).err())
+                    .map(|error| format!("its page does not draw: {error}")),
+            )
+            .collect();
+        if !failed.is_empty() {
+            problems.push(info.problem(failed.join("; ")));
+        }
+        tools.push(sounds);
     }
-    let refused = define(tools);
+    (tools, problems)
+}
+
+/// Defines the tools of `sounds` with `define`, which answers the ones it refused and why, and
+/// gives the tools it kept. Each refused one is a problem.
+fn define(
+    sounds: Vec<Sounds>,
+    problems: &mut Vec<Problem>,
+    define: impl FnOnce(Vec<JsonTool>) -> Vec<(String, String)>,
+) -> Vec<ToolInfo> {
+    let mut infos: Vec<ToolInfo> = sounds.iter().map(|sounds| sounds.info().clone()).collect();
+    let refused = define(sounds.into_iter().map(Sounds::json_tool).collect());
     infos.retain(|info| {
         let Some((_, message)) = refused.iter().find(|(name, _)| *name == info.name) else {
             return true;
@@ -190,7 +198,7 @@ fn define(
         problems.push(info.problem(message));
         false
     });
-    (infos, problems)
+    infos
 }
 
 /// Whether a card or a page drew a tree the window can show.
@@ -222,10 +230,12 @@ fn tool_files(extensions: &Path) -> Vec<String> {
 /// A Bun that loaded.
 struct Launched {
     bun: Bun,
-    loaded: Loaded,
+    /// The tools it loaded, see [`checked`].
+    sounds: Vec<Sounds>,
     /// The files it runs without: those given, and each whose code hung or stopped Bun while it
     /// loaded.
     skipped: Skipped,
+    problems: Vec<Problem>,
 }
 
 /// Starts Bun on the tools of `extensions` without the `skipped` files, and waits for its load.
@@ -244,15 +254,18 @@ fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, S
     std::fs::write(&host, HOST).map_err(|error| error.to_string())?;
     // Ends: a file is blamed at most once, as Bun never loads a skipped one.
     loop {
-        let loading: Vec<&String> = (files.iter())
+        let loading: Vec<&str> = (files.iter())
             .filter(|file| !skipped.contains_key(*file))
+            .map(String::as_str)
             .collect();
         match Bun::start(&program, &host, extensions, &loading) {
             Ok((bun, loaded)) => {
+                let (sounds, problems) = checked(loaded, &skipped);
                 return Ok(Some(Launched {
                     bun,
-                    loaded,
+                    sounds,
                     skipped,
+                    problems,
                 }));
             }
             Err(LoadFailure {

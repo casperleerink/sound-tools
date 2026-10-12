@@ -7,11 +7,9 @@
 //! picks another graph; a knob, a toggle or a pattern only moves a value of the sound that
 //! plays.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::rc::Rc;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -395,6 +393,10 @@ impl ToolInfo {
         state
     }
 
+    fn has_choices(&self) -> bool {
+        (self.fields.0.iter()).any(|(_, field)| matches!(field, Field::Choice { .. }))
+    }
+
     /// The choices of a record, each at its default when the record leaves it out, as JSON:
     /// what picks its sound. A record and Bun may write an option apart, `4.0` and `4`.
     fn sound_key(&self, state: &Value) -> String {
@@ -483,40 +485,47 @@ impl ToolInfo {
 /// which waits for a sample read on its thread.
 type Read<'a> = (&'a Assets, u32, &'a InstanceId);
 
-/// The sound of one combination of choices: as Bun sent it, then compiled.
-enum Sound {
-    Sent(Graph),
-    Compiled(Rc<Code>),
-}
-
 /// The behaviour of a tool: its sound per combination of choices.
 pub(crate) struct Sounds {
     info: Arc<ToolInfo>,
-    declarations: Declarations,
-    /// By [`ToolInfo::sound_key`]. Compiled when a record first plays it; a failure is kept
-    /// too, so a record that cannot play does not compile again on every turn of a knob.
-    sounds: RefCell<HashMap<String, Result<Sound, String>>>,
+    /// Compiled, by [`ToolInfo::sound_key`], or why that sound does not build.
+    sounds: HashMap<String, Result<Arc<Code>, String>>,
 }
 
 impl Sounds {
-    /// The behaviour of `info`, with the graph Bun sent for each combination of its choices.
+    /// The behaviour of `info`, with the graph Bun sent for each combination of its choices
+    /// compiled. Takes as long as compiling them all: not on the thread that draws.
     pub(crate) fn new(
         info: &ToolInfo,
         graphs: Vec<(Map<String, Value>, Result<Graph, String>)>,
     ) -> Self {
+        let declarations = info.declarations();
         let sounds = (graphs.into_iter())
             .map(|(choices, graph)| {
-                (
-                    info.sound_key(&Value::Object(choices)),
-                    graph.map(Sound::Sent),
-                )
+                let key = info.sound_key(&Value::Object(choices));
+                let code = graph.and_then(|graph| {
+                    (graph.compile(&declarations).map(Arc::new)).map_err(|error| error.to_string())
+                });
+                let code = code.map_err(|error| match info.has_choices() {
+                    true => format!("its sound with the choices {key} does not build: {error}"),
+                    false => format!("its sound does not build: {error}"),
+                });
+                (key, code)
             })
             .collect();
         Self {
             info: Arc::new(info.clone()),
-            declarations: info.declarations(),
-            sounds: RefCell::new(sounds),
+            sounds,
         }
+    }
+
+    pub(crate) fn info(&self) -> &ToolInfo {
+        &self.info
+    }
+
+    /// Why each sound that does not build does not.
+    pub(crate) fn failures(&self) -> impl Iterator<Item = &String> {
+        self.sounds.values().filter_map(|code| code.as_ref().err())
     }
 
     /// The tool for the core.
@@ -555,23 +564,11 @@ impl Sounds {
     }
 
     /// The compiled sound for the choices of `state`.
-    pub(crate) fn code(&self, state: &Value) -> Result<Rc<Code>, String> {
+    fn code(&self, state: &Value) -> Result<Arc<Code>, String> {
         let key = self.info.sound_key(state);
-        let mut sounds = self.sounds.borrow_mut();
         // A checked record has one of the options of each choice, and Bun sent each combination.
-        let sound = sounds
-            .entry(key)
-            .or_insert_with_key(|key| Err(format!("Bun sent no sound for the choices {key}")));
-        let code = match sound {
-            Ok(Sound::Compiled(code)) => return Ok(code.clone()),
-            Err(error) => return Err(error.clone()),
-            Ok(Sound::Sent(graph)) => graph.compile(&self.declarations).map(Rc::new),
-        };
-        let file = &self.info.file;
-        let code =
-            code.map_err(|error| format!("the sound of extensions/{file} does not build: {error}"));
-        *sound = code.clone().map(Sound::Compiled);
-        code
+        (self.sounds.get(&key).cloned())
+            .unwrap_or_else(|| Err(format!("Bun sent no sound for the choices {key}")))
     }
 
     /// Where the params and lists of `code` stand in `state`: a knob or a toggle by the name of

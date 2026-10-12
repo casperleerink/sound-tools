@@ -1,13 +1,16 @@
 //! The Bun process that runs `host.ts`. It loads the files of `extensions/` once and says what
 //! it loaded, then hears what the window tells it and says what the tools do. A change of the
 //! code starts a new Bun. One JSON message per line, both ways.
+//!
+//! Bun does one thing at a time and says which tool's code it runs before it runs it, so a
+//! thread here that hears it knows what hangs, without the window: the window may be busy.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
-use std::sync::mpsc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -19,8 +22,13 @@ use crate::Midi;
 use crate::tools::ToolInfo;
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
-/// hung. Bun starts in a few tens of milliseconds and loads a file in less.
-const LOAD_TIMEOUT: Duration = Duration::from_secs(5);
+/// hung. A file's step is its import, the sound of every combination of its choices and the
+/// first draw of its cards: all of it takes well under a second.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long Bun may say nothing while it has something to do before it counts as hung. It
+/// answers in well under a millisecond.
+const HANG_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The lines that may wait for Bun to read them. More, and Bun has stopped reading.
 const QUEUED_LINES: usize = 1024;
@@ -51,7 +59,7 @@ pub(crate) enum Request<'a> {
         handler: usize,
         at: Option<(f32, f32)>,
     },
-    /// One step of the control loop of instances of one tool.
+    /// One step of the control loop of every instance whose tool has one.
     Frame {
         /// Seconds since the last frame.
         dt: f32,
@@ -66,7 +74,7 @@ pub(crate) enum Request<'a> {
         key: &'a str,
         down: bool,
     },
-    /// What the MIDI keyboard played, for the instances of one tool that hear it.
+    /// What the MIDI keyboard played, for the instances that hear it.
     Midi {
         time: f64,
         instances: Vec<Looped<'a>>,
@@ -96,12 +104,12 @@ pub(crate) struct Looped<'a> {
     pub edits: u64,
 }
 
-/// What Bun says after its load.
+/// What the window hears of Bun after its load.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Event {
-    /// It finished the oldest request it had not finished.
-    Done,
+    /// The control loops ran the last frame.
+    Framed,
     /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
     /// A card drew, with the version of its tree, which a click on it names, so it runs a
@@ -140,6 +148,18 @@ pub(crate) enum Event {
         pitch: u8,
         at: Option<f64>,
     },
+    /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
+    /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as
+    /// code a timer of a tool ran.
+    #[serde(skip_deserializing)]
+    Ended { blame: Option<Runs>, why: String },
+}
+
+/// The code of a tool Bun runs: its tool, and which code, such as `tick`.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct Runs {
+    pub tool: String,
+    pub what: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -208,6 +228,10 @@ enum Line {
         file: String,
     },
     Loaded(Loaded),
+    /// It runs this code of a tool now.
+    Runs(Runs),
+    /// It did the oldest thing it was told and had not done.
+    Done,
     #[serde(untagged)]
     Event(Event),
 }
@@ -218,10 +242,21 @@ pub(crate) struct LoadFailure {
     pub why: String,
 }
 
+/// What Bun has to do, for the thread that hears it.
+struct Busy {
+    /// How many things it was told and has not done.
+    pending: usize,
+    /// When it last said something, or was told something when it had nothing to do.
+    since: Instant,
+    /// The code it runs now.
+    runs: Option<Runs>,
+}
+
 pub(crate) struct Bun {
     /// Lines on their way to Bun, which a thread of their own writes: a Bun that stops reading
     /// does not block the window.
     lines: mpsc::SyncSender<String>,
+    busy: Arc<Mutex<Busy>>,
     events: smol::channel::Receiver<Event>,
     /// Ended when the runtime lets go of it.
     child: Child,
@@ -234,7 +269,7 @@ impl Bun {
         program: &Path,
         host_script: &Path,
         folder: &Path,
-        files: &[&String],
+        files: &[&str],
     ) -> Result<(Self, Loaded), LoadFailure> {
         let failure = |why: String| LoadFailure { file: None, why };
         #[allow(clippy::disallowed_methods)]
@@ -251,17 +286,23 @@ impl Bun {
             return Err(failure("started without pipes".to_string()));
         };
         let (events, received) = smol::channel::unbounded();
-        let (steps, load) = mpsc::channel();
+        let (said, heard) = mpsc::channel();
         let (lines, to_write) = mpsc::sync_channel::<String>(QUEUED_LINES);
+        let busy = Arc::new(Mutex::new(Busy {
+            pending: 0,
+            since: Instant::now(),
+            runs: None,
+        }));
         // From here a failure drops it, which ends the process.
         let bun = Self {
             lines,
+            busy: busy.clone(),
             events: received,
             child,
         };
         std::thread::Builder::new()
             .name("bun".into())
-            .spawn(move || read(stdout, steps, &events))
+            .spawn(move || read(stdout, &said))
             .map_err(|error| failure(error.to_string()))?;
         std::thread::Builder::new()
             .name("bun-input".into())
@@ -280,45 +321,51 @@ impl Bun {
             })
             .map_err(|error| failure(error.to_string()))?;
         let mut file = None;
-        loop {
-            let why = match load.recv_timeout(LOAD_TIMEOUT) {
-                Ok(Line::Loading { file: next }) => {
-                    file = Some(next);
-                    continue;
+        let why = loop {
+            match heard.recv_timeout(LOAD_TIMEOUT) {
+                Ok(Line::Loading { file: next }) => file = Some(next),
+                Ok(Line::Loaded(loaded)) => {
+                    std::thread::Builder::new()
+                        .name("bun-events".into())
+                        .spawn(move || hear(&heard, &busy, &events))
+                        .map_err(|error| failure(error.to_string()))?;
+                    return Ok((bun, loaded));
                 }
-                Ok(Line::Loaded(loaded)) => return Ok((bun, loaded)),
-                Ok(Line::Event(_)) => continue,
+                // Bun runs no tool and does nothing it is told before its load.
+                Ok(Line::Runs(_) | Line::Done | Line::Event(_)) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    format!("did not finish loading within {LOAD_TIMEOUT:?}")
+                    break format!("did not finish loading within {LOAD_TIMEOUT:?}");
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => "stopped Bun".to_string(),
-            };
-            return Err(LoadFailure { file, why });
-        }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break "stopped Bun".to_string(),
+            }
+        };
+        Err(LoadFailure { file, why })
     }
 
-    /// What Bun says after its load, in order. It ends when Bun does.
+    /// What Bun says after its load, in order, up to [`Event::Ended`].
     pub(crate) fn events(&self) -> smol::channel::Receiver<Event> {
         self.events.clone()
     }
 
-    /// Tells Bun something and does not wait. Bun says [`Event::Done`] when it is done.
-    /// Whether it went: not when Bun stopped reading, which the window finds hung by what it
-    /// did not say done, or stopped, which the end of its events says.
-    pub(crate) fn send(&self, request: &Request) -> bool {
-        match serde_json::to_string(request) {
-            Ok(json) => self.lines.try_send(json + "\n").is_ok(),
-            Err(error) => {
-                eprintln!("error: {error}");
-                false
+    /// Tells Bun something and does not wait. Nothing when Bun stopped reading, which the
+    /// thread that hears it finds hung, or stopped.
+    pub(crate) fn send(&self, request: &Request) {
+        let line = match serde_json::to_string(request) {
+            Ok(json) => json + "\n",
+            Err(error) => return eprintln!("error: {error}"),
+        };
+        if self.lines.try_send(line).is_ok() {
+            let mut busy = self.busy.lock().unwrap_or_else(PoisonError::into_inner);
+            if busy.pending == 0 {
+                busy.since = Instant::now();
             }
+            busy.pending += 1;
         }
     }
 }
 
-/// Reads what Bun says until it stops: the steps of its load to `steps`, which nobody hears
-/// after it, and every event to `events`.
-fn read(stdout: ChildStdout, steps: mpsc::Sender<Line>, events: &smol::channel::Sender<Event>) {
+/// Reads what Bun says until it stops, and passes it on to `said`.
+fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     for line in BufReader::new(stdout).lines() {
         let line = match line {
             Ok(line) => line,
@@ -328,14 +375,51 @@ fn read(stdout: ChildStdout, steps: mpsc::Sender<Line>, events: &smol::channel::
             }
         };
         match serde_json::from_str::<Line>(&line) {
-            // Outside the window nobody reads them, and Bun says nothing unasked.
-            Ok(Line::Event(event)) => {
-                events.try_send(event).ok();
-            }
-            Ok(step) => {
-                steps.send(step).ok();
+            Ok(line) => {
+                if said.send(line).is_err() {
+                    break;
+                }
             }
             Err(error) => eprintln!("error: the TypeScript host said something unknown: {error}"),
+        }
+    }
+}
+
+/// Hears what Bun says after its load and passes its events on to `events`, until it hangs or
+/// stops, which [`Event::Ended`] says.
+fn hear(heard: &mpsc::Receiver<Line>, busy: &Mutex<Busy>, events: &smol::channel::Sender<Event>) {
+    let lock = || busy.lock().unwrap_or_else(PoisonError::into_inner);
+    let ended = |why: String| {
+        let blame = lock().runs.take();
+        // Outside the window nobody hears it.
+        events.try_send(Event::Ended { blame, why }).ok();
+    };
+    loop {
+        let line = match heard.recv_timeout(HANG_TIMEOUT / 4) {
+            Ok(line) => line,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let busy = lock();
+                if busy.pending > 0 && busy.since.elapsed() > HANG_TIMEOUT {
+                    drop(busy);
+                    return ended(format!("took longer than {HANG_TIMEOUT:?}"));
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped Bun".to_string()),
+        };
+        let mut busy = lock();
+        busy.since = Instant::now();
+        match line {
+            Line::Runs(runs) => busy.runs = Some(runs),
+            Line::Done => {
+                busy.pending = busy.pending.saturating_sub(1);
+                busy.runs = None;
+            }
+            Line::Event(event) => {
+                events.try_send(event).ok();
+            }
+            // Bun loads once.
+            Line::Loading { .. } | Line::Loaded(_) => {}
         }
     }
 }
