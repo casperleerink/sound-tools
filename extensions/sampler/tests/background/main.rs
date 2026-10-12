@@ -10,7 +10,7 @@ mod support;
 use sampler::{SamplerState, SfzPath};
 use sound_core::Changes;
 
-use support::{Harness, SAMPLE_RATE, id, note, write_wav};
+use support::{Harness, SAMPLE_RATE, id, note, playing, write_wav};
 
 /// Writes `assets/instruments/<name>/<name>.sfz` with one steady sample at `level`.
 fn write_pack(harness: &Harness, name: &str, level: f32) -> SamplerState {
@@ -66,4 +66,33 @@ fn a_new_instrument_plays_once_it_is_loaded_and_the_old_one_until_then() {
     take_ready(&mut harness);
     assert_eq!(level(&mut harness), 0.2);
     assert_eq!(harness.project.problems(), []);
+}
+
+/// While the new instrument loads, the old file plays with the new record. A start and loop
+/// past the end of the old file play nothing of it, and do not stop the audio thread.
+#[test]
+fn a_start_past_the_old_file_plays_nothing_while_the_new_instrument_loads() {
+    sound_media::load_in_background();
+    let mut harness = Harness::with_samples(&[("short.wav", SAMPLE_RATE, vec![0.1; 4_800])]);
+    let notes = vec![note(0, 4_800, 60, 127)];
+    harness.add_track(notes, playing("short.wav", SamplerState::default()));
+    assert_eq!(level(&mut harness), 0.1);
+
+    let sampler = harness
+        .project
+        .resolve::<SamplerState>(&id("track/instrument"))
+        .unwrap();
+    let mut changes = Changes::new();
+    changes.set(
+        &sampler,
+        SamplerState {
+            start_seconds: 0.5,
+            looping: true,
+            ..write_pack(&harness, "long", 0.2)
+        },
+    );
+    harness.project.commit("Load instrument", changes).unwrap();
+    assert_eq!(level(&mut harness), 0.0);
+    take_ready(&mut harness);
+    assert_eq!(level(&mut harness), 0.2);
 }

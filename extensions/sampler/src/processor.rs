@@ -284,6 +284,9 @@ impl Layer {
                 )
             }
         };
+        // While another instrument loads, the old file plays with the new record, whose start
+        // may lie past the end of the old file. Then the part that plays is empty.
+        let offset = offset.min(end);
         let phase = match region.trigger {
             Trigger::Attack => Phase::Playing,
             Trigger::Release => Phase::Waiting,
