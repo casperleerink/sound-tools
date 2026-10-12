@@ -52,10 +52,12 @@ fn sustain_raises_or_lowers_the_tail_of_each_hit() {
 /// A steady tone has no start and no tail: with both gains at their ends it comes out sample
 /// for sample as it went in. At 1 kHz a sample falls on each peak, so its level does not move
 /// at all; at other frequencies it moves by the ripple of the largest sample, under 0.03 dB.
+/// Under -120 dB, as the end of a fade or a reverb tail, it does too.
 #[test]
 fn a_steady_sound_passes_the_shaper_untouched() {
-    let amplitude = decibels(-12.0);
-    let output = Rig::new(shaper(18.0, -18.0), sine(1_000.0, amplitude)).render(SECOND);
-    let input = dry(sine(1_000.0, amplitude), SECOND);
-    assert_eq!(output[SECOND / 2..], input[SECOND / 2..]);
+    for amplitude in [decibels(-12.0), decibels(-130.0)] {
+        let output = Rig::new(shaper(18.0, -18.0), sine(1_000.0, amplitude)).render(SECOND);
+        let input = dry(sine(1_000.0, amplitude), SECOND);
+        assert_eq!(output[SECOND / 2..], input[SECOND / 2..], "{amplitude}");
+    }
 }
