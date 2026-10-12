@@ -228,7 +228,9 @@ impl Gate {
         if self.falling < SILENT {
             self.falling = 0.0;
         }
-        if !shaping || level == 0.0 {
+        // Under -120 dB there is nothing to shape, and the falling follower may have let go
+        // while the sound has not, which would divide by 0.
+        if !shaping || level < SILENT {
             return 1.0;
         }
         let transient = f64::from(self.transient.advance(1));
