@@ -1,7 +1,8 @@
 //! Small building blocks of the built-in effects and instruments that more than one of them
 //! needs: a read of a [`DelayLine`] that fades from one length to another, a one-pole filter,
-//! the hold on what goes into a loop and the rounding of a step of a waveform. Next to [`Smoothed`](crate::Smoothed) and [`DelayLine`]. The core itself
-//! uses none of them.
+//! the hold on what goes into a loop, the rounding of a step of a waveform and the Bessel
+//! function of a Kaiser window. Next to [`Smoothed`](crate::Smoothed) and [`DelayLine`]. The
+//! core itself uses only the Bessel function, for its [`Oversampler`](crate::Oversampler).
 
 use std::f32::consts::PI;
 
@@ -192,6 +193,22 @@ impl<const N: usize> Taps<N> {
         let from = read(from);
         from + (to - from) * fade
     }
+}
+
+/// The modified Bessel function of the first kind, order 0, for a Kaiser window. To the full
+/// precision of `f64`.
+pub fn bessel_i0(x: f64) -> f64 {
+    let quarter = x * x / 4.0;
+    let mut term = 1.0;
+    let mut sum = 1.0;
+    for k in 1..100 {
+        term *= quarter / (k * k) as f64;
+        sum += term;
+        if term < sum * 1e-17 {
+            break;
+        }
+    }
+    sum
 }
 
 /// The one-pole factor for a time constant: after `seconds` a step is 63 % of the way. An

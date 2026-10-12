@@ -47,8 +47,8 @@ pub use device::{
     input_devices, monotonic_nanos, output_devices,
 };
 pub use dsp::{
-    HIGHEST_PHASE_STEP, OnePole, Taps, all_held_silent, all_positive_zero, all_zero, held, pole,
-    poly_blep,
+    HIGHEST_PHASE_STEP, OnePole, Taps, all_held_silent, all_positive_zero, all_zero, bessel_i0,
+    held, pole, poly_blep,
 };
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};
