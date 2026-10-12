@@ -131,6 +131,7 @@ impl Voice {
         let phase_step = (self.key_step * pitch_ratio).min(HIGHEST_PHASE_STEP);
         // Only an event changes the envelope between frames, and events end the frames.
         let still = self.envelope.is_still(envelope);
+        let gain = filter.level * self.amplitude;
         for sample in output {
             let mut oscillator = sawtooth(self.phase, phase_step);
             if SQUARE {
@@ -145,7 +146,6 @@ impl Voice {
             }
 
             let (_, low_pass) = self.filter.band_and_low(&filter.factors, oscillator);
-            let filtered = filter.level * low_pass;
 
             // An idle voice ended on the frame before: nothing of it is added any more.
             if self.envelope.is_idle() {
@@ -155,7 +155,7 @@ impl Voice {
                 true => self.envelope.level,
                 false => self.envelope.next(envelope),
             } as f32;
-            *sample += filtered * level * self.amplitude;
+            *sample += low_pass * level * gain;
         }
     }
 }
