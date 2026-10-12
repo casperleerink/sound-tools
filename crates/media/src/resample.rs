@@ -12,6 +12,8 @@
 //! 95 % of the lower Nyquist frequency of the two rates when that is lower, and it stops from
 //! that Nyquist frequency on, so nothing above it folds back.
 
+use sound_core::bessel_i0;
+
 use crate::file::Audio;
 
 /// Where the pass band ends at most: 20 kHz and a little room, so 20 kHz itself is flat.
@@ -220,21 +222,6 @@ pub(crate) fn kaiser(edge: f64, beta: f64, normal: f64) -> f64 {
         true => bessel_i0(beta * (1.0 - edge * edge).sqrt()) / normal,
         false => 0.0,
     }
-}
-
-/// The modified Bessel function of the first kind, order 0, for the Kaiser window.
-pub(crate) fn bessel_i0(x: f64) -> f64 {
-    let quarter = x * x / 4.0;
-    let mut term = 1.0;
-    let mut sum = 1.0;
-    for k in 1..100 {
-        term *= quarter / (k * k) as f64;
-        sum += term;
-        if term < sum * 1e-17 {
-            break;
-        }
-    }
-    sum
 }
 
 fn greatest_common_divisor(mut a: u64, mut b: u64) -> u64 {

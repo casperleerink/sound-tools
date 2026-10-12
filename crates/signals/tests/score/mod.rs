@@ -5,7 +5,7 @@
 
 use sound_core::{
     AudioOutput, Automation, Connection, Engine, EngineConfig, EventOutput, Ports, PrepareConfig,
-    ProcessContext, Processor, Watch,
+    ProcessContext, Processor, Watch, xorshift32,
 };
 use sound_notes::{Bend, NoteEvent, Pitch, Velocity};
 use sound_signals::{Code, Kind, Machine, Signals, SignalsUpdate, Values};
@@ -276,9 +276,7 @@ impl Processor for Player {
         for (index, (left, right)) in left.iter_mut().zip(right).enumerate() {
             let frame = self.frame + index;
             *left = ((frame % 200) as f32 / 100.0 - 1.0) * 0.5;
-            self.noise ^= self.noise << 13;
-            self.noise ^= self.noise >> 17;
-            self.noise ^= self.noise << 5;
+            self.noise = xorshift32(self.noise);
             *right = (self.noise >> 8) as f32 / (1 << 24) as f32 * 0.5 - 0.25;
         }
         self.frame = block.end;
