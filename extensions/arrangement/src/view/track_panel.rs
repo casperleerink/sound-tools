@@ -66,7 +66,7 @@ use sound_ui::{
     Recording, Session, Slot, Views, every_poll, weak_action, weak_callback,
 };
 
-use super::clip_card::ClipCard;
+use super::clip_card::{self, ClipCard};
 use super::layout::{DOT_LEFT, HEADER_WIDTH, NAME_LEFT};
 use super::paint::accent;
 use super::sidechain;
@@ -438,8 +438,12 @@ impl TrackPanel {
                 panel.refill_input_select(cx);
                 cx.notify();
             }
-            // Another track came, went or was renamed: a sidechain picker names the tracks.
+            // Another track came, went or was renamed: a sidechain picker names the tracks. A
+            // return that goes takes its send knob along, and the knob its end of a drag.
             if id != panel.track.id() && id.parent() == panel.track.id().parent() {
+                if matches!(event, ProjectEvent::Deleted(_)) {
+                    panel.end_drag(cx);
+                }
                 cx.notify();
             }
             // A record inside the track came or went and has no card: an effect record that
@@ -1042,39 +1046,43 @@ impl TrackPanel {
                 let set = |track: &mut TrackState, mute| track.mute = mute;
                 panel.edit.apply(session, track, label, change, set, cx);
             }));
-        let solo = Toggle::new("solo", "S", track.solo)
-            .color(yellow)
-            .on_change(weak_callback(cx, |panel, solo: bool, cx| {
-                let label = if solo { "Solo track" } else { "Unsolo track" };
-                let change = ValueChange::Set(solo);
-                let (session, track) = (&panel.session, &panel.track);
-                let set = |track: &mut TrackState, solo| track.solo = solo;
-                panel.edit.apply(session, track, label, change, set, cx);
-            }));
-        // A return has no solo, and says where its sends take the sound where an audio track
-        // has its input.
-        let pre_fader = Toggle::new("pre_fader", "Pre fader", track.pre_fader).on_change(
-            weak_callback(cx, |panel, pre_fader: bool, cx| {
-                let label = match pre_fader {
-                    true => "Send pre fader",
-                    false => "Send post fader",
-                };
-                let change = ValueChange::Set(pre_fader);
-                let (session, track) = (&panel.session, &panel.track);
-                let set = |track: &mut TrackState, pre_fader| track.pre_fader = pre_fader;
-                panel.edit.apply(session, track, label, change, set, cx);
-            }),
-        );
-        let is_return = track.kind == TrackKind::Return;
         let at = |left: f32, top: f32| div().absolute().left(px(left)).top(px(top));
         // A toggle sits on the line of the middle of a knob.
         let toggle_top = ROW_TOP + ROW_HEIGHT + (CONTROL_HEIGHT - toggle::HEIGHT) / 2.;
+        // A return has no solo, and says where its sends take the sound where an audio track
+        // has its input.
+        let is_return = track.kind == TrackKind::Return;
+        let solo = (!is_return).then(|| {
+            let solo = Toggle::new("solo", "S", track.solo)
+                .color(yellow)
+                .on_change(weak_callback(cx, |panel, solo: bool, cx| {
+                    let label = if solo { "Solo track" } else { "Unsolo track" };
+                    let change = ValueChange::Set(solo);
+                    let (session, track) = (&panel.session, &panel.track);
+                    let set = |track: &mut TrackState, solo| track.solo = solo;
+                    panel.edit.apply(session, track, label, change, set, cx);
+                }));
+            at(SOLO_LEFT, toggle_top).child(solo)
+        });
+        let pre_fader = is_return.then(|| {
+            let pre_fader = Toggle::new("pre_fader", "Pre fader", track.pre_fader).on_change(
+                weak_callback(cx, |panel, pre_fader: bool, cx| {
+                    let label = match pre_fader {
+                        true => "Send pre fader",
+                        false => "Send post fader",
+                    };
+                    let change = ValueChange::Set(pre_fader);
+                    let (session, track) = (&panel.session, &panel.track);
+                    let set = |track: &mut TrackState, pre_fader| track.pre_fader = pre_fader;
+                    panel.edit.apply(session, track, label, change, set, cx);
+                }),
+            );
+            at(PAN_LEFT, INPUT_TOP).child(pre_fader)
+        });
         let input = self
             .input_select
             .clone()
             .map(|select| at(PAN_LEFT, INPUT_TOP).child(select));
-        let solo = (!is_return).then(|| at(SOLO_LEFT, toggle_top).child(solo));
-        let pre_fader = is_return.then(|| at(PAN_LEFT, INPUT_TOP).child(pre_fader));
         [
             at(VOLUME_LEFT, ROW_TOP).child(volume),
             at(PAN_LEFT, ROW_TOP).child(pan),
@@ -1123,7 +1131,7 @@ impl TrackPanel {
                     }))
             })
             .collect();
-        let mut card = DeviceCard::new("sends", card_title("Sends"));
+        let mut card = DeviceCard::new("sends", clip_card::title("Sends"));
         let mut knobs = knobs.into_iter();
         while let Some(top) = knobs.next() {
             let column = Column::new().top(top);
@@ -1155,11 +1163,6 @@ fn short_name(name: &str) -> String {
         }
         false => name.to_string(),
     }
-}
-
-/// The title of a card that is no device, plain.
-fn card_title(text: &'static str) -> impl IntoElement {
-    div().font_weight(FontWeight::MEDIUM).child(text)
 }
 
 impl Focusable for TrackPanel {
