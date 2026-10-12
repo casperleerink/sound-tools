@@ -261,10 +261,13 @@ pub(crate) struct SimulatedInput {
     pub fails: Arc<AtomicBool>,
     /// Its sample rate, when not 48 kHz.
     pub rate: Arc<AtomicU32>,
+    /// Each time it closed, whether it closed on the thread that draws.
+    closed: Arc<Mutex<Vec<bool>>>,
 }
 
 impl SimulatedInput {
-    pub(crate) fn opener(&self) -> OpenInput {
+    /// `executor` is what an input that closes asks whether it is on the thread that draws.
+    pub(crate) fn opener(&self, executor: BackgroundExecutor) -> OpenInput {
         let input = self.clone();
         Arc::new(move || {
             input.attempts.fetch_add(1, Ordering::Relaxed);
@@ -281,12 +284,21 @@ impl SimulatedInput {
             *input.live.lock().unwrap() = Some(live_writer);
             input.written.store(0, Ordering::Relaxed);
             input.openings.fetch_add(1, Ordering::Relaxed);
+            let stream = SimulatedStream {
+                closed: input.closed.clone(),
+                executor: executor.clone(),
+            };
             Ok(OpenedInput {
-                stream: None,
+                stream: Some(Box::new(stream)),
                 reader,
                 live,
             })
         })
+    }
+
+    /// Each time it closed, whether it closed on the thread that draws.
+    pub(crate) fn closed_on_ui_thread(&self) -> Vec<bool> {
+        self.closed.lock().unwrap().clone()
     }
 
     pub(crate) fn openings(&self) -> u32 {
@@ -336,7 +348,7 @@ pub(crate) fn open_with_input(
     fill(&mut project);
     let input = SimulatedInput::default();
     let device = DeviceAccess {
-        open_input: Some(input.opener()),
+        open_input: Some(input.opener(cx.executor())),
         ..DeviceAccess::default()
     };
     let plugins = plugins.downgrade();
@@ -399,7 +411,7 @@ impl SimulatedApp {
     }
 }
 
-/// The stream of a simulated tap, which tells where it was dropped.
+/// The stream of a simulated tap or input, which tells where it was dropped.
 struct SimulatedStream {
     closed: Arc<Mutex<Vec<bool>>>,
     executor: BackgroundExecutor,
