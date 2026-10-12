@@ -162,6 +162,15 @@ fn a_runaway_feedback_is_held_and_a_division_by_zero_is_silence() {
             .all(|sample| sample.abs() <= 4.0)
     );
 
+    // Through a filter it runs away too, and starts again from silence as it does without one.
+    let mut comb = machine(compile(|| {
+        let comb = feedback();
+        comb.set(lowpass(input() + comb.read() * 2.0, 5000.0, FRAC_1_SQRT_2));
+        comb.read()
+    }));
+    let output = run(&mut comb, |_| 1.0, 10_000);
+    assert!(loudest(&output[9_000..]) > 1.0);
+
     let mut divided = machine(compile(|| 1.0 / (input() - input())));
     assert!(
         run(&mut divided, |_| 1.0, 10)

@@ -1047,6 +1047,11 @@ impl Filter {
         }
         let input = finite(input);
         let (band, low) = self.section.band_and_low(&self.factors, input);
+        if !(band.is_finite() && low.is_finite()) {
+            // A feedback ran away through it. Its memory would stay so for good: it starts
+            // again from silence, as a feedback without a filter does.
+            self.section = SvfSection::default();
+        }
         let k = self.k;
         match kind {
             FilterKind::LowPass => low,
