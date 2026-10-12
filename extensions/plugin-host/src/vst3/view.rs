@@ -1,8 +1,8 @@
 //! The VST 3 side of a plugin's own window: `IPlugView` in a window of ours.
 //!
-//! The host machinery is in `host.rs` and `window.rs` and knows no format. What a plugin has to
-//! do for a window is [`crate::backend::PluginGui`], and this is the VST 3 answer to it. The
-//! CLAP answer is in `clap.rs`; neither format changed the machinery.
+//! The host machinery is in `host/windows.rs` and `window.rs` and knows no format. What a
+//! plugin has to do for a window is [`crate::backend::PluginGui`], and this is the VST 3 answer
+//! to it. The CLAP answer is in `clap.rs`; neither format changed the machinery.
 //!
 //! What the format says, from `pluginterfaces/gui/iplugview.h`:
 //!

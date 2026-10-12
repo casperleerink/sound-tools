@@ -7,19 +7,29 @@
 //! goes (`crate::store`), and the sidebar opens on the project's last one. The menu of **New**
 //! also opens the composer's instructions to the agent in place of the thread
 //! (`super::instructions`).
+//!
+//! This file holds the view itself: its fields, the menus and the settings, the instructions,
+//! and the render. The rest is in `sidebar/`, as more `impl Sidebar`:
+//! - `turn`: the agent's process, a turn from the send to its end, approvals, and the problems
+//!   a turn left.
+//! - `setup`: finding the program, its download, the sign-in and the sign-out.
+//! - `threads`: the saved threads: the project's last one, **New**, **Open recent**, and
+//!   writing them in order.
+
+mod setup;
+mod threads;
+mod turn;
 
 use std::collections::{HashMap, HashSet};
-use std::io;
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Instant;
 
 use gpui::{
     AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable, FollowMode, FontWeight,
     Global, KeyBinding, ListAlignment, ListState, Subscription, Task, Window, actions, div, hsla,
     list, point, prelude::*, px,
 };
-use smol::future;
-use sound_core::{GROUPING_WINDOW, INSTRUCTIONS_FILE, Problem, ProjectEvent};
+use sound_core::{INSTRUCTIONS_FILE, Problem, ProjectEvent};
 use sound_ui::ActiveTheme;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuPicked, Trigger};
@@ -33,35 +43,17 @@ use super::instructions::{self, InstructionsEditor, InstructionsEvent, Save, Sco
 use super::markdown::{self, Markdown};
 use super::menu::{self, Choice};
 use super::onboarding::{Onboarding, Setup, SetupAction};
-use crate::conversation::{Conversation, Entry, request_label};
-use crate::environment::put_first_on_path;
-use crate::install::{self, InstallError};
+use crate::conversation::{Conversation, Entry};
 use crate::settings::{AgentSettings, AgentSettingsEvent};
-use crate::store::{Line, RecentThread, SavedThread, ThreadStore, Write};
-use crate::{
-    Account, AgentEvent, ApprovalAnswer, Events, Installed, Provider, SignInChoice, Thread,
-    ThreadOptions, TurnOutcome, login_shell_environment, program_on_path,
-};
+use crate::store::{RecentThread, SavedThread, ThreadStore, Write};
+use crate::{Account, ApprovalAnswer, Installed, Provider, SignInChoice, Thread};
 
 actions!(agent_sidebar, [Stop]);
 
 const KEY_CONTEXT: &str = "AgentSidebar";
 
-/// Events that come within one frame are applied together, so a fast stream of text measures
-/// the growing entry once a frame and not once a token.
-const FRAME: Duration = Duration::from_millis(16);
-
 /// How far the list draws beyond what shows, so a short scroll needs no measuring.
 const OVERDRAW: f32 = 800.;
-
-/// How long the browser may take to sign in before the sidebar gives up and asks again.
-const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-
-/// How long the program may take to say whether it is signed in.
-const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// How many threads **Open recent** lists.
-const RECENT: usize = 10;
 
 struct BindingsInstalled;
 impl Global for BindingsInstalled {}
@@ -156,14 +148,9 @@ pub struct Sidebar {
 }
 
 impl Sidebar {
-    /// Reads the login shell in the background, then asks the program whether it is signed
-    /// in, or offers **Set up** when there is none yet. The program is the one the provider's
-    /// environment variable names, else the composer's own on the login shell's `PATH`, else
-    /// the download in `agents`. The threads of the
+    /// Finds the program in the background, see [`Self::find_program`]. The threads of the
     /// project are kept in `threads`, `agent/threads` in the support folder of the machine;
     /// with `None` nothing is saved. `settings` are the app's, shared by every sidebar.
-    /// `first_on_path` goes first on the agent's `PATH`: the folder of the programs the app
-    /// ships, so the agent runs the same ones.
     pub fn new(
         session: Entity<sound_ui::Session>,
         agents: Option<PathBuf>,
@@ -182,42 +169,7 @@ impl Sidebar {
             window,
             cx,
         );
-        let provider = sidebar.provider;
-        let downloaded = sidebar
-            .agents
-            .clone()
-            .zip(provider.download())
-            .map(|(agents, download)| download.program(&agents));
-        sidebar.setup_task = Some(cx.spawn(async move |sidebar, cx| {
-            let found = cx
-                .background_spawn(async move {
-                    let (mut environment, error) = match login_shell_environment().await {
-                        Ok(environment) => (environment, None),
-                        Err(error) => (std::env::vars_os().collect(), Some(error)),
-                    };
-                    let named = std::env::var_os(provider.program_variable()).map(PathBuf::from);
-                    let program = named
-                        .or_else(|| program_on_path(provider.command(), &environment))
-                        .or(downloaded);
-                    let present = program.as_ref().is_some_and(|program| program.is_file());
-                    // Without it the agent still runs, with only the composer's own programs.
-                    if let Some(folder) = &first_on_path
-                        && let Err(error) = put_first_on_path(&mut environment, folder)
-                    {
-                        eprintln!("{} is not on the agent's PATH: {error}", folder.display());
-                    }
-                    let installed = program.map(|program| Installed {
-                        program,
-                        environment,
-                    });
-                    (installed, present, error)
-                })
-                .await;
-            // A sidebar that went in the meantime has nobody to tell.
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.found(found, cx))
-                .ok();
-        }));
+        sidebar.find_program(first_on_path, cx);
         sidebar
     }
 
@@ -381,78 +333,6 @@ impl Sidebar {
         sidebar
     }
 
-    /// Reads the current thread of `project` from `threads` in the background.
-    fn load(threads: PathBuf, project: PathBuf, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |sidebar, cx| {
-            let (store, current, recent) = cx
-                .background_spawn(async move {
-                    let store = ThreadStore::new(&threads, &project);
-                    let (current, recent) = (store.current(), store.recent(RECENT));
-                    (store, current, recent)
-                })
-                .await;
-            // A sidebar that went in the meantime shows nothing.
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.loaded(store, current, recent, cx))
-                .ok();
-        })
-    }
-
-    fn loaded(
-        &mut self,
-        store: ThreadStore,
-        current: Result<Option<(SavedThread, Conversation)>, String>,
-        recent: Result<Vec<RecentThread>, String>,
-        cx: &mut Context<Self>,
-    ) {
-        self.loading = None;
-        self.writes = Some(write_in_order(store.clone(), cx));
-        self.store = Some(store);
-        // The index did not read: `current` says so.
-        self.recent = recent.unwrap_or_default();
-        // **New** while it loaded: the saved thread stays in the store, and the new one is
-        // current.
-        let current = match std::mem::take(&mut self.new_thread_while_loading) {
-            true => {
-                if let Ok(Some((saved, conversation))) = &current {
-                    self.remember(saved, conversation);
-                }
-                self.keep([Write::Current(None)]);
-                Ok(None)
-            }
-            false => current,
-        };
-        match current {
-            Ok(Some((saved, conversation))) => {
-                self.saved = Some(saved);
-                // Only notices came meanwhile: no message goes while it loads.
-                let meanwhile = std::mem::replace(&mut self.conversation, conversation);
-                self.conversation.append(meanwhile);
-            }
-            Ok(None) => {}
-            Err(error) => self
-                .conversation
-                .notice(format!("The saved thread could not be read: {error}")),
-        }
-        self.forget_entries();
-        self.list.reset(self.conversation.entries().len());
-        self.update_new_menu(cx);
-        cx.notify();
-    }
-
-    /// Puts a thread first in **Open recent**, by its first message. A thread with none has
-    /// nothing to show.
-    fn remember(&mut self, saved: &SavedThread, conversation: &Conversation) {
-        let Some(message) = conversation.messages().next() else {
-            return;
-        };
-        self.recent.retain(|thread| thread.id != saved.id);
-        let title = request_label(message);
-        let id = saved.id.clone();
-        self.recent.insert(0, RecentThread { id, title });
-        self.recent.truncate(RECENT);
-    }
-
     /// For a conversation that is another one now: what the sidebar keeps by entry is not
     /// its.
     fn forget_entries(&mut self) {
@@ -581,177 +461,9 @@ impl Sidebar {
         self.saved.as_ref()?.session_id.clone()
     }
 
-    fn keep(&self, writes: impl IntoIterator<Item = Write>) {
-        let Some(sender) = &self.writes else {
-            return;
-        };
-        for write in writes {
-            // The writer ends only with the sidebar, which owns the sender.
-            sender.try_send(write).ok();
-        }
-    }
-
     /// Whether the agent works or waits on the composer, so a closed sidebar can say so.
     pub fn is_busy(&self) -> bool {
         self.conversation.is_working()
-    }
-
-    /// Shows the composer's message and opens its request. [`Self::send`] calls it before the
-    /// message goes to the agent; a test calls it to replay a recorded turn with no process.
-    pub fn begin(&mut self, message: &str, cx: &mut Context<Self>) {
-        self.begin_at(message, SystemTime::now(), cx);
-    }
-
-    /// [`Self::begin`] with the turn started at `started`, so a snapshot shows how long it
-    /// worked.
-    pub fn begin_at(&mut self, message: &str, started: SystemTime, cx: &mut Context<Self>) {
-        let label = request_label(message);
-        self.session
-            .update(cx, |session, _| session.begin_request(&label));
-        self.problems_before = self.session.read(cx).project().problems();
-        self.just_ended = None;
-        self.conversation.send(message, started);
-        let saved = self.saved.get_or_insert_with(SavedThread::fresh);
-        let line = Line::Sent {
-            at: started,
-            message: message.to_string(),
-        };
-        let writes = [
-            Write::Current(Some(saved.clone())),
-            Write::Lines {
-                thread: saved.id.clone(),
-                lines: vec![line],
-            },
-        ];
-        self.keep(writes);
-        self.show(None, cx);
-    }
-
-    /// What the agent did, in order. The process hands its events here once a frame; a test
-    /// calls it with recorded ones.
-    pub fn receive(
-        &mut self,
-        events: impl IntoIterator<Item = AgentEvent>,
-        cx: &mut Context<Self>,
-    ) {
-        let now = SystemTime::now();
-        let mut changed: Option<usize> = None;
-        let mut lines = Vec::new();
-        let mut failed = false;
-        for event in events {
-            lines.extend(Line::of(&event, now));
-            match &event {
-                AgentEvent::Started {
-                    account, models, ..
-                } => {
-                    let models = models.clone();
-                    // Every sidebar's menu follows, by observing the settings.
-                    self.settings
-                        .update(cx, |settings, cx| settings.set_models(models, cx));
-                    // The account the running agent reports is the newest word on it.
-                    if matches!(self.setup, Setup::Ready { .. }) {
-                        let account = account.clone();
-                        self.set_setup(Setup::Ready { account }, cx);
-                    }
-                }
-                AgentEvent::TurnEnded {
-                    outcome: TurnOutcome::Failed { .. },
-                } => failed = true,
-                _ => {}
-            }
-            let ends = matches!(
-                event,
-                AgentEvent::TurnEnded { .. } | AgentEvent::Exited { .. }
-            );
-            // Only the end of a turn that works ends its request: an exit after the turn
-            // ended must not move the end of a request that finished long ago.
-            let ends_turn = ends && self.conversation.is_working();
-            if ends_turn {
-                self.session.update(cx, |session, _| session.end_request());
-            }
-            if matches!(event, AgentEvent::Exited { .. }) {
-                // The next message starts a new process.
-                self.agent = None;
-            }
-            if let Some(index) = self.conversation.apply(event, now) {
-                changed = Some(changed.map_or(index, |earlier| earlier.min(index)));
-                if ends_turn {
-                    self.keep_problems_left(index, cx);
-                }
-            }
-        }
-        // A thread is saved from its first message on.
-        if let Some(saved) = &self.saved
-            && !lines.is_empty()
-        {
-            let thread = saved.id.clone();
-            self.keep([Write::Lines { thread, lines }]);
-        }
-        self.show(changed, cx);
-        if failed {
-            self.check_still_signed_in(cx);
-        }
-    }
-
-    /// Keeps what problems the turn at `index` left that were not there when it began. Nothing
-    /// goes to the agent: its docs tell it to read `problems.txt` itself.
-    fn keep_problems_left(&mut self, index: usize, cx: &App) {
-        let left: Vec<Problem> = self
-            .session
-            .read(cx)
-            .project()
-            .problems()
-            .into_iter()
-            .filter(|problem| !self.problems_before.contains(problem))
-            .collect();
-        if left.is_empty() {
-            self.problems_left.remove(&index);
-        } else {
-            self.problems_left.insert(index, left);
-        }
-        self.just_ended = Some((index, Instant::now()));
-    }
-
-    /// The watcher applies what it heard after its grouping window, so the last writes of a
-    /// turn may come just after the turn ended. Their problems are that turn's too.
-    fn problems_changed(&mut self, cx: &mut Context<Self>) {
-        let Some((index, ended)) = self.just_ended else {
-            return;
-        };
-        if ended.elapsed() > GROUPING_WINDOW {
-            self.just_ended = None;
-            return;
-        }
-        self.keep_problems_left(index, cx);
-        // The turn's own end still counts from when it ended.
-        self.just_ended = Some((index, ended));
-        self.list.remeasure_items(index..index + 1);
-        cx.notify();
-    }
-
-    /// After a failed turn: the program may have been signed out meanwhile, such as in a
-    /// terminal. Only an answer of signed out changes anything; the failed turn says the rest.
-    fn check_still_signed_in(&mut self, cx: &mut Context<Self>) {
-        let Some(installed) = self.installed.clone() else {
-            return;
-        };
-        let provider = self.provider;
-        let asking = cx.background_spawn(async move { provider.account(&installed).await });
-        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
-            match asking.await {
-                Ok(None) => {
-                    let reason = Some(format!("{} is signed out.", provider.name()));
-                    sidebar
-                        .update(cx, |sidebar, cx| {
-                            sidebar.end_agent(cx);
-                            sidebar.set_setup(Setup::SignedOut { reason }, cx);
-                        })
-                        .ok();
-                }
-                // Signed in, or no answer: the next message shows whether the agent runs.
-                Ok(Some(_)) | Err(_) => {}
-            }
-        }));
     }
 
     /// Tells the list what changed: entries added at the end, and `changed` and what comes
@@ -770,450 +482,6 @@ impl Sidebar {
             self.list.splice(shown..shown, count - shown);
         }
         cx.notify();
-    }
-
-    fn found(
-        &mut self,
-        (installed, present, error): (Option<Installed>, bool, Option<io::Error>),
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(error) = error {
-            self.conversation.notice(format!(
-                "The agent runs without the settings of your shell: {error}."
-            ));
-            self.show(None, cx);
-        }
-        self.installed = installed;
-        if present {
-            self.check(None, cx);
-        } else {
-            self.set_setup(Setup::NotInstalled, cx);
-        }
-    }
-
-    fn set_setup(&mut self, setup: Setup, cx: &mut Context<Self>) {
-        let ready = matches!(setup, Setup::Ready { .. });
-        self.setup = setup;
-        // The menu keeps the last account it showed until the next one is in.
-        if ready {
-            self.update_menu(cx);
-        }
-        cx.notify();
-    }
-
-    fn act(&mut self, action: SetupAction, cx: &mut Context<Self>) {
-        match action {
-            SetupAction::Download => self.download(cx),
-            SetupAction::Cancel => self.cancel(cx),
-            SetupAction::SignIn(choice) => self.sign_in(choice, cx),
-            SetupAction::OpenPageAgain => {
-                if let Some(choice) = self.signing_in {
-                    self.sign_in(choice, cx);
-                }
-            }
-            SetupAction::Check => self.check(None, cx),
-        }
-    }
-
-    /// Asks the program whether it is signed in. `reason` is what the composer reads when it
-    /// is not, after a sign-in.
-    fn check(&mut self, reason: Option<String>, cx: &mut Context<Self>) {
-        let Some(installed) = self.installed.clone() else {
-            self.set_setup(Setup::NotInstalled, cx);
-            return;
-        };
-        let provider = self.provider;
-        self.set_setup(Setup::Checking, cx);
-        let asking = cx.background_spawn({
-            let installed = installed.clone();
-            async move { provider.account(&installed).await }
-        });
-        let timeout = cx.background_executor().timer(CHECK_TIMEOUT);
-        let folder = self.session.read(cx).project().root().to_path_buf();
-        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
-            // The question that loses the race is dropped, which ends its process.
-            let answer = future::or(async { Some(asking.await) }, async {
-                timeout.await;
-                None
-            })
-            .await;
-            let setup = match answer {
-                Some(Ok(Some(account))) => Setup::Ready { account },
-                Some(Ok(None)) => Setup::SignedOut { reason },
-                Some(Err(error)) => Setup::Stopped {
-                    message: error.to_string(),
-                },
-                None => Setup::Stopped {
-                    message: "it did not answer within 30 seconds.".to_string(),
-                },
-            };
-            let ready = matches!(setup, Setup::Ready { .. });
-            // A sidebar that went in the meantime has nobody to tell.
-            if sidebar
-                .update(cx, |sidebar, cx| sidebar.set_setup(setup, cx))
-                .is_err()
-                || !ready
-            {
-                return;
-            }
-            // The menu shows the models before the first message starts an agent. Asked after
-            // every check, as another account may offer others.
-            let listing =
-                cx.background_spawn(async move { provider.models(installed, folder).await });
-            let timeout = cx.background_executor().timer(CHECK_TIMEOUT);
-            let listed = future::or(async { Some(listing.await) }, async {
-                timeout.await;
-                None
-            })
-            .await;
-            sidebar
-                .update(cx, |sidebar, cx| match listed {
-                    Some(Ok(models)) => sidebar
-                        .settings
-                        .update(cx, |settings, cx| settings.set_models(models, cx)),
-                    Some(Err(error)) => sidebar.models_not_listed(&error.to_string(), cx),
-                    None => sidebar.models_not_listed("it did not answer within 30 seconds", cx),
-                })
-                .ok();
-        }));
-    }
-
-    fn models_not_listed(&mut self, error: &str, cx: &mut Context<Self>) {
-        let name = self.provider.name();
-        self.conversation
-            .notice(format!("{name} did not list its models: {error}"));
-        self.show(None, cx);
-    }
-
-    /// Downloads the pinned program, from where an earlier try stopped.
-    fn download(&mut self, cx: &mut Context<Self>) {
-        let name = self.provider.name();
-        let (Some(agents), Some(download)) = (self.agents.clone(), self.provider.download()) else {
-            let message = match self.agents {
-                None => format!("There is no folder on this computer to keep {name} in."),
-                Some(_) => format!("{name} does not run on this computer."),
-            };
-            self.set_setup(Setup::DownloadFailed { message }, cx);
-            return;
-        };
-        let size = download.size;
-        self.set_setup(Setup::Downloading { received: 0, size }, cx);
-        let (sender, receiver) = smol::channel::unbounded();
-        let installing = cx.background_spawn(async move {
-            install::install(&download, &agents, move |received| {
-                // Closed only when the sidebar went, and then nobody reads it.
-                sender.try_send(received).ok();
-            })
-            .await
-        });
-        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
-            // Ends with the download, which drops the sender.
-            while let Ok(received) = receiver.recv().await {
-                let downloading = Setup::Downloading { received, size };
-                if sidebar
-                    .update(cx, |sidebar, cx| sidebar.set_setup(downloading, cx))
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            let installed = installing.await;
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.downloaded(installed, cx))
-                .ok();
-        }));
-    }
-
-    fn downloaded(&mut self, installed: Result<PathBuf, InstallError>, cx: &mut Context<Self>) {
-        match installed {
-            Ok(program) => {
-                // The login shell answered before **Set up** showed.
-                let environment = self.installed.take().map_or_else(
-                    || std::env::vars_os().collect(),
-                    |installed| installed.environment,
-                );
-                self.installed = Some(Installed {
-                    program,
-                    environment,
-                });
-                self.check(None, cx);
-            }
-            Err(error) => {
-                let message = error.sentence(self.provider.name());
-                self.set_setup(Setup::DownloadFailed { message }, cx);
-            }
-        }
-    }
-
-    /// Runs the provider's sign-in in the browser and waits for it, at most ten minutes.
-    /// Started again, it ends the one before.
-    fn sign_in(&mut self, choice: SignInChoice, cx: &mut Context<Self>) {
-        let Some(installed) = self.installed.clone() else {
-            return;
-        };
-        self.signing_in = Some(choice);
-        self.set_setup(Setup::SigningIn, cx);
-        let running = cx.background_spawn(async move { choice.run(&installed).await });
-        let timeout = cx.background_executor().timer(SIGN_IN_TIMEOUT);
-        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
-            // The one that loses the race is dropped: a sign-in out of time ends its process.
-            let ended = future::or(
-                async {
-                    match running.await {
-                        Ok(()) => SignInEnded::Finished,
-                        Err(error) => SignInEnded::Failed(error),
-                    }
-                },
-                async {
-                    timeout.await;
-                    SignInEnded::TimedOut
-                },
-            )
-            .await;
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.signed_in(ended, cx))
-                .ok();
-        }));
-    }
-
-    fn signed_in(&mut self, ended: SignInEnded, cx: &mut Context<Self>) {
-        self.signing_in = None;
-        let reason = Some(ended.reason());
-        match ended {
-            // The program says whether it worked.
-            SignInEnded::Finished => self.check(reason, cx),
-            SignInEnded::Failed(_) | SignInEnded::TimedOut | SignInEnded::Cancelled => {
-                self.set_setup(Setup::SignedOut { reason }, cx);
-            }
-        }
-    }
-
-    fn cancel(&mut self, cx: &mut Context<Self>) {
-        // Dropping the task ends the download or the sign-in, and its process.
-        self.setup_task = None;
-        self.signing_in = None;
-        let setup = match self.setup {
-            Setup::Downloading { .. } => Setup::NotInstalled,
-            _ => Setup::SignedOut {
-                reason: Some(SignInEnded::Cancelled.reason()),
-            },
-        };
-        self.set_setup(setup, cx);
-    }
-
-    /// Signs the program out, for every app that shares its login, and ends the thread's
-    /// agent.
-    fn sign_out(&mut self, cx: &mut Context<Self>) {
-        let Some(installed) = self.installed.clone() else {
-            return;
-        };
-        self.end_agent(cx);
-        let provider = self.provider;
-        let signing_out = cx.background_spawn(async move { provider.sign_out(&installed).await });
-        self.setup_task = Some(cx.spawn(async move |sidebar, cx| {
-            let signed_out = signing_out.await;
-            sidebar
-                .update(cx, |sidebar, cx| match signed_out {
-                    Ok(()) => sidebar.check(None, cx),
-                    Err(error) => {
-                        let notice = format!("Could not sign out: {error}");
-                        sidebar.conversation.notice(notice);
-                        sidebar.show(None, cx);
-                    }
-                })
-                .ok();
-        }));
-    }
-
-    fn send(&mut self, cx: &mut Context<Self>) {
-        let message = self.input.read(cx).text().trim().to_string();
-        let ready = self.loading.is_none()
-            && self.opening.is_none()
-            && self.settings.read(cx).is_read()
-            && self.conversation.can_continue();
-        if message.is_empty() || self.conversation.is_working() || !ready {
-            return;
-        }
-        if self.agent.is_none() {
-            let (Setup::Ready { .. }, Some(installed)) = (&self.setup, &self.installed) else {
-                return;
-            };
-            match self.start(installed.clone(), cx) {
-                Ok(agent) => self.attach(agent),
-                Err(error) => {
-                    let name = self.provider.name();
-                    self.conversation
-                        .notice(format!("{name} did not start: {error}"));
-                    self.show(None, cx);
-                    return;
-                }
-            }
-        }
-        self.input.update(cx, |input, cx| input.set_text("", cx));
-        self.history.reset();
-        self.begin(&message, cx);
-        let sent = self.agent.as_ref().map(|agent| agent.thread.send(message));
-        if let Some(Err(error)) = sent {
-            let outcome = TurnOutcome::Failed {
-                message: error.to_string(),
-            };
-            self.receive([AgentEvent::TurnEnded { outcome }], cx);
-        }
-    }
-
-    fn start(&self, installed: Installed, cx: &mut Context<Self>) -> io::Result<Agent> {
-        let folder = self.session.read(cx).project().root().to_path_buf();
-        let settings = self.settings.read(cx).settings().clone();
-        // The flag needs a file that exists. One look, beside starting a process.
-        let instructions = (self.settings.read(cx).instructions_file())
-            .filter(|instructions| instructions.is_file());
-        let (thread, events) = Thread::start(ThreadOptions {
-            provider: self.provider,
-            installed,
-            folder,
-            model: settings.model.clone(),
-            approval_mode: settings.approval_mode,
-            resume: self.resume(),
-            instructions,
-        })?;
-        let (sender, receiver) = smol::channel::unbounded();
-        let reading = cx.background_spawn(read(events, sender));
-        let delivering = cx.spawn(async move |sidebar, cx| {
-            while let Ok(first) = receiver.recv().await {
-                let mut batch = vec![first];
-                while let Ok(event) = receiver.try_recv() {
-                    batch.push(event);
-                }
-                if sidebar
-                    .update(cx, |sidebar, cx| sidebar.receive(batch, cx))
-                    .is_err()
-                {
-                    break;
-                }
-                // What comes during the wait is the next batch.
-                cx.background_executor().timer(FRAME).await;
-            }
-        });
-        Ok(Agent {
-            thread,
-            _reading: reading,
-            _delivering: delivering,
-        })
-    }
-
-    /// Talks to `thread` from now on, in place of starting a process at the next send. For a
-    /// test with [`Thread::without_agent`], which hands the events to [`Self::receive`].
-    pub fn connect(&mut self, thread: Thread) {
-        self.attach(Agent {
-            thread,
-            _reading: Task::ready(()),
-            _delivering: Task::ready(()),
-        });
-    }
-
-    /// Talks to `agent` from now on. Its session is the thread's: the next message saves it,
-    /// before the agent has said anything, so a thread quit early still resumes.
-    fn attach(&mut self, agent: Agent) {
-        let saved = self.saved.get_or_insert_with(SavedThread::fresh);
-        saved.session_id = Some(agent.thread.session_id().to_string());
-        self.agent = Some(agent);
-    }
-
-    fn stop(&mut self, cx: &mut Context<Self>) {
-        if !self.conversation.is_working() {
-            return;
-        }
-        let stopped = self.agent.as_ref().map(|agent| agent.thread.interrupt());
-        if let Some(Err(error)) = stopped {
-            self.conversation.notice(error.to_string());
-            self.show(None, cx);
-        }
-    }
-
-    fn answer(&mut self, answer: ApprovalAnswer, cx: &mut Context<Self>) {
-        let Some((approval, turn)) = self.conversation.answered() else {
-            return;
-        };
-        let answered = self
-            .agent
-            .as_ref()
-            .map(|agent| agent.thread.answer(approval, answer));
-        if let Some(Err(error)) = answered {
-            self.conversation.notice(error.to_string());
-        }
-        self.show(Some(turn), cx);
-    }
-
-    /// Drops the thread and its process, and starts empty.
-    fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.leave_thread(window, cx);
-        // The old one stays in the store, and no thread is current until the next message.
-        self.keep([Write::Current(None)]);
-        // With no writer yet, the thread that loads must not come back.
-        self.new_thread_while_loading = self.loading.is_some();
-        window.focus(&self.focus_handle(cx), cx);
-        cx.notify();
-    }
-
-    /// Drops the thread and its process, and shows the recent thread `id` once it is read.
-    fn open_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(store) = self.store.clone() else {
-            return;
-        };
-        self.leave_thread(window, cx);
-        self.opening = Some(cx.spawn(async move |sidebar, cx| {
-            let opened = cx.background_spawn(async move { store.thread(&id) }).await;
-            // A sidebar that went in the meantime shows nothing.
-            sidebar
-                .update(cx, |sidebar, cx| sidebar.opened(opened, cx))
-                .ok();
-        }));
-        window.focus(&self.focus_handle(cx), cx);
-        cx.notify();
-    }
-
-    fn opened(
-        &mut self,
-        opened: Result<Option<(SavedThread, Conversation)>, String>,
-        cx: &mut Context<Self>,
-    ) {
-        self.opening = None;
-        match opened {
-            Ok(Some((saved, conversation))) => {
-                self.recent.retain(|thread| thread.id != saved.id);
-                self.keep([Write::Current(Some(saved.clone()))]);
-                self.saved = Some(saved);
-                // Only notices came meanwhile: no message goes while it reads.
-                let meanwhile = std::mem::replace(&mut self.conversation, conversation);
-                self.conversation.append(meanwhile);
-            }
-            // Gone from the index meanwhile, such as by a copy of the app on the same project.
-            Ok(None) => self
-                .conversation
-                .notice("That thread is not saved any more."),
-            Err(error) => self
-                .conversation
-                .notice(format!("The thread could not be read: {error}")),
-        }
-        self.forget_entries();
-        self.list.reset(self.conversation.entries().len());
-        self.update_new_menu(cx);
-        cx.notify();
-    }
-
-    /// Ends the thread's process, keeps the thread in **Open recent**, and empties the
-    /// sidebar. A recent thread still being read stays where it is.
-    fn leave_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_instructions(window, cx);
-        self.end_agent(cx);
-        self.opening = None;
-        let conversation = std::mem::take(&mut self.conversation);
-        if let Some(saved) = self.saved.take() {
-            self.remember(&saved, &conversation);
-        }
-        self.forget_entries();
-        self.list.reset(0);
-        self.update_new_menu(cx);
     }
 
     /// Shows the instructions in `scope` in place of the thread.
@@ -1256,16 +524,6 @@ impl Sidebar {
         editor.update(cx, |editor, cx| editor.close(cx));
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
-    }
-
-    /// Ends the thread's process. A dropped process says nothing more, so the turn it was
-    /// working on ends here as stopped, and its request with it.
-    fn end_agent(&mut self, cx: &mut Context<Self>) {
-        self.agent = None;
-        if self.conversation.is_working() {
-            let outcome = TurnOutcome::Interrupted;
-            self.receive([AgentEvent::TurnEnded { outcome }], cx);
-        }
     }
 
     /// Opens or closes the turn at `index` in `set`: its steps or its problems.
@@ -1533,68 +791,6 @@ fn save_instructions(cx: &mut Context<Sidebar>) -> smol::channel::Sender<Save> {
     sender
 }
 
-/// Hands each write to the background in turn, so the files get them in order. Detached: it
-/// ends when the sidebar does, after the writes still queued.
-fn write_in_order(store: ThreadStore, cx: &mut Context<Sidebar>) -> smol::channel::Sender<Write> {
-    let (sender, receiver) = smol::channel::unbounded::<Write>();
-    cx.spawn(async move |sidebar, cx| {
-        let mut told = false;
-        while let Ok(write) = receiver.recv().await {
-            let store = store.clone();
-            let written = cx
-                .background_spawn(async move { store.write(&write) })
-                .await;
-            // Said once: a full disk would otherwise add a line at every event.
-            if let Err(error) = written
-                && !told
-            {
-                told = true;
-                // A sidebar that went has nobody to tell.
-                sidebar
-                    .update(cx, |sidebar, cx| {
-                        let notice = format!("This thread is not saved: {error}");
-                        sidebar.conversation.notice(notice);
-                        sidebar.show(None, cx);
-                    })
-                    .ok();
-            }
-        }
-    })
-    .detach();
-    sender
-}
-
-/// How a sign-in ended.
-#[derive(Debug)]
-enum SignInEnded {
-    /// The program asks whether it worked.
-    Finished,
-    Failed(io::Error),
-    TimedOut,
-    Cancelled,
-}
-
-impl SignInEnded {
-    /// The line the composer reads when the sign-in ended with nobody signed in.
-    fn reason(&self) -> String {
-        match self {
-            SignInEnded::Finished => "The sign-in did not finish.".to_string(),
-            SignInEnded::Failed(error) => format!("The sign-in failed: {error}"),
-            SignInEnded::TimedOut => "The sign-in took over 10 minutes.".to_string(),
-            SignInEnded::Cancelled => "The sign-in was cancelled.".to_string(),
-        }
-    }
-}
-
-/// Every event of the process, until it ends or the sidebar stops listening.
-async fn read(mut events: Events, sender: smol::channel::Sender<AgentEvent>) {
-    while let Some(event) = events.next().await {
-        if sender.send(event).await.is_err() {
-            break;
-        }
-    }
-}
-
 impl Focusable for Sidebar {
     /// The composer, which cmd-L focuses, or the sidebar itself while it has none, so cmd-L
     /// and escape still work there.
@@ -1664,28 +860,5 @@ impl Render for Sidebar {
             .text_color(text)
             .child(self.header(cx))
             .child(body)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_sign_in_out_of_time_failed_or_cancelled_says_why() {
-        let reasons = [
-            SignInEnded::TimedOut,
-            SignInEnded::Cancelled,
-            SignInEnded::Failed(io::Error::other("OAuth error: access denied")),
-        ]
-        .map(|ended| ended.reason());
-        assert_eq!(
-            reasons,
-            [
-                "The sign-in took over 10 minutes.",
-                "The sign-in was cancelled.",
-                "The sign-in failed: OAuth error: access denied",
-            ]
-        );
     }
 }
