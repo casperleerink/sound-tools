@@ -303,14 +303,16 @@ impl Bun {
     }
 
     /// Tells Bun something and does not wait. Bun says [`Event::Done`] when it is done.
-    pub(crate) fn send(&self, request: &Request) {
-        let line = match serde_json::to_string(request) {
-            Ok(json) => json + "\n",
-            Err(error) => return eprintln!("error: {error}"),
-        };
-        // A Bun that stopped reading never says done, so the window finds it hung; one that
-        // stopped says so with the end of its events.
-        self.lines.try_send(line).ok();
+    /// Whether it went: not when Bun stopped reading, which the window finds hung by what it
+    /// did not say done, or stopped, which the end of its events says.
+    pub(crate) fn send(&self, request: &Request) -> bool {
+        match serde_json::to_string(request) {
+            Ok(json) => self.lines.try_send(json + "\n").is_ok(),
+            Err(error) => {
+                eprintln!("error: {error}");
+                false
+            }
+        }
     }
 }
 

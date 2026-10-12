@@ -34,6 +34,10 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 /// millisecond.
 const HANG_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// A Bun that stops or hangs with nothing to blame starts again, unless it ran shorter than
+/// this.
+const SHORTEST_RUN: Duration = Duration::from_secs(10);
+
 /// The tools and cards of the project in the window. One per window.
 pub(crate) struct Live {
     /// The `extensions/` folder of the project.
@@ -66,24 +70,22 @@ pub(crate) struct Live {
 enum Host {
     Running {
         bun: Bun,
-        /// What it was told and has not said done yet, oldest first. Bun does one thing at a
-        /// time, so the oldest is what hangs or what stopped it.
-        pending: VecDeque<Sent>,
+        started: Instant,
+        /// What it was told and has not said done yet, oldest first, by the tool whose code
+        /// it runs and which code. Bun does one thing at a time, so the oldest is what hangs or
+        /// what stopped it.
+        pending: VecDeque<Option<(String, Runs)>>,
+        /// Since when Bun runs the oldest of `pending`.
+        oldest_since: Instant,
         /// Hears what Bun says, until it ends.
         _hearing: Task<()>,
     },
     /// A new Bun starts and loads on a thread of its own. `again`: `extensions/` changed
     /// meanwhile, so another starts once this one has loaded.
     Starting { again: bool },
-    /// No Bun runs: the folder has no tool, Bun cannot start, or it stopped with nothing to
-    /// blame, until the folder changes.
+    /// No Bun runs: the folder has no tool, Bun cannot start, or it stopped twice with nothing
+    /// to blame, until the folder changes.
     Stopped,
-}
-
-struct Sent {
-    /// The tool whose code it runs, and which code, to blame when it hangs.
-    blame: Option<(String, Runs)>,
-    at: Instant,
 }
 
 /// The code of a tool a request runs.
@@ -112,13 +114,33 @@ impl Host {
     /// Tells Bun something, which runs the code `blame` names. Nothing while no Bun runs: the
     /// next one draws every card again.
     fn send(&mut self, blame: Option<(&str, Runs)>, request: &Request) {
-        if let Self::Running { bun, pending, .. } = self {
-            bun.send(request);
-            let blame = blame.map(|(tool, runs)| (tool.to_string(), runs));
-            pending.push_back(Sent {
-                blame,
-                at: Instant::now(),
-            });
+        let Self::Running {
+            bun,
+            pending,
+            oldest_since,
+            ..
+        } = self
+        else {
+            return;
+        };
+        if bun.send(request) {
+            if pending.is_empty() {
+                *oldest_since = Instant::now();
+            }
+            pending.push_back(blame.map(|(tool, runs)| (tool.to_string(), runs)));
+        }
+    }
+
+    /// Bun finished the oldest thing it was told.
+    fn done(&mut self) {
+        if let Self::Running {
+            pending,
+            oldest_since,
+            ..
+        } = self
+        {
+            pending.pop_front();
+            *oldest_since = Instant::now();
         }
     }
 }
@@ -326,7 +348,9 @@ impl Live {
         });
         Host::Running {
             bun,
+            started: Instant::now(),
             pending: VecDeque::new(),
+            oldest_since: Instant::now(),
             _hearing: hearing,
         }
     }
@@ -689,8 +713,13 @@ impl Live {
     /// whose watches moved draws again, and every instance whose sample was read on its thread
     /// runs again, so it plays it.
     fn frame(&mut self, cx: &mut Context<Self>) {
-        if let Host::Running { pending, .. } = &self.host
-            && (pending.front()).is_some_and(|sent| sent.at.elapsed() > HANG_TIMEOUT)
+        if let Host::Running {
+            pending,
+            oldest_since,
+            ..
+        } = &self.host
+            && !pending.is_empty()
+            && oldest_since.elapsed() > HANG_TIMEOUT
         {
             self.failed(&format!("took longer than {HANG_TIMEOUT:?}"), cx);
         }
@@ -714,8 +743,7 @@ impl Live {
         let Host::Running { pending, .. } = &self.host else {
             return;
         };
-        let ticking = |sent: &Sent| matches!(sent.blame, Some((_, Runs::Tick)));
-        if pending.iter().any(ticking) {
+        if (pending.iter()).any(|sent| matches!(sent, Some((_, Runs::Tick)))) {
             return;
         }
         let dt = self.last_frame.elapsed().as_secs_f32();
@@ -771,9 +799,7 @@ impl Live {
         match event {
             // Nothing to draw.
             Event::Done => {
-                if let Host::Running { pending, .. } = &mut self.host {
-                    pending.pop_front();
-                }
+                self.host.done();
                 return;
             }
             Event::Failed { tool, message } => {
@@ -854,15 +880,21 @@ impl Live {
 
     /// Bun hung or stopped: what it ran last is to blame, and the file of that tool runs no
     /// more until the folder changes, while a new Bun runs the others. With nothing to blame,
-    /// such as code a timer ran, no Bun runs until the folder changes: it may stop again at
-    /// once, for ever.
+    /// such as code a timer ran, a new Bun runs as it was, unless this one ran only a moment:
+    /// then it would stop again at once, for ever, and none runs until the folder changes.
     fn failed(&mut self, why: &str, cx: &mut Context<Self>) {
-        let Host::Running { pending, .. } = &self.host else {
+        let Host::Running {
+            pending, started, ..
+        } = &self.host
+        else {
             return;
         };
-        let blamed = (pending.front().and_then(|sent| sent.blame.as_ref()))
+        let blamed = (pending.front().and_then(Option::as_ref))
             .and_then(|(tool, runs)| Some((find(&self.tools.borrow(), tool)?.clone(), *runs)));
         let Some((info, runs)) = blamed else {
+            if started.elapsed() >= SHORTEST_RUN {
+                return self.restart(cx);
+            }
             self.host = Host::Stopped;
             let message = "the TypeScript host stopped or hung with no tool to blame, so the tools do not run: fix them and save";
             self.problems
@@ -879,16 +911,24 @@ impl Live {
 
     /// Ends Bun, if one runs, and starts a new one on the files of `extensions/` as they are now.
     fn restart(&mut self, cx: &mut Context<Self>) {
-        if let Host::Starting { again } = &mut self.host {
-            *again = true;
-            return;
+        match std::mem::replace(&mut self.host, Host::Starting { again: false }) {
+            Host::Starting { .. } => self.host = Host::Starting { again: true },
+            Host::Running { bun, .. } => self.launch(Some(bun), cx),
+            Host::Stopped => self.launch(None, cx),
         }
-        self.host = Host::Starting { again: false };
+    }
+
+    /// Starts a new Bun on a thread of its own, once `old` ended there.
+    fn launch(&mut self, old: Option<Bun>, cx: &mut Context<Self>) {
         let (folder, skipped) = (self.folder.clone(), self.skipped.clone());
         cx.spawn(async move |live, cx| {
-            // Up to a timeout of a step of the load, so not on the thread that draws.
+            // Ending a Bun waits for it, and a load up to a timeout of each step: not on the
+            // thread that draws.
             let launched = (cx.background_executor())
-                .spawn(async move { crate::launch(&folder, skipped) })
+                .spawn(async move {
+                    drop(old);
+                    crate::launch(&folder, skipped)
+                })
                 .await;
             live.update(cx, |live, cx| live.launched(launched, cx)).ok();
         })
@@ -898,8 +938,9 @@ impl Live {
     /// A new Bun loaded, or why none runs.
     fn launched(&mut self, launched: Result<Option<Launched>, String>, cx: &mut Context<Self>) {
         if let Host::Starting { again: true } = self.host {
-            self.host = Host::Stopped;
-            return self.restart(cx);
+            self.host = Host::Starting { again: false };
+            let bun = launched.ok().flatten().map(|launched| launched.bun);
+            return self.launch(bun, cx);
         }
         // The new Bun counts the edits it sends from none.
         self.edits.clear();

@@ -52,8 +52,11 @@ function send(message: object) {
 
 /** The handlers of the last trees of each card, by the version of the tree. */
 const handlers = new Map<number, Map<number, Handler[]>>();
-/** The version of the last tree drawn: a click names the tree it was on. */
-let treeVersion = 0;
+/**
+ * The version of the last tree drawn: a click names the tree it was on. From the time this Bun
+ * started, so a click on a tree an earlier Bun drew runs nothing here.
+ */
+let treeVersion = Date.now() * 1000;
 /** The trees of a card whose clicks still count: the window may still show an older one. */
 const KEPT_TREES = 8;
 /** What each card was last drawn from, so it draws again after a tick or a click. */

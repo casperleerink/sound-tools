@@ -198,6 +198,36 @@ fn a_file_that_hangs_as_it_loads_is_a_problem_and_the_other_tools_load() {
     );
 }
 
+#[test]
+fn a_tool_whose_pattern_cannot_be_is_a_problem_before_anything_is_made_of_it() {
+    if !sound_typescript::has_bun() {
+        return eprintln!("skipped: Bun is not installed");
+    }
+    let steps = r#"import { input, pattern, tool } from "./sdk";
+
+tool({
+  name: "steps",
+  title: "Steps",
+  when: "You want steps",
+  doc: "Steps.",
+  state: { steps: pattern({ length: 1000000000000, min: 0, max: 1, default: 0 }) },
+  sound: () => input,
+});
+"#;
+    let folder = tempfile::tempdir().unwrap();
+    crate::support::write(folder.path(), "extensions/steps.ts", steps);
+    let harness = Harness::open(folder);
+    let problems = harness.project.problems();
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert_eq!(problem.path, "extensions/steps.ts");
+    assert!(
+        problem.message.contains("a pattern holds 1 to 1024 values"),
+        "{problem:?}"
+    );
+}
+
 /// A lane of a tool of the project bends on its frame, as one of a built-in device does: the
 /// level opens from 0 to 1 in 50 frames, and is silent before and full after.
 #[test]

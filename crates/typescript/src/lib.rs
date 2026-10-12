@@ -161,6 +161,11 @@ fn define(
             card,
             page,
         } = tool;
+        // Before anything is made from the fields, such as a pattern at its defaults.
+        if let Err(error) = info.declarations().check() {
+            problems.push(info.problem(error));
+            continue;
+        }
         let sounds = Sounds::new(&info, sounds);
         let failed = [
             sounds.code(&serde_json::json!({})).map(drop),
