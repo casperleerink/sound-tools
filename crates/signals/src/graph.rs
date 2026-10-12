@@ -167,6 +167,52 @@ pub enum ControlSpec {
     Trigger(String),
 }
 
+impl Declarations {
+    /// Whether a sound can take these: how many there are, and each range and length. A sound
+    /// checks them as it compiles; a tool checks them before it is defined.
+    pub fn check(&self) -> Result<(), GraphError> {
+        if self.parameters.len() > MAX_PARAMETERS {
+            return error(format!(
+                "a tool has at most {MAX_PARAMETERS} knobs and toggles"
+            ));
+        }
+        for parameter in &self.parameters {
+            check_range(
+                &parameter.name,
+                parameter.default,
+                parameter.min,
+                parameter.max,
+            )?;
+        }
+        for array in &self.arrays {
+            if !(1..=MAX_ARRAY_LENGTH).contains(&array.length.unwrap_or(1)) {
+                return error(format!(
+                    "`{}`: a pattern holds 1 to {MAX_ARRAY_LENGTH} values",
+                    array.name
+                ));
+            }
+            check_range(&array.name, array.default, array.min, array.max)?;
+        }
+        let (mut lives, mut triggers) = (0, 0);
+        for control in &self.controls {
+            match control {
+                ControlSpec::Live(live) => {
+                    lives += 1;
+                    check_range(&live.name, live.default, live.min, live.max)?;
+                }
+                ControlSpec::Trigger(_) => triggers += 1,
+            }
+        }
+        if lives > MAX_LIVES {
+            return error(format!("a tool has at most {MAX_LIVES} live controls"));
+        }
+        if triggers > MAX_LIVES {
+            return error(format!("a tool has at most {MAX_LIVES} triggers"));
+        }
+        Ok(())
+    }
+}
+
 /// Why a sound does not build, in the words of the SDK.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 #[error("{0}")]
@@ -267,45 +313,19 @@ struct Lowering<'a> {
 impl<'a> Lowering<'a> {
     /// The operations of the fields and controls, which come first.
     fn declare(&mut self, declarations: &'a Declarations) -> Result<(), GraphError> {
-        if declarations.parameters.len() > MAX_PARAMETERS {
-            return error(format!(
-                "a tool has at most {MAX_PARAMETERS} knobs and toggles"
-            ));
-        }
+        declarations.check()?;
         for (index, parameter) in declarations.parameters.iter().enumerate() {
-            check_range(
-                &parameter.name,
-                parameter.default,
-                parameter.min,
-                parameter.max,
-            )?;
             let register = self.emit(Operation::Parameter(index as u16))?;
             self.names.insert(&parameter.name, register);
-        }
-        for array in &declarations.arrays {
-            if !(1..=MAX_ARRAY_LENGTH).contains(&array.length.unwrap_or(1)) {
-                return error(format!(
-                    "`{}`: a pattern holds 1 to {MAX_ARRAY_LENGTH} values",
-                    array.name
-                ));
-            }
-            check_range(&array.name, array.default, array.min, array.max)?;
         }
         for control in &declarations.controls {
             let (name, operation) = match control {
                 ControlSpec::Live(live) => {
-                    if self.lives.len() == MAX_LIVES {
-                        return error(format!("a tool has at most {MAX_LIVES} live controls"));
-                    }
-                    check_range(&live.name, live.default, live.min, live.max)?;
                     let index = self.lives.len() as u16;
                     self.lives.push(live.clone());
                     (&live.name, Operation::Live(index))
                 }
                 ControlSpec::Trigger(name) => {
-                    if self.triggers.len() == MAX_LIVES {
-                        return error(format!("a tool has at most {MAX_LIVES} triggers"));
-                    }
                     let index = self.triggers.len() as u16;
                     self.triggers.push(name.clone());
                     (name, Operation::Trigger(index))
