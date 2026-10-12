@@ -212,7 +212,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to an extension.
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows correctly for free.
 - The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
-- Windows installs per user with one Inno Setup program, which the update runs silently. It moves a running program aside, so no window has to close. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and starting Bun; WiX/MSI, more work for the same.
+- Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 - No error tracking in the cloud. The window's stdout and stderr go to `log.txt` in the support folder, which the composer can send.
 
 ## The agent sidebar
