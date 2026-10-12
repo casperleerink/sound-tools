@@ -188,25 +188,24 @@ pub fn take_clip(
     Some(clip)
 }
 
-impl Placement {
-    /// The clip of each finished take, up to `end`. A take that holds nothing heard in the
-    /// recording gets none, and neither does any while the recording is not tied to the
-    /// timeline, which takes two polls of the engine while it plays.
-    pub fn clips(
-        &self,
-        takes: &[(InstanceId, Imported)],
-        end: Ticks,
-        timing: Option<&StreamTiming>,
-    ) -> Vec<(InstanceId, AudioClip)> {
-        let clock = self.clock();
-        let Some(head) = self.head(timing) else {
-            return Vec::new();
-        };
-        let clips = takes.iter().filter_map(|(track, take)| {
-            let file = take.audio.info();
-            let clip = take_clip(take.asset.clone(), &file, head, (self.start, end), clock)?;
-            Some((track.clone(), clip))
-        });
-        clips.collect()
-    }
+/// The clip of each finished take of a recording placed by `placement`, up to `end`. A take
+/// that holds nothing heard in the recording gets none, and neither does any while the
+/// recording is not tied to the timeline, which takes two polls of the engine while it plays.
+pub fn take_clips(
+    placement: &Placement,
+    takes: &[(InstanceId, Imported)],
+    end: Ticks,
+    timing: Option<&StreamTiming>,
+) -> Vec<(InstanceId, AudioClip)> {
+    let clock = placement.clock();
+    let Some(head) = placement.head(timing) else {
+        return Vec::new();
+    };
+    let start = placement.start;
+    let clips = takes.iter().filter_map(|(track, take)| {
+        let file = take.audio.info();
+        let clip = take_clip(take.asset.clone(), &file, head, (start, end), clock)?;
+        Some((track.clone(), clip))
+    });
+    clips.collect()
 }

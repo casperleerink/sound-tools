@@ -116,7 +116,7 @@ pub fn add_audio_track(
     project.commit("Add audio track", changes)
 }
 
-/// What the menu of a recorded clip calls. The arrangement knows no fit, so the window hands it
+/// What the menu of a recorded clip calls. The arrangement knows no fit, so the runtime hands it
 /// this. A project made before the fit existed does not enable it; the file edit that does is
 /// in the agent docs.
 pub(crate) const FIT_TEMPO: arrangement::view::FitTempo = arrangement::view::FitTempo {
@@ -132,7 +132,7 @@ pub(crate) const FIT_TEMPO: arrangement::view::FitTempo = arrangement::view::Fit
 };
 
 /// [`add_track`] or [`add_audio_track`]: what the add track button of the arrangement calls.
-/// The arrangement knows no instrument, so the window hands it this.
+/// The arrangement knows no instrument, so the runtime hands it this.
 pub fn add_track_of_kind(
     project: &mut Project,
     arrangement: &Instance<ArrangementState>,

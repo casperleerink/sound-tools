@@ -19,6 +19,8 @@
 //! `impl TransportPill`:
 //! - `take`: the record control, a take from its start to its clips, and the audio input.
 //! - `strip`: the seek strip.
+//!
+//! `tempo` and `steadiness` there hold the numbers of those two controls.
 
 mod steadiness;
 mod strip;
@@ -96,6 +98,8 @@ pub struct TransportPill {
     /// Whether the main area shows the arrangement. Without it there is no transport, see
     /// `without_arrangement`. Kept between events like the end of the project.
     arrangement_is_main: bool,
+    /// Whether something takes the notes of the keyboard, as of the last poll.
+    takes_notes: bool,
     end_is_stale: bool,
     scrubbing: bool,
     /// The click in the engine. `None` only when the engine refused it, which is reported.
@@ -266,6 +270,7 @@ impl TransportPill {
             end: session.read(cx).project().end(),
             fit: fit_tempo::fit_of(session.read(cx).project()),
             arrangement_is_main: arrangement_is_main(&session, cx),
+            takes_notes: false,
             end_is_stale: false,
             seen: *session.read(cx).playhead().read(cx),
             take: None,
@@ -309,6 +314,10 @@ impl TransportPill {
         let track = track.map(|track| track.id().clone());
         let timing = self.timing.clone();
         let recording_track = self.take.as_ref().map(|take| take.midi_track.clone());
+        if self.takes_notes != destination.is_some() {
+            self.takes_notes = destination.is_some();
+            cx.notify();
+        }
         self.poll_audio(cx);
         let Some(keyboard) = self.keyboard.as_mut() else {
             return;
@@ -765,9 +774,6 @@ impl TransportPill {
     /// No play, tempo, record or seek: a tool that needs them draws them in its own page. The
     /// computer keys, while something takes notes, and the master meter stay.
     fn without_arrangement(&self, cx: &mut Context<Self>) -> AnyElement {
-        let session = self.session.read(cx);
-        let takes_notes =
-            recording::live_notes_input(session.project(), session.selected()).is_some();
         div()
             .flex()
             .flex_none()
@@ -775,7 +781,7 @@ impl TransportPill {
             .gap(px(12.))
             .h(px(HEIGHT))
             .occlude()
-            .children(takes_notes.then(|| self.computer_keys_button(cx)))
+            .children(self.takes_notes.then(|| self.computer_keys_button(cx)))
             .child(self.master_meter(cx))
             .into_any_element()
     }

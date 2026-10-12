@@ -262,7 +262,9 @@ impl TransportPill {
         };
         let timing = self.timing.clone();
         let clips = match &audio {
-            Some(audio) => audio.placement.clips(&audio_takes, end, timing.as_deref()),
+            Some(audio) => {
+                recording::take_clips(&audio.placement, &audio_takes, end, timing.as_deref())
+            }
             None => Vec::new(),
         };
         // A track deleted while it recorded gets no clip. Its raw take is on disk already, and

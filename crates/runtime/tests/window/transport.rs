@@ -551,6 +551,7 @@ fn a_project_without_an_arrangement_has_no_transport(cx: &mut TestAppContext) {
         changes.create(support::id("synth"), SynthState::default());
         project.commit("Experiment", changes)
     });
+    opened.settle();
     for control in ["transport", "play", "record"] {
         assert!(opened.find(control).is_none(), "{control} is on screen");
     }
@@ -568,5 +569,6 @@ fn a_project_without_an_arrangement_has_no_transport(cx: &mut TestAppContext) {
         changes.create(support::id("reverb"), ReverbState::default());
         project.commit("Reverb", changes)
     });
+    opened.settle();
     assert!(opened.find("computer-keys").is_none());
 }
