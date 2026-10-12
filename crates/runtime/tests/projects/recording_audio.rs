@@ -9,8 +9,8 @@
 use std::time::Duration;
 
 use arrangement::AudioClip;
+use runtime::arrangement_wiring::recording::add_audio_take_clips;
 use runtime::recorder::{Placement, Recorder, RecorderCommand, RecorderReport, TakeRequest};
-use runtime::window::recording::add_audio_take_clips;
 use sound_core::{CaptureWriter, Changes, EngineStatus, InstanceId, StreamTiming, Ticks, capture};
 use sound_media::Imported;
 

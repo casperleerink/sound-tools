@@ -10,11 +10,11 @@ use sound_media::Imported;
 use sound_ui::{LiveBody, LiveSound, LiveTake, Playhead};
 
 use super::{Take, TransportPill};
+use crate::arrangement_wiring::recording;
 use crate::recorder::{
     Placement, RecorderCommand, RecorderReport, StartedTake, TakeRequest, take_seconds_at,
 };
 use crate::window::audio_input::OpenedInput;
-use crate::window::recording;
 
 /// Polls a finished recording waits for its audio files to hold what was heard up to its end,
 /// about two seconds, before it closes them with what they have.

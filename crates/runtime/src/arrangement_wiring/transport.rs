@@ -20,8 +20,10 @@
 //! - `take`: the record control, a take from its start to its clips, and the audio input.
 //! - `strip`: the seek strip.
 
+mod steadiness;
 mod strip;
 mod take;
+mod tempo;
 
 use std::sync::Arc;
 
@@ -48,8 +50,8 @@ use sound_ui::{
 };
 
 use self::take::{AudioTake, Ended};
-use super::audio_input::{AudioInput, OpenInput};
-use super::{recording, steadiness, tempo};
+use super::recording;
+use crate::window::audio_input::{AudioInput, OpenInput};
 
 /// A recording of the record control, from its start to its clips.
 struct Take {
@@ -247,7 +249,7 @@ impl TransportPill {
         // without unwinding, and GPUI drops the views first, so this is the last moment the
         // numbers exist. A session with no MIDI message prints nothing.
         cx.on_release(|pill, _| {
-            super::print_midi_report(pill.latency(), pill.lost_messages());
+            print_midi_report(pill.latency(), pill.lost_messages());
         })
         .detach();
         // Its own timer, next to the one of the session: what the engine reports about the
@@ -681,6 +683,28 @@ impl TransportPill {
         if self.end.is_none() {
             self.scrubbing = false;
         }
+    }
+}
+
+/// What a key press cost, measured over the session. It covers the wait for the next audio
+/// block and the output latency the device reports, not the keyboard and its cable.
+fn print_midi_report(latency: Latency, lost: Lost) {
+    if latency.count() == 0 {
+        return;
+    }
+    println!(
+        "midi to sound over {} messages: mean {:?}, shortest {:?}, longest {:?}, jitter {:?}",
+        latency.count(),
+        latency.mean(),
+        latency.shortest(),
+        latency.longest(),
+        latency.spread()
+    );
+    if lost.any() {
+        println!(
+            "midi lost: {} messages never played, {} missing from a take",
+            lost.input, lost.reports
+        );
     }
 }
 

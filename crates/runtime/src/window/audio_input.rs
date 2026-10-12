@@ -77,7 +77,7 @@ struct Open {
     generation: u64,
 }
 
-pub(super) struct AudioInput {
+pub(crate) struct AudioInput {
     open_input: Option<OpenInput>,
     open: Option<Open>,
     /// The opening on its way, while one is. A close forgets it, and what it opens is dropped.
@@ -94,7 +94,7 @@ pub(super) struct AudioInput {
 }
 
 impl AudioInput {
-    pub(super) fn new(open_input: Option<OpenInput>) -> Self {
+    pub(crate) fn new(open_input: Option<OpenInput>) -> Self {
         Self {
             open_input,
             open: None,
@@ -111,7 +111,7 @@ impl AudioInput {
     /// connection hears it. After a failure it stays closed until something new wants it: a
     /// track armed that was not, or a connection that was not there. Else a failure that
     /// disarms every track would open it again, and fail again, at once.
-    pub(super) fn wants(&mut self, armed: Vec<InstanceId>, heard: bool) -> bool {
+    pub(crate) fn wants(&mut self, armed: Vec<InstanceId>, heard: bool) -> bool {
         let new = (heard && !self.heard) || armed.iter().any(|track| !self.armed.contains(track));
         self.failed &= !new;
         self.heard = heard;
@@ -121,24 +121,24 @@ impl AudioInput {
 
     /// Closes an input that was opened for a connection alone and plays nothing, because it runs
     /// at another rate than the output. It is not opened again until something new wants it.
-    pub(super) fn give_up(&mut self, cx: &App) {
+    pub(crate) fn give_up(&mut self, cx: &App) {
         self.close(cx);
         self.failed = true;
     }
 
     /// Whether this window has an input to open at all.
-    pub(super) fn can_open(&self) -> bool {
+    pub(crate) fn can_open(&self) -> bool {
         self.open_input.is_some()
     }
 
     /// Whether the input is open or on its way.
-    pub(super) fn is_open_or_opening(&self) -> bool {
+    pub(crate) fn is_open_or_opening(&self) -> bool {
         self.open.is_some() || self.opening.is_some()
     }
 
     /// What opens the input, for a background thread, and which opening this is. `None` when it
     /// is open or on its way, or when this window has no input.
-    pub(super) fn start_opening(&mut self) -> Option<(OpenInput, u64)> {
+    pub(crate) fn start_opening(&mut self) -> Option<(OpenInput, u64)> {
         if self.is_open_or_opening() {
             return None;
         }
@@ -151,7 +151,7 @@ impl AudioInput {
     /// The input opening `generation` opened, or why not. Gives its channel count and its live
     /// input for the engine, or `None` for an opening that was given up since: its input stops
     /// again.
-    pub(super) fn opened(
+    pub(crate) fn opened(
         &mut self,
         generation: u64,
         opened: Result<OpenedInput, DeviceError>,
@@ -194,13 +194,13 @@ impl AudioInput {
     }
 
     /// Whether the open input went away, such as an interface that was unplugged.
-    pub(super) fn is_gone(&self) -> bool {
+    pub(crate) fn is_gone(&self) -> bool {
         self.open.as_ref().is_some_and(|open| open.status.is_gone())
     }
 
     /// Stops the device, or forgets the opening on its way. A recorder out on a run is dropped
     /// when it comes back.
-    pub(super) fn close(&mut self, cx: &App) {
+    pub(crate) fn close(&mut self, cx: &App) {
         if let Some(open) = self.open.take() {
             drop_in_background(open, cx);
         }
@@ -208,7 +208,7 @@ impl AudioInput {
         self.commands.clear();
     }
 
-    pub(super) fn sample_rate(&self) -> Option<u32> {
+    pub(crate) fn sample_rate(&self) -> Option<u32> {
         self.open.as_ref().map(|open| open.sample_rate)
     }
 
@@ -216,7 +216,7 @@ impl AudioInput {
     /// whether it just reached about two seconds of nothing but exact silence, once per
     /// opening. A real input is never exactly silent: macOS gives zeros to an app it does not
     /// let use the microphone.
-    pub(super) fn poll_levels(&mut self) -> Option<(Vec<f32>, bool)> {
+    pub(crate) fn poll_levels(&mut self) -> Option<(Vec<f32>, bool)> {
         let open = self.open.as_mut()?;
         let levels = open.status.take_levels();
         match levels.iter().all(|level| *level == 0.0) {
@@ -227,7 +227,7 @@ impl AudioInput {
     }
 
     /// Whether the device just went away or stopped: true once, on the poll that sees it.
-    pub(super) fn went_away(&mut self) -> bool {
+    pub(crate) fn went_away(&mut self) -> bool {
         let Some(open) = self.open.as_mut() else {
             return false;
         };
@@ -237,13 +237,13 @@ impl AudioInput {
         now
     }
 
-    pub(super) fn send(&mut self, command: RecorderCommand) {
+    pub(crate) fn send(&mut self, command: RecorderCommand) {
         self.commands.push(command);
     }
 
     /// The recorder and what it is to do, for a run on the background executor, when it is
     /// here: at most one run at a time, so the takes are written in order.
-    pub(super) fn start_run(&mut self) -> Option<Run> {
+    pub(crate) fn start_run(&mut self) -> Option<Run> {
         let open = self.open.as_mut()?;
         let recorder = open.recorder.take()?;
         Some(Run {
@@ -254,7 +254,7 @@ impl AudioInput {
     }
 
     /// The recorder is back from its run. One of an input closed since goes with it.
-    pub(super) fn end_run(&mut self, recorder: Recorder, generation: u64) {
+    pub(crate) fn end_run(&mut self, recorder: Recorder, generation: u64) {
         if let Some(open) = &mut self.open
             && open.generation == generation
         {
@@ -264,7 +264,7 @@ impl AudioInput {
 }
 
 /// One run of the recorder on the background executor.
-pub(super) struct Run {
+pub(crate) struct Run {
     recorder: Recorder,
     commands: Vec<RecorderCommand>,
     generation: u64,
@@ -273,7 +273,7 @@ pub(super) struct Run {
 impl Run {
     /// Reads and writes files: never on the thread that draws. Gives the recorder back with
     /// what it reported and which opening of the input it belongs to.
-    pub(super) fn run(mut self) -> (Recorder, Vec<RecorderReport>, u64) {
+    pub(crate) fn run(mut self) -> (Recorder, Vec<RecorderReport>, u64) {
         let reports = self.recorder.run(self.commands);
         (self.recorder, reports, self.generation)
     }

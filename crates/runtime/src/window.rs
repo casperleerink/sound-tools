@@ -9,11 +9,7 @@
 pub mod audio_input;
 pub mod other_apps;
 mod project_menu;
-pub mod recording;
 mod start;
-mod steadiness;
-mod tempo;
-pub mod transport;
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -21,14 +17,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use arrangement::view::layout::RULER_HEIGHT;
 use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
     KeyBindingContextPredicate, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, SharedString, Subscription, Task, TitlebarOptions, WeakFocusHandle, Window,
     WindowBounds, WindowControlArea, WindowOptions, actions, div, point, prelude::*, px, size,
 };
-use midi::{Latency, Lost};
 use plugin_host::{Plugins, WeakPlugins};
 use sound_core::{
     Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
@@ -45,7 +39,8 @@ use audio_input::OpenInput;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
 use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
-pub use transport::TransportPill;
+
+pub use crate::arrangement_wiring::transport::TransportPill;
 
 use crate::app::ChosenDevices;
 use crate::{open_with_extensions, update, views};
@@ -72,8 +67,7 @@ actions!(
 /// nothing.
 const TITLE_ROW_INSET: f32 = if cfg!(target_os = "macos") { 80. } else { 8. };
 const TOP_ROW_HEIGHT: f32 = 48.;
-/// The notices sit this far in from the right of the window and below the ruler of the main
-/// view.
+/// The notices sit this far in from the right of the window and below the title row.
 const NOTICE_INSET: f32 = 24.;
 /// The widest a notice gets. A longer message wraps, to three lines at most.
 const NOTICE_WIDTH: f32 = 400.;
@@ -502,15 +496,15 @@ impl Shell {
             count => Some(format!("{count} files are not live, see problems.txt")),
         };
         let error = session.notice().cloned();
-        // Top-right, under the title row and the ruler of the main view: clear of the transport,
-        // the bar numbers, the track headers and the panel below. Not in the title row: there
-        // are the window buttons on Windows. A definite width, so that a message wraps
+        // Top-right, under the title row: clear of the transport, and of the left panel and the
+        // left edge of the main view, where an arrangement has its track headers. Not in the
+        // title row: there are the window buttons on Windows. A definite width, so that a message wraps
         // at the width it gets and the box is as tall as its lines: with only a largest width
         // the text was measured on one line and then painted on three. A notice is as wide as
         // its text up to this width.
         div()
             .absolute()
-            .top(px(TOP_ROW_HEIGHT + RULER_HEIGHT + NOTICE_INSET))
+            .top(px(TOP_ROW_HEIGHT + NOTICE_INSET))
             .right(px(NOTICE_INSET))
             .w(px(NOTICE_WIDTH))
             .flex()
@@ -846,28 +840,6 @@ fn print_device_report(stream: &OutputStream) {
     println!("late callbacks: {}", status.late_callbacks);
     println!("slowest callback: {:?}", status.slowest_callback);
     println!("device output latency: {:?}", status.output_latency);
-}
-
-/// What a key press cost, measured over the session. It covers the wait for the next audio
-/// block and the output latency the device reports, not the keyboard and its cable.
-fn print_midi_report(latency: Latency, lost: Lost) {
-    if latency.count() == 0 {
-        return;
-    }
-    println!(
-        "midi to sound over {} messages: mean {:?}, shortest {:?}, longest {:?}, jitter {:?}",
-        latency.count(),
-        latency.mean(),
-        latency.shortest(),
-        latency.longest(),
-        latency.spread()
-    );
-    if lost.any() {
-        println!(
-            "midi lost: {} messages never played, {} missing from a take",
-            lost.input, lost.reports
-        );
-    }
 }
 
 /// Opens the project, starts the device and runs the window until it closes. An error comes

@@ -293,7 +293,7 @@ fn switch_devices(chosen: ChosenDevices, cx: &mut Context<Session>) {
 fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
     let project = session.project();
     if !selection {
-        return crate::project_end(project).map(|_| Vec::new());
+        return project.end().map(|_| Vec::new());
     }
     let (from, to) = crate::clips_span(project, session.selected_clips())?;
     Some(vec![
