@@ -35,10 +35,10 @@ const COPY: &str = "copy";
 const DUPLICATE: &str = "duplicate";
 const DELETE: &str = "delete";
 
-/// Whether a press opens the menu, on systems where it opens at the press.
-pub(super) fn opens_menu_at_press(event: &MouseDownEvent) -> bool {
+/// Whether a press is the start of opening the menu.
+pub(super) fn opens_menu(event: &MouseDownEvent) -> bool {
     match event.button {
-        MouseButton::Right => !cfg!(windows),
+        MouseButton::Right => true,
         MouseButton::Left => cfg!(target_os = "macos") && event.modifiers.control,
         _ => false,
     }
@@ -76,9 +76,9 @@ fn entries(fit: Option<Option<&'static str>>) -> Vec<MenuEntry> {
 }
 
 impl Timeline {
-    /// A press or a release that opens the menu, at `(x, y)` on the timeline and `position` in
-    /// the window. Nothing off a clip.
-    pub(super) fn open_clip_menu_at(
+    /// A press that opens the menu, at `(x, y)` on the timeline and `position` in the window.
+    /// Off a clip, nothing. On Windows the menu waits for the release.
+    pub(super) fn press_for_clip_menu(
         &mut self,
         (x, y): (f32, f32),
         position: Point<Pixels>,
@@ -86,6 +86,7 @@ impl Timeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clip_menu_held = false;
         if self.dragging() || x < 0.0 || y < 0.0 {
             return;
         }
@@ -100,7 +101,21 @@ impl Timeline {
         if !self.clips.contains(&id) {
             self.select_clip(Some(id), cx);
         }
-        self.show_clip_menu(position, window, cx);
+        match cfg!(windows) {
+            true => self.clip_menu_held = true,
+            false => self.show_clip_menu(position, window, cx),
+        }
+    }
+
+    pub(super) fn release_for_clip_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if std::mem::take(&mut self.clip_menu_held) {
+            self.show_clip_menu(position, window, cx);
+        }
     }
 
     /// The menu at the first selected clip, as shift-F10 and the menu key open it. Whether

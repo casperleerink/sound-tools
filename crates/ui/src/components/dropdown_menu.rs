@@ -29,9 +29,9 @@ use std::rc::Rc;
 
 use gpui::{
     App, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    HoverListenerMode, Hsla, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point,
-    Render, RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window, anchored,
-    deferred, div, point, prelude::*, px,
+    HoverListenerMode, Hsla, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent,
+    Pixels, Point, Render, RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window,
+    anchored, deferred, div, point, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
@@ -412,13 +412,14 @@ impl RenderOnce for MenuList {
                                             cx,
                                         ))
                                     }),
-                                // A right press held from where a context menu opened and
-                                // let go on a row picks it, as in a system menu.
+                                // A row picks at the release, as in a system menu: a press
+                                // held from where a context menu opened, with the right
+                                // button or ctrl-left on macOS, picks the row it is let go on.
                                 _ => element.when_some(
                                     on_select.clone().filter(|_| enabled),
                                     |d, f| {
                                         let (released, picked) = (f.clone(), value.clone());
-                                        d.on_click(move |_, window, cx| {
+                                        d.on_mouse_up(MouseButton::Left, move |_, window, cx| {
                                             f(value.clone(), window, cx)
                                         })
                                         .on_mouse_up(
@@ -1153,6 +1154,15 @@ impl DropdownMenu {
 }
 
 impl DropdownMenu {
+    /// The press that opened a context menu, let go off it once moved away, cancels it, as in
+    /// a system menu. Let go where it opened, the menu stays open.
+    fn cancel_held(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let moved = event.position - self.position;
+        if !self.pointer_in_submenu && (moved.x.abs() > px(4.) || moved.y.abs() > px(4.)) {
+            self.close(window, cx);
+        }
+    }
+
     /// The open menu: the search field and the rows.
     fn panel(&self, cx: &mut Context<Self>) -> Div {
         let search = self.search.as_ref().map(|search| {
@@ -1170,6 +1180,10 @@ impl DropdownMenu {
                     this.close(window, cx)
                 }
             }))
+            .when(self.trigger == Trigger::Pointer, |d| {
+                d.on_mouse_up_out(MouseButton::Right, cx.listener(Self::cancel_held))
+                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::cancel_held))
+            })
             .on_key_down(
                 cx.listener(|this, ev: &KeyDownEvent, window, cx| this.on_key(ev, window, cx)),
             )

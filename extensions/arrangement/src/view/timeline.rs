@@ -174,6 +174,8 @@ pub struct Timeline {
     /// The snap setting, in the corner above the track headers.
     snap_menu: Entity<DropdownMenu>,
     clip_menu: Entity<DropdownMenu>,
+    /// A right press on a clip, on Windows, whose menu opens at the release.
+    clip_menu_held: bool,
     fit_tempo: FitTempo,
     /// What the cursor says of a drag from where the pointer is: that it resizes, trims, fades
     /// or changes the gain.
@@ -369,6 +371,7 @@ impl Timeline {
             snap,
             snap_menu,
             clip_menu,
+            clip_menu_held: false,
             fit_tempo,
             hover_cursor: None,
             hovered: None,
@@ -934,11 +937,11 @@ fn listen(
         let (timeline, hitbox, scene) = (timeline.clone(), hitbox.clone(), scene.clone());
         move |event: &MouseDownEvent, phase, window, cx| {
             let hit = phase == DispatchPhase::Bubble && hitbox.is_hovered(window);
-            if hit && clip_menu::opens_menu_at_press(event) {
+            if hit && clip_menu::opens_menu(event) {
                 let position = Timeline::timeline_position(bounds, event.position);
                 timeline.update(cx, |timeline, cx| {
                     timeline.take_focus_from_press(window, cx);
-                    timeline.open_clip_menu_at(position, event.position, &scene, window, cx);
+                    timeline.press_for_clip_menu(position, event.position, &scene, window, cx);
                 });
                 window.prevent_default();
             } else if hit && event.button == MouseButton::Left {
@@ -955,7 +958,7 @@ fn listen(
     });
     // A drag that starts on a clip goes on wherever the pointer is, until the button is up.
     window.on_mouse_event({
-        let (timeline, hitbox, scene) = (timeline.clone(), hitbox.clone(), scene.clone());
+        let (timeline, hitbox) = (timeline.clone(), hitbox.clone());
         move |event: &MouseMoveEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
@@ -1010,27 +1013,16 @@ fn listen(
         }
     });
     window.on_mouse_event({
-        let (timeline, hitbox) = (timeline.clone(), hitbox.clone());
+        let timeline = timeline.clone();
         move |event: &MouseUpEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
             }
-            if event.button == MouseButton::Left {
-                timeline.update(cx, |timeline, cx| {
-                    if timeline.dragging() {
-                        timeline.end_drag(cx);
-                    }
-                });
-            } else if cfg!(windows)
-                && event.button == MouseButton::Right
-                && hitbox.is_hovered(window)
-            {
-                let position = Timeline::timeline_position(bounds, event.position);
-                timeline.update(cx, |timeline, cx| {
-                    timeline.take_focus_from_press(window, cx);
-                    timeline.open_clip_menu_at(position, event.position, &scene, window, cx);
-                });
-            }
+            timeline.update(cx, |timeline, cx| match event.button {
+                MouseButton::Left if timeline.dragging() => timeline.end_drag(cx),
+                MouseButton::Right => timeline.release_for_clip_menu(event.position, window, cx),
+                _ => {}
+            });
         }
     });
     window.on_mouse_event({

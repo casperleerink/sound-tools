@@ -655,3 +655,25 @@ fn a_ctrl_click_opens_the_clip_menu_on_macos(cx: &mut TestAppContext) {
     assert!(opened.find("menu-copy").is_some());
     assert_eq!(opened.selected_clips(), [id(PART)]);
 }
+
+/// A right press held onto a row and let go there picks it, as in a system menu. Let go off
+/// the menu, it closes and picks nothing. On Windows the menu opens at the release instead.
+#[cfg(not(windows))]
+#[gpui::test]
+fn a_held_right_press_picks_the_row_it_is_let_go_on(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let on_part = opened.at(BAR + 100, 0);
+    opened.right_press(on_part);
+    let duplicate = opened.control("menu-duplicate");
+    opened.right_release(duplicate);
+    assert_eq!(opened.undo_label().as_deref(), Some("Duplicate clip"));
+
+    let empty = opened.at(8 * BAR, 0);
+    opened.right_press(on_part);
+    opened.right_release(empty);
+    assert!(
+        opened.find("menu-copy").is_none(),
+        "a release off the menu left it open"
+    );
+    assert_eq!(opened.undo_label().as_deref(), Some("Duplicate clip"));
+}
