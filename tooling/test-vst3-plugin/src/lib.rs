@@ -191,6 +191,8 @@ struct Audio {
     reports_out: u32,
     /// Whether to say the output is silent and write nothing into it, from the second block on.
     goes_silent: bool,
+    /// Whether to answer `setProcessing` as the SDK's default does: not implemented.
+    no_set_processing: bool,
     /// Whether this plugin keeps a state in its edit controller as well.
     controller_state: bool,
     /// The second channel a mono output has nowhere to go, so a block has somewhere to render
@@ -221,6 +223,7 @@ impl TestTone {
                 fails_from: support::fails_from(),
                 reports_out: support::events_out(),
                 goes_silent: support::told_to(support::SILENT_VARIABLE),
+                no_set_processing: support::told_to(support::NO_SET_PROCESSING_VARIABLE),
                 controller_state: support::told_to(support::CONTROLLER_STATE_VARIABLE),
                 scratch: vec![0.0; SCRATCH],
                 glide: None,
@@ -612,7 +615,12 @@ impl IAudioProcessorTrait for TestTone {
         } else {
             "start_processing"
         });
-        kResultOk
+        let audio = self.audio.try_borrow();
+        if audio.is_ok_and(|audio| audio.no_set_processing) {
+            kNotImplemented
+        } else {
+            kResultOk
+        }
     }
 
     unsafe fn process(&self, data: *mut ProcessData) -> tresult {
