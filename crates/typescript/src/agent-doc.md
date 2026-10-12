@@ -8,7 +8,7 @@ To play a track from the computer keyboard, write nothing: tell the composer to 
 
 One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card. Make the folder if it is not there, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
 
-The runtime runs them with Bun, which the app ships and puts on your `PATH`; a build from source uses the one installed from https://bun.sh. While the app has the project open, a save loads every file of `extensions/` again within a second, every record of the tool plays the new sound, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
+The runtime runs them with Bun, which the app ships and puts on your `PATH`; a build from source uses the one installed from https://bun.sh. While the app has the project open, any change in `extensions/` starts the tools again in a moment: every file loads again, also a helper a tool imports, every record plays the new sound, every `memory` starts again, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 
 ## A tool
 
@@ -41,7 +41,7 @@ tool({
 
 ## The sound
 
-`sound` gets the fields and controls, and returns a `Signal`: a stream of samples, one value per sample, run for each channel apart and for each voice apart. It is called once, when the tool loads or a choice changes, to build the sound; the sound then plays by itself. So a knob is no number in `sound` but a `Signal` that moves: `if (rate > 5)` is a type error on purpose, because turning a knob must not build the sound again. A `choice` is its value, and `sound` can branch on it.
+`sound` gets the fields and controls, and returns a `Signal`: a stream of samples, one value per sample, run for each channel apart and for each voice apart. It is called when the tool loads, once for each combination of choices (at most 256), to build the sound; the sound then plays by itself. So a knob is no number in `sound` but a `Signal` that moves: `if (rate > 5)` is a type error on purpose, because turning a knob must not build the sound again. A `choice` is its value, and `sound` can branch on it.
 
 Combine signals with methods, which take a signal or a number: `.plus`, `.minus`, `.times`, `.over`, `.mod`, `.negate()`, and the comparisons `.lt`, `.gt`, `.le`, `.ge`, `.eq`, `.ne`, which give 1 for true and 0 for false. And with these functions, all in `sdk.ts` with their docs:
 
@@ -107,7 +107,7 @@ const wet = combs.reduce((sum, comb) => sum.plus(comb)).over(combs.length);
 | --- | --- | --- | --- |
 | `knob({ min, max, default, unit?, label? })` | a number | a `Signal` | glides at once |
 | `toggle({ default, label? })` | `true` or `false` | a `Signal`, 1 or 0 | glides at once |
-| `choice({ options, default, label? })` | one of `options` | the option itself | builds the sound again; it fades in over 10 ms |
+| `choice({ options, default, label? })` | one of `options` | the option itself | switches to the sound of that option; it fades in over 10 ms |
 | `pattern({ length, min, max, default, label? })` | a list of `length` numbers | a table: `.at(index)` | at once |
 | `sample({ label? })` | the name of a file under `assets/audio/`, such as `"voice.wav"`, or `""` | a table of its sound: one channel at the engine's rate, up to 60 s | at once, once the file is there |
 
@@ -240,7 +240,7 @@ tool({
 ## Check your work
 
 1. `bun x tsc -p extensions` checks the types. The first run downloads TypeScript.
-2. `problems.txt`, or the problems `sound-tools . --inspect` prints, list what is wrong under `extensions/<file>`: a file that does not load, a tool definition that does not hold, a sound that does not build, and, while the window is open, the first tick or click that failed. Fix it and save; the problem goes.
+2. `problems.txt`, or the problems `sound-tools . --inspect` prints, list what is wrong under `extensions/<file>`: a file that does not load, a tool definition that does not hold, a sound that does not build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change. Fix it and save; the problem goes.
 3. Use the tool as the composer will: write its record in a track (`"state": {}` is its defaults; an effect is also named in the track's `effects`). `--inspect` lists each track's instrument and effects with their tools. Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.
 
 ## Limits
