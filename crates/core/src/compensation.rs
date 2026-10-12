@@ -41,6 +41,9 @@ struct History {
     /// Frames written since it started this time.
     written: u64,
     active: bool,
+    /// The `ahead` it was written under. Kept here, not read from the `Compensation`, because
+    /// the history moves to the next schedule.
+    ahead: u64,
 }
 
 impl Compensation {
@@ -56,18 +59,23 @@ impl Compensation {
                 channels: std::array::from_fn(|_| vec![0.0; HISTORY]),
                 written: 0,
                 active: false,
+                ahead: 0,
             },
         }
     }
 
     /// The delay the listener that needs most needs, from `ahead` and `least_lead`. Starts
-    /// writing when it is no longer zero, so no listener hears a past from before.
+    /// writing when it is no longer zero, so no listener hears a past from before. A new
+    /// `ahead` starts over too: the producer jumped, and what it played before is on another
+    /// timeline. A new `least_lead` does not; that listener jumps itself.
     pub(crate) fn longest_delay(&mut self) -> u64 {
         let longest = self.ahead.saturating_sub(self.least_lead);
-        if longest > 0 && !self.history.active {
-            self.history.written = 0;
+        let history = &mut self.history;
+        if longest > 0 && (!history.active || history.ahead != self.ahead) {
+            history.written = 0;
         }
-        self.history.active = longest > 0;
+        history.active = longest > 0;
+        history.ahead = self.ahead;
         longest
     }
 

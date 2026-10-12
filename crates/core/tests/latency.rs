@@ -647,6 +647,36 @@ fn a_routing_edit_keeps_the_delayed_path_playing() {
     assert_eq!(direct, ramp);
 }
 
+/// A ramp feeds channel 0 directly and channel 2 through a processor whose latency changes
+/// while it plays. The ramp jumps with its new lead, so the direct path starts its delay over:
+/// it may skip or fall silent for a moment, but never plays again what it already played.
+#[test]
+fn a_latency_change_on_the_slow_path_never_replays_the_fast_one() {
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, CHANNELS));
+    let mut edit = control.edit();
+    let ramp = edit.add_processor("ramp", Ramp).unwrap();
+    let delay = edit.add_processor("delay", Delay::new(300)).unwrap();
+    for connection in [
+        Connection::new(ramp.id(), AUDIO_OUT, delay.id(), AUDIO_IN),
+        Connection::to_device(ramp.id(), AUDIO_OUT, 0),
+        Connection::to_device(delay.id(), AUDIO_OUT, 2),
+    ] {
+        edit.connect(connection).unwrap();
+    }
+    edit.commit().unwrap();
+    let [mut direct, _] = render(&mut control, &mut engine, 2000);
+    for latency in [900, 50] {
+        control.update(delay, latency).unwrap();
+        let [after, _] = render(&mut control, &mut engine, 2000);
+        direct.extend(after);
+    }
+    let played: Vec<f32> = direct.into_iter().filter(|sample| *sample != 0.0).collect();
+    let backwards = played.windows(2).position(|pair| pair[1] <= pair[0]);
+    assert_eq!(backwards, None);
+    // 6000 frames played, 50 of them behind the ramp.
+    assert_eq!(played.last(), Some(&5_950.0));
+}
+
 /// Paths whose latency differs by more than the engine makes up for: the faster one is delayed
 /// by the most it can be, and the status says how early it still is.
 #[test]
