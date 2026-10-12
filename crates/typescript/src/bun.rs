@@ -33,6 +33,10 @@ const HANG_TIMEOUT: Duration = Duration::from_secs(2);
 /// The lines that may wait for Bun to read them. More, and Bun has stopped reading.
 const QUEUED_LINES: usize = 1024;
 
+/// What Bun said that may wait for the window to hear it. More, and the code of a tool says
+/// things in a loop that never ends: the window would not catch up.
+const MAX_EVENTS: usize = 4096;
+
 /// The files of `extensions/` Bun runs without, because their code hung or stopped it, with
 /// what to tell the composer. A change in the folder clears it.
 pub(crate) type Skipped = BTreeMap<String, String>;
@@ -246,7 +250,8 @@ pub(crate) struct LoadFailure {
 struct Busy {
     /// How many things it was told and has not done.
     pending: usize,
-    /// When it last said something, or was told something when it had nothing to do.
+    /// When it last took a step: started the code of a tool, finished what it was told, or was
+    /// told something when it had nothing to do.
     since: Instant,
     /// The code it runs now.
     runs: Option<Runs>,
@@ -354,12 +359,18 @@ impl Bun {
             Ok(json) => json + "\n",
             Err(error) => return eprintln!("error: {error}"),
         };
-        if self.lines.try_send(line).is_ok() {
-            let mut busy = self.busy.lock().unwrap_or_else(PoisonError::into_inner);
+        let lock = || self.busy.lock().unwrap_or_else(PoisonError::into_inner);
+        // Counted before it goes, so its done never comes before it is counted.
+        {
+            let mut busy = lock();
             if busy.pending == 0 {
                 busy.since = Instant::now();
             }
             busy.pending += 1;
+        }
+        if self.lines.try_send(line).is_err() {
+            let mut busy = lock();
+            busy.pending = busy.pending.saturating_sub(1);
         }
     }
 }
@@ -395,31 +406,35 @@ fn hear(heard: &mpsc::Receiver<Line>, busy: &Mutex<Busy>, events: &smol::channel
         events.try_send(Event::Ended { blame, why }).ok();
     };
     loop {
-        let line = match heard.recv_timeout(HANG_TIMEOUT / 4) {
-            Ok(line) => line,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                let busy = lock();
-                if busy.pending > 0 && busy.since.elapsed() > HANG_TIMEOUT {
-                    drop(busy);
-                    return ended(format!("took longer than {HANG_TIMEOUT:?}"));
-                }
-                continue;
+        match heard.recv_timeout(HANG_TIMEOUT / 4) {
+            // A step: code of a tool starts, or what it was told is done.
+            Ok(Line::Runs(runs)) => {
+                let mut busy = lock();
+                busy.since = Instant::now();
+                busy.runs = Some(runs);
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped Bun".to_string()),
-        };
-        let mut busy = lock();
-        busy.since = Instant::now();
-        match line {
-            Line::Runs(runs) => busy.runs = Some(runs),
-            Line::Done => {
+            Ok(Line::Done) => {
+                let mut busy = lock();
+                busy.since = Instant::now();
                 busy.pending = busy.pending.saturating_sub(1);
                 busy.runs = None;
             }
-            Line::Event(event) => {
+            // Code that says things in a loop that never ends says more than the window hears.
+            Ok(Line::Event(_)) if events.len() >= MAX_EVENTS => {
+                return ended(format!("said more than {MAX_EVENTS} things at once"));
+            }
+            Ok(Line::Event(event)) => {
                 events.try_send(event).ok();
             }
             // Bun loads once.
-            Line::Loading { .. } | Line::Loaded(_) => {}
+            Ok(Line::Loading { .. } | Line::Loaded(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped Bun".to_string()),
+        }
+        // Also while it says things: a loop that never ends may.
+        let busy = lock();
+        if busy.pending > 0 && busy.since.elapsed() > HANG_TIMEOUT {
+            drop(busy);
+            return ended(format!("took longer than {HANG_TIMEOUT:?}"));
         }
     }
 }

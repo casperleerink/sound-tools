@@ -50,6 +50,8 @@ const SDK: &str = include_str!("sdk.ts");
 const HOST: &str = include_str!("host.ts");
 /// What the runtime writes in `extensions/` and owns there.
 const OWNED: [&str; 2] = ["sdk.ts", "tsconfig.json"];
+/// The sounds of a tool that do not build that its problem names; it counts the others.
+const SHOWN_FAILURES: usize = 3;
 /// JSX makes the nodes of `sdk.ts`. Also what `tsc -p extensions` checks with.
 const TSCONFIG: &str = r#"{
   "compilerOptions": {
@@ -163,7 +165,13 @@ fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<Problem>) {
         }
         let sounds = Sounds::new(&info, sounds);
         // One problem a file: a list keeps one.
-        let failed: Vec<String> = (sounds.failures().cloned())
+        let mut sounds_failed: Vec<&String> = sounds.failures().collect();
+        sounds_failed.sort();
+        let shown = sounds_failed.len().min(SHOWN_FAILURES);
+        let more = (sounds_failed.len() > shown)
+            .then(|| format!("and {} more sounds", sounds_failed.len() - shown));
+        let failed: Vec<String> = (sounds_failed.into_iter().take(shown).cloned())
+            .chain(more)
             .chain(
                 drawn(card)
                     .err()

@@ -53,8 +53,10 @@ pub(crate) struct Live {
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
-    /// Hears the changes in `extensions/`, or why it cannot, which is a problem of its own.
-    watcher: Result<RecommendedWatcher, Problem>,
+    /// Hears the changes in `extensions/`.
+    _watcher: Option<RecommendedWatcher>,
+    /// What it cannot hear, a problem of its own.
+    watch_problem: Option<Problem>,
     changed: smol::channel::Sender<()>,
     _tasks: [Task<()>; 2],
 }
@@ -183,49 +185,68 @@ pub fn start_window(
 }
 
 /// Watches `folder` and its folders but `node_modules`, and says on `changed` when a file
-/// that may be imported changes, or a folder. Not hidden files, such as an editor's.
-fn watch(folder: &Path, changed: smol::channel::Sender<()>) -> Result<RecommendedWatcher, Problem> {
-    let not_heard = |error: notify::Error| {
-        crate::folder_problem(format!("changes in {FOLDER}/ are not heard: {error}"))
+/// that may be imported changes, or a folder. Not hidden files, such as an editor's. With
+/// what it cannot watch, which is a problem.
+fn watch(
+    folder: &Path,
+    changed: smol::channel::Sender<()>,
+) -> (Option<RecommendedWatcher>, Option<Problem>) {
+    let not_heard = |path: &Path, error: notify::Error| {
+        let message = format!("changes in {} are not heard: {error}", path.display());
+        Some(crate::folder_problem(message))
     };
     let skipped = |name: &str| name.starts_with('.') || name == "node_modules";
     // The paths of events are the real ones.
     let root = dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
-    let counts = move |path: &Path| {
+    let counts = move |path: &Path, removed: bool| {
         let inside = path.strip_prefix(&root).unwrap_or(path);
         let hidden = (inside.components()).any(|part| skipped(&part.as_os_str().to_string_lossy()));
         let importable = (path.extension()).is_some_and(|extension| {
-            ["ts", "tsx", "js", "mjs", "json"]
+            ["ts", "tsx", "mts", "js", "jsx", "mjs", "cjs", "json"]
                 .iter()
                 .any(|known| extension == *known)
         });
+        // A folder that is gone is no folder any more.
+        let folder = path.is_dir() || (removed && path.extension().is_none());
         let owned = OWNED.iter().any(|owned| inside == Path::new(owned));
-        !hidden && !owned && (importable || path.is_dir())
+        !hidden && !owned && (importable || folder)
     };
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let event = match event {
             Ok(event) => event,
             Err(error) => return eprintln!("error: watching {FOLDER}/: {error}"),
         };
         // An event with no paths asks to look again at everything, as after a lost event.
-        let paths = &event.paths;
-        if !event.kind.is_access() && (paths.is_empty() || paths.iter().any(|path| counts(path))) {
+        let (paths, removed) = (&event.paths, event.kind.is_remove());
+        if !event.kind.is_access()
+            && (paths.is_empty() || paths.iter().any(|path| counts(path, removed)))
+        {
             changed.try_send(()).ok();
         }
-    })
-    .map_err(not_heard)?;
-    watcher
-        .watch(folder, RecursiveMode::NonRecursive)
-        .map_err(not_heard)?;
+    });
+    let mut watcher = match watcher {
+        Ok(watcher) => watcher,
+        Err(error) => return (None, not_heard(folder, error)),
+    };
     let entries = std::fs::read_dir(folder).into_iter().flatten().flatten();
-    for entry in entries.filter(|entry| entry.path().is_dir()) {
-        if !skipped(&entry.file_name().to_string_lossy()) {
-            watcher
-                .watch(&entry.path(), RecursiveMode::Recursive)
-                .map_err(not_heard)?;
+    let folders = (entries.map(|entry| entry.path()))
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| skipped(&name.to_string_lossy()))
+        })
+        .map(|path| (path, RecursiveMode::Recursive));
+    // The first that fails says so; the others are watched all the same.
+    let mut problem = None;
+    for (path, mode) in
+        std::iter::once((folder.to_path_buf(), RecursiveMode::NonRecursive)).chain(folders)
+    {
+        if let Err(error) = watcher.watch(&path, mode) {
+            problem = problem.or_else(|| not_heard(&path, error));
         }
     }
-    Ok(watcher)
+    (Some(watcher), problem)
 }
 
 impl Live {
@@ -248,7 +269,7 @@ impl Live {
         *tools.borrow_mut() = loaded;
         cx.new(|cx: &mut Context<Live>| {
             let (changed, changes) = smol::channel::unbounded();
-            let watcher = watch(&folder, changed.clone());
+            let (watcher, watch_problem) = watch(&folder, changed.clone());
             let hearing_changes = cx.spawn(async move |live, cx| {
                 while changes.recv().await.is_ok() {
                     // Until it is quiet: an editor saves in several writes, an agent several
@@ -290,12 +311,13 @@ impl Live {
                 edits: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
-                watcher,
+                _watcher: watcher,
+                watch_problem,
                 changed,
                 _tasks: [hearing_changes, framing],
             };
             // Only the watcher's problem is new.
-            if live.watcher.is_err() {
+            if live.watch_problem.is_some() {
                 live.report(cx);
             }
             live
@@ -817,7 +839,7 @@ impl Live {
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.skipped.clear();
         // A new folder is watched too.
-        self.watcher = watch(&self.folder, self.changed.clone());
+        (self._watcher, self.watch_problem) = watch(&self.folder, self.changed.clone());
         self.restart(cx);
     }
 
@@ -829,7 +851,12 @@ impl Live {
         let info =
             (blame.as_ref()).and_then(|runs| find(&self.tools.borrow(), &runs.tool).cloned());
         let (Some(info), Some(runs)) = (info, blame) else {
-            self.host = Host::Stopped;
+            // Ending a Bun waits for it: not on the thread that draws.
+            if let Host::Running { bun, .. } = std::mem::replace(&mut self.host, Host::Stopped) {
+                cx.background_executor()
+                    .spawn(async move { drop(bun) })
+                    .detach();
+            }
             let message = format!(
                 "the TypeScript host {why} with no tool to blame, so the tools do not run: fix them and save"
             );
@@ -956,8 +983,8 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let watcher = self.watcher.as_ref().err().cloned();
-        let problems = self.problems.iter().cloned().chain(watcher).collect();
+        let watched = self.watch_problem.clone();
+        let problems = self.problems.iter().cloned().chain(watched).collect();
         session.update(cx, |session, cx| {
             session.background(cx, |project| {
                 project.set_problems_in(&format!("{FOLDER}/"), problems);

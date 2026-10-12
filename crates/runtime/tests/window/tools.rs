@@ -710,6 +710,42 @@ tool({
     });
 }
 
+/// A loop that never ends but keeps saying things, here moving a live control, is a hang of
+/// its tool too.
+#[gpui::test]
+fn a_tick_that_never_ends_while_it_plays_is_a_problem(cx: &mut TestAppContext) {
+    let flood = r#"import { input, live, tool } from "./sdk";
+
+tool({
+  name: "flood",
+  title: "Flood",
+  when: "You want a flood",
+  doc: "Its loop never ends and moves a control all the time.",
+  state: {},
+  controls: { x: live({ min: 0, max: 1, default: 0 }) },
+  sound: ({ x }) => input.times(x),
+  tick: ({ time, set }) => {
+    while (time > 0) set("x", 0);
+  },
+});
+"#;
+    let (_, project) = ONLY_THE_TOOL[0];
+    let files = [
+        ("project.json", project),
+        ("state/flood.json", r#"{"tool": "flood", "state": {}}"#),
+        ("extensions/flood.ts", flood),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.until("the flood among the problems", |window| {
+        let problems = window.problems();
+        problems
+            .iter()
+            .any(|problem| problem.path == "extensions/flood.ts")
+    });
+}
+
 /// Code a timer of a tool runs between two requests hangs Bun: the request that waits then is
 /// not to blame, and no tool is.
 #[gpui::test]
