@@ -586,7 +586,7 @@ fn apply(state: &DrumPadState, context: &mut BehaviourContext<'_>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use sound_core::{check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::{check_doc_ranges, check_parameter_ranges};
 
     use super::*;
 
@@ -726,30 +726,24 @@ mod tests {
     /// definition, so they cannot drift from it.
     #[test]
     fn the_docs_give_the_kit_and_the_range_of_every_field() {
-        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
-        for (name, doc) in docs {
-            assert_eq!(
-                check_doc_ranges(doc, &PARAMETERS[0].each_ref()),
-                Ok(()),
-                "{name}"
+        let doc = include_str!("../agent-doc.md");
+        assert_eq!(check_doc_ranges(doc, &PARAMETERS[0].each_ref()), Ok(()));
+        for (pad, kit) in KIT.iter().enumerate() {
+            let choke = if kit.choke { "yes" } else { "no" };
+            let row = format!(
+                "| {} | {} | `{}` | {} | {} | {} | {} | {choke} |",
+                note_of(pad),
+                kit.name,
+                kit.sound.key(),
+                kit.volume_db,
+                kit.pitch_semitones,
+                kit.decay_ms,
+                kit.pan
             );
-            for (pad, kit) in KIT.iter().enumerate() {
-                let choke = if kit.choke { "yes" } else { "no" };
-                let row = format!(
-                    "| {} | {} | `{}` | {} | {} | {} | {} | {choke} |",
-                    note_of(pad),
-                    kit.name,
-                    kit.sound.key(),
-                    kit.volume_db,
-                    kit.pitch_semitones,
-                    kit.decay_ms,
-                    kit.pan
-                );
-                assert!(
-                    doc.lines().any(|line| line == row),
-                    "{name} has no row {row}"
-                );
-            }
+            assert!(
+                doc.lines().any(|line| line == row),
+                "the doc has no row {row}"
+            );
         }
     }
 

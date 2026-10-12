@@ -202,7 +202,7 @@ fn apply(state: &SynthState, context: &mut BehaviourContext<'_>) -> Result<(), B
 
 #[cfg(test)]
 mod tests {
-    use sound_core::{check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::{check_doc_ranges, check_parameter_ranges};
 
     use super::*;
 

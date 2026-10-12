@@ -319,40 +319,32 @@ fn apply(state: &EqState, context: &mut BehaviourContext<'_>) -> Result<(), Beha
 
 #[cfg(test)]
 mod tests {
-    use sound_core::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
 
     use super::*;
-
-    fn row<'a>(name: &str, doc: &'a str, field: &str) -> &'a str {
-        let row = format!("| `{field}` |");
-        let row = doc.lines().find(|line| line.starts_with(&row));
-        row.unwrap_or_else(|| panic!("{name} has no row for {field}"))
-    }
 
     /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
     /// definition, so they cannot drift from it. The frequency has a default per band, and its row
     /// lists them in the order of the bands.
     #[test]
     fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let docs = [("agent-doc.md", include_str!("../agent-doc.md"))];
+        let doc = include_str!("../agent-doc.md");
+        assert_eq!(check_doc_ranges(doc, &[&FREQUENCIES[0], &GAIN, &Q]), Ok(()));
+        assert_eq!(check_doc_ranges(doc, &[&OUTPUT_GAIN]), Ok(()));
+        assert_eq!(check_doc_defaults(doc, &[&GAIN, &Q]), Ok(()));
+        assert_eq!(check_doc_defaults(doc, &[&OUTPUT_GAIN]), Ok(()));
         let frequencies = FREQUENCIES
             .each_ref()
             .map(|parameter| parameter.default.to_string());
         let shapes = SHAPES.map(|shape| format!("`\"{}\"`", snake_case(shape)));
-        for (name, doc) in docs {
-            let band = [&FREQUENCIES[0], &GAIN, &Q];
-            assert_eq!(check_doc_ranges(doc, &band), Ok(()), "{name}");
-            assert_eq!(check_doc_ranges(doc, &[&OUTPUT_GAIN]), Ok(()), "{name}");
-            assert_eq!(check_doc_defaults(doc, &[&GAIN, &Q]), Ok(()), "{name}");
-            assert_eq!(check_doc_defaults(doc, &[&OUTPUT_GAIN]), Ok(()), "{name}");
-            let defaults = [
-                (FREQUENCIES[0].field, frequencies.join(", ")),
-                ("shape", shapes.join(", ")),
-            ];
-            for (field, default) in defaults {
-                let row = row(name, doc, field);
-                assert!(row.contains(&format!("| {default} |")), "{name}: {row}");
-            }
+        let defaults = [
+            (FREQUENCIES[0].field, frequencies.join(", ")),
+            ("shape", shapes.join(", ")),
+        ];
+        for (field, default) in defaults {
+            let row = format!("| `{field}` |");
+            let row = doc.lines().find(|line| line.starts_with(&row)).unwrap();
+            assert!(row.contains(&format!("| {default} |")), "{row}");
         }
     }
 

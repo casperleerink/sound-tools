@@ -84,10 +84,8 @@ fn apply(state: &WavetableState, context: &mut BehaviourContext<'_>) -> Result<(
 #[cfg(test)]
 mod tests {
     use serde::Serialize;
-    use sound_core::{
-        FilterType, LfoShape, Parameter, check_doc_defaults, check_doc_ranges,
-        check_parameter_ranges,
-    };
+    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::{FilterType, LfoShape, Parameter};
 
     use super::*;
     use crate::state::{
