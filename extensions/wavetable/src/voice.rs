@@ -68,13 +68,11 @@ impl OscillatorVoice {
     };
 }
 
-/// One filter of one voice.
+/// One filter of one voice at one rate.
 #[derive(Clone)]
 struct FilterVoice {
     /// Left and right, each two sections.
     sections: [[SvfSection; 2]; 2],
-    /// Left and right, for the drive at four times the rate.
-    oversamplers: [Oversampler; 2],
     /// The level of the low and high pass of the first section, which moves with the resonance.
     level: f32,
     /// The cutoff in octaves, the resonance and the slope the factors are for, so they are
@@ -82,21 +80,41 @@ struct FilterVoice {
     factors_for: [f32; 3],
     factors: [SvfFactors; 2],
     factors_level: f32,
-    /// The oversamplers hold sound, so they are cleared once when the drive goes, and not
-    /// every block: they are large.
-    driving: bool,
 }
 
 impl FilterVoice {
     fn start() -> Self {
         Self {
             sections: [[SvfSection::default(); 2]; 2],
-            oversamplers: [Oversampler::new(); 2],
             level: 1.0,
             factors_for: [f32::NAN; 3],
             factors: [SvfFactors::default(); 2],
             factors_level: 1.0,
-            driving: false,
+        }
+    }
+}
+
+/// The two filters of one voice at the sample rate, and at four times it with the way up and
+/// down.
+#[derive(Clone)]
+struct Filters {
+    plain: [FilterVoice; 2],
+    oversampled: [FilterVoice; 2],
+    /// Left and right: up for the sound into the first filter and back down for the mix, and
+    /// up for the sound into the second.
+    oversamplers: [[Oversampler; 2]; 2],
+    /// Whether each way ran in the last block, so its memory is cleared once when it stops,
+    /// and not every block: the oversamplers are large.
+    running: [bool; 2],
+}
+
+impl Filters {
+    fn start() -> Self {
+        Self {
+            plain: [FilterVoice::start(), FilterVoice::start()],
+            oversampled: [FilterVoice::start(), FilterVoice::start()],
+            oversamplers: [[Oversampler::new(); 2]; 2],
+            running: [false; 2],
         }
     }
 }
@@ -134,7 +152,7 @@ pub(crate) struct Voice {
     lfo_rates: [f32; 2],
     oscillators: [OscillatorVoice; 2],
     sub_phase: f32,
-    filters: [FilterVoice; 2],
+    filters: Filters,
     last: Targets,
     /// Just started from silence: the first block starts where the routes put it.
     fresh: bool,
@@ -194,7 +212,7 @@ impl Voice {
             lfo_rates: [1.0; 2],
             oscillators: [OscillatorVoice::START; 2],
             sub_phase: 0.0,
-            filters: [FilterVoice::start(), FilterVoice::start()],
+            filters: Filters::start(),
             last: Targets::default(),
             fresh: true,
             stereo: false,
@@ -206,8 +224,15 @@ impl Voice {
         self.oscillators[index].oversamplers = [Oversampler::new(); 2];
     }
 
-    /// Adds this voice to `output`, left and right, over the frames of `block`.
-    pub(crate) fn render(&mut self, output: [&mut [f32]; 2], block: &Block<'_>) {
+    /// Adds this voice to `output`, left and right, over the frames of `block`: what its filters
+    /// make at the sample rate, and to `late` what they make at four times it, which is
+    /// already [`Oversampler::DELAY_FRAMES`] late.
+    pub(crate) fn render(
+        &mut self,
+        output: [&mut [f32]; 2],
+        late: [&mut [f32]; 2],
+        block: &Block<'_>,
+    ) {
         let frames = block.frames;
         let mut levels = [0.0; MAX_BLOCK];
         let (sounding, envelope_levels) = self.advance_envelopes(block, &mut levels[..frames]);
@@ -255,19 +280,25 @@ impl Voice {
 
         let mixed = self.filter(block, &oscillators, &sub, [&last, &targets], channels);
 
-        let [left, right] = output;
         let right_channel = channels - 1;
         let [output_from, output_to] = [last.output, targets.output];
-        let frames_out = left[..sounding]
-            .iter_mut()
-            .zip(&mut right[..sounding])
-            .zip(&levels[..sounding])
-            .enumerate();
-        for (frame, ((left, right), level)) in frames_out {
-            let at = (frame + 1) as f32 / frames as f32;
-            let side = |side: usize| output_from[side] + (output_to[side] - output_from[side]) * at;
-            *left += mixed[0][frame] * level * side(0);
-            *right += mixed[right_channel][frame] * level * side(1);
+        let ways = ways(block.oversampled);
+        for (([left, right], mixed), runs) in [output, late].into_iter().zip(&mixed).zip(ways) {
+            if !runs {
+                continue;
+            }
+            let frames_out = left[..sounding]
+                .iter_mut()
+                .zip(&mut right[..sounding])
+                .zip(&levels[..sounding])
+                .enumerate();
+            for (frame, ((left, right), level)) in frames_out {
+                let at = (frame + 1) as f32 / frames as f32;
+                let side =
+                    |side: usize| output_from[side] + (output_to[side] - output_from[side]) * at;
+                *left += mixed[0][frame] * level * side(0);
+                *right += mixed[right_channel][frame] * level * side(1);
+            }
         }
         self.last = targets;
     }
@@ -378,7 +409,9 @@ impl Voice {
         }
     }
 
-    /// The oscillators and the sub through the filters, as the routing weighs them.
+    /// The oscillators and the sub through the filters, as the routing weighs them: at the
+    /// sample rate, and at four times it, which comes out [`Oversampler::DELAY_FRAMES`] late.
+    /// Each is weighed by its part while the patch glides from one to the other.
     fn filter(
         &mut self,
         block: &Block<'_>,
@@ -386,55 +419,153 @@ impl Voice {
         sub: &[f32; MAX_BLOCK],
         [last, targets]: [&Targets; 2],
         channels: usize,
-    ) -> Buffer {
+    ) -> [Buffer; 2] {
         let frames = block.frames;
         let weights = &block.routing;
-        let [first, second] = &mut self.filters;
         let mut one = [[0.0; MAX_BLOCK]; 2];
         let mut two = [[0.0; MAX_BLOCK]; 2];
         for channel in 0..channels {
             let sources = [&oscillators[0][channel], &oscillators[1][channel], sub];
             for (source, weight) in sources.iter().zip(&weights[0..3]) {
-                add(&mut one[channel], source, weight, frames);
+                add::<1>(&mut one[channel], *source, weight, frames);
             }
             for (source, weight) in sources.iter().zip(&weights[3..6]) {
-                add(&mut two[channel], source, weight, frames);
+                add::<1>(&mut two[channel], *source, weight, frames);
             }
         }
-        first.render(
-            &block.filters[0],
-            [last, targets],
-            0,
-            block,
-            channels,
-            &mut one,
-        );
-        for channel in 0..channels {
-            add(&mut two[channel], &one[channel], &weights[6], frames);
+        let tones = [0, 1].map(|index| {
+            [
+                Ramp::new(last.cutoff[index], targets.cutoff[index]),
+                Ramp::new(last.resonance[index], targets.resonance[index]),
+            ]
+        });
+        let filters = &mut self.filters;
+        let oversampled = block.oversampled;
+        let ways = ways(oversampled);
+        for (way, (ran, runs)) in filters.running.iter_mut().zip(ways).enumerate() {
+            if std::mem::replace(ran, runs) && !runs {
+                match way {
+                    0 => filters.plain = [FilterVoice::start(), FilterVoice::start()],
+                    _ => {
+                        filters.oversampled = [FilterVoice::start(), FilterVoice::start()];
+                        filters.oversamplers = [[Oversampler::new(); 2]; 2];
+                    }
+                }
+            }
         }
-        second.render(
-            &block.filters[1],
-            [last, targets],
-            1,
-            block,
-            channels,
-            &mut two,
-        );
-        let mut mixed = [[0.0; MAX_BLOCK]; 2];
-        for channel in 0..channels {
-            add(&mut mixed[channel], &one[channel], &weights[7], frames);
-            add(&mut mixed[channel], &two[channel], &weights[8], frames);
+        let mut mixed = [[[0.0; MAX_BLOCK]; 2]; 2];
+        if ways[0] {
+            let [plain, _] = &mut mixed;
+            let (mut one, mut two) = (one, two);
+            let [first, second] = &mut filters.plain;
+            first.render::<1>(
+                &block.filters[0],
+                tones[0],
+                block,
+                channels,
+                slices(&mut one),
+            );
+            for channel in 0..channels {
+                add::<1>(&mut two[channel], &one[channel], &weights[6], frames);
+            }
+            second.render::<1>(
+                &block.filters[1],
+                tones[1],
+                block,
+                channels,
+                slices(&mut two),
+            );
+            for channel in 0..channels {
+                add::<1>(&mut plain[channel], &one[channel], &weights[7], frames);
+                add::<1>(&mut plain[channel], &two[channel], &weights[8], frames);
+            }
+        }
+        if ways[1] {
+            let [_, late] = &mut mixed;
+            let length = Oversampler::FACTOR * frames;
+            let mut ones = [[0.0; Oversampler::FACTOR * MAX_BLOCK]; 2];
+            let mut twos = [[0.0; Oversampler::FACTOR * MAX_BLOCK]; 2];
+            let oversamplers = filters.oversamplers.iter_mut();
+            for (channel, [into_one, into_two]) in oversamplers.enumerate().take(channels) {
+                let filters = block.oversampling;
+                into_one.up(
+                    filters,
+                    &one[channel][..frames],
+                    &mut ones[channel][..length],
+                );
+                into_two.up(
+                    filters,
+                    &two[channel][..frames],
+                    &mut twos[channel][..length],
+                );
+            }
+            let [first, second] = &mut filters.oversampled;
+            first.render::<4>(
+                &block.filters[0],
+                tones[0],
+                block,
+                channels,
+                slices(&mut ones),
+            );
+            for channel in 0..channels {
+                add::<4>(&mut twos[channel], &ones[channel], &weights[6], frames);
+            }
+            second.render::<4>(
+                &block.filters[1],
+                tones[1],
+                block,
+                channels,
+                slices(&mut twos),
+            );
+            let oversamplers = filters.oversamplers.iter_mut();
+            for (channel, [down, _]) in oversamplers.enumerate().take(channels) {
+                let mut four = [0.0; Oversampler::FACTOR * MAX_BLOCK];
+                add::<4>(&mut four, &ones[channel], &weights[7], frames);
+                add::<4>(&mut four, &twos[channel], &weights[8], frames);
+                down.down(
+                    block.oversampling,
+                    &four[..length],
+                    &mut late[channel][..frames],
+                );
+            }
+            if channels == 1 {
+                filters.oversamplers[1] = filters.oversamplers[0];
+            }
+        }
+        if oversampled.from != oversampled.to {
+            for channel in 0..channels {
+                for frame in 0..frames {
+                    let part = oversampled.at(frame, frames);
+                    mixed[0][channel][frame] *= 1.0 - part;
+                    mixed[1][channel][frame] *= part;
+                }
+            }
         }
         mixed
     }
 }
 
+/// Whether the filters run at the sample rate, and at four times it, over a block: both while
+/// the patch glides from one to the other.
+fn ways(oversampled: Ramp) -> [bool; 2] {
+    let all_oversampled = oversampled.from == 1.0 && oversampled.to == 1.0;
+    [!all_oversampled, !oversampled.is_zero()]
+}
+
+/// Left and right of a pair of buffers.
+fn slices<const LENGTH: usize>([left, right]: &mut [[f32; LENGTH]; 2]) -> [&mut [f32]; 2] {
+    [left, right]
+}
+
 /// Adds `source` to `sum` at a weight that moves over the block, and nothing while it is 0.
-fn add(sum: &mut [f32; MAX_BLOCK], source: &[f32; MAX_BLOCK], weight: &Ramp, frames: usize) {
+/// Each holds `FACTOR` samples for each frame.
+fn add<const FACTOR: usize>(sum: &mut [f32], source: &[f32], weight: &Ramp, frames: usize) {
     if weight.is_zero() {
         return;
     }
-    let pairs = sum[..frames].iter_mut().zip(&source[..frames]);
+    let pairs = sum[..FACTOR * frames]
+        .iter_mut()
+        .zip(&source[..FACTOR * frames]);
     if weight.from == weight.to && weight.from.is_finite() {
         // Most of the time. The ramp below adds a step of exactly 0 to the weight then.
         for (sum, source) in pairs {
@@ -443,8 +574,8 @@ fn add(sum: &mut [f32; MAX_BLOCK], source: &[f32; MAX_BLOCK], weight: &Ramp, fra
         return;
     }
     let step = (weight.to - weight.from) / frames as f32;
-    for (frame, (sum, source)) in pairs.enumerate() {
-        *sum += (weight.from + step * (frame + 1) as f32) * source;
+    for (sample, (sum, source)) in pairs.enumerate() {
+        *sum += (weight.from + step * (sample / FACTOR + 1) as f32) * source;
     }
 }
 
@@ -771,51 +902,30 @@ impl Copies<'_> {
 }
 
 impl FilterVoice {
-    /// Filters `buffer` in place, left and, when `channels` is 2, right. Off, it lets the sound
-    /// through as it is.
-    fn render(
+    /// Filters the buffers in place, left and, when `channels` is 2, right, with `FACTOR`
+    /// samples for each frame: at four times the rate with the drive and the warmth, at the
+    /// sample rate without them. Off, it lets the sound through as it is.
+    fn render<const FACTOR: usize>(
         &mut self,
         filter: &FilterBlock,
-        [last, targets]: [&Targets; 2],
-        index: usize,
+        [cutoff, resonance]: [Ramp; 2],
         block: &Block<'_>,
         channels: usize,
-        buffer: &mut Buffer,
+        buffers: [&mut [f32]; 2],
     ) {
         let frames = block.frames;
-        if filter.oversampled.is_zero() {
-            if std::mem::take(&mut self.driving) {
-                self.oversamplers = [Oversampler::new(); 2];
-            }
-        } else {
-            self.driving = true;
-            // Without drive of its own it only waits, as long as the drive of the other filter.
-            let clean = filter.saturated.is_zero();
-            let mut four = [0.0; 4 * MAX_BLOCK];
-            let four = &mut four[..4 * frames];
-            for channel in 0..channels {
-                let oversampler = &mut self.oversamplers[channel];
-                let samples = &mut buffer[channel][..frames];
-                oversampler.up(block.oversampling, samples, four);
-                if !clean {
-                    for (frame, chunk) in four.chunks_exact_mut(4).enumerate() {
-                        let drive = filter.drive.at(frame, frames);
-                        let part = filter.saturated.at(frame, frames);
-                        for sample in chunk.iter_mut() {
-                            *sample += part * (soft_clip(*sample * drive) - *sample);
-                        }
+        let length = FACTOR * frames;
+        let [left, right] = buffers;
+        let mut buffers = [&mut left[..length], &mut right[..length]];
+        if FACTOR > 1 && !filter.saturated.is_zero() {
+            for buffer in buffers.iter_mut().take(channels) {
+                for (frame, samples) in buffer.chunks_exact_mut(FACTOR).enumerate() {
+                    let drive = filter.drive.at(frame, frames);
+                    let part = filter.saturated.at(frame, frames);
+                    for sample in samples {
+                        *sample += part * (soft_clip(*sample * drive) - *sample);
                     }
                 }
-                let mut late = [0.0; MAX_BLOCK];
-                oversampler.down(block.oversampling, four, &mut late[..frames]);
-                // Into the late sound over a fade, so a drive turned on does not click.
-                for (frame, sample) in samples.iter_mut().enumerate() {
-                    let part = filter.oversampled.at(frame, frames);
-                    *sample += part * (late[frame] - *sample);
-                }
-            }
-            if channels == 1 {
-                self.oversamplers[1] = self.oversamplers[0];
             }
         }
         if filter.wet.is_zero() {
@@ -825,13 +935,15 @@ impl FilterVoice {
 
         // While it is all the way on, which is nearly always, it keeps nothing of the dry sound.
         let all_wet = filter.wet.from == 1.0 && filter.wet.to == 1.0;
-        let mut dry = [[0.0; MAX_BLOCK]; 2];
+        let mut dry = [[0.0; Oversampler::FACTOR * MAX_BLOCK]; 2];
         if !all_wet {
-            dry[..channels].copy_from_slice(&buffer[..channels]);
+            for (dry, buffer) in dry.iter_mut().zip(&buffers).take(channels) {
+                dry[..length].copy_from_slice(buffer);
+            }
         }
-        let cutoff = Ramp::new(last.cutoff[index], targets.cutoff[index]);
-        let resonance = Ramp::new(last.resonance[index], targets.resonance[index]);
         let second_runs = !filter.slope.is_zero();
+        let warm = FACTOR > 1 && !filter.warmth.is_zero();
+        let sample_rate = FACTOR as f32 * block.sample_rate;
         let mut start = 0;
         while start < frames {
             let end = (start + FACTOR_FRAMES).min(frames);
@@ -840,25 +952,33 @@ impl FilterVoice {
             if inputs != self.factors_for {
                 let [cutoff, resonance, slope] = inputs;
                 (self.factors, self.factors_level) =
-                    SvfFactors::sections(cutoff.exp2(), resonance, slope, block.sample_rate);
+                    SvfFactors::sections(cutoff.exp2(), resonance, slope, sample_rate);
                 self.factors_for = inputs;
             }
             let (factors, level_to, level_from) = (self.factors, self.factors_level, self.level);
-            for (channel, sections) in self.sections.iter_mut().enumerate().take(channels) {
-                let [first, second] = sections;
+            let channels = self
+                .sections
+                .iter_mut()
+                .zip(buffers.iter_mut())
+                .take(channels);
+            for ([first, second], buffer) in channels {
                 for frame in start..end {
                     let part = (frame + 1 - start) as f32 / (end - start) as f32;
                     let level = level_from + (level_to - level_from) * part;
                     let taps = filter.taps.map(|tap| tap.at(frame, frames));
-                    let input = buffer[channel][frame];
-                    let one = first.next(&factors[0], taps, level, input);
-                    let filtered = if second_runs {
-                        let two = second.next(&factors[1], taps, 1.0, one);
-                        one + filter.slope.at(frame, frames) * (two - one)
-                    } else {
-                        one
-                    };
-                    buffer[channel][frame] = filtered;
+                    let warmth = filter.warmth.at(frame, frames);
+                    for sample in &mut buffer[FACTOR * frame..FACTOR * (frame + 1)] {
+                        let one = match warm {
+                            true => first.next_warm(&factors[0], taps, level, *sample, warmth),
+                            false => first.next(&factors[0], taps, level, *sample),
+                        };
+                        *sample = if second_runs {
+                            let two = second.next(&factors[1], taps, 1.0, one);
+                            one + filter.slope.at(frame, frames) * (two - one)
+                        } else {
+                            one
+                        };
+                    }
                 }
             }
             self.level = level_to;
@@ -875,11 +995,13 @@ impl FilterVoice {
         if all_wet {
             return;
         }
-        for channel in 0..channels {
-            for frame in 0..frames {
+        for (buffer, dry) in buffers.iter_mut().zip(&dry).take(channels) {
+            for (frame, samples) in buffer.chunks_exact_mut(FACTOR).enumerate() {
                 let wet = filter.wet.at(frame, frames);
-                let dry = dry[channel][frame];
-                buffer[channel][frame] = dry + wet * (buffer[channel][frame] - dry);
+                let dry = &dry[FACTOR * frame..FACTOR * (frame + 1)];
+                for (sample, dry) in samples.iter_mut().zip(dry) {
+                    *sample = dry + wet * (*sample - dry);
+                }
             }
         }
     }

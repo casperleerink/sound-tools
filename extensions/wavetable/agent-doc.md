@@ -91,6 +91,7 @@ The tables, each made in code, with its category:
 | `cutoff_hz` | Where it starts to cut, or the middle of its band or gap. | 20 to 20000 | 1000 |
 | `resonance` | 0 is no peak, 1 a strong ringing peak at the cutoff. | 0 to 1 | 0.2 |
 | `drive_db` | Gain into a soft saturation before the filter. 0 is clean. | 0 to 24 | 0 |
+| `character` | `"warm"` saturates inside the filter: a loud resonance compresses instead of whistling, and `resonance` near 1 rings on its own. | `"clean"` or `"warm"` | `"clean"` |
 
 ## Envelopes
 

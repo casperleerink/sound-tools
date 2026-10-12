@@ -10,9 +10,9 @@
 use std::sync::Arc;
 
 use sound_core::{
-    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeCurves, EventInput, Lfo, LfoShape,
-    OversamplingFilters, Parameter, Ports, PrepareConfig, ProcessContext, Processor, Smoothed,
-    Targets, Transport, amplitude,
+    AudioOutput, Automated, AutomationInput, Envelope, EnvelopeCurves, EventInput, FilterCharacter,
+    Lfo, LfoShape, MAX_BLOCK, Oversampler, OversamplerDelay, OversamplingFilters, Parameter, Ports,
+    PrepareConfig, ProcessContext, Processor, Smoothed, Targets, Transport, amplitude,
 };
 use sound_notes::{NoteEvent, Voice as _, Voices, Wheels};
 
@@ -41,6 +41,11 @@ pub(crate) const FACTOR_FRAMES: usize = 16;
 
 /// How long a change of a setting takes.
 const RAMP_SECONDS: f32 = 0.02;
+
+/// How many frames the synth delays its sound, at every sample rate: 1.3 ms at 48 kHz. While a
+/// filter has drive or is warm its filters run at four times the rate and take that long; else
+/// the synth waits as long, so the latency it reports never moves.
+pub const LATENCY: u32 = Oversampler::DELAY_FRAMES as u32;
 
 /// The frames a change of a setting takes at a sample rate.
 fn ramp_frames(sample_rate: f32) -> f32 {
@@ -99,6 +104,10 @@ pub(crate) struct Block<'a> {
     /// copies are about as loud as one, and 0 for the copies that do not play.
     pub unison_levels: [f32; MAX_UNISON],
     pub filters: [FilterBlock; 2],
+    /// From 0 to 1 while any filter of the patch has drive or is warm: then the filters run at
+    /// four times the rate, both of them, so the two come out equally late and a sum of them
+    /// has no comb. 0 runs them at the sample rate.
+    pub oversampled: Ramp,
     /// How much goes where, as [`routing_weights`] lists it.
     pub routing: [Ramp; ROUTING_WEIGHTS],
     /// Amp, env 2, env 3.
@@ -140,10 +149,8 @@ pub(crate) struct FilterBlock {
     pub slope: Ramp,
     /// From 0 while the filter is off to 1 while it is on.
     pub wet: Ramp,
-    /// From 0 to 1 while any filter of the patch has drive: then both filters run at four
-    /// times the rate, the one without drive clean, so the two come out equally late and a
-    /// sum of them has no comb. Off, a filter still waits.
-    pub oversampled: Ramp,
+    /// From 0, clean, to 1, warm.
+    pub warmth: Ramp,
 }
 
 const ROUTING_WEIGHTS: usize = 9;
@@ -295,7 +302,7 @@ struct FilterGlide {
     slope: Smoothed,
     wet: Smoothed,
     saturated: Smoothed,
-    oversampled: Smoothed,
+    warmth: Smoothed,
 }
 
 impl FilterGlide {
@@ -308,19 +315,13 @@ impl FilterGlide {
             slope: Smoothed::new(0.0),
             wet: Smoothed::new(0.0),
             saturated: Smoothed::new(0.0),
-            oversampled: Smoothed::new(0.0),
+            warmth: Smoothed::new(0.0),
         }
     }
 
     /// Aims at `filter`, whose numbers are `lanes` of the record. What a choice or the drive
     /// turns on or off glides as an edit.
-    fn aim(
-        &mut self,
-        filter: &Filter,
-        lanes: &Lanes<3>,
-        targets: &WavetableTargets,
-        any_driven: bool,
-    ) {
+    fn aim(&mut self, filter: &Filter, lanes: &Lanes<3>, targets: &WavetableTargets) {
         let [cutoff, resonance, drive] = lanes.each_ref().map(|lane| targets.ramp(lane));
         self.cutoff.set_target(filter.cutoff_hz.log2(), cutoff);
         self.resonance.set_target(filter.resonance, resonance);
@@ -334,8 +335,7 @@ impl FilterGlide {
         }
         self.slope.set_target(filter.slope.weight(), ramp);
         self.wet.set_target(if filter.on { 1.0 } else { 0.0 }, ramp);
-        let oversampled = if any_driven { 1.0 } else { 0.0 };
-        self.oversampled.set_target(oversampled, ramp);
+        self.warmth.set_target(filter.character.warmth(), ramp);
     }
 
     fn advance(&mut self, frames: usize) -> FilterBlock {
@@ -347,7 +347,7 @@ impl FilterGlide {
             taps: self.taps.each_mut().map(|tap| Ramp::advance(tap, frames)),
             slope: Ramp::advance(&mut self.slope, frames),
             wet: Ramp::advance(&mut self.wet, frames),
-            oversampled: Ramp::advance(&mut self.oversampled, frames),
+            warmth: Ramp::advance(&mut self.warmth, frames),
         }
     }
 
@@ -359,7 +359,7 @@ impl FilterGlide {
             &mut self.slope,
             &mut self.wet,
             &mut self.saturated,
-            &mut self.oversampled,
+            &mut self.warmth,
         ]
         .into_iter()
         .chain(&mut self.taps)
@@ -373,6 +373,7 @@ struct Glides {
     unison_amount: Smoothed,
     unison_levels: [Smoothed; MAX_UNISON],
     filters: [FilterGlide; 2],
+    oversampled: Smoothed,
     routing: [Smoothed; ROUTING_WEIGHTS],
     gain: Smoothed,
 }
@@ -398,11 +399,15 @@ impl Glides {
             };
             level.set_target(target, ramp);
         }
-        let driven = |filter: &&Filter| filter.on && filter.drive_db > 0.0;
-        let any_driven = state.filters().iter().any(driven);
+        let bends = |filter: &&Filter| {
+            filter.on && (filter.drive_db > 0.0 || filter.character == FilterCharacter::Warm)
+        };
+        let oversampled = state.filters().iter().any(bends);
+        self.oversampled
+            .set_target(if oversampled { 1.0 } else { 0.0 }, ramp);
         let filters = self.filters.iter_mut().zip(state.filters());
         for ((glide, filter), lanes) in filters.zip(&FILTER_LANES) {
-            glide.aim(filter, lanes, targets, any_driven);
+            glide.aim(filter, lanes, targets);
         }
         for (weight, target) in self.routing.iter_mut().zip(routing_weights(state.routing)) {
             weight.set_target(target, ramp);
@@ -420,6 +425,7 @@ impl Glides {
             .chain(&mut self.unison_levels)
             .chain(filter_1.smoothers())
             .chain(filter_2.smoothers())
+            .chain([&mut self.oversampled])
             .chain(&mut self.routing)
     }
 }
@@ -460,6 +466,10 @@ pub(crate) struct WavetableSynth {
     /// The bend and the vibrato of every voice. At rest after every `AllOff`, like the pedal.
     wheels: Wheels,
     oversampling: OversamplingFilters,
+    /// What the filters make at the sample rate, left and right, on its way to the output.
+    late: [OversamplerDelay; 2],
+    /// Frames since the last voice ended, up to the latency: then the delay is empty.
+    quiet: usize,
     /// Counts the notes, for the seeds of their LFOs and their random value.
     notes_started: u32,
 }
@@ -485,6 +495,7 @@ impl WavetableSynth {
                 unison_amount: Smoothed::new(0.0),
                 unison_levels: [0.0; MAX_UNISON].map(Smoothed::new),
                 filters: [FilterGlide::new(), FilterGlide::new()],
+                oversampled: Smoothed::new(0.0),
                 routing: [0.0; ROUTING_WEIGHTS].map(Smoothed::new),
                 gain: Smoothed::new(0.0),
             },
@@ -492,6 +503,8 @@ impl WavetableSynth {
             voices: Voices::new(Voice::idle(), VOICES),
             wheels: Wheels::default(),
             oversampling: OversamplingFilters::new(),
+            late: [OversamplerDelay::new(); 2],
+            quiet: Oversampler::DELAY_FRAMES,
             notes_started: 0,
             sample_rate: 0.0,
             state: Automated::new(Self::AUTOMATION, state),
@@ -559,7 +572,10 @@ impl WavetableSynth {
     }
 
     /// Renders the frames between two events.
-    fn render(&mut self, [left, right]: [&mut [f32]; 2], lfo_hz: [f32; 2]) {
+    /// Renders the frames between two events: what the filters make at the sample rate into
+    /// `output`, and what they make at four times it into `late`.
+    fn render(&mut self, output: [&mut [f32]; 2], mut late: [&mut [f32]; 2], lfo_hz: [f32; 2]) {
+        let [left, right] = output;
         let frames = left.len();
         if frames == 0 {
             return;
@@ -622,6 +638,7 @@ impl WavetableSynth {
                 .each_mut()
                 .map(|level| level.advance(frames)),
             filters: [filter_1.advance(frames), filter_2.advance(frames)],
+            oversampled: Ramp::advance(&mut glides.oversampled, frames),
             routing: glides
                 .routing
                 .each_mut()
@@ -636,7 +653,12 @@ impl WavetableSynth {
             oversampling: &self.oversampling,
         };
         for voice in self.voices.iter_mut().filter(|voice| !voice.is_idle()) {
-            voice.render([&mut *left, &mut *right], &block);
+            let [late_left, late_right] = &mut late;
+            voice.render(
+                [&mut *left, &mut *right],
+                [&mut **late_left, &mut **late_right],
+                &block,
+            );
         }
         let start = NoteStart {
             lfos: [Lfo::default(); 2],
@@ -648,10 +670,12 @@ impl WavetableSynth {
             lfo.advance(frames, hz, self.sample_rate);
         }
         let gain = Ramp::advance(&mut self.glides.gain, frames);
-        for (frame, (left, right)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
-            let gain = gain.at(frame, frames);
-            *left *= gain;
-            *right *= gain;
+        for [left, right] in [[left, right], late] {
+            for (frame, (left, right)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
+                let gain = gain.at(frame, frames);
+                *left *= gain;
+                *right *= gain;
+            }
         }
     }
 }
@@ -671,6 +695,10 @@ impl Processor for WavetableSynth {
         let targets = self.state.targets(ramp_frames(self.sample_rate));
         self.apply_state(&targets, self.sample_rate);
         self.rest();
+    }
+
+    fn latency(&self) -> u32 {
+        LATENCY
     }
 
     fn update(&mut self, update: &mut Update) {
@@ -693,24 +721,59 @@ impl Processor for WavetableSynth {
         let lfo_hz = self.lfo_hz(&context.transport);
         let frames = context.frames;
         let events = context.event_inputs.get(Self::NOTES);
-        if events.is_empty() && self.voices.is_idle() {
+        let idle = events.is_empty() && self.voices.is_idle();
+        if idle {
             self.rest();
             for (lfo, hz) in self.free_lfos.iter_mut().zip(lfo_hz) {
                 lfo.advance(frames, hz, self.sample_rate);
             }
-            return;
+            if self.quiet >= Oversampler::DELAY_FRAMES {
+                return;
+            }
         }
         let [left, right] = context.audio_outputs.get(Self::OUTPUT);
-        let mut rendered = 0;
-        for timed in events {
-            let offset = timed.offset.clamp(rendered, left.len());
+        let mut late = [[0.0; MAX_BLOCK]; 2];
+        let oversampled = &self.glides.oversampled;
+        let oversampled = oversampled.current() != 0.0 || oversampled.is_moving();
+        if idle {
+            // Nothing plays, but the delay still holds the end of the sound.
+            self.quiet += frames;
+        } else {
+            self.quiet = 0;
+            let mut rendered = 0;
+            for timed in events {
+                let offset = timed.offset.clamp(rendered, left.len());
+                let [late_left, late_right] = &mut late;
+                self.render(
+                    [&mut left[rendered..offset], &mut right[rendered..offset]],
+                    [
+                        &mut late_left[rendered..offset],
+                        &mut late_right[rendered..offset],
+                    ],
+                    lfo_hz,
+                );
+                rendered = offset;
+                self.handle(timed.event);
+            }
+            let [late_left, late_right] = &mut late;
             self.render(
-                [&mut left[rendered..offset], &mut right[rendered..offset]],
+                [&mut left[rendered..], &mut right[rendered..]],
+                [
+                    &mut late_left[rendered..frames],
+                    &mut late_right[rendered..frames],
+                ],
                 lfo_hz,
             );
-            rendered = offset;
-            self.handle(timed.event);
         }
-        self.render([&mut left[rendered..], &mut right[rendered..]], lfo_hz);
+        // The sound of the sample rate waits as long as the sound of four times it.
+        for ((output, delay), late) in [left, right].into_iter().zip(&mut self.late).zip(&late) {
+            delay.delay(output);
+            if oversampled {
+                output
+                    .iter_mut()
+                    .zip(late)
+                    .for_each(|(output, late)| *output += late);
+            }
+        }
     }
 }

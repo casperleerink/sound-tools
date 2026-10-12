@@ -1,8 +1,8 @@
 //! The filters of a voice: each type and slope holds to the exact response of the filter of
-//! the SDK, the routings send each oscillator where they say, and the drive bends.
+//! the SDK, the routings send each oscillator where they say, the drive bends and warm rings.
 
 use sound_core::testing::Spectrum;
-use sound_core::{FilterSlope, FilterType, svf_response};
+use sound_core::{FilterCharacter, FilterSlope, FilterType, svf_response};
 use wavetable::WavetableState;
 use wavetable::state::{Filter, Oscillator, Routing};
 
@@ -241,5 +241,56 @@ fn a_drive_on_one_of_two_filters_side_by_side_makes_no_comb() {
     for ((number, clean), driven) in numbers.iter().zip(&clean).zip(&driven) {
         let moved = db(driven / clean);
         assert!(moved.abs() < 0.3, "harmonic {number}: {moved} dB");
+    }
+}
+
+/// The same with filter 1 warm: without resonance it barely bends, so it sounds as the clean
+/// one beside it, in time.
+#[test]
+fn a_warm_filter_beside_a_clean_one_makes_no_comb() {
+    let filter = Filter {
+        cutoff_hz: 4_000.0,
+        resonance: 0.0,
+        ..Filter::default()
+    };
+    let side_by_side = |character| WavetableState {
+        filter_1: Filter {
+            character,
+            ..filter
+        },
+        filter_2: filter,
+        routing: Routing::Parallel,
+        ..plain(Oscillator::default())
+    };
+    let numbers: Vec<u32> = (1..=24).collect();
+    let clean = levels(&render(side_by_side(FilterCharacter::Clean)), &numbers);
+    let warm = levels(&render(side_by_side(FilterCharacter::Warm)), &numbers);
+    for ((number, clean), warm) in numbers.iter().zip(&clean).zip(&warm) {
+        let moved = db(warm / clean);
+        assert!(moved.abs() < 0.3, "harmonic {number}: {moved} dB");
+    }
+}
+
+/// Full resonance half an octave over C6, between its first two harmonics: the warm filter
+/// rings there on its own, the clean one only lets the note through.
+#[test]
+fn at_full_resonance_a_warm_filter_rings_at_its_cutoff() {
+    for cutoff_hz in [1_500.0, 1_600.0] {
+        let level = |character| {
+            let state = WavetableState {
+                filter_1: Filter {
+                    cutoff_hz,
+                    resonance: 1.0,
+                    character,
+                    ..Filter::default()
+                },
+                ..plain(Oscillator::default())
+            };
+            let mut harness = Harness::with_notes(vec![note(0, ticks(2.0), 84, 127)], state);
+            level_at(&steady(&mut harness), cutoff_hz)
+        };
+        let (warm, clean) = (level(FilterCharacter::Warm), level(FilterCharacter::Clean));
+        println!("{cutoff_hz} Hz: warm {warm:.4}, clean {clean:.4}");
+        assert!(warm > 20.0 * clean, "{cutoff_hz}: {warm} {clean}");
     }
 }

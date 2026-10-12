@@ -12,7 +12,7 @@
 //! lists of those are at the end, and [`AUTOMATED`] holds them all.
 
 use serde::{Deserialize, Serialize};
-use sound_core::{FilterSlope, FilterType, LfoShape, Scale, lanes};
+use sound_core::{FilterCharacter, FilterSlope, FilterType, LfoShape, Scale, lanes};
 use sound_notes::{Division, Feel};
 
 use crate::matrix::{Destination, MAX_ROUTES, Route, Source};
@@ -280,11 +280,14 @@ pub struct Filter {
     pub slope: FilterSlope,
     /// Where it starts to cut, or the middle of its band or its gap.
     pub cutoff_hz: f32,
-    /// 0 is no peak. 1 is a strong ringing peak at the cutoff that never runs away.
+    /// 0 is no peak. 1 is a strong ringing peak at the cutoff that, clean, never runs away.
     pub resonance: f32,
     /// Gain into a soft saturation before the filter, at four times the sample rate. 0 is
-    /// clean and costs nothing.
+    /// clean.
     pub drive_db: f32,
+    /// Warm saturates inside the filter, at four times the sample rate, so a loud resonance
+    /// compresses and full resonance rings on its own.
+    pub character: FilterCharacter,
 }
 
 pub const FILTER_CUTOFF: Parameter<Filter> = Parameter {
@@ -329,6 +332,7 @@ impl Default for Filter {
             cutoff_hz: FILTER_CUTOFF.default,
             resonance: FILTER_RESONANCE.default,
             drive_db: FILTER_DRIVE.default,
+            character: FilterCharacter::Clean,
         }
     }
 }

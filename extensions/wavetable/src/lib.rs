@@ -41,6 +41,7 @@ use crate::synth::{Update, WavetableSynth};
 
 pub use matrix::{Destination, KEY_SEMITONES, MAX_ROUTES, ROUTE_AMOUNT, Route, Source};
 pub use state::WavetableState;
+pub use synth::LATENCY;
 pub use tables::{Category, FRAME_LENGTH, Table, Wavetable, wavetable};
 
 /// The name to enable in `project.json`.

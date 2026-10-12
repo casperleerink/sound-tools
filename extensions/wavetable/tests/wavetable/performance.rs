@@ -2,8 +2,9 @@
 
 use std::time::Instant;
 
+use sound_core::FilterCharacter;
 use wavetable::WavetableState;
-use wavetable::state::Unison;
+use wavetable::state::{Filter, Unison};
 
 use crate::support::{Harness, SAMPLE_RATE, Track, note, peak};
 
@@ -30,8 +31,18 @@ fn realtime_ratio_of_many_synths() {
         },
         ..WavetableState::default()
     };
+    let bent = |drive_db, character| WavetableState {
+        filter_1: Filter {
+            drive_db,
+            character,
+            ..Filter::default()
+        },
+        ..WavetableState::default()
+    };
     for (name, tracks, state) in [
         ("default patch", 20, WavetableState::default()),
+        ("drive", 20, bent(12.0, FilterCharacter::Clean)),
+        ("warm", 20, bent(0.0, FilterCharacter::Warm)),
         ("unison 8", 5, unison),
     ] {
         let mut harness = Harness::new();
