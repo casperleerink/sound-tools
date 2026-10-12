@@ -183,6 +183,11 @@ pub fn constrained_size(width: u32, height: u32) -> (u32, u32) {
 /// buffers would then play the block before over and over. VST 3 only: CLAP has no such flag.
 pub const SILENT_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SILENT";
 
+/// Makes the VST 3 plugin answer `setProcessing` with `kNotImplemented`, which is what the VST 3
+/// SDK's `AudioEffect` answers unless a plugin says otherwise. Hosts play such a plugin. VST 3
+/// only.
+pub const NO_SET_PROCESSING_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_NO_SET_PROCESSING";
+
 /// Makes the plugin's `process` fail from this block on, and write nothing into its output,
 /// which is what a plugin that gives up does. A host must not leave a gap in the chain there.
 /// The value is how many blocks it plays first.
