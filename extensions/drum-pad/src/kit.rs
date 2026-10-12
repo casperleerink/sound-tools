@@ -13,7 +13,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use sound_core::poly_blep;
+use sound_core::{poly_blep, xorshift32};
 
 use crate::Sound;
 
@@ -351,7 +351,7 @@ fn rise(t: f64, length: f64) -> f64 {
     (t / length).min(1.0)
 }
 
-/// White noise, from a fixed seed: the same sequence every time (xorshift32).
+/// White noise, from a fixed seed: the same sequence every time.
 struct Noise(u32);
 
 impl Noise {
@@ -361,12 +361,8 @@ impl Noise {
 
     /// The next sample, from -1 to 1.
     fn next(&mut self) -> f64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.0 = x;
-        f64::from(x) / f64::from(u32::MAX) * 2.0 - 1.0
+        self.0 = xorshift32(self.0);
+        f64::from(self.0) / f64::from(u32::MAX) * 2.0 - 1.0
     }
 }
 

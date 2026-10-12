@@ -48,7 +48,7 @@ pub use device::{
 };
 pub use dsp::{
     HIGHEST_PHASE_STEP, OnePole, Taps, all_held_silent, all_positive_zero, all_zero, bessel_i0,
-    held, pole, poly_blep,
+    held, pole, poly_blep, xorshift32,
 };
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};

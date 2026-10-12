@@ -1,7 +1,7 @@
 //! Small building blocks of the built-in effects and instruments that more than one of them
 //! needs: a read of a [`DelayLine`] that fades from one length to another, a one-pole filter,
-//! the hold on what goes into a loop, the rounding of a step of a waveform and the Bessel
-//! function of a Kaiser window. Next to [`Smoothed`](crate::Smoothed) and [`DelayLine`]. The
+//! the hold on what goes into a loop, the rounding of a step of a waveform, a noise
+//! generator and the Bessel function of a Kaiser window. Next to [`Smoothed`](crate::Smoothed) and [`DelayLine`]. The
 //! core itself uses only the Bessel function, for its [`Oversampler`](crate::Oversampler).
 
 use std::f32::consts::PI;
@@ -193,6 +193,15 @@ impl<const N: usize> Taps<N> {
         let from = read(from);
         from + (to - from) * fade
     }
+}
+
+/// The next state of a xorshift32 generator: a fixed sequence of numbers that looks random, for
+/// noise that is the same on every render. A state of 0 stays 0, so a seed must not be 0.
+pub fn xorshift32(mut state: u32) -> u32 {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    state
 }
 
 /// The modified Bessel function of the first kind, order 0, for a Kaiser window. To the full
