@@ -7,7 +7,7 @@ use sound_core::{
 };
 
 use crate::tools::{
-    BANK_RECORD, CHAIN_RECORD, Dc, Harness, SAMPLE_RATE, dc_record, dc_to_device,
+    BANK_RECORD, CHAIN_RECORD, Dc, Harness, Reporter, SAMPLE_RATE, dc_record, dc_to_device,
     dc_to_device_channel, id, level_record, project_file, records, registry, write,
 };
 
@@ -259,6 +259,78 @@ fn invalid_files_leave_the_live_state_and_name_the_field() {
     harness.write_and_apply("state/dc.json", &dc_record(0.5));
     assert_eq!(harness.project.problems(), []);
     assert_eq!(harness.level(), 0.5);
+}
+
+fn reporter_record(message: &str) -> String {
+    format!(r#"{{"tool": "test.reporter", "state": {{"message": "{message}"}}}}"#)
+}
+
+#[test]
+fn a_rejected_group_applies_whole_once_its_failing_file_is_fixed() {
+    let mut harness = one_dc();
+    // A reporter with the message "fail" derives an invalid record, which rejects the group.
+    let paths = [
+        harness.write("state/second.json", &dc_record(0.125)),
+        harness.write("state/reporter.json", &reporter_record("fail")),
+        harness.write("state/second.json.tmp", "an editor's temporary file"),
+        harness.write(
+            "project.json",
+            &project_file(&[dc_to_device("dc"), dc_to_device("second")].join(", ")),
+        ),
+    ];
+    harness.apply_outside_changes(&paths).unwrap_err();
+    assert_eq!(harness.level(), 0.25);
+    let problems = harness.project.problems();
+    let listed: Vec<&str> = problems
+        .iter()
+        .map(|problem| problem.path.as_str())
+        .collect();
+    assert_eq!(
+        listed,
+        ["project.json", "state/reporter.json", "state/second.json"]
+    );
+    for problem in &problems {
+        assert!(problem.message.starts_with("not applied"), "{problem:?}");
+    }
+
+    // Fixing the failing file brings in the rest of its group.
+    harness.write_and_apply("state/reporter.json", &reporter_record("fixed"));
+    assert_eq!(harness.level(), 0.375);
+    let problems = harness.project.problems();
+    assert_eq!(problems.len(), 1);
+    // What the reporter's derive says, not that the file did not apply.
+    assert_eq!(problems[0].path, "state/reporter.json");
+    assert_eq!(problems[0].message, "fixed");
+}
+
+#[test]
+fn deleting_an_instance_after_its_outside_edit_was_rejected_removes_its_file() {
+    let mut harness = one_dc();
+    let mut changes = Changes::new();
+    let hello = Reporter {
+        message: "hello".to_string(),
+    };
+    let reporter = changes.create(id("reporter"), hello.clone());
+    harness.project.commit("Add reporter", changes).unwrap();
+    harness.write("state/reporter.json", &reporter_record("fail"));
+    let paths = [harness.path("state/reporter.json")];
+    harness.apply_outside_changes(&paths).unwrap_err();
+
+    let mut changes = Changes::new();
+    changes.delete(reporter.id());
+    harness.project.commit("Delete reporter", changes).unwrap();
+    assert!(!harness.path("state/reporter.json").exists());
+
+    harness.project.undo().unwrap();
+    assert_eq!(harness.project.state(&reporter), Some(&hello));
+    harness.project.redo().unwrap();
+    let harness = harness.reopen();
+    assert!(
+        harness
+            .project
+            .resolve::<Reporter>(&id("reporter"))
+            .is_none()
+    );
 }
 
 #[test]

@@ -17,6 +17,14 @@ use super::{Project, ProjectError, ProjectEvent, ProjectFile, Source};
 /// The undo label of a group of outside changes.
 const OUTSIDE_LABEL: &str = "File change";
 
+/// What rejected groups would have changed. The next group that touches any of it takes all
+/// of it along, so fixing the file that failed applies the rest.
+#[derive(Default)]
+pub(crate) struct NotApplied {
+    records: BTreeSet<InstanceId>,
+    project_file: bool,
+}
+
 impl Project {
     /// Applies what changed at `paths` as one group and one undo step. This is what the
     /// watcher calls. Paths may be files or folders, inside the project folder, and may no
@@ -25,6 +33,9 @@ impl Project {
     /// A file that does not load leaves the live state as it is, stays on disk, and is listed
     /// in [`Project::problems`]. The rest of the group still applies. The runtime's own writes
     /// change nothing here, because the files hold what the runtime last wrote.
+    ///
+    /// A group that is rejected whole, such as because a behaviour fails, lists each of its
+    /// records as not applied. It applies again with the next group that touches one of them.
     ///
     /// Groups of one request (see [`Project::begin_request`]), or groups that follow each
     /// other within [`OUTSIDE_UNDO_WINDOW`] when no request is open, are one undo step, as
@@ -74,6 +85,18 @@ impl Project {
                 PathTarget::Ignored => {}
             }
         }
+        let touches_not_applied = (project_file_changed && self.not_applied.project_file)
+            || (self.not_applied.records.iter()).any(|id| queue.contains_key(id));
+        if touches_not_applied {
+            let NotApplied {
+                records,
+                project_file,
+            } = std::mem::take(&mut self.not_applied);
+            project_file_changed |= project_file;
+            for id in records {
+                queue.entry(id).or_insert(None);
+            }
+        }
         if queue.is_empty() && !project_file_changed {
             self.rebind_waiting_for(&asset_folders)?;
             return Ok(0);
@@ -93,19 +116,25 @@ impl Project {
         let mut observed = Vec::new();
         // New instances of this group: their tool, and whether it owns children.
         let mut created: BTreeMap<InstanceId, (&'static str, bool)> = BTreeMap::new();
-        let mut deleted = BTreeSet::new();
+        // Deleted instances of this group, with the path of their record.
+        let mut deleted = BTreeMap::new();
         while let Some((id, seen)) = queue.pop_first() {
             self.clear_record_problems(&id);
-            if id.ancestors().any(|ancestor| deleted.contains(&ancestor)) {
+            if id
+                .ancestors()
+                .any(|ancestor| deleted.contains_key(&ancestor))
+            {
                 continue;
             }
-            let is_live = self.instances.contains_key(&id);
+            let live_form = self.instances.get(&id).map(Form::of);
+            let is_live = live_form.is_some();
             let (form, bytes) = match self.storage.read_record(&id, seen) {
                 Ok(RecordOnDisk::One(form, bytes)) => (form, bytes),
                 Ok(RecordOnDisk::Missing) => {
-                    if is_live {
+                    if let Some(form) = live_form {
                         changes.push(Change::Delete(id.clone()));
-                        deleted.insert(id.clone());
+                        let path = self.storage.record_path(&id, form);
+                        deleted.insert(id.clone(), self.storage.display_path(&path));
                     }
                     // Files of children that are left behind are not live. Say so.
                     if self.storage.has_folder(&id) {
@@ -197,27 +226,31 @@ impl Project {
                 }
             }
             changes.push(Change::Set(id.clone(), record));
-            observed.push((id, on_disk));
+            observed.push((id, on_disk, path));
         }
 
         let applied = match self.apply_leniently(changes, source) {
             Ok(applied) => applied,
             Err(error) => {
-                // The files hold something the project does not. Look at them again next time.
-                for (id, _) in &observed {
-                    self.storage.forget(id);
+                // What the runtime last saw of these files stays known, so a delete in the
+                // window still removes them and they read as changed again.
+                let set = observed.into_iter().map(|(id, _, path)| (id, path));
+                let message = format!("not applied: {error}");
+                for (id, path) in set.chain(deleted) {
+                    self.report_problem(path, message.clone());
+                    self.not_applied.records.insert(id);
                 }
-                for path in paths {
-                    let path = self.storage.display_path(path);
-                    self.report_problem(path, format!("not applied: {error}"));
+                if outside_project_file.is_some() {
+                    self.report_problem(PROJECT_FILE.to_string(), message);
+                    self.not_applied.project_file = true;
                 }
                 return Err(error);
             }
         };
         let observed = observed
             .into_iter()
-            .filter(|(id, _)| self.instances.contains_key(id));
-        for (id, on_disk) in observed {
+            .filter(|(id, ..)| self.instances.contains_key(id));
+        for (id, on_disk, _) in observed {
             self.storage.observe(id, on_disk);
         }
         for change in &applied.records {
