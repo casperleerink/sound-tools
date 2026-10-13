@@ -534,13 +534,28 @@ impl PluginStateImpl for TestToneMainThread<'_> {
 }
 
 /// One stereo port each way. The input is what the effect half is played; an instrument gets
-/// silence there, which is what every audio input of a plugin got before effects existed.
+/// silence there, which is what every audio input of a plugin got before effects existed. Told
+/// to, a second mono port each way, see `test_plugin_support::EXTRA_PORTS_VARIABLE`.
 impl PluginAudioPortsImpl for TestToneMainThread<'_> {
     fn count(&self, _is_input: bool) -> u32 {
-        1
+        port_count()
     }
 
     fn get(&self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
+        if index == 1 && port_count() == 2 {
+            writer.set(&AudioPortInfo {
+                id: ClapId::new(2 + u32::from(is_input)),
+                name: if is_input {
+                    b"sidechain".as_slice()
+                } else {
+                    b"aux".as_slice()
+                },
+                channel_count: 1,
+                flags: AudioPortFlags::empty(),
+                port_type: Some(AudioPortType::MONO),
+                in_place_pair: None,
+            });
+        }
         if index != 0 {
             return;
         }
@@ -556,6 +571,14 @@ impl PluginAudioPortsImpl for TestToneMainThread<'_> {
             port_type: Some(AudioPortType::STEREO),
             in_place_pair: None,
         });
+    }
+}
+
+/// How many audio ports the plugin has each way.
+fn port_count() -> u32 {
+    match support::told_to(support::EXTRA_PORTS_VARIABLE) {
+        true => 2,
+        false => 1,
     }
 }
 
@@ -606,6 +629,8 @@ pub struct TestToneAudio<'a> {
     fails_from: Option<u64>,
     /// The level as it glides, when the plugin smooths it, see `test_plugin_support::SMOOTH_VARIABLE`.
     glide: Option<support::Glide>,
+    /// How many audio ports it has each way, which is how many buffers a host must give.
+    ports: usize,
 }
 
 impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for TestToneAudio<'a> {
@@ -644,6 +669,7 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
             fails_from: support::fails_from(),
             glide: support::told_to(support::SMOOTH_VARIABLE)
                 .then(|| support::Glide::new(shared.level.load(Ordering::Acquire))),
+            ports: port_count() as usize,
         })
     }
 
@@ -684,7 +710,19 @@ impl<'a> PluginAudioProcessor<'a, TestToneShared, TestToneMainThread<'a>> for Te
             self.host.request_callback();
             return Ok(ProcessStatus::Continue);
         }
+        if audio.input_port_count() != self.ports || audio.output_port_count() != self.ports {
+            return Err(PluginError::Message(
+                "a buffer for every port, as CLAP requires",
+            ));
+        }
         let frames = audio.frames_count() as usize;
+        // What a plugin with an aux output writes there. The host must not play it on the track.
+        if let Some(mut port) = audio.output_port(1)
+            && let Some(mut channels) = port.channels()?.into_f32()
+            && let Some(aux) = channels.channel_mut(0)
+        {
+            aux.fill(1.0);
+        }
         // What the effect half is played, copied out before the output port is taken: the two
         // ports cannot be held at once. An unconnected input is silence.
         for channel in &mut self.input {

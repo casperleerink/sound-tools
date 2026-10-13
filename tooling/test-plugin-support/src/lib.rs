@@ -208,6 +208,11 @@ pub fn is_audio_only() -> bool {
     told_to(AUDIO_ONLY_VARIABLE)
 }
 
+/// Makes the CLAP plugin declare a second, mono audio port each way, a sidechain in and an aux
+/// out, and fail its `process` unless the host gives a buffer for every port, as CLAP requires.
+/// A plugin written in C reads and writes past the host's buffers instead. CLAP only.
+pub const EXTRA_PORTS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_EXTRA_PORTS";
+
 /// Makes the plugin take notes and offer the host no way to send the sustain pedal: the CLAP
 /// one takes no MIDI on its note port, and the VST 3 one maps no parameter to controller 64.
 /// A host has to say so, which is the line an audio-only effect must not get.

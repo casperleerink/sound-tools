@@ -475,8 +475,8 @@ fn activate(
         audio.into(),
         ports.dialect,
         ports.takes_midi,
-        ports.input_channels,
-        ports.output_channels,
+        &ports.input_channels,
+        &ports.output_channels,
         latency,
         values,
         played.clone(),
@@ -819,11 +819,12 @@ struct ClapStarted {
     takes_midi: bool,
     input_ports: AudioPorts,
     output_ports: AudioPorts,
-    /// The first audio input port of the plugin, one buffer per channel. Empty when the plugin
-    /// takes no audio in, which is the usual case for an instrument.
-    input_channels: Vec<Vec<f32>>,
-    /// The first audio output port of the plugin, one buffer per channel.
-    output_channels: Vec<Vec<f32>>,
+    /// One buffer per channel of every audio input port, by port: CLAP wants a buffer for each
+    /// port the plugin declared. The first port gets the track and the rest silence. Empty when
+    /// the plugin takes no audio in, which is the usual case for an instrument.
+    input_channels: Vec<Vec<Vec<f32>>>,
+    /// The same for the output ports. Only the first one is heard.
+    output_channels: Vec<Vec<Vec<f32>>>,
     input_events: EventBuffer,
     /// How many more note and control events the buffer takes in this block, so a block never
     /// grows it. The values of parameters have room of their own on top.
@@ -853,21 +854,29 @@ impl ClapStarted {
         audio: PluginAudioProcessor<SoundToolsHost>,
         dialect: Dialect,
         takes_midi: bool,
-        input_channel_count: usize,
-        output_channel_count: usize,
+        input_channels: &[usize],
+        output_channels: &[usize],
         latency: u32,
         values: rtrb::Consumer<ParameterChange>,
         played: Arc<AtomicU64>,
     ) -> Self {
-        let buffers = |count: usize| (0..count).map(|_| vec![0.0; MAX_BLOCK]).collect();
+        let buffers = |counts: &[usize]| {
+            counts
+                .iter()
+                .map(|&count| (0..count).map(|_| vec![0.0; MAX_BLOCK]).collect())
+                .collect()
+        };
+        let ports = |counts: &[usize]| {
+            AudioPorts::with_capacity(counts.iter().sum::<usize>().max(1), counts.len())
+        };
         Self {
             audio,
             dialect,
             takes_midi,
-            input_ports: AudioPorts::with_capacity(input_channel_count.max(1), 1),
-            output_ports: AudioPorts::with_capacity(output_channel_count.max(1), 1),
-            input_channels: buffers(input_channel_count),
-            output_channels: buffers(output_channel_count),
+            input_ports: ports(input_channels),
+            output_ports: ports(output_channels),
+            input_channels: buffers(input_channels),
+            output_channels: buffers(output_channels),
             input_events: EventBuffer::with_capacity(EVENT_CAPACITY + 2 * VALUE_CAPACITY),
             room: EVENT_CAPACITY,
             lane_room: VALUE_CAPACITY,
@@ -981,34 +990,30 @@ impl Started for ClapStarted {
             ..
         } = self;
 
-        copy_in(input_channels, frames, input);
-        let inputs = if input_channels.is_empty() {
-            InputAudioBuffers::empty()
-        } else {
-            input_ports.with_input_buffers([AudioPortBuffer {
+        if let Some(main) = input_channels.first_mut() {
+            copy_in(main, frames, input);
+        }
+        let inputs = input_ports.with_input_buffers(input_channels.iter_mut().map(|port| {
+            AudioPortBuffer {
                 latency: 0,
                 channels: AudioPortBufferType::f32_input_only(
                     // Not `constant`: a constant buffer tells the plugin every sample of it is
                     // the same, which is true of the silence an instrument gets and not of the
                     // sound an effect is given.
-                    input_channels
-                        .iter_mut()
+                    port.iter_mut()
                         .map(|channel| InputChannel::variable(&mut channel[..frames])),
                 ),
-            }])
-        };
-        let mut outputs = if output_channels.is_empty() {
-            OutputAudioBuffers::empty()
-        } else {
-            output_ports.with_output_buffers([AudioPortBuffer {
-                latency: 0,
-                channels: AudioPortBufferType::f32_output_only(
-                    output_channels
-                        .iter_mut()
-                        .map(|channel| &mut channel[..frames]),
-                ),
-            }])
-        };
+            }
+        }));
+        let mut outputs =
+            output_ports.with_output_buffers(output_channels.iter_mut().map(|port| {
+                AudioPortBuffer {
+                    latency: 0,
+                    channels: AudioPortBufferType::f32_output_only(
+                        port.iter_mut().map(|channel| &mut channel[..frames]),
+                    ),
+                }
+            }));
         let input = input_events.as_input();
         // Nothing reads what a plugin sends out: MIDI from a plugin is not built. A void list
         // takes every event and keeps none, so a plugin that sends thousands grows nothing.
@@ -1030,7 +1035,9 @@ impl Started for ClapStarted {
         if !processed {
             return false;
         }
-        copy_out(&self.output_channels, frames, left, right);
+        if let Some(main) = self.output_channels.first() {
+            copy_out(main, frames, left, right);
+        }
         true
     }
 
@@ -1058,14 +1065,14 @@ fn midi(control: Control) -> [u8; 3] {
 }
 
 /// What the plugin's ports say: whether and how to send it notes, and how many channels to
-/// give it.
+/// give each of its audio ports.
 struct PortLayout {
     dialect: Dialect,
     /// Whether the plugin has a note input port at all. An ordinary effect has none.
     takes_notes: bool,
     takes_midi: bool,
-    input_channels: usize,
-    output_channels: usize,
+    input_channels: Vec<usize>,
+    output_channels: Vec<usize>,
 }
 
 fn read_ports(instance: &mut PluginInstance<SoundToolsHost>) -> PortLayout {
@@ -1079,8 +1086,8 @@ fn read_ports(instance: &mut PluginInstance<SoundToolsHost>) -> PortLayout {
         dialect: Dialect::Clap,
         takes_notes: true,
         takes_midi: false,
-        input_channels: 0,
-        output_channels: 2,
+        input_channels: Vec::new(),
+        output_channels: vec![2],
     };
     if let Some(notes) = notes {
         let mut buffer = NotePortInfoBuffer::new();
@@ -1093,13 +1100,15 @@ fn read_ports(instance: &mut PluginInstance<SoundToolsHost>) -> PortLayout {
     }
     if let Some(audio) = audio {
         let mut buffer = AudioPortInfoBuffer::new();
-        let mut channels = |is_input: bool| {
-            if audio.count(&plugin, is_input) == 0 {
-                return 0;
-            }
-            audio
-                .get(&plugin, 0, is_input, &mut buffer)
-                .map_or(0, |port| port.channel_count as usize)
+        // CLAP puts the main port, if there is one, first.
+        let mut channels = |is_input: bool| -> Vec<usize> {
+            (0..audio.count(&plugin, is_input))
+                .map(|index| {
+                    audio
+                        .get(&plugin, index, is_input, &mut buffer)
+                        .map_or(0, |port| port.channel_count as usize)
+                })
+                .collect()
         };
         layout.input_channels = channels(true);
         layout.output_channels = channels(false);

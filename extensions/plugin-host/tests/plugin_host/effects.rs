@@ -192,6 +192,26 @@ fn an_audio_only_effect_reports_nothing_about_the_pedal() {
     }
 }
 
+/// CLAP wants one buffer per audio port. A plugin with a sidechain input and an aux output gets
+/// the track on its main ports, silence on the others, and only its main output is heard.
+/// Nothing more is allocated on the audio thread for the extra ports.
+#[test]
+fn a_clap_plugin_with_extra_ports_gets_a_buffer_for_every_port() {
+    // SAFETY: as `tell_the_plugin_to_fail_from`.
+    unsafe { std::env::set_var(test_plugin_support::EXTRA_PORTS_VARIABLE, "1") };
+    let mut harness = Harness::new();
+    harness.add_level_track(DRY, record(PluginFormat::Clap, "trim"));
+    assert_eq!(harness.problems(), Vec::<String>::new());
+    let render = harness.play(BLOCK * 4);
+    assert!(
+        render.left().iter().all(|sample| *sample == DRY * 0.5),
+        "{:?}",
+        &render.left()[..4]
+    );
+    let (_render, allocations) = harness.render_counting_allocations(BLOCK * 4);
+    assert_eq!(allocations, 0);
+}
+
 /// The other side of that rule: a plugin that takes notes and offers the pedal no way in is
 /// still reported, because for that one the pedal really is missing.
 #[test]
