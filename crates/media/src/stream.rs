@@ -77,7 +77,7 @@ fn decoded(path: &Path) -> Result<PathBuf, StreamError> {
             "FLAC of 8-bit samples".to_string(),
         ))
     })?;
-    // A name of its own for each decoding, as several threads may decode one file at once. It
+    // A name of its own for each decoding, as two processes may decode one file at once. It
     // is removed when anything fails.
     let folder = path.parent().unwrap_or(Path::new("."));
     let written = tempfile::Builder::new()
@@ -91,7 +91,7 @@ fn decoded(path: &Path) -> Result<PathBuf, StreamError> {
         });
     match written {
         Ok(()) => Ok(target),
-        // Another thread put its decoded file there first, and maps it, which Windows does not
+        // Another process put its decoded file there first, and maps it, which Windows does not
         // let a rename replace.
         Err(_) if fresh() => Ok(target),
         Err(error) => Err(StreamError::Io(error)),
