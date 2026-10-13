@@ -123,6 +123,11 @@ pub const ATTACH_FAILS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_ATTACH_FAILS";
 /// the plugin at its full level. The value is the count.
 pub const EDITS_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_EDITS";
 
+/// Makes the VST 3 plugin's controller edit thousands of different parameters through the host
+/// as soon as it has a component handler, the way a preset load can. None of them is one the
+/// plugin has, so only the room they take in a block is heard. VST 3 only.
+pub const FLOOD_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_FLOOD";
+
 /// The size a plugin was told to ask its window to be, if it was told.
 pub fn wanted_window_size() -> Option<(u32, u32)> {
     size_from(RESIZE_GUI_VARIABLE)

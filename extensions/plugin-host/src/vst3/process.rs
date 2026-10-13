@@ -4,11 +4,9 @@
 //! parameter changes going in and the ones coming back. All of them are objects the host owns,
 //! so all of them are made once, when the plugin loads, and only filled in here. Nothing in
 //! this file allocates, locks or makes a system call.
-//!
-//! The list objects are only ever touched by the thread that calls `process`, which is why
-//! they may hold plain cells and still be sent to the audio thread with the processor.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -29,7 +27,8 @@ use crate::processor::{
 
 /// How many parameters one block may carry, in each direction. Going in, they are the pins of
 /// the record, the pedal, the wheels, the key pressure and the composer's edits in the plugin's
-/// own window, and all of them fit at once; an edit that does not fit waits for the next block.
+/// own window, and all of them fit at once: the edits take no more than [`WINDOW_EDITS`], and
+/// the rest wait for the next block.
 /// A lane moves a pin, so it shares the queue of its pin.
 /// Coming out, a plugin that reports more than this while it plays loses the rest until the
 /// next block.
@@ -157,7 +156,7 @@ pub(super) struct Vst3Processor {
 // SAFETY: everything a `Vst3Processor` holds is reached from one thread at a time. The engine
 // moves a processor between the control thread and the audio thread and never runs it in two
 // places at once, which is the contract of `sound_core::Processor`. The plugin's own objects
-// are Send by the VST 3 API.
+// are Send by the VST 3 API. The plugin is given the lists for one `process` call and no longer.
 unsafe impl Send for Vst3Processor {}
 
 impl Vst3Processor {
@@ -218,12 +217,21 @@ impl Drop for Vst3Processor {
         // Stopped already on every way out of the engine but the engine itself going, which
         // ends the audio thread before this runs.
         self.stop();
-        // An edit that reached this side and was never played goes back to the host's side,
-        // which gives it to the next audio side: the plugin being started again, when its
-        // latency or its buses change. A newer edit of the same parameter stays.
-        while let Ok(edit) = self.edits.pop() {
-            self.handler.keep_edit(edit);
-        }
+        give_back(&mut self.edits, &self.handler);
+    }
+}
+
+/// An edit that reached an audio side and was never played goes back to the host's side,
+/// which gives it to the next audio side: the plugin being started again, when its latency or
+/// its buses change. The ring may hold more than one edit of a parameter, and the newest of
+/// them goes back. A newer edit the host's side holds already stays.
+fn give_back(edits: &mut rtrb::Consumer<ParameterChange>, handler: &Handler) {
+    let mut newest = BTreeMap::new();
+    while let Ok(edit) = edits.pop() {
+        newest.insert(edit.id, edit.value);
+    }
+    for (id, value) in newest {
+        handler.keep_edit(ParameterChange { id, value });
     }
 }
 
@@ -244,18 +252,13 @@ impl Started for Vst3Processor {
         // carries an edit to the processor in the block's input parameter changes, and this is
         // the only place a block is built. At the start of the block, because the value was
         // already true before this block began. Popping a ring allocates nothing and locks
-        // nothing, and the host's side keeps whatever did not fit.
-        while let Ok(edit) = self.edits.peek().copied() {
-            if !self.input_changes.add(edit.id, 0, edit.value) {
-                // Every queue of this block is taken, which is a plugin with more parameters
-                // at once than this host keeps room for. This one and the rest wait for the
-                // next block: only an edit that went into a block leaves the ring.
-                break;
-            }
-            // Peeked a moment ago, so this is that edit, and the ring cannot be empty.
-            if self.edits.pop().is_err() {
-                break;
-            }
+        // nothing. The edits take at most `WINDOW_EDITS` queues, so a flood of them, such as a
+        // preset load, never takes the room of a pedal coming up; the rest wait in the ring.
+        while self.input_changes.used.get() < WINDOW_EDITS
+            && let Ok(edit) = self.edits.pop()
+        {
+            let added = self.input_changes.add(edit.id, 0, edit.value);
+            debug_assert!(added, "a free queue was refused");
             self.edits_taken += 1;
         }
     }
@@ -460,15 +463,8 @@ impl Buses {
 
 /// The events of one block, as VST 3 takes them.
 pub(super) struct HostEventList {
-    events: RefCell<Vec<Event>>,
+    events: Slots<Event>,
 }
-
-// SAFETY: the list belongs to one `Vst3Processor` and is only ever touched from the thread
-// that runs it, which the engine never runs in two places at once. The plugin is given a
-// pointer to it for the length of one `process` call and no longer.
-unsafe impl Send for HostEventList {}
-// SAFETY: as above.
-unsafe impl Sync for HostEventList {}
 
 impl Class for HostEventList {
     type Interfaces = (IEventList,);
@@ -477,40 +473,34 @@ impl Class for HostEventList {
 impl HostEventList {
     fn new() -> Self {
         Self {
-            events: RefCell::new(Vec::with_capacity(EVENT_CAPACITY)),
+            events: Slots::new(note_off(0, 0), EVENT_CAPACITY),
         }
     }
 
     fn clear(&self) {
-        self.events.borrow_mut().clear();
+        self.events.clear();
     }
 
-    /// `false` says the block is full, which the caller counts. Nothing grows here.
+    /// `false` says the block is full, which the caller counts.
     fn push(&self, event: Event) -> bool {
-        let mut events = self.events.borrow_mut();
-        if events.len() == EVENT_CAPACITY {
-            return false;
-        }
-        events.push(event);
-        true
+        self.events.push(event)
     }
 }
 
 impl IEventListTrait for HostEventList {
     unsafe fn getEventCount(&self) -> int32 {
-        self.events.borrow().len() as int32
+        self.events.len() as int32
     }
 
     unsafe fn getEvent(&self, index: int32, event: *mut Event) -> tresult {
         if event.is_null() || index < 0 {
             return kInvalidArgument;
         }
-        let events = self.events.borrow();
-        let Some(found) = events.get(index as usize) else {
+        let Some(found) = self.events.get(index as usize) else {
             return kInvalidArgument;
         };
         // SAFETY: the caller gave a place to write one event.
-        unsafe { *event = *found };
+        unsafe { *event = found };
         kResultOk
     }
 
@@ -527,11 +517,6 @@ pub(super) struct HostParameterChanges {
     queues: Vec<ComWrapper<HostParameterQueue>>,
     used: Cell<usize>,
 }
-
-// SAFETY: as `HostEventList`.
-unsafe impl Send for HostParameterChanges {}
-// SAFETY: as `HostEventList`.
-unsafe impl Sync for HostParameterChanges {}
 
 impl Class for HostParameterChanges {
     type Interfaces = (IParameterChanges,);
@@ -637,13 +622,8 @@ impl IParameterChangesTrait for HostParameterChanges {
 /// The points of one parameter in one block.
 pub(super) struct HostParameterQueue {
     id: Cell<ParamID>,
-    points: RefCell<Vec<(int32, ParamValue)>>,
+    points: Slots<(int32, ParamValue)>,
 }
-
-// SAFETY: as `HostEventList`.
-unsafe impl Send for HostParameterQueue {}
-// SAFETY: as `HostEventList`.
-unsafe impl Sync for HostParameterQueue {}
 
 impl Class for HostParameterQueue {
     type Interfaces = (IParamValueQueue,);
@@ -653,7 +633,7 @@ impl HostParameterQueue {
     fn new() -> Self {
         Self {
             id: Cell::new(0),
-            points: RefCell::new(Vec::with_capacity(POINT_CAPACITY)),
+            points: Slots::new((0, 0.0), POINT_CAPACITY),
         }
     }
 
@@ -663,11 +643,11 @@ impl HostParameterQueue {
 
     fn begin(&self, id: ParamID) {
         self.id.set(id);
-        self.points.borrow_mut().clear();
+        self.points.clear();
     }
 
     fn clear(&self) {
-        self.points.borrow_mut().clear();
+        self.points.clear();
     }
 
     /// Adds one point. When the block has no room left, the newest value takes the place of the
@@ -680,20 +660,15 @@ impl HostParameterQueue {
     /// It never says no, so nothing above counts a control move as an event that was dropped:
     /// the value did reach the plugin, at a frame a little later than it was played.
     fn add(&self, offset: int32, value: ParamValue) -> bool {
-        let mut points = self.points.borrow_mut();
-        if points.len() == POINT_CAPACITY {
-            if let Some(last) = points.last_mut() {
-                *last = (offset, value);
-            }
-            return true;
+        if !self.points.push((offset, value)) {
+            self.points.set_last((offset, value));
         }
-        points.push((offset, value));
         true
     }
 
     /// Where the parameter ended up in this block, which is what the controller is told.
     fn last(&self) -> Option<ParamValue> {
-        self.points.borrow().last().map(|point| point.1)
+        self.points.last().map(|point| point.1)
     }
 }
 
@@ -703,7 +678,7 @@ impl IParamValueQueueTrait for HostParameterQueue {
     }
 
     unsafe fn getPointCount(&self) -> int32 {
-        self.points.borrow().len() as int32
+        self.points.len() as int32
     }
 
     unsafe fn getPoint(
@@ -715,8 +690,7 @@ impl IParamValueQueueTrait for HostParameterQueue {
         if index < 0 || sample_offset.is_null() || value.is_null() {
             return kInvalidArgument;
         }
-        let points = self.points.borrow();
-        let Some(point) = points.get(index as usize) else {
+        let Some(point) = self.points.get(index as usize) else {
             return kInvalidArgument;
         };
         // SAFETY: the caller gave two places to write.
@@ -738,9 +712,63 @@ impl IParamValueQueueTrait for HostParameterQueue {
         }
         if !index.is_null() {
             // SAFETY: the caller gave a place to write the index.
-            unsafe { *index = (self.points.borrow().len() - 1) as int32 };
+            unsafe { *index = (self.points.len() - 1) as int32 };
         }
         kResultOk
+    }
+}
+
+/// A list of at most a fixed number of values, filled through `&self` as a COM object is.
+/// Reading it writes nothing, unlike a `RefCell`'s borrow count, so a plugin that reads a list
+/// from threads of its own during `process` races nothing.
+struct Slots<T: Copy> {
+    slots: Box<[Cell<T>]>,
+    len: Cell<usize>,
+}
+
+impl<T: Copy> Slots<T> {
+    /// `capacity` slots, each holding `filler` until it is written.
+    fn new(filler: T, capacity: usize) -> Self {
+        Self {
+            slots: vec![Cell::new(filler); capacity].into_boxed_slice(),
+            len: Cell::new(0),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len.get()
+    }
+
+    fn get(&self, index: usize) -> Option<T> {
+        self.slots[..self.len()].get(index).map(Cell::get)
+    }
+
+    fn last(&self) -> Option<T> {
+        self.len().checked_sub(1).and_then(|index| self.get(index))
+    }
+
+    fn clear(&self) {
+        self.len.set(0);
+    }
+
+    /// `false` says the list is full.
+    fn push(&self, value: T) -> bool {
+        let Some(slot) = self.slots.get(self.len()) else {
+            return false;
+        };
+        slot.set(value);
+        self.len.set(self.len() + 1);
+        true
+    }
+
+    fn set_last(&self, value: T) {
+        if let Some(slot) = self
+            .len()
+            .checked_sub(1)
+            .and_then(|index| self.slots.get(index))
+        {
+            slot.set(value);
+        }
     }
 }
 
@@ -748,6 +776,25 @@ impl IParamValueQueueTrait for HostParameterQueue {
 mod tests {
     use super::*;
     use sound_notes::{Amount, Bend, Pedal};
+
+    /// Two edits of one parameter wait in the ring as the audio side goes: the newer one is what
+    /// the next audio side plays. One the host's side holds is newer still and stays.
+    #[test]
+    fn the_newest_edit_of_a_parameter_goes_back_when_the_audio_side_goes() {
+        let handler = Handler::default();
+        let (mut edited, mut edits) = rtrb::RingBuffer::new(4);
+        for (id, value) in [(7, 0.25), (8, 0.25), (7, 0.75), (8, 0.75)] {
+            edited.push(ParameterChange { id, value }).unwrap();
+        }
+        handler.put_edit(ParameterChange { id: 8, value: 0.5 });
+        give_back(&mut edits, &handler);
+        let waiting = handler.take_edits();
+        let expected = [
+            ParameterChange { id: 7, value: 0.75 },
+            ParameterChange { id: 8, value: 0.5 },
+        ];
+        assert_eq!(waiting, expected);
+    }
 
     /// Every control reaches its parameter as the whole range from 0 to 1.
     #[test]
@@ -787,7 +834,7 @@ mod tests {
         for point in 0..POINT_CAPACITY * 2 {
             assert!(changes.add(7, point as int32, 0.5), "at {point}");
         }
-        assert_eq!(changes.queues[0].points.borrow().len(), POINT_CAPACITY);
+        assert_eq!(changes.queues[0].points.len(), POINT_CAPACITY);
         changes.clear();
         assert_eq!(changes.used.get(), 0);
     }
@@ -805,9 +852,9 @@ mod tests {
         // The block is full and the pedal comes up. It is the value the plugin must end on.
         assert!(changes.add(1, POINT_CAPACITY as int32, 0.0));
         assert_eq!(changes.queues[0].last(), Some(0.0));
-        assert_eq!(changes.queues[0].points.borrow().len(), POINT_CAPACITY);
+        assert_eq!(changes.queues[0].points.len(), POINT_CAPACITY);
         // And at the frame it was played, not the frame of the point it took the place of.
-        let points = changes.queues[0].points.borrow();
-        assert_eq!(points.last().copied(), Some((POINT_CAPACITY as int32, 0.0)));
+        let points = &changes.queues[0].points;
+        assert_eq!(points.last(), Some((POINT_CAPACITY as int32, 0.0)));
     }
 }

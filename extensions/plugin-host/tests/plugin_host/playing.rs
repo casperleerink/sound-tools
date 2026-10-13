@@ -363,6 +363,39 @@ fn a_pedal_that_moves_more_often_than_a_block_holds_still_ends_where_it_was_play
     );
 }
 
+/// A VST 3 plugin that edits more parameters at once than a block has room for, as a preset
+/// load can. The edits wait for later blocks; the pedal does not wait behind them. A pedal
+/// that came up in a block the edits filled would hold for ever.
+#[test]
+fn a_flood_of_edits_leaves_room_for_the_pedal() {
+    // SAFETY: nextest runs one test per process and no other thread reads the environment yet.
+    unsafe { std::env::set_var(test_plugin_support::FLOOD_VARIABLE, "1") };
+    let mut harness = Harness::new();
+    // The host sends the edits after every buffer of 512 frames, and they fill the first
+    // blocks of the next one. The pedal goes down where the edits have left room, and comes
+    // up in the second block of the next buffer.
+    harness.add_track(
+        record(PluginFormat::Vst3, "piano"),
+        vec![
+            Played::Pedal {
+                frame: 256,
+                value: 127,
+            },
+            Played::Pedal {
+                frame: 576,
+                value: 0,
+            },
+        ],
+    );
+    let render = harness.play(2048);
+    let right = render.right();
+    assert_eq!(right[575], 1.0);
+    assert!(
+        right[576..].iter().all(|sample| *sample == 0.0),
+        "the pedal never came up"
+    );
+}
+
 /// The VST 3 SDK's own default for `setProcessing` answers that it is not implemented. Other
 /// hosts play such a plugin, so this one does too.
 #[test]

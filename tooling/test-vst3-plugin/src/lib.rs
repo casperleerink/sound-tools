@@ -1132,8 +1132,14 @@ impl IEditControllerTrait for TestTone {
         // What a plugin's own window does when the composer turns a knob: a burst of edits of
         // one parameter through the host, ending on the value the knob was left on. The
         // processor is the half that reads it, so this is what a host has to carry across.
-        if let (Some(handler), Some(count)) = (given, support::wanted_edits()) {
-            self.edit_the_level(&handler, count);
+        if let (Some(handler), Some(count)) = (&given, support::wanted_edits()) {
+            self.edit_the_level(handler, count);
+        }
+        if let Some(handler) = given.filter(|_| support::told_to(support::FLOOD_VARIABLE)) {
+            for id in 1000..5000 {
+                // SAFETY: the handler came from the host and is alive for this call.
+                unsafe { handler.performEdit(id, 0.5) };
+            }
         }
         kResultOk
     }
