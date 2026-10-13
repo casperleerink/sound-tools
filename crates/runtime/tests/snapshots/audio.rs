@@ -166,7 +166,7 @@ fn audio_piece(project: &mut Project) -> Result<()> {
             ..CompressorState::default()
         },
     )?;
-    add_reverb(project, "voice")?;
+    add_reverb(project, "voice", 0.25)?;
     Ok(())
 }
 

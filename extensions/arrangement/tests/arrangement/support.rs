@@ -315,6 +315,81 @@ fn apply_duck(_: &Duck, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     Ok(())
 }
 
+/// A test effect with latency: it plays what it is given `frames` later and says so, as a
+/// lookahead does. The length is fixed when it is made.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Late {
+    pub frames: u32,
+}
+
+impl State for Late {
+    const TOOL: &'static str = "test.late";
+}
+
+pub(crate) struct LateProcessor {
+    frames: u32,
+    lines: [Vec<f32>; 2],
+    next: usize,
+}
+
+impl LateProcessor {
+    const INPUT: sound_core::AudioInput = sound_core::AudioInput::new(0);
+    const OUTPUT: AudioOutput = AudioOutput::new(0);
+}
+
+impl Processor for LateProcessor {
+    type Update = Late;
+
+    fn ports(&self) -> Ports {
+        Ports::new()
+            .audio_input(Self::INPUT)
+            .audio_output(Self::OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut Late) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let input = context.audio_inputs.get(Self::INPUT);
+        let output = context.audio_outputs.get(Self::OUTPUT);
+        let length = self.frames as usize;
+        let mut next = self.next;
+        for ((output, input), line) in output.into_iter().zip(input).zip(&mut self.lines) {
+            next = self.next;
+            for (sample, played) in output.iter_mut().zip(input) {
+                *sample = line[next];
+                line[next] = *played;
+                next = (next + 1) % length;
+            }
+        }
+        self.next = next;
+    }
+
+    fn latency(&self) -> u32 {
+        self.frames
+    }
+}
+
+fn apply_late(state: &Late, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let length = state.frames as usize;
+    let late = context.processor("late", || LateProcessor {
+        frames: state.frames,
+        lines: [vec![0.0; length], vec![0.0; length]],
+        next: 0,
+    })?;
+    context.input(
+        sound_notes::AUDIO_INPUT,
+        InputEndpoint::new(late, LateProcessor::INPUT),
+    );
+    context.output(
+        AUDIO_OUTPUT,
+        OutputEndpoint::new(late, LateProcessor::OUTPUT),
+    );
+    Ok(())
+}
+
 pub(crate) fn registry() -> Registry {
     let mut registry = Registry::new();
     arrangement::register(&mut registry).unwrap();
@@ -324,6 +399,7 @@ pub(crate) fn registry() -> Registry {
         .behaviour(apply_probe);
     registry.tool::<Trim>("test").unwrap().behaviour(apply_trim);
     registry.tool::<Duck>("test").unwrap().behaviour(apply_duck);
+    registry.tool::<Late>("test").unwrap().behaviour(apply_late);
     registry
 }
 

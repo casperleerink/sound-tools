@@ -5,13 +5,15 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, Context, Entity, FontWeight, Hsla, Pixels, Point,
-    SharedString, TextAlign, TextRun, TruncateFrom, Window, canvas, fill, point, prelude::*, px,
-    quad, size,
+    App, BorderStyle, Bounds, ContentMask, Context, Div, Entity, FontWeight, Hsla, Pixels, Point,
+    SharedString, TextAlign, TextRun, TruncateFrom, Window, canvas, div, fill, point, prelude::*,
+    px, quad, size,
 };
 use sound_ui::{ActiveTheme, Playhead, Theme, typography};
 
-use super::layout::{DOT_LEFT, HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport};
+use super::layout::{
+    DOT_LEFT, HEADER_INSET, HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport,
+};
 use crate::Colour;
 
 /// Track colours are design tokens. The match is exhaustive, so a new colour cannot be
@@ -33,6 +35,24 @@ pub(super) fn accent(colour: Colour, theme: &Theme) -> Hsla {
         Colour::Rosewater => theme.rosewater,
         Colour::Flamingo => theme.flamingo,
     }
+}
+
+/// The shape of a selected track header in a row of `height` under the timeline: filled while
+/// `selected`, and with the lavender ring while it has the focus from the keyboard.
+pub(super) fn header_shape(height: f32, selected: bool, keyboard_ring: bool, theme: &Theme) -> Div {
+    div()
+        .absolute()
+        .left(px(HEADER_INSET))
+        .top(px(4.))
+        .w(px(HEADER_WIDTH - 2. * HEADER_INSET))
+        .h(px(height - 8.))
+        .rounded(px(6.))
+        .border_1()
+        .border_color(match keyboard_ring {
+            true => theme.lavender,
+            false => gpui::transparent_black(),
+        })
+        .when(selected, |shape| shape.bg(theme.alpha_at(0.05)))
 }
 
 /// A rect of [`super::layout`] in window coordinates, on whole pixels so that edges stay sharp.

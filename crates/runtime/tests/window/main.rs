@@ -13,6 +13,7 @@
 //! - `rack`: reordering the track rack.
 //! - `track_order`: moving tracks up and down by their headers and with alt and the arrows.
 //! - `track_panel`: the track panel and the view of the synth in it.
+//! - `returns`: the returns under the timeline, and the sends of a track.
 //! - `instruments`: picking the instrument of a track, and the plugin's own window.
 //! - `plugin_card`: the parameters on the card of a plugin: pinned, turned and taken off.
 //! - `drum_pad`: the card of the Drum pad: its pads, its keys and samples dropped on it.
@@ -66,6 +67,7 @@ mod plugin_hosts;
 mod rack;
 mod recording;
 mod recording_audio;
+mod returns;
 mod reverb;
 mod sampler;
 mod saturator;

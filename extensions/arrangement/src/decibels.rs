@@ -55,6 +55,34 @@ impl Visitor<'_> for GainVisitor {
     }
 }
 
+/// For `#[serde(with = "decibels::by_name")]` on a map of names to gains in decibels.
+pub mod by_name {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(transparent)]
+    struct Gain(#[serde(with = "super")] f32);
+
+    pub fn serialize<S: Serializer>(
+        gains: &BTreeMap<String, f32>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(gains.iter().map(|(name, db)| (name, Gain(*db))))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<String, f32>, D::Error> {
+        let gains = BTreeMap::<String, Gain>::deserialize(deserializer)?;
+        Ok(gains
+            .into_iter()
+            .map(|(name, Gain(db))| (name, db))
+            .collect())
+    }
+}
+
 /// The factor a gain multiplies the samples by: 0 dB is exactly 1 and `-inf` exactly 0.
 pub use sound_core::amplitude;
 

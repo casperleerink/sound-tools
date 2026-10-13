@@ -120,9 +120,9 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.
 - A routing edit keeps the state of surviving processors. Removing a processor is a hard switch, no crossfade.
 - The graph has no cycles. A connection that closes one is left out and reported, and the rest plays. Which one is left out is fixed, so the same one goes on every open and a sidechain mistake usually mutes only a detector.
-- Latency compensation leads instead of delaying: each processor sees the transport ahead by the latency after it. No delay lines and no maximum. Delaying after a track would also delay a keyboard played into it; leading keeps live playing at the cost of only that track's own chain.
+- Latency compensation leads instead of delaying: each processor sees the transport ahead by the latency after it. Delaying would also delay a keyboard played into a track; with leading it waits only for that track's chain.
 - A side input (such as a sidechain) is skipped by the lead, so its source is not led by another track's chain. The detector hears it a little early or late instead.
-- A send to a bus, when it comes, will need a delay on the shorter path: the one exception to "no delay lines".
+- An output feeding paths of different latency (a send) is delayed on faster ones: at most a second at 48 kHz. Rejected: no maximum, which would allocate on the audio thread.
 - Levels leave the audio thread through `Peaks` (atomics), sound through a `Scope` (a ring of atomics). Views measure on their own thread. Rejected: measuring on the audio thread, an FFT per card in every block.
 - Every render is deterministic: the same project gives the same bytes. Nothing random; anything that looks random takes a seed. The click is attached only by the window.
 
@@ -130,18 +130,19 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 `extensions/arrangement`.
 
-- It owns tracks, clips, the track mixer and the master. Mixer values are fields of the track record, because they are the track.
+- It owns tracks, clips, the track mixer and the master. Mixer values are fields of the track record.
 - A track's chain is its instrument, then the effects its `effects` list names. One list decides the order, so a reorder is one record and one undo step. Rejected: an order number in each effect record (two files per move, and ties).
-- Bypass and sidechain are saved on the track's effect slot, not in the effect's record, so plugins and built-in effects share them. The arrangement wires sidechains, as only it sees every track, and names a loop of keys by its tracks, because the core's cycle message names processors an agent cannot act on.
-- Solo mutes the other tracks in their mixers. That is why the mixers are in the arrangement: only the owner of every track sees them all.
+- Bypass and sidechain are saved on the track's effect slot, not in the effect's record, so plugins and built-in effects share them. The arrangement wires sidechains and names a loop of keys by its tracks, because the core's cycle message names processors an agent cannot act on.
+- A return is a track of kind `return`. Sends are a map on the sending track. No return sends to another yet.
+- Solo mutes the other tracks in their mixers, never a return, so a soloed track keeps its reverb. Mixers, sends and sidechains are wired in the arrangement, the one owner that sees every track.
 - The master limiter is fixed code of the arrangement, not a tool, so old projects get it without a file changing. It is bit-transparent under its ceiling. The core itself limits nothing.
-- Every note starts inside its clip, else the record does not load, so a note written with a project position is an error and not silence. No note is ever stuck: an edit, move, delete or tempo change ends what it started.
+- A note starts inside its clip, else the record does not load: a note written with a project position is an error, not silence. An edit, move, delete or tempo change ends every note it started.
 - Expression lanes of a clip are sent only when they move, so outside every clip a lane is at rest and a seek or stop needs no case of its own.
 - Automation lanes are on the track, in project ticks and the number's own units. A lane names a device by its file name and a number by its path in the record; a device declares what it takes in one `AutomationInput`. So the arrangement knows no device. Whole numbers are not automatable, because a lane is a straight line. A lane that does not fit is a problem; the rest plays.
 - A lane is a straight line on the knob's travel, so a sweep sounds even and the knob and the lane agree.
 - Each automated device gets its own small player on the track, so it sees that device's latency lead and its events need no device id.
 - A player sends every lane every block, also while stopped, and a number that hears nothing goes back to its record. Rejected: sending only what moved, as the expression lanes do, because a removed player cannot say it is gone.
-- Where a lane bends inside a block, the engine plays the device's block in pieces, so a fast ramp lands on its frame and no device needs code for it.
+- Where a lane bends inside a block, the engine plays the device's block in pieces, so no device needs code for it.
 - How fast a number moves is decided once, in `Lane`, for built-in devices and tools of the project alike.
 - Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
 - A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.

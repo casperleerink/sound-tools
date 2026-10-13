@@ -141,3 +141,26 @@ fn a_second_arrangement_does_not_print_the_tracks_of_the_first_again() {
     assert!(summary.contains("arrangement `arrangement-2`"), "{summary}");
     assert!(!summary.contains("instance `arrangement/"), "{summary}");
 }
+
+#[test]
+fn the_summary_tells_the_sends_of_a_track_and_where_a_return_takes_them() {
+    let mut harness = Harness::piece();
+    harness.write_and_apply(
+        "state/arrangement/space/instance.json",
+        r#"{"tool": "arrangement.track", "state": {"name": "Space", "kind": "return", "pre_fader": true}}"#,
+    );
+    harness.write_and_apply(
+        "state/arrangement/piano/instance.json",
+        r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "sends": {"space": -12.0}}}"#,
+    );
+    assert_eq!(harness.project.problems(), []);
+    let summary = runtime::summary(&harness.project);
+    let lines = [
+        "arrangement `arrangement`: 2 tracks, 1 return.",
+        "  track `arrangement/piano` \"piano\": colour blue, order 1, instrument instrument.synth, sends space -12 dB\n",
+        "  return `arrangement/space` \"Space\": colour blue, order 0, pre fader\n",
+    ];
+    for line in lines {
+        assert!(summary.contains(line), "{line} in {summary}");
+    }
+}

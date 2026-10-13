@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use crate::automation::Automation;
+use crate::compensation::Compensation;
 use crate::input::InputId;
 use crate::processor::{
     AudioBuffer, CHANNELS, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
@@ -569,7 +570,50 @@ impl Graph {
             }
         }
         schedule.needed = vec![0; schedule.steps.len()];
+        self.add_compensations(&mut schedule, &step_of);
         Ok(schedule)
+    }
+
+    /// A compensation for each audio output of a processor that feeds two or more others, or
+    /// another and the device: only there can one listener need less lead than another. A side
+    /// input is not led, so it does not count, and it is not delayed.
+    fn add_compensations(&self, schedule: &mut Schedule, step_of: &BTreeMap<NodeId, usize>) {
+        // `None` for the device.
+        let mut listeners: BTreeMap<NodeId, BTreeSet<Option<NodeId>>> = BTreeMap::new();
+        // Each audio output with a listener that may be delayed, and whether the device is one.
+        let mut outputs: BTreeMap<(NodeId, usize), bool> = BTreeMap::new();
+        for connection in &self.connections {
+            let Source::Node(id, output) = connection.source else {
+                continue;
+            };
+            if self.is_side_input(connection) {
+                continue;
+            }
+            let listener = match connection.destination {
+                Destination::Node(destination, _) => Some(destination),
+                Destination::DeviceOutput(_) => None,
+            };
+            listeners.entry(id).or_default().insert(listener);
+            if let OutputPort::Audio(index) = output {
+                *outputs.entry((id, index)).or_default() |= listener.is_none();
+            }
+        }
+        schedule.compensation_of = vec![None; schedule.audio_outputs.len()];
+        for ((id, index), to_device) in outputs {
+            let fans_out = listeners
+                .get(&id)
+                .is_some_and(|listeners| listeners.len() > 1);
+            let step = step_of.get(&id).and_then(|step| schedule.steps.get(*step));
+            let Some(step) = step.filter(|_| fans_out) else {
+                continue;
+            };
+            let buffer = step.audio_outputs.start + index;
+            if let Some(compensation) = schedule.compensation_of.get_mut(buffer) {
+                *compensation = Some(schedule.compensations.len());
+                let compensation = Compensation::new((id, index), buffer, to_device);
+                schedule.compensations.push(compensation);
+            }
+        }
     }
 }
 
@@ -609,8 +653,12 @@ pub(crate) struct Schedule {
     pub audio_producers: Vec<usize>,
     pub event_producers: Vec<usize>,
     /// Per step, room for the lead its output needs while the leads are worked out, so that
-    /// needs no allocation on the audio thread.
+    /// needs no allocation on the audio thread. Afterwards, how far ahead its output runs.
     pub needed: Vec<u64>,
+    /// In key order, so the audio thread can match them with those of the schedule before.
+    pub compensations: Vec<Compensation>,
+    /// Per audio output buffer: its index in `compensations`, when it has one.
+    pub compensation_of: Vec<Option<usize>>,
 }
 
 #[cfg(test)]

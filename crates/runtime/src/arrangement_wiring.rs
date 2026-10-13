@@ -128,8 +128,8 @@ pub(crate) const FIT_TEMPO: arrangement::view::FitTempo = arrangement::view::Fit
     },
 };
 
-/// [`add_track`] or [`add_audio_track`]: what the add track button of the arrangement calls.
-/// The arrangement knows no instrument, so the runtime hands it this.
+/// [`add_track`], [`add_audio_track`] or a return: what the add track button of the
+/// arrangement calls. The arrangement knows no instrument, so the runtime hands it this.
 pub fn add_track_of_kind(
     project: &mut Project,
     arrangement: &Instance<ArrangementState>,
@@ -138,6 +138,11 @@ pub fn add_track_of_kind(
     match kind {
         TrackKind::Instrument => add_track(project, arrangement),
         TrackKind::Audio => add_audio_track(project, arrangement),
+        TrackKind::Return => {
+            let mut changes = Changes::new();
+            arrangement::add_return(project, &mut changes, arrangement.id())?;
+            project.commit("Add return", changes)
+        }
     }
 }
 

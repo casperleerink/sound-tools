@@ -1,5 +1,5 @@
 //! The add track button, right under the last track header: `Add track` adds an instrument
-//! track, and its chevron offers an instrument track or an audio track. It has the shape of a
+//! track, and its chevron offers an instrument track, an audio track or a return. It has the shape of a
 //! selected header, its plus where a header has its dot and its words where a name starts. It
 //! scrolls with the tracks.
 //!
@@ -28,6 +28,7 @@ pub type AddTrack =
 
 const INSTRUMENT: &str = "instrument-track";
 const AUDIO: &str = "audio-track";
+const RETURN: &str = "return-track";
 /// The inset of the button from the top and bottom of its row, as a selected header has.
 const BUTTON_INSET: f32 = 4.;
 
@@ -36,6 +37,7 @@ fn kind_of(value: &str) -> Option<TrackKind> {
     match value {
         INSTRUMENT => Some(TrackKind::Instrument),
         AUDIO => Some(TrackKind::Audio),
+        RETURN => Some(TrackKind::Return),
         _ => None,
     }
 }
@@ -60,11 +62,12 @@ impl AddTrackButton {
             let items = [
                 MenuItem::new(INSTRUMENT, "Instrument track").selectable(false),
                 MenuItem::new(AUDIO, "Audio track").selectable(false),
+                MenuItem::new(RETURN, "Return track").selectable(false),
             ];
             let choices = SplitChoices {
                 label: "Add track".into(),
                 main_value: INSTRUMENT.into(),
-                menu_label: "Instrument or audio track".into(),
+                menu_label: "Instrument, audio or return track".into(),
                 entries: vec![MenuEntry::Group(MenuGroup::new().items(items))],
             };
             SplitButton::new("add-track", choices, cx).icon("plus").row(

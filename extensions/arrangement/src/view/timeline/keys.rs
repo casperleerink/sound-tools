@@ -12,7 +12,7 @@ use super::{Timeline, TimelineEvent, is_clip_tool};
 use crate::view::clips::{GAIN_KEY_STEP_DB, gain_moved};
 use crate::view::gesture::nudged_track;
 use crate::view::layout::{HEADER_WIDTH, NAME_LEFT, NAME_MIDDLE, RULER_HEIGHT};
-use crate::{AudioClip, TrackState};
+use crate::{AudioClip, TrackKind, TrackState, remove_return};
 
 impl Timeline {
     /// Alt-up and alt-down: the gain of every selected audio clip by a decibel, as one undo
@@ -218,19 +218,31 @@ impl Timeline {
 
     /// Deletes a track with its clips, devices and automation as one undo step, once the composer
     /// says yes. The keys go to the track when no clip is selected, so without the question one
-    /// backspace too many after deleting a clip would take the whole track.
-    fn delete_track(
+    /// backspace too many after deleting a clip would take the whole track. A return takes the
+    /// sends into it along.
+    pub(in crate::view) fn delete_track(
         &mut self,
         track: Instance<TrackState>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let project = self.session.read(cx).project();
-        let Some(name) = project.state(&track).map(|state| state.name.clone()) else {
+        let Some(state) = project.state(&track) else {
             return;
         };
-        let message = format!("Delete the track \"{name}\"?");
-        let detail = "Its clips, devices and automation go with it. Undo brings it back.";
+        let is_return = state.kind == TrackKind::Return;
+        let (message, detail, label) = match is_return {
+            true => (
+                format!("Delete the return \"{}\"?", state.name),
+                "Its effects, automation and the sends into it go with it. Undo brings it back.",
+                "Delete return",
+            ),
+            false => (
+                format!("Delete the track \"{}\"?", state.name),
+                "Its clips, devices and automation go with it. Undo brings it back.",
+                "Delete track",
+            ),
+        };
         let buttons = ["Delete", "Cancel"];
         let answer = window.prompt(PromptLevel::Warning, &message, Some(detail), &buttons, cx);
         let session = self.session.clone();
@@ -241,8 +253,11 @@ impl Timeline {
             session.update(cx, |session, cx| {
                 session.edit(cx, |project| {
                     let mut changes = Changes::new();
-                    changes.delete(track.id());
-                    project.commit("Delete track", changes)
+                    match is_return {
+                        true => remove_return(project, &mut changes, &track),
+                        false => changes.delete(track.id()),
+                    }
+                    project.commit(label, changes)
                 })
             });
         })
@@ -296,24 +311,30 @@ impl Timeline {
                 .map(|rename| rename.input.read(cx).text().to_string());
             timeline.finish_rename(text, window, cx);
         });
+        let focus_before = window.focused(cx);
         window.focus(&focus, cx);
         self.rename = Some(Rename {
             track,
             input,
             focus,
+            focus_before,
             _blur: blur,
         });
         cx.notify();
     }
 
     /// Enter or a click elsewhere gives the name, one undo step; escape gives nothing. A name of
-    /// only spaces is no name, and the track keeps the one it had.
+    /// only spaces is no name, and the track keeps the one it had. Enter and escape give the
+    /// focus back to where it was, so the keys of a return work on after its rename.
     fn finish_rename(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(rename) = self.rename.take() else {
             return;
         };
         if rename.focus.is_focused(window) {
-            window.focus(&self.focus_handle, cx);
+            let back = rename
+                .focus_before
+                .unwrap_or_else(|| self.focus_handle.clone());
+            window.focus(&back, cx);
         }
         let project = self.session.read(cx).project();
         let state = project.state(&rename.track).cloned();
@@ -372,6 +393,6 @@ impl Timeline {
 }
 
 /// The name field of a renamed track: a small text input where the name is painted.
-const RENAME_HEIGHT: f32 = 28.;
+pub(in crate::view) const RENAME_HEIGHT: f32 = 28.;
 /// Its left edge, so that its text starts where the painted name does.
-const RENAME_LEFT: f32 = NAME_LEFT - 8.;
+pub(in crate::view) const RENAME_LEFT: f32 = NAME_LEFT - 8.;

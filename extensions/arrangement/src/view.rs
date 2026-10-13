@@ -14,6 +14,8 @@
 //! - [`TrackPanel`] shows the devices of one track, each in the view of its own tool.
 //! - [`MasterPanel`] shows the master: its volume and its limiter. The master row under the
 //!   tracks opens it.
+//! - [`Returns`] shows the returns above the master row, folded or open. A return opens in the
+//!   track panel.
 //! - A `PlayheadLine` on top of each draws one line, every frame while the project plays.
 //!
 //! All positions come from [`layout`], and what a drag does to a clip from [`gesture`]. The
@@ -32,6 +34,7 @@ pub mod layout;
 pub mod master_panel;
 mod paint;
 mod recording_overlay;
+pub mod returns;
 pub mod roll;
 pub mod selection;
 mod sidechain;
@@ -58,8 +61,10 @@ pub use editor::NoteEditor;
 use layout::HEADER_WIDTH;
 pub use master_panel::MasterPanel;
 use master_panel::{MASTER_NAME, MasterPanelEvent};
-use paint::PlayheadLine;
+use paint::{PlayheadLine, header_shape};
 use recording_overlay::RecordingOverlay;
+pub use returns::Returns;
+use returns::ReturnsEvent;
 use roll::EDITOR_HEIGHT;
 use snap::SharedSnap;
 use timeline::scrolled_or_zoomed;
@@ -119,6 +124,8 @@ pub struct ArrangementView {
     /// The arm toggles, input meters and growing takes over the timeline.
     recording_overlay: Entity<RecordingOverlay>,
     add_track_button: Entity<AddTrackButton>,
+    /// The returns, between the timeline and the master row.
+    returns: Entity<Returns>,
     detail: Option<Detail>,
     /// The snap setting of the window, shared by the timeline and the note editor.
     snap: SharedSnap,
@@ -160,6 +167,22 @@ impl ArrangementView {
             )
         });
 
+        let returns = cx.new(|cx| {
+            let (session, arrangement) = (session.clone(), arrangement.clone());
+            Returns::new(
+                session,
+                arrangement,
+                timeline.clone(),
+                add_track,
+                window,
+                cx,
+            )
+        });
+        cx.subscribe_in(&returns, window, |view, _, event, window, cx| {
+            let ReturnsEvent::Open(track) = event;
+            view.open_track_panel(track.clone(), window, cx);
+        })
+        .detach();
         cx.subscribe_in(
             &timeline,
             window,
@@ -215,6 +238,7 @@ impl ArrangementView {
             playhead_line,
             recording_overlay,
             add_track_button,
+            returns,
             detail: None,
             snap,
             clipboard,
@@ -227,7 +251,11 @@ impl ArrangementView {
         &self.timeline
     }
 
-    /// The menu of the add track button: an instrument or an audio track.
+    pub fn returns(&self) -> &Entity<Returns> {
+        &self.returns
+    }
+
+    /// The menu of the add track button: an instrument track, an audio track or a return.
     pub fn add_track_menu(&self, cx: &App) -> Entity<DropdownMenu> {
         self.add_track_button.read(cx).menu(cx)
     }
@@ -402,15 +430,10 @@ impl ArrangementView {
     /// or enter when it has the focus, opens the panel of the master.
     fn master_row(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = cx.theme();
-        let (hairline, ring, text, selected, focus) = (
-            theme.alpha_at(0.05),
-            theme.gray_800,
-            theme.gray_900,
-            theme.alpha_at(0.05),
-            theme.lavender,
-        );
+        let (hairline, ring, text) = (theme.alpha_at(0.05), theme.gray_800, theme.gray_900);
         let open = self.master_panel().is_some();
         let keyboard_ring = self.master_keyboard.shows_ring(&self.master_focus, window);
+        let shape = header_shape(MASTER_ROW_HEIGHT, open, keyboard_ring, theme);
         let header = div()
             .id("master-row")
             .debug_selector(|| "master-row".to_string())
@@ -427,22 +450,7 @@ impl ArrangementView {
                 cx.listener(|view, _, _, cx| view.master_keyboard.pressed(cx)),
             )
             .on_click(cx.listener(|view, _, window, cx| view.open_master_panel(window, cx)))
-            .child(
-                // The fill of a selected track header, in the same place.
-                div()
-                    .absolute()
-                    .left(px(8.))
-                    .top(px(4.))
-                    .w(px(HEADER_WIDTH - 16.))
-                    .h(px(MASTER_ROW_HEIGHT - 8.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(match keyboard_ring {
-                        true => focus,
-                        false => gpui::transparent_black(),
-                    })
-                    .when(open, |fill| fill.bg(selected)),
-            )
+            .child(shape)
             .child(
                 div()
                     .absolute()
@@ -537,6 +545,7 @@ impl Render for ArrangementView {
                     .child(self.add_track_button.clone())
                     .child(self.playhead_line.clone()),
             )
+            .child(self.returns.clone())
             .child(master_row)
             .children(detail)
     }

@@ -3,7 +3,8 @@
 use sound_core::{Instance, Project};
 
 use crate::{
-    ArrangementState, INSTRUMENT, TrackKind, TrackState, audio_clip_end, audio_clips, clips, tracks,
+    ArrangementState, INSTRUMENT, TrackKind, TrackState, audio_clip_end, audio_clips, clips,
+    returns, tracks,
 };
 
 /// One line per track and per clip. Positions are `bar:beat:tick`, the end is where the clip
@@ -14,8 +15,13 @@ pub(crate) fn of_arrangement(
 ) -> String {
     let time_signatures = project.project_file().tempo_map.time_signatures();
     let tracks = tracks(project, arrangement.id());
+    let returns = returns(project, arrangement.id());
+    let returns_counted = match returns.is_empty() {
+        true => String::new(),
+        false => format!(", {}", counted(returns.len(), "return")),
+    };
     let mut lines = vec![format!(
-        "arrangement `{}`: {}. Positions are bar:beat:tick, a clip runs up to its end position",
+        "arrangement `{}`: {}{returns_counted}. Positions are bar:beat:tick, a clip runs up to its end position",
         arrangement.id(),
         counted(tracks.len(), "track"),
     )];
@@ -26,22 +32,8 @@ pub(crate) fn of_arrangement(
         }
         let instrument = track.id().child(INSTRUMENT).ok();
         let instrument = instrument.and_then(|id| project.tool_of(&id));
-        // Each effect with its tool, so an agent sees that a record it wrote loaded.
-        let effects: Vec<String> = (state.effects.iter())
-            .map(|slot| {
-                let tool = track.id().child(&slot.name).ok();
-                match tool.and_then(|id| project.tool_of(&id)) {
-                    Some(tool) => format!("{} ({tool})", slot.name),
-                    None => format!("{} (not loaded)", slot.name),
-                }
-            })
-            .collect();
-        let effects = match effects.is_empty() {
-            true => String::new(),
-            false => format!(", effects {}", effects.join(", ")),
-        };
         lines.push(format!(
-            "  track `{}` {:?}: colour {}, order {}, {}{effects}",
+            "  track `{}` {:?}: colour {}, order {}, {}{}{}",
             track.id(),
             state.name,
             state.colour.name(),
@@ -50,6 +42,8 @@ pub(crate) fn of_arrangement(
                 Some(tool) => format!("instrument {tool}"),
                 None => format!("no instrument, so it is silent: add {INSTRUMENT}.json"),
             },
+            effects(project, &track, state),
+            sends(state),
         ));
         let clips = clips(project, track.id());
         if clips.is_empty() {
@@ -72,7 +66,46 @@ pub(crate) fn of_arrangement(
             ));
         }
     }
+    for (track, state) in returns {
+        lines.push(format!(
+            "  return `{}` {:?}: colour {}, order {}{}{}",
+            track.id(),
+            state.name,
+            state.colour.name(),
+            state.order,
+            if state.pre_fader { ", pre fader" } else { "" },
+            effects(project, &track, state),
+        ));
+    }
     lines.join("\n")
+}
+
+/// Each effect of a track with its tool, so an agent sees that a record it wrote loaded.
+fn effects(project: &Project, track: &Instance<TrackState>, state: &TrackState) -> String {
+    let effects: Vec<String> = (state.effects.iter())
+        .map(|slot| {
+            let tool = track.id().child(&slot.name).ok();
+            match tool.and_then(|id| project.tool_of(&id)) {
+                Some(tool) => format!("{} ({tool})", slot.name),
+                None => format!("{} (not loaded)", slot.name),
+            }
+        })
+        .collect();
+    match effects.is_empty() {
+        true => String::new(),
+        false => format!(", effects {}", effects.join(", ")),
+    }
+}
+
+/// How loud a track sends into each return, by the folder name of the return.
+fn sends(state: &TrackState) -> String {
+    let sends: Vec<String> = (state.sends.iter())
+        .map(|(to, gain_db)| format!("{to} {gain_db} dB"))
+        .collect();
+    match sends.is_empty() {
+        true => String::new(),
+        false => format!(", sends {}", sends.join(", ")),
+    }
 }
 
 /// An audio track and its clips: the file of each, where it plays in the piece and which part
@@ -85,11 +118,12 @@ fn audio_track(
 ) {
     let time_signatures = project.project_file().tempo_map.time_signatures();
     lines.push(format!(
-        "  track `{}` {:?}: colour {}, order {}, audio track",
+        "  track `{}` {:?}: colour {}, order {}, audio track{}",
         track.id(),
         state.name,
         state.colour.name(),
         state.order,
+        sends(state),
     ));
     let clips = audio_clips(project, track.id());
     if clips.is_empty() {

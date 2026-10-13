@@ -65,9 +65,9 @@ pub trait Processor: Send + 'static {
     /// hosted plugin that says it has latency. Zero for almost everything.
     ///
     /// The engine reads it when the processor arrives and after each of its updates, so change
-    /// it in `update` and nowhere else. The engine delays nothing to make up for it: everything
-    /// before this processor runs that much earlier on the timeline instead, so its output
-    /// reaches the device in time with everything else.
+    /// it in `update` and nowhere else. Everything before this processor runs that much earlier
+    /// on the timeline, so its output reaches the device in time with everything else. A path
+    /// that leaves before it and goes around it is delayed to match.
     fn latency(&self) -> u32 {
         0
     }
