@@ -203,4 +203,23 @@ fn the_summary_tells_the_bars_of_each_section() {
     for line in lines {
         assert!(summary.contains(line), "{line} in {summary}");
     }
+
+    // From bar 3 the bars are 7/8, 3360 ticks long.
+    let changing = outro
+        .replace(
+            r#"[{"signature": "4/4", "bars": 1}]"#,
+            r#"[{"signature": "4/4", "bars": 2}, {"signature": "7/8", "bars": 1}]"#,
+        )
+        .replace(r#""bar": 3"#, r#""bar": 4"#);
+    harness.write_and_apply("project.json", &changing);
+    assert_eq!(harness.project.problems(), [], "{changing}");
+    let summary = runtime::summary(&harness.project);
+    let lines = [
+        "section \"Intro\": bars 1 to 3, ticks 0 to 11040\n",
+        "section \"Chorus\": bars 4 to 11, ticks 11040 to 37920\n",
+        "section \"Outro\": from bar 12 (tick 37920) to the end\n",
+    ];
+    for line in lines {
+        assert!(summary.contains(line), "{line} in {summary}");
+    }
 }

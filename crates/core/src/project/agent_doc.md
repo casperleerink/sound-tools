@@ -48,7 +48,6 @@ The time signatures are in `project.json`, under `tempo_map.time_signatures`: ru
 
 - A beat is the note value of the lower number, a bar the upper number of beats: 960 and 3840 ticks in 4/4, 480 and 3360 in 7/8.
 - Bars and beats count from 1. In 4/4, bar 5 is at 4 × 3840 = 15360 and bar 3, beat 2 at 2 × 3840 + 960 = 8640. With the runs above, bar 10 is at 8 × 3840 + 3360 = 34080: add up the bars before it.
-- Parts such as the chorus are `sections` in `project.json`: each runs from its bar to the next.
 - Note lengths: whole 3840, half 1920, quarter 960, eighth 480, sixteenth 240, eighth triplet 320.
 
 ## Rules

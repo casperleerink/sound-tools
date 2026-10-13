@@ -111,9 +111,6 @@ impl Sections {
     /// be. `None` when none starts at `from`, or another starts at `to`.
     pub fn with_section_moved(&self, from: NonZeroU64, to: NonZeroU64) -> Option<Self> {
         let name = self.0.get(self.index_of(from)?)?.name.clone();
-        if from == to {
-            return Some(self.clone());
-        }
         self.without_section_at(from)?.with_section_at(to, name)
     }
 
