@@ -16,7 +16,8 @@
 //! A failed check or download is quiet: one line on stderr, and the next check tries again.
 //! An update that does not install is shown once, with why and **Download**, and that version
 //! is not downloaded again: it would fail the same way at every start.
-//! A dev build and the command line forms never check.
+//! A dev build, the command line forms and, on Linux and Windows, a copy the installer did not
+//! write never check.
 //!
 //! In the support folder:
 //!
@@ -196,7 +197,9 @@ impl Updater {
     /// The updater of this program, or `None` when it does not update: a dev build, a program
     /// started with `SOUND_TOOLS_NO_UPDATES` set (the perf harness of `tooling/perf`), a
     /// release build that is not the app (`cargo build --release` names the program `runtime`),
-    /// and on macOS a program outside a `.app`.
+    /// on macOS a program outside a `.app`, and elsewhere a program the installer did not
+    /// write. That one, such as a tarball run where it was unpacked, would install into the
+    /// installer's place and download the same release again at its next start.
     fn of_this_app(support: &Path) -> Option<Self> {
         if cfg!(debug_assertions) || std::env::var_os("SOUND_TOOLS_NO_UPDATES").is_some() {
             return None;
@@ -213,9 +216,10 @@ impl Updater {
             }
             Place::Bundle(bundle.to_path_buf())
         } else {
-            Place::Installer {
-                program: installed_program()?,
+            if dunce::canonicalize(installed_program()?).ok()? != program {
+                return None;
             }
+            Place::Installer { program }
         };
         Some(Self {
             folder: support.join(UPDATES_FOLDER),
