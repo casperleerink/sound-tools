@@ -105,6 +105,20 @@ fn a_release_zone_plays_when_the_key_comes_up() {
     assert_eq!([left[2_400], left[7_200]], [0.1, 0.2]);
 }
 
+/// The second key up starts its own release zone and leaves the first one sounding.
+#[test]
+fn a_release_zone_sounds_on_when_its_key_comes_up_again() {
+    let mut harness = playing(
+        "<group> key=60 amp_veltrack=0
+         <region> sample=string.wav
+         <region> sample=damper.wav trigger=release",
+        &[("string.wav", 0.1, 1.0), ("damper.wav", 0.2, 1.0)],
+        vec![note(0, 4_800, 60, 100), note(9_600, 4_800, 60, 100)],
+    );
+    let left = harness.play(19_200);
+    assert_eq!([left[12_000], left[16_800]], [0.3, 0.4]);
+}
+
 /// The file is 0.1 s long and the note half a second: the loop holds it.
 #[test]
 fn a_looped_zone_sounds_past_the_end_of_its_file() {
