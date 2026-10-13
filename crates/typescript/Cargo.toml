@@ -19,7 +19,7 @@ sound-media.workspace = true
 sound-notes.workspace = true
 sound-signals.workspace = true
 sound-ui.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 hound.workspace = true
-tempfile.workspace = true

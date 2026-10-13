@@ -18,6 +18,7 @@ mod tools;
 mod tree;
 mod window;
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -258,8 +259,7 @@ fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, S
         "Bun is not installed, so the tools of this project do not load: install it from https://bun.sh and open the project again".to_string()
     })?;
     // The host script is no file of the project.
-    let host = std::env::temp_dir().join(format!("sound-tools-host-{}.ts", std::process::id()));
-    std::fs::write(&host, HOST).map_err(|error| error.to_string())?;
+    let host = host_script().map_err(|error| error.to_string())?;
     // Ends: a file is blamed at most once, as Bun never loads a skipped one.
     loop {
         let loading: Vec<&str> = (files.iter())
@@ -289,6 +289,17 @@ fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, S
             }
         }
     }
+}
+
+/// `host.ts` in a new temporary file only this user can change, as `/tmp` may be shared. Gone
+/// when dropped: Bun reads it only as it starts.
+fn host_script() -> std::io::Result<tempfile::TempPath> {
+    let mut file = tempfile::Builder::new()
+        .prefix("sound-tools-host-")
+        .suffix(".ts")
+        .tempfile()?;
+    file.write_all(HOST.as_bytes())?;
+    Ok(file.into_temp_path())
 }
 
 /// A problem of the whole `extensions/` folder.
