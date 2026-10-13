@@ -177,6 +177,32 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
 }
 
 #[test]
+fn a_pluck_into_a_delay_echoes_after_each_note_and_only_its_own() {
+    // Quiet from the end of the pluck, at 6 ms, until its echo. The first note is let go of
+    // at once, the second is held past its echo.
+    let code = compile(|| {
+        let pluck = 0.5 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 5.0, 0.0, 1.0);
+        pluck + delay_up_to(pluck, 300.0, 300.0)
+    });
+    let notes = vec![
+        (0, on(69)),
+        (480, off(69)),
+        (48_000, on(69)),
+        (67_200, off(69)),
+    ];
+    let mut played = play(Kind::Instrument { voices: 1 }, code, notes);
+    let output = played.render(96_000);
+    for note in [0, 48_000] {
+        assert_eq!(loudest(&output[note + 960..note + 14_000]), 0.0, "{note}");
+        // 300 ms is 14400 frames.
+        assert!(
+            loudest(&output[note + 14_400..note + 14_880]) > 0.1,
+            "{note}"
+        );
+    }
+}
+
+#[test]
 fn two_voices_started_on_the_same_frame_play_different_noise() {
     let kind = Kind::Instrument { voices: 4 };
     let noise = || compile(|| 0.2 * noise() * adsr(gate(), 1.0, 1.0, 1.0, 1.0));
@@ -291,18 +317,23 @@ fn a_note_with_no_length_plays_until_it_is_released() {
 }
 
 #[test]
-fn a_release_lets_go_of_its_note_when_the_list_of_what_waits_for_its_frame_is_full() {
+fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_key_at_once() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = SignalsUpdate::Note {
+    let note = |at| SignalsUpdate::Note {
         pitch,
         velocity: Velocity::new(100).unwrap(),
-        at: None,
+        at,
         frames: None,
     };
-    played.control.update(played.signals, note).unwrap();
-    // A trigger far ahead waits in the list, which holds 256.
-    for _ in 0..256 {
+    played.control.update(played.signals, note(None)).unwrap();
+    played.render(64);
+    // The same key again, later, waits in the list, which holds 256, with triggers far ahead.
+    played
+        .control
+        .update(played.signals, note(Some(48_000)))
+        .unwrap();
+    for _ in 0..255 {
         let hit = SignalsUpdate::Trigger {
             index: 0,
             at: Some(u64::MAX),
@@ -313,7 +344,8 @@ fn a_release_lets_go_of_its_note_when_the_list_of_what_waits_for_its_frame_is_fu
     assert!(loudest(&played.render(4_800)) > 0.1);
     let release = SignalsUpdate::Release { pitch, at: None };
     played.control.update(played.signals, release).unwrap();
-    assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
+    // Past frame 48000, where the waiting note would start and never end.
+    assert_eq!(loudest(&played.render(48_000)[4_800..]), 0.0);
 }
 
 #[test]
@@ -514,15 +546,16 @@ fn a_note_after_new_code_plays_only_the_new_code() {
     let kind = Kind::Instrument { voices: 1 };
     let notes = vec![(0, on(60)), (64, off(60)), (9_600, on(60))];
     let mut played = play(kind, compile(|| 0.5 * gate()), notes);
-    // Released at frame 64 and silent since, so the voice is idle when the code changes.
-    played.render(4_800);
+    // Released at frame 64 and silent since, so the voice is over 50 ms later, at frame 2464:
+    // before the 10 ms fade from the old code ends.
+    played.render(2_304);
     played
         .control
         .update(played.signals, new_code(kind, compile(|| -0.5 * gate())))
         .unwrap();
     let output = played.render(9_600);
     // The note at frame 9600 starts with the new code, not with a fade from the old.
-    assert_eq!(output[4_800], -0.5);
+    assert_eq!(output[9_600 - 2_304], -0.5);
 }
 
 /// Every param at its default, and the first one moved by a lane.

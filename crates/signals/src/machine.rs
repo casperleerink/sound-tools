@@ -285,6 +285,12 @@ impl Machine {
         }
     }
 
+    /// How far back the longest delay reaches, in frames.
+    pub(crate) fn longest_delay(&self) -> usize {
+        let longest = (self.code.slots.delays.iter()).fold(0.0_f32, |longest, ms| longest.max(*ms));
+        (longest * 0.001 * self.sample_rate) as usize
+    }
+
     /// The last value of each watch, in the order of [`Code::watches`].
     pub(crate) fn watched(&self) -> &[f32] {
         &self.watched

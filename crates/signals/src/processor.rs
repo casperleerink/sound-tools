@@ -25,7 +25,8 @@ const FADE_SECONDS: f32 = 0.01;
 /// How long a new value of a param or a live control takes to arrive, also a lane that takes a
 /// param over or lets it go. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
-/// A released voice this quiet for this long is over and free for another note.
+/// A released voice this quiet for this long, past its longest delay, is over and free for
+/// another note. An echo may come until then.
 const QUIET: f32 = 1e-4;
 const QUIET_SECONDS: f32 = 0.05;
 /// How far the bend wheel moves every note, either way.
@@ -288,9 +289,7 @@ impl Signals {
                 let old = std::mem::replace(&mut voice.machine, new);
                 // The one that faded before rides back with this update, to be dropped there.
                 *machine = voice.fading.replace(old);
-                // An idle voice is silent, so it has nothing to fade from. It also plays no
-                // frame that would count the fade down before its next note.
-                voice.fade_left = if voice.is_idle() { 0 } else { fade_frames };
+                voice.fade_left = fade_frames;
             }
         };
         match &mut self.players {
@@ -471,6 +470,10 @@ impl Voice for SignalsVoice {
     }
 
     fn start(&mut self, pitch: f32, velocity: Velocity, _: &()) {
+        // An idle voice is silent, so it has nothing to fade from.
+        if self.is_idle() {
+            self.fade_left = 0;
+        }
         self.note = Note {
             pitch,
             frequency: 0.0,
@@ -511,6 +514,7 @@ impl SignalsVoice {
         mix: &mut Frames,
     ) {
         let [sound, old] = voice_frames;
+        let quiet_limit = shared.quiet_limit + self.machine.longest_delay();
         let mut start = frames.start;
         while start < frames.end && !self.is_idle() {
             // Cut where the fade ends, and, after the release, where the voice may go idle,
@@ -521,7 +525,7 @@ impl SignalsVoice {
             }
             let ending = !self.always && !self.note.gate;
             if ending {
-                let quiet_left = shared.quiet_limit.saturating_sub(self.quiet_frames);
+                let quiet_left = quiet_limit.saturating_sub(self.quiet_frames);
                 end = end.min(start + quiet_left.max(1));
             }
             let part = start..end;
@@ -562,7 +566,7 @@ impl SignalsVoice {
                 if ending {
                     if self.loudness < QUIET {
                         self.quiet_frames += 1;
-                        self.sounding = self.quiet_frames < shared.quiet_limit;
+                        self.sounding = self.quiet_frames < quiet_limit;
                     } else {
                         self.quiet_frames = 0;
                     }
@@ -685,9 +689,15 @@ impl Processor for Signals {
                 }
             }
             SignalsUpdate::Release { pitch, at } => {
-                let off = NoteEvent::Off { pitch: *pitch };
-                // A full list lets go at once: a dropped release would hold the note for ever.
+                let pitch = *pitch;
+                let off = NoteEvent::Off { pitch };
+                // A full list lets go at once, and drops a note of the key still waiting: a
+                // dropped release would hold either for ever.
                 if !self.schedule(*at, Scheduled::Note(off)) {
+                    self.scheduled.retain(|(_, what)| match what {
+                        Scheduled::Note(NoteEvent::On { pitch: waiting, .. }) => *waiting != pitch,
+                        _ => true,
+                    });
                     self.follow(off);
                 }
             }

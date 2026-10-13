@@ -145,6 +145,14 @@ pub(crate) fn mix(a: impl Into<Signal>, b: impl Into<Signal>, amount: impl Into<
 pub(crate) fn delay(x: impl Into<Signal>, ms: impl Into<Signal>) -> Signal {
     node("delay", &[("x", x.into()), ("ms", ms.into())])
 }
+pub(crate) fn delay_up_to(x: impl Into<Signal>, ms: impl Into<Signal>, longest: f32) -> Signal {
+    let operands = [
+        ("x", x.into()),
+        ("ms", ms.into()),
+        ("longest", longest.into()),
+    ];
+    node("delay", &operands)
+}
 pub(crate) fn lowpass(x: impl Into<Signal>, hz: impl Into<Signal>, q: f32) -> Signal {
     node(
         "lowpass",
