@@ -37,6 +37,9 @@ pub struct Values {
 /// a feedback that runs away is loud but not deafening.
 pub(crate) const LIMIT: f32 = 4.0;
 
+/// Quieter than this is silence: of a voice that ends, and of what a delay holds.
+pub(crate) const QUIET: f32 = 1e-4;
+
 /// The note a voice plays. A source follows the newest held note; an effect has none.
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct Note {
@@ -105,6 +108,8 @@ pub struct Machine {
     /// gives one value over a span works it out once, and fills the row only when it differs.
     filled: Vec<Option<f32>>,
     channels: [Memory; CHANNELS],
+    /// The input and the slot of each delay.
+    delay_inputs: Box<[(Register, u16)]>,
     /// Where the delays write the first frame of the next span.
     position: usize,
     /// The last value of each watch, of the left channel.
@@ -117,12 +122,20 @@ struct Memory {
     histories: Vec<f32>,
     phases: Vec<f32>,
     noises: Vec<u32>,
-    delays: Vec<DelayLine>,
+    delays: Vec<Delay>,
     filters: Vec<Filter>,
     smooths: Vec<Smooth>,
     envelopes: Vec<Envelope>,
     memories: Vec<f32>,
     buffers: Vec<Vec<f32>>,
+}
+
+#[derive(Clone)]
+struct Delay {
+    line: DelayLine,
+    /// The position from which it holds nothing louder than [`QUIET`]: a loud frame stays in
+    /// the line until the frame as many as it holds later overwrites it.
+    quiet_from: usize,
 }
 
 #[derive(Clone, Default)]
@@ -211,7 +224,10 @@ impl Machine {
                 .map(|slot| noise_seed(0, slots.noises, slot, channel))
                 .collect(),
             delays: (slots.delays.iter())
-                .map(|ms| DelayLine::new((ms * 0.001 * sample_rate) as usize + 4))
+                .map(|ms| Delay {
+                    line: DelayLine::new((ms * 0.001 * sample_rate) as usize + 4),
+                    quiet_from: 0,
+                })
                 .collect(),
             filters: (0..slots.filters)
                 .map(|_| Filter {
@@ -257,7 +273,14 @@ impl Machine {
             }
             steps.push(step);
         }
+        let delay_inputs = (code.operations.iter())
+            .filter_map(|operation| match operation {
+                Operation::Delay { input, slot, .. } => Some((*input, *slot)),
+                _ => None,
+            })
+            .collect();
         Self {
+            delay_inputs,
             per_channel: program::per_channel(&code, &edges, &steps),
             steps: steps.into_boxed_slice(),
             sample_rate,
@@ -285,10 +308,10 @@ impl Machine {
         }
     }
 
-    /// How far back the delays reach, in frames, were they all in one chain.
-    pub(crate) fn delays_reach(&self) -> usize {
-        let ms: f32 = self.code.slots.delays.iter().sum();
-        (ms * 0.001 * self.sample_rate) as usize
+    /// Whether a delay holds something louder than [`QUIET`], which a read may still hear.
+    pub(crate) fn delays_sound(&self) -> bool {
+        let mut delays = self.channels.iter().flat_map(|memory| &memory.delays);
+        delays.any(|delay| self.position < delay.quiet_from)
     }
 
     /// The last value of each watch, in the order of [`Code::watches`].
@@ -347,6 +370,7 @@ impl Machine {
             registers,
             filled,
             channels,
+            delay_inputs,
             position,
             ..
         } = self;
@@ -390,6 +414,15 @@ impl Machine {
         let last = frames.end.saturating_sub(1);
         for (history, source) in memory.histories.iter_mut().zip(&code.feedbacks) {
             *history = finite(value_at(registers, *source, last));
+        }
+        // Where each delay was last written loud, from the rows: a check in the frame loops
+        // slowed them.
+        for (input, slot) in delay_inputs.iter() {
+            let inputs = row(registers, usize::from(*input), &frames);
+            let loud = inputs.iter().rposition(|input| input.abs() >= QUIET);
+            if let (Some(frame), Some(delay)) = (loud, memory.delays.get_mut(usize::from(*slot))) {
+                delay.quiet_from = *position + frame + delay.line.frames();
+            }
         }
     }
 }
@@ -527,11 +560,11 @@ impl Span<'_> {
             },
             Operation::Delay { input, ms, slot } => {
                 match memory.delays.get_mut(usize::from(slot)) {
-                    Some(line) => {
+                    Some(delay) => {
                         let mut position =
                             (self.position).wrapping_add(frames.start.wrapping_sub(self.first));
                         for ((out, input), ms) in out.iter_mut().zip(read(input)).zip(read(ms)) {
-                            *out = delayed(line, position, *input, *ms, sample_rate);
+                            *out = delayed(&mut delay.line, position, *input, *ms, sample_rate);
                             position = position.wrapping_add(1);
                         }
                     }
@@ -824,8 +857,8 @@ impl Span<'_> {
                 .map_or(0.0, |phase| phasor(phase, at(hz), sample_rate)),
             Operation::Delay { input, ms, slot } => {
                 let position = (self.position).wrapping_add(frame.wrapping_sub(self.first));
-                (memory.delays.get_mut(usize::from(slot))).map_or(0.0, |line| {
-                    delayed(line, position, at(input), at(ms), sample_rate)
+                (memory.delays.get_mut(usize::from(slot))).map_or(0.0, |delay| {
+                    delayed(&mut delay.line, position, at(input), at(ms), sample_rate)
                 })
             }
             Operation::Filter {

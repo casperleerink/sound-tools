@@ -209,6 +209,27 @@ fn a_pluck_into_a_delay_echoes_after_each_note_and_only_its_own() {
 }
 
 #[test]
+fn a_voice_whose_delays_hold_nothing_ends_soon_after_its_release() {
+    // An instrument hears no input, so its delays of 4 s hold only silence.
+    let code = compile(|| {
+        let frames = feedback();
+        frames.set(frames.read() + 1.0);
+        watch("frames", frames.read());
+        let delays = delay(input(), 4_000.0) + delay(input(), 4_000.0);
+        0.2 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 1.0, 1.0, 1.0) + delays
+    });
+    let notes = vec![(0, on(69)), (4_800, off(69))];
+    let mut played = play(Kind::Instrument { voices: 1 }, code, notes);
+    played.render(48_000);
+    // The watch shows the voice until it ends: 50 ms after its release.
+    let frames = played.watches[0].get();
+    assert!(
+        frames > 4_800.0 + 2_400.0 && frames < 4_800.0 + 2_400.0 + 128.0,
+        "{frames}"
+    );
+}
+
+#[test]
 fn two_voices_started_on_the_same_frame_play_different_noise() {
     let kind = Kind::Instrument { voices: 4 };
     let noise = || compile(|| 0.2 * noise() * adsr(gate(), 1.0, 1.0, 1.0, 1.0));
