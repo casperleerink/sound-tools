@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Release
 
-A release is a tag `v<version>` on main. Pushing it starts `.github/workflows/release.yml`, which builds the macOS zip, the two Linux tarballs and the Windows zip and makes the GitHub release with them and their `SHA256SUMS`, which the app's updater checks. The version lives in one place, `version` in `[workspace.package]` of `Cargo.toml`. The workflow fails when the tag does not match it.
+A release is a tag `v<version>` on main. Pushing it starts `.github/workflows/release.yml`, which builds the macOS zip, the two Linux tarballs and the Windows setup program and makes the GitHub release with them and their `SHA256SUMS`, which the app's updater checks. The version lives in one place, `version` in `[workspace.package]` of `Cargo.toml`. The workflow fails when the tag does not match it.
 
 Stop and report at the first step that fails. Never move or delete a tag that was pushed.
 
