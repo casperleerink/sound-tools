@@ -264,6 +264,7 @@ impl Project {
                 }
                 Change::ProjectFile(project_file) => self.project_file = project_file,
                 Change::TempoMap(tempo_map) => self.project_file.tempo_map = tempo_map,
+                Change::Sections(sections) => self.project_file.sections = sections,
                 Change::Connect(connection) => {
                     if !self.project_file.connections.contains(&connection) {
                         self.project_file.connections.push(connection);

@@ -11,6 +11,7 @@ use super::history::{Side, Step};
 use super::instance::{Instance, InstanceId, Record, State};
 use super::{Project, ProjectError, Source};
 use crate::clock::TempoMap;
+use crate::sections::Sections;
 
 #[derive(Clone)]
 pub(crate) enum Change {
@@ -20,6 +21,7 @@ pub(crate) enum Change {
     Delete(InstanceId),
     ProjectFile(ProjectFile),
     TempoMap(TempoMap),
+    Sections(Sections),
     Connect(SavedConnection),
     Disconnect(SavedConnection),
 }
@@ -66,6 +68,10 @@ impl Changes {
 
     pub fn set_tempo_map(&mut self, tempo_map: TempoMap) {
         self.changes.push(Change::TempoMap(tempo_map));
+    }
+
+    pub fn set_sections(&mut self, sections: Sections) {
+        self.changes.push(Change::Sections(sections));
     }
 }
 

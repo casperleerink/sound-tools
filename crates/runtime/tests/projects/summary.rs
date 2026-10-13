@@ -164,3 +164,62 @@ fn the_summary_tells_the_sends_of_a_track_and_where_a_return_takes_them() {
         assert!(summary.contains(line), "{line} in {summary}");
     }
 }
+
+/// Each section with its bars and ticks, so an agent can copy the music of "the chorus". The
+/// last runs to the bar line after the last clip, or to the end when it starts after it.
+#[test]
+fn the_summary_tells_the_bars_of_each_section() {
+    let mut harness = Harness::piece();
+    harness.write_and_apply(
+        "state/arrangement/pad/bars-5-8.json",
+        &clip(15360, 15000, &[(960, 480, 70)]),
+    );
+    let sections = r#"[{"bar": 1, "name": "Intro"}, {"bar": 3, "name": "Chorus"}]"#;
+    let project_file = std::fs::read_to_string(harness.path("project.json")).unwrap();
+    assert!(project_file.contains(r#""sections": []"#), "{project_file}");
+    let project_file =
+        project_file.replace(r#""sections": []"#, &format!(r#""sections": {sections}"#));
+    harness.write_and_apply("project.json", &project_file);
+    assert_eq!(harness.project.problems(), []);
+    let summary = runtime::summary(&harness.project);
+    let lines = [
+        "section \"Intro\": bars 1 to 2, ticks 0 to 7680\n",
+        "section \"Chorus\": bars 3 to 8, ticks 7680 to 30720\n",
+    ];
+    for line in lines {
+        assert!(summary.contains(line), "{line} in {summary}");
+    }
+
+    let outro = project_file.replace(
+        r#""name": "Chorus"}"#,
+        r#""name": "Chorus"}, {"bar": 12, "name": "Outro"}"#,
+    );
+    harness.write_and_apply("project.json", &outro);
+    let summary = runtime::summary(&harness.project);
+    let lines = [
+        "section \"Chorus\": bars 3 to 11, ticks 7680 to 42240\n",
+        "section \"Outro\": from bar 12 (tick 42240) to the end\n",
+    ];
+    for line in lines {
+        assert!(summary.contains(line), "{line} in {summary}");
+    }
+
+    // From bar 3 the bars are 7/8, 3360 ticks long.
+    let changing = outro
+        .replace(
+            r#"[{"signature": "4/4", "bars": 1}]"#,
+            r#"[{"signature": "4/4", "bars": 2}, {"signature": "7/8", "bars": 1}]"#,
+        )
+        .replace(r#""bar": 3"#, r#""bar": 4"#);
+    harness.write_and_apply("project.json", &changing);
+    assert_eq!(harness.project.problems(), [], "{changing}");
+    let summary = runtime::summary(&harness.project);
+    let lines = [
+        "section \"Intro\": bars 1 to 3, ticks 0 to 11040\n",
+        "section \"Chorus\": bars 4 to 11, ticks 11040 to 37920\n",
+        "section \"Outro\": from bar 12 (tick 37920) to the end\n",
+    ];
+    for line in lines {
+        assert!(summary.contains(line), "{line} in {summary}");
+    }
+}

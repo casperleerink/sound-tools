@@ -17,7 +17,7 @@ This file is the map. It holds what you need on every task. The docs below hold 
 ## Layout
 
 ```text
-project.json              tempo, time signatures, enabled extensions, extra connections
+project.json              tempo, time signatures, sections, enabled extensions, extra connections
 state/                    every instance of a tool, one JSON record each
   <name>.json             an instance of a tool that owns no children
   <name>/                 an instance of a tool that owns children

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::instance::InstanceId;
 use crate::apps::AppSound;
 use crate::clock::TempoMap;
+use crate::sections::Sections;
 
 /// The only project format this runtime reads and writes.
 pub const FORMAT: u32 = 1;
@@ -19,6 +20,9 @@ pub struct ProjectFile {
     /// untouched and are reported.
     pub extensions: Vec<String>,
     pub tempo_map: TempoMap,
+    /// Missing in a project from before sections.
+    #[serde(default)]
+    pub sections: Sections,
     /// Core-owned connections. Routing that a tool makes by itself, such as a parent to its
     /// children or to the device, is not listed here.
     pub connections: Vec<SavedConnection>,
@@ -30,6 +34,7 @@ impl ProjectFile {
             format: FORMAT,
             extensions,
             tempo_map: TempoMap::default(),
+            sections: Sections::default(),
             connections: Vec::new(),
         }
     }

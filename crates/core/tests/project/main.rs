@@ -14,6 +14,7 @@ mod outside;
 mod places;
 mod properties;
 mod scale;
+mod sections;
 mod tools;
 mod undo_grouping;
 mod waiting;
