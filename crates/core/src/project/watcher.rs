@@ -57,7 +57,7 @@ impl Watcher {
     /// Collects what the system said changed. Once the folder has been quiet for
     /// [`GROUPING_WINDOW`], returns those paths as one group, with the time its last path was
     /// heard.
-    fn take_group(&mut self) -> notify::Result<Option<(Vec<PathBuf>, Instant)>> {
+    fn take_group(&mut self) -> Result<Option<(Vec<PathBuf>, Instant)>, ProjectError> {
         // `assets/` from the moment it exists. What is in it by then counts as changed, since
         // no event said so.
         if !self.assets_watched && self.assets.is_dir() {
@@ -76,8 +76,10 @@ impl Watcher {
                         self.hear(event.paths);
                     }
                 }
-                Ok(Err(error)) => return Err(error),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                Ok(Err(error)) => return Err(error.into()),
+                Err(TryRecvError::Empty) => break,
+                // notify's thread ended.
+                Err(TryRecvError::Disconnected) => return Err(ProjectError::WatcherStopped),
             }
         }
         // The system dropped events, such as in the burst of a branch switch, so any file may
@@ -137,9 +139,16 @@ impl Project {
         let Some(watcher) = &mut self.watcher else {
             return Ok(0);
         };
-        match watcher.take_group()? {
-            Some((paths, heard)) => self.apply_outside_changes_at(&paths, heard),
-            None => Ok(0),
+        match watcher.take_group() {
+            Ok(Some((paths, heard))) => self.apply_outside_changes_at(&paths, heard),
+            Ok(None) => Ok(0),
+            Err(error) => {
+                // Reported once, not on every poll.
+                if matches!(error, ProjectError::WatcherStopped) {
+                    self.watcher = None;
+                }
+                Err(error)
+            }
         }
     }
 }
@@ -154,7 +163,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::GROUPING_WINDOW;
-    use crate::{Engine, EngineConfig, Project, Registry, State};
+    use crate::{Engine, EngineConfig, Project, ProjectError, Registry, State};
 
     #[derive(Clone, PartialEq, Serialize, Deserialize)]
     struct Note {
@@ -184,5 +193,18 @@ mod tests {
         let heard = project.poll().unwrap();
         std::thread::sleep(GROUPING_WINDOW);
         assert_eq!(heard + project.poll().unwrap(), 1);
+    }
+
+    #[test]
+    fn a_watcher_that_stops_is_reported_once() {
+        let folder = tempfile::tempdir().unwrap();
+        let (control, _engine) = Engine::new(EngineConfig::new(48_000, 1));
+        let mut project = Project::open(folder.path(), Registry::new(), control).unwrap();
+        project.watch().unwrap();
+        // The system's end of the channel is gone, as when notify's thread ends.
+        project.watcher.as_mut().unwrap().events = channel().1;
+
+        assert!(matches!(project.poll(), Err(ProjectError::WatcherStopped)));
+        assert_eq!(project.poll().unwrap(), 0);
     }
 }

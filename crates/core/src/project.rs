@@ -108,6 +108,10 @@ pub enum ProjectError {
     Storage(#[from] StorageError),
     #[error("the file watcher failed: {0}")]
     Watcher(#[from] notify::Error),
+    #[error(
+        "the file watcher stopped: changes to the project files from outside the app no longer apply. Open the project again"
+    )]
+    WatcherStopped,
     #[error(transparent)]
     Registry(#[from] RegistryError),
 }
