@@ -19,8 +19,8 @@ use std::f32::consts::PI;
 use crate::{Curve, DRIVE, MIX, OUTPUT, PARAMETERS, SaturatorState, TONE};
 use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, OnePole, Oversampler,
-    OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Targets,
-    all_held_silent, amplitude, held, soft_clip,
+    OversamplerDelay, OversamplingFilters, Ports, PrepareConfig, ProcessContext, Processor,
+    Smoothed, Targets, all_held_silent, amplitude, held, soft_clip,
 };
 
 /// Every number of the saturator can be automated.
@@ -58,9 +58,6 @@ const FACTOR_FRAMES: usize = 16;
 /// Frames of silent input after which the dry delay and the oversampling hold only zeros: more
 /// than the delay and the memory of every stage.
 const QUIET_FRAMES: usize = 2 * Oversampler::DELAY_FRAMES + 32;
-
-/// The dry sound waits this many frames at most: a power of two over the latency.
-const DRY_FRAMES: usize = 128;
 
 /// A curve at `sample`, after the drive. Every curve has a slope of 1 at 0, and 0 at 0.
 fn shape(curve: Curve, sample: f32) -> f32 {
@@ -248,7 +245,7 @@ struct Channel {
     dc: OnePole,
     tone: OnePole,
     /// The dry sound, for the frames of the latency.
-    dry: [f32; DRY_FRAMES],
+    dry: OversamplerDelay,
 }
 
 impl Channel {
@@ -257,7 +254,7 @@ impl Channel {
             oversampler: Oversampler::new(),
             dc: OnePole::default(),
             tone: OnePole::default(),
-            dry: [0.0; DRY_FRAMES],
+            dry: OversamplerDelay::new(),
         }
     }
 }
@@ -291,8 +288,6 @@ pub struct Saturator {
     /// that snapped, and before the first block.
     stale: bool,
     channels: [Channel; CHANNELS],
-    /// Where the next dry frame goes.
-    write: usize,
     /// Frames in a row of silent input, up to what a silence needs to leave everything.
     quiet: usize,
 }
@@ -323,7 +318,6 @@ impl Saturator {
             gains_target: [1.0; 2],
             stale: true,
             channels: [Channel::new(); CHANNELS],
-            write: 0,
             quiet: QUIET_FRAMES,
         };
         saturator.aim(&saturator.state.targets(saturator.ramp_frames));
@@ -491,10 +485,13 @@ impl Processor for Saturator {
                 let frames = &mut frames[..length];
                 let mut four = [0.0; 4 * FACTOR_FRAMES];
                 let four = &mut four[..4 * length];
-                for (index, (frame, input)) in frames.iter_mut().zip(input).enumerate() {
+                for (frame, input) in frames.iter_mut().zip(input) {
                     *frame = held(*input);
-                    channel.dry[(self.write + index) % DRY_FRAMES] = *frame;
                 }
+                let mut dry = [0.0; FACTOR_FRAMES];
+                let dry = &mut dry[..length];
+                dry.copy_from_slice(frames);
+                channel.dry.delay(dry);
                 channel.oversampler.up(&self.filters, frames, four);
                 match steady {
                     Some(Curve::Soft) => shape_all(four, moves, tanh),
@@ -505,10 +502,11 @@ impl Processor for Saturator {
                 }
                 channel.oversampler.down(&self.filters, four, frames);
                 let ([below, above], [to_below, to_above]) = (self.gains, self.gains_target);
-                let frames = frames.iter().zip(output.iter_mut()).zip(moves.iter());
-                for (index, ((curved, output), frame)) in frames.enumerate() {
-                    let delayed = self.write + index + DRY_FRAMES - Oversampler::DELAY_FRAMES;
-                    let dry = channel.dry[delayed % DRY_FRAMES];
+                let frames = frames
+                    .iter()
+                    .zip(output.iter_mut())
+                    .zip(moves.iter().zip(&*dry));
+                for (index, ((curved, output), (frame, dry))) in frames.enumerate() {
                     let blocked = curved - channel.dc.low(self.dc_factor, *curved);
                     let low = channel.tone.low(self.tone_factor, blocked);
                     let along = (index + 1) as f32 / length as f32;
@@ -518,7 +516,6 @@ impl Processor for Saturator {
                     *output = dry + frame.mix * (wet - dry);
                 }
             }
-            self.write = (self.write + length) % DRY_FRAMES;
             self.stale = false;
         }
         if silent_input {

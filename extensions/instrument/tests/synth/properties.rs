@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use instrument::{Synth, SynthState, Waveform};
+use instrument::{FilterCharacter, Synth, SynthState, Waveform};
 use proptest::prelude::*;
 use sound_core::{Connection, Engine, EngineConfig, State};
 use sound_notes::Note;
@@ -17,22 +17,26 @@ fn within(low: f32, high: f32) -> impl Strategy<Value = f32> {
 
 fn any_state() -> impl Strategy<Value = SynthState> {
     let waveform = prop_oneof![Just(Waveform::Saw), Just(Waveform::Square)];
-    let filter = (within(20.0, 20_000.0), within(0.0, 1.0));
+    let character = prop_oneof![Just(FilterCharacter::Clean), Just(FilterCharacter::Warm)];
+    let filter = (within(20.0, 20_000.0), within(0.0, 1.0), character);
     let times = (
         within(0.001, 10.0),
         within(0.001, 10.0),
         within(0.001, 10.0),
     );
     (waveform, filter, times, within(0.0, 1.0), within(0.0, 1.0)).prop_map(
-        |(waveform, (cutoff_hz, resonance), (attack, decay, release), sustain, gain)| SynthState {
-            waveform,
-            cutoff_hz,
-            resonance,
-            attack_seconds: attack,
-            decay_seconds: decay,
-            sustain,
-            release_seconds: release,
-            gain,
+        |(waveform, (cutoff_hz, resonance, character), (attack, decay, release), sustain, gain)| {
+            SynthState {
+                waveform,
+                cutoff_hz,
+                resonance,
+                character,
+                attack_seconds: attack,
+                decay_seconds: decay,
+                sustain,
+                release_seconds: release,
+                gain,
+            }
         },
     )
 }

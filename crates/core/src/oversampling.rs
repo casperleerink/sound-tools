@@ -271,6 +271,44 @@ impl Default for Oversampler {
     }
 }
 
+/// One channel of sound that waits as long as the way up and down, [`Oversampler::DELAY_FRAMES`]:
+/// for a processor that reports that latency also while it does not oversample, so its sound
+/// stays in time when it starts or stops. `Copy` and free to make, like [`Oversampler`].
+#[derive(Clone, Copy)]
+pub struct OversamplerDelay {
+    frames: [f32; Oversampler::DELAY_FRAMES],
+    next: usize,
+}
+
+impl OversamplerDelay {
+    pub const fn new() -> Self {
+        Self {
+            frames: [0.0; Oversampler::DELAY_FRAMES],
+            next: 0,
+        }
+    }
+
+    /// Delays `frames` in place: each becomes the one that came [`Oversampler::DELAY_FRAMES`]
+    /// before it.
+    pub fn delay(&mut self, frames: &mut [f32]) {
+        const LENGTH: usize = Oversampler::DELAY_FRAMES;
+        // The oldest frame is at `next`: swap each frame with the one as old as the delay, in
+        // at most two runs from there.
+        for frames in frames.chunks_mut(LENGTH) {
+            let (now, wrapped) = frames.split_at_mut(frames.len().min(LENGTH - self.next));
+            self.frames[self.next..self.next + now.len()].swap_with_slice(now);
+            self.frames[..wrapped.len()].swap_with_slice(wrapped);
+            self.next = (self.next + frames.len()) % LENGTH;
+        }
+    }
+}
+
+impl Default for OversamplerDelay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,5 +413,26 @@ mod tests {
         for (output, input) in delayed.skip(Oversampler::DELAY_FRAMES) {
             assert!((output - input).abs() < 1e-4, "{output} {input}");
         }
+    }
+
+    /// Blocks of any length, also longer than the delay, come out exactly as late as the way
+    /// up and down.
+    #[test]
+    fn the_delay_is_the_oversampling_in_blocks_of_any_length() {
+        let input: Vec<f32> = (1..=500).map(|frame| frame as f32).collect();
+        let mut output = input.clone();
+        let mut delay = OversamplerDelay::new();
+        let mut start = 0;
+        for length in [1, 64, 7, 200, 63, 3].into_iter().cycle() {
+            let end = (start + length).min(output.len());
+            delay.delay(&mut output[start..end]);
+            start = end;
+            if start == output.len() {
+                break;
+            }
+        }
+        let (silent, late) = output.split_at(Oversampler::DELAY_FRAMES);
+        assert!(silent.iter().all(|frame| *frame == 0.0));
+        assert_eq!(late, &input[..input.len() - Oversampler::DELAY_FRAMES]);
     }
 }

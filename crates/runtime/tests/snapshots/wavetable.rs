@@ -5,7 +5,7 @@
 //! - `wavetable-oscillators.png`: the card expanded on its Osc page: the rest of the first
 //!   oscillator and the second, with its own wavetable. Dots mark every page but Voice.
 //! - `wavetable-voice.png`: the Voice page: the sub, the unison and the voicing.
-//! - `wavetable-filters.png`: the Filter page: both filters, the second a high pass.
+//! - `wavetable-filters.png`: the Filter page: both filters, the second a warm high pass.
 //! - `wavetable-envelopes.png`: the Env page, showing Env 2.
 //! - `wavetable-lfos.png`: the LFO page, showing a synced LFO 1.
 //! - `wavetable-matrix.png`: the Matrix page, with three routes.
@@ -13,7 +13,7 @@
 use anyhow::{Context as _, Result};
 use arrangement::{Colour, TrackState};
 use gpui::{Entity, HeadlessAppContext};
-use sound_core::{Changes, FilterType, Instance, LfoShape, Project, Ticks};
+use sound_core::{Changes, FilterCharacter, FilterType, Instance, LfoShape, Project, Ticks};
 use sound_notes::{Division, Feel};
 use wavetable::state::{Effect, Oscillator};
 use wavetable::view::{EnvelopeShown, Page, WavetableView};
@@ -54,6 +54,7 @@ fn pad() -> WavetableState {
             on: true,
             kind: FilterType::HighPass,
             cutoff_hz: 180.,
+            character: FilterCharacter::Warm,
             ..default.filter_2
         },
         amp_env: wavetable::state::Adsr {

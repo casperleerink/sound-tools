@@ -1,7 +1,7 @@
 //! Notes from the transport: start frame, pitch, release, chords, voice stealing and the
 //! response to pause, stop and seek.
 
-use instrument::{SynthState, VOICES, Waveform};
+use instrument::{FilterCharacter, SynthState, VOICES, Waveform};
 use sound_core::{Changes, Tempo, TempoMap, Ticks, TimeSignature};
 use sound_notes::Pitch;
 
@@ -17,6 +17,7 @@ fn plain(waveform: Waveform) -> SynthState {
         waveform,
         cutoff_hz: 1_000.0,
         resonance: 0.0,
+        character: FilterCharacter::Clean,
         attack_seconds: 0.005,
         decay_seconds: 0.1,
         sustain: 0.7,
@@ -260,15 +261,23 @@ fn resonance_and_chords_stay_under_full_scale() {
     // A loud single note: full velocity, the strongest peak, the cutoff on the fundamental,
     // and a gain well above the default.
     for waveform in [Waveform::Saw, Waveform::Square] {
-        let ringing = SynthState {
-            waveform,
-            cutoff_hz: hz(57),
-            resonance: 1.0,
-            gain: 0.25,
-            ..SynthState::default()
-        };
-        let output = Harness::with_track(vec![note(0, 9_600, 57, 127)], ringing).play(2 * SECOND);
-        assert!(peak(&output) < 1.0, "{waveform:?}: {}", peak(&output));
+        for character in FilterCharacter::ALL {
+            let ringing = SynthState {
+                waveform,
+                cutoff_hz: hz(57),
+                resonance: 1.0,
+                character,
+                gain: 0.25,
+                ..SynthState::default()
+            };
+            let notes = vec![note(0, 9_600, 57, 127)];
+            let output = Harness::with_track(notes, ringing).play(2 * SECOND);
+            assert!(
+                peak(&output) < 1.0,
+                "{waveform:?} {character:?}: {}",
+                peak(&output)
+            );
+        }
 
         // A chord of six notes at full velocity on the default synth.
         let chord = [48, 55, 60, 64, 67, 72].map(|pitch| note(0, 9_600, pitch, 127));

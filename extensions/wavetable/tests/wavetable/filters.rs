@@ -1,8 +1,8 @@
 //! The filters of a voice: each type and slope holds to the exact response of the filter of
-//! the SDK, the routings send each oscillator where they say, and the drive bends.
+//! the SDK, the routings send each oscillator where they say, the drive bends and warm rings.
 
 use sound_core::testing::Spectrum;
-use sound_core::{FilterSlope, FilterType, svf_response};
+use sound_core::{FilterCharacter, FilterSlope, FilterType, svf_response};
 use wavetable::WavetableState;
 use wavetable::state::{Filter, Oscillator, Routing};
 
@@ -242,4 +242,61 @@ fn a_drive_on_one_of_two_filters_side_by_side_makes_no_comb() {
         let moved = db(driven / clean);
         assert!(moved.abs() < 0.3, "harmonic {number}: {moved} dB");
     }
+}
+
+/// The same with filter 1 warm and the oscillator quiet, at -24 dB: warm then barely bends,
+/// so it sounds as the clean one beside it, in time.
+#[test]
+fn a_quiet_warm_filter_beside_a_clean_one_makes_no_comb() {
+    let filter = Filter {
+        cutoff_hz: 4_000.0,
+        resonance: 0.0,
+        ..Filter::default()
+    };
+    let side_by_side = |character| WavetableState {
+        filter_1: Filter {
+            character,
+            ..filter
+        },
+        filter_2: filter,
+        routing: Routing::Parallel,
+        ..plain(Oscillator {
+            gain: 0.063,
+            ..Oscillator::default()
+        })
+    };
+    let numbers: Vec<u32> = (1..=24).collect();
+    let clean = levels(&render(side_by_side(FilterCharacter::Clean)), &numbers);
+    let warm = levels(&render(side_by_side(FilterCharacter::Warm)), &numbers);
+    for ((number, clean), warm) in numbers.iter().zip(&clean).zip(&warm) {
+        let moved = db(warm / clean);
+        assert!(moved.abs() < 0.3, "harmonic {number}: {moved} dB");
+    }
+}
+
+/// At resonance 0.5 with the oscillator at its full gain, the harmonic on the cutoff comes out
+/// quieter when warm, and the fundamental, far under it, keeps its level.
+#[test]
+fn at_moderate_resonance_a_warm_filter_bends_its_peak() {
+    let level = |character| {
+        let state = with_filter(Filter {
+            cutoff_hz: C3 * 8.0,
+            resonance: 0.5,
+            character,
+            ..Filter::default()
+        });
+        let state = WavetableState {
+            osc_1: Oscillator {
+                gain: 1.0,
+                ..state.osc_1
+            },
+            ..state
+        };
+        levels(&render(state), &[1, 8])
+    };
+    let (clean, warm) = (level(FilterCharacter::Clean), level(FilterCharacter::Warm));
+    let (fundamental, peak) = (db(warm[0] / clean[0]), db(warm[1] / clean[1]));
+    println!("warm against clean: peak {peak:.2} dB, fundamental {fundamental:.2} dB");
+    assert!(peak < -3.0, "{peak}");
+    assert!(fundamental.abs() < 1.0, "{fundamental}");
 }

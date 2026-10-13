@@ -62,7 +62,7 @@ pub use input::{
 };
 pub use lfo::{Lfo, LfoShape};
 pub use limiter::PeakLimiter;
-pub use oversampling::{Oversampler, OversamplingFilters};
+pub use oversampling::{Oversampler, OversamplerDelay, OversamplingFilters};
 pub use parameter::{
     AutomatedNumber, FADER_TOP_DB, FADER_UNITY, Parameter, ParameterInfo, Scale, ValueRange,
 };
@@ -83,6 +83,8 @@ pub use project::{
 };
 pub use saturation::soft_clip;
 pub use scope::Scope;
-pub use svf::{FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response};
+pub use svf::{
+    FilterCharacter, FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response,
+};
 pub use transport::Transport;
 pub use watch::Watch;

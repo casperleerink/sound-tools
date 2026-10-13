@@ -176,12 +176,12 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 One extension per device, one tool with no children. `extensions/filter` is the reference.
 
-- The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter` with range and default, which validation, the knobs, the reset, automation and the doc tests all read.
+- The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter`: validation, knobs, reset, automation and doc tests all read it.
 - Every change glides (about 20 ms), including choices, so no edit clicks.
-- Shared DSP lives in the SDK (`sound_core`), not in copies: devices kept copying filters, envelopes and helpers. A gain in dB and the pan law are there too, so a pan means the same everywhere.
+- Shared DSP lives in the SDK (`sound_core`), not in copies: devices kept copying filters, envelopes and helpers.
 - Each effect has an exact response function, and tests hold the measured sound to it.
 - A time that follows the tempo saves the note, not the seconds, and follows a tempo change while playing.
-- A latency is a choice, not a knob: a latency that moves with a drag would make every track jump.
+- A latency is a choice, not a knob: one moving with a drag would make every track jump. The Filter always reports its 4x latency, so drive automated across 0 stays in phase with the dry mix. Instruments report none; a bent voice is 1.3 ms late.
 - The Drum pad's default kit is not written into records, so changing the kit changes existing projects. Treat it like a change to a saved format.
 - The metronome is not project state: a tool would mean a file in `state/`, and turning the click on would rewrite a musical record.
 

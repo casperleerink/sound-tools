@@ -742,13 +742,13 @@ impl WavetableView {
             .child(routing)
     }
 
-    /// On, type, slope and drive of a filter.
+    /// On, type, slope, character and drive of a filter.
     fn filter_columns(
         &self,
         object: Object<Filter>,
         state: &WavetableState,
         cx: &mut Context<Self>,
-    ) -> [Column; 2] {
+    ) -> [Column; 3] {
         let filter = (object.get)(state);
         let on = Self::switch(
             object.id("on"),
@@ -766,17 +766,24 @@ impl WavetableView {
             (object.get_mut)(state).slope = slope
         });
         let slope = Self::segments(object.id("slope"), filter.slope, cx, pick);
+        let pick = Self::picks(
+            object.undo("Change", "character"),
+            move |state, character| (object.get_mut)(state).character = character,
+        );
+        let character = Self::segments(object.id("character"), filter.character, cx, pick);
         [
             Column::new().top(on).bottom(Cell::new(kind).label("Type")),
             Column::new()
+                .span(2)
                 .top(Cell::new(slope).label("Slope").value("dB / oct"))
-                .bottom(self.knob(object, &DRIVE, state, cx)),
+                .bottom(Cell::new(character).span(2).label("Character")),
+            Column::new().top(self.knob(object, &DRIVE, state, cx)),
         ]
     }
 
     fn filters(&self, state: &WavetableState, cx: &mut Context<Self>) -> Section {
-        let [first_on, first_slope] = self.filter_columns(FILTER_1, state, cx);
-        let [second_on, second_slope] = self.filter_columns(FILTER_2, state, cx);
+        let [first_on, first_slope, first_drive] = self.filter_columns(FILTER_1, state, cx);
+        let [second_on, second_slope, second_drive] = self.filter_columns(FILTER_2, state, cx);
         let second_tone = Column::new()
             .top(self.knob(FILTER_2, &CUTOFF, state, cx))
             .bottom(self.knob(FILTER_2, &RESONANCE, state, cx));
@@ -784,8 +791,10 @@ impl WavetableView {
             .display(self.filter_display(state, cx))
             .column(first_on)
             .column(first_slope)
+            .column(first_drive)
             .column(second_on)
             .column(second_slope)
+            .column(second_drive)
             .column(second_tone)
     }
 

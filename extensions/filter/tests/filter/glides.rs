@@ -1,7 +1,7 @@
 //! Every change glides: an edit of any field while a tone plays makes no step in the sound
 //! larger than the tone itself takes, where a switch would jump by a large part of its level.
 
-use filter::{FilterState, FilterType, Slope};
+use filter::{FilterState, FilterType, LATENCY, Slope};
 
 use crate::support::{Rig, SAMPLE_RATE, largest_step, sine};
 
@@ -154,8 +154,8 @@ fn a_glide_takes_twenty_milliseconds() {
     });
     let [output, _] = rig.render(SAMPLE_RATE as usize / 10);
     // 440 Hz under a high pass at 20 kHz is 70 dB down. The glide is 960 frames, and 1.5 ms
-    // after it the tone has gone.
-    let after = &output[960 + 72..];
+    // after it, and the latency, the tone has gone.
+    let after = &output[960 + LATENCY as usize + 72..];
     assert!(crate::support::peak(after) < AMPLITUDE * 0.001);
     assert!(crate::support::peak(&output[..480]) > AMPLITUDE * 0.5);
 }

@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use instrument::{SynthState, Waveform};
+use instrument::{FilterCharacter, SynthState, Waveform};
 
 use crate::support::{Harness, SAMPLE_RATE, note, peak};
 
@@ -23,7 +23,12 @@ fn render_and_report(label: &str, harness: &mut Harness) -> Vec<f32> {
 #[test]
 #[ignore = "a measurement, not a check; run it locally and read the printed ratios"]
 fn realtime_ratio_of_one_hundred_synths() {
-    for waveform in [Waveform::Saw, Waveform::Square] {
+    let synths = [
+        (Waveform::Saw, FilterCharacter::Clean),
+        (Waveform::Square, FilterCharacter::Clean),
+        (Waveform::Saw, FilterCharacter::Warm),
+    ];
+    for (waveform, character) in synths {
         let mut harness = Harness::new();
         for track in 0..TRACKS {
             // A chord of four notes per track, held for the whole render.
@@ -31,6 +36,7 @@ fn realtime_ratio_of_one_hundred_synths() {
             let chord = [0, 4, 7, 11].map(|interval| note(0, 96_000, root + interval, 100));
             let quiet = SynthState {
                 waveform,
+                character,
                 gain: 0.002,
                 ..SynthState::default()
             };
@@ -38,10 +44,11 @@ fn realtime_ratio_of_one_hundred_synths() {
         }
 
         // The transport is stopped, so no note has started: every synth is idle.
-        let idle = render_and_report(&format!("100 {waveform:?} synths, idle"), &mut harness);
+        let synths = format!("100 {waveform:?} {character:?} synths");
+        let idle = render_and_report(&format!("{synths}, idle"), &mut harness);
         assert_eq!(peak(&idle), 0.0);
         harness.project.engine().play();
-        let label = format!("100 {waveform:?} synths, 4 voices each");
+        let label = format!("{synths}, 4 voices each");
         let playing = render_and_report(&label, &mut harness);
         assert!(peak(&playing) > 0.01);
     }

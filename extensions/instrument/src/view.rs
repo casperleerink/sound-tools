@@ -1,5 +1,6 @@
 //! The card of the synth in a rack: the envelope as a display whose handles drag, the waveform
-//! at the top of it, the main knobs next to it and the envelope knobs behind expand. The rack
+//! at the top of it, the main knobs and the character next to it and the envelope knobs behind
+//! expand. The rack
 //! gives the frame of the card, whose title says "Synth" and is where another instrument is
 //! picked.
 //!
@@ -15,6 +16,7 @@
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent};
+use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{Adsr, EnvelopeHandle, envelope_display};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::Display;
@@ -26,7 +28,8 @@ use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
-    ATTACK, CUTOFF, DECAY, GAIN, RELEASE, RESONANCE, SUSTAIN, Synth, SynthState, Waveform,
+    ATTACK, CUTOFF, DECAY, FilterCharacter, GAIN, RELEASE, RESONANCE, SUSTAIN, Synth, SynthState,
+    Waveform,
 };
 
 /// The name the rack puts on the card of a synth.
@@ -72,6 +75,11 @@ const KNOBS: [&Control; 7] = [
 const WAVEFORMS: [(Waveform, &str, &str); 2] = [
     (Waveform::Saw, "saw", "Saw"),
     (Waveform::Square, "square", "Square"),
+];
+
+const CHARACTERS: [(FilterCharacter, &str, &str); 2] = [
+    (FilterCharacter::Clean, "clean", "Clean"),
+    (FilterCharacter::Warm, "warm", "Warm"),
 ];
 
 /// The width of the display: the synth card is 352 pt, with two columns of cells.
@@ -228,6 +236,30 @@ impl SynthView {
     }
 }
 
+impl SynthView {
+    fn character(&self, state: &SynthState, cx: &mut Context<Self>) -> Cell {
+        let selected = CHARACTERS
+            .iter()
+            .find(|(character, ..)| *character == state.character);
+        let selected = selected.map_or("", |(_, value, _)| value);
+        let characters = SegmentedControl::new("character", selected)
+            .options(CHARACTERS.map(|(_, value, label)| (value, label)))
+            .on_change(weak_callback(cx, |view, value: SharedString, cx| {
+                let picked = CHARACTERS
+                    .iter()
+                    .find(|(_, name, _)| *name == value.as_ref());
+                if let Some((character, ..)) = picked {
+                    let change = ValueChange::Set(*character);
+                    let (session, synth) = (&view.session, &view.synth);
+                    let set = |state: &mut SynthState, character| state.character = character;
+                    view.edit
+                        .apply(session, synth, "Change character", change, set, cx);
+                }
+            }));
+        Cell::new(characters).span(2).label("Character")
+    }
+}
+
 impl Render for SynthView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
@@ -240,7 +272,10 @@ impl Render for SynthView {
             Column::new()
                 .top(knob(CUTOFF_KNOB, cx))
                 .bottom(knob(GAIN_KNOB, cx)),
-            Column::new().top(knob(RESONANCE_KNOB, cx)),
+            Column::new()
+                .span(2)
+                .top(knob(RESONANCE_KNOB, cx))
+                .bottom(self.character(&state, cx)),
         ];
         // Behind expand: the times and the level the handles of the display move, so the keys
         // reach every one of them. Read across as A, D, then S, R.

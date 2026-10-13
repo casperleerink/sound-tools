@@ -9,6 +9,7 @@
 //!     "waveform": "saw",
 //!     "cutoff_hz": 2000.0,
 //!     "resonance": 0.2,
+//!     "character": "clean",
 //!     "attack_seconds": 0.005,
 //!     "decay_seconds": 0.2,
 //!     "sustain": 0.7,
@@ -30,6 +31,7 @@ use sound_core::{
 };
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT};
 
+pub use sound_core::FilterCharacter;
 pub use synth::{Synth, VOICES};
 
 /// The name to enable in `project.json`.
@@ -52,9 +54,12 @@ pub struct SynthState {
     pub waveform: Waveform,
     /// Where the low-pass filter starts to cut.
     pub cutoff_hz: f32,
-    /// 0 is a flat filter. 1 is a strong peak at the cutoff. It never oscillates on its own.
-    /// The filter input is turned down as this goes up, so the peak does not overload.
+    /// 0 is a flat filter. 1 is a strong peak at the cutoff. Clean, it never oscillates on its
+    /// own. The filter input is turned down as this goes up, so the peak does not overload.
     pub resonance: f32,
+    /// Warm saturates inside the filter: a loud sound bends at the cutoff and above, a quiet
+    /// one passes clean, and full resonance rings on its own.
+    pub character: FilterCharacter,
     /// From note on to full level.
     pub attack_seconds: f32,
     /// From full level to within 0.1% of the sustain level.
@@ -156,6 +161,7 @@ impl Default for SynthState {
             waveform: Waveform::Saw,
             cutoff_hz: CUTOFF.default,
             resonance: RESONANCE.default,
+            character: FilterCharacter::Clean,
             attack_seconds: ATTACK.default,
             decay_seconds: DECAY.default,
             sustain: SUSTAIN.default,

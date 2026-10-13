@@ -1,7 +1,7 @@
 //! The wheels: the bend moves every note up to two semitones, the mod wheel adds a vibrato, and
 //! an `AllOff` puts both back at rest.
 
-use instrument::{SynthState, Waveform};
+use instrument::{FilterCharacter, SynthState, Waveform};
 use sound_core::Ticks;
 use sound_notes::Pitch;
 
@@ -16,6 +16,7 @@ fn plain() -> SynthState {
         waveform: Waveform::Saw,
         cutoff_hz: 1_000.0,
         resonance: 0.0,
+        character: FilterCharacter::Clean,
         attack_seconds: 0.005,
         decay_seconds: 0.05,
         sustain: 1.0,
