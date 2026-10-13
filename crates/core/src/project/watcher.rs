@@ -143,9 +143,11 @@ impl Project {
             Ok(Some((paths, heard))) => self.apply_outside_changes_at(&paths, heard),
             Ok(None) => Ok(0),
             Err(error) => {
-                // Reported once, not on every poll.
+                // Taken out so it is reported once, not on every poll. Forgotten, not dropped:
+                // notify's inotify watcher unwraps a send to its ended thread when dropped,
+                // and its FSEvents watcher joins that thread with `expect`.
                 if matches!(error, ProjectError::WatcherStopped) {
-                    self.watcher = None;
+                    std::mem::forget(self.watcher.take());
                 }
                 Err(error)
             }
