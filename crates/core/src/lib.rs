@@ -28,6 +28,7 @@ mod processor;
 mod project;
 mod saturation;
 mod scope;
+mod sections;
 mod svf;
 pub mod testing;
 mod transport;
@@ -83,6 +84,7 @@ pub use project::{
 };
 pub use saturation::soft_clip;
 pub use scope::Scope;
+pub use sections::{Section, SectionError, SectionName, Sections};
 pub use svf::{
     FilterCharacter, FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response,
 };
