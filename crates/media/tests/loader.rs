@@ -89,3 +89,19 @@ fn what_nothing_holds_is_let_go_of_once_its_instances_took_it() {
     take_done(&LOADER, &path);
     assert_eq!(READS.load(Ordering::Relaxed), 2);
 }
+
+#[test]
+fn a_read_that_panics_fails_instead_of_loading_forever() {
+    static LOADER: Loader<PathBuf, String> = Loader::new("test", Keep::Always);
+    sound_media::load_in_background();
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("file");
+    let tool = InstanceId::new("tool").unwrap();
+    let assets = Assets::new(folder.path());
+
+    let got = LOADER.get(path.clone(), (&assets, &tool), || panic!("a damaged file"));
+    assert_eq!(got, Ok(None));
+    assert_eq!(take_done(&LOADER, &path), std::slice::from_ref(&tool));
+    let failed = LOADER.get(path, (&assets, &tool), || unreachable!());
+    assert_eq!(failed, Err("reading it failed: a damaged file".to_string()));
+}

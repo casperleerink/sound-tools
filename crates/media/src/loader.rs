@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -142,7 +143,7 @@ where
         if state.running.insert(key.clone()) {
             let spawned = std::thread::Builder::new().name(self.thread.into()).spawn({
                 let key = key.clone();
-                move || self.finish(key, read())
+                move || self.finish(key, unwound(read))
             });
             if let Err(error) = spawned {
                 state.running.remove(&key);
@@ -189,4 +190,15 @@ where
     pub fn is_loading(&self, key: &K) -> bool {
         self.lock().running.contains(key)
     }
+}
+
+/// `read`, or a failure when it panics: else its instances would wait for it forever. With no
+/// files to look at, the failure stays until the process ends.
+fn unwound<T>(read: impl FnOnce() -> Read<T>) -> Read<T> {
+    std::panic::catch_unwind(AssertUnwindSafe(read)).unwrap_or_else(|panic| {
+        let why = (panic.downcast_ref::<&str>().map(|why| why.to_string()))
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        (Err(format!("reading it failed: {why}")), Vec::new())
+    })
 }
