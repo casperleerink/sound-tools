@@ -59,7 +59,7 @@ sound-tools . --analyze
 sound-tools . --render <wav>
 ```
 
-- `--inspect` prints where each time signature starts, the tempo, every track in order, every clip with its bar range, note count and pitch range, and the problems.
+- `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every track in order, every clip with its bar range, note count and pitch range, and the problems.
 - `--analyze` plays the piece and its tail offline and prints what it measures, of the whole and in up to 32 rows. Use it after a change, to check that it sounds as you meant.
 - `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak.
 
@@ -432,6 +432,7 @@ pub fn summary(project: &Project) -> String {
             change.tick.0
         ));
     }
+    lines.extend(sections(project));
 
     let mut summarised: Vec<&InstanceId> = Vec::new();
     for (id, tool) in project.instances() {
@@ -465,6 +466,41 @@ pub fn summary(project: &Project) -> String {
     }
     lines.push(problems(project));
     lines.join("\n")
+}
+
+/// One line per section with its bars, and its ticks up to where it ends. The last section ends
+/// on the bar line at or after the end of the project.
+fn sections(project: &Project) -> Vec<String> {
+    let time_signatures = project.project_file().tempo_map.time_signatures();
+    let end = project.end();
+    let sections = project.project_file().sections.spans();
+    sections
+        .map(|(section, next)| {
+            let name = section.name.as_str();
+            let Some(start) = time_signatures.bar(section.bar.get()) else {
+                return format!("section {name:?}: from bar {}", section.bar);
+            };
+            let last = match next {
+                Some(next) => time_signatures.bar(next.get() - 1),
+                None => end
+                    .filter(|end| *end > start.start)
+                    .map(|end| time_signatures.bar_at(end.saturating_sub(Ticks(1)))),
+            };
+            match last {
+                Some(last) => format!(
+                    "section {name:?}: bars {} to {}, ticks {} to {}",
+                    start.number,
+                    last.number,
+                    start.start.0,
+                    last.end().0
+                ),
+                None => format!(
+                    "section {name:?}: from bar {} (tick {}) to the end",
+                    start.number, start.start.0
+                ),
+            }
+        })
+        .collect()
 }
 
 /// What `--plugin-params` prints: every parameter of one plugin of this machine that a host may
