@@ -190,8 +190,8 @@ impl Keyboard {
             || self.lost_reports.load(Ordering::Relaxed) != self.seen_lost_reports
     }
 
-    /// Lets go of every note and the pedal the live input holds, at the start of the next
-    /// audio block. See [`Input::release_held`]: this is the same one path.
+    /// Lets go of every note and the pedal the live input holds. See [`Input::release_held`]:
+    /// this is the same one path.
     pub fn release_held(&self) {
         self.input.release_held();
     }

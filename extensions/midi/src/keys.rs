@@ -229,8 +229,8 @@ impl Input {
         true
     }
 
-    /// Lets go of every note and the pedal that the live input holds, at the start of the next
-    /// audio block. The device layer calls it when a port goes away, so a keyboard that is
+    /// Lets go of every note and the pedal that the live input holds, once what is already in
+    /// the ring has been sent. The device layer calls it when a port goes away, so a keyboard that is
     /// unplugged with keys down leaves nothing sounding.
     ///
     /// It releases what every keyboard holds, not only the one that went. That is the same
@@ -397,21 +397,12 @@ impl Processor for Keys {
         // release these notes too. That is the known limit of one `notes` port per instrument.
         //
         // A release does: the port it plays into is about to change, a keyboard was unplugged
-        // while it held keys, or a message was lost and may have been an off. It goes out
-        // before whatever arrived after it.
+        // while it held keys, or a message was lost and may have been an off. It waits until
+        // the ring is empty, since the on of a lost off may still be in it.
         let asked = self.release.asked.load(Ordering::Relaxed);
         if asked != self.taken {
             self.taken = asked;
             self.releasing = true;
-        }
-        if self.releasing {
-            self.release(event_outputs);
-            if !self.releasing {
-                // Out. The control side lets go of its copy of what is held, and whoever waits
-                // for it may now take the connection away.
-                self.report(Report::Released);
-                self.release.released.store(self.taken, Ordering::Relaxed);
-            }
         }
         while let Ok(arrived) = self.input.peek().copied() {
             // The event buffer is full: the message waits in the ring for the next block, so
@@ -431,6 +422,15 @@ impl Processor for Keys {
                 tick: transport.heard_tick,
                 playing: transport.playing,
             }));
+        }
+        if self.releasing && self.input.is_empty() {
+            self.release(event_outputs);
+            if !self.releasing {
+                // Out. The control side lets go of its copy of what is held, and whoever waits
+                // for it may now take the connection away.
+                self.report(Report::Released);
+                self.release.released.store(self.taken, Ordering::Relaxed);
+            }
         }
     }
 }

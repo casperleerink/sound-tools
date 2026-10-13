@@ -265,10 +265,22 @@ fn a_message_that_is_lost_releases_what_is_held() {
     assert!(!harness.input.send(off(72)));
     assert_eq!(harness.keyboard.lost().input, 1);
 
-    // The release goes out before what is still in the ring, so pitch 60 is let go at once.
-    harness.run(64, 64);
+    // The ring takes several blocks to empty. The release goes out after it, so it also lets
+    // go of pitch 72, whose on was still in the ring when its off was lost.
+    harness.run(64 * 8, 64);
     let heard = harness.heard();
-    assert_eq!(heard[0], (64, NoteEvent::Off { pitch: pitch(60) }));
+    assert_eq!(heard.len(), INPUT_CAPACITY + 2);
+    let last = heard.len() - 2;
+    assert_eq!(
+        heard[last..]
+            .iter()
+            .map(|(_, event)| *event)
+            .collect::<Vec<_>>(),
+        [
+            NoteEvent::Off { pitch: pitch(60) },
+            NoteEvent::Off { pitch: pitch(72) },
+        ]
+    );
 }
 
 /// A wheel left away from rest is held like a key: switching the track puts it back at rest in
