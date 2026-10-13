@@ -344,28 +344,32 @@ impl Audio {
         }
     }
 
-    /// Has the system read the mapped bytes from frame `from` to the end, so a note that plays
-    /// them finds them in memory. For the thread that reads ahead, never the audio thread.
-    pub(crate) fn read_ahead(&self, from: u64) {
+    /// Has the system read the mapped bytes of `frames` frames from frame `from` on, so a note
+    /// that plays them finds them in memory. For the thread that reads ahead, never the audio
+    /// thread.
+    pub(crate) fn read_ahead(&self, from: u64, frames: u64) {
         let Some(map) = &self.mapped else {
             return;
         };
         let frame_size = (self.encoding.size() * usize::from(self.channels)) as u64;
-        let start = (self.data as u64).saturating_add(from.saturating_mul(frame_size));
-        let start = usize::try_from(start).unwrap_or(usize::MAX).min(map.len());
+        let byte_of = |frame: u64| {
+            let byte = (self.data as u64).saturating_add(frame.saturating_mul(frame_size));
+            usize::try_from(byte).unwrap_or(usize::MAX).min(map.len())
+        };
+        let (start, end) = (byte_of(from), byte_of(from.saturating_add(frames)));
         // Windows has no such hint; the reads below bring the pages in on their own.
         #[cfg(unix)]
-        match map.advise_range(memmap2::Advice::WillNeed, start, map.len() - start) {
+        match map.advise_range(memmap2::Advice::WillNeed, start, end - start) {
             Ok(()) => {}
             // Only a hint: the reads below are what brings the pages in.
             Err(_) => {}
         }
         // One byte per page brings the page in.
         const PAGE: usize = 4096;
-        let mut at = start;
-        while let Some(byte) = map.get(at) {
-            std::hint::black_box(*byte);
-            at += PAGE;
+        for at in (start..end).step_by(PAGE) {
+            if let Some(byte) = map.get(at) {
+                std::hint::black_box(*byte);
+            }
         }
     }
 
