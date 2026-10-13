@@ -177,6 +177,81 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
 }
 
 #[test]
+fn a_pluck_into_a_delay_echoes_after_each_note_and_only_its_own() {
+    let pluck = || 0.5 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 5.0, 0.0, 1.0);
+    let once = compile(|| {
+        let pluck = pluck();
+        pluck + delay_up_to(pluck, 300.0, 300.0)
+    });
+    let twice = compile(|| {
+        let pluck = pluck();
+        pluck + delay_up_to(delay_up_to(pluck, 300.0, 300.0), 300.0, 300.0)
+    });
+    // 300 ms is 14400 frames.
+    for (code, echo) in [(once, 14_400), (twice, 28_800)] {
+        // Quiet from the end of the pluck, at 6 ms, until its echo. The first note is let go
+        // of at once, the second is held past its echo.
+        let notes = vec![
+            (0, on(69)),
+            (480, off(69)),
+            (96_000, on(69)),
+            (96_000 + echo + 4_800, off(69)),
+        ];
+        let mut played = play(Kind::Instrument { voices: 1 }, code, notes);
+        let output = played.render(144_000);
+        for note in [0, 96_000] {
+            let quiet = loudest(&output[note + 960..note + echo - 400]);
+            assert_eq!(quiet, 0.0, "{note} {echo}");
+            let echoed = loudest(&output[note + echo..note + echo + 480]);
+            assert!(echoed > 0.1, "{note} {echo}");
+        }
+    }
+}
+
+#[test]
+fn a_released_voice_that_is_not_heard_ends_even_when_its_delays_hold_something() {
+    fn note() -> Signal {
+        0.2 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 1.0, 1.0, 1.0)
+    }
+    // An instrument hears no input, so its delays of 4 s hold only silence.
+    let unused = || note() + delay(input(), 4_000.0) + delay(input(), 4_000.0);
+    // A delay writes what is not a number as 0.
+    let infinite = || note() + delay_up_to(1.0 / (gate() - gate()), 250.0, 250.0);
+    // A pulse goes round for ever, and is not heard after the release.
+    let unheard = || {
+        let echo = feedback();
+        let wet = delay_up_to(note() + echo.read(), 250.0, 250.0);
+        echo.set(wet);
+        wet * gate()
+    };
+    let sounds: [(fn() -> Signal, usize); 3] = [
+        (unused, 0),
+        (infinite, 0),
+        // Quiet for as long as its delays reach, 250 ms.
+        (unheard, 12_000),
+    ];
+    for (sound, late) in sounds {
+        let code = compile(|| {
+            let frames = feedback();
+            frames.set(frames.read() + 1.0);
+            watch("frames", frames.read());
+            sound()
+        });
+        let notes = vec![(0, on(69)), (4_800, off(69))];
+        let mut played = play(Kind::Instrument { voices: 1 }, code, notes);
+        played.render(48_000);
+        // It ends 50 ms after its release, and `late`. The watch shows it up to the block
+        // before.
+        let ends = (4_800 + 2_400 + late) as f32;
+        let frames = played.watches[0].get();
+        assert!(
+            frames > ends - 128.0 && frames < ends + 128.0,
+            "{late} {frames}"
+        );
+    }
+}
+
+#[test]
 fn two_voices_started_on_the_same_frame_play_different_noise() {
     let kind = Kind::Instrument { voices: 4 };
     let noise = || compile(|| 0.2 * noise() * adsr(gate(), 1.0, 1.0, 1.0, 1.0));
@@ -291,18 +366,25 @@ fn a_note_with_no_length_plays_until_it_is_released() {
 }
 
 #[test]
-fn a_release_lets_go_of_its_note_when_the_list_of_what_waits_for_its_frame_is_full() {
+fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_key_at_once() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = SignalsUpdate::Note {
+    let note = |at, frames| SignalsUpdate::Note {
         pitch,
         velocity: Velocity::new(100).unwrap(),
-        at: None,
-        frames: None,
+        at,
+        frames,
     };
-    played.control.update(played.signals, note).unwrap();
-    // A trigger far ahead waits in the list, which holds 256.
-    for _ in 0..256 {
+    played
+        .control
+        .update(played.signals, note(None, None))
+        .unwrap();
+    played.render(64);
+    // The same key again, from frame 48000 to 96000, waits in the list, which holds 256, with
+    // triggers far ahead.
+    let waiting = note(Some(48_000), Some(48_000));
+    played.control.update(played.signals, waiting).unwrap();
+    for _ in 0..254 {
         let hit = SignalsUpdate::Trigger {
             index: 0,
             at: Some(u64::MAX),
@@ -313,7 +395,14 @@ fn a_release_lets_go_of_its_note_when_the_list_of_what_waits_for_its_frame_is_fu
     assert!(loudest(&played.render(4_800)) > 0.1);
     let release = SignalsUpdate::Release { pitch, at: None };
     played.control.update(played.signals, release).unwrap();
-    assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
+    // Past frame 48000, where the waiting note would start.
+    assert_eq!(loudest(&played.render(48_000)[4_800..]), 0.0);
+    // A newer note of the key plays on past frame 96000, where the waiting one would end.
+    played
+        .control
+        .update(played.signals, note(None, None))
+        .unwrap();
+    assert!(loudest(&played.render(48_000)[38_400..]) > 0.1);
 }
 
 #[test]
@@ -514,15 +603,16 @@ fn a_note_after_new_code_plays_only_the_new_code() {
     let kind = Kind::Instrument { voices: 1 };
     let notes = vec![(0, on(60)), (64, off(60)), (9_600, on(60))];
     let mut played = play(kind, compile(|| 0.5 * gate()), notes);
-    // Released at frame 64 and silent since, so the voice is idle when the code changes.
-    played.render(4_800);
+    // Released at frame 64 and silent since, so the voice is over 50 ms later, at frame 2464:
+    // before the 10 ms fade from the old code ends.
+    played.render(2_304);
     played
         .control
         .update(played.signals, new_code(kind, compile(|| -0.5 * gate())))
         .unwrap();
     let output = played.render(9_600);
     // The note at frame 9600 starts with the new code, not with a fade from the old.
-    assert_eq!(output[4_800], -0.5);
+    assert_eq!(output[9_600 - 2_304], -0.5);
 }
 
 /// Every param at its default, and the first one moved by a lane.

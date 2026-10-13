@@ -18,15 +18,16 @@ use sound_core::{
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice, Voices, frequency_hz};
 
 use crate::code::{Code, MAX_LIVES, MAX_PARAMETERS};
-use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, Values};
+use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values};
 
 /// How long the old code fades out while the new one fades in.
 const FADE_SECONDS: f32 = 0.01;
 /// How long a new value of a param or a live control takes to arrive, also a lane that takes a
 /// param over or lets it go. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
-/// A released voice this quiet for this long is over and free for another note.
-const QUIET: f32 = 1e-4;
+/// A released voice this quiet for this long, with no delay that holds a sound, is over and free
+/// for another note. Quiet for as long again as its delays reach, it is over whatever they hold:
+/// what goes round a loop that long unheard is never heard.
 const QUIET_SECONDS: f32 = 0.05;
 /// How far the bend wheel moves every note, either way.
 const BEND_SEMITONES: f32 = 2.0;
@@ -288,9 +289,7 @@ impl Signals {
                 let old = std::mem::replace(&mut voice.machine, new);
                 // The one that faded before rides back with this update, to be dropped there.
                 *machine = voice.fading.replace(old);
-                // An idle voice is silent, so it has nothing to fade from. It also plays no
-                // frame that would count the fade down before its next note.
-                voice.fade_left = if voice.is_idle() { 0 } else { fade_frames };
+                voice.fade_left = fade_frames;
             }
         };
         match &mut self.players {
@@ -471,6 +470,10 @@ impl Voice for SignalsVoice {
     }
 
     fn start(&mut self, pitch: f32, velocity: Velocity, _: &()) {
+        // An idle voice is silent, so it has nothing to fade from.
+        if self.is_idle() {
+            self.fade_left = 0;
+        }
         self.note = Note {
             pitch,
             frequency: 0.0,
@@ -521,8 +524,11 @@ impl SignalsVoice {
             }
             let ending = !self.always && !self.note.gate;
             if ending {
+                // Quiet long enough, it waits for its delays a part at a time.
                 let quiet_left = shared.quiet_limit.saturating_sub(self.quiet_frames);
-                end = end.min(start + quiet_left.max(1));
+                if quiet_left > 0 {
+                    end = end.min(start + quiet_left);
+                }
             }
             let part = start..end;
             let inputs = Inputs {
@@ -562,13 +568,16 @@ impl SignalsVoice {
                 if ending {
                     if self.loudness < QUIET {
                         self.quiet_frames += 1;
-                        self.sounding = self.quiet_frames < shared.quiet_limit;
                     } else {
                         self.quiet_frames = 0;
                     }
                 }
                 *mix_left += left;
                 *mix_right += right;
+            }
+            if ending && self.quiet_frames >= shared.quiet_limit {
+                let unheard = self.quiet_frames - shared.quiet_limit >= self.machine.delays_reach();
+                self.sounding = !unheard && self.machine.delays_sound();
             }
             start = end;
         }
@@ -685,9 +694,19 @@ impl Processor for Signals {
                 }
             }
             SignalsUpdate::Release { pitch, at } => {
-                let off = NoteEvent::Off { pitch: *pitch };
+                let pitch = *pitch;
+                let off = NoteEvent::Off { pitch };
                 // A full list lets go at once: a dropped release would hold the note for ever.
+                // A note of the key still waiting would too, and a waiting end of one would end
+                // a newer note, so both go.
                 if !self.schedule(*at, Scheduled::Note(off)) {
+                    self.scheduled.retain(|(_, what)| match what {
+                        Scheduled::Note(
+                            NoteEvent::On { pitch: waiting, .. }
+                            | NoteEvent::Off { pitch: waiting },
+                        ) => *waiting != pitch,
+                        _ => true,
+                    });
                     self.follow(off);
                 }
             }
