@@ -89,12 +89,13 @@ impl<V: Voice> Slot<V> {
         self.voice.cut();
     }
 
-    /// The key came up. With the pedal down the note sounds on until the pedal comes up.
+    /// The key came up. With the pedal down the note sounds on until the pedal comes up. A
+    /// voice already released is left alone: a sampler's release zone would end.
     fn key_up(&mut self, pedal_is_down: bool) {
-        if pedal_is_down && self.held != Key::Up {
-            self.held = Key::Pedal;
-        } else {
-            self.release();
+        match self.held {
+            Key::Up => {}
+            _ if pedal_is_down => self.held = Key::Pedal,
+            _ => self.release(),
         }
     }
 }
