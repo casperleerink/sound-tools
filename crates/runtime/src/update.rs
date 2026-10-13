@@ -216,10 +216,12 @@ impl Updater {
             }
             Place::Bundle(bundle.to_path_buf())
         } else {
-            if dunce::canonicalize(installed_program()?).ok()? != program {
+            // Started as installed, not as its link target: the installer replaces a link.
+            let installed = installed_program()?;
+            if dunce::canonicalize(&installed).ok()? != program {
                 return None;
             }
-            Place::Installer { program }
+            Place::Installer { program: installed }
         };
         Some(Self {
             folder: support.join(UPDATES_FOLDER),
