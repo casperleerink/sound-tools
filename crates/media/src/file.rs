@@ -351,12 +351,7 @@ impl Audio {
         let Some(map) = &self.mapped else {
             return;
         };
-        let frame_size = (self.encoding.size() * usize::from(self.channels)) as u64;
-        let byte_of = |frame: u64| {
-            let byte = (self.data as u64).saturating_add(frame.saturating_mul(frame_size));
-            usize::try_from(byte).unwrap_or(usize::MAX).min(map.len())
-        };
-        let (start, end) = (byte_of(from), byte_of(from.saturating_add(frames)));
+        let (start, end) = self.mapped_bytes(from, frames);
         // Windows has no such hint; the reads below bring the pages in on their own.
         #[cfg(unix)]
         match map.advise_range(memmap2::Advice::WillNeed, start, end - start) {
@@ -364,13 +359,22 @@ impl Audio {
             // Only a hint: the reads below are what brings the pages in.
             Err(_) => {}
         }
-        // One byte per page brings the page in.
-        const PAGE: usize = 4096;
-        for at in (start..end).step_by(PAGE) {
+        for at in touches(start, end) {
             if let Some(byte) = map.get(at) {
                 std::hint::black_box(*byte);
             }
         }
+    }
+
+    /// The bytes of the map that hold `frames` frames from frame `from` on, start and end.
+    pub(crate) fn mapped_bytes(&self, from: u64, frames: u64) -> (usize, usize) {
+        let length = self.mapped.as_deref().map_or(0, <[u8]>::len);
+        let frame_size = (self.encoding.size() * usize::from(self.channels)) as u64;
+        let byte_of = |frame: u64| {
+            let byte = (self.data as u64).saturating_add(frame.saturating_mul(frame_size));
+            usize::try_from(byte).unwrap_or(usize::MAX).min(length)
+        };
+        (byte_of(from), byte_of(from.saturating_add(frames)))
     }
 
     /// The whole file as it is on disk, for a WAV or AIFF file. A FLAC file holds its decoded
@@ -503,6 +507,14 @@ fn check(sample_rate: u32, channels: u16) -> Result<(), FormatError> {
         return Err(FormatError::Damaged("it says it has no channels"));
     }
     Ok(())
+}
+
+/// One byte of every page from `start` to `end`: reading it brings the page in. The last byte
+/// too, as steps from an unaligned start can end in the page before it.
+pub(crate) fn touches(start: usize, end: usize) -> impl Iterator<Item = usize> {
+    const PAGE: usize = 4096;
+    let last = (end > start).then(|| end - 1);
+    (start..end).step_by(PAGE).chain(last)
 }
 
 pub(crate) fn is_flac(bytes: &[u8]) -> bool {

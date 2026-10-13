@@ -256,30 +256,36 @@ fn turn(notes: &mut Vec<(Weak<Audio>, u64)>, read: impl Fn(&Audio, u64, u64)) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
+    use crate::file::touches;
+
+    /// A streamed WAV file of `frames` frames of silence at 48 kHz, mono, 16-bit.
+    fn streamed_wav(folder: &Path, name: &str, frames: u32) -> Arc<Audio> {
+        let path = folder.join(name);
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        for _ in 0..frames {
+            writer.write_sample(0_i16).unwrap();
+        }
+        writer.finalize().unwrap();
+        let Ok(audio) = open(&path) else {
+            panic!("{name} does not open");
+        };
+        Arc::new(audio)
+    }
 
     #[test]
     fn a_note_that_starts_while_another_is_read_has_its_start_read_in_the_next_turn() {
         let folder = tempfile::tempdir().unwrap();
-        let file = |name: &str, seconds: u32| {
-            let path = folder.path().join(name);
-            let spec = hound::WavSpec {
-                channels: 1,
-                sample_rate: 48_000,
-                bits_per_sample: 16,
-                sample_format: hound::SampleFormat::Int,
-            };
-            let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-            for _ in 0..48_000 * seconds {
-                writer.write_sample(0_i16).unwrap();
-            }
-            writer.finalize().unwrap();
-            let Ok(audio) = open(&path) else {
-                panic!("{name} does not open");
-            };
-            Arc::new(audio)
-        };
-        let (long, short) = (file("long.wav", 10), file("short.wav", 1));
+        let long = streamed_wav(folder.path(), "long.wav", 480_000);
+        let short = streamed_wav(folder.path(), "short.wav", 48_000);
         let read = std::cell::RefCell::new(Vec::new());
         let mut notes = vec![(Arc::downgrade(&long), 0)];
         let turn = |notes: &mut _| {
@@ -308,5 +314,24 @@ mod tests {
             read.iter().filter(|(which, _)| *which == "short").count(),
             10
         );
+    }
+
+    #[test]
+    fn reading_a_note_ahead_brings_in_every_page_of_its_samples() {
+        let folder = tempfile::tempdir().unwrap();
+        // Its samples end 172 bytes into a page, past the last of the steps from each start.
+        let audio = streamed_wav(folder.path(), "note.wav", 14_400);
+        let touched = std::cell::RefCell::new(Vec::new());
+        let mut notes = vec![(Arc::downgrade(&audio), 0)];
+        while !notes.is_empty() {
+            turn(&mut notes, |audio, from, frames| {
+                let (start, end) = audio.mapped_bytes(from, frames);
+                touched.borrow_mut().extend(touches(start, end));
+            });
+        }
+        let pages: BTreeSet<usize> = touched.take().iter().map(|at| at / 4096).collect();
+        let (start, end) = audio.mapped_bytes(0, audio.frames());
+        assert_eq!(end, 28_844);
+        assert_eq!(pages, (start / 4096..=(end - 1) / 4096).collect());
     }
 }
