@@ -25,7 +25,7 @@ use sound_ui::{ActiveTheme, KeyboardFocus, Session};
 use super::AddTrack;
 use super::layout::{DOT_LEFT, HEADER_INSET, HEADER_WIDTH, NAME_LEFT};
 use super::paint::{accent, header_shape};
-use super::timeline::{MUTE, MUTE_LEFT, RENAME_HEIGHT, RENAME_LEFT, Timeline};
+use super::timeline::{MUTE, RENAME_HEIGHT, RENAME_LEFT, SOLO_LEFT, Timeline};
 use crate::{ArrangementState, TrackKind, TrackState, returns};
 
 /// The row that folds the section.
@@ -364,14 +364,14 @@ impl Returns {
                 .absolute()
                 .left(px(RENAME_LEFT))
                 .top(px(middle - RENAME_HEIGHT / 2.))
-                .w(px(MUTE_LEFT - RENAME_LEFT - 4.))
+                .w(px(SOLO_LEFT - RENAME_LEFT - 4.))
                 .occlude()
                 .child(input),
             None => div()
                 .absolute()
                 .left(px(NAME_LEFT))
                 .top(px(middle - 10.))
-                .w(px(MUTE_LEFT - NAME_LEFT - 8.))
+                .w(px(SOLO_LEFT - NAME_LEFT - 8.))
                 .truncate()
                 .line_height(px(20.))
                 .font_weight(FontWeight::MEDIUM)
@@ -399,9 +399,10 @@ impl Returns {
             )
             .child(name_line)
             .child(
+                // A return has no solo, so its mute takes the place at the right edge.
                 div()
                     .absolute()
-                    .left(px(MUTE_LEFT))
+                    .left(px(SOLO_LEFT))
                     .top(px(middle - toggle::HEIGHT / 2.))
                     .occlude()
                     .child(mute),
