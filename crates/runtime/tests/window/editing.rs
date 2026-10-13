@@ -579,6 +579,88 @@ fn a_double_click_in_the_ruler_adds_a_section_and_opens_its_name(cx: &mut TestAp
     one_undo_step(&mut opened, "Remove section", &before);
 }
 
+/// A section, a time signature change and a tempo change on one bar line each take their own
+/// presses: every one of them can be clicked.
+#[gpui::test]
+fn three_marks_on_one_bar_can_each_be_clicked(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    opened.write_tempo_map(
+        r#"{"time_signatures": [{"signature": "4/4", "bars": 4}, {"signature": "7/8", "bars": 1}],
+            "tempo_changes": [{"tick": 0, "bpm": 120.0}, {"tick": 15360, "bpm": 90.0}]}"#,
+    );
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.set_sections(serde_json::from_str(r#"[{"bar": 5, "name": "Verse"}]"#).unwrap());
+        project.commit("Sections", changes)
+    });
+    opened.settle();
+    let bar_line = opened.ruler(4 * BAR);
+    let mut hit = Vec::new();
+    for right in (0..240).step_by(3) {
+        opened.click(bar_line + point(px(right as f32), px(0.)));
+        if let Some(mark) = selected_mark(&mut opened)
+            && !hit.contains(&mark)
+        {
+            hit.push(mark);
+        }
+    }
+    let section = RulerMark::Section(5.try_into().unwrap());
+    let expected = [
+        tempo_mark(4 * BAR).unwrap(),
+        RulerMark::TimeSignature(5),
+        section,
+    ];
+    assert_eq!(hit, expected);
+}
+
+/// With nothing selected, the menu key takes the mark at the playhead, so the keys reach every
+/// mark: enter renames a section there, and the menu removes it.
+#[gpui::test]
+fn the_menu_key_reaches_the_mark_at_the_playhead(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    opened.edit(|project| {
+        let mut changes = Changes::new();
+        changes.set_sections(serde_json::from_str(r#"[{"bar": 5, "name": "Verse"}]"#).unwrap());
+        project.commit("Sections", changes)
+    });
+    opened.settle();
+    let bar_line = opened.ruler(4 * BAR);
+    opened.click(bar_line);
+    assert_eq!(selected_mark(&mut opened), None);
+    opened.settle();
+    opened.keys("shift-f10");
+    let section = Some(RulerMark::Section(5.try_into().unwrap()));
+    assert_eq!(selected_mark(&mut opened), section);
+    opened.keys("escape");
+    opened.keys("enter");
+    assert_eq!(section_field(&mut opened).as_deref(), Some("Verse"));
+    opened.keys("escape");
+
+    let before = mark(&mut opened);
+    opened.keys("shift-f10");
+    // Up from no row is the last one: Remove.
+    opened.keys("up");
+    opened.keys("enter");
+    assert_eq!(sections(&mut opened), []);
+    one_undo_step(&mut opened, "Remove section", &before);
+}
+
+/// Undo takes the section away under its open name field: the field goes with it.
+#[gpui::test]
+fn the_name_field_of_a_section_closes_when_undo_takes_it_away(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let bar_five = opened.ruler(4 * BAR);
+    opened.double_click(bar_five);
+    assert_eq!(section_field(&mut opened).as_deref(), Some("Section 1"));
+    let session = opened.session.clone();
+    opened
+        .cx
+        .update(|_, cx| session.update(cx, |session, cx| session.undo(cx)));
+    opened.settle();
+    assert_eq!(sections(&mut opened), []);
+    assert_eq!(section_field(&mut opened), None);
+}
+
 #[gpui::test]
 fn a_time_signature_change_is_added_in_the_ruler_and_set_in_the_transport(cx: &mut TestAppContext) {
     let mut opened = open(cx);
@@ -893,10 +975,15 @@ fn t_while_playing_puts_the_tempo_change_on_the_grid(cx: &mut TestAppContext) {
         !tick.is_multiple_of(STEP),
         "the playhead is between two steps: {tick}"
     );
+    let jumps = opened.playhead().jumps;
     opened.keys("t");
     let (added, _) = opened.tempo_changes()[1];
     assert!(added.is_multiple_of(STEP));
     assert!(added.abs_diff(tick) <= STEP / 2);
+    // It is selected, and playing goes on where it was.
+    assert_eq!(selected_mark(&mut opened), tempo_mark(added));
+    opened.settle();
+    assert_eq!(opened.playhead().jumps, jumps);
 }
 
 /// Cmd pressed during a draw frees the end of the note and never its start.
