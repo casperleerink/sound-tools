@@ -2,6 +2,7 @@
 //! files dragged in from the Finder.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -283,9 +284,15 @@ pub(super) enum After {
     End,
 }
 
-/// The name of a track while it is being edited in its header.
+/// What a name field edits: a track in its header, or a section in the ruler.
+pub(super) enum RenameTarget {
+    Track(Instance<TrackState>),
+    Section(NonZeroU64),
+}
+
+/// A name while it is being edited.
 pub(super) struct Rename {
-    pub(super) track: Instance<TrackState>,
+    pub(super) target: RenameTarget,
     pub(super) input: Entity<TextInput>,
     /// Kept apart from the field, because the field is being updated when it submits.
     pub(super) focus: FocusHandle,

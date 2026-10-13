@@ -7,7 +7,8 @@ use sound_core::{Changes, Instance};
 use sound_notes::Clip;
 use sound_ui::components::text_input::{InputSize, TextInput};
 
-use super::state::{GAIN_LABEL, Rename};
+use super::ruler::RulerMark;
+use super::state::{GAIN_LABEL, Rename, RenameTarget};
 use super::{Timeline, TimelineEvent, is_clip_tool};
 use crate::view::clips::{GAIN_KEY_STEP_DB, gain_moved};
 use crate::view::gesture::nudged_track;
@@ -64,7 +65,10 @@ impl Timeline {
             _ => false,
         };
         if menu_key && !self.dragging() {
-            return self.open_clip_menu(window, cx);
+            if !self.open_clip_menu(window, cx) {
+                self.open_ruler_menu(window, cx);
+            }
+            return true;
         }
         // Alt-up and alt-down: the gain of the selected audio clips, and with no clip selected,
         // the place of the selected track.
@@ -88,10 +92,10 @@ impl Timeline {
             if self.cancel_drag(cx) {
                 return true;
             }
-            // Then a selected tempo change or point lets go, and only then the panel below
+            // Then a selected mark of the ruler or point lets go, and only then the panel below
             // closes.
-            if self.selected_tempo.is_some() {
-                self.select_tempo(None, cx);
+            if self.selected_mark.is_some() {
+                self.select_mark(None, cx);
                 return true;
             }
             if self.selected_point.is_some() {
@@ -118,10 +122,12 @@ impl Timeline {
             self.add_tempo_change(tick, cx);
             return true;
         }
-        if let Some(tick) = self.selected_tempo
-            && matches!(key, "backspace" | "delete")
-        {
-            self.remove_tempo_change(tick, cx);
+        if let Some(mark) = self.selected_mark {
+            match (key, mark) {
+                ("backspace" | "delete", _) => self.remove_mark(mark, cx),
+                ("enter", RulerMark::Section(bar)) => self.start_section_rename(bar, window, cx),
+                _ => return false,
+            }
             return true;
         }
         if matches!(key, "backspace" | "delete") && self.delete_point(cx) {
@@ -271,15 +277,21 @@ impl Timeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(name) = self
-            .session
-            .read(cx)
-            .project()
-            .state(&track)
-            .map(|state| state.name.clone())
-        else {
+        let project = self.session.read(cx).project();
+        let Some(name) = project.state(&track).map(|state| state.name.clone()) else {
             return;
         };
+        self.open_rename(RenameTarget::Track(track), name, window, cx);
+    }
+
+    /// Opens a name field on `name`, selected.
+    pub(super) fn open_rename(
+        &mut self,
+        target: RenameTarget,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let input = cx.new(|cx| {
             let mut input = TextInput::new(cx).size(InputSize::Sm);
             input.set_text(name, cx);
@@ -314,7 +326,7 @@ impl Timeline {
         let focus_before = window.focused(cx);
         window.focus(&focus, cx);
         self.rename = Some(Rename {
-            track,
+            target,
             input,
             focus,
             focus_before,
@@ -324,8 +336,8 @@ impl Timeline {
     }
 
     /// Enter or a click elsewhere gives the name, one undo step; escape gives nothing. A name of
-    /// only spaces is no name, and the track keeps the one it had. Enter and escape give the
-    /// focus back to where it was, so the keys of a return work on after its rename.
+    /// only spaces is no name, and the old one stays. Enter and escape give the focus back to
+    /// where it was, so the keys of a return work on after its rename.
     fn finish_rename(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(rename) = self.rename.take() else {
             return;
@@ -336,22 +348,30 @@ impl Timeline {
                 .unwrap_or_else(|| self.focus_handle.clone());
             window.focus(&back, cx);
         }
-        let project = self.session.read(cx).project();
-        let state = project.state(&rename.track).cloned();
-        let name = name.map(|name| name.trim().to_string());
-        if let (Some(mut state), Some(name)) = (state, name)
-            && !name.is_empty()
-            && name != state.name
-        {
-            state.name = name;
-            let track = rename.track;
-            self.session.update(cx, |session, cx| {
-                session.edit(cx, |project| {
-                    let mut changes = Changes::new();
-                    changes.set(&track, state);
-                    project.commit("Rename track", changes)
-                })
-            });
+        let Some(name) = name else {
+            cx.notify();
+            return;
+        };
+        match rename.target {
+            RenameTarget::Section(bar) => self.rename_section(bar, &name, cx),
+            RenameTarget::Track(track) => {
+                let project = self.session.read(cx).project();
+                let state = project.state(&track).cloned();
+                let name = name.trim().to_string();
+                if let Some(mut state) = state
+                    && !name.is_empty()
+                    && name != state.name
+                {
+                    state.name = name;
+                    self.session.update(cx, |session, cx| {
+                        session.edit(cx, |project| {
+                            let mut changes = Changes::new();
+                            changes.set(&track, state);
+                            project.commit("Rename track", changes)
+                        })
+                    });
+                }
+            }
         }
         cx.notify();
     }
@@ -371,26 +391,46 @@ impl Timeline {
         self.set_clips(clips, primary, cx);
     }
 
-    /// The name field over the header of the track being renamed, where the name is painted.
+    /// The name field where the name is painted: over the header of a track, or over the label
+    /// of a section in the ruler.
     pub(super) fn rename_field(&self, cx: &App) -> Option<gpui::AnyElement> {
         let rename = self.rename.as_ref()?;
-        let row = self.row_of(rename.track.id())?;
-        let rows = self.rows(cx);
-        let top = self.painted.get().y_of(&rows, row);
-        let top = RULER_HEIGHT + top + NAME_MIDDLE - RENAME_HEIGHT / 2.;
+        let (selector, top, left, width) = match &rename.target {
+            RenameTarget::Track(track) => {
+                let row = self.row_of(track.id())?;
+                let top = self.painted.get().y_of(&self.rows(cx), row);
+                let top = RULER_HEIGHT + top + NAME_MIDDLE - RENAME_HEIGHT / 2.;
+                let width = HEADER_WIDTH - RENAME_LEFT - 12.;
+                ("rename-track", top, RENAME_LEFT, width)
+            }
+            RenameTarget::Section(bar) => {
+                let start = self.time_signatures(cx).bar(bar.get())?.start;
+                let x = self.painted.get().x_of(start).max(0.);
+                let top = (RULER_HEIGHT - RENAME_HEIGHT) / 2.;
+                (
+                    "rename-section",
+                    top,
+                    HEADER_WIDTH + x,
+                    SECTION_RENAME_WIDTH,
+                )
+            }
+        };
         Some(
             div()
-                .debug_selector(|| "rename-track".to_string())
+                .debug_selector(move || selector.to_string())
                 .absolute()
                 .top(px(top))
-                .left(px(RENAME_LEFT))
-                .w(px(HEADER_WIDTH - RENAME_LEFT - 12.))
+                .left(px(left))
+                .w(px(width))
                 .occlude()
                 .child(rename.input.clone())
                 .into_any_element(),
         )
     }
 }
+
+/// How wide the name field of a section is.
+const SECTION_RENAME_WIDTH: f32 = 160.;
 
 /// The name field of a renamed track: a small text input where the name is painted.
 pub(in crate::view) const RENAME_HEIGHT: f32 = 28.;

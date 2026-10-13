@@ -2,8 +2,9 @@
 //! the clips, painted on one canvas. Clips of notes and of audio are added, selected, moved,
 //! resized, copied, pasted and deleted here with the mouse and the keys, an audio clip is
 //! trimmed, faded and turned up or down from its handles, audio files are dropped in from the
-//! Finder, a track is renamed in its header and deleted with backspace, tempo changes are added
-//! and removed in the ruler, the loop is set there, and the snap setting sits in the corner. Under a track its
+//! Finder, a track is renamed in its header and deleted with backspace, tempo changes, time
+//! signature changes and sections are edited in the ruler, the loop is set there, and the snap
+//! setting sits in the corner. Under a track its
 //! automation lanes show at the toggle in its header, where lanes are added and their points
 //! added, moved, deleted and erased ([`super::track_lanes`]).
 //!
@@ -20,6 +21,7 @@
 //! - `file_drop`: audio files dropped from the Finder.
 //! - `lanes`: the automation lanes, their add menus and their points.
 //! - `loop_bar`: the loop in the ruler.
+//! - `ruler`: the marks of the ruler and its menu.
 
 mod build;
 mod clip_menu;
@@ -31,12 +33,14 @@ mod keys;
 mod lanes;
 mod loop_bar;
 mod mouse;
+mod ruler;
 mod scene;
 mod state;
 
 pub use clip_menu::FitTempo;
 pub(super) use header::{ARM_LEFT, MUTE, SOLO_LEFT};
 pub(super) use keys::{RENAME_HEIGHT, RENAME_LEFT};
+pub use ruler::RulerMark;
 pub(super) use scene::{ARMED_METER_HEIGHT, ARMED_METER_LEFT, paint_takes};
 pub use scene::{ClipShape, Scene};
 pub use state::DropTarget;
@@ -72,8 +76,9 @@ use crate::{
     AnyClip, ArrangementState, AudioClip, TrackKind, TrackState, shown_end, tracks, unnumbered,
 };
 use lanes::LaneMenu;
+use ruler::RulerMenuAt;
 use scene::{PointKey, paint_scene};
-use state::{Held, Incoming, Rename};
+use state::{Held, Incoming, Rename, RenameTarget};
 
 /// What of the kept track order and clip ends has to be read again. A drag changes a few clips
 /// per mouse move, so only their tracks are walked then, not every clip of the project.
@@ -147,8 +152,8 @@ pub struct Timeline {
     /// The track whose header was clicked last. The track panel shows it. The keys go to the
     /// selected clips first, and to this track when no clip is selected.
     selected_track: Option<InstanceId>,
-    /// The selected tempo change, by its tick. Selecting one selects no clip.
-    selected_tempo: Option<Ticks>,
+    /// The selected mark of the ruler. Selecting one selects no clip.
+    selected_mark: Option<RulerMark>,
     /// Selected clips that were deleted in the event group that is arriving, each with whether
     /// it came first, and what the same group created. See [`Self::reselect`].
     lost_selection: Vec<(InstanceId, bool)>,
@@ -177,8 +182,11 @@ pub struct Timeline {
     /// The snap setting, in the corner above the track headers.
     snap_menu: Entity<DropdownMenu>,
     clip_menu: Entity<DropdownMenu>,
-    /// A right press on a clip, on Windows, whose menu opens at the release.
-    clip_menu_held: bool,
+    /// The menu of a right click in the ruler, and what it opened for.
+    ruler_menu: Entity<DropdownMenu>,
+    ruler_menu_at: Option<RulerMenuAt>,
+    /// A right press, on Windows, whose menu opens at the release.
+    menu_held: Option<HeldMenu>,
     fit_tempo: FitTempo,
     /// What the cursor says of a drag from where the pointer is: that it resizes, trims, fades
     /// or changes the gain.
@@ -202,6 +210,7 @@ impl Timeline {
         arrangement: Instance<ArrangementState>,
         (snap, clipboard): (SharedSnap, SharedClipboard),
         fit_tempo: FitTempo,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle().tab_stop(true);
@@ -257,11 +266,9 @@ impl Timeline {
                     if timeline.selected_track.as_ref() == Some(id) {
                         timeline.select_track(None, cx);
                     }
-                    if timeline
-                        .rename
-                        .as_ref()
-                        .is_some_and(|rename| rename.track.id() == id)
-                    {
+                    if timeline.rename.as_ref().is_some_and(|rename| {
+                        matches!(&rename.target, RenameTarget::Track(track) if track.id() == id)
+                    }) {
                         timeline.rename = None;
                     }
                     let first = timeline.clips.primary() == Some(id);
@@ -287,9 +294,9 @@ impl Timeline {
                     timeline.lane_menus.remove(id);
                     changed
                 }
-                // The time signature places the bars, and the tempo map the tempo marks.
+                // The time signatures place the bars, and the file holds the marks of the ruler.
                 ProjectEvent::ProjectFileChanged => {
-                    timeline.forget_lost_tempo(cx);
+                    timeline.forget_lost_mark(cx);
                     true
                 }
                 ProjectEvent::ProblemsChanged => false,
@@ -342,6 +349,21 @@ impl Timeline {
             timeline.on_clip_menu(&picked.0, cx);
         })
         .detach();
+        let ruler_menu = cx.new(|cx| {
+            DropdownMenu::new("Ruler", Vec::new(), cx)
+                .trigger(Trigger::Pointer)
+                .width(200.)
+        });
+        cx.subscribe_in(
+            &ruler_menu,
+            window,
+            |timeline, _, picked: &MenuPicked, window, cx| {
+                timeline.on_ruler_menu(&picked.0, window, cx);
+            },
+        )
+        .detach();
+        // The ghost of the row the pointer or the keys are on.
+        cx.observe(&ruler_menu, |_, _, cx| cx.notify()).detach();
         Self {
             session,
             playhead,
@@ -358,7 +380,7 @@ impl Timeline {
             stale: Stale::Everything,
             clips: Selection::default(),
             selected_track: None,
-            selected_tempo: None,
+            selected_mark: None,
             lost_selection: Vec::new(),
             created_in_group: Vec::new(),
             reselects_later: false,
@@ -374,7 +396,9 @@ impl Timeline {
             snap,
             snap_menu,
             clip_menu,
-            clip_menu_held: false,
+            ruler_menu,
+            ruler_menu_at: None,
+            menu_held: None,
             fit_tempo,
             hover_cursor: None,
             hovered: None,
@@ -657,7 +681,7 @@ impl Timeline {
         self.clips.set(clips, primary);
         if self.clips != before {
             if !self.clips.is_empty() {
-                self.selected_tempo = None;
+                self.selected_mark = None;
                 self.selected_point = None;
             }
             self.publish_selection(cx);
@@ -690,7 +714,7 @@ impl Timeline {
     pub fn select_track(&mut self, track: Option<InstanceId>, cx: &mut Context<Self>) {
         if track.is_some() {
             self.select_clip(None, cx);
-            self.select_tempo(None, cx);
+            self.select_mark(None, cx);
         }
         if self.selected_track != track {
             self.selected_track = track.clone();
@@ -700,38 +724,19 @@ impl Timeline {
         }
     }
 
-    /// The selected tempo change, by its tick.
-    pub fn selected_tempo(&self) -> Option<Ticks> {
-        self.selected_tempo
-    }
-
-    /// Selects a tempo change and no clip, so delete removes it.
-    fn select_tempo(&mut self, tick: Option<Ticks>, cx: &mut Context<Self>) {
-        if tick.is_some() {
-            self.select_clip(None, cx);
-            self.selected_point = None;
-        }
-        if self.selected_tempo != tick {
-            self.selected_tempo = tick;
-            cx.notify();
-        }
-    }
-
-    /// A tempo change removed from outside is not selected any more.
-    fn forget_lost_tempo(&mut self, cx: &App) {
-        let Some(tick) = self.selected_tempo else {
-            return;
-        };
-        let project = self.session.read(cx).project();
-        if project.project_file().tempo_map.change_at(tick).tick != tick {
-            self.selected_tempo = None;
-        }
-    }
-
     /// The track whose name is being edited and the field that edits it, while it is.
     pub fn name_field(&self) -> Option<(&Instance<TrackState>, &Entity<TextInput>)> {
         let rename = self.rename.as_ref()?;
-        Some((&rename.track, &rename.input))
+        match &rename.target {
+            RenameTarget::Track(track) => Some((track, &rename.input)),
+            RenameTarget::Section(_) => None,
+        }
+    }
+
+    /// The field that edits the name of a section, while it is.
+    pub fn section_name_field(&self) -> Option<&Entity<TextInput>> {
+        let rename = self.rename.as_ref()?;
+        matches!(rename.target, RenameTarget::Section(_)).then_some(&rename.input)
     }
 
     fn time_signatures<'a>(&self, cx: &'a App) -> &'a TimeSignatures {
@@ -925,6 +930,7 @@ impl Render for Timeline {
             .child(self.lane_menu_column(cx))
             .children(self.rename_field(cx))
             .child(self.clip_menu.clone())
+            .child(self.ruler_menu.clone())
     }
 }
 
@@ -941,10 +947,21 @@ fn listen(
         move |event: &MouseDownEvent, phase, window, cx| {
             let hit = phase == DispatchPhase::Bubble && hitbox.is_hovered(window);
             if hit && clip_menu::opens_menu(event) {
-                let position = Timeline::timeline_position(bounds, event.position);
+                let (x, y) = Timeline::timeline_position(bounds, event.position);
                 timeline.update(cx, |timeline, cx| {
                     timeline.take_focus_from_press(window, cx);
-                    timeline.press_for_clip_menu(position, event.position, &scene, window, cx);
+                    timeline.menu_held = None;
+                    if timeline.dragging() || x < 0.0 {
+                        return;
+                    }
+                    match y < 0.0 {
+                        true => {
+                            timeline.press_for_ruler_menu(x, event.position, &scene, window, cx)
+                        }
+                        false => {
+                            timeline.press_for_clip_menu((x, y), event.position, &scene, window, cx)
+                        }
+                    }
                 });
                 window.prevent_default();
             } else if hit && event.button == MouseButton::Left {
@@ -1023,7 +1040,7 @@ fn listen(
             }
             timeline.update(cx, |timeline, cx| match event.button {
                 MouseButton::Left if timeline.dragging() => timeline.end_drag(cx),
-                MouseButton::Right => timeline.release_for_clip_menu(event.position, window, cx),
+                MouseButton::Right => timeline.release_for_menu(event.position, window, cx),
                 _ => {}
             });
         }
@@ -1043,6 +1060,13 @@ fn listen(
             timeline.update(cx, |timeline, cx| timeline.on_pinch(event, x, cx));
         }
     });
+}
+
+/// Which menu a right press held on Windows opens at its release.
+#[derive(Copy, Clone)]
+enum HeldMenu {
+    Clip,
+    Ruler,
 }
 
 /// Whether an id is a clip of either kind.

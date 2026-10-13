@@ -1,10 +1,11 @@
 //! Editing the arrangement in the window, step 9a of the third milestone: several clips at once,
-//! copy and paste, renaming a track, tempo changes in the ruler and the snap setting. Every
+//! copy and paste, renaming a track, the marks of the ruler and the snap setting. Every
 //! action is driven with the simulated mouse and keys and checked for its records, for exactly
 //! one undo step, and for undo giving the files back byte for byte. For each, the same thing
 //! written as a file from outside shows in the window at once.
 
 use arrangement::TrackState;
+use arrangement::view::RulerMark;
 use arrangement::view::snap::Snap;
 use gpui::{Modifiers, TestAppContext, point, px};
 use sound_core::{Changes, InstanceId, Ticks};
@@ -76,9 +77,42 @@ fn frame(opened: &mut Opened<'_>) {
     opened.cx.run_until_parked();
 }
 
-fn selected_tempo(opened: &mut Opened<'_>) -> Option<Ticks> {
+fn selected_mark(opened: &mut Opened<'_>) -> Option<RulerMark> {
     let timeline = opened.timeline.clone();
-    opened.cx.read(|cx| timeline.read(cx).selected_tempo())
+    opened.cx.read(|cx| timeline.read(cx).selected_mark())
+}
+
+fn tempo_mark(tick: u64) -> Option<RulerMark> {
+    Some(RulerMark::Tempo(Ticks(tick)))
+}
+
+/// The sections of the project, as bar and name.
+fn sections(opened: &mut Opened<'_>) -> Vec<(u64, String)> {
+    opened.project(|project| {
+        let sections = project.project_file().sections.as_slice().iter();
+        let sections = sections.map(|section| (section.bar.get(), section.name.as_str().into()));
+        sections.collect()
+    })
+}
+
+/// The time signature changes of the project, as bar and signature.
+fn time_signatures(opened: &mut Opened<'_>) -> Vec<(u64, String)> {
+    opened.project(|project| {
+        let time_signatures = project.project_file().tempo_map.time_signatures();
+        let changes = time_signatures.changes();
+        changes
+            .map(|bar| (bar.number, bar.signature.to_string()))
+            .collect()
+    })
+}
+
+/// What the name field of a section holds, while it is open.
+fn section_field(opened: &mut Opened<'_>) -> Option<String> {
+    let timeline = opened.timeline.clone();
+    opened.cx.read(|cx| {
+        let input = timeline.read(cx).section_name_field()?;
+        Some(input.read(cx).text().to_string())
+    })
 }
 
 fn snap(opened: &mut Opened<'_>) -> Snap {
@@ -473,19 +507,22 @@ fn a_name_written_from_outside_shows_in_the_header_and_its_field(cx: &mut TestAp
 }
 
 #[gpui::test]
-fn a_double_click_in_the_ruler_adds_a_tempo_change_and_delete_removes_it(cx: &mut TestAppContext) {
+fn the_ruler_menu_adds_a_tempo_change_and_delete_removes_it(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let before = mark(&mut opened);
     // Bar 5 and a bit: the change lands on the grid, with the tempo that played there.
     let bar_five = opened.ruler(4 * BAR + 100);
-    opened.double_click(bar_five);
+    opened.right_click(bar_five);
+    let add = opened.control("menu-add-tempo");
+    opened.click(add);
     assert_eq!(opened.tempo_changes(), [(0, 120.0), (4 * BAR, 120.0)]);
-    assert_eq!(selected_tempo(&mut opened), Some(Ticks(4 * BAR)));
+    assert_eq!(selected_mark(&mut opened), tempo_mark(4 * BAR));
     one_undo_step(&mut opened, "Add tempo change", &before);
 
     // The playhead is on it, so the tempo of the transport is its tempo, and a drag there or
     // the arrows change it and nothing else.
     opened.settle();
+    assert_eq!(opened.playhead().tick, Ticks(4 * BAR));
     let tempo = opened.control("number-tempo");
     opened.click(tempo);
     opened.keys("up");
@@ -495,17 +532,109 @@ fn a_double_click_in_the_ruler_adds_a_tempo_change_and_delete_removes_it(cx: &mu
     let before = mark(&mut opened);
     let empty = opened.ruler(10 * BAR);
     opened.click(empty);
-    assert_eq!(selected_tempo(&mut opened), None);
+    assert_eq!(selected_mark(&mut opened), None);
     let mark = opened.ruler(4 * BAR) + point(px(24.), px(0.));
     opened.click(mark);
-    assert_eq!(selected_tempo(&mut opened), Some(Ticks(4 * BAR)));
+    assert_eq!(selected_mark(&mut opened), tempo_mark(4 * BAR));
     opened.settle();
-    assert_eq!(opened.playhead().tick, Ticks(4 * BAR));
     assert_eq!(opened.shown_tempo(), 121.0);
     opened.keys("delete");
     assert_eq!(opened.tempo_changes(), [(0, 120.0)]);
-    assert_eq!(selected_tempo(&mut opened), None);
+    assert_eq!(selected_mark(&mut opened), None);
     one_undo_step(&mut opened, "Remove tempo change", &before);
+}
+
+#[gpui::test]
+fn a_double_click_in_the_ruler_adds_a_section_and_opens_its_name(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    let before = mark(&mut opened);
+    // Past the middle of bar 4: the section starts on the nearest bar line, bar 5.
+    let near_bar_five = opened.ruler(3 * BAR + 2000);
+    opened.double_click(near_bar_five);
+    assert_eq!(sections(&mut opened), [(5, "Section 1".to_string())]);
+    assert_eq!(
+        selected_mark(&mut opened),
+        Some(RulerMark::Section(5.try_into().unwrap()))
+    );
+    assert_eq!(section_field(&mut opened).as_deref(), Some("Section 1"));
+    opened.keys("escape");
+    one_undo_step(&mut opened, "Add section", &before);
+
+    // A double click on its name opens it again, and enter gives the name as one step.
+    let before = mark(&mut opened);
+    let name = opened.ruler(4 * BAR) + point(px(32.), px(0.));
+    opened.double_click(name);
+    assert_eq!(section_field(&mut opened).as_deref(), Some("Section 1"));
+    opened.cx.simulate_input("Chorus");
+    opened.keys("enter");
+    assert_eq!(section_field(&mut opened), None);
+    assert_eq!(sections(&mut opened), [(5, "Chorus".to_string())]);
+    one_undo_step(&mut opened, "Rename section", &before);
+
+    // Selected, backspace takes it out.
+    let before = mark(&mut opened);
+    opened.click(name);
+    opened.keys("backspace");
+    assert_eq!(sections(&mut opened), []);
+    one_undo_step(&mut opened, "Remove section", &before);
+}
+
+#[gpui::test]
+fn a_time_signature_change_is_added_in_the_ruler_and_set_in_the_transport(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    // Bar 1 has its time signature already: that row is off, and picking it does nothing.
+    let start = opened.ruler(100);
+    opened.right_click(start);
+    let taken = opened.control("menu-add-time-signature");
+    opened.click(taken);
+    assert_eq!(opened.undo_label(), None);
+    opened.keys("escape");
+
+    // The keys reach the menu too: with no clip selected, the menu key opens it at the
+    // playhead, and down and enter pick a row. It adds the time signature that played there,
+    // so no bar moves.
+    let before = mark(&mut opened);
+    let bar_four = opened.ruler(3 * BAR);
+    opened.click(bar_four);
+    opened.settle();
+    opened.keys("shift-f10");
+    opened.keys("down");
+    opened.keys("down");
+    opened.keys("enter");
+    let four_four = |bar: u64| (bar, "4/4".to_string());
+    assert_eq!(time_signatures(&mut opened), [four_four(1), four_four(4)]);
+    assert_eq!(
+        selected_mark(&mut opened),
+        Some(RulerMark::TimeSignature(4))
+    );
+    one_undo_step(&mut opened, "Add time signature change", &before);
+
+    // The playhead is on it, so the transport edits it: one beat less from bar 4 on.
+    opened.settle();
+    let before = mark(&mut opened);
+    let beats = opened.control("number-beats");
+    opened.click(beats);
+    opened.keys("down");
+    let three_four = (4, "3/4".to_string());
+    assert_eq!(time_signatures(&mut opened), [four_four(1), three_four]);
+    one_undo_step(&mut opened, "Change time signature", &before);
+    let note_value = opened.control("number-note-value");
+    opened.click(note_value);
+    opened.keys("up");
+    assert_eq!(time_signatures(&mut opened)[1], (4, "3/8".to_string()));
+
+    // A right click on its mark offers to remove it.
+    let before = mark(&mut opened);
+    let mark = opened.ruler(3 * BAR) + point(px(24.), px(0.));
+    opened.right_click(mark);
+    assert_eq!(
+        selected_mark(&mut opened),
+        Some(RulerMark::TimeSignature(4))
+    );
+    let remove = opened.control("menu-remove");
+    opened.click(remove);
+    assert_eq!(time_signatures(&mut opened), [four_four(1)]);
+    one_undo_step(&mut opened, "Remove time signature change", &before);
 }
 
 #[gpui::test]
@@ -538,14 +667,14 @@ fn a_tempo_change_written_from_outside_shows_as_a_mark(cx: &mut TestAppContext) 
     );
     let mark = opened.ruler(6 * BAR) + point(px(24.), px(0.));
     opened.click(mark);
-    assert_eq!(selected_tempo(&mut opened), Some(Ticks(6 * BAR)));
+    assert_eq!(selected_mark(&mut opened), tempo_mark(6 * BAR));
     opened.settle();
     assert_eq!(opened.shown_tempo(), 90.0);
     // Removed from outside, it is no longer selected, and delete does nothing.
     opened.write_tempo_map(
         r#"{"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]}"#,
     );
-    assert_eq!(selected_tempo(&mut opened), None);
+    assert_eq!(selected_mark(&mut opened), None);
 }
 
 #[gpui::test]
@@ -732,16 +861,18 @@ fn escape_puts_back_the_selection_of_before_a_rectangle(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-fn escape_lets_go_of_a_tempo_change_before_it_closes_the_panel(cx: &mut TestAppContext) {
+fn escape_lets_go_of_a_mark_before_it_closes_the_panel(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     let header = opened.track_header(0);
     opened.click(header);
     assert!(opened.track_panel().is_some());
     let bar_five = opened.ruler(4 * BAR);
-    opened.double_click(bar_five);
-    assert_eq!(selected_tempo(&mut opened), Some(Ticks(4 * BAR)));
+    opened.click(bar_five);
+    opened.settle();
+    opened.keys("t");
+    assert_eq!(selected_mark(&mut opened), tempo_mark(4 * BAR));
     opened.keys("escape");
-    assert_eq!(selected_tempo(&mut opened), None);
+    assert_eq!(selected_mark(&mut opened), None);
     assert!(opened.track_panel().is_some());
     opened.keys("escape");
     assert!(opened.track_panel().is_none());

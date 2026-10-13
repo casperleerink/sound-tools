@@ -14,8 +14,8 @@ use sound_core::{Project, ProjectError};
 use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
 
-use super::Timeline;
 use super::scene::Scene;
+use super::{HeldMenu, Timeline};
 use crate::AnyClip;
 use crate::view::layout::{HEADER_WIDTH, Part, RULER_HEIGHT, TRACK_HEIGHT};
 
@@ -76,7 +76,7 @@ fn entries(fit: Option<Option<&'static str>>) -> Vec<MenuEntry> {
 }
 
 impl Timeline {
-    /// A press that opens the menu, at `(x, y)` on the timeline and `position` in the window.
+    /// A press that opens the menu, at `(x, y)` in the tracks and `position` in the window.
     /// Off a clip, nothing. On Windows the menu waits for the release.
     pub(super) fn press_for_clip_menu(
         &mut self,
@@ -86,10 +86,6 @@ impl Timeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clip_menu_held = false;
-        if self.dragging() || x < 0.0 || y < 0.0 {
-            return;
-        }
         let part = scene.viewport.part_at(&scene.layout, y);
         if !matches!(part, Some((_, Part::Track))) {
             return;
@@ -102,19 +98,21 @@ impl Timeline {
             self.select_clip(Some(id), cx);
         }
         match cfg!(windows) {
-            true => self.clip_menu_held = true,
+            true => self.menu_held = Some(HeldMenu::Clip),
             false => self.show_clip_menu(position, window, cx),
         }
     }
 
-    pub(super) fn release_for_clip_menu(
+    pub(super) fn release_for_menu(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if std::mem::take(&mut self.clip_menu_held) {
-            self.show_clip_menu(position, window, cx);
+        match self.menu_held.take() {
+            Some(HeldMenu::Clip) => self.show_clip_menu(position, window, cx),
+            Some(HeldMenu::Ruler) => self.show_ruler_menu(position, window, cx),
+            None => {}
         }
     }
 

@@ -1,4 +1,4 @@
-//! The scene of one paint: the rows, clips, lanes and tempo marks on screen, the hit tests on
+//! The scene of one paint: the rows, clips, lanes and ruler marks on screen, the hit tests on
 //! them, and the code that paints them. Nothing here touches the `Timeline`.
 
 use std::ops::Range;
@@ -15,6 +15,10 @@ use sound_ui::components::audio_clip::{
 use sound_ui::{ActiveTheme, Waveforms, typography};
 
 use super::loop_bar::{LoopBar, paint_loop_bar};
+use super::ruler::{
+    MarkZones, RulerMark, SectionBand, label_left, paint_ghost, paint_section_bands,
+    paint_section_names, paint_time_signature_marks,
+};
 use crate::AutomationLane;
 use crate::view::gesture::{Zone, zone_at};
 use crate::view::layout::{
@@ -181,9 +185,15 @@ pub struct Scene {
     pub(super) rows: Vec<TrackRow>,
     pub(super) bars: Vec<RulerBar>,
     pub(super) tempo: Vec<TempoMark>,
-    /// Where each tempo change is in the ruler, across: filled by the paint, which measures
-    /// the labels, and hit by a press.
-    pub(super) tempo_zones: Vec<(Ticks, Range<f32>)>,
+    pub(super) sections: Vec<SectionBand>,
+    /// The bars on screen where a time signature change starts, each with whether it is
+    /// selected.
+    pub(super) time_signature_marks: Vec<(u64, bool)>,
+    /// Where each mark is in the ruler, across: filled by the paint, which measures the
+    /// labels, and hit by a press.
+    pub(super) mark_zones: MarkZones,
+    /// Where the row of the ruler menu under the pointer or the keys would add its mark.
+    pub(super) ghost: Option<f32>,
     pub(super) loop_bar: LoopBar,
     /// The rectangle of a drag on empty space.
     pub(super) marquee: Option<Rect>,
@@ -227,12 +237,12 @@ impl Scene {
         Some((shape, grip))
     }
 
-    /// The tempo change whose mark is at `x` in the ruler.
-    pub(super) fn tempo_at(&self, x: f32) -> Option<Ticks> {
-        let mut zones = self.tempo_zones.iter().rev();
+    /// The mark at `x` in the ruler, the one painted last when they overlap.
+    pub(super) fn mark_at(&self, x: f32) -> Option<RulerMark> {
+        let mut zones = self.mark_zones.iter().rev();
         zones
             .find(|(_, across)| across.contains(&x))
-            .map(|(tick, _)| *tick)
+            .map(|(mark, _)| *mark)
     }
 }
 
@@ -339,11 +349,22 @@ pub(super) fn paint_scene(
         size(ruler.size.width, headers.size.height),
     );
 
-    // The ruler: a short mark and a number per bar, the loop and the tempo changes. No grid
-    // below it.
-    paint_ruler(&scene.bars, ruler, window, cx);
+    // The ruler: a short mark and a number per bar, the sections, the loop and the tempo
+    // changes. No grid below it.
+    let bars = &scene.bars;
+    let signatures = &scene.time_signature_marks;
+    let mut zones = paint_time_signature_marks(signatures, bars, ruler, window, cx);
+    paint_section_bands(&scene.sections, ruler, window, cx);
+    paint_ruler(bars, ruler, window, cx);
     paint_loop_bar(&scene.loop_bar, ruler, window, cx);
-    scene.tempo_zones = paint_tempo_marks(&scene.tempo, &scene.bars, ruler, window, cx);
+    let sections = paint_section_names(&scene.sections, bars, ruler, window, cx);
+    let tempo = paint_tempo_marks(&scene.tempo, bars, &sections, ruler, window, cx);
+    zones.extend(sections);
+    zones.extend(tempo);
+    scene.mark_zones = zones;
+    if let Some(x) = scene.ghost {
+        paint_ghost(x, ruler, window, cx);
+    }
 
     window.with_content_mask(Some(ContentMask { bounds: headers }), |window| {
         for row in &scene.rows {
@@ -739,15 +760,17 @@ enum Overview {
 
 /// The tempo changes after tick 0 in the ruler: a line at the tick and a label, `140 bpm`, in
 /// a box of the window colour that covers the bar numbers under it. On a bar line it starts
-/// after the number of the bar. The selected one has a light border, as a selected clip. Gives
-/// where each label is across, for the hit test of a press.
+/// after the number of the bar, and after the name of a section there. The selected one has a
+/// light border, as a selected clip. Gives where each label is across, for the hit test of a
+/// press.
 fn paint_tempo_marks(
     marks: &[TempoMark],
     bars: &[RulerBar],
+    taken: &MarkZones,
     ruler: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
-) -> Vec<(Ticks, Range<f32>)> {
+) -> MarkZones {
     let theme = cx.theme();
     let (line, background, border, selected_fill, selected_border, value, unit) = (
         theme.gray_700,
@@ -772,19 +795,6 @@ fn paint_tempo_marks(
     window.with_content_mask(Some(ContentMask { bounds: ruler }), |window| {
         for mark in marks {
             let x = mark.x.round();
-            // A bar number at the same place stays readable: the label goes after it.
-            let bar = bars.iter().find(|bar| (bar.x.round() - x).abs() < 1.);
-            let after = match bar {
-                Some(bar) => {
-                    let text: SharedString = bar.label().into();
-                    let runs = [run(text.len(), unit)];
-                    let shaped = window
-                        .text_system()
-                        .shape_line(text, font_size, &runs, None);
-                    8. + f32::from(shaped.width) + 4.
-                }
-                None => 4.,
-            };
             let text: SharedString = format!("{} bpm", mark.text).into();
             let runs = [
                 run(mark.text.len(), value),
@@ -793,7 +803,8 @@ fn paint_tempo_marks(
             let shaped = window
                 .text_system()
                 .shape_line(text, font_size, &runs, None);
-            let (left, width) = (x + after, f32::from(shaped.width) + 12.);
+            let left = label_left(x, bars, taken, window);
+            let width = f32::from(shaped.width) + 12.;
             let tick_line = Bounds::new(
                 ruler.origin + point(px(x), px(0.)),
                 size(px(1.), px(RULER_HEIGHT)),
@@ -814,7 +825,10 @@ fn paint_tempo_marks(
             if let Err(error) = shaped.paint(origin, px(17.), TextAlign::Left, None, window, cx) {
                 eprintln!("arrangement view: {error}");
             }
-            zones.push((mark.tick, x - 4.0..left + width));
+            // Not over the name of a section at the same place, which a press takes.
+            let named = taken.iter().filter(|(_, zone)| zone.contains(&x));
+            let start = named.map(|(_, zone)| zone.end).fold(x - 4., f32::max);
+            zones.push((RulerMark::Tempo(mark.tick), start..left + width));
         }
     });
     zones
