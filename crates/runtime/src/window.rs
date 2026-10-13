@@ -29,6 +29,7 @@ use sound_core::{
     Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
     StreamTiming,
 };
+use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
@@ -44,7 +45,7 @@ use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
 pub use crate::arrangement_wiring::transport::TransportPill;
 
 use crate::app::ChosenDevices;
-use crate::{open_with_extensions, update, views};
+use crate::{open_with_loaded, update, views};
 
 actions!(
     sound_tools,
@@ -848,7 +849,7 @@ fn print_device_report(stream: &OutputStream) {
 pub fn run(folder: &Path) -> Result<()> {
     // A window must not wait while a Sampler reads hundreds of samples, also not to open.
     sound_media::load_in_background();
-    let opened = Opened::open(folder)?;
+    let opened = Opened::open(folder, Opened::load_tools(folder)?)?;
     gpui_platform::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
@@ -867,7 +868,7 @@ pub fn run_app() {
         .run(|cx: &mut App| {
             init(cx);
             match crate::app::last_project() {
-                Some(folder) => start::open_or_explain(&folder, cx),
+                Some(folder) => start::open_or_explain(folder, cx),
                 None => start::choose_project(cx),
             }
         });
@@ -894,7 +895,7 @@ fn init(cx: &mut App) {
 struct Opened {
     project: Project,
     /// The project's own tools, for the window to keep live.
-    extensions: Option<sound_typescript::Extensions>,
+    extensions: Option<Extensions>,
     plugins: WeakPlugins,
     stream: OutputStream,
     device_name: String,
@@ -902,7 +903,16 @@ struct Opened {
 }
 
 impl Opened {
-    fn open(folder: &Path) -> Result<Self> {
+    /// The project's own tools, for [`Opened::open`]. Waits for Bun: not on the thread that
+    /// draws.
+    fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
+        // An experiment: every project the window opens can have tools of its own, written
+        // while it runs, so the folder for them is always there.
+        std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
+        Ok(Extensions::load(folder))
+    }
+
+    fn open(folder: &Path, tools: Option<FirstLoad>) -> Result<Self> {
         let chosen = ChosenDevices::read();
         let device = OutputDevice::open(chosen.output.as_deref())?;
         let device_name = device.name()?;
@@ -914,10 +924,7 @@ impl Opened {
         // up: the tick below runs its behaviour again.
         let plugins = crate::plugins(false)?;
         plugins.start_scanning();
-        // An experiment: every project the window opens can have tools of its own, written
-        // while it runs, so the folder for them is always there.
-        std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
-        let (mut project, extensions) = open_with_extensions(folder, control, plugins.clone())?;
+        let (mut project, extensions) = open_with_loaded(folder, control, plugins.clone(), tools)?;
         project.watch()?;
         // From here only the project holds the plugins, so that dropping the project ends them
         // and saves the state of every one. A handle kept here would outlive the project: the

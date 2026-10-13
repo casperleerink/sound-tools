@@ -5,7 +5,7 @@
 //! When a project does not open, a small window says why and offers the panel again, since an
 //! app started from the Finder has no terminal to print to.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gpui::{
     App, PathPromptOptions, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
@@ -31,20 +31,29 @@ pub(super) fn folder_prompt() -> PathPromptOptions {
     }
 }
 
-/// Opens the project in `folder` in its window, or says why it did not open.
-pub(super) fn open_or_explain(folder: &Path, cx: &mut App) {
-    match Opened::open(folder) {
-        Ok(opened) => {
-            opened.show(cx);
-            close_start_windows(cx);
-        }
-        Err(error) => {
-            let name = folder.file_name().unwrap_or(folder.as_os_str());
-            let message = format!("“{}” did not open: {error:#}", name.to_string_lossy());
-            eprintln!("error: {message}");
-            explain(message, cx);
-        }
-    }
+/// Opens the project in `folder` in its window, or says why it did not open. Its tools load on
+/// the background executor first.
+pub(super) fn open_or_explain(folder: PathBuf, cx: &mut App) {
+    let tools = cx.background_spawn({
+        let folder = folder.clone();
+        async move { Opened::load_tools(&folder) }
+    });
+    cx.spawn(async move |cx| {
+        let opened = tools.await.and_then(|tools| Opened::open(&folder, tools));
+        cx.update(|cx| match opened {
+            Ok(opened) => {
+                opened.show(cx);
+                close_start_windows(cx);
+            }
+            Err(error) => {
+                let name = folder.file_name().unwrap_or(folder.as_os_str());
+                let message = format!("“{}” did not open: {error:#}", name.to_string_lossy());
+                eprintln!("error: {message}");
+                explain(message, cx);
+            }
+        });
+    })
+    .detach();
 }
 
 /// Shows the folder panel and opens the folder picked in it. Cancel quits, unless the start
@@ -56,7 +65,7 @@ pub(super) fn choose_project(cx: &mut App) {
         let folder = picked_folder(picked.await.ok());
         cx.update(|cx| match folder {
             Ok(Some(folder)) => match check_project_folder(&folder) {
-                Ok(()) => open_or_explain(&folder, cx),
+                Ok(()) => open_or_explain(folder, cx),
                 Err(error) => explain(error.to_string(), cx),
             },
             Ok(None) => {
