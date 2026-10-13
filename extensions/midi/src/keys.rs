@@ -271,8 +271,12 @@ pub(crate) struct Keys {
     held: [bool; 128],
     pedal_is_down: bool,
     expression: Expression,
-    /// A release that is not out yet, because the event buffer of a block filled up.
+    /// A release that is not out yet: messages that were in the ring when it was asked for
+    /// go first, and the event buffer of a block may fill up.
     releasing: bool,
+    /// Messages still to play before the release. Those that arrive later wait for it, so a
+    /// source that never stops cannot hold it back.
+    before_release: usize,
 }
 
 impl Keys {
@@ -295,6 +299,7 @@ impl Keys {
             pedal_is_down: false,
             expression: Expression::REST,
             releasing: false,
+            before_release: 0,
         };
         let shared = Shared {
             producer: Mutex::new(producer),
@@ -365,6 +370,34 @@ impl Keys {
         }
     }
 
+    /// Sends up to `most` messages from the ring to the instrument. Returns how many it sent.
+    fn play(&mut self, context: &mut ProcessContext<'_>, most: usize) -> usize {
+        let mut sent = 0;
+        while sent < most
+            && let Ok(arrived) = self.input.peek().copied()
+        {
+            // The event buffer is full: the message waits in the ring for the next block, so
+            // nothing a keyboard sent is ever lost on the way to the instrument.
+            if let Some(event) = arrived.played.event()
+                && !context.event_outputs.push(Self::NOTES, 0, event)
+            {
+                break;
+            }
+            if self.input.pop().is_err() {
+                break;
+            }
+            sent += 1;
+            self.note(arrived.played);
+            self.report(Report::Sounded(Sounded {
+                arrived,
+                frame: context.start_frame,
+                tick: context.transport.heard_tick,
+                playing: context.transport.playing,
+            }));
+        }
+        sent
+    }
+
     fn report(&mut self, report: Report) {
         if self.reports.push(report).is_err() {
             // Only the take, the latency and the control side's copy of what is held lose
@@ -386,51 +419,34 @@ impl Processor for Keys {
     fn update(&mut self, _: &mut ()) {}
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let ProcessContext {
-            transport,
-            event_outputs,
-            start_frame,
-            ..
-        } = context;
         // A stop or a seek says nothing about a keyboard: what is held stays held, and the
         // player lifts it. The sequencer of the track sends its own `AllOff`, which does
         // release these notes too. That is the known limit of one `notes` port per instrument.
         //
         // A release does: the port it plays into is about to change, a keyboard was unplugged
-        // while it held keys, or a message was lost and may have been an off. It waits until
-        // the ring is empty, since the on of a lost off may still be in it.
+        // while it held keys, or a message was lost and may have been an off. What was in the
+        // ring when it was asked for plays first, since the on of a lost off may be in it.
         let asked = self.release.asked.load(Ordering::Relaxed);
-        if asked != self.taken {
+        if asked != self.taken && !self.releasing {
             self.taken = asked;
             self.releasing = true;
+            self.before_release = self.input.slots();
         }
-        while let Ok(arrived) = self.input.peek().copied() {
-            // The event buffer is full: the message waits in the ring for the next block, so
-            // nothing a keyboard sent is ever lost on the way to the instrument.
-            if let Some(event) = arrived.played.event()
-                && !event_outputs.push(Self::NOTES, 0, event)
-            {
-                break;
+        if self.releasing {
+            self.before_release -= self.play(context, self.before_release);
+            // When the event buffer filled up, the release goes first in the next block.
+            if self.before_release == 0 {
+                self.release(&mut context.event_outputs);
             }
-            if self.input.pop().is_err() {
-                break;
-            }
-            self.note(arrived.played);
-            self.report(Report::Sounded(Sounded {
-                arrived,
-                frame: *start_frame,
-                tick: transport.heard_tick,
-                playing: transport.playing,
-            }));
-        }
-        if self.releasing && self.input.is_empty() {
-            self.release(event_outputs);
             if !self.releasing {
                 // Out. The control side lets go of its copy of what is held, and whoever waits
                 // for it may now take the connection away.
                 self.report(Report::Released);
                 self.release.released.store(self.taken, Ordering::Relaxed);
             }
+        }
+        if !self.releasing {
+            self.play(context, usize::MAX);
         }
     }
 }

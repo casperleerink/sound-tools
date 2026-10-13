@@ -283,6 +283,31 @@ fn a_message_that_is_lost_releases_what_is_held() {
     );
 }
 
+/// A source that sends faster than a block takes keeps the ring from ever emptying. The
+/// release waits only for what was in the ring when it was asked for.
+#[test]
+fn a_release_goes_out_while_the_ring_keeps_filling() {
+    let mut harness = Harness::new();
+    let capacity = harness.control.config().event_capacity;
+    harness.input.send(on(60, 88));
+    harness.run(64, 64);
+    for _ in 0..2 * capacity {
+        assert!(harness.input.send(bend(100)));
+    }
+    harness.input.release_held();
+    for _ in 0..4 {
+        for _ in 0..capacity {
+            assert!(harness.input.send(bend(100)));
+        }
+        harness.run(64, 64);
+    }
+    // Three full blocks hold what was in the ring when the first one took the release, and
+    // the release goes first in the fourth.
+    assert!(!harness.input.release_is_pending());
+    let heard = harness.heard();
+    assert!(heard.contains(&(64 * 4, NoteEvent::Off { pitch: pitch(60) })));
+}
+
 /// A wheel left away from rest is held like a key: switching the track puts it back at rest in
 /// the instrument it bent, and that instrument is not left out of tune.
 #[test]
