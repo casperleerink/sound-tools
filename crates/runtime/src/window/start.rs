@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 
 use gpui::{
-    App, PathPromptOptions, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
-    div, prelude::*, px, size,
+    App, Global, PathPromptOptions, SharedString, TitlebarOptions, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, size,
 };
 use sound_ui::components::button::Button;
 use sound_ui::components::empty_state::EmptyState;
@@ -31,25 +31,42 @@ pub(super) fn folder_prompt() -> PathPromptOptions {
     }
 }
 
+/// A project is on its way to its window. One at a time: a second would open in this process
+/// too, with its own lock and quit handler, and take the MIDI keyboard from the first.
+struct Opening(bool);
+
+impl Global for Opening {}
+
+fn opening(cx: &App) -> bool {
+    cx.try_global::<Opening>().is_some_and(|opening| opening.0)
+}
+
 /// Opens the project in `folder` in its window, or says why it did not open. Its tools load on
-/// the background executor first.
+/// the background executor first. Does nothing while another project opens.
 pub(super) fn open_or_explain(folder: PathBuf, cx: &mut App) {
+    if opening(cx) {
+        return;
+    }
+    cx.set_global(Opening(true));
     let tools = cx.background_spawn({
         let folder = folder.clone();
         async move { Opened::load_tools(&folder) }
     });
     cx.spawn(async move |cx| {
         let opened = tools.await.and_then(|tools| Opened::open(&folder, tools));
-        cx.update(|cx| match opened {
-            Ok(opened) => {
-                opened.show(cx);
-                close_start_windows(cx);
-            }
-            Err(error) => {
-                let name = folder.file_name().unwrap_or(folder.as_os_str());
-                let message = format!("“{}” did not open: {error:#}", name.to_string_lossy());
-                eprintln!("error: {message}");
-                explain(message, cx);
+        cx.update(|cx| {
+            cx.set_global(Opening(false));
+            match opened {
+                Ok(opened) => {
+                    opened.show(cx);
+                    close_start_windows(cx);
+                }
+                Err(error) => {
+                    let name = folder.file_name().unwrap_or(folder.as_os_str());
+                    let message = format!("“{}” did not open: {error:#}", name.to_string_lossy());
+                    eprintln!("error: {message}");
+                    explain(message, cx);
+                }
             }
         });
     })
@@ -57,8 +74,11 @@ pub(super) fn open_or_explain(folder: PathBuf, cx: &mut App) {
 }
 
 /// Shows the folder panel and opens the folder picked in it. Cancel quits, unless the start
-/// window is open: then the composer is back at it.
+/// window is open: then the composer is back at it. Does nothing while a project opens.
 pub(super) fn choose_project(cx: &mut App) {
+    if opening(cx) {
+        return;
+    }
     cx.activate(true);
     let picked = cx.prompt_for_paths(folder_prompt());
     cx.spawn(async move |cx| {
