@@ -75,7 +75,7 @@ libc = "0.2"
 # MIDI devices and messages. wmidi parses without allocating, so it is safe next to the engine.
 midir = "0.11"
 no_denormals = "0.3"
-# Raw events. The project groups them itself, see ARCHITECTURE.md "Project storage".
+# Raw events: the runtime groups them itself, as a debouncer can split a burst.
 notify = "8.2"
 # macOS: the Core Audio process taps that hear other apps. The versions cpal uses. MIT.
 objc2 = "0.6"
@@ -90,7 +90,7 @@ realfft = "3.5"
 # The `NSView` of a GPUI window, which a plugin embeds its own view in. Same version as gpui.
 raw-window-handle = "0.6"
 rtrb = "0.4"
-# Does nothing unless the build sets RTSAN_ENABLE=1. See ENGINEERING.md section 3.
+# Does nothing unless the build sets RTSAN_ENABLE=1.
 rtsan-standalone = "0.3"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps key order stable, so agent diffs of project files stay small.
