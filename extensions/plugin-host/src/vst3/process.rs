@@ -6,6 +6,7 @@
 //! this file allocates, locks or makes a system call.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -216,12 +217,21 @@ impl Drop for Vst3Processor {
         // Stopped already on every way out of the engine but the engine itself going, which
         // ends the audio thread before this runs.
         self.stop();
-        // An edit that reached this side and was never played goes back to the host's side,
-        // which gives it to the next audio side: the plugin being started again, when its
-        // latency or its buses change. A newer edit of the same parameter stays.
-        while let Ok(edit) = self.edits.pop() {
-            self.handler.keep_edit(edit);
-        }
+        give_back(&mut self.edits, &self.handler);
+    }
+}
+
+/// An edit that reached an audio side and was never played goes back to the host's side,
+/// which gives it to the next audio side: the plugin being started again, when its latency or
+/// its buses change. The ring may hold more than one edit of a parameter, and the newest of
+/// them goes back. A newer edit the host's side holds already stays.
+fn give_back(edits: &mut rtrb::Consumer<ParameterChange>, handler: &Handler) {
+    let mut newest = BTreeMap::new();
+    while let Ok(edit) = edits.pop() {
+        newest.insert(edit.id, edit.value);
+    }
+    for (id, value) in newest {
+        handler.keep_edit(ParameterChange { id, value });
     }
 }
 
@@ -766,6 +776,25 @@ impl<T: Copy> Slots<T> {
 mod tests {
     use super::*;
     use sound_notes::{Amount, Bend, Pedal};
+
+    /// Two edits of one parameter wait in the ring as the audio side goes: the newer one is what
+    /// the next audio side plays. One the host's side holds is newer still and stays.
+    #[test]
+    fn the_newest_edit_of_a_parameter_goes_back_when_the_audio_side_goes() {
+        let handler = Handler::default();
+        let (mut edited, mut edits) = rtrb::RingBuffer::new(4);
+        for (id, value) in [(7, 0.25), (8, 0.25), (7, 0.75), (8, 0.75)] {
+            edited.push(ParameterChange { id, value }).unwrap();
+        }
+        handler.put_edit(ParameterChange { id: 8, value: 0.5 });
+        give_back(&mut edits, &handler);
+        let waiting = handler.take_edits();
+        let expected = [
+            ParameterChange { id: 7, value: 0.75 },
+            ParameterChange { id: 8, value: 0.5 },
+        ];
+        assert_eq!(waiting, expected);
+    }
 
     /// Every control reaches its parameter as the whole range from 0 to 1.
     #[test]
