@@ -517,7 +517,7 @@ proptest! {
             None => prop_assert!(starts_there),
             Some(added) => {
                 prop_assert!(!starts_there);
-                prop_assert_eq!(bars(&added, 130), before.clone());
+                prop_assert_eq!(&bars(&added, 130), &before);
                 prop_assert_eq!(added.change_at(added.bar(number).unwrap().start).number, number);
                 let removed = added.without_change_at(number).unwrap();
                 prop_assert_eq!(bars(&removed, 130), before);
