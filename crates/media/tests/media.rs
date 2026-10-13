@@ -1000,9 +1000,9 @@ fn a_streamed_flac_file_plays_from_a_wav_decoded_next_to_it_once() {
 }
 
 /// The regions of a library instrument load on every core at once, and several may name one
-/// FLAC file that was never decoded.
+/// FLAC file that was never decoded. It is read once and shared.
 #[test]
-fn a_flac_file_streamed_from_several_threads_at_once_plays_whole_on_each() {
+fn a_flac_file_streamed_from_several_threads_at_once_is_read_once_and_plays_whole() {
     let (_, expected) = read_all(&fixture("stereo-16"));
     let threads = 8;
     for round in 0..20 {
@@ -1019,11 +1019,14 @@ fn a_flac_file_streamed_from_several_threads_at_once_plays_whole_on_each() {
                     })
                 })
                 .collect();
-            for load in loads {
-                let audio = load.join().unwrap();
-                let audio = audio.unwrap_or_else(|error| panic!("round {round}: {error}"));
-                assert_eq!(read_in_blocks(&audio), expected, "round {round}");
+            let loaded: Vec<_> = (loads.into_iter())
+                .map(|load| load.join().unwrap())
+                .map(|audio| audio.unwrap_or_else(|error| panic!("round {round}: {error}")))
+                .collect();
+            for audio in &loaded {
+                assert!(Arc::ptr_eq(audio, &loaded[0]), "round {round}");
             }
+            assert_eq!(read_in_blocks(&loaded[0]), expected, "round {round}");
         });
     }
 }

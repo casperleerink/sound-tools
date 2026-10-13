@@ -32,13 +32,13 @@ mod stream;
 mod take;
 mod varispeed;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, PoisonError, Weak};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -250,6 +250,7 @@ pub fn load_streamed(path: &Path, shown: &str) -> Result<Arc<Audio>, MediaError>
 }
 
 fn load_known(path: &Path, shown: &str, streamed: bool) -> Result<Arc<Audio>, MediaError> {
+    let _reading = Reading::start(path);
     let stamp = stat(path, shown)?;
     if let Some(entry) = known().get(path)
         && (entry.length, entry.modified) == stamp
@@ -265,6 +266,35 @@ fn load_known(path: &Path, shown: &str, streamed: bool) -> Result<Arc<Audio>, Me
         }
     }
     read(path, shown, stamp, streamed)
+}
+
+/// The files [`load_known`] looks at now. A thread that asks for one of them waits, then shares
+/// what the first read: the regions of an instrument load on every core at once, and many name
+/// one file.
+static READING: LazyLock<(Mutex<HashSet<PathBuf>>, Condvar)> = LazyLock::new(Default::default);
+
+struct Reading<'a>(&'a Path);
+
+impl<'a> Reading<'a> {
+    fn start(path: &'a Path) -> Self {
+        let (reading, finished) = &*READING;
+        let mut reading = reading.lock().unwrap_or_else(PoisonError::into_inner);
+        while reading.contains(path) {
+            reading = finished
+                .wait(reading)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        reading.insert(path.to_path_buf());
+        Self(path)
+    }
+}
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        let (reading, finished) = &*READING;
+        (reading.lock().unwrap_or_else(PoisonError::into_inner)).remove(self.0);
+        finished.notify_all();
+    }
 }
 
 /// What the file a record names is: how many frames at what rate. It reads the header of the
