@@ -35,7 +35,7 @@ This is the main rule of the codebase.
 - Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. So a main view other than the arrangement gets no transport.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (notes, clips, the realtime note events, port names, voice handling) and `sound-media` (audio files and measuring a sound).
 - Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`; an effect an audio input and output named `audio`, and maybe a `sidechain` input. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
-- The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension.
+- The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
 - `extensions/tone`, a small non-musical tool, proves the core rules hold for a tool shaped unlike the arrangement.
 
 ## Tools, instances and behaviours
@@ -59,7 +59,7 @@ A project is a folder of JSON records and assets. Together with its extensions i
 
 ```text
 my-piece/
-  project.json              format, enabled extensions, tempo map, hand-made connections
+  project.json              format, extensions, tempo map, sections, hand-made connections
   state/
     arrangement/            a tool that owns children is a folder
       instance.json
@@ -111,11 +111,11 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 - The audio thread plays at real-time priority; on Linux through PipeWire, because cpal raises no thread behind ALSA's PipeWire plugin. Without it a slow laptop played the same piece at 2.5 times the cost and dropped out.
 - Every audio port is stereo: no channel negotiation, a cable cannot be half connected, and a plugin's stereo output fits one port.
-- Time is integers: frames for the engine, ticks (960 per quarter) for music. Saved positions are ticks, never floats or seconds. Tick to frame rounds in one place, so every part agrees.
-- Time signatures are runs of whole bars, so a change can only fall on a bar line. Rejected: changes at ticks, which could fall inside a bar.
-- Changing the time signatures moves bar lines, never notes. Keeping bar positions would need a derive that moves every clip, and it would go wrong for clips placed off the bar lines.
+- Time is integers: frames for the engine, ticks (960 per quarter) for music. Saved positions are ticks or bars, never floats or seconds.
+- Time signatures are runs of whole bars and sections start at a bar number, so neither falls inside a bar. Rejected: ticks.
+- Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would need a derive that moves every clip, and it would go wrong for clips placed off the bar lines.
 - Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
-- The core holds no scheduled events. Timeline processors make their events block by block from the transport, so a seek has nothing to invalidate and timing never depends on the control thread.
+- The core holds no scheduled events: timeline processors make theirs from the transport, so a seek has nothing to invalidate.
 - The loop goes back by a seek on the frame of its end, so processors need no loop code. With latency that leaves a gap as long as the latency. Rejected: wrapping each processor ahead of the device, far more transport code.
 - The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.
 - A routing edit keeps the state of surviving processors. Removing a processor is a hard switch, no crossfade.
