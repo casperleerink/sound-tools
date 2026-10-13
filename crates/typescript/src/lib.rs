@@ -88,13 +88,19 @@ pub struct Extensions {
     problems: Vec<Problem>,
 }
 
+/// The first load of the tools of a project, before a registry takes them.
+pub struct FirstLoad {
+    folder: PathBuf,
+    launched: Result<Option<Launched>, String>,
+}
+
 impl Extensions {
-    /// Starts the tools of the project in `folder` and registers them in `registry`. Call it
-    /// before the project opens, so their records load with it. `None` when it has no
-    /// `extensions/` folder, which is every project that has not asked for its own tools. Bun
-    /// starts only when the folder has a tool file; the SDK is written either way, for the
-    /// agent that writes the first one.
-    pub fn start(folder: &Path, registry: &mut Registry) -> Option<Self> {
+    /// Loads the tools of the project in `folder`, for [`FirstLoad::register`]. `None` when it
+    /// has no `extensions/` folder, which is every project that has not asked for its own
+    /// tools. Bun starts only when the folder has a tool file; the SDK is written either way,
+    /// for the agent that writes the first one. Waits for Bun, up to a timeout for each file:
+    /// not on the thread that draws.
+    pub fn load(folder: &Path) -> Option<FirstLoad> {
         let folder = folder.join(FOLDER);
         if !folder.is_dir() {
             return None;
@@ -102,6 +108,20 @@ impl Extensions {
         let launched = write_sdk(&folder)
             .map_err(|error| error.to_string())
             .and_then(|()| launch(&folder, Skipped::new()));
+        Some(FirstLoad { folder, launched })
+    }
+
+    /// Lists what is wrong with `extensions/` among the problems of the project.
+    pub fn report(&self, project: &mut Project) {
+        project.set_problems_in(&format!("{FOLDER}/"), self.problems.clone());
+    }
+}
+
+impl FirstLoad {
+    /// Registers the tools in `registry`. Call it before the project opens, so their records
+    /// load with it.
+    pub fn register(self, registry: &mut Registry) -> Extensions {
+        let Self { folder, launched } = self;
         let none = |problems| (None, Vec::new(), Skipped::new(), problems);
         let (bun, tools, skipped, problems) = match launched {
             Ok(Some(Launched {
@@ -124,18 +144,13 @@ impl Extensions {
             Ok(None) => none(Vec::new()),
             Err(message) => none(vec![folder_problem(message)]),
         };
-        Some(Self {
+        Extensions {
             folder,
             bun,
             tools,
             skipped,
             problems,
-        })
-    }
-
-    /// Lists what is wrong with `extensions/` among the problems of the project.
-    pub fn report(&self, project: &mut Project) {
-        project.set_problems_in(&format!("{FOLDER}/"), self.problems.clone());
+        }
     }
 }
 
@@ -360,7 +375,9 @@ mod tests {
     fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {
         let project = tempfile::tempdir().unwrap();
         std::fs::create_dir(project.path().join(FOLDER)).unwrap();
-        let extensions = Extensions::start(project.path(), &mut Registry::new()).unwrap();
+        let extensions = Extensions::load(project.path())
+            .unwrap()
+            .register(&mut Registry::new());
         assert!(extensions.bun.is_none());
         assert!(extensions.problems.is_empty(), "{:?}", extensions.problems);
         assert!(project.path().join(FOLDER).join("sdk.ts").is_file());

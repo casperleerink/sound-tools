@@ -24,7 +24,7 @@ use sound_core::{
     AgentDoc, Engine, EngineConfig, EngineControl, InstanceId, Project, ProjectError, Registry,
     SavedDestination, SavedSource, Ticks,
 };
-use sound_typescript::Extensions;
+use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use window::{LeftPanel, LeftPanelSlot};
 
@@ -361,8 +361,19 @@ pub fn open_with_extensions(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
+    open_with_loaded(folder, control, plugins, Extensions::load(folder))
+}
+
+/// [`open_with_extensions`] with the tools of the project loaded already, see
+/// [`Extensions::load`].
+pub(crate) fn open_with_loaded(
+    folder: &Path,
+    control: EngineControl,
+    plugins: Plugins,
+    extensions: Option<FirstLoad>,
+) -> Result<(Project, Option<Extensions>)> {
     let is_new = !folder.join(PROJECT_FILE).exists();
-    let (registry, extensions) = registry_of(folder, plugins)?;
+    let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open(folder, registry, control)?;
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);
@@ -375,10 +386,13 @@ pub fn open_with_extensions(
     Ok((project, extensions))
 }
 
-/// The registry, with the tools of the project in `folder` when it has its own.
-fn registry_of(folder: &Path, plugins: Plugins) -> Result<(Registry, Option<Extensions>)> {
+/// The registry, with the tools of the project when it has its own.
+fn registry_of(
+    plugins: Plugins,
+    extensions: Option<FirstLoad>,
+) -> Result<(Registry, Option<Extensions>)> {
     let mut registry = registry(plugins)?;
-    let extensions = Extensions::start(folder, &mut registry);
+    let extensions = extensions.map(|loaded| loaded.register(&mut registry));
     Ok((registry, extensions))
 }
 
@@ -395,7 +409,7 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
-    let (registry, extensions) = registry_of(folder, plugins)?;
+    let (registry, extensions) = registry_of(plugins, Extensions::load(folder))?;
     let mut project = Project::open_read_only(folder, registry, control)?;
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);
