@@ -158,7 +158,7 @@ mod tests {
         // Named without the extension here, so this file does not match itself.
         let docs = DOCS.map(|(doc, _)| format!("{doc}.md"));
         let mut violations = Vec::new();
-        for path in files(&["crates", "extensions", "tooling"])? {
+        for path in files(&["crates", "extensions", "tooling", "Cargo.toml"])? {
             if path.extension().is_some_and(|extension| extension == "md") {
                 continue;
             }
