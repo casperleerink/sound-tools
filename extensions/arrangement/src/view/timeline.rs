@@ -35,7 +35,8 @@ mod scene;
 mod state;
 
 pub use clip_menu::FitTempo;
-pub(super) use header::ARM_LEFT;
+pub(super) use header::{ARM_LEFT, MUTE, SOLO_LEFT};
+pub(super) use keys::{RENAME_HEIGHT, RENAME_LEFT};
 pub(super) use scene::{ARMED_METER_HEIGHT, ARMED_METER_LEFT, paint_takes};
 pub use scene::{ClipShape, Scene};
 pub use state::DropTarget;

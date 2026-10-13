@@ -16,13 +16,14 @@ const AUTOMATION: &str = "Automation";
 /// The first toggle starts 4 pt inside the shape of a selected header and the last ends 4 pt
 /// inside it, 4 pt apart.
 const LANES_LEFT: f32 = HEADER_INSET + 4.;
-const SOLO_LEFT: f32 = HEADER_WIDTH - HEADER_INSET - 4. - toggle::LETTER_WIDTH;
+pub(in crate::view) const SOLO_LEFT: f32 = HEADER_WIDTH - HEADER_INSET - 4. - toggle::LETTER_WIDTH;
 const MUTE_LEFT: f32 = SOLO_LEFT - 4. - toggle::LETTER_WIDTH;
 pub(in crate::view) const ARM_LEFT: f32 = MUTE_LEFT - 4. - toggle::HEIGHT;
 
 /// What a mute or solo toggle sets, and its undo steps when it turns off and on.
-type Switch = (fn(&mut TrackState, bool), [&'static str; 2]);
-const MUTE: Switch = (|state, on| state.mute = on, ["Unmute track", "Mute track"]);
+pub(in crate::view) type Switch = (fn(&mut TrackState, bool), [&'static str; 2]);
+pub(in crate::view) const MUTE: Switch =
+    (|state, on| state.mute = on, ["Unmute track", "Mute track"]);
 const SOLO: Switch = (|state, on| state.solo = on, ["Unsolo track", "Solo track"]);
 
 impl Timeline {
@@ -50,12 +51,11 @@ impl Timeline {
                     // Released: there is nothing left to show.
                     timeline.show_lanes(track.id(), shown, cx);
                 }));
-            let switch = |kind, letter, on, (set, labels): Switch| {
+            let switch = |kind, letter, on, switch: Switch| {
                 Toggle::new(name(kind), letter, on)
                     .tab_stop(false)
                     .on_change(on_toggle(track, cx, move |timeline, track, on, cx| {
-                        let label = labels[usize::from(on)];
-                        timeline.set_track(track, label, |state| set(state, on), cx);
+                        timeline.switch(track, switch, on, cx);
                     }))
             };
             let mute = switch("mute", "M", state.mute, MUTE).color(peach);
@@ -72,23 +72,23 @@ impl Timeline {
         header_column().overflow_hidden().children(toggles)
     }
 
-    /// One undo step that changes the record of a track.
-    fn set_track(
+    /// Mute or solo of a track turned on or off: one undo step.
+    pub(in crate::view) fn switch(
         &mut self,
         track: &Instance<TrackState>,
-        label: &str,
-        change: impl FnOnce(&mut TrackState),
+        (set, labels): Switch,
+        on: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(mut state) = self.session.read(cx).project().state(track).cloned() else {
             return;
         };
-        change(&mut state);
+        set(&mut state, on);
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut changes = Changes::new();
                 changes.set(track, state);
-                project.commit(label, changes)
+                project.commit(labels[usize::from(on)], changes)
             })
         });
     }

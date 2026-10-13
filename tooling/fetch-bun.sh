@@ -55,7 +55,7 @@ check "$asset.zip" "$sum"
 fetch LICENSE.md "https://raw.githubusercontent.com/oven-sh/bun/bun-v$version/LICENSE.md"
 check LICENSE.md "$license_sum"
 
-# The zip holds <asset>/bun. On Windows the tar of Windows unpacks it, as in bundle-windows.sh.
+# The zip holds <asset>/bun. On Windows the tar of Windows unpacks it.
 if [[ "$asset" == bun-windows-* ]]; then
   program="bun.exe"
   "$(cygpath "$SYSTEMROOT")/System32/tar.exe" -xf "$scratch/$asset.zip" -C "$scratch"

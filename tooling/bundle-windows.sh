@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Packs the app for Windows into a zip, for a release. Run it on Windows in Git Bash, as the
-# release job does.
+# Packs the app for Windows into its setup program, for a release. Run it on Windows in Git
+# Bash, as the release job does. It needs Inno Setup 6.
 #
 #   tooling/bundle-windows.sh [output-folder]
 #
-# Writes sound-tools-<version>-windows-x86_64.zip to dist/ by default. It holds a folder with
-# the program, bun.exe, LICENSE and install.ps1, which puts the two programs in
-# %LOCALAPPDATA%\Programs\Sound Tools. The program is the whole app but for Bun, which runs
-# the tools of a project: the plugin scan runs the program again, and the icon is inside it.
+# Writes Sound-Tools-Setup-<version>.exe to dist/ by default, from tooling/windows/setup.iss. It
+# installs the program, bun.exe and the licenses in %LOCALAPPDATA%\Programs\Sound Tools. The
+# program is the whole app but for Bun, which runs the tools of a project: the plugin scan runs
+# the program again, and the icon is inside it.
 set -euo pipefail
 
 output="${1:-dist}"
@@ -22,7 +22,15 @@ mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 
 version="$(tooling/version.sh)"
-name="sound-tools-$version-windows-x86_64"
+
+iscc="$(command -v iscc || true)"
+if [[ -z "$iscc" ]]; then
+  iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+fi
+if [[ ! -x "$iscc" ]]; then
+  echo "error: Inno Setup 6 is not installed: no ISCC.exe on the PATH or in its default folder" >&2
+  exit 1
+fi
 
 cargo build --release -p runtime --locked
 target="$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
@@ -30,16 +38,15 @@ target="$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"target_dire
 target="${target//\\\\//}"
 
 scratch="$(mktemp -d)"
-folder="$scratch/$name"
-mkdir -p "$folder"
-cp "$target/release/runtime.exe" "$folder/sound-tools.exe"
-tooling/fetch-bun.sh "$folder" "$folder"
-cp tooling/windows/install.ps1 LICENSE "$folder/"
-"$folder/sound-tools.exe" --version
+cp "$target/release/runtime.exe" "$scratch/sound-tools.exe"
+tooling/fetch-bun.sh "$scratch" "$scratch"
+cp LICENSE "$scratch/"
+"$scratch/sound-tools.exe" --version
 
-archive="$output/$name.zip"
-rm -f "$archive"
-# The tar of Windows writes zips. The GNU tar of Git Bash does not, and there is no zip.
-"$(cygpath "$SYSTEMROOT")/System32/tar.exe" -a -cf "$archive" -C "$scratch" "$name"
+setup="$output/Sound-Tools-Setup-$version.exe"
+rm -f "$setup"
+# Git Bash would rewrite an argument that starts with a slash into a path.
+MSYS2_ARG_CONV_EXCL='*' "$iscc" /Q "/DVersion=$version" "/DSource=$(cygpath -w "$scratch")" \
+  "/DOutput=$(cygpath -w "$output")" 'tooling\windows\setup.iss'
 rm -rf "$scratch"
-echo "built $archive"
+echo "built $setup"

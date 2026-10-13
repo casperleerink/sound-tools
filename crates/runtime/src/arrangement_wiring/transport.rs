@@ -20,16 +20,18 @@
 //! - `take`: the record control, a take from its start to its clips, and the audio input.
 //! - `strip`: the seek strip.
 
+mod steadiness;
 mod strip;
 mod take;
+mod tempo;
 
 use std::sync::Arc;
 
-use arrangement::TrackState;
+use arrangement::{ArrangementState, TrackState};
 use fit_tempo::FitState;
 use gpui::{
-    App, Context, Entity, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent,
-    Task, Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseUpEvent, Task, Window, div, prelude::*, px,
 };
 use metronome::Click;
 use midi::{ComputerKeys, Input, Keyboard, Latency, Lost};
@@ -43,13 +45,13 @@ use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::meter::Meter;
 use sound_ui::{
-    ActiveTheme, DragEdit, Metering, Playhead, Recording, Session, every_poll, typography,
+    ActiveTheme, DragEdit, Metering, Playhead, Recording, Session, Views, every_poll, typography,
     weak_action, weak_callback,
 };
 
 use self::take::{AudioTake, Ended};
-use super::audio_input::{AudioInput, OpenInput};
-use super::{recording, steadiness, tempo};
+use super::recording;
+use crate::window::audio_input::{AudioInput, OpenInput};
 
 /// A recording of the record control, from its start to its clips.
 struct Take {
@@ -91,6 +93,10 @@ pub struct TransportPill {
     /// The fit of the project, when it has one. Finding it walks every instance, and this is
     /// read on every frame, so it is kept between events like the end of the project.
     fit: Option<Instance<FitState>>,
+    /// Whether the main area shows the arrangement.
+    arrangement_is_main: bool,
+    /// Whether something takes the notes of the keyboard, as of the last poll.
+    takes_notes: bool,
     end_is_stale: bool,
     scrubbing: bool,
     /// The click in the engine. `None` only when the engine refused it, which is reported.
@@ -247,7 +253,7 @@ impl TransportPill {
         // without unwinding, and GPUI drops the views first, so this is the last moment the
         // numbers exist. A session with no MIDI message prints nothing.
         cx.on_release(|pill, _| {
-            super::print_midi_report(pill.latency(), pill.lost_messages());
+            print_midi_report(pill.latency(), pill.lost_messages());
         })
         .detach();
         // Its own timer, next to the one of the session: what the engine reports about the
@@ -260,6 +266,8 @@ impl TransportPill {
         Self {
             end: session.read(cx).project().end(),
             fit: fit_tempo::fit_of(session.read(cx).project()),
+            arrangement_is_main: arrangement_is_main(&session, cx),
+            takes_notes: false,
             end_is_stale: false,
             seen: *session.read(cx).playhead().read(cx),
             take: None,
@@ -303,6 +311,10 @@ impl TransportPill {
         let track = track.map(|track| track.id().clone());
         let timing = self.timing.clone();
         let recording_track = self.take.as_ref().map(|take| take.midi_track.clone());
+        if self.takes_notes != destination.is_some() {
+            self.takes_notes = destination.is_some();
+            cx.notify();
+        }
         self.poll_audio(cx);
         let Some(keyboard) = self.keyboard.as_mut() else {
             return;
@@ -676,12 +688,41 @@ impl TransportPill {
         let project = self.session.read(cx).project();
         self.end = project.end();
         self.fit = fit_tempo::fit_of(project);
+        self.arrangement_is_main = arrangement_is_main(&self.session, cx);
         self.end_is_stale = false;
         // Without an end there is no strip, and no mouse up on it would end a drag.
         if self.end.is_none() {
             self.scrubbing = false;
         }
     }
+}
+
+/// What a key press cost, measured over the session. It covers the wait for the next audio
+/// block and the output latency the device reports, not the keyboard and its cable.
+fn print_midi_report(latency: Latency, lost: Lost) {
+    if latency.count() == 0 {
+        return;
+    }
+    println!(
+        "midi to sound over {} messages: mean {:?}, shortest {:?}, longest {:?}, jitter {:?}",
+        latency.count(),
+        latency.mean(),
+        latency.shortest(),
+        latency.longest(),
+        latency.spread()
+    );
+    if lost.any() {
+        println!(
+            "midi lost: {} messages never played, {} missing from a take",
+            lost.input, lost.reports
+        );
+    }
+}
+
+fn arrangement_is_main(session: &Entity<Session>, cx: &App) -> bool {
+    let project = session.read(cx).project();
+    Views::main_instance(session, cx)
+        .is_some_and(|main| project.resolve::<ArrangementState>(&main).is_some())
 }
 
 /// Minutes and seconds, as `1:07`.
@@ -702,9 +743,53 @@ fn position_texts(project: &sound_core::Project, tick: Ticks) -> (String, String
     )
 }
 
+impl TransportPill {
+    fn computer_keys_button(&self, cx: &mut Context<Self>) -> Button {
+        let muted = cx.theme().gray_700;
+        Button::icon_only("computer-keys", "keyboard-music")
+            .variant(match self.computer_keys_are_on() {
+                true => ButtonVariant::Primary,
+                false => ButtonVariant::GhostColor(muted),
+            })
+            .size(ButtonSize::Sm)
+            .rounded(true)
+            .disabled(self.keyboard.is_none())
+            .debug_selector(|| "computer-keys".to_string())
+            .focus_handle(&self.keys_focus)
+            .on_click(cx.listener(|pill, _, _, cx| pill.toggle_computer_keys(cx)))
+    }
+
+    fn master_meter(&self, cx: &mut Context<Self>) -> Meter {
+        Meter::new("master", self.metering.level())
+            .horizontal()
+            .on_clear_clip(weak_action(cx, |pill: &mut Self, cx| {
+                pill.metering.clear_clip();
+                cx.notify();
+            }))
+    }
+
+    /// No play, tempo, record or seek: a tool that needs them draws them in its own page. The
+    /// computer keys, while something takes notes, and the master meter stay.
+    fn without_arrangement(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(12.))
+            .h(px(HEIGHT))
+            .occlude()
+            .children(self.takes_notes.then(|| self.computer_keys_button(cx)))
+            .child(self.master_meter(cx))
+            .into_any_element()
+    }
+}
+
 impl Render for TransportPill {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh(cx);
+        if !self.arrangement_is_main {
+            return self.without_arrangement(cx);
+        }
         let theme = cx.theme();
         let (fill, border, muted, green, red) = (
             theme.gray_200.blend(theme.alpha_at(0.06)),
@@ -724,7 +809,6 @@ impl Render for TransportPill {
         let strip = self.end.map(|end| self.strip(end, cx));
         let click_on = self.click_is_on();
         let has_click = self.click.is_some();
-        let keys_on = self.computer_keys_are_on();
         let recording = self.is_recording();
         let can_record = self.keyboard.is_some() || self.audio.can_open();
         let session = self.session.clone();
@@ -815,19 +899,7 @@ impl Render for TransportPill {
             .children(steadiness)
             // The computer keys and the click are switches of the composer, not of the mix, so
             // they take no colour: a muted glyph while off, and white under a dark glyph while on.
-            .child(
-                Button::icon_only("computer-keys", "keyboard-music")
-                    .variant(match keys_on {
-                        true => ButtonVariant::Primary,
-                        false => ButtonVariant::GhostColor(muted),
-                    })
-                    .size(ButtonSize::Sm)
-                    .rounded(true)
-                    .disabled(self.keyboard.is_none())
-                    .debug_selector(|| "computer-keys".to_string())
-                    .focus_handle(&self.keys_focus)
-                    .on_click(cx.listener(|pill, _, _, cx| pill.toggle_computer_keys(cx))),
-            )
+            .child(self.computer_keys_button(cx))
             .child(
                 Button::icon_only("click", "metronome")
                     .variant(match click_on {
@@ -842,14 +914,8 @@ impl Render for TransportPill {
                     .on_click(cx.listener(|pill, _, _, cx| pill.toggle_click(cx))),
             )
             // What the device plays: the master, and the click beside it.
-            .child(
-                Meter::new("master", self.metering.level())
-                    .horizontal()
-                    .on_clear_clip(weak_action(cx, |pill: &mut Self, cx| {
-                        pill.metering.clear_clip();
-                        cx.notify();
-                    })),
-            )
+            .child(self.master_meter(cx))
+            .into_any_element()
     }
 }
 

@@ -449,6 +449,7 @@ fn a_tempo_change_while_playing_plays_every_beat_once_on_a_chain_ahead() {
 /// Hears its input and makes no sound, with latency, as a compressor hears its sidechain.
 struct Listener {
     side: bool,
+    latency: u32,
 }
 
 impl Processor for Listener {
@@ -470,7 +471,7 @@ impl Processor for Listener {
     fn process(&mut self, _: &mut ProcessContext<'_>) {}
 
     fn latency(&self) -> u32 {
-        1200
+        self.latency
     }
 }
 
@@ -490,7 +491,11 @@ fn what_feeds_a_side_input_is_not_led_by_its_latency() {
         };
         let beats = edit.add_processor("beats", beats).unwrap();
         let impulses = edit.add_processor("impulses", Impulses).unwrap();
-        let listener = edit.add_processor("listener", Listener { side }).unwrap();
+        let listener = Listener {
+            side,
+            latency: 1200,
+        };
+        let listener = edit.add_processor("listener", listener).unwrap();
         let connections = [
             Connection::new(beats.id(), BEATS_OUT, impulses.id(), BEATS_IN),
             Connection::new(impulses.id(), AUDIO_OUT, listener.id(), AUDIO_IN),
@@ -511,5 +516,187 @@ fn what_feeds_a_side_input_is_not_led_by_its_latency() {
         let started = started_at.load(Ordering::Relaxed);
         assert!(heard > 0, "side {side}");
         assert_eq!(started - heard, lead, "side {side}");
+    }
+}
+
+/// Writes the engine frame, counted from 1, so every frame differs from the one before by one.
+struct Ramp;
+
+impl Processor for Ramp {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new().audio_output(AUDIO_OUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, _: &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let [left, right] = context.audio_outputs.get(AUDIO_OUT);
+        for (frame, sample) in left.iter_mut().enumerate() {
+            *sample = (context.start_frame + frame as u64 + 1) as f32;
+        }
+        right.copy_from_slice(left);
+    }
+}
+
+/// Renders `frames` frames in device buffers of 512 and keeps what a render keeps, as
+/// [`Chains::render`]: device channels 0 and 2.
+fn render(control: &mut EngineControl, engine: &mut Engine, frames: usize) -> [Vec<f32>; 2] {
+    let mut kept = [Vec::new(), Vec::new()];
+    let mut left = frames;
+    while left > 0 {
+        let size = left.min(512);
+        let mut buffer = vec![0.0; size * CHANNELS];
+        let preroll = engine.preroll_frames();
+        engine.process_block(&mut buffer);
+        let waited = (engine.preroll_frames() - preroll) as usize;
+        control.poll().unwrap();
+        for frame in buffer.chunks(CHANNELS).skip(waited) {
+            kept[0].push(frame[0]);
+            kept[1].push(frame[2]);
+        }
+        left -= size;
+    }
+    kept
+}
+
+/// One source of beats feeds a mix directly and through a processor with latency, as a track
+/// feeds the master and a return with a lookahead compressor. Another source plays on its own
+/// to channel 2. The direct path is delayed, so each beat reaches the mix once, on its frame,
+/// and in time with the other source.
+#[test]
+fn an_output_that_feeds_paths_of_different_latency_is_heard_once_on_every_path() {
+    for latency in [1, 63, 64, 300, 1200, 3000] {
+        let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, CHANNELS));
+        let mut edit = control.edit();
+        let mut beats = |name: &str| {
+            let beats = Beats {
+                heard_tick: Arc::default(),
+                started_at: Arc::default(),
+            };
+            let beats = edit.add_processor(&format!("{name}-beats"), beats).unwrap();
+            let impulses = edit.add_processor(&format!("{name}-impulses"), Impulses);
+            let impulses = impulses.unwrap();
+            edit.connect(Connection::new(
+                beats.id(),
+                BEATS_OUT,
+                impulses.id(),
+                BEATS_IN,
+            ))
+            .unwrap();
+            impulses
+        };
+        let source = beats("a");
+        let other = beats("b");
+        let delay = edit.add_processor("a-delay", Delay::new(latency)).unwrap();
+        let mix = edit.add_processor("a-mix", Delay::new(0)).unwrap();
+        let connections = [
+            Connection::new(source.id(), AUDIO_OUT, mix.id(), AUDIO_IN),
+            Connection::new(source.id(), AUDIO_OUT, delay.id(), AUDIO_IN),
+            Connection::new(delay.id(), AUDIO_OUT, mix.id(), AUDIO_IN),
+            Connection::to_device(mix.id(), AUDIO_OUT, 0),
+            Connection::to_device(other.id(), AUDIO_OUT, 2),
+        ];
+        for connection in connections {
+            edit.connect(connection).unwrap();
+        }
+        edit.commit().unwrap();
+        control.play();
+        let [mixed, other] = render(&mut control, &mut engine, latency as usize + 6 * 1200);
+        let doubled: Vec<_> = (expected(6).into_iter())
+            .map(|(frame, value)| (frame, 2.0 * value))
+            .collect();
+        assert_eq!(impulses(&mixed), doubled, "latency {latency}");
+        assert_eq!(impulses(&other), expected(6), "latency {latency}");
+    }
+}
+
+/// A ramp feeds channel 0 directly and channel 2 through a processor with latency. An edit
+/// elsewhere sends a new schedule while the delayed ramp plays; it goes on without a gap.
+#[test]
+fn a_routing_edit_keeps_the_delayed_path_playing() {
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, CHANNELS));
+    let mut edit = control.edit();
+    let ramp = edit.add_processor("ramp", Ramp).unwrap();
+    let delay = edit.add_processor("delay", Delay::new(300)).unwrap();
+    for connection in [
+        Connection::new(ramp.id(), AUDIO_OUT, delay.id(), AUDIO_IN),
+        Connection::to_device(ramp.id(), AUDIO_OUT, 0),
+        Connection::to_device(delay.id(), AUDIO_OUT, 2),
+    ] {
+        edit.connect(connection).unwrap();
+    }
+    edit.commit().unwrap();
+    let [mut direct, mut delayed] = render(&mut control, &mut engine, 1000);
+    let mut edit = control.edit();
+    let other = edit.add_processor("other", Impulses).unwrap();
+    edit.connect(Connection::to_device(other.id(), AUDIO_OUT, 0))
+        .unwrap();
+    edit.commit().unwrap();
+    let [direct_after, delayed_after] = render(&mut control, &mut engine, 1000);
+    direct.extend(direct_after);
+    delayed.extend(delayed_after);
+    assert_eq!(direct, delayed);
+    let ramp: Vec<f32> = (0..2000_usize)
+        .map(|frame| frame.saturating_sub(299) as f32)
+        .collect();
+    assert_eq!(direct, ramp);
+}
+
+/// A ramp feeds channel 0 directly and channel 2 through a processor whose latency changes
+/// while it plays. The ramp jumps with its new lead, so the direct path starts its delay over:
+/// it may skip or fall silent for a moment, but never plays again what it already played.
+#[test]
+fn a_latency_change_on_the_slow_path_never_replays_the_fast_one() {
+    let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, CHANNELS));
+    let mut edit = control.edit();
+    let ramp = edit.add_processor("ramp", Ramp).unwrap();
+    let delay = edit.add_processor("delay", Delay::new(300)).unwrap();
+    for connection in [
+        Connection::new(ramp.id(), AUDIO_OUT, delay.id(), AUDIO_IN),
+        Connection::to_device(ramp.id(), AUDIO_OUT, 0),
+        Connection::to_device(delay.id(), AUDIO_OUT, 2),
+    ] {
+        edit.connect(connection).unwrap();
+    }
+    edit.commit().unwrap();
+    let [mut direct, _] = render(&mut control, &mut engine, 2000);
+    for latency in [900, 50] {
+        control.update(delay, latency).unwrap();
+        let [after, _] = render(&mut control, &mut engine, 2000);
+        direct.extend(after);
+    }
+    let played: Vec<f32> = direct.into_iter().filter(|sample| *sample != 0.0).collect();
+    let backwards = played.windows(2).position(|pair| pair[1] <= pair[0]);
+    assert_eq!(backwards, None);
+    // 6000 frames played, 50 of them behind the ramp.
+    assert_eq!(played.last(), Some(&5_950.0));
+}
+
+/// Paths whose latency differs by more than the engine makes up for: the faster one is delayed
+/// by the most it can be, a second at 48 kHz.
+#[test]
+fn a_delay_over_the_maximum_is_made_up_to_the_maximum() {
+    for latency in [48_000, 50_000] {
+        let (mut control, mut engine) = Engine::new(EngineConfig::new(48_000, CHANNELS));
+        let mut edit = control.edit();
+        let ramp = edit.add_processor("ramp", Ramp).unwrap();
+        let listener = Listener {
+            side: false,
+            latency,
+        };
+        let listener = edit.add_processor("listener", listener).unwrap();
+        for connection in [
+            Connection::new(ramp.id(), AUDIO_OUT, listener.id(), AUDIO_IN),
+            Connection::to_device(ramp.id(), AUDIO_OUT, 0),
+        ] {
+            edit.connect(connection).unwrap();
+        }
+        edit.commit().unwrap();
+        let [direct, _] = render(&mut control, &mut engine, 49_000);
+        assert_eq!(direct.last(), Some(&1_000.0), "latency {latency}");
     }
 }

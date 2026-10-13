@@ -376,8 +376,8 @@ impl ClipCard {
     }
 }
 
-/// The title of the card: the file name, plain.
-fn title(text: impl Into<SharedString>) -> AnyElement {
+/// The title of a card that is no device, such as the file name of a clip: plain.
+pub(super) fn title(text: impl Into<SharedString>) -> AnyElement {
     div()
         .min_w_0()
         .truncate()
