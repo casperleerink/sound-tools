@@ -57,8 +57,8 @@ pub struct SynthState {
     /// 0 is a flat filter. 1 is a strong peak at the cutoff. Clean, it never oscillates on its
     /// own. The filter input is turned down as this goes up, so the peak does not overload.
     pub resonance: f32,
-    /// Warm saturates inside the filter, so a loud resonance compresses and full resonance
-    /// rings on its own.
+    /// Warm saturates inside the filter: a loud sound bends at the cutoff and above, a quiet
+    /// one passes clean, and full resonance rings on its own.
     pub character: FilterCharacter,
     /// From note on to full level.
     pub attack_seconds: f32,

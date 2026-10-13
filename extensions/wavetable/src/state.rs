@@ -285,8 +285,8 @@ pub struct Filter {
     /// Gain into a soft saturation before the filter, at four times the sample rate. 0 is
     /// clean.
     pub drive_db: f32,
-    /// Warm saturates inside the filter, at four times the sample rate, so a loud resonance
-    /// compresses and full resonance rings on its own.
+    /// Warm saturates inside the filter, at four times the sample rate: a loud sound bends at
+    /// the cutoff and above, a quiet one passes clean, and full resonance rings on its own.
     pub character: FilterCharacter,
 }
 

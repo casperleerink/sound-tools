@@ -1,46 +1,53 @@
-//! The warm character: a resonance that compresses as the sound gets louder, where the clean
-//! filter's grows with it, and full resonance that rings on its own at a steady level wherever
-//! the cutoff is.
+//! The warm character: a quiet sound passes as through the clean filter, a hot one bends at
+//! the cutoff, which compresses the peak and adds odd harmonics, and full resonance rings on
+//! its own at a steady level and in tune wherever the cutoff is.
 
 use filter::{FilterCharacter, FilterState, Slope};
 
-use crate::support::{Rig, SAMPLE_RATE, Signal, noise, peak, sine};
+use crate::support::{Rig, SAMPLE_RATE, Signal, amplitude_at, noise, peak, sine};
 
-/// The peak of the steady output for a sine at the cutoff, at a resonance near the top.
-fn peak_at_the_cutoff(character: FilterCharacter, slope: Slope, amplitude: f32) -> f32 {
+/// A tone at the cutoff at resonance 0.5, once it has settled: its gain and its third harmonic
+/// against it, in dB.
+fn tone_at_the_cutoff(character: FilterCharacter, slope: Slope, amplitude: f32) -> (f64, f64) {
     let state = FilterState {
         cutoff_hz: 1_000.0,
-        resonance: 0.9,
+        resonance: 0.5,
         slope,
         character,
         ..FilterState::default()
     };
     let mut rig = Rig::new(state, sine(1_000.0, amplitude));
-    let [left, _] = rig.render(SAMPLE_RATE as usize / 2);
-    peak(&left[SAMPLE_RATE as usize / 4..])
+    rig.render(SAMPLE_RATE as usize / 4);
+    // A tenth of a second: whole cycles of the tone and of its harmonics.
+    let [left, _] = rig.render(SAMPLE_RATE as usize / 10);
+    let level = |hz| amplitude_at(&left, 0, hz, SAMPLE_RATE);
+    let tone = level(1_000.0);
+    let db = |ratio: f64| 20.0 * ratio.log10();
+    (db(tone / f64::from(amplitude)), db(level(3_000.0) / tone))
 }
 
-/// 20 dB more into a ringing peak: the clean filter gives 20 dB more, the warm one far less.
+/// At -24 dBFS warm is the clean filter. At -6 dBFS the clean filter is as linear as ever, and
+/// the warm one gives the peak less gain and adds a third harmonic you hear.
 #[test]
-fn a_loud_resonance_compresses_when_warm_and_not_when_clean() {
-    let db = |ratio: f32| 20.0 * ratio.log10();
+fn warm_is_clean_when_quiet_and_bends_a_hot_peak_at_moderate_resonance() {
     for slope in Slope::ALL {
-        let rise = |character| {
-            let quiet = peak_at_the_cutoff(character, slope, 0.05);
-            let loud = peak_at_the_cutoff(character, slope, 0.5);
-            (db(loud / quiet), loud)
-        };
-        let ((clean, clean_peak), (warm, warm_peak)) =
-            (rise(FilterCharacter::Clean), rise(FilterCharacter::Warm));
+        let quiet = |character| tone_at_the_cutoff(character, slope, 0.063);
+        let hot = |character| tone_at_the_cutoff(character, slope, 0.5);
+        let ((clean, _), (warm, warm_third)) =
+            (quiet(FilterCharacter::Clean), quiet(FilterCharacter::Warm));
         println!(
-            "{slope:?}: clean rises {clean:.1} dB to {clean_peak:.2}, warm {warm:.1} dB to {warm_peak:.2}"
+            "{slope:?} at -24 dBFS: clean {clean:.2} dB, warm {warm:.2} dB, third {warm_third:.0} dB"
         );
-        assert!((clean - 20.0).abs() < 0.1, "{slope:?}: {clean}");
-        assert!(warm < 12.0, "{slope:?}: {warm}");
-        assert!(
-            warm_peak < 0.6 * clean_peak,
-            "{slope:?}: {warm_peak} {clean_peak}"
+        assert!((warm - clean).abs() < 0.6, "{slope:?}: {clean} {warm}");
+        assert!(warm_third < -50.0, "{slope:?}: {warm_third}");
+        let ((clean, clean_third), (warm, warm_third)) =
+            (hot(FilterCharacter::Clean), hot(FilterCharacter::Warm));
+        println!(
+            "{slope:?} at -6 dBFS: gain clean {clean:.2} dB, warm {warm:.2} dB; third clean {clean_third:.0} dB, warm {warm_third:.0} dB"
         );
+        assert!(clean_third < -90.0, "{slope:?}: {clean_third}");
+        assert!(warm < clean - 4.0, "{slope:?}: {clean} {warm}");
+        assert!(warm_third > -55.0, "{slope:?}: {warm_third}");
     }
 }
 
@@ -78,11 +85,39 @@ fn full_warm_resonance_rings_on_at_a_steady_level_while_the_cutoff_sweeps() {
         });
         let swing = 20.0 * (highest / lowest).log10();
         println!("{slope:?}: warm rings at {lowest:.3} to {highest:.3}, {swing:.2} dB apart");
-        assert!(lowest > 0.15, "{slope:?}: {lowest}");
+        assert!(lowest > 0.1, "{slope:?}: {lowest}");
         assert!(swing < 0.5, "{slope:?}: {swing} dB");
         let mut clean = Rig::new(state(FilterCharacter::Clean), burst());
         clean.render(SAMPLE_RATE as usize);
         let [ring, _] = clean.render(SAMPLE_RATE as usize);
         assert!(peak(&ring) < 1e-3, "{slope:?}: {}", peak(&ring));
+    }
+}
+
+/// The bend slows the ring a little, the more the louder it rings: it stays within half a
+/// semitone of the cutoff, from the bass to the top.
+#[test]
+fn full_warm_resonance_rings_in_tune_with_the_cutoff() {
+    for cutoff_hz in [100.0, 1_000.0, 5_000.0] {
+        let state = FilterState {
+            cutoff_hz,
+            resonance: 1.0,
+            character: FilterCharacter::Warm,
+            ..FilterState::default()
+        };
+        let mut rig = Rig::new(state, burst());
+        rig.render(2 * SAMPLE_RATE as usize);
+        let [ring, _] = rig.render(SAMPLE_RATE as usize);
+        let rising: Vec<usize> = (1..ring.len())
+            .filter(|frame| ring[frame - 1] < 0.0 && ring[*frame] >= 0.0)
+            .collect();
+        let cycles = (rising.len() - 1) as f32;
+        let hz = cycles * SAMPLE_RATE as f32 / (rising[rising.len() - 1] - rising[0]) as f32;
+        let semitones = 12.0 * (hz / cutoff_hz).log2();
+        println!(
+            "{cutoff_hz} Hz: rings at {hz:.1} Hz, {semitones:+.2} semitones, peak {:.3}",
+            peak(&ring)
+        );
+        assert!(semitones.abs() < 0.5, "{cutoff_hz}: {semitones}");
     }
 }

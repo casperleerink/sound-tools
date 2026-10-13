@@ -64,8 +64,8 @@ pub struct FilterState {
     pub slope: Slope,
     /// Gain into a soft saturation before the filter. 0 is clean.
     pub drive_db: f32,
-    /// Warm saturates inside the filter, so a loud resonance compresses and full resonance
-    /// rings on its own.
+    /// Warm saturates inside the filter: a loud sound bends at the cutoff and above, a quiet
+    /// one passes clean, and full resonance rings on its own.
     pub character: FilterCharacter,
     /// 0 is the sound as it came in, 1 is the filtered sound only.
     pub mix: f32,

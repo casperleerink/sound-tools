@@ -21,12 +21,14 @@
 //! and from one slope to the other ([`FilterSlope::weight`]) by running both sections and
 //! gliding from the output of the first to the output of the second.
 //!
-//! The warm character ([`SvfSection::next_warm`]) bends the first section inside its loop: its
-//! damping rises with the square of its band pass, as in a Van der Pol oscillator. A loud
-//! resonance damps itself, so its peak grows far slower than the sound that drives it, and at
-//! the top of the resonance the damping starts below 0, so the filter rings on its own at a
-//! level the bend holds, whatever the cutoff. A bend makes harmonics, so a processor runs a
-//! warm section at four times the sample rate ([`crate::Oversampler`]).
+//! The warm character ([`SvfSection::next_warm`]) bends the first section inside its loop, as
+//! the transistors of an analog filter do: a `tanh` on the high pass where it goes into the
+//! first integrator. A quiet sound passes clean, and so does what is below the cutoff; a loud
+//! sound bends at the cutoff and above it, so the peak compresses, the sound darkens and gains
+//! odd harmonics. Its damping also rises with the square of its band pass, as in a Van der Pol
+//! oscillator: at the top of the resonance the damping starts below 0, and the filter rings on
+//! its own at a level that rise holds, whatever the cutoff. A bend makes harmonics, so a
+//! processor runs a warm section at four times the sample rate ([`crate::Oversampler`]).
 
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
@@ -111,7 +113,8 @@ pub enum FilterCharacter {
     /// Linear at every level: the same peak for a quiet and a loud sound.
     #[default]
     Clean,
-    /// A loud resonance compresses itself, and full resonance rings on its own.
+    /// A loud sound bends inside the filter: its peak compresses, it darkens and gains odd
+    /// harmonics. A quiet one passes as through clean. Full resonance rings on its own.
     Warm,
 }
 
@@ -144,8 +147,14 @@ pub const SVF_MAX_Q: f32 = 20.0;
 /// the eighth, so up to about 0.8 a warm filter has the peaks of a clean one.
 const WARM_UNDAMPING: f32 = 0.07;
 /// How fast the damping of a warm section rises with the square of its band pass. With
-/// [`WARM_UNDAMPING`] it sets the level of the ring at full resonance.
-const WARM_DAMPING: f32 = 0.01;
+/// [`WARM_UNDAMPING`] it sets the level of the ring at full resonance, low enough that the
+/// `tanh` pulls its pitch less than half a semitone flat.
+const WARM_DAMPING: f32 = 0.05;
+/// The gain into the `tanh` of a warm section at resonance 0: its high pass bends from about
+/// `1 / WARM_DRIVE`, so the saw of a voice bends where it passes the cutoff and a sound at
+/// -24 dBFS does not. Resonance raises the high pass at the cutoff by its Q, so the gain falls
+/// with it, to a fifth at resonance 1, where it also keeps the ring in tune.
+const WARM_DRIVE: f32 = 3.0;
 
 /// The Q of one section at resonance 0: a second order Butterworth filter.
 const BUTTERWORTH_Q: f32 = FRAC_1_SQRT_2;
@@ -242,6 +251,8 @@ pub struct SvfFactors {
     a3: f32,
     /// What a warm section takes off `k`.
     undamping: f32,
+    /// The gain into the `tanh` of a warm section.
+    drive: f32,
 }
 
 impl SvfFactors {
@@ -257,6 +268,7 @@ impl SvfFactors {
             a2,
             a3: g * a2,
             undamping: 0.0,
+            drive: WARM_DRIVE,
         }
     }
 
@@ -280,6 +292,7 @@ impl SvfFactors {
         let (q, level) = first_section(resonance, slope);
         let first = Self {
             undamping: WARM_UNDAMPING * resonance.powi(8),
+            drive: WARM_DRIVE / (1.0 + 4.0 * resonance * resonance),
             ..Self::new(g, 1.0 / q)
         };
         ([first, Self::new(g, 1.0 / SECOND_Q)], level)
@@ -305,8 +318,10 @@ impl SvfSection {
     }
 
     /// One frame of a first section between clean, `warmth` 0, and warm, 1: [`Self::next`]
-    /// with a damping that rises with the band pass of the last frame. The factors depend on
-    /// the damping, so they are worked out for every frame: a division more than `next`.
+    /// with the high pass bent by `tanh` on its way into the first integrator, and a damping
+    /// that rises with the band pass of the last frame. The high pass is solved as the clean
+    /// filter solves it and then bent: at four times the rate that is close to solving the bend
+    /// itself, and a division less.
     #[inline]
     pub fn next_warm(
         &mut self,
@@ -316,19 +331,17 @@ impl SvfSection {
         input: f32,
         warmth: f32,
     ) -> f32 {
+        let g = factors.g;
         let bend = WARM_DAMPING * self.band * self.band - factors.undamping;
         let damping = factors.k + warmth * bend;
-        let g = factors.g;
-        let a1 = 1.0 / (1.0 + g * (g + damping));
-        let a2 = g * a1;
-        let warm = SvfFactors {
-            k: damping,
-            a1,
-            a2,
-            a3: g * a2,
-            ..*factors
-        };
-        let (v1, v2) = self.band_and_low(&warm, input);
+        let feedback = damping + g;
+        let high = (input - feedback * self.ic1 - self.ic2) / (1.0 + g * feedback);
+        let bent = soft_tanh(factors.drive * high) / factors.drive;
+        let into = high + warmth * (bent - high);
+        let v1 = g * into + self.ic1;
+        let v2 = g * v1 + self.ic2;
+        self.ic1 = 2.0 * v1 - self.ic1;
+        self.ic2 = 2.0 * v2 - self.ic2;
         self.band = v1;
         mix(factors, taps, level, input, damping, v1, v2)
     }
@@ -359,6 +372,16 @@ impl SvfSection {
     pub fn is_silent(&self) -> bool {
         self.ic1 == 0.0 && self.ic2 == 0.0
     }
+}
+
+/// A cheap `tanh`, the (3, 2) Padé approximant up to 3, where it reaches 1, and 1 past it:
+/// within 3% of `tanh`, smooth, with one division. A curve for the bend of a warm section, which
+/// is the slowest step of its loop.
+#[inline]
+fn soft_tanh(sample: f32) -> f32 {
+    let sample = sample.clamp(-3.0, 3.0);
+    let square = sample * sample;
+    sample * (27.0 + square) / (27.0 + 9.0 * square)
 }
 
 /// The mix of low, band and high pass and notch that `taps` asks for, from the band pass `v1`

@@ -244,10 +244,10 @@ fn a_drive_on_one_of_two_filters_side_by_side_makes_no_comb() {
     }
 }
 
-/// The same with filter 1 warm: without resonance it barely bends, so it sounds as the clean
-/// one beside it, in time.
+/// The same with filter 1 warm and the oscillator quiet, at -24 dB: warm then barely bends,
+/// so it sounds as the clean one beside it, in time.
 #[test]
-fn a_warm_filter_beside_a_clean_one_makes_no_comb() {
+fn a_quiet_warm_filter_beside_a_clean_one_makes_no_comb() {
     let filter = Filter {
         cutoff_hz: 4_000.0,
         resonance: 0.0,
@@ -260,7 +260,10 @@ fn a_warm_filter_beside_a_clean_one_makes_no_comb() {
         },
         filter_2: filter,
         routing: Routing::Parallel,
-        ..plain(Oscillator::default())
+        ..plain(Oscillator {
+            gain: 0.063,
+            ..Oscillator::default()
+        })
     };
     let numbers: Vec<u32> = (1..=24).collect();
     let clean = levels(&render(side_by_side(FilterCharacter::Clean)), &numbers);
@@ -271,26 +274,29 @@ fn a_warm_filter_beside_a_clean_one_makes_no_comb() {
     }
 }
 
-/// Full resonance half an octave over C6, between its first two harmonics: the warm filter
-/// rings there on its own, the clean one only lets the note through.
+/// At resonance 0.5 with the oscillator at its full gain, the harmonic on the cutoff comes out
+/// quieter when warm, and the fundamental, far under it, keeps its level.
 #[test]
-fn at_full_resonance_a_warm_filter_rings_at_its_cutoff() {
-    for cutoff_hz in [1_500.0, 1_600.0] {
-        let level = |character| {
-            let state = WavetableState {
-                filter_1: Filter {
-                    cutoff_hz,
-                    resonance: 1.0,
-                    character,
-                    ..Filter::default()
-                },
-                ..plain(Oscillator::default())
-            };
-            let mut harness = Harness::with_notes(vec![note(0, ticks(2.0), 84, 127)], state);
-            level_at(&steady(&mut harness), cutoff_hz)
+fn at_moderate_resonance_a_warm_filter_bends_its_peak() {
+    let level = |character| {
+        let state = with_filter(Filter {
+            cutoff_hz: C3 * 8.0,
+            resonance: 0.5,
+            character,
+            ..Filter::default()
+        });
+        let state = WavetableState {
+            osc_1: Oscillator {
+                gain: 1.0,
+                ..state.osc_1
+            },
+            ..state
         };
-        let (warm, clean) = (level(FilterCharacter::Warm), level(FilterCharacter::Clean));
-        println!("{cutoff_hz} Hz: warm {warm:.4}, clean {clean:.4}");
-        assert!(warm > 20.0 * clean, "{cutoff_hz}: {warm} {clean}");
-    }
+        levels(&render(state), &[1, 8])
+    };
+    let (clean, warm) = (level(FilterCharacter::Clean), level(FilterCharacter::Warm));
+    let (fundamental, peak) = (db(warm[0] / clean[0]), db(warm[1] / clean[1]));
+    println!("warm against clean: peak {peak:.2} dB, fundamental {fundamental:.2} dB");
+    assert!(peak < -3.0, "{peak}");
+    assert!(fundamental.abs() < 1.0, "{fundamental}");
 }

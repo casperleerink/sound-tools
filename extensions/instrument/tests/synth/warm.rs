@@ -1,54 +1,65 @@
-//! The warm character: at full resonance a held note rings at the cutoff on top of its own
-//! sound, and at no resonance it sounds as the clean filter does, as late as the oversampling.
+//! The warm character: a voice is a full scale saw into the filter, so warm bends its peak at
+//! moderate resonance, and its sound comes as late as the oversampling.
 
 use instrument::{FilterCharacter, SynthState, Waveform};
 use sound_core::Oversampler;
 
-use crate::support::{Harness, SAMPLE_RATE, level_at, note, peak};
+use crate::support::{Harness, SAMPLE_RATE, level_at, note};
 
 const SECOND: usize = SAMPLE_RATE as usize;
 
-fn held(cutoff_hz: f32, resonance: f32, character: FilterCharacter) -> Vec<f32> {
+/// A3 held, its fourth harmonic on the cutoff at resonance 0.5: half a second once it has
+/// settled.
+fn held(character: FilterCharacter) -> Vec<f32> {
     let state = SynthState {
         waveform: Waveform::Saw,
-        cutoff_hz,
-        resonance,
+        cutoff_hz: 880.0,
+        resonance: 0.5,
         character,
         sustain: 1.0,
         gain: 0.25,
         ..SynthState::default()
     };
-    // C6, 1047 Hz, held for two seconds.
-    let output = Harness::with_track(vec![note(0, 3_840, 84, 127)], state).play(2 * SECOND);
-    output[SECOND / 2..3 * SECOND / 2].to_vec()
+    let output = Harness::with_track(vec![note(0, 3_840, 57, 127)], state).play(2 * SECOND);
+    output[SECOND / 2..SECOND].to_vec()
 }
 
-/// Half an octave over the note, between its first two harmonics, the warm filter rings on its
-/// own; the clean one only lets the note through.
+/// The harmonic on the peak comes out quieter when warm; the fundamental, far under the cutoff,
+/// keeps its level.
 #[test]
-fn at_full_resonance_a_warm_voice_rings_at_the_cutoff() {
-    for cutoff_hz in [1_500.0, 1_600.0] {
-        let warm = level_at(&held(cutoff_hz, 1.0, FilterCharacter::Warm), cutoff_hz);
-        let clean = level_at(&held(cutoff_hz, 1.0, FilterCharacter::Clean), cutoff_hz);
-        println!("{cutoff_hz} Hz: warm {warm:.4}, clean {clean:.4}");
-        assert!(warm > 20.0 * clean, "{cutoff_hz}: {warm} {clean}");
-    }
+fn at_moderate_resonance_a_warm_voice_bends_its_peak() {
+    let (clean, warm) = (held(FilterCharacter::Clean), held(FilterCharacter::Warm));
+    let db = |samples: &[f32], hz: f32| 20.0 * level_at(samples, hz).log10();
+    let peak = db(&warm, 880.0) - db(&clean, 880.0);
+    let fundamental = db(&warm, 220.0) - db(&clean, 220.0);
+    println!("warm against clean: peak {peak:.2} dB, fundamental {fundamental:.2} dB");
+    assert!(peak < -3.0, "{peak}");
+    assert!(fundamental.abs() < 1.0, "{fundamental}");
 }
 
-/// Without resonance the warm filter barely bends, so it sounds as the clean one, as late as
-/// the way up and down: the synth reports no latency for it.
+/// With the cutoff at the top and no resonance the warm filter bends only the edges of the
+/// saw, so a warm voice is closest to the clean one as late as the way up and down: the synth
+/// reports no latency for it.
 #[test]
-fn without_resonance_a_warm_voice_sounds_as_a_clean_one_as_late_as_the_oversampling() {
-    let clean = held(2_000.0, 0.0, FilterCharacter::Clean);
-    let warm = held(2_000.0, 0.0, FilterCharacter::Warm);
-    let loudest = peak(&clean);
-    let late = warm[Oversampler::DELAY_FRAMES..].iter();
-    let largest = clean
-        .iter()
-        .zip(late)
-        .fold(0.0_f32, |largest, (clean, warm)| {
-            largest.max((clean - warm).abs())
-        });
-    println!("largest difference {largest:.5} of {loudest:.3}");
-    assert!(largest < 0.02 * loudest, "{largest} of {loudest}");
+fn an_open_warm_voice_is_the_clean_one_as_late_as_the_oversampling() {
+    let open = |character| {
+        let state = SynthState {
+            cutoff_hz: 20_000.0,
+            resonance: 0.0,
+            character,
+            sustain: 1.0,
+            ..SynthState::default()
+        };
+        let output = Harness::with_track(vec![note(0, 3_840, 57, 127)], state).play(SECOND);
+        output[SECOND / 2..].to_vec()
+    };
+    let (clean, warm) = (open(FilterCharacter::Clean), open(FilterCharacter::Warm));
+    let apart = |lag: usize| -> f32 {
+        let pairs = clean.iter().zip(&warm[lag..]);
+        pairs.map(|(clean, warm)| (clean - warm).powi(2)).sum()
+    };
+    let closest = (0..2 * Oversampler::DELAY_FRAMES)
+        .min_by(|a, b| apart(*a).total_cmp(&apart(*b)))
+        .unwrap();
+    assert_eq!(closest, Oversampler::DELAY_FRAMES);
 }

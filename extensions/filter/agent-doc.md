@@ -30,7 +30,7 @@ These are the defaults. A field you leave out takes its default, so `"state": {}
 | `resonance` | A peak at the cutoff, and a narrower band or notch. 0 is none, 1 rings strongly. | 0 to 1 | 0.2 |
 | `slope` | How steeply it cuts, in dB per octave. 24 is steeper and more synth-like. | `12` or `24` | `12` |
 | `drive_db` | Gain into a soft saturation before the filter. 0 is clean. It makes quiet sounds louder by the same dB, and bends loud ones. | 0 to 24 | 0 |
-| `character` | `"warm"` saturates inside the filter: a loud resonance compresses instead of whistling, and `resonance` near 1 rings on its own, a steady tone at the cutoff. `"clean"` stays the same at every level. | `"clean"` or `"warm"` | `"clean"` |
+| `character` | `"warm"` saturates inside the filter: a loud sound gets a rounder, compressed peak, a darker top and odd harmonics, a quiet one stays clean, and `resonance` near 1 rings on its own, a steady tone at the cutoff. `"clean"` stays the same at every level. | `"clean"` or `"warm"` | `"clean"` |
 | `mix` | 1 is only the filtered sound, 0 is the sound as it came in. | 0 to 1 | 1 |
 | `lfo_rate_hz` | How fast the LFO moves the cutoff up and down. | 0.05 to 20 | 1 |
 | `lfo_depth_octaves` | How far the LFO moves the cutoff each way. 0 is no LFO. | 0 to 4 | 0 |

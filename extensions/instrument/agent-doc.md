@@ -26,7 +26,7 @@ These are the defaults. A field you leave out takes its default, so `"state": {}
 | `waveform` | The oscillator. `"saw"` is bright and full, `"square"` is hollow. | `"saw"`, `"square"` |
 | `cutoff_hz` | The filter lets through what is below this frequency. Lower is darker. | 20 to 20000 |
 | `resonance` | A peak at the cutoff. 0 is none, 1 is a strong ringing peak. | 0 to 1 |
-| `character` | `"warm"` saturates inside the filter: a loud resonance compresses instead of whistling, and `resonance` near 1 rings on its own, a steady tone at the cutoff. `"clean"` stays the same at every level. | `"clean"`, `"warm"` |
+| `character` | `"warm"` saturates inside the filter: a rounder, compressed peak, a darker top and odd harmonics, and `resonance` near 1 rings on its own, a steady tone at the cutoff. `"clean"` stays the same at every level. | `"clean"`, `"warm"` |
 | `attack_seconds` | From note on to full level. | 0.001 to 10 |
 | `decay_seconds` | From full level down to the sustain level. | 0.001 to 10 |
 | `sustain` | The level a held note settles at. 0 makes every note a pluck. | 0 to 1 |
