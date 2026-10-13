@@ -391,6 +391,65 @@ impl TimeSignatures {
         }
     }
 
+    /// The first bar of the run that `tick` is in: where the time signature there starts.
+    pub fn change_at(&self, tick: Ticks) -> Bar {
+        self.run_before(self.later.partition_point(|bar| bar.start <= tick))
+    }
+
+    /// The same bars with a new change at bar `number` to the time signature that plays there,
+    /// so no bar moves until it is edited. `None` when a change starts there already, which bar
+    /// 1 always has, or when there is no such bar.
+    ///
+    /// The `with_` and `without_` functions give time signatures valid by construction, like
+    /// the tempo change functions of [`TempoMap`].
+    pub fn with_change_at(&self, number: u64) -> Option<Self> {
+        let bar = self.bar(number)?;
+        let index = self.later.partition_point(|later| later.number <= number);
+        let start = self.run_before(index);
+        if start.number == number {
+            return None;
+        }
+        let mut runs = self.runs.clone();
+        let run = runs.get_mut(index)?;
+        let before = NonZeroU32::new(u32::try_from(number - start.number).ok()?)?;
+        // The last run goes on forever, so its count of bars says nothing.
+        let after = run.bars.get().checked_sub(before.get());
+        let after = after.and_then(NonZeroU32::new).unwrap_or(NonZeroU32::MIN);
+        run.bars = before;
+        let signature = bar.signature;
+        runs.insert(
+            index + 1,
+            SignatureRun {
+                signature,
+                bars: after,
+            },
+        );
+        Self::new(runs).ok()
+    }
+
+    /// The change at bar `number` to another time signature. Later changes keep their bar
+    /// numbers. `None` when no change starts there.
+    pub fn with_signature_at(&self, number: u64, signature: TimeSignature) -> Option<Self> {
+        let index = self.changes().position(|bar| bar.number == number)?;
+        let mut runs = self.runs.clone();
+        runs.get_mut(index)?.signature = signature;
+        Self::new(runs).ok()
+    }
+
+    /// Without the change at bar `number`: the time signature before it goes on over its bars.
+    /// `None` at bar 1, which every piece keeps, and where no change starts.
+    pub fn without_change_at(&self, number: u64) -> Option<Self> {
+        let index = self.changes().position(|bar| bar.number == number)?;
+        let previous = index.checked_sub(1)?;
+        let mut runs = self.runs.clone();
+        let removed = runs.remove(index);
+        if index < runs.len() {
+            let run = runs.get_mut(previous)?;
+            run.bars = run.bars.checked_add(removed.bars.get())?;
+        }
+        Self::new(runs).ok()
+    }
+
     /// The first bar of the last of the first `count` later runs, or bar 1 when `count` is 0.
     fn run_before(&self, count: usize) -> Bar {
         (count.checked_sub(1))

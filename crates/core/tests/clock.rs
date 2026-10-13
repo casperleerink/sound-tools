@@ -496,6 +496,64 @@ fn a_tempo_change_is_added_with_the_tempo_in_effect_and_removed_by_its_tick() {
     assert_eq!(serde_json::from_str::<TempoMap>(&text).unwrap(), added);
 }
 
+/// Bar number, start and time signature of the first `count` bars.
+fn bars(time_signatures: &TimeSignatures, count: usize) -> Vec<(u64, Ticks, TimeSignature)> {
+    let bars = time_signatures.bars_from(Ticks(0)).take(count);
+    bars.map(|bar| (bar.number, bar.start, bar.signature))
+        .collect()
+}
+
+proptest! {
+    /// Adding a change keeps every bar where it was, so nothing sounds different, and taking
+    /// it out again gives the same bars back.
+    #[test]
+    fn a_time_signature_change_is_added_and_removed_without_moving_a_bar(
+        time_signatures in any_time_signatures(),
+        number in 1_u64..120,
+    ) {
+        let before = bars(&time_signatures, 130);
+        let starts_there = time_signatures.changes().any(|bar| bar.number == number);
+        match time_signatures.with_change_at(number) {
+            None => prop_assert!(starts_there),
+            Some(added) => {
+                prop_assert!(!starts_there);
+                prop_assert_eq!(bars(&added, 130), before.clone());
+                prop_assert_eq!(added.change_at(added.bar(number).unwrap().start).number, number);
+                let removed = added.without_change_at(number).unwrap();
+                prop_assert_eq!(bars(&removed, 130), before);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_time_signature_change_is_set_and_removed_by_its_bar() {
+    let piece = time_signatures(&[("4/4", 8), ("7/8", 2), ("4/4", 1)]);
+    assert_eq!(piece.change_at(Ticks(0)).number, 1);
+    assert_eq!(piece.change_at(Ticks(9 * 3840 - 1)).number, 9);
+    assert_eq!(piece.change_at(Ticks(99 * 3840)).number, 11);
+
+    // Another time signature at bar 9: the bars after it move, and the change at bar 11 stays
+    // at bar 11.
+    let changed = piece.with_signature_at(9, signature("3/4")).unwrap();
+    assert_eq!(
+        changed,
+        time_signatures(&[("4/4", 8), ("3/4", 2), ("4/4", 1)])
+    );
+    assert_eq!(piece.with_signature_at(10, signature("3/4")), None);
+
+    // Taken out, the time signature before it goes on over its bars.
+    let removed = piece.without_change_at(9).unwrap();
+    assert_eq!(removed, time_signatures(&[("4/4", 10), ("4/4", 1)]));
+    assert_eq!(
+        piece.without_change_at(11).unwrap(),
+        time_signatures(&[("4/4", 8), ("7/8", 2)])
+    );
+    assert_eq!(piece.without_change_at(1), None);
+    assert_eq!(piece.without_change_at(10), None);
+    assert_eq!(piece.with_change_at(0), None);
+}
+
 /// A map with a tempo change on every beat is the same piece at every sample rate.
 ///
 /// Each change starts a segment at the exact moment its tick falls on, fraction of a frame and
