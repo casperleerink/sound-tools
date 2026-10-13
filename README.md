@@ -41,7 +41,7 @@ Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has t
 
 - The app keeps the last project, agents, updates and the sample library in `%LOCALAPPDATA%\Sound Tools`, and the plugin cache in its `Cache` folder.
 - Plugins are looked for in `%COMMONPROGRAMFILES%\CLAP` and `%LOCALAPPDATA%\Programs\Common\CLAP`, and the same two folders with `VST3`. Plugin windows open, but typing into a plugin's own text fields likely does not work yet: gpui keeps the keys.
-- There is no **Install command line tool**: `install.ps1` puts the `sound-tools` command on your `PATH`. Run from a terminal, the command line forms print after the prompt comes back, because the program is a window program. Pipe it (`| more`) to wait for it.
+- There is no **Install command line tool**: the setup program puts the `sound-tools` command on your `PATH`. Run from a terminal, the command line forms print after the prompt comes back, because the program is a window program. Pipe it (`| more`) to wait for it.
 - **Open terminal in project folder** opens Windows Terminal, or else a Command Prompt.
 - The snapshot tests render with Metal, so on Windows they only say so.
 - The Claude Code agent uses PowerShell for its commands, and Bash too when Git for Windows is installed.
@@ -73,7 +73,7 @@ Each [release](https://github.com/casperleerink/sound-tools/releases) has the ap
 
 - macOS: unzip and drag `Sound Tools.app` to Applications. It is not signed by a known developer, so macOS blocks the first open. Run `xattr -dr com.apple.quarantine "/Applications/Sound Tools.app"` once, or click **Open Anyway** in System Settings, Privacy & Security.
 - Linux: extract the tarball and run `./install.sh`.
-- Windows: unzip, right-click `install.ps1` and pick **Run with PowerShell**. It installs into `%LOCALAPPDATA%\Programs\Sound Tools` with a Start menu entry. The app is not signed, so SmartScreen may warn at the first start: **More info**, then **Run anyway**.
+- Windows: run `Sound-Tools-Setup-<version>.exe`. It installs into `%LOCALAPPDATA%\Programs\Sound Tools` with a Start menu entry and no administrator. Settings, Apps removes it and keeps your data in `%LOCALAPPDATA%\Sound Tools`. The setup is not signed, so SmartScreen may warn: **More info**, then **Run anyway**. `tooling/bundle-windows.sh` makes it, with Inno Setup 6.
 
 After that the app updates itself: at every launch, and every day while it stays open, it looks for a new release, downloads it in the background and shows **Restart** in the corner. Restart installs it and opens the same project again; a quit installs it at the next launch. On macOS the app must be in a folder it can write, such as Applications, or the notice offers **Download** instead. Every release has a `SHA256SUMS` file the app checks the download against. `cargo run` and the command line forms never update.
 

@@ -32,10 +32,11 @@ The technical decisions, why we made them, and what we rejected. How something w
 This is the main rule of the codebase.
 
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no bundled crate. `tooling/workspace-rules` checks this.
+- Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. So a main view other than the arrangement gets no transport.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (notes, clips, the realtime note events, port names, voice handling) and `sound-media` (audio files and measuring a sound).
 - Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`; an effect an audio input and output named `audio`, and maybe a `sidechain` input. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
 - The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension.
-- `extensions/tone` is a small non-musical tool, not in the default project. It proves the core rules hold for a tool shaped differently from the arrangement.
+- `extensions/tone`, a small non-musical tool, proves the core rules hold for a tool shaped unlike the arrangement.
 
 ## Tools, instances and behaviours
 
@@ -132,7 +133,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - It owns tracks, clips, the track mixer and the master. Mixer values are fields of the track record.
 - A track's chain is its instrument, then the effects its `effects` list names. One list decides the order, so a reorder is one record and one undo step. Rejected: an order number in each effect record (two files per move, and ties).
 - Bypass and sidechain are saved on the track's effect slot, not in the effect's record, so plugins and built-in effects share them. The arrangement wires sidechains and names a loop of keys by its tracks, because the core's cycle message names processors an agent cannot act on.
-- A return is a track of kind `return`. Sends are a map on the sending track, like its mixer values. No return sends to another yet.
+- A return is a track of kind `return`. Sends are a map on the sending track. No return sends to another yet.
 - Solo mutes the other tracks in their mixers, never a return, so a soloed track keeps its reverb. Mixers, sends and sidechains are wired in the arrangement, the one owner that sees every track.
 - The master limiter is fixed code of the arrangement, not a tool, so old projects get it without a file changing. It is bit-transparent under its ceiling. The core itself limits nothing.
 - A note starts inside its clip, else the record does not load: a note written with a project position is an error, not silence. An edit, move, delete or tempo change ends every note it started.
@@ -205,13 +206,14 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `crates/ui` and `crates/runtime/src/window`.
 
-- `Session` is the one GPUI entity that owns the `Project`. The core never depends on GPUI.
+- `Session` is the one GPUI entity that owns the `Project`.
 - Views read state when they render and keep no copy of saved state, so an outside edit shows at once, also mid-drag.
 - Views and device offers are registered per tool, so the track panel knows no instrument or plugin.
 - The playhead is its own entity, because GPUI redraws a notified view and everything above it.
 - `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to an extension.
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows correctly for free.
-- The app updates itself from the latest GitHub release, with the system's curl and a checked sha256. The swap happens at the next start, because GPUI gives a quit too little time to copy an app. An update that fails to install is not downloaded again.
+- The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
+- Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 - No error tracking in the cloud. The window's stdout and stderr go to `log.txt` in the support folder, which the composer can send.
 
 ## The agent sidebar

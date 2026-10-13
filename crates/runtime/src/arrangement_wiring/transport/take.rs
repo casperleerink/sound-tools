@@ -10,11 +10,11 @@ use sound_media::Imported;
 use sound_ui::{LiveBody, LiveSound, LiveTake, Playhead};
 
 use super::{Take, TransportPill};
+use crate::arrangement_wiring::recording;
 use crate::recorder::{
     Placement, RecorderCommand, RecorderReport, StartedTake, TakeRequest, take_seconds_at,
 };
 use crate::window::audio_input::OpenedInput;
-use crate::window::recording;
 
 /// Polls a finished recording waits for its audio files to hold what was heard up to its end,
 /// about two seconds, before it closes them with what they have.
@@ -71,8 +71,9 @@ impl TransportPill {
             self.finish_recording(tick, cx);
             return;
         }
-        // The last one is still being written: its clips come first.
-        if self.take.is_some() {
+        // The last one is still being written: its clips come first. Without the arrangement
+        // in the main area there is nothing to record onto.
+        if self.take.is_some() || !self.arrangement_is_main {
             return;
         }
         let session = self.session.clone();
@@ -261,7 +262,9 @@ impl TransportPill {
         };
         let timing = self.timing.clone();
         let clips = match &audio {
-            Some(audio) => audio.placement.clips(&audio_takes, end, timing.as_deref()),
+            Some(audio) => {
+                recording::take_clips(&audio.placement, &audio_takes, end, timing.as_deref())
+            }
             None => Vec::new(),
         };
         // A track deleted while it recorded gets no clip. Its raw take is on disk already, and

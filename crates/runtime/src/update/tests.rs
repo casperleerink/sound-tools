@@ -1,6 +1,6 @@
 //! The check, download and install against a release served from local files, with the real
-//! curl and no network. The release with an install script is the one of the system the tests
-//! run on: the Linux tarball, or on Windows the zip.
+//! curl and no network. Only a Unix runs an installer here, the `install.sh` of the Linux
+//! tarball: the release workflow tries the setup program of Windows on a real install.
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -47,10 +47,10 @@ fn write_release(served: &Path, tag: &str, prerelease: bool, assets: &[(&str, us
     fs::write(served.join("latest.json"), release.to_string()).unwrap();
 }
 
-/// Publishes `archive`, which is in `served`, as release `tag` with its `SHA256SUMS`.
-fn publish(served: &Path, tag: &str, archive: &Path) {
-    let name = archive.file_name().unwrap().to_str().unwrap();
-    let bytes = fs::read(archive).unwrap();
+/// Publishes `file`, which is in `served`, as release `tag` with its `SHA256SUMS`.
+fn publish(served: &Path, tag: &str, file: &Path) {
+    let name = file.file_name().unwrap().to_str().unwrap();
+    let bytes = fs::read(file).unwrap();
     let sums = format!("{}  {name}\n", sha256_hex(&bytes));
     fs::write(served.join(SUMS), &sums).unwrap();
     write_release(
@@ -76,36 +76,42 @@ fn check(updater: &Updater) -> Result<Option<Ready>> {
     smol::block_on(updater.check())
 }
 
+/// The system whose release the tests download.
 #[cfg(unix)]
-const SCRIPT_OS: &str = "linux";
+const INSTALLER_OS: &str = "linux";
 #[cfg(windows)]
-const SCRIPT_OS: &str = "windows";
+const INSTALLER_OS: &str = "windows";
 
-/// The release of 0.2.0 with the install `script` in `root/served`.
-fn script_release(root: &Path, script: &str) -> PathBuf {
-    let source = root.join("source");
-    let name = format!("sound-tools-0.2.0-{SCRIPT_OS}-x86_64");
-    let folder = source.join(&name);
-    fs::create_dir_all(&folder).unwrap();
-    fs::write(folder.join(app::program_file_name()), "0.2.0").unwrap();
-    fs::write(folder.join(INSTALL_SCRIPT), script).unwrap();
+/// The file of 0.2.0 for [`INSTALLER_OS`] in `root/served`, with these bytes.
+fn serve(root: &Path, bytes: &[u8]) -> PathBuf {
     let served = root.join("served");
     fs::create_dir_all(&served).unwrap();
-    let archive = served.join(asset_name(version("0.2.0"), SCRIPT_OS, "x86_64").unwrap());
-    let status = pack(&archive)
+    let file = served.join(asset_name(version("0.2.0"), INSTALLER_OS, "x86_64").unwrap());
+    fs::write(&file, bytes).unwrap();
+    file
+}
+
+/// The Linux tarball of 0.2.0 with the install `script`, in `root/served`.
+#[cfg(unix)]
+fn tarball(root: &Path, script: &str) -> PathBuf {
+    let source = root.join("source");
+    let name = "sound-tools-0.2.0-linux-x86_64";
+    let folder = source.join(name);
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("sound-tools"), "0.2.0").unwrap();
+    fs::write(folder.join("install.sh"), script).unwrap();
+    let archive = serve(root, &[]);
+    let status = Command::new("tar")
+        .arg("-czf")
+        .arg(&archive)
         .arg("-C")
         .arg(&source)
-        .arg(&name)
+        .arg(name)
         .status()
         .unwrap();
     assert!(status.success());
     archive
 }
-
-#[cfg(unix)]
-const INSTALL_SCRIPT: &str = "install.sh";
-#[cfg(windows)]
-const INSTALL_SCRIPT: &str = "install.ps1";
 
 /// An install script that writes `installed`.
 #[cfg(unix)]
@@ -113,34 +119,9 @@ fn copying_script(installed: &Path) -> String {
     format!("#!/bin/sh\ncp sound-tools '{}'\n", installed.display())
 }
 
-#[cfg(windows)]
-fn copying_script(installed: &Path) -> String {
-    format!(
-        "Copy-Item -LiteralPath sound-tools.exe -Destination '{}'\n",
-        installed.display()
-    )
-}
-
-/// An install script that stops, as `install.ps1` does when it cannot remove an old program.
+/// An install script that stops.
 #[cfg(unix)]
-const FAILING_SCRIPT: &str = "#!/bin/sh\necho 'cannot remove sound-tools.old' >&2\nexit 1\n";
-#[cfg(windows)]
-const FAILING_SCRIPT: &str = "throw 'cannot remove sound-tools.old'\n";
-
-#[cfg(unix)]
-fn pack(archive: &Path) -> Command {
-    let mut command = Command::new("tar");
-    command.arg("-czf").arg(archive);
-    command
-}
-
-/// `-a` picks the zip format from the name.
-#[cfg(windows)]
-fn pack(archive: &Path) -> Command {
-    let mut command = Command::new(windows_program(r"System32\tar.exe"));
-    command.arg("-a").arg("-cf").arg(archive);
-    command
-}
+const FAILING_SCRIPT: &str = "#!/bin/sh\necho 'cannot write sound-tools' >&2\nexit 1\n";
 
 #[test]
 fn versions_compare_by_number() {
@@ -171,7 +152,7 @@ fn each_platform_gets_its_own_file() {
     );
     assert_eq!(
         asset_name(version, "windows", "x86_64").as_deref(),
-        Some("sound-tools-0.2.0-windows-x86_64.zip")
+        Some("Sound-Tools-Setup-0.2.0.exe")
     );
     // No Intel Mac build, and no Windows on Arm one.
     assert_eq!(asset_name(version, "macos", "x86_64"), None);
@@ -196,19 +177,20 @@ fn the_checksum_is_found_by_file_name() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     let installed = root.join("installed");
-    let archive = script_release(root, &copying_script(&installed));
+    let archive = tarball(root, &copying_script(&installed));
     publish(&root.join("served"), "v0.2.0", &archive);
     let program = root.join("home/.local/lib/sound-tools/sound-tools");
     let updater = updater(
         root,
-        SCRIPT_OS,
+        "linux",
         "x86_64",
-        Place::Script {
+        Place::Installer {
             program: program.clone(),
         },
     );
@@ -222,8 +204,8 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
     );
     let (pending, unpacked) = updater.pending().unwrap();
     assert_eq!(pending, version("0.2.0"));
-    let name = format!("sound-tools-0.2.0-{SCRIPT_OS}-x86_64");
-    assert!(unpacked.join(name).join(app::program_file_name()).is_file());
+    let folder = unpacked.join("sound-tools-0.2.0-linux-x86_64");
+    assert!(folder.join("sound-tools").is_file());
 
     // The next start installs it, and is told what to start.
     assert_eq!(updater.install_pending().unwrap(), Some(program));
@@ -234,17 +216,18 @@ fn a_newer_release_is_downloaded_checked_and_installed_by_its_script() {
 }
 
 /// It would fail the same way at every start, with Restart offered again after each.
+#[cfg(unix)]
 #[test]
 fn an_update_that_does_not_install_says_why_once_and_is_not_downloaded_again() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
-    let archive = script_release(root, FAILING_SCRIPT);
+    let archive = tarball(root, FAILING_SCRIPT);
     publish(&root.join("served"), "v0.2.0", &archive);
     let updater = updater(
         root,
-        SCRIPT_OS,
+        "linux",
         "x86_64",
-        Place::Script {
+        Place::Installer {
             program: root.join("program"),
         },
     );
@@ -255,30 +238,52 @@ fn an_update_that_does_not_install_says_why_once_and_is_not_downloaded_again() {
     let Action::Failed { reason, .. } = failed.action else {
         panic!("{failed:?}");
     };
-    assert!(!reason.is_empty());
-    // PowerShell words a thrown error its own way.
-    #[cfg(unix)]
-    assert!(reason.contains("cannot remove sound-tools.old"), "{reason}");
+    assert!(reason.contains("cannot write sound-tools"), "{reason}");
     assert!(updater.pending().is_none());
     assert_eq!(check(&updater).unwrap(), None);
     assert!(!updater.version_folder(version("0.2.0")).exists());
+}
+
+/// The download has no name Windows runs, so the setup program waits under one.
+#[cfg(windows)]
+#[test]
+fn the_setup_program_is_kept_to_run_at_the_next_start() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let setup = serve(root, b"the setup program");
+    publish(&root.join("served"), "v0.2.0", &setup);
+    let updater = updater(
+        root,
+        "windows",
+        "x86_64",
+        Place::Installer {
+            program: root.join("program"),
+        },
+    );
+    assert_eq!(check(&updater).unwrap().unwrap().action, Action::Restart);
+
+    let (pending, unpacked) = updater.pending().unwrap();
+    assert_eq!(pending, version("0.2.0"));
+    let kept = only_entry(&unpacked).unwrap();
+    assert_eq!(kept.extension().unwrap(), "exe");
+    assert_eq!(fs::read(kept).unwrap(), b"the setup program");
 }
 
 #[test]
 fn a_damaged_download_is_never_ready() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
-    let archive = script_release(root, &copying_script(&root.join("installed")));
-    publish(&root.join("served"), "v0.2.0", &archive);
+    let file = serve(root, &[7; 200]);
+    publish(&root.join("served"), "v0.2.0", &file);
     // One byte changes after the checksums were written.
-    let mut bytes = fs::read(&archive).unwrap();
+    let mut bytes = fs::read(&file).unwrap();
     bytes[100] ^= 1;
-    fs::write(&archive, bytes).unwrap();
+    fs::write(&file, bytes).unwrap();
     let updater = updater(
         root,
-        SCRIPT_OS,
+        INSTALLER_OS,
         "x86_64",
-        Place::Script {
+        Place::Installer {
             program: root.join("program"),
         },
     );
@@ -298,7 +303,7 @@ fn an_older_release_or_a_prerelease_is_not_offered() {
         root,
         "linux",
         "x86_64",
-        Place::Script {
+        Place::Installer {
             program: root.join("program"),
         },
     );

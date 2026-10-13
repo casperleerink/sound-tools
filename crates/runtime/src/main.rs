@@ -336,7 +336,8 @@ impl Options {
                 let from = from.map_or(Ticks(0), |from| from.tick(clock));
                 let to = match to {
                     Some(to) => to.tick(clock),
-                    None => runtime::project_end(project)
+                    None => project
+                        .end()
                         .context("the project has no clips, so there is nothing to render")?,
                 };
                 if to <= from {

@@ -309,7 +309,8 @@ impl Recording {
         let mut keyboard = Keyboard::attach(harness.project.engine()).unwrap();
         let track = InstanceId::new(track).unwrap();
         let track = harness.project.resolve(&track).unwrap();
-        let notes = runtime::window::recording::notes_input(&harness.project, &track).unwrap();
+        let notes =
+            runtime::arrangement_wiring::recording::notes_input(&harness.project, &track).unwrap();
         keyboard
             .play_into(harness.project.engine(), Some(notes))
             .unwrap();

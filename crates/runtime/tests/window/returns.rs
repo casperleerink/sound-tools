@@ -257,7 +257,12 @@ fn many_open_returns_scroll_and_keep_the_master_row_in_the_window(cx: &mut TestA
     let mut opened = support::open_with(cx, |project| {
         let arrangement = runtime::main_arrangement(project).unwrap();
         for _ in 0..20 {
-            runtime::add_track_of_kind(project, &arrangement, TrackKind::Return).unwrap();
+            runtime::arrangement_wiring::add_track_of_kind(
+                project,
+                &arrangement,
+                TrackKind::Return,
+            )
+            .unwrap();
         }
         project.clear_history();
     });

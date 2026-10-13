@@ -58,7 +58,8 @@ impl Recorder {
         let mut keyboard = Keyboard::attach(harness.project.engine()).unwrap();
         let track = InstanceId::new(TRACK).unwrap();
         let track = harness.project.resolve(&track).unwrap();
-        let notes = runtime::window::recording::notes_input(&harness.project, &track).unwrap();
+        let notes =
+            runtime::arrangement_wiring::recording::notes_input(&harness.project, &track).unwrap();
         keyboard
             .play_into(harness.project.engine(), Some(notes))
             .unwrap();
@@ -109,13 +110,14 @@ impl Recorder {
     /// Saves the take as the window does: the raw take first, then the clip that names it, as
     /// one undo step.
     fn save(&mut self, take: &Take) -> InstanceId {
-        let name = runtime::window::recording::write_take(&self.harness.project, take).unwrap();
+        let name = runtime::arrangement_wiring::recording::write_take(&self.harness.project, take)
+            .unwrap();
         let track = InstanceId::new(TRACK).unwrap();
         let track = self.harness.project.resolve(&track).unwrap();
         let mut changes = sound_core::Changes::new();
         let project = &mut self.harness.project;
         let clock = project.clock().clone();
-        let clip = runtime::window::recording::add_take_clip(
+        let clip = runtime::arrangement_wiring::recording::add_take_clip(
             project,
             &mut changes,
             &track,
@@ -124,7 +126,7 @@ impl Recorder {
         );
         let clip = clip.unwrap().unwrap();
         project
-            .commit(runtime::window::recording::LABEL, changes)
+            .commit(runtime::arrangement_wiring::recording::LABEL, changes)
             .unwrap();
         clip
     }

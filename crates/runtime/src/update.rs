@@ -11,7 +11,7 @@
 //! On macOS the `.app` the program runs from is replaced. When its folder cannot be written,
 //! as for an app macOS runs from a read-only copy, the notice offers **Download**, which opens
 //! the release page. On Linux the tarball's `install.sh` writes into `~/.local`, and on Windows
-//! the zip's `install.ps1` into `%LOCALAPPDATA%\Programs\Sound Tools`.
+//! the setup program of the release into `%LOCALAPPDATA%\Programs\Sound Tools`.
 //!
 //! A failed check or download is quiet: one line on stderr, and the next check tries again.
 //! An update that does not install is shown once, with why and **Download**, and that version
@@ -21,8 +21,8 @@
 //! In the support folder:
 //!
 //! ```text
-//! updates/sound-tools/<version>/sound-tools   the archive of the release, checked
-//! updates/sound-tools/<version>/unpacked/     what is in it, once whole
+//! updates/sound-tools/<version>/sound-tools   the file of the release, checked
+//! updates/sound-tools/<version>/unpacked/     what installs from it, once whole
 //! updates/sound-tools/<version>.failed        why it did not install
 //! ```
 
@@ -38,9 +38,9 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use gpui::{App, AppContext as _, Global};
 use serde::Deserialize;
 use sound_agent::Download;
-use sound_core::process::curl;
 #[cfg(windows)]
-use sound_core::process::{background_command, windows_program};
+use sound_core::process::background_command;
+use sound_core::process::curl;
 
 use crate::app::{self, TOOL_NAME};
 
@@ -127,7 +127,7 @@ fn asset_name(version: Version, os: &str, arch: &str) -> Option<String> {
         ("linux", "x86_64" | "aarch64") => {
             Some(format!("sound-tools-{version}-linux-{arch}.tar.gz"))
         }
-        ("windows", "x86_64") => Some(format!("sound-tools-{version}-windows-x86_64.zip")),
+        ("windows", "x86_64") => Some(format!("Sound-Tools-Setup-{version}.exe")),
         _ => None,
     }
 }
@@ -174,9 +174,10 @@ impl Release {
 enum Place {
     /// macOS: the `.app` the program runs from, replaced as a whole.
     Bundle(PathBuf),
-    /// Linux and Windows: the archive's install script, which writes `program` and the rest:
-    /// `install.sh` into `~/.local`, `install.ps1` into `%LOCALAPPDATA%\Programs`.
-    Script { program: PathBuf },
+    /// Linux and Windows: the installer of the release, which writes `program` and the rest:
+    /// the tarball's `install.sh` into `~/.local`, the setup program into
+    /// `%LOCALAPPDATA%\Programs`.
+    Installer { program: PathBuf },
 }
 
 /// The update of one copy of the app.
@@ -212,7 +213,7 @@ impl Updater {
             }
             Place::Bundle(bundle.to_path_buf())
         } else {
-            Place::Script {
+            Place::Installer {
                 program: installed_program()?,
             }
         };
@@ -276,15 +277,15 @@ impl Updater {
             sha256,
             size: asset.size,
         };
-        let archive = sound_agent::install(&download, &self.folder, |_| {})
+        let file = sound_agent::install(&download, &self.folder, |_| {})
             .await
             .map_err(|error| anyhow!(error.sentence(&format!("Sound Tools {version}"))))?;
         let unpacked = self.version_folder(version).join(UNPACKED);
         let tool = match self.place {
             Place::Bundle(_) => Unpack::Ditto,
-            Place::Script { .. } => Unpack::Archive,
+            Place::Installer { .. } => Unpack::Installer,
         };
-        smol::unblock(move || unpack(tool, &archive, &unpacked)).await?;
+        smol::unblock(move || unpack(tool, &file, &unpacked)).await?;
         Ok(Some(Ready {
             version,
             action: Action::Restart,
@@ -317,7 +318,7 @@ impl Updater {
             Place::Bundle(bundle) => {
                 replace_bundle(bundle, &new).map(|()| bundle.join("Contents/MacOS").join(TOOL_NAME))
             }
-            Place::Script { program } => run_install_script(&new).map(|()| program.clone()),
+            Place::Installer { program } => run_installer(&new).map(|()| program.clone()),
         });
         if let Err(error) = fs::remove_dir_all(self.version_folder(version)) {
             eprintln!("error: could not remove the update {version}: {error}");
@@ -337,11 +338,11 @@ impl Updater {
         })
     }
 
-    /// Removes the programs an update moved aside. `install.ps1` renames the running
+    /// Removes the programs an update moved aside. The setup program renames the running
     /// `sound-tools.exe` and `bun.exe` to `.old`, because Windows cannot overwrite a running
     /// program but can rename it. Linux and macOS leave none.
     fn remove_old_programs(&self) {
-        let Place::Script { program } = &self.place else {
+        let Place::Installer { program } = &self.place else {
             return;
         };
         let bun = program.with_file_name(format!("bun{}", std::env::consts::EXE_SUFFIX));
@@ -357,13 +358,13 @@ impl Updater {
     }
 }
 
-/// The program the install script of the release writes.
+/// The program the installer of the release writes.
 #[cfg(unix)]
 fn installed_program() -> Option<PathBuf> {
     Some(PathBuf::from(std::env::var_os("HOME")?).join(LINUX_PROGRAM))
 }
 
-/// What `tooling/windows/install.ps1` writes.
+/// What `tooling/windows/setup.iss` writes.
 #[cfg(windows)]
 fn installed_program() -> Option<PathBuf> {
     let folder = app::local_app_data()
@@ -406,13 +407,13 @@ fn can_replace(bundle: &Path) -> bool {
 enum Unpack {
     /// The zip of the macOS app, which `ditto` made.
     Ditto,
-    /// The tarball of Linux, or the zip of Windows.
-    Archive,
+    /// The tarball of Linux, or the setup program of Windows.
+    Installer,
 }
 
-/// Unpacks `archive` into `unpacked`, which appears only once whole. Another window that
-/// unpacked the same already is fine.
-fn unpack(tool: Unpack, archive: &Path, unpacked: &Path) -> Result<()> {
+/// Unpacks the `file` of a release into `unpacked`, which appears only once whole. Another
+/// window that unpacked the same already is fine.
+fn unpack(tool: Unpack, file: &Path, unpacked: &Path) -> Result<()> {
     if unpacked.is_dir() {
         return Ok(());
     }
@@ -421,19 +422,13 @@ fn unpack(tool: Unpack, archive: &Path, unpacked: &Path) -> Result<()> {
         fs::remove_dir_all(&partial)?;
     }
     fs::create_dir_all(&partial)?;
-    let mut command = match tool {
-        Unpack::Ditto => {
-            let mut command = Command::new("/usr/bin/ditto");
-            command.args(["-x", "-k"]).arg(archive).arg(&partial);
-            command
-        }
-        Unpack::Archive => {
-            let mut command = unpack_archive();
-            command.arg(archive).arg("-C").arg(&partial);
-            command
-        }
-    };
-    run(&mut command)?;
+    match tool {
+        Unpack::Ditto => run(Command::new("/usr/bin/ditto")
+            .args(["-x", "-k"])
+            .arg(file)
+            .arg(&partial))?,
+        Unpack::Installer => unpack_installer(file, &partial)?,
+    }
     if let Err(error) = fs::rename(&partial, unpacked) {
         fs::remove_dir_all(&partial)?;
         if !unpacked.is_dir() {
@@ -443,7 +438,8 @@ fn unpack(tool: Unpack, archive: &Path, unpacked: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The one file or folder an archive holds: `Sound Tools.app`, or the tarball's folder.
+/// The one file or folder an update holds: `Sound Tools.app`, the tarball's folder, or the
+/// setup program.
 fn only_entry(folder: &Path) -> Result<PathBuf> {
     let mut entries = fs::read_dir(folder)?
         .flatten()
@@ -485,44 +481,34 @@ fn replace_bundle(bundle: &Path, new: &Path) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn unpack_archive() -> Command {
-    let mut command = Command::new("tar");
-    command.arg("-xzf");
-    command
+fn unpack_installer(tarball: &Path, folder: &Path) -> Result<()> {
+    run(Command::new("tar")
+        .arg("-xzf")
+        .arg(tarball)
+        .arg("-C")
+        .arg(folder))
 }
 
-/// The tar of Windows 10 and later, which unpacks a zip too. Never a tar on the `PATH`: the
-/// GNU tar of Git for Windows takes the `C:` of a path for the name of another computer.
+/// The download is the setup program. It gets a name Windows runs.
 #[cfg(windows)]
-fn unpack_archive() -> Command {
-    let mut command = background_command(windows_program(r"System32\tar.exe"));
-    command.arg("-xf");
-    command
+fn unpack_installer(setup: &Path, folder: &Path) -> Result<()> {
+    fs::copy(setup, folder.join("Sound-Tools-Setup.exe"))?;
+    Ok(())
 }
 
 #[cfg(unix)]
-fn run_install_script(folder: &Path) -> Result<()> {
+fn run_installer(folder: &Path) -> Result<()> {
     run(Command::new("sh")
         .arg(folder.join("install.sh"))
         .current_dir(folder)
         .stdout(Stdio::null()))
 }
 
-/// The policy of a new Windows refuses to run scripts, so this one call bypasses it.
+/// With no window and no question. It moves the running programs aside, so this process need
+/// not end first.
 #[cfg(windows)]
-fn run_install_script(folder: &Path) -> Result<()> {
-    let powershell = windows_program(r"System32\WindowsPowerShell\v1.0\powershell.exe");
-    run(background_command(powershell)
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ])
-        .arg(folder.join("install.ps1"))
-        .current_dir(folder)
-        .stdout(Stdio::null()))
+fn run_installer(setup: &Path) -> Result<()> {
+    run(background_command(setup).args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]))
 }
 
 /// Runs `command`. A failure says the first line it wrote to stderr, which is why, and the log

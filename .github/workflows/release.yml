@@ -92,11 +92,51 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - name: Install the pinned Inno Setup
+        run: choco install innosetup --version 6.7.1 --allow-downgrade --no-progress --yes
       - run: tooling/bundle-windows.sh
+      # Nobody here has a Windows computer, so the runner tries the setup program as the app's
+      # own update runs it: an install, an update over a running Bun, and the uninstall.
+      - name: Try the setup program
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          setup() { "dist/Sound-Tools-Setup-$VERSION.exe" //VERYSILENT //SUPPRESSMSGBOXES //NORESTART; }
+          on_path() {
+            powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')" \
+              | grep -qF 'Programs\Sound Tools'
+          }
+          folder="$(cygpath "$LOCALAPPDATA")/Programs/Sound Tools"
+          shortcut="$(cygpath "$APPDATA")/Microsoft/Windows/Start Menu/Programs/Sound Tools.lnk"
+
+          setup
+          "$folder/sound-tools.exe" --version
+          test -f "$shortcut"
+          on_path
+
+          "$folder/bun.exe" -e 'setTimeout(() => {}, 600000)' &
+          bun=$!
+          sleep 2
+          setup
+          test -f "$folder/bun.exe.old"
+          "$folder/bun.exe" --version
+          kill "$bun"
+          wait "$bun" || true
+
+          "$folder/unins000.exe" //VERYSILENT //SUPPRESSMSGBOXES //NORESTART
+          # The uninstaller hands over to a copy of itself and may return before that is done.
+          for _ in $(seq 30); do
+            [[ -e "$folder" ]] || break
+            sleep 1
+          done
+          if [[ -e "$folder" || -e "$shortcut" ]] || on_path; then
+            echo "::error::The uninstall left something behind."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64
-          path: dist/sound-tools-${{ needs.version.outputs.version }}-windows-x86_64.zip
+          path: dist/Sound-Tools-Setup-${{ needs.version.outputs.version }}.exe
           if-no-files-found: error
 
   release:
@@ -112,7 +152,7 @@ jobs:
           merge-multiple: true
       # The app checks its update against this file. See crates/runtime/src/update.rs.
       - name: Write the checksums
-        run: cd dist && sha256sum -- *.zip *.tar.gz > SHA256SUMS
+        run: cd dist && sha256sum -- *.zip *.tar.gz *.exe > SHA256SUMS
       # The fixed install notes come first, then the notes GitHub writes from the pull requests.
       - name: Create the release
         env:
@@ -142,7 +182,7 @@ jobs:
 
           It needs glibc 2.39 or later: Ubuntu 24.04, Debian 13, Fedora 40 or newer. It also needs ALSA, PipeWire, D-Bus, Vulkan (a graphics driver, or Mesa for a software one), xkbcommon, fontconfig and Wayland or X11, which a desktop mostly has. On Ubuntu or Debian: `sudo apt-get install libasound2t64 libpipewire-0.3-0t64 libdbus-1-3 libvulkan1 mesa-vulkan-drivers libxkbcommon-x11-0 libwayland-client0 libx11-xcb1 libfontconfig1`.
 
-          **Windows** (x86_64, Windows 10 or later): unzip `sound-tools-*-windows-x86_64.zip`, open the folder, right-click `install.ps1` and pick **Run with PowerShell**. It puts the app in `%LOCALAPPDATA%\Programs\Sound Tools` and adds it to the Start menu. The app is not signed, so Windows SmartScreen may block the first start: click **More info**, then **Run anyway**.
+          **Windows** (x86_64, Windows 10 or later): run `Sound-Tools-Setup-*.exe`. It installs the app for your user, with no administrator, adds it to the Start menu and puts the `sound-tools` command on your `PATH`. To remove it, use Settings, Apps. The setup is not signed, so Windows SmartScreen may block it: click **More info**, then **Run anyway**.
           NOTES
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Sound Tools $VERSION" --notes-file notes.md --generate-notes

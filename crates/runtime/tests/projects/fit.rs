@@ -698,7 +698,8 @@ fn the_whole_path_on_this_machine() {
     let stream = device.start(engine).expect("the stream");
     let mut keyboard = midi::Keyboard::attach(project.engine()).expect("the keyboard");
     let mut ports = midi::Ports::new(keyboard.input());
-    let track = runtime::window::recording::target_track(&project, None).expect("a track");
+    let track =
+        runtime::arrangement_wiring::recording::target_track(&project, None).expect("a track");
 
     // The plugin has to load before anything is played into it.
     let mut pump = |project: &mut sound_core::Project, keyboard: &mut midi::Keyboard| {
@@ -707,7 +708,7 @@ fn the_whole_path_on_this_machine() {
         keyboard
             .poll(project.engine(), Some(stream.timing()))
             .expect("the reports");
-        let notes = runtime::window::recording::notes_input(project, &track);
+        let notes = runtime::arrangement_wiring::recording::notes_input(project, &track);
         keyboard
             .play_into(project.engine(), notes)
             .expect("the port");
@@ -733,11 +734,12 @@ fn the_whole_path_on_this_machine() {
     pump(&mut project, &mut keyboard);
     let take = keyboard.finish_recording(at).expect("a take");
     assert!(!take.is_empty(), "nothing was played into the port");
-    let name = runtime::window::recording::write_take(&project, &take).expect("the take");
+    let name =
+        runtime::arrangement_wiring::recording::write_take(&project, &take).expect("the take");
     let mut changes = sound_core::Changes::new();
     let clock = project.clock().clone();
     let take_and_name = (&take, Some(name));
-    runtime::window::recording::add_take_clip(
+    runtime::arrangement_wiring::recording::add_take_clip(
         &project,
         &mut changes,
         &track,
@@ -746,7 +748,7 @@ fn the_whole_path_on_this_machine() {
     )
     .expect("the clip");
     project
-        .commit(runtime::window::recording::LABEL, changes)
+        .commit(runtime::arrangement_wiring::recording::LABEL, changes)
         .expect("the clip");
     let clip = clip_of_track(&project, &track);
     println!(
