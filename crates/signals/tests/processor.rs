@@ -209,24 +209,46 @@ fn a_pluck_into_a_delay_echoes_after_each_note_and_only_its_own() {
 }
 
 #[test]
-fn a_voice_whose_delays_hold_nothing_ends_soon_after_its_release() {
+fn a_released_voice_that_is_not_heard_ends_even_when_its_delays_hold_something() {
+    fn note() -> Signal {
+        0.2 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 1.0, 1.0, 1.0)
+    }
     // An instrument hears no input, so its delays of 4 s hold only silence.
-    let code = compile(|| {
-        let frames = feedback();
-        frames.set(frames.read() + 1.0);
-        watch("frames", frames.read());
-        let delays = delay(input(), 4_000.0) + delay(input(), 4_000.0);
-        0.2 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 1.0, 1.0, 1.0) + delays
-    });
-    let notes = vec![(0, on(69)), (4_800, off(69))];
-    let mut played = play(Kind::Instrument { voices: 1 }, code, notes);
-    played.render(48_000);
-    // The watch shows the voice until it ends: 50 ms after its release.
-    let frames = played.watches[0].get();
-    assert!(
-        frames > 4_800.0 + 2_400.0 && frames < 4_800.0 + 2_400.0 + 128.0,
-        "{frames}"
-    );
+    let unused = || note() + delay(input(), 4_000.0) + delay(input(), 4_000.0);
+    // A delay writes what is not a number as 0.
+    let infinite = || note() + delay_up_to(1.0 / (gate() - gate()), 250.0, 250.0);
+    // A pulse goes round for ever, and is not heard after the release.
+    let unheard = || {
+        let echo = feedback();
+        let wet = delay_up_to(note() + echo.read(), 250.0, 250.0);
+        echo.set(wet);
+        wet * gate()
+    };
+    let sounds: [(fn() -> Signal, usize); 3] = [
+        (unused, 0),
+        (infinite, 0),
+        // Quiet for as long as its delays reach, 250 ms.
+        (unheard, 12_000),
+    ];
+    for (sound, late) in sounds {
+        let code = compile(|| {
+            let frames = feedback();
+            frames.set(frames.read() + 1.0);
+            watch("frames", frames.read());
+            sound()
+        });
+        let notes = vec![(0, on(69)), (4_800, off(69))];
+        let mut played = play(Kind::Instrument { voices: 1 }, code, notes);
+        played.render(48_000);
+        // It ends 50 ms after its release, and `late`. The watch shows it up to the block
+        // before.
+        let ends = (4_800 + 2_400 + late) as f32;
+        let frames = played.watches[0].get();
+        assert!(
+            frames > ends - 128.0 && frames < ends + 128.0,
+            "{late} {frames}"
+        );
+    }
 }
 
 #[test]

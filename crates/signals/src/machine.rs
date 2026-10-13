@@ -314,6 +314,12 @@ impl Machine {
         delays.any(|delay| self.position < delay.quiet_from)
     }
 
+    /// How far back the delays reach, in frames, were they all in one chain.
+    pub(crate) fn delays_reach(&self) -> usize {
+        let ms: f32 = self.code.slots.delays.iter().sum();
+        (ms * 0.001 * self.sample_rate) as usize
+    }
+
     /// The last value of each watch, in the order of [`Code::watches`].
     pub(crate) fn watched(&self) -> &[f32] {
         &self.watched
@@ -419,7 +425,7 @@ impl Machine {
         // slowed them.
         for (input, slot) in delay_inputs.iter() {
             let inputs = row(registers, usize::from(*input), &frames);
-            let loud = inputs.iter().rposition(|input| input.abs() >= QUIET);
+            let loud = (inputs.iter()).rposition(|input| finite(*input).abs() >= QUIET);
             if let (Some(frame), Some(delay)) = (loud, memory.delays.get_mut(usize::from(*slot))) {
                 delay.quiet_from = *position + frame + delay.line.frames();
             }

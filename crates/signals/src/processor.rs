@@ -26,7 +26,8 @@ const FADE_SECONDS: f32 = 0.01;
 /// param over or lets it go. A jump would click.
 const RAMP_SECONDS: f32 = 0.02;
 /// A released voice this quiet for this long, with no delay that holds a sound, is over and free
-/// for another note.
+/// for another note. Quiet for as long again as its delays reach, it is over whatever they hold:
+/// what goes round a loop that long unheard is never heard.
 const QUIET_SECONDS: f32 = 0.05;
 /// How far the bend wheel moves every note, either way.
 const BEND_SEMITONES: f32 = 2.0;
@@ -574,8 +575,9 @@ impl SignalsVoice {
                 *mix_left += left;
                 *mix_right += right;
             }
-            if ending && self.quiet_frames >= shared.quiet_limit && !self.machine.delays_sound() {
-                self.sounding = false;
+            if ending && self.quiet_frames >= shared.quiet_limit {
+                let unheard = self.quiet_frames - shared.quiet_limit >= self.machine.delays_reach();
+                self.sounding = !unheard && self.machine.delays_sound();
             }
             start = end;
         }
