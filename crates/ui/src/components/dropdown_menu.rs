@@ -17,7 +17,8 @@
 //!
 //! [`Trigger::Pointer`] makes it a context menu: no trigger, and [`DropdownMenu::open_at`] opens
 //! it where a right click was. It flips up or left at the edge of the window, as a system menu
-//! does, and closing it gives the focus back to what had it.
+//! does, and closing it gives the focus back to what had it. [`DropdownMenu::pointed`] tells its
+//! owner the row the pointer or the keys are on, to show where a pick would land.
 //!
 //! [`DropdownMenu::searchable`] puts a field above the rows, for a list too long to read
 //! through, such as the parameters of a plugin. What is typed keeps the rows whose label or
@@ -270,6 +271,7 @@ fn found(entries: &[MenuEntry], query: &str) -> Vec<MenuEntry> {
 type SelectFn = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
 type SubmenuFn = Rc<dyn Fn(Option<SharedString>, &mut Window, &mut App)>;
 type HoverFn = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type PointFn = Rc<dyn Fn((SharedString, bool), &mut Window, &mut App)>;
 
 /// The submenu that is open, see [`MenuItem::submenu`].
 #[derive(Clone)]
@@ -293,6 +295,8 @@ pub struct MenuList {
     max_height: Option<f32>,
     on_select: Option<SelectFn>,
     submenu: Option<OpenSubmenu>,
+    /// Hears the pointer come onto a row that can be picked, and leave it.
+    on_point: Option<PointFn>,
 }
 
 impl MenuList {
@@ -305,7 +309,13 @@ impl MenuList {
             max_height: None,
             on_select: None,
             submenu: None,
+            on_point: None,
         }
+    }
+
+    pub(crate) fn on_point(mut self, on_point: PointFn) -> Self {
+        self.on_point = Some(on_point);
+        self
     }
 
     pub(crate) fn submenu(mut self, submenu: OpenSubmenu) -> Self {
@@ -347,6 +357,7 @@ impl RenderOnce for MenuList {
         let (muted, line) = (theme.gray_700, theme.alpha_at(0.10));
         let on_select = self.on_select;
         let submenu = self.submenu;
+        let on_point = self.on_point;
         let selected = self.selected;
         let highlighted = self.highlighted;
         let mut index = 0;
@@ -383,17 +394,24 @@ impl RenderOnce for MenuList {
                             let enabled = !item.disabled;
                             // Every row the pointer reaches says which submenu is open: its
                             // own, or none.
-                            let element = match &submenu {
-                                Some(submenu) if enabled => {
-                                    let (on_open, opens) = (submenu.on_open.clone(), value.clone());
-                                    let opens = item.submenu.is_some().then_some(opens);
-                                    element.on_hover(move |hovered, window, cx| {
-                                        if *hovered {
-                                            on_open(opens.clone(), window, cx);
-                                        }
-                                    })
-                                }
-                                _ => element,
+                            let opens = submenu.as_ref().filter(|_| enabled).map(|submenu| {
+                                let opens = item.submenu.is_some().then(|| value.clone());
+                                (submenu.on_open.clone(), opens)
+                            });
+                            let points = on_point.clone().filter(|_| enabled);
+                            let points = points.map(|on_point| (on_point, value.clone()));
+                            let element = match opens.is_some() || points.is_some() {
+                                true => element.on_hover(move |hovered, window, cx| {
+                                    if let Some((on_open, opens)) = &opens
+                                        && *hovered
+                                    {
+                                        on_open(opens.clone(), window, cx);
+                                    }
+                                    if let Some((on_point, value)) = &points {
+                                        on_point((value.clone(), *hovered), window, cx);
+                                    }
+                                }),
+                                false => element,
                             };
                             match (&item.submenu, &submenu) {
                                 (Some(items), Some(submenu)) => element
@@ -738,6 +756,8 @@ pub struct DropdownMenu {
     submenu_highlighted: usize,
     /// A press there is not outside the menu, though it is outside its bounds.
     pointer_in_submenu: bool,
+    /// The row the pointer is on, see [`Self::pointed`].
+    pointer_on: Option<SharedString>,
     side: Side,
     align: Align,
     width: f32,
@@ -787,6 +807,7 @@ impl DropdownMenu {
             submenu: None,
             submenu_highlighted: usize::MAX,
             pointer_in_submenu: false,
+            pointer_on: None,
             side: Side::default(),
             align: Align::default(),
             width: 320.,
@@ -1022,11 +1043,35 @@ impl DropdownMenu {
     pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = false;
         self.highlighted = usize::MAX;
+        self.pointer_on = None;
         self.set_submenu(None, cx);
         // The open menu held the focus. Without this it would be nowhere, and keys with it.
         let back = self.focus_before.take();
         window.focus(back.as_ref().unwrap_or(&self.trigger_focus), cx);
         cx.notify();
+    }
+
+    /// The row the pointer is on, else the one the keys highlight, so an owner can show what a
+    /// pick would do before it. `None` while the menu is closed.
+    pub fn pointed(&self) -> Option<&MenuItem> {
+        if !self.open {
+            return None;
+        }
+        match &self.pointer_on {
+            Some(value) => self.item(value),
+            None => flat(self.shown()).get(self.highlighted).copied(),
+        }
+    }
+
+    fn point(&mut self, value: SharedString, hovered: bool, cx: &mut Context<Self>) {
+        let pointer_on = match hovered {
+            true => Some(value),
+            false => self.pointer_on.take().filter(|on| *on != value),
+        };
+        if self.pointer_on != pointer_on {
+            self.pointer_on = pointer_on;
+            cx.notify();
+        }
     }
 
     /// Opens the submenu of the row `value`, or closes the one that is open.
@@ -1052,6 +1097,7 @@ impl DropdownMenu {
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         if let Some(next) = highlight_step(self.shown(), self.highlighted, delta) {
             self.highlighted = next;
+            self.pointer_on = None;
             cx.notify();
         }
     }
@@ -1203,6 +1249,11 @@ impl DropdownMenu {
                             this.pointer_in_submenu = hovered
                         })),
                     })
+                    .on_point(Rc::new(cx.processor(
+                        |this, (value, hovered): (SharedString, bool), _, cx| {
+                            this.point(value, hovered, cx)
+                        },
+                    )))
                     .on_select(cx.processor(|this, value: SharedString, window, cx| {
                         this.pick(value, window, cx)
                     })),

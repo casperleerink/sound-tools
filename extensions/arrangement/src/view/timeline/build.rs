@@ -13,12 +13,13 @@ use sound_ui::{ActiveTheme, LiveBody, LiveSound};
 
 use super::Timeline;
 use super::loop_bar::LoopBar;
+use super::ruler::{RulerMark, SectionBand};
 use super::scene::{
     AudioShape, Body, ClipShape, Ghosts, LanePoint, LaneShape, PointKey, Scene, Sound, TempoMark,
     TrackRow,
 };
 use super::state::{
-    ClipDragKind, DropTarget, Edge, EdgeDrag, Held, LaneDragKind, LaneGhost, MoveDrag,
+    ClipDragKind, DropTarget, Edge, EdgeDrag, Held, LaneDragKind, LaneGhost, MoveDrag, RenameTarget,
 };
 use crate::view::clips::{gain_label, time_label};
 use crate::view::layout::{LANE_HEIGHT, Rect, Rows, Viewport, ordered};
@@ -60,7 +61,11 @@ impl Timeline {
         // Clamped again for this size: the window may have grown since the last scroll.
         let viewport = self.clamped(self.viewport, width, height, cx);
         let visible_ticks = viewport.visible_ticks(width);
-        let renaming = self.rename.as_ref().map(|rename| rename.track.id());
+        let renaming = self.rename.as_ref().map(|rename| &rename.target);
+        let renaming_track = match renaming {
+            Some(RenameTarget::Track(track)) => Some(track.id()),
+            Some(RenameTarget::Section(_)) | None => None,
+        };
 
         let changes = tempo_map.tempo_changes().iter();
         let tempo = changes
@@ -69,12 +74,38 @@ impl Timeline {
                 tick: change.tick,
                 x: viewport.x_of(change.tick),
                 text: change.bpm.to_string().into(),
-                selected: self.selected_tempo == Some(change.tick),
+                selected: self.selected_mark == Some(RulerMark::Tempo(change.tick)),
             })
             // A label reaches right of its tick, so one that starts just left of the area
             // still shows its end.
             .filter(|mark| (-TEMPO_LABEL_ROOM..width).contains(&mark.x))
             .collect();
+        let visible_x = |x: &Range<f32>| x.end > 0. && x.start < width;
+        let sections = project.project_file().sections.spans().filter_map(|(section, next)| {
+            let x_of_bar = |bar: u64| Some(viewport.x_of(time_signatures.bar(bar)?.start));
+            // The last one runs past the right edge.
+            let end = next.and_then(|next| x_of_bar(next.get())).unwrap_or(width + 1.);
+            Some(SectionBand {
+                bar: section.bar,
+                x: x_of_bar(section.bar.get())?..end,
+                name: section.name.as_str().to_string().into(),
+                selected: self.selected_mark == Some(RulerMark::Section(section.bar)),
+                renaming: matches!(renaming, Some(RenameTarget::Section(bar)) if *bar == section.bar),
+            })
+        });
+        let sections = sections.filter(|band| visible_x(&band.x)).collect();
+        let changes = time_signatures.changes().skip(1);
+        let changes = changes.filter(|bar| visible_ticks.contains(&bar.start));
+        let time_signature_marks = changes
+            .map(|bar| {
+                let selected = self.selected_mark == Some(RulerMark::TimeSignature(bar.number));
+                (bar.number, selected)
+            })
+            .collect();
+        let ghost = match self.ghost_tick(cx) {
+            Some(tick) => Some(viewport.x_of(tick)),
+            None => None,
+        };
         let marquee = match &self.held {
             Held::Marquee(marquee) => Some(marquee),
             _ => None,
@@ -99,7 +130,10 @@ impl Timeline {
             rows: Vec::new(),
             bars: viewport.ruler_bars(time_signatures, width),
             tempo,
-            tempo_zones: Vec::new(),
+            sections,
+            time_signature_marks,
+            mark_zones: Vec::new(),
+            ghost,
             loop_bar: LoopBar {
                 x: viewport.x_of(looped.range.start)..viewport.x_of(looped.range.end),
                 on: looped.on,
@@ -131,7 +165,7 @@ impl Timeline {
                 accent,
                 selected: self.selected_track.as_ref() == Some(track.id()),
                 silent: state.is_silent(soloing),
-                renaming: renaming == Some(track.id()),
+                renaming: renaming_track == Some(track.id()),
                 armed: state.kind == TrackKind::Audio && recording.is_armed(track.id()),
                 lifted: matches!(
                     &self.held,

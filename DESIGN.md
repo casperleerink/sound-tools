@@ -22,7 +22,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Every device shows what it does to the sound. A card is a display of the sound on the left and a few knobs at its right. The handles on a display drag.
 - A display is never the only way to reach a value: every value a handle moves also has a knob, visible or behind expand. That knob is the path for the keys.
 - A value is one bright line on dark: the arc of a knob, the thumb on a meter, a curve and its handles. Values are never coloured.
-- One control per value. The tempo has one drag number, in the transport; a tempo mark in the ruler selects and seeks.
+- One control per value. The tempo and the two numbers of the time signature are drag numbers in the transport; a mark in the ruler selects and seeks.
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
 - A value an automation lane of the track moves is not the composer's to drag: its control shows what the lane plays at the playhead and stays put, and its keys and reset do nothing. It stays a tab stop, and a small dot and a tooltip say why. Taking the lane out gives the control back the record.
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
@@ -64,10 +64,11 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 - There is no save. Every finished edit is already in the folder.
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.
 - The arrangement and the note editor select and edit the same way: click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes. They share one clipboard.
-- Double click on empty space makes what lives there: a clip, a note, a tempo change. On a control it sets the default.
+- Double click on empty space makes what lives there: a clip, a note, a section. On a control it sets the default.
+- A right click in the ruler adds a tempo change, a time signature change or a section; the menu row under the pointer or the keys shows where it lands.
 - A right click on a clip opens its menu: what the keys do, and Fit tempo to take on a recorded clip. The menu opens and is picked from the way the system's own menus are.
 - Alt-drag copies clips and notes, and across a lane erases its points.
-- Adding something never changes the sound. A new tempo change keeps the tempo that played there; a new automation lane holds the value its number plays now.
+- Adding something never changes the sound. A new tempo or time signature change keeps what played there; a new automation lane holds the value its number plays now.
 - A drag shows what it will do before the drop: a lavender ring where it lands, and the automation a clip takes along.
 - A clip drag takes the automation under the clip along. Shift leaves it.
 

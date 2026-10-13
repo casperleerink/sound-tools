@@ -1,10 +1,10 @@
-//! The mouse on the timeline: what a press takes, the ruler with its tempo changes and the
-//! loop, the marquee, the end of a drag, hover and the cursor.
+//! The mouse on the timeline: what a press takes, the marquee, the end of a drag, hover and the
+//! cursor.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::{Bounds, Context, CursorStyle, MouseDownEvent, Pixels, Point, Window};
-use sound_core::{Changes, InstanceId, Project, Ticks};
+use sound_core::{Changes, InstanceId, Project};
 use sound_media::{AudioAsset, Cached, Info};
 use sound_notes::Clip;
 use sound_ui::DragEdit;
@@ -74,7 +74,7 @@ impl Timeline {
         if y < 0.0 {
             match scene.loop_zone_at(x, y + RULER_HEIGHT) {
                 Some(zone) => self.start_loop_drag(zone, x, cx),
-                None => self.on_ruler(x, double, scene, cx),
+                None => self.on_ruler(x, double, scene, window, cx),
             }
             return;
         }
@@ -280,63 +280,6 @@ impl Timeline {
         }))
     }
 
-    /// A press in the ruler: on a tempo mark it selects the tempo change and moves the playhead
-    /// onto it, so the tempo of the transport is its tempo and a drag there edits it. Anywhere
-    /// else it moves the playhead to the grid, and a double click adds a tempo change there.
-    fn on_ruler(&mut self, x: f32, double: bool, scene: &Scene, cx: &mut Context<Self>) {
-        if let Some(tick) = scene.tempo_at(x) {
-            self.select_tempo(Some(tick), cx);
-            self.seek(tick, cx);
-            return;
-        }
-        let tick = self.grid(cx).snap(scene.viewport.tick_at(x));
-        if double {
-            self.add_tempo_change(tick, cx);
-        } else {
-            self.select_tempo(None, cx);
-        }
-        self.seek(tick, cx);
-    }
-
-    fn seek(&mut self, tick: Ticks, cx: &mut Context<Self>) {
-        self.session
-            .update(cx, |session, _| session.engine().seek(tick));
-    }
-
-    /// Adds a tempo change at `tick` with the tempo that plays there, and selects it. A change
-    /// that is there already is selected.
-    pub(super) fn add_tempo_change(&mut self, tick: Ticks, cx: &mut Context<Self>) {
-        self.session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                let Some(tempo_map) = project.project_file().tempo_map.with_change_at(tick) else {
-                    return Ok(());
-                };
-                let mut changes = Changes::new();
-                changes.set_tempo_map(tempo_map);
-                project.commit("Add tempo change", changes)
-            })
-        });
-        let project = self.session.read(cx).project();
-        if project.project_file().tempo_map.change_at(tick).tick == tick && tick > Ticks(0) {
-            self.select_tempo(Some(tick), cx);
-        }
-    }
-
-    pub(super) fn remove_tempo_change(&mut self, tick: Ticks, cx: &mut Context<Self>) {
-        self.session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                let map = &project.project_file().tempo_map;
-                let Some(tempo_map) = map.without_change_at(tick) else {
-                    return Ok(());
-                };
-                let mut changes = Changes::new();
-                changes.set_tempo_map(tempo_map);
-                project.commit("Remove tempo change", changes)
-            })
-        });
-        self.select_tempo(None, cx);
-    }
-
     /// A double click on empty track space: a clip of one bar in the cell under the pointer.
     fn add_clip_at(&mut self, x: f32, y: f32, scene: &Scene, cx: &mut Context<Self>) {
         let row = scene.viewport.track_at(&scene.layout, y);
@@ -375,7 +318,7 @@ impl Timeline {
         if !adds {
             self.select_clip(None, cx);
         }
-        self.select_tempo(None, cx);
+        self.select_mark(None, cx);
         let viewport = self.painted.get();
         let corner = (viewport.tick_at(x), f64::from(y) + viewport.scroll_y);
         self.held = Held::Marquee(Marquee {

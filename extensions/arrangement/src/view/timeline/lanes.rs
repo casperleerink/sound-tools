@@ -528,11 +528,12 @@ impl Timeline {
         After::Keep
     }
 
-    /// Selects a point of an automation lane and no clip or tempo change, so delete removes it.
+    /// Selects a point of an automation lane and no clip or mark of the ruler, so delete
+    /// removes it.
     pub(super) fn select_point(&mut self, point: Option<PointKey>, cx: &mut Context<Self>) {
         if point.is_some() {
             self.select_clip(None, cx);
-            self.select_tempo(None, cx);
+            self.select_mark(None, cx);
         }
         if self.selected_point != point {
             self.selected_point = point;

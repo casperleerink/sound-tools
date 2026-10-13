@@ -14,8 +14,8 @@ use sound_core::{Project, ProjectError};
 use sound_notes::Clip;
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem};
 
-use super::Timeline;
 use super::scene::Scene;
+use super::{HeldMenu, Timeline};
 use crate::AnyClip;
 use crate::view::layout::{HEADER_WIDTH, Part, RULER_HEIGHT, TRACK_HEIGHT};
 
@@ -44,15 +44,18 @@ pub(super) fn opens_menu(event: &MouseDownEvent) -> bool {
     }
 }
 
+/// The key that deletes, as a menu shows it.
+pub(super) fn delete_key() -> &'static str {
+    match cfg!(target_os = "macos") {
+        true => "backspace",
+        false => "delete",
+    }
+}
+
 /// `fit` is `None` when the fit is not offered, else why it cannot run, if it cannot.
 fn entries(fit: Option<Option<&'static str>>) -> Vec<MenuEntry> {
     let command =
         |value: &'static str, label: &'static str| MenuItem::new(value, label).selectable(false);
-    let delete_key = if cfg!(target_os = "macos") {
-        "backspace"
-    } else {
-        "delete"
-    };
     let mut entries = Vec::new();
     if let Some(unavailable) = fit {
         let fit = command(FIT_TEMPO, "Fit tempo to take");
@@ -70,13 +73,13 @@ fn entries(fit: Option<Option<&'static str>>) -> Vec<MenuEntry> {
     ])));
     entries.push(MenuEntry::Separator);
     entries.push(MenuEntry::Group(
-        MenuGroup::new().item(command(DELETE, "Delete").shortcut(delete_key)),
+        MenuGroup::new().item(command(DELETE, "Delete").shortcut(delete_key())),
     ));
     entries
 }
 
 impl Timeline {
-    /// A press that opens the menu, at `(x, y)` on the timeline and `position` in the window.
+    /// A press that opens the menu, at `(x, y)` in the tracks and `position` in the window.
     /// Off a clip, nothing. On Windows the menu waits for the release.
     pub(super) fn press_for_clip_menu(
         &mut self,
@@ -86,10 +89,6 @@ impl Timeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clip_menu_held = false;
-        if self.dragging() || x < 0.0 || y < 0.0 {
-            return;
-        }
         let part = scene.viewport.part_at(&scene.layout, y);
         if !matches!(part, Some((_, Part::Track))) {
             return;
@@ -102,19 +101,21 @@ impl Timeline {
             self.select_clip(Some(id), cx);
         }
         match cfg!(windows) {
-            true => self.clip_menu_held = true,
+            true => self.menu_held = Some(HeldMenu::Clip),
             false => self.show_clip_menu(position, window, cx),
         }
     }
 
-    pub(super) fn release_for_clip_menu(
+    pub(super) fn release_for_menu(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if std::mem::take(&mut self.clip_menu_held) {
-            self.show_clip_menu(position, window, cx);
+        match self.menu_held.take() {
+            Some(HeldMenu::Clip) => self.show_clip_menu(position, window, cx),
+            Some(HeldMenu::Ruler) => self.show_ruler_menu(position, window, cx),
+            None => {}
         }
     }
 

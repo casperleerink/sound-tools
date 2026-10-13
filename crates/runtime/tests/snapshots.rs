@@ -81,8 +81,12 @@
 //! - `arrangement-loop.png`: the same with the loop on, over bars 3 to 6.
 //! - `arrangement-snap.png`: the snap setting open in the corner above the track headers.
 //! - `arrangement-rename.png`: the name field open in the header of the bass.
+//! - `arrangement-sections.png`: the same with three sections, the chorus selected.
+//! - `arrangement-ruler-menu.png`: the menu of a right click in the ruler, its time signature
+//!   row under the keys and the ghost of where it lands.
 //! - `arrangement-time-signatures.png`: the piece with a time signature that changes almost
 //!   every bar, each shown in the ruler where it starts.
+//! - `arrangement-time-signature-selected.png`: the same with the 4/4 of bar 10 clicked.
 //! - `editor-time-signatures.png`: the note editor on the melody in those bars.
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
 //! - `audio-*.png`: audio tracks and clips, see `snapshots/audio.rs`.
@@ -111,7 +115,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use arrangement::view::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
 use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
-use arrangement::view::{ArrangementView, NoteEditor};
+use arrangement::view::{ArrangementView, NoteEditor, RulerMark};
 use arrangement::{Colour, TrackState};
 use compressor::CompressorState;
 use compressor::view::CompressorView;
@@ -1285,7 +1289,7 @@ fn main() -> Result<()> {
     editing.drag(mark, point(px(0.), px(0.)), 0, &mut cx)?;
     editing.advance(64, &mut cx);
     anyhow::ensure!(
-        cx.update(|cx| timeline.read(cx).selected_tempo()) == Some(Ticks(4 * BAR)),
+        cx.update(|cx| timeline.read(cx).selected_mark()) == Some(RulerMark::Tempo(Ticks(4 * BAR))),
         "the tempo mark was not hit"
     );
     save(&mut cx, &editing, "arrangement-tempo")?;
@@ -1342,12 +1346,67 @@ fn main() -> Result<()> {
     save(&mut cx, &editing, "arrangement-track-drag")?;
     editing.key("escape", &mut cx)?;
     editing.release(header(2.), &mut cx)?;
+
+    // Sections behind the bar numbers, two of them where a tempo changes, the chorus clicked.
+    let sections = serde_json::from_str(
+        r#"[{"bar": 1, "name": "Intro"}, {"bar": 5, "name": "Verse"}, {"bar": 9, "name": "Chorus"}]"#,
+    )?;
+    cx.update(|cx| {
+        editing.session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set_sections(sections);
+                project.commit("Sections", changes)
+            })
+        })
+    });
+    cx.run_until_parked();
+    let in_ruler = |tick: u64, right: f32| {
+        let x = HEADER_WIDTH + Viewport::default().x_of(Ticks(tick)) + right;
+        point(px(x), px(48. + RULER_HEIGHT / 2.))
+    };
+    editing.drag(in_ruler(8 * BAR, 30.), point(px(0.), px(0.)), 0, &mut cx)?;
+    anyhow::ensure!(
+        matches!(
+            cx.update(|cx| timeline.read(cx).selected_mark()),
+            Some(RulerMark::Section(_))
+        ),
+        "the name of the chorus was not hit"
+    );
+    save(&mut cx, &editing, "arrangement-sections")?;
+
+    // The menu of a right click in the ruler, past the middle of bar 7, with the keys on its
+    // time signature row: the ghost shows it lands on bar 8.
+    let menu_at = in_ruler(6 * BAR + 2000, 0.);
+    editing.mouse(
+        PlatformInput::MouseDown(MouseDownEvent {
+            position: menu_at,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Right,
+            click_count: 1,
+            first_mouse: false,
+        }),
+        &mut cx,
+    )?;
+    editing.mouse(
+        PlatformInput::MouseUp(MouseUpEvent {
+            position: menu_at,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Right,
+            click_count: 1,
+        }),
+        &mut cx,
+    )?;
+    editing.key("down", &mut cx)?;
+    editing.key("down", &mut cx)?;
+    save(&mut cx, &editing, "arrangement-ruler-menu")?;
+    editing.key("escape", &mut cx)?;
     drop(editing);
 
     // Time signatures that change: two bars of 4/4, then a new one almost every bar as in the
     // Danse sacrale. The ruler shows each where it starts, and the editor has the beats of
     // each bar.
-    let meters = Opened::new(&mut cx, |project| {
+    let mut meters = Opened::new(&mut cx, |project| {
         piece(project)?;
         let time_signatures = serde_json::from_str(
             r#"[
@@ -1368,6 +1427,21 @@ fn main() -> Result<()> {
         Ok(())
     })?;
     save(&mut cx, &meters, "arrangement-time-signatures")?;
+    // The 4/4 of bar 10 clicked: selected, and the transport shows it to edit. Two bars of 4/4,
+    // then 3/16, 2/16, 3/16, 2/8, 5/16 and two of 7/8.
+    let bar_ten = Ticks(2 * BAR + 720 + 480 + 720 + 960 + 1200 + 2 * 3360);
+    let label = point(
+        px(HEADER_WIDTH + Viewport::default().x_of(bar_ten) + 36.),
+        px(48. + RULER_HEIGHT / 2.),
+    );
+    let timeline = meters.timeline_view(&mut cx)?;
+    meters.drag(label, point(px(0.), px(0.)), 0, &mut cx)?;
+    meters.advance(64, &mut cx);
+    anyhow::ensure!(
+        cx.update(|cx| timeline.read(cx).selected_mark()) == Some(RulerMark::TimeSignature(10)),
+        "the time signature of bar 10 was not hit"
+    );
+    save(&mut cx, &meters, "arrangement-time-signature-selected")?;
     let melody =
         InstanceId::new("arrangement/a-melody-with-a-name-too-long-for-its-header/clip-000")?;
     meters.open_editor(&melody, &mut cx)?;

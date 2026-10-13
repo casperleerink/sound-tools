@@ -1,7 +1,7 @@
 //! The transport: a pill in the middle of the title row. Play or pause, stop, record, the
 //! position as bar and beat and as time, a hairline seek strip with the duration when the
-//! project has an end, the tempo at the playhead, the steadiness of a fit, the computer keys,
-//! the click and the master meter.
+//! project has an end, the tempo and the time signature at the playhead, the steadiness of a
+//! fit, the computer keys, the click and the master meter.
 //!
 //! It follows the playhead, so it renders every frame while the project plays. It therefore
 //! reads the end of the project, which walks every clip, only after a project event, and
@@ -19,7 +19,9 @@
 //! `impl TransportPill`:
 //! - `take`: the record control, a take from its start to its clips, and the audio input.
 //! - `strip`: the seek strip.
+//! - `signature`: the time signature.
 
+mod signature;
 mod steadiness;
 mod strip;
 mod take;
@@ -126,6 +128,7 @@ pub struct TransportPill {
     audio: AudioInput,
     recording: Entity<Recording>,
     tempo_drag: Option<TempoDrag>,
+    signature_drag: Option<signature::SignatureDrag>,
     steadiness_drag: DragEdit,
     play_focus: FocusHandle,
     stop_focus: FocusHandle,
@@ -284,6 +287,7 @@ impl TransportPill {
             computer_keys: None,
             timing,
             tempo_drag: None,
+            signature_drag: None,
             steadiness_drag: DragEdit::default(),
             play_focus: cx.focus_handle().tab_stop(true),
             stop_focus: cx.focus_handle().tab_stop(true),
@@ -805,6 +809,7 @@ impl Render for TransportPill {
             .end
             .map(|end| clock_time(project.clock().seconds_of(end)));
         let tempo = self.tempo(cx);
+        let time_signature = self.time_signature(cx);
         let steadiness = self.steadiness(cx);
         let strip = self.end.map(|end| self.strip(end, cx));
         let click_on = self.click_is_on();
@@ -895,6 +900,7 @@ impl Render for TransportPill {
                     .child(duration)
             }))
             .child(tempo)
+            .child(time_signature)
             // Only a project with a fit has this, so every other pill is what it always was.
             .children(steadiness)
             // The computer keys and the click are switches of the composer, not of the mix, so

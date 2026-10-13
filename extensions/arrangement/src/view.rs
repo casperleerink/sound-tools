@@ -68,7 +68,7 @@ use returns::ReturnsEvent;
 use roll::EDITOR_HEIGHT;
 use snap::SharedSnap;
 use timeline::scrolled_or_zoomed;
-pub use timeline::{ClipShape, DropTarget, FitTempo, Scene, Timeline, TimelineEvent};
+pub use timeline::{ClipShape, DropTarget, FitTempo, RulerMark, Scene, Timeline, TimelineEvent};
 pub use track_panel::TrackPanel;
 use track_panel::TrackPanelEvent;
 
@@ -149,7 +149,14 @@ impl ArrangementView {
         let (snap, clipboard) = (SharedSnap::default(), SharedClipboard::default());
         let timeline = cx.new(|cx| {
             let shared = (snap.clone(), clipboard.clone());
-            Timeline::new(session.clone(), arrangement.clone(), shared, fit_tempo, cx)
+            Timeline::new(
+                session.clone(),
+                arrangement.clone(),
+                shared,
+                fit_tempo,
+                window,
+                cx,
+            )
         });
         let painted = timeline.read(cx).painted();
         let playhead_line = cx.new(|cx| PlayheadLine::new(playhead, &timeline, painted, cx));
