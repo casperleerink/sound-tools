@@ -83,7 +83,8 @@ impl Timeline {
         let visible_x = |x: &Range<f32>| x.end > 0. && x.start < width;
         let sections = project.project_file().sections.spans().filter_map(|(section, next)| {
             let x_of_bar = |bar: u64| Some(viewport.x_of(time_signatures.bar(bar)?.start));
-            let end = next.and_then(|next| x_of_bar(next.get())).unwrap_or(f32::MAX);
+            // The last one runs past the right edge.
+            let end = next.and_then(|next| x_of_bar(next.get())).unwrap_or(width + 1.);
             Some(SectionBand {
                 bar: section.bar,
                 x: x_of_bar(section.bar.get())?..end,

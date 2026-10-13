@@ -15,6 +15,7 @@ use sound_core::{Bar, Changes, ProjectFile, SectionName, Ticks, TimeSignatures};
 use sound_ui::ActiveTheme;
 use sound_ui::components::dropdown_menu::{MenuEntry, MenuGroup, MenuItem};
 
+use super::clip_menu::delete_key;
 use super::scene::Scene;
 use super::state::RenameTarget;
 use super::{HeldMenu, Timeline};
@@ -127,12 +128,7 @@ fn entries(file: &ProjectFile, at: RulerMenuAt) -> Vec<MenuEntry> {
     ];
     let mut entries = vec![MenuEntry::Group(MenuGroup::new().items(adds))];
     if at.mark.is_some() {
-        let delete_key = if cfg!(target_os = "macos") {
-            "backspace"
-        } else {
-            "delete"
-        };
-        let remove = row(REMOVE, "trash-2", "Remove", false).shortcut(delete_key);
+        let remove = row(REMOVE, "trash-2", "Remove", false).shortcut(delete_key());
         entries.push(MenuEntry::Separator);
         entries.push(MenuEntry::Group(MenuGroup::new().item(remove)));
     }
@@ -198,11 +194,27 @@ impl Timeline {
         }
     }
 
-    /// A mark removed from outside is not selected any more.
+    /// Selects a mark just added. The playhead moves onto it only while stopped, so the
+    /// transport edits it; playing on is never cut short.
+    fn select_added(&mut self, mark: RulerMark, cx: &mut Context<Self>) {
+        match self.playhead.read(cx).playing {
+            true => self.select_mark(Some(mark), cx),
+            false => self.select_mark_and_seek(mark, cx),
+        }
+    }
+
+    /// A mark removed from outside or by undo is not selected any more, and the name field of
+    /// a section that went closes.
     pub(super) fn forget_lost_mark(&mut self, cx: &App) {
         let file = self.session.read(cx).project().project_file();
         if self.selected_mark.is_some_and(|mark| !mark.is_in(file)) {
             self.selected_mark = None;
+        }
+        let renamed = self.rename.as_ref().map(|rename| &rename.target);
+        if let Some(RenameTarget::Section(bar)) = renamed
+            && !RulerMark::Section(*bar).is_in(file)
+        {
+            self.rename = None;
         }
     }
 
@@ -239,7 +251,7 @@ impl Timeline {
         );
         let mark = RulerMark::Tempo(tick);
         if mark.is_in(self.session.read(cx).project().project_file()) {
-            self.select_mark_and_seek(mark, cx);
+            self.select_added(mark, cx);
         }
     }
 
@@ -258,7 +270,7 @@ impl Timeline {
             cx,
         );
         if added {
-            self.select_mark_and_seek(RulerMark::TimeSignature(bar.number), cx);
+            self.select_added(RulerMark::TimeSignature(bar.number), cx);
         }
     }
 
@@ -280,7 +292,7 @@ impl Timeline {
             cx,
         );
         if added {
-            self.select_mark_and_seek(RulerMark::Section(bar), cx);
+            self.select_added(RulerMark::Section(bar), cx);
             self.start_section_rename(bar, window, cx);
         }
     }
@@ -380,19 +392,38 @@ impl Timeline {
     }
 
     /// The menu at the playhead, for the menu key while no clip is selected. On the selected
-    /// mark when there is one.
+    /// mark, else on a mark at the playhead, which it selects: so the keys reach every mark.
     pub(super) fn open_ruler_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let playhead = self.playhead.read(cx).tick;
+        let mark = self
+            .selected_mark
+            .or_else(|| self.mark_at_tick(playhead, cx));
+        if mark.is_some() {
+            self.select_mark(mark, cx);
+        }
         let landing = Landing::at(playhead, &self.grid(cx), self.time_signatures(cx));
-        self.ruler_menu_at = Some(RulerMenuAt {
-            landing,
-            mark: self.selected_mark,
-        });
+        self.ruler_menu_at = Some(RulerMenuAt { landing, mark });
         let (width, _) = self.painted_size.get();
         let x = self.painted.get().x_of(playhead).clamp(0., width.max(0.));
         let origin = self.painted_bounds.get().origin;
         let position = origin + point(px(HEADER_WIDTH + x), px(RULER_HEIGHT));
         self.show_ruler_menu(position, window, cx);
+    }
+
+    /// A mark that starts exactly at `tick`: a section first, which enter renames, then a time
+    /// signature change, then a tempo change.
+    fn mark_at_tick(&self, tick: Ticks, cx: &App) -> Option<RulerMark> {
+        let file = self.session.read(cx).project().project_file();
+        let bar = file.tempo_map.time_signatures().bar_at(tick);
+        let on_bar_line = (bar.start == tick).then_some(bar.number);
+        let section = on_bar_line
+            .and_then(NonZeroU64::new)
+            .map(RulerMark::Section);
+        let time_signature = on_bar_line.map(RulerMark::TimeSignature);
+        [section, time_signature, Some(RulerMark::Tempo(tick))]
+            .into_iter()
+            .flatten()
+            .find(|mark| mark.is_in(file))
     }
 
     pub(super) fn show_ruler_menu(
@@ -544,10 +575,7 @@ pub(super) fn paint_section_names(
                 cx,
             );
         });
-        zones.push((
-            RulerMark::Section(band.bar),
-            start - 4.0..left + width + 12.,
-        ));
+        zones.push((RulerMark::Section(band.bar), left..left + width + 12.));
     }
     zones
 }
@@ -575,6 +603,8 @@ pub(super) fn paint_time_signature_marks(
         let before = text_width(&format!("{number}  "), 12., FontWeight::NORMAL, window);
         let whole = text_width(&bar.label(), 12., FontWeight::NORMAL, window);
         let (left, right) = (x + before - 6., x + whole + 6.);
+        // A label after it starts 4 pt after the bar label: a press there is that label's.
+        let reach = left..x + whole + 3.;
         if selected {
             let label = Bounds::new(
                 ruler.origin + point(px(left), px(6.)),
@@ -586,22 +616,29 @@ pub(super) fn paint_time_signature_marks(
                 window.paint_quad(quad(label, px(6.), selected_fill, px(1.), border, solid));
             });
         }
-        zones.push((RulerMark::TimeSignature(number), left..right));
+        zones.push((RulerMark::TimeSignature(number), reach));
     }
     zones
 }
 
 /// Where the row of the ruler menu under the pointer or the keys would add its mark: a line in
-/// the colour of where things land.
-pub(super) fn paint_ghost(x: f32, ruler: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
-    let color = cx.theme().lavender.opacity(0.7);
-    let line = Bounds::new(
-        ruler.origin + point(px(x.round() - 1.), px(0.)),
-        size(px(2.), px(RULER_HEIGHT)),
-    );
-    window.with_content_mask(Some(ContentMask { bounds: ruler }), |window| {
-        window.paint_quad(fill(line, color));
-    });
+/// the colour of where things land, faint down through the tracks, so it shows beside the menu.
+pub(super) fn paint_ghost(
+    x: f32,
+    (ruler, tracks): (Bounds<Pixels>, Bounds<Pixels>),
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let lavender = cx.theme().lavender;
+    for (area, opacity) in [(ruler, 0.7), (tracks, 0.3)] {
+        let line = Bounds::new(
+            area.origin + point(px(x.round() - 1.), px(0.)),
+            size(px(2.), area.size.height),
+        );
+        window.with_content_mask(Some(ContentMask { bounds: area }), |window| {
+            window.paint_quad(fill(line, lavender.opacity(opacity)));
+        });
+    }
 }
 
 #[cfg(test)]

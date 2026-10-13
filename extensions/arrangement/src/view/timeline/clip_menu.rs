@@ -44,15 +44,18 @@ pub(super) fn opens_menu(event: &MouseDownEvent) -> bool {
     }
 }
 
+/// The key that deletes, as a menu shows it.
+pub(super) fn delete_key() -> &'static str {
+    match cfg!(target_os = "macos") {
+        true => "backspace",
+        false => "delete",
+    }
+}
+
 /// `fit` is `None` when the fit is not offered, else why it cannot run, if it cannot.
 fn entries(fit: Option<Option<&'static str>>) -> Vec<MenuEntry> {
     let command =
         |value: &'static str, label: &'static str| MenuItem::new(value, label).selectable(false);
-    let delete_key = if cfg!(target_os = "macos") {
-        "backspace"
-    } else {
-        "delete"
-    };
     let mut entries = Vec::new();
     if let Some(unavailable) = fit {
         let fit = command(FIT_TEMPO, "Fit tempo to take");
@@ -70,7 +73,7 @@ fn entries(fit: Option<Option<&'static str>>) -> Vec<MenuEntry> {
     ])));
     entries.push(MenuEntry::Separator);
     entries.push(MenuEntry::Group(
-        MenuGroup::new().item(command(DELETE, "Delete").shortcut(delete_key)),
+        MenuGroup::new().item(command(DELETE, "Delete").shortcut(delete_key())),
     ));
     entries
 }

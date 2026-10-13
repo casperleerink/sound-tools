@@ -362,9 +362,6 @@ pub(super) fn paint_scene(
     zones.extend(sections);
     zones.extend(tempo);
     scene.mark_zones = zones;
-    if let Some(x) = scene.ghost {
-        paint_ghost(x, ruler, window, cx);
-    }
 
     window.with_content_mask(Some(ContentMask { bounds: headers }), |window| {
         for row in &scene.rows {
@@ -572,6 +569,9 @@ pub(super) fn paint_scene(
             paint_hint(readout, timeline.origin + at, window, cx);
         }
     });
+    if let Some(x) = scene.ghost {
+        paint_ghost(x, (ruler, timeline), window, cx);
+    }
 }
 
 /// A line through `corners`, from `origin`.
@@ -825,10 +825,10 @@ fn paint_tempo_marks(
             if let Err(error) = shaped.paint(origin, px(17.), TextAlign::Left, None, window, cx) {
                 eprintln!("arrangement view: {error}");
             }
-            // Not over the name of a section at the same place, which a press takes.
-            let named = taken.iter().filter(|(_, zone)| zone.contains(&x));
-            let start = named.map(|(_, zone)| zone.end).fold(x - 4., f32::max);
-            zones.push((RulerMark::Tempo(mark.tick), start..left + width));
+            // Its line and its label, not what lies between: the number and time signature of
+            // a bar there, and the name of a section, take their own presses.
+            zones.push((RulerMark::Tempo(mark.tick), x - 4.0..x + 4.));
+            zones.push((RulerMark::Tempo(mark.tick), left..left + width));
         }
     });
     zones
