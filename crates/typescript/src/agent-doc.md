@@ -67,7 +67,7 @@ Inside `sound` only:
 - `buffer(seconds)`: memory to `.write(index, value)` every sample and read with `.at` or `lookup`, for loops and grains.
 - `watch(name, signal)`: shows the signal's value to the card, as `watches[name]`: a meter, a step light. Up to 16.
 
-A sound is held to 4, about 12 dB over full scale, and a value that is not a number is 0, so a feedback that runs away is loud, not dangerous. Keep feedback gains under 1. An instrument's voice ends when its gate is 0 and it has been silent for 50 ms past its longest `delay`, so multiply it by an `adsr` of `note.gate`.
+A sound is held to 4, about 12 dB over full scale, and a value that is not a number is 0, so a feedback that runs away is loud, not dangerous. Keep feedback gains under 1. An instrument's voice ends when its gate is 0 and it has been silent for 50 ms past all its `delay`s in a row, so multiply it by an `adsr` of `note.gate`.
 
 ```ts
 import { delay, feedback, input, knob, lowpass, mix, saturate, tool } from "./sdk";

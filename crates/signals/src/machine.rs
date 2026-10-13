@@ -285,10 +285,10 @@ impl Machine {
         }
     }
 
-    /// How far back the longest delay reaches, in frames.
-    pub(crate) fn longest_delay(&self) -> usize {
-        let longest = (self.code.slots.delays.iter()).fold(0.0_f32, |longest, ms| longest.max(*ms));
-        (longest * 0.001 * self.sample_rate) as usize
+    /// How far back the delays reach, in frames, were they all in one chain.
+    pub(crate) fn delays_reach(&self) -> usize {
+        let ms: f32 = self.code.slots.delays.iter().sum();
+        (ms * 0.001 * self.sample_rate) as usize
     }
 
     /// The last value of each watch, in the order of [`Code::watches`].

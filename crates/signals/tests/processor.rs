@@ -178,27 +178,33 @@ fn an_instrument_plays_a_chord_as_one_voice_per_note() {
 
 #[test]
 fn a_pluck_into_a_delay_echoes_after_each_note_and_only_its_own() {
-    // Quiet from the end of the pluck, at 6 ms, until its echo. The first note is let go of
-    // at once, the second is held past its echo.
-    let code = compile(|| {
-        let pluck = 0.5 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 5.0, 0.0, 1.0);
+    let pluck = || 0.5 * sin(phasor(freq()) * TAU) * adsr(gate(), 1.0, 5.0, 0.0, 1.0);
+    let once = compile(|| {
+        let pluck = pluck();
         pluck + delay_up_to(pluck, 300.0, 300.0)
     });
-    let notes = vec![
-        (0, on(69)),
-        (480, off(69)),
-        (48_000, on(69)),
-        (67_200, off(69)),
-    ];
-    let mut played = play(Kind::Instrument { voices: 1 }, code, notes);
-    let output = played.render(96_000);
-    for note in [0, 48_000] {
-        assert_eq!(loudest(&output[note + 960..note + 14_000]), 0.0, "{note}");
-        // 300 ms is 14400 frames.
-        assert!(
-            loudest(&output[note + 14_400..note + 14_880]) > 0.1,
-            "{note}"
-        );
+    let twice = compile(|| {
+        let pluck = pluck();
+        pluck + delay_up_to(delay_up_to(pluck, 300.0, 300.0), 300.0, 300.0)
+    });
+    // 300 ms is 14400 frames.
+    for (code, echo) in [(once, 14_400), (twice, 28_800)] {
+        // Quiet from the end of the pluck, at 6 ms, until its echo. The first note is let go
+        // of at once, the second is held past its echo.
+        let notes = vec![
+            (0, on(69)),
+            (480, off(69)),
+            (96_000, on(69)),
+            (96_000 + echo + 4_800, off(69)),
+        ];
+        let mut played = play(Kind::Instrument { voices: 1 }, code, notes);
+        let output = played.render(144_000);
+        for note in [0, 96_000] {
+            let quiet = loudest(&output[note + 960..note + echo - 400]);
+            assert_eq!(quiet, 0.0, "{note} {echo}");
+            let echoed = loudest(&output[note + echo..note + echo + 480]);
+            assert!(echoed > 0.1, "{note} {echo}");
+        }
     }
 }
 
@@ -320,20 +326,22 @@ fn a_note_with_no_length_plays_until_it_is_released() {
 fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_key_at_once() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = |at| SignalsUpdate::Note {
+    let note = |at, frames| SignalsUpdate::Note {
         pitch,
         velocity: Velocity::new(100).unwrap(),
         at,
-        frames: None,
+        frames,
     };
-    played.control.update(played.signals, note(None)).unwrap();
-    played.render(64);
-    // The same key again, later, waits in the list, which holds 256, with triggers far ahead.
     played
         .control
-        .update(played.signals, note(Some(48_000)))
+        .update(played.signals, note(None, None))
         .unwrap();
-    for _ in 0..255 {
+    played.render(64);
+    // The same key again, from frame 48000 to 96000, waits in the list, which holds 256, with
+    // triggers far ahead.
+    let waiting = note(Some(48_000), Some(48_000));
+    played.control.update(played.signals, waiting).unwrap();
+    for _ in 0..254 {
         let hit = SignalsUpdate::Trigger {
             index: 0,
             at: Some(u64::MAX),
@@ -344,8 +352,14 @@ fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_ke
     assert!(loudest(&played.render(4_800)) > 0.1);
     let release = SignalsUpdate::Release { pitch, at: None };
     played.control.update(played.signals, release).unwrap();
-    // Past frame 48000, where the waiting note would start and never end.
+    // Past frame 48000, where the waiting note would start.
     assert_eq!(loudest(&played.render(48_000)[4_800..]), 0.0);
+    // A newer note of the key plays on past frame 96000, where the waiting one would end.
+    played
+        .control
+        .update(played.signals, note(None, None))
+        .unwrap();
+    assert!(loudest(&played.render(48_000)[38_400..]) > 0.1);
 }
 
 #[test]
