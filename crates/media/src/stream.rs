@@ -4,7 +4,7 @@
 //! mapped, so the system reads the rest from disk as it plays and lets go of it again under
 //! memory pressure. A note must not wait for the disk on the audio thread, so a thread of its
 //! own reads ahead: a processor asks it with [`ReadAhead::ask`] when a note starts, and by the
-//! time the note is past the start in memory, the rest is in memory too.
+//! time the note is past the start in memory, the next part is in memory too.
 //!
 //! A FLAC file cannot be mapped as plain samples, so it is decoded once into a WAV file next
 //! to it, `<name>.flac.wav`, which is mapped instead and decoded again only when the FLAC file
@@ -209,26 +209,129 @@ fn start_reader() {
 }
 
 /// Takes the requests of every processor and reads what they ask for. The audio thread cannot
-/// wake a thread without a system call, so this one looks every millisecond.
+/// wake a thread without a system call, so this one looks every millisecond while it has
+/// nothing to read.
 fn read_ahead() {
-    let mut requests = Vec::new();
+    let mut notes = Vec::new();
     loop {
         {
             let mut queues = QUEUES.lock().unwrap_or_else(PoisonError::into_inner);
             // A processor that went away leaves its queue behind.
             queues.retain(|queue| !queue.is_abandoned() || !queue.is_empty());
+            let streamed = streamed();
             for queue in queues.iter_mut() {
-                while let Ok(request) = queue.pop() {
-                    requests.push(request);
+                while let Ok((number, from)) = queue.pop() {
+                    notes.extend(streamed.get(&number).map(|audio| (audio.clone(), from)));
                 }
             }
         }
-        for (number, from) in requests.drain(..) {
-            let audio = streamed().get(&number).and_then(Weak::upgrade);
-            if let Some(audio) = audio {
-                audio.read_ahead(from);
-            }
+        turn(&mut notes, |audio, from, frames| {
+            audio.read_ahead(from, frames)
+        });
+        if notes.is_empty() {
+            std::thread::sleep(Duration::from_millis(1));
         }
-        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// How much of a note one turn reads.
+const STEP_SECONDS: f64 = HEAD_SECONDS;
+
+/// Reads the next step of every note, its file and the frame it is read from, and lets go of
+/// those read to the end. A step of each note before more of any one: read whole one after
+/// another, the last note of a chord of long samples waited for all the others and played past
+/// its start in memory.
+fn turn(notes: &mut Vec<(Weak<Audio>, u64)>, read: impl Fn(&Audio, u64, u64)) {
+    notes.retain_mut(|(audio, from)| {
+        let Some(audio) = audio.upgrade() else {
+            return false;
+        };
+        let step = (f64::from(audio.sample_rate()) * STEP_SECONDS) as u64;
+        let step = step.max(1);
+        read(&audio, *from, step);
+        *from = from.saturating_add(step);
+        *from < audio.frames()
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use crate::file::touches;
+
+    /// A streamed WAV file of `frames` frames of silence at 48 kHz, mono, 16-bit.
+    fn streamed_wav(folder: &Path, name: &str, frames: u32) -> Arc<Audio> {
+        let path = folder.join(name);
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        for _ in 0..frames {
+            writer.write_sample(0_i16).unwrap();
+        }
+        writer.finalize().unwrap();
+        let Ok(audio) = open(&path) else {
+            panic!("{name} does not open");
+        };
+        Arc::new(audio)
+    }
+
+    #[test]
+    fn a_note_that_starts_while_another_is_read_has_its_start_read_in_the_next_turn() {
+        let folder = tempfile::tempdir().unwrap();
+        let long = streamed_wav(folder.path(), "long.wav", 480_000);
+        let short = streamed_wav(folder.path(), "short.wav", 48_000);
+        let read = std::cell::RefCell::new(Vec::new());
+        let mut notes = vec![(Arc::downgrade(&long), 0)];
+        let turn = |notes: &mut _| {
+            turn(notes, |audio, from, _| {
+                let which = if std::ptr::eq(audio, &*long) {
+                    "long"
+                } else {
+                    "short"
+                };
+                read.borrow_mut().push((which, from));
+            });
+        };
+        turn(&mut notes);
+        notes.push((Arc::downgrade(&short), 0));
+        turn(&mut notes);
+        assert_eq!(*read.borrow(), [("long", 0), ("long", 4_800), ("short", 0)]);
+        while !notes.is_empty() {
+            turn(&mut notes);
+        }
+        let read = read.into_inner();
+        assert_eq!(
+            read.iter().filter(|(which, _)| *which == "long").count(),
+            100
+        );
+        assert_eq!(
+            read.iter().filter(|(which, _)| *which == "short").count(),
+            10
+        );
+    }
+
+    #[test]
+    fn reading_a_note_ahead_brings_in_every_page_of_its_samples() {
+        let folder = tempfile::tempdir().unwrap();
+        // Its samples end 172 bytes into a page, past the last of the steps from each start.
+        let audio = streamed_wav(folder.path(), "note.wav", 14_400);
+        let touched = std::cell::RefCell::new(Vec::new());
+        let mut notes = vec![(Arc::downgrade(&audio), 0)];
+        while !notes.is_empty() {
+            turn(&mut notes, |audio, from, frames| {
+                let (start, end) = audio.mapped_bytes(from, frames);
+                touched.borrow_mut().extend(touches(start, end));
+            });
+        }
+        let pages: BTreeSet<usize> = touched.take().iter().map(|at| at / 4096).collect();
+        let (start, end) = audio.mapped_bytes(0, audio.frames());
+        assert_eq!(end, 28_844);
+        assert_eq!(pages, (start / 4096..=(end - 1) / 4096).collect());
     }
 }
