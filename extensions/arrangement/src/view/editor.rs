@@ -266,8 +266,17 @@ impl NoteEditor {
             }
         })
         .detach();
-        let editors = session.read(cx).project().provided::<Editors>();
-        let editors = editors.cloned().unwrap_or_default();
+        // The arrangement provides them when it registers. A project without is a bug: the
+        // view still opens, in the piano roll.
+        let editors = match session.read(cx).project().provided::<Editors>() {
+            Some(editors) => editors.clone(),
+            None => {
+                eprintln!(
+                    "arrangement view: the project has no clip editors; clips show in the piano roll"
+                );
+                Editors::default()
+            }
+        };
         // Until the clip is there: `set_clip` below finds its rows.
         let piano_roll = sound_notes::piano_roll().grid_for(&View::default());
         let mut editor = Self {
