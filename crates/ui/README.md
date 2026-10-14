@@ -29,25 +29,20 @@ drag. Nothing needs to sync.
   move, which opens the gesture with the first one, then `finish`, or `cancel` on escape. Sound
   and every view follow each move. The file is written once, and the whole drag is one undo
   step. The session holds the open edit, so undo and redo wait until the drag ends.
-- **A control on saved state is controlled.** Give it the value on every render and hand its
-  `ValueChange` to `ControlEdit::apply`. That one call does the gesture, a key step and a reset.
-- **A knob on a number of the record is a `ParameterKnob`.** Its name, range and default come
-  from the `Parameter`; the card gives the label, the name of the undo step and a readout such
-  as `hertz_readout`.
+- **A device view keeps a `DeviceEdit` and implements `DeviceView`.** It draws from
+  `DeviceEdit::state`, the record with the automation lanes over it. Each control gets the
+  value on every render and hands its `ValueChange` to `DeviceEdit::change`: one call does the
+  gesture, a key step and a reset. A knob on a number of the record is a `ParameterKnob`, put
+  on the card with `DeviceEdit::knob`. A number an automation lane moves does not drag.
 - **A file from the composer goes through `import`:** `choose_file` opens the file panel, and
   `import_file` copies the file into the assets on a background thread.
-- **A number an automation lane moves does not drag.** A device view keeps a
-  `Lanes::follow(session, instance, Device::AUTOMATION)`, draws from `Lanes::state`, the record
-  with the lanes over it, and makes each knob or handle of an automated number `automated`. A
-  number of a nested object is asked with `is_automated_in`. `Lanes` draws the view again only
-  when a value it shows changes.
 - **Something that should sound now but is not an edit**, such as a preview note, goes through
   `Project::send`. Nothing is saved.
 
 ## How views find each other
 
 Extensions never depend on each other, and neither do their views. The runtime fills two
-registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI globals:
+registries and installs them as GPUI globals:
 
 - `Views`: `register` gives a tool its main view, and `register_card` gives it a card for a
   slot in a rack. A host calls `Views::card_of` or `Views::view_of` to show the view of an
@@ -72,7 +67,7 @@ registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI glob
   value. A drag there and back then ends where it began.
 - The target of a drag can be deleted under it by an agent. Check on every move and on
   `Deleted`, and finish the gesture when it is gone. Finish an open gesture when the view is
-  released too (`cx.on_release`).
+  released too (`cx.on_release`). `DeviceEdit` does both for a device view.
 - A callback that a control keeps holds the view weakly: `cx.listener`, `weak_callback` or
   `weak_action`, not `cx.processor`. A strong one keeps a closed view and its drag alive.
 - Keep what repaints with the playhead apart from heavy views, and put `.cached(..)` on the
@@ -84,16 +79,3 @@ registries (`crates/runtime/src/lib.rs`, `views`) and installs them as GPUI glob
 - Put coordinate math in pure functions with tests.
 - Use the components and theme tokens of this crate. A general component goes here, with a
   gallery entry. What only one tool needs stays in its extension.
-
-## Copy an example
-
-| You want | Start from |
-| --- | --- |
-| A device card with knobs and a display | `extensions/filter/src/view.rs` |
-| A card with handles on a display | `extensions/instrument/src/view.rs` |
-| A card with sections behind expand, selects and a list of rows | `extensions/wavetable/src/view/` |
-| A rack that hosts cards of other extensions | `extensions/arrangement/src/view/track_panel.rs` |
-| A meter and a mixer strip | `extensions/arrangement/src/view/track_panel.rs` |
-| A large view on a canvas, with drags and keys | `extensions/arrangement/src/view.rs` |
-| A test of the bridge | `crates/ui/tests/bridge.rs` |
-| A test of a view with a simulated mouse and keys | `crates/runtime/tests/window/` |
