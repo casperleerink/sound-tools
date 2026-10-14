@@ -61,14 +61,14 @@ impl NoteEditor {
         };
         let pointer = viewport.tick_at(x);
         let hit = note_at(&viewport, clip, x, y);
-        let hit = hit.and_then(|(index, zone)| Some((zone, *clip.notes.get(index)?)));
+        let hit = hit.and_then(|(index, zone)| Some((zone, clip.notes.get(index)?.clone())));
         if let Some((zone, note)) = hit {
             let kind = match zone {
                 Zone::RightEdge => NoteDragKind::Resize { grab: pointer },
                 Zone::Body | Zone::LeftEdge => NoteDragKind::Move {
                     grab: pointer,
                     grab_pitch: pitch,
-                    grabbed: note,
+                    grabbed: note.clone(),
                     copy: event.modifiers.alt,
                 },
             };
@@ -104,22 +104,22 @@ impl NoteEditor {
         );
         let dragged: Vec<Note> = match (several, self.selection.contains(&note) || cmd) {
             (true, true) => {
-                let mut notes: Vec<Note> = self.selection.iter().copied().collect();
+                let mut notes: Vec<Note> = self.selection.iter().cloned().collect();
                 if !notes.contains(&note) {
-                    notes.push(note);
+                    notes.push(note.clone());
                 }
                 notes
             }
             _ => {
                 if !cmd {
-                    self.select_alone(Some(note), cx);
+                    self.select_alone(Some(note.clone()), cx);
                 }
-                vec![note]
+                vec![note.clone()]
             }
         };
         let on_release = match (cmd, dragged.len() > 1) {
-            (true, _) => Some(OnRelease::Toggle(note)),
-            (false, true) => Some(OnRelease::SelectAlone(note)),
+            (true, _) => Some(OnRelease::Toggle(note.clone())),
+            (false, true) => Some(OnRelease::SelectAlone(note.clone())),
             (false, false) => None,
         };
         if matches!(
@@ -133,7 +133,7 @@ impl NoteEditor {
             notes: dragged
                 .into_iter()
                 .map(|note| Tracked {
-                    origin: note,
+                    origin: note.clone(),
                     written: note,
                 })
                 .collect(),
@@ -161,7 +161,7 @@ impl NoteEditor {
                 let distance = |note: &Note| (velocity_y(note.velocity) - y).abs();
                 distance(a).total_cmp(&distance(b))
             })
-            .copied();
+            .cloned();
         let Some(note) = nearest else {
             self.drag = Some(NoteDrag {
                 kind: NoteDragKind::DrawVelocity { last: (x, y) },
@@ -203,7 +203,7 @@ impl NoteEditor {
         let stroke = Stroke::new(event.modifiers.alt, origin.start, inside, &viewport, (x, y));
         let kind = NoteDragKind::Expression {
             lane,
-            origin,
+            origin: Box::new(origin),
             stroke,
         };
         self.drag = Some(NoteDrag {
@@ -235,7 +235,7 @@ impl NoteEditor {
         // The note is the first change, so this drag opens at the press.
         let mut edit = DragEdit::default();
         let drawn = edit.publish(&self.session, "Draw note", cx, |project, edit| {
-            project.update(edit, &instance, |clip| clip.notes.push(note))
+            project.update(edit, &instance, |clip| clip.notes.push(note.clone()))
         });
         if drawn.is_none() {
             edit.cancel(&self.session, cx);
@@ -243,12 +243,12 @@ impl NoteEditor {
         }
         // Escape gives back what was selected before the first click of the double click.
         let at_press = self.before_click.clone();
-        self.select_alone(Some(note), cx);
+        self.select_alone(Some(note.clone()), cx);
         self.drag = Some(NoteDrag {
             kind: NoteDragKind::Draw { down: start },
             notes: vec![Tracked {
-                origin: note,
-                written: note,
+                origin: note.clone(),
+                written: note.clone(),
             }],
             edit,
             on_release: None,
@@ -269,7 +269,7 @@ impl NoteEditor {
         self.marquee = Some(Marquee {
             from: corner,
             to: corner,
-            before: self.selection.iter().copied().collect(),
+            before: self.selection.iter().cloned().collect(),
             at_press,
         });
     }
@@ -303,9 +303,13 @@ impl NoteEditor {
         };
         if let Some(clip) = self.session.read(cx).project().state(&self.clip) {
             let touched = notes_in(&viewport, clip, area);
-            selected.extend(touched.iter().filter_map(|index| clip.notes.get(*index)));
+            selected.extend(
+                touched
+                    .iter()
+                    .filter_map(|index| clip.notes.get(*index).cloned()),
+            );
         }
-        let primary = self.selection.primary().copied();
+        let primary = self.selection.primary().cloned();
         self.set_selection(selected, primary, cx);
         cx.notify();
     }

@@ -5,6 +5,7 @@ use arrangement::{
     tracks,
 };
 use sound_core::Changes;
+use sound_notes::{Clip, Velocity};
 
 use crate::support::{Harness, Probe, Shows, TICK, clip, id, level_changes, note};
 
@@ -35,7 +36,7 @@ fn an_invalid_clip_names_the_field_and_the_last_valid_clip_keeps_playing() {
         ),
         (
             r#"{"start": 0, "length": 3840, "notes": [], "name": "Verse"}"#,
-            "state.name: unknown field `name`, expected one of `start`, `length`, `notes`, `pedal`, `bend`, `mod_wheel`, `pressure`, `take`",
+            "state.name: unknown field `name`, expected one of `start`, `length`, `notes`, `pedal`, `bend`, `mod_wheel`, `pressure`, `take`, `editor`, `view`",
         ),
         (
             r#"{"start": 15360, "length": 3840, "notes": [{"start": 0, "length": 480, "pitch": 60, "velocity": 100}, {"start": 15360, "length": 480, "pitch": 60, "velocity": 100}]}"#,
@@ -309,4 +310,70 @@ fn add_clips_gives_every_clip_of_a_group_its_own_id_and_counts_numbers_on() {
         let path = format!("state/arrangement/piano/{name}.json");
         assert!(harness.path(&path).exists(), "{path}");
     }
+}
+
+const OLD_CLIP: &str = r#"{
+  "tool": "arrangement.clip",
+  "state": {
+    "start": 960,
+    "length": 3840,
+    "notes": [
+      {"start": 0, "length": 480, "pitch": 60, "velocity": 100},
+      {"start": 480, "length": 480, "pitch": 64, "velocity": 100}
+    ],
+    "take": "take-1"
+  }
+}
+"#;
+
+const EDITOR_CLIP: &str = r#"{
+  "tool": "arrangement.clip",
+  "state": {
+    "start": 0,
+    "length": 3840,
+    "notes": [{"start": 0, "length": 480, "pitch": 38, "velocity": 100, "view": {"accent": true}}],
+    "editor": "drums",
+    "view": {"kit": "house"}
+  }
+}
+"#;
+
+fn set_velocity(harness: &mut Harness, file: &str, velocity: u8) {
+    let instance = file.trim_start_matches("state/").trim_end_matches(".json");
+    let instance = harness.project.resolve::<Clip>(&id(instance)).unwrap();
+    let mut state = harness.project.state(&instance).unwrap().clone();
+    state.notes[0].velocity = Velocity::new(velocity).unwrap();
+    let mut changes = Changes::new();
+    changes.set(&instance, state);
+    harness.project.commit("Change velocity", changes).unwrap();
+}
+
+/// A clip of before clip editors is written back as it was, and the editor and the views of
+/// a clip that has them stay through an edit.
+#[test]
+fn an_edit_writes_an_old_clip_as_it_was_and_keeps_the_editor_and_the_views() {
+    let other = "state/arrangement/piano/clip-1.json";
+    let mut harness =
+        Harness::with_clips(vec![clip(0, 3840, Vec::new()), clip(0, 3840, Vec::new())]);
+    harness.write_and_apply(CLIP, OLD_CLIP);
+    harness.write_and_apply(other, EDITOR_CLIP);
+    assert!(harness.problems().is_empty(), "{:?}", harness.problems());
+
+    set_velocity(&mut harness, other, 90);
+    assert_eq!(
+        std::fs::read_to_string(harness.path(CLIP)).unwrap(),
+        OLD_CLIP
+    );
+    set_velocity(&mut harness, CLIP, 90);
+    set_velocity(&mut harness, CLIP, 100);
+    assert_eq!(
+        std::fs::read_to_string(harness.path(CLIP)).unwrap(),
+        OLD_CLIP
+    );
+
+    let written = std::fs::read_to_string(harness.path(other)).unwrap();
+    assert_eq!(
+        written,
+        EDITOR_CLIP.replace(r#""velocity": 100"#, r#""velocity": 90"#)
+    );
 }

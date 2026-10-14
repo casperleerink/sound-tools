@@ -23,7 +23,7 @@ fn render(notes: Vec<sound_notes::Note>, drums: DrumPadState) -> Stereo {
 fn open_hat_part(cutter: usize, drums: &DrumPadState) -> Vec<f32> {
     let open = hit(0, note(OPEN_HAT), 110);
     let cut = hit(EIGHTH, note(cutter), 110);
-    let both = render(vec![open, cut], drums.clone()).sum();
+    let both = render(vec![open, cut.clone()], drums.clone()).sum();
     let cutter = render(vec![cut], drums.clone()).sum();
     both.iter()
         .zip(cutter)
@@ -100,7 +100,11 @@ fn a_new_hit_of_a_pad_fades_its_last_one_out() {
     let drums = DrumPadState::default();
     let first = render(vec![hit(0, note(crash), 110)], drums.clone()).sum();
     let second = hit(EIGHTH, note(crash), 110);
-    let both = render(vec![hit(0, note(crash), 110), second], drums.clone()).sum();
+    let both = render(
+        vec![hit(0, note(crash), 110), second.clone()],
+        drums.clone(),
+    )
+    .sum();
     let later = render(vec![second], drums).sum();
     let fade = (FADE_SECONDS * SAMPLE_RATE as f32).round() as usize;
     let part: Vec<f32> = both

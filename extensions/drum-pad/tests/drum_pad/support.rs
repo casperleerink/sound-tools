@@ -102,12 +102,12 @@ pub(crate) fn id(id: &str) -> InstanceId {
 
 /// A hit of the pad with this note, a sixteenth long.
 pub(crate) fn hit(start: u64, note: u8, velocity: u8) -> Note {
-    Note {
-        start: Ticks(start),
-        length: Length::new(Ticks(QUARTER / 4)).unwrap(),
-        pitch: Pitch::new(note).unwrap(),
-        velocity: Velocity::new(velocity).unwrap(),
-    }
+    Note::new(
+        Ticks(start),
+        Length::new(Ticks(QUARTER / 4)).unwrap(),
+        Pitch::new(note).unwrap(),
+        Velocity::new(velocity).unwrap(),
+    )
 }
 
 /// The note of pad `pad`, 0 to 15.

@@ -545,11 +545,13 @@ mod tests {
             Length::new(Ticks(length)).unwrap(),
             notes
                 .iter()
-                .map(|&(start, length, pitch)| Note {
-                    start: Ticks(start),
-                    length: Length::new(Ticks(length)).unwrap(),
-                    pitch: Pitch::new(pitch).unwrap(),
-                    velocity: Velocity::new(100).unwrap(),
+                .map(|&(start, length, pitch)| {
+                    Note::new(
+                        Ticks(start),
+                        Length::new(Ticks(length)).unwrap(),
+                        Pitch::new(pitch).unwrap(),
+                        Velocity::new(100).unwrap(),
+                    )
                 })
                 .collect(),
         )

@@ -139,11 +139,13 @@ mod tests {
             Length::new(Ticks(length)).unwrap(),
             notes
                 .iter()
-                .map(|&(start, length)| Note {
-                    start: Ticks(start),
-                    length: Length::new(Ticks(length)).unwrap(),
-                    pitch: Pitch::new(60).unwrap(),
-                    velocity: Velocity::new(100).unwrap(),
+                .map(|&(start, length)| {
+                    Note::new(
+                        Ticks(start),
+                        Length::new(Ticks(length)).unwrap(),
+                        Pitch::new(60).unwrap(),
+                        Velocity::new(100).unwrap(),
+                    )
                 })
                 .collect(),
         )
@@ -326,5 +328,21 @@ mod tests {
         assert_eq!(nudged_track(0, 3, 1), 1);
         assert_eq!(nudged_track(2, 3, 1), 2);
         assert_eq!(nudged_track(0, 1, 1), 0);
+    }
+
+    #[test]
+    fn a_resized_clip_keeps_its_editor_and_view() {
+        let mut origin = clip(BAR, BAR, &[(480, 240)]);
+        origin.editor = Some(sound_notes::EditorName::new("drums").unwrap());
+        origin.view = serde_json::from_str(r#"{"kit":"house"}"#).unwrap();
+        origin.notes[0].view = serde_json::from_str(r#"{"accent":true}"#).unwrap();
+        for resized in [
+            resized_left(&origin, 240, UNIT),
+            resized_right(&origin, -240, UNIT),
+        ] {
+            assert_eq!(resized.editor, origin.editor);
+            assert_eq!(resized.view, origin.view);
+            assert_eq!(resized.notes[0].view, origin.notes[0].view);
+        }
     }
 }

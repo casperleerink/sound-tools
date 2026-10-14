@@ -113,12 +113,12 @@ pub(crate) fn id(id: &str) -> InstanceId {
 
 /// A note, with its start and length in frames at 120 bpm.
 pub(crate) fn note(start_frame: u64, length_frames: u64, pitch: u8, velocity: u8) -> Note {
-    Note {
-        start: Ticks(start_frame / FRAMES_PER_TICK),
-        length: Length::new(Ticks(length_frames / FRAMES_PER_TICK)).unwrap(),
-        pitch: Pitch::new(pitch).unwrap(),
-        velocity: Velocity::new(velocity).unwrap(),
-    }
+    Note::new(
+        Ticks(start_frame / FRAMES_PER_TICK),
+        Length::new(Ticks(length_frames / FRAMES_PER_TICK)).unwrap(),
+        Pitch::new(pitch).unwrap(),
+        Velocity::new(velocity).unwrap(),
+    )
 }
 
 /// A float WAV of these mono samples at `rate`, as `assets/audio/<name>`.

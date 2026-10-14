@@ -304,7 +304,7 @@ impl Fits {
         }
 
         let clips = clips_of_take(project, &state.take);
-        let Some((clip, _)) = clips.first() else {
+        let Some((clip, old)) = clips.first() else {
             derived.problem(format!(
                 "no clip names the take {:?}, so there is nothing to write the notes into. The grid follows the take all the same. Put \"take\": {:?} back in the clip that was recorded from it",
                 state.take, state.take
@@ -321,6 +321,15 @@ impl Fits {
         }
         let mut record = fitted.clip.clone();
         record.take = Some(state.take.clone());
+        record.editor = old.editor.clone();
+        record.view = old.view.clone();
+        // The notes are made again from the take. The note at the same place in the list with
+        // the same pitch is taken to be the same note.
+        for (note, old_note) in record.notes.iter_mut().zip(&old.notes) {
+            if note.pitch == old_note.pitch {
+                note.view = old_note.view.clone();
+            }
+        }
         derived.changes().set(clip, record);
     }
 

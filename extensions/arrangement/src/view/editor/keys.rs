@@ -17,8 +17,8 @@ impl NoteEditor {
     /// The selected notes that the clip has now, each with its index, and the clip.
     fn selected(&self, cx: &App) -> Option<(Clip, Vec<(usize, Note)>)> {
         let clip = self.session.read(cx).project().state(&self.clip)?.clone();
-        let notes: Vec<Note> = self.selection.iter().copied().collect();
-        let found = located(&clip, notes.iter().copied());
+        let notes: Vec<Note> = self.selection.iter().cloned().collect();
+        let found = located(&clip, notes.iter().cloned());
         let selected: Vec<(usize, Note)> = found
             .into_iter()
             .zip(notes)
@@ -80,7 +80,7 @@ impl NoteEditor {
             ("down", true) => (0, -12),
             _ => return false,
         };
-        let origins: Vec<Note> = selected.iter().map(|(_, note)| *note).collect();
+        let origins: Vec<Note> = selected.iter().map(|(_, note)| note.clone()).collect();
         let next = moved_notes(clip.length, &origins, delta, semitones);
         if next == origins {
             return true;
@@ -89,14 +89,14 @@ impl NoteEditor {
         let mut edited = clip.clone();
         for ((index, _), note) in selected.iter().zip(&next) {
             if let Some(slot) = edited.notes.get_mut(*index) {
-                *slot = *note;
+                *slot = note.clone();
             }
         }
         if self.commit(label, edited, cx) {
-            let pairs: Vec<(Note, Note)> = origins.iter().copied().zip(next).collect();
+            let pairs: Vec<(Note, Note)> = origins.iter().cloned().zip(next).collect();
             self.follow_selection(&pairs, cx);
-            let first = self.selection.primary().copied();
-            let moved_first = pairs.iter().find(|(_, new)| Some(*new) == first);
+            let first = self.selection.primary().cloned();
+            let moved_first = pairs.iter().find(|(_, new)| Some(new) == first.as_ref());
             if let Some((old, new)) = moved_first
                 && old.pitch != new.pitch
             {
@@ -117,11 +117,14 @@ impl NoteEditor {
         let mut pairs = Vec::new();
         for (index, note) in &selected {
             let velocity = Velocity::nearest(i64::from(note.velocity.value()) + delta);
-            let next = Note { velocity, ..*note };
+            let next = Note {
+                velocity,
+                ..note.clone()
+            };
             if let Some(slot) = clip.notes.get_mut(*index) {
-                *slot = next;
+                *slot = next.clone();
             }
-            pairs.push((*note, next));
+            pairs.push((note.clone(), next));
         }
         if pairs.iter().all(|(old, new)| old == new) {
             return true;
@@ -139,7 +142,7 @@ impl NoteEditor {
             "a" => {
                 let clip = self.session.read(cx).project().state(&self.clip);
                 let notes: Vec<Note> = clip.map(|clip| clip.notes.clone()).unwrap_or_default();
-                let primary = self.selection.primary().copied();
+                let primary = self.selection.primary().cloned();
                 self.set_selection(notes, primary, cx);
             }
             "c" => {
@@ -240,9 +243,9 @@ impl NoteEditor {
             return;
         }
         let label = plural(notes.len(), one, several);
-        clip.notes.extend(notes.iter().copied());
+        clip.notes.extend(notes.iter().cloned());
         if self.commit(label, clip, cx) {
-            let first = notes.first().copied();
+            let first = notes.first().cloned();
             self.set_selection(notes, first, cx);
         }
     }

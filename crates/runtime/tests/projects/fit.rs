@@ -7,7 +7,7 @@
 
 use fit_tempo::{BeatRate, FitState};
 use sound_core::{Clock, Frames, InstanceId, TempoMap, Ticks};
-use sound_notes::{Clip, RawEvent, RawTake};
+use sound_notes::{Clip, EditorName, Pitch, RawEvent, RawTake, View};
 
 use crate::generated_take::{STARTS_AT_US, generated_take};
 use crate::plugin_hosts::open_read_only;
@@ -163,6 +163,37 @@ fn a_fit_is_one_undo_step_and_gives_everything_back() {
     harness.project.redo().unwrap();
     assert_ne!(clip_of(&harness), clip_before);
     assert!(harness.project.resolve::<FitState>(&fit_id()).is_some());
+}
+
+/// A fit makes the notes again from the take. The clip keeps its editor and view, and a note
+/// keeps its view while the note at its place in the list has its pitch.
+#[test]
+fn a_fit_keeps_the_editor_and_the_views() {
+    let mut harness = recorded(4);
+    let mut clip = clip_of(&harness);
+    let accent: View = serde_json::from_str(r#"{"accent":true}"#).unwrap();
+    clip.editor = Some(EditorName::new("drums").unwrap());
+    clip.view = serde_json::from_str(r#"{"kit":"house"}"#).unwrap();
+    clip.notes[0].view = accent.clone();
+    clip.notes[1].view = accent.clone();
+    let moved = Pitch::nearest(i64::from(clip.notes[1].pitch.number()) + 1);
+    clip.notes[1].pitch = moved;
+    let mut changes = sound_core::Changes::new();
+    let instance = harness.project.resolve::<Clip>(&clip_id()).unwrap();
+    changes.set(&instance, clip.clone());
+    harness.project.commit("Edit clip", changes).unwrap();
+
+    fit(&mut harness);
+    let fitted = clip_of(&harness);
+    assert_ne!(
+        fitted.notes[1].pitch, moved,
+        "the fit did not make the notes again"
+    );
+    assert_eq!(fitted.editor, clip.editor);
+    assert_eq!(fitted.view, clip.view);
+    assert_eq!(fitted.notes[0].view, accent);
+    assert!(fitted.notes[1].view.is_empty());
+    assert!(clip_json(&harness).contains(r#""editor": "drums""#));
 }
 
 /// Steadiness rewrites the tempo map and never the clip, so turning it back to 0 gives the

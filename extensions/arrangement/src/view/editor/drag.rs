@@ -36,7 +36,7 @@ impl NoteEditor {
         // An undo between mouse down and the first change may have changed the lane: the
         // stroke works from the clip as it is now, so it does not write the old lane back.
         if !drag.edit.is_open() {
-            *origin = clip.clone();
+            **origin = clip.clone();
         }
         if !stroke.moved(&viewport, grid, (x, y)) {
             return;
@@ -85,21 +85,28 @@ impl NoteEditor {
         }
         // Something else may have changed the clip. Each note is found by what this drag wrote
         // last. A note that is gone is left out, and when none is left the drag ends.
-        let found = located(&clip, drag.notes.iter().map(|tracked| tracked.written));
+        let found = located(
+            &clip,
+            drag.notes.iter().map(|tracked| tracked.written.clone()),
+        );
         let mut kept = Vec::new();
         let mut indices = Vec::new();
         for (tracked, index) in drag.notes.iter().zip(found) {
             if let Some(index) = index {
-                kept.push(*tracked);
+                kept.push(tracked.clone());
                 indices.push(index);
             }
         }
-        let Some(first) = kept.first().map(|tracked| tracked.origin) else {
+        let Some(first) = kept.first().map(|tracked| tracked.origin.clone()) else {
             self.drag = Some(drag);
             return self.end_drag(cx);
         };
         drag.notes = kept;
-        let origins: Vec<Note> = drag.notes.iter().map(|tracked| tracked.origin).collect();
+        let origins: Vec<Note> = drag
+            .notes
+            .iter()
+            .map(|tracked| tracked.origin.clone())
+            .collect();
         let pointer = viewport.tick_at(x);
         let next: Vec<Note> = match &drag.kind {
             NoteDragKind::Draw { down } => {
@@ -125,7 +132,7 @@ impl NoteEditor {
                 let dy = y - ROLL_HEIGHT - grab;
                 let moved = origins.iter().map(|origin| Note {
                     velocity: moved_velocity(origin.velocity, dy),
-                    ..*origin
+                    ..origin.clone()
                 });
                 moved.collect()
             }
@@ -135,8 +142,9 @@ impl NoteEditor {
             copy: true,
             grabbed,
             ..
-        } = drag.kind
+        } = &drag.kind
         {
+            let grabbed = grabbed.clone();
             self.drag = Some(drag);
             return self.copy_to(next, grabbed, cx);
         }
@@ -144,26 +152,26 @@ impl NoteEditor {
             .into_iter()
             .zip(&drag.notes)
             .zip(next)
-            .map(|((index, tracked), next)| (index, tracked.written, next))
+            .map(|((index, tracked), next)| (index, tracked.written.clone(), next))
             .filter(|(_, written, next)| written != next)
             .collect();
         // A pitch that changed under the pointer sounds.
         let sounds = match &drag.kind {
             NoteDragKind::Move { grabbed, .. } => {
                 let grabbed = drag.notes.iter().find(|tracked| tracked.origin == *grabbed);
-                let grabbed = grabbed.map(|tracked| tracked.written);
+                let grabbed = grabbed.map(|tracked| &tracked.written);
                 let moved = changes
                     .iter()
-                    .find(|(_, written, _)| Some(*written) == grabbed);
+                    .find(|(_, written, _)| Some(written) == grabbed);
                 moved
                     .filter(|(_, written, next)| written.pitch != next.pitch)
-                    .map(|(_, _, next)| *next)
+                    .map(|(_, _, next)| next.clone())
             }
             _ => None,
         };
         for tracked in &mut drag.notes {
             if let Some((_, _, next)) = changes.iter().find(|(_, old, _)| *old == tracked.written) {
-                tracked.written = *next;
+                tracked.written = next.clone();
             }
         }
         self.drag = Some(drag);
@@ -190,7 +198,11 @@ impl NoteEditor {
             .iter()
             .any(|tracked| tracked.written != tracked.origin);
         let had: Vec<Note> = match copied {
-            true => drag.notes.iter().map(|tracked| tracked.written).collect(),
+            true => drag
+                .notes
+                .iter()
+                .map(|tracked| tracked.written.clone())
+                .collect(),
             false => Vec::new(),
         };
         let wanted = match back {
@@ -221,11 +233,14 @@ impl NoteEditor {
         let mut pairs = Vec::new();
         let mut sounds = None;
         for (index, tracked) in drag.notes.iter_mut().enumerate() {
-            let now = wanted.get(index).copied().unwrap_or(tracked.origin);
+            let now = wanted
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| tracked.origin.clone());
             if tracked.origin == grabbed && now.pitch != tracked.written.pitch {
-                sounds = Some(now);
+                sounds = Some(now.clone());
             }
-            pairs.push((tracked.written, now));
+            pairs.push((tracked.written.clone(), now.clone()));
             tracked.written = now;
         }
         self.follow_selection(&pairs, cx);
@@ -245,7 +260,7 @@ impl NoteEditor {
         };
         let label = drag.kind.label(drag.notes.len().max(changes.len()));
         let instance = self.clip.clone();
-        let written: Vec<(usize, Note)> = changes.iter().map(|(i, _, n)| (*i, *n)).collect();
+        let written: Vec<(usize, Note)> = changes.iter().map(|(i, _, n)| (*i, n.clone())).collect();
         let published = drag
             .edit
             .publish(&self.session, label, cx, |project, edit| {
@@ -258,7 +273,10 @@ impl NoteEditor {
                 })
             });
         if published.is_some() {
-            let pairs: Vec<(Note, Note)> = changes.iter().map(|(_, a, b)| (*a, *b)).collect();
+            let pairs: Vec<(Note, Note)> = changes
+                .iter()
+                .map(|(_, a, b)| (a.clone(), b.clone()))
+                .collect();
             self.follow_selection(&pairs, cx);
         }
     }
@@ -276,11 +294,14 @@ fn drawn_velocities(
     passed
         .into_iter()
         .filter_map(|index| {
-            let note = *clip.notes.get(index)?;
-            let bar = velocity_bar(viewport, clip, &note);
+            let note = clip.notes.get(index)?;
+            let bar = velocity_bar(viewport, clip, note);
             let velocity = velocity_at(height_at(from, to, bar.x));
-            let next = Note { velocity, ..note };
-            (next != note).then_some((index, note, next))
+            let next = Note {
+                velocity,
+                ..note.clone()
+            };
+            (next != *note).then(|| (index, note.clone(), next))
         })
         .collect()
 }

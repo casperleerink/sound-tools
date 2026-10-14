@@ -334,12 +334,12 @@ impl RawTake {
                         continue;
                     };
                     let (pitch, note_start, velocity) = held.remove(index);
-                    notes.push(Note {
-                        start: note_start,
-                        length: Length::at_least_one(in_clip.saturating_sub(note_start)),
+                    notes.push(Note::new(
+                        note_start,
+                        Length::at_least_one(in_clip.saturating_sub(note_start)),
                         pitch,
                         velocity,
-                    });
+                    ));
                 }
                 RawEvent::Pedal { value, .. } => {
                     let value = Pedal::nearest(i64::from(value));
@@ -373,12 +373,12 @@ impl RawTake {
         // Still held when recording ended: the note ends there.
         let clip_end = length.ticks();
         for (pitch, start, velocity) in held {
-            notes.push(Note {
+            notes.push(Note::new(
                 start,
-                length: Length::at_least_one(clip_end.saturating_sub(start)),
+                Length::at_least_one(clip_end.saturating_sub(start)),
                 pitch,
                 velocity,
-            });
+            ));
         }
         // A take that ends with the pedal down lifts it at its end, as a held note ends there.
         if lifts {

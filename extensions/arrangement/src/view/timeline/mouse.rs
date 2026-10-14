@@ -161,13 +161,13 @@ impl Timeline {
         let project = self.session.read(cx).project();
         if let Some(clip) = project.resolve::<Clip>(id) {
             let state = project.state(&clip)?.clone();
-            return Some(ClipDragKind::Resize(ResizeDrag {
+            return Some(ClipDragKind::Resize(Box::new(ResizeDrag {
                 clip,
                 edge,
                 origin: state.clone(),
                 written: state,
                 delta: 0,
-            }));
+            })));
         }
         let clip = project.resolve::<AudioClip>(id)?;
         let origin = project.state(&clip)?.clone();

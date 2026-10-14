@@ -81,7 +81,7 @@ enum NoteDragKind {
     /// erases, over the lane of the clip at mouse down.
     Expression {
         lane: Lane,
-        origin: Clip,
+        origin: Box<Clip>,
         stroke: Stroke,
     },
 }
@@ -102,7 +102,7 @@ impl NoteDragKind {
 
 /// One note a drag changes: as it was at mouse down, which every move starts from, and as the
 /// drag wrote it last, which finds it again when something else changed the clip.
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 struct Tracked {
     origin: Note,
     written: Note,
@@ -323,7 +323,7 @@ impl NoteEditor {
         let Some(clip) = self.session.read(cx).project().state(&self.clip) else {
             return Vec::new();
         };
-        let mut indices: Vec<usize> = located(clip, self.selection.iter().copied())
+        let mut indices: Vec<usize> = located(clip, self.selection.iter().cloned())
             .into_iter()
             .flatten()
             .collect();
@@ -336,9 +336,9 @@ impl NoteEditor {
         let clip = self.session.read(cx).project().state(&self.clip);
         let notes: Vec<Note> = indices
             .iter()
-            .filter_map(|index| clip?.notes.get(*index).copied())
+            .filter_map(|index| clip?.notes.get(*index).cloned())
             .collect();
-        let first = notes.first().copied();
+        let first = notes.first().cloned();
         self.set_selection(notes, first, cx);
     }
 
@@ -356,7 +356,7 @@ impl NoteEditor {
     }
 
     fn select_alone(&mut self, note: Option<Note>, cx: &mut Context<Self>) {
-        self.set_selection(note, note, cx);
+        self.set_selection(note.clone(), note, cx);
     }
 
     fn toggle(&mut self, note: Note, cx: &mut Context<Self>) {
@@ -368,7 +368,7 @@ impl NoteEditor {
     fn follow_selection(&mut self, changed: &[(Note, Note)], cx: &mut Context<Self>) {
         let renamed = |note: &Note| {
             let found = changed.iter().find(|(old, _)| old == note);
-            found.map_or(*note, |(_, new)| *new)
+            found.map_or_else(|| note.clone(), |(_, new)| new.clone())
         };
         let notes: Vec<Note> = self.selection.iter().map(renamed).collect();
         let primary = self.selection.primary().map(renamed);
@@ -413,7 +413,7 @@ impl NoteEditor {
             })
             .collect();
         if !brought.is_empty() {
-            let first = brought.first().copied();
+            let first = brought.first().cloned();
             self.set_selection(brought, first, cx);
         }
     }

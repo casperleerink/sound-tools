@@ -31,6 +31,7 @@ mod division;
 mod expression;
 mod lane;
 mod take;
+mod view;
 mod voices;
 
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,7 @@ pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, val
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };
+pub use view::{EditorName, FieldName, View, ViewError, ViewValue};
 pub use voices::{Voice, Voices, frequency_hz};
 
 /// The event input of an instrument. It carries [`NoteEvent`].
@@ -368,17 +370,31 @@ impl From<Length> for Ticks {
 }
 
 /// A saved note. `start` counts from the start of whatever holds the note, for example a clip.
-/// Ordered by start, then length, pitch and velocity, so an interface can keep notes in a set.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// Ordered by start, then length, pitch, velocity and view, so an interface can keep notes in a
+/// set.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Note {
     pub start: Ticks,
     pub length: Length,
     pub pitch: Pitch,
     pub velocity: Velocity,
+    #[serde(default, skip_serializing_if = "View::is_empty")]
+    pub view: View,
 }
 
 impl Note {
+    /// A note with an empty view.
+    pub fn new(start: Ticks, length: Length, pitch: Pitch, velocity: Velocity) -> Self {
+        Self {
+            start,
+            length,
+            pitch,
+            velocity,
+            view: View::default(),
+        }
+    }
+
     /// The tick of the note off.
     pub fn end(&self) -> Ticks {
         self.start + self.length.ticks()
@@ -425,6 +441,8 @@ pub struct PlacedPedal {
 ///   tick order, one per tick, read with [`value_at`]. An empty lane is left out of the file
 ///   and moves nothing; a lane with points holds for the whole clip, and ends with it.
 /// - `take` names the raw take this clip was recorded from, when it was recorded.
+/// - `editor` names the clip editor the window shows the clip in, and `view` on the clip and on
+///   its notes holds what that editor keeps. Left out when empty, like the pedal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Clip {
@@ -453,10 +471,15 @@ pub struct Clip {
     /// through every edit, because every edit keeps the rest of the record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub take: Option<String>,
+    /// Absent is the piano roll.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor: Option<EditorName>,
+    #[serde(default, skip_serializing_if = "View::is_empty")]
+    pub view: View,
 }
 
 impl Clip {
-    /// A clip with notes, no pedal, no lanes and no take.
+    /// A clip with notes, no pedal, no lanes, no take and no editor.
     pub fn new(start: Ticks, length: Length, notes: Vec<Note>) -> Self {
         Self {
             start,
@@ -467,6 +490,8 @@ impl Clip {
             mod_wheel: Vec::new(),
             pressure: Vec::new(),
             take: None,
+            editor: None,
+            view: View::default(),
         }
     }
 

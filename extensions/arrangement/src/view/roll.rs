@@ -173,12 +173,12 @@ pub fn drawn_note(
         .snap(pointer)
         .max(start + grid.unit_at(start))
         .min(clip.end());
-    Some(Note {
-        start: Ticks(start.0 - clip.start.0),
-        length: Length::at_least_one(Ticks(end.0 - start.0)),
+    Some(Note::new(
+        Ticks(start.0 - clip.start.0),
+        Length::at_least_one(Ticks(end.0 - start.0)),
         pitch,
-        velocity: Velocity::nearest(DRAWN_VELOCITY),
-    })
+        Velocity::nearest(DRAWN_VELOCITY),
+    ))
 }
 
 /// The latest start of a note in a clip: where its end meets the clip end. A note that already
@@ -217,7 +217,7 @@ pub fn moved_notes(clip_length: Length, origins: &[Note], delta: i64, semitones:
     );
     let moved = origins.iter();
     moved
-        .map(|origin| moved_note(clip_length, *origin, delta, semitones))
+        .map(|origin| moved_note(clip_length, origin.clone(), delta, semitones))
         .collect()
 }
 
@@ -321,12 +321,12 @@ mod tests {
     }
 
     fn note(start: u64, length: u64, number: u8) -> Note {
-        Note {
-            start: Ticks(start),
-            length: Length::new(Ticks(length)).unwrap(),
-            pitch: pitch(number),
-            velocity: Velocity::new(100).unwrap(),
-        }
+        Note::new(
+            Ticks(start),
+            Length::new(Ticks(length)).unwrap(),
+            pitch(number),
+            Velocity::new(100).unwrap(),
+        )
     }
 
     fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
@@ -519,14 +519,17 @@ mod tests {
     #[test]
     fn a_moved_note_stays_whole_inside_its_clip() {
         let origin = note(960, 480, 60);
-        assert_eq!(moved_note(length(BAR), origin, 0, 0), origin);
-        assert_eq!(moved_note(length(BAR), origin, 480, 3), note(1440, 480, 63));
+        assert_eq!(moved_note(length(BAR), origin.clone(), 0, 0), origin);
         assert_eq!(
-            moved_note(length(BAR), origin, -5000, -100),
+            moved_note(length(BAR), origin.clone(), 480, 3),
+            note(1440, 480, 63)
+        );
+        assert_eq!(
+            moved_note(length(BAR), origin.clone(), -5000, -100),
             note(0, 480, 0)
         );
         assert_eq!(
-            moved_note(length(BAR), origin, 50_000, 100),
+            moved_note(length(BAR), origin.clone(), 50_000, 100),
             note(BAR - 480, 480, 127)
         );
 
@@ -538,16 +541,16 @@ mod tests {
         // A note that reaches past the clip end moves left and never right.
         let long = note(960, 2 * BAR, 60);
         assert_eq!(
-            moved_note(length(BAR), long, 240, 1),
+            moved_note(length(BAR), long.clone(), 240, 1),
             note(960, 2 * BAR, 61)
         );
         assert_eq!(
-            moved_note(length(BAR), long, -240, 0),
+            moved_note(length(BAR), long.clone(), -240, 0),
             note(720, 2 * BAR, 60)
         );
         for delta in [-100_000, -240, 0, 240, 100_000] {
-            assert!(moved_note(length(BAR), origin, delta, 0).start < Ticks(BAR));
-            assert!(moved_note(length(BAR), long, delta, 0).start < Ticks(BAR));
+            assert!(moved_note(length(BAR), origin.clone(), delta, 0).start < Ticks(BAR));
+            assert!(moved_note(length(BAR), long.clone(), delta, 0).start < Ticks(BAR));
         }
     }
 
@@ -643,13 +646,13 @@ mod tests {
     #[test]
     fn a_resized_note_keeps_a_snap_step_and_ends_with_the_clip_at_the_latest() {
         let origin = note(960, 480, 60);
-        assert_eq!(resized_note(length(BAR), origin, 0, UNIT), origin);
+        assert_eq!(resized_note(length(BAR), origin.clone(), 0, UNIT), origin);
         assert_eq!(
-            resized_note(length(BAR), origin, 480, UNIT),
+            resized_note(length(BAR), origin.clone(), 480, UNIT),
             note(960, 960, 60)
         );
         assert_eq!(
-            resized_note(length(BAR), origin, -10_000, UNIT),
+            resized_note(length(BAR), origin.clone(), -10_000, UNIT),
             note(960, 240, 60)
         );
         assert_eq!(
@@ -657,13 +660,25 @@ mod tests {
             note(960, BAR - 960, 60)
         );
         let tiny = note(0, 100, 60);
-        assert_eq!(resized_note(length(BAR), tiny, -240, UNIT), tiny);
+        assert_eq!(resized_note(length(BAR), tiny.clone(), -240, UNIT), tiny);
         // Untouched, a note that reaches past the clip end stays as it is.
         let long = note(960, 2 * BAR, 60);
-        assert_eq!(resized_note(length(BAR), long, 0, UNIT), long);
+        assert_eq!(resized_note(length(BAR), long.clone(), 0, UNIT), long);
         assert_eq!(
             resized_note(length(BAR), long, -240, UNIT),
             note(960, BAR - 960, 60)
         );
+    }
+
+    #[test]
+    fn a_moved_or_resized_note_keeps_its_view() {
+        let mut origin = note(960, 480, 60);
+        origin.view = serde_json::from_str(r#"{"accent":true}"#).unwrap();
+        let moved = moved_note(length(BAR), origin.clone(), 240, 2);
+        assert_eq!(moved.view, origin.view);
+        let several = moved_notes(length(BAR), std::slice::from_ref(&origin), 240, 2);
+        assert_eq!(several[0].view, origin.view);
+        let resized = resized_note(length(BAR), origin.clone(), 240, UNIT);
+        assert_eq!(resized.view, origin.view);
     }
 }

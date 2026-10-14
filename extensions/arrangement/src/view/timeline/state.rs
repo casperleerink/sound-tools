@@ -38,7 +38,7 @@ pub(super) struct MovedClip {
 /// A trim and a fade hold the same.
 pub(super) enum ClipDragKind {
     Move(MoveDrag),
-    Resize(ResizeDrag),
+    Resize(Box<ResizeDrag>),
     /// An edge of an audio clip: the part of its file that plays. Every move starts from
     /// `origin`, and writes only what the edge moves onto the live clip.
     Trim(EdgeDrag),
@@ -140,7 +140,7 @@ impl ClipDragKind {
             ClipDragKind::Move(MoveDrag { clips, grabbed, .. }) => {
                 clips.get(*grabbed).map(|moved| &moved.clip)
             }
-            ClipDragKind::Resize(ResizeDrag { clip, .. }) => Some(clip.id()),
+            ClipDragKind::Resize(resize) => Some(resize.clip.id()),
             ClipDragKind::Trim(EdgeDrag { clip, .. })
             | ClipDragKind::Fade(EdgeDrag { clip, .. })
             | ClipDragKind::Gain(GainDrag { clip, .. }) => Some(clip.id()),

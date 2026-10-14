@@ -5,8 +5,8 @@
 
 use sound_core::{State, Ticks};
 use sound_notes::{
-    Amount, Bend, Clip, Expression, Length, Note, NoteError, NoteEvent, Pedal, PedalChange, Pitch,
-    Velocity,
+    Amount, Bend, Clip, EditorName, Expression, Length, Note, NoteError, NoteEvent, Pedal,
+    PedalChange, Pitch, Velocity, ViewValue,
 };
 
 const LINE: &str = r#"{"start":0,"length":480,"pitch":60,"velocity":100}"#;
@@ -216,4 +216,70 @@ fn a_pitch_has_the_note_name_of_the_app() {
     assert_eq!(name(59), "B3");
     assert_eq!(name(0), "C-1");
     assert_eq!(name(127), "G9");
+}
+
+/// A clip of before editors existed, with notes, a pedal and a take, comes back byte for byte.
+#[test]
+fn a_clip_without_editor_or_view_saves_without_the_fields() {
+    let line = r#"{"start":0,"length":3840,"notes":[{"start":0,"length":480,"pitch":60,"velocity":100}],"pedal":[{"start":0,"value":127}],"take":"take-1"}"#;
+    let clip: Clip = serde_json::from_str(line).unwrap();
+    assert_eq!(clip.editor, None);
+    assert!(clip.view.is_empty() && clip.notes[0].view.is_empty());
+    assert_eq!(serde_json::to_string(&clip).unwrap(), line);
+}
+
+#[test]
+fn a_clip_keeps_its_editor_and_the_views_of_the_clip_and_its_notes() {
+    let line = r#"{"start":0,"length":3840,"notes":[{"start":0,"length":480,"pitch":60,"velocity":100,"view":{"accent":true}}],"editor":"scale","view":{"root":-3,"scale":"dorian"}}"#;
+    let clip: Clip = serde_json::from_str(line).unwrap();
+    assert_eq!(clip.editor, Some(EditorName::new("scale").unwrap()));
+    assert_eq!(
+        clip.view.get("scale"),
+        Some(&ViewValue::Word("dorian".into()))
+    );
+    assert_eq!(clip.view.get("root"), Some(&ViewValue::Number(-3)));
+    assert_eq!(
+        clip.notes[0].view.get("accent"),
+        Some(&ViewValue::Toggle(true))
+    );
+    assert_eq!(serde_json::to_string(&clip).unwrap(), line);
+}
+
+fn clip_error(fields: &str) -> String {
+    let line = format!(r#"{{"start":0,"length":3840,"notes":[]{fields}}}"#);
+    serde_json::from_str::<Clip>(&line).unwrap_err().to_string()
+}
+
+#[test]
+fn a_view_holds_words_whole_numbers_and_toggles_only() {
+    for value in ["1.5", "[1]", r#"{"a":1}"#, "null", "9223372036854775808"] {
+        let error = clip_error(&format!(r#","view":{{"scale":{value}}}"#));
+        assert!(
+            error.contains("expected a view value: a word, a whole number, or true or false"),
+            "{value}: {error}"
+        );
+    }
+    let error =
+        load_error(r#"{"start":0,"length":480,"pitch":60,"velocity":100,"view":{"accent":0.5}}"#);
+    assert!(error.contains("expected a view value"), "{error}");
+}
+
+#[test]
+fn bad_editor_and_field_names_and_unknown_clip_fields_are_refused() {
+    let long = "a".repeat(65);
+    for name in ["", "Drums", "my drums", "drüms", long.as_str()] {
+        let error = clip_error(&format!(r#","editor":{name:?}"#));
+        assert!(
+            error.starts_with("an editor name is 1 to 64"),
+            "{name}: {error}"
+        );
+    }
+    assert!(EditorName::new(&"a".repeat(64)).is_ok());
+    assert!(EditorName::new("piano-roll").is_ok());
+    for name in ["Scale", "1st", "_x", "a-b", ""] {
+        let error = clip_error(&format!(r#","view":{{{name:?}:1}}"#));
+        assert!(error.starts_with("a view field name is"), "{name}: {error}");
+    }
+    let error = clip_error(r#","views":{}"#);
+    assert!(error.starts_with("unknown field `views`"), "{error}");
 }

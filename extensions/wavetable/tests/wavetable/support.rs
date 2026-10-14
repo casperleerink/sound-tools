@@ -155,12 +155,12 @@ pub(crate) fn id(id: &str) -> InstanceId {
 
 /// A note at `start` ticks, `length` ticks long.
 pub(crate) fn note(start: u64, length: u64, pitch: u8, velocity: u8) -> Note {
-    Note {
-        start: Ticks(start),
-        length: Length::new(Ticks(length)).unwrap(),
-        pitch: Pitch::new(pitch).unwrap(),
-        velocity: Velocity::new(velocity).unwrap(),
-    }
+    Note::new(
+        Ticks(start),
+        Length::new(Ticks(length)).unwrap(),
+        Pitch::new(pitch).unwrap(),
+        Velocity::new(velocity).unwrap(),
+    )
 }
 
 /// A pedal move at a tick.

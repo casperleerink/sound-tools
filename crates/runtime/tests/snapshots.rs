@@ -879,12 +879,12 @@ fn print_times(what: &str, mut times: Vec<Duration>) {
 }
 
 fn note(start: u64, length: u64, pitch: u8) -> Result<Note> {
-    Ok(Note {
-        start: Ticks(start),
-        length: Length::new(Ticks(length))?,
-        pitch: Pitch::new(pitch)?,
-        velocity: Velocity::new(100)?,
-    })
+    Ok(Note::new(
+        Ticks(start),
+        Length::new(Ticks(length))?,
+        Pitch::new(pitch)?,
+        Velocity::new(100)?,
+    ))
 }
 
 fn clip(start_bar: u64, bars: u64, notes: Vec<Note>) -> Result<Clip> {

@@ -52,12 +52,12 @@ pub(crate) fn id(id: &str) -> InstanceId {
 }
 
 pub(crate) fn note(start: u64, length: u64, pitch: u8) -> Note {
-    Note {
-        start: Ticks(start),
-        length: Length::new(Ticks(length)).unwrap(),
-        pitch: Pitch::new(pitch).unwrap(),
-        velocity: Velocity::new(100).unwrap(),
-    }
+    Note::new(
+        Ticks(start),
+        Length::new(Ticks(length)).unwrap(),
+        Pitch::new(pitch).unwrap(),
+        Velocity::new(100).unwrap(),
+    )
 }
 
 pub(crate) fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {

@@ -167,7 +167,7 @@ fn the_keys_delete_and_nudge_the_selected_note(cx: &mut TestAppContext) {
 
     for key in ["delete", "backspace"] {
         let before = opened.clip(PART).unwrap().notes.len();
-        let first = opened.clip(PART).unwrap().notes[0];
+        let first = opened.clip(PART).unwrap().notes[0].clone();
         let place = opened.in_editor(BAR + first.start.0 + 100, first.pitch.number());
         opened.click(place);
         opened.keys(key);
@@ -211,7 +211,7 @@ fn notes_never_leave_their_clip(cx: &mut TestAppContext) {
     opened.drag_to(far);
     opened.drag_to(point(far.x, px(-500.)));
     opened.release(far);
-    let last = *opened.clip(PART).unwrap().notes.last().unwrap();
+    let last = opened.clip(PART).unwrap().notes.last().unwrap().clone();
     assert_eq!((last.start.0, last.end().0), (2 * BAR - 480, 2 * BAR));
     assert_eq!(last.pitch.number(), 127);
     opened.keys("right up");

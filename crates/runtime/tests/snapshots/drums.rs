@@ -53,12 +53,12 @@ fn beat_bar(bar: u64) -> Result<Vec<Note>> {
     }
     hits.into_iter()
         .map(|(start, pitch, velocity)| {
-            Ok(Note {
-                start: Ticks(bar * BAR + start),
-                length: Length::new(Ticks(240))?,
-                pitch: Pitch::new(pitch)?,
-                velocity: Velocity::new(velocity)?,
-            })
+            Ok(Note::new(
+                Ticks(bar * BAR + start),
+                Length::new(Ticks(240))?,
+                Pitch::new(pitch)?,
+                Velocity::new(velocity)?,
+            ))
         })
         .collect()
 }

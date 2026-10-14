@@ -251,7 +251,7 @@ fn a_paste_goes_to_the_playhead_in_the_clip_or_to_the_selected_notes(cx: &mut Te
     let selected: Vec<_> = opened
         .selected_notes()
         .into_iter()
-        .map(|index| now[index])
+        .map(|index| now[index].clone())
         .collect();
     assert_eq!(selected, pasted);
     one_undo_step(&mut opened, "Paste notes", &before);
