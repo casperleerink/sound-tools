@@ -21,6 +21,7 @@ mod beats;
 mod grid;
 
 use std::cell::RefCell;
+use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ use sound_core::{
     AgentDoc, Assets, Changes, Derived, Instance, InstanceId, Place, Project, ProjectError,
     Registry, RegistryError, State, TimeSignature, Was,
 };
-use sound_notes::{Clip, RawTake};
+use sound_notes::{Clip, Pitch, RawTake, View};
 
 pub use grid::{BeatRate, FIT_SAMPLE_RATE, FitError, Fitted, fit};
 
@@ -323,11 +324,15 @@ impl Fits {
         record.take = Some(state.take.clone());
         record.editor = old.editor.clone();
         record.view = old.view.clone();
-        // The notes are made again from the take. The note at the same place in the list with
-        // the same pitch is taken to be the same note.
-        for (note, old_note) in record.notes.iter_mut().zip(&old.notes) {
-            if note.pitch == old_note.pitch {
-                note.view = old_note.view.clone();
+        // The notes are made again from the take. The nth note of a pitch is taken to be the
+        // nth note of that pitch before, whatever notes of other pitches came or went.
+        let mut views: BTreeMap<Pitch, VecDeque<&View>> = BTreeMap::new();
+        for note in &old.notes {
+            views.entry(note.pitch).or_default().push_back(&note.view);
+        }
+        for note in &mut record.notes {
+            if let Some(view) = views.get_mut(&note.pitch).and_then(VecDeque::pop_front) {
+                note.view = view.clone();
             }
         }
         derived.changes().set(clip, record);

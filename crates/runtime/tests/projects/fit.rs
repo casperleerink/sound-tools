@@ -7,7 +7,7 @@
 
 use fit_tempo::{BeatRate, FitState};
 use sound_core::{Clock, Frames, InstanceId, TempoMap, Ticks};
-use sound_notes::{Clip, EditorName, Pitch, RawEvent, RawTake, View};
+use sound_notes::{Clip, EditorName, Note, Pitch, RawEvent, RawTake, View};
 
 use crate::generated_take::{STARTS_AT_US, generated_take};
 use crate::plugin_hosts::open_read_only;
@@ -165,8 +165,9 @@ fn a_fit_is_one_undo_step_and_gives_everything_back() {
     assert!(harness.project.resolve::<FitState>(&fit_id()).is_some());
 }
 
-/// A fit makes the notes again from the take. The clip keeps its editor and view, and a note
-/// keeps its view while the note at its place in the list has its pitch.
+/// A fit makes the notes again from the take. The clip keeps its editor and view, and the nth
+/// note of a pitch keeps the view of the nth note of that pitch, whatever notes of other pitches
+/// came or went.
 #[test]
 fn a_fit_keeps_the_editor_and_the_views() {
     let mut harness = recorded(4);
@@ -174,10 +175,18 @@ fn a_fit_keeps_the_editor_and_the_views() {
     let accent: View = serde_json::from_str(r#"{"accent":true}"#).unwrap();
     clip.editor = Some(EditorName::new("drums").unwrap());
     clip.view = serde_json::from_str(r#"{"kit":"house"}"#).unwrap();
-    clip.notes[0].view = accent.clone();
-    clip.notes[1].view = accent.clone();
-    let moved = Pitch::nearest(i64::from(clip.notes[1].pitch.number()) + 1);
-    clip.notes[1].pitch = moved;
+    // The second C3 is accented, and a note of another pitch before it is deleted.
+    let c3 = Pitch::new(48).unwrap();
+    let positions = |notes: &[Note]| -> Vec<usize> {
+        (0..notes.len())
+            .filter(|index| notes[*index].pitch == c3)
+            .collect()
+    };
+    let second = positions(&clip.notes)[1];
+    clip.notes[second].view = accent.clone();
+    let deleted = clip.notes.iter().position(|note| note.pitch != c3).unwrap();
+    assert!(deleted < second);
+    clip.notes.remove(deleted);
     let mut changes = sound_core::Changes::new();
     let instance = harness.project.resolve::<Clip>(&clip_id()).unwrap();
     changes.set(&instance, clip.clone());
@@ -185,14 +194,18 @@ fn a_fit_keeps_the_editor_and_the_views() {
 
     fit(&mut harness);
     let fitted = clip_of(&harness);
-    assert_ne!(
-        fitted.notes[1].pitch, moved,
+    assert_eq!(
+        fitted.notes.len(),
+        clip.notes.len() + 1,
         "the fit did not make the notes again"
     );
     assert_eq!(fitted.editor, clip.editor);
     assert_eq!(fitted.view, clip.view);
-    assert_eq!(fitted.notes[0].view, accent);
-    assert!(fitted.notes[1].view.is_empty());
+    let accented: Vec<usize> = (0..fitted.notes.len())
+        .filter(|index| !fitted.notes[*index].view.is_empty())
+        .collect();
+    assert_eq!(accented, [positions(&fitted.notes)[1]]);
+    assert_eq!(fitted.notes[accented[0]].view, accent);
     assert!(clip_json(&harness).contains(r#""editor": "drums""#));
 }
 
