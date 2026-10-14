@@ -440,12 +440,15 @@ impl Opened {
     ) -> Result<Vec<Duration>> {
         let editor = self.open_editor(clip, cx)?;
         let (viewport, rows) = cx.update(|cx| (editor.read(cx).viewport(), editor.read(cx).rows()));
-        let state = cx.update(|cx| {
-            let project = self.session.read(cx).project();
-            let instance = project.resolve::<Clip>(clip)?;
-            project.state(&instance).cloned()
-        });
-        let state = state.context("the clip has no state")?;
+        let clip_now = |cx: &mut HeadlessAppContext| {
+            let state = cx.update(|cx| {
+                let project = self.session.read(cx).project();
+                let instance = project.resolve::<Clip>(clip)?;
+                project.state(&instance).cloned()
+            });
+            state.context("the clip has no state")
+        };
+        let state = clip_now(cx)?;
         let first = state.notes.first().context("the clip has no notes")?;
         let editor_top = WINDOW_HEIGHT - EDITOR_HEIGHT + RULER_HEIGHT;
         let top = rows.y_of(&viewport, first.pitch).context("no row")?;
@@ -455,8 +458,26 @@ impl Opened {
             px(editor_top + top + row / 2.),
         );
         let mut moves = self.drag(on_note, point(px(12.), px(-row)), 10, cx)?;
+        // A drag that does nothing is fast too: the note must be ten rows up and later, then
+        // back down.
+        let up = rows.stepped(first.pitch, 10);
+        let moved = clip_now(cx)?.notes;
+        let found = moved
+            .iter()
+            .find(|note| note.pitch == up && note.start > first.start);
+        let found = found
+            .cloned()
+            .context("the drag did not move the note ten rows up")?;
         let back = on_note + point(px(120.), px(-10. * row));
         moves.extend(self.drag(back, point(px(-12.), px(row)), 10, cx)?);
+        let after = clip_now(cx)?.notes;
+        let down = after
+            .iter()
+            .find(|note| note.pitch == first.pitch && note.start < found.start);
+        anyhow::ensure!(
+            !after.contains(&found) && down.is_some(),
+            "the drag back did not move the note ten rows down"
+        );
         Ok(moves)
     }
 
