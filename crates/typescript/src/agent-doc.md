@@ -263,7 +263,7 @@ A clip shows in it when its record has `"editor": "drums"` next to `start`, `len
 - `clip` holds the fields of the clip's `view`, each a `choice` or a `toggle`, such as `scale: choice({ options: ["major", "dorian"], default: "major" })`; a clip then has `"view": {"scale": "dorian"}`. `grid` gets their values. It runs when the file loads, once for every combination (at most 256), and never after.
 - `note` holds the fields of each note's `view`, such as `accent: toggle({ default: false })`.
 - A note whose pitch has no row gets a row of its own. The editor changes no note, and the clip plays with its track's instrument as before.
-- A value the clip's editor does not take, or a field no editor has, is a problem of the clip; it still plays.
+- An editor the project lacks, a value the clip's editor does not take, or a field no editor has is a problem of the clip; it still plays. A value that is no word, whole number, `true` or `false` (a fraction, a list, an object, `null`), or a badly formed field or editor name, stops the clip loading.
 
 ## Check your work
 

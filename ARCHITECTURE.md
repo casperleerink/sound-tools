@@ -145,11 +145,11 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Where a lane bends inside a block, the engine plays the device's block in pieces, so no device needs code for it.
 - How fast a number moves is decided once, in `Lane`, for built-in devices and tools of the project alike.
 - Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
-- A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.
+- A clip moved in the window takes the automation under it, in the same undo step. A clip moved by editing its file moves no automation.
 - An audio clip plays at its file's speed, so a tempo change moves only its start. Every audio clip edge and jump gets a short ramp, so nothing clicks.
-- A clip names its editor (`editor`; absent means the piano roll). An editor is rows and fields made once; every gesture runs in the one Rust note editor. Rejected: editor code per gesture.
-- Editor data is a flat `view` on clips and notes that playback never reads. A missing editor or bad value is a track problem; the clip still plays.
-- Editors are shared through `Registry::provide`, one value per type; the core never looks inside.
+- A clip names its editor (`editor`, else the piano roll): rows and fields made once. Every gesture runs in the one note editor. Rejected: editor code per gesture.
+- Editor data is a flat `view` on clips and notes; playback never reads it. A missing editor or an untaken value is a problem; the clip still plays.
+- Editors are shared through `Registry::provide`; the core never looks inside.
 
 ## Audio files and the Sampler
 
@@ -207,6 +207,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `crates/ui` and `crates/runtime/src/window`.
 
+- `Session` is the one GPUI entity that owns the `Project`.
 - Views read state when they render and keep no copy of saved state, so an outside edit shows at once, also mid-drag.
 - Views and device offers are registered per tool, so the track panel knows no instrument or plugin.
 - The playhead is its own entity, because GPUI redraws a notified view and everything above it.
@@ -221,6 +222,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/agent`.
 
 - The sidebar runs Claude Code as a child process in the project folder. It edits files like a terminal agent. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is the way to add more agents later.
+- The window has a generic left panel slot and names no agent type.
 - Each message is one request, so all its writes are one undo step named after the message.
 - The thread state is built from provider-neutral events and holds no process, so tests feed it events.
 - Threads, settings and whether the panel is open are kept per machine, never in the project: an agent writes in the project folder, and must not change the interface or raise its own access by editing a file.
@@ -236,7 +238,7 @@ A composer asks the agent for a tool no extension has, and it plays at once, in 
 - **Written in TypeScript, run by Bun as a separate process.** A file change, a crash or a hang starts a fresh Bun; code that hangs is blamed and left out until the folder changes. The window never waits on Bun. Rejected: reloading code inside Bun, which cannot read a changed import again and has no answer to a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads, and an agent hears what is wrong with it, without Bun.
 - **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between, which nobody wrote by hand and needed a parser. Rejected: that language in a template, which an eval found no better for agents.
-- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without asking Bun: Bun sends a graph for every combination of choices up front. A clip editor sends its rows for every combination of its clip choices the same way, so its gestures never ask Bun.
+- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without asking Bun: Bun sends a graph for every combination of choices up front. Clip editor rows come the same way.
 - **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps every render bit for bit the same; `tooling/perf` measures them. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
 - **Cards and pages** are trees of elements Bun draws. A `tick` plays like a performer and never changes the record.
 - **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, which would know nothing of where the notes went.

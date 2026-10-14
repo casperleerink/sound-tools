@@ -46,7 +46,7 @@ In 4/4 this clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 a
 - Clips on one track may overlap in time. The notes of both play.
 - A clip the composer recorded also has `pedal`, the sustain pedal, and `take`, the raw take it came from. Leave `pedal` out of a clip you write. Read `agent-docs/takes.md` before you touch anything under `assets/takes/`.
 - `editor`: the clip editor the window shows the clip in, the piano roll when left out. The project's own are `editor({...})` in `extensions/*.ts`: read the file for its name and fields. `agent-docs/extensions.md` covers writing one.
-- `view`: what the editor keeps, flat, on the clip and on each note, as in the example below.
+- `view`: what the editor keeps, flat, on the clip and on each note, as in the example below. A value is a word, a whole number, `true` or `false`; a field name is a lowercase letter, then lowercase letters, digits and `_`. Anything else in a `view`, or an `editor` name other than lowercase letters, digits, `-` and `_`, stops the clip loading. An editor the project lacks, a value the editor does not take or a field no editor has is only a problem: the clip still plays.
 - Keep `pedal`, `take`, `editor` and `view` as they are when you change, move or copy a clip.
 
 ```json state/arrangement/piano/verse.json
