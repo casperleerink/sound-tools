@@ -53,8 +53,6 @@ pub(crate) struct Live {
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
-    /// How many requests went to Bun.
-    requests: u64,
     /// Hears the changes in `extensions/`.
     _watcher: Option<RecommendedWatcher>,
     /// What it cannot hear, a problem of its own.
@@ -82,12 +80,10 @@ enum Host {
 }
 
 impl Host {
-    /// Tells Bun something, and counts it in `requests`. Nothing while no Bun runs: the next
-    /// one draws every card again.
-    fn send(&mut self, request: &Request, requests: &mut u64) {
+    /// Tells Bun something. Nothing while no Bun runs: the next one draws every card again.
+    fn send(&mut self, request: &Request) {
         if let Self::Running { bun, .. } = self {
             bun.send(request);
-            *requests += 1;
         }
     }
 }
@@ -132,12 +128,6 @@ pub fn hear_midi(track: Option<&InstanceId>, messages: &[Midi], cx: &mut App) {
         return;
     };
     live.update(cx, |live, cx| live.midi(track, messages, cx));
-}
-
-/// How many requests the window sent to Bun, so a test can tell that a gesture sends none.
-pub fn requests_sent(cx: &App) -> u64 {
-    cx.try_global::<WindowTools>()
-        .map_or(0, |tools| tools.0.read(cx).requests)
 }
 
 /// Starts the live part of `extensions` for the window of `session`: the cards of its tools in
@@ -328,7 +318,6 @@ impl Live {
                 edits: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
-                requests: 0,
                 _watcher: watcher,
                 watch_problem,
                 changed,
@@ -498,7 +487,7 @@ impl Live {
 
     pub(crate) fn remove(&mut self, card: u64) {
         self.cards.remove(&card);
-        self.host.send(&Request::Drop { card }, &mut self.requests);
+        self.host.send(&Request::Drop { card });
     }
 
     /// Asks for the tree of the card again, from the record and the watches as they are now.
@@ -535,7 +524,7 @@ impl Live {
             watches: &entry.watches,
             page,
         };
-        self.host.send(&request, &mut self.requests);
+        self.host.send(&request);
     }
 
     /// The page was laid out at `size`: it draws again when that is new.
@@ -566,7 +555,7 @@ impl Live {
                 handler,
                 at,
             };
-            self.host.send(&request, &mut self.requests);
+            self.host.send(&request);
         }
     }
 
@@ -669,7 +658,7 @@ impl Live {
             key,
             down,
         };
-        self.host.send(&request, &mut self.requests);
+        self.host.send(&request);
     }
 
     /// What the MIDI keyboard played, for every instance whose tool hears it: on `track` or at
@@ -694,7 +683,7 @@ impl Live {
                 instances,
                 messages,
             };
-            self.host.send(&request, &mut self.requests);
+            self.host.send(&request);
         }
     }
 
@@ -737,7 +726,7 @@ impl Live {
                 time,
                 instances,
             };
-            self.host.send(&request, &mut self.requests);
+            self.host.send(&request);
             if let Host::Running { ticking, .. } = &mut self.host {
                 *ticking = true;
             }

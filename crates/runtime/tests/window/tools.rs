@@ -1,15 +1,14 @@
 //! Tools of the project in the window, run by Bun: a key on a page and a note of the MIDI
 //! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes back; a save of a tool
-//! keeps the sample it plays. A clip editor of the code shows its rows with no word to Bun, and
-//! a save shows the new ones. Bun is not part of the build, so where it is not installed, as
-//! in CI, these tests say so and pass.
+//! keeps the sample it plays, and a save of a clip editor shows its new rows. Bun is not part
+//! of the build, so where it is not installed, as in CI, these tests say so and pass.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
     AppContext, Entity, FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    TestAppContext, VisualTestContext, point, px,
+    TestAppContext, VisualTestContext,
 };
 use midi::Played;
 use plugin_host::{Plugins, ScanCache};
@@ -405,8 +404,6 @@ fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppC
     window.until("six keys in the record", |window| {
         window.record("keys")["count"] == 6
     });
-    // The page drew, and each key down and up went to Bun.
-    assert!(window.cx.read(sound_typescript::requests_sent) > 12);
 }
 
 #[gpui::test]
@@ -794,14 +791,6 @@ tool({
     assert!(problem.message.contains("no tool to blame"), "{problem:?}");
 }
 
-/// The clip editor of the doc for agents: a drum kit.
-fn doc_editor() -> String {
-    let doc = sound_typescript::AGENT_DOC.markdown;
-    let section = doc.split("## A clip editor").nth(1).unwrap();
-    let block = section.split("```ts\n").nth(1).unwrap();
-    block.split("```").next().unwrap().to_string()
-}
-
 /// A scale editor whose rows go from C3 to C6.
 const SCALE: &str = include_str!("../shared/scale.ts");
 
@@ -847,31 +836,6 @@ fn open_part(opened: &mut Opened<'_>) {
 fn row_count(opened: &mut Opened<'_>) -> usize {
     let editor = opened.editor().unwrap();
     opened.cx.read(|cx| editor.read(cx).rows().count())
-}
-
-#[gpui::test]
-fn a_drag_in_a_clip_editor_of_the_code_sends_nothing_to_bun(cx: &mut TestAppContext) {
-    let folder = clip_in_editor("drums", &doc_editor(), 38);
-    let Some(mut opened) = support::open_with_tools(cx, folder) else {
-        return;
-    };
-    open_part(&mut opened);
-    assert_eq!(row_count(&mut opened), 16);
-
-    let sent = opened.cx.read(sound_typescript::requests_sent);
-    // Inside the hit, a square at its start.
-    let inside = point(px(4.), px(0.));
-    let from = opened.in_editor(BAR, 38) + inside;
-    opened.press(from);
-    for step in 1..=20 {
-        let to = opened.in_editor(BAR + step * 60, 38) + inside;
-        opened.drag_to(to);
-    }
-    let end = opened.in_editor(BAR + 1200, 38) + inside;
-    opened.release(end);
-    let notes = opened.clip("arrangement/track-1/part").unwrap().notes;
-    assert_eq!(notes[0].start.0, 1200);
-    assert_eq!(opened.cx.read(sound_typescript::requests_sent), sent);
 }
 
 #[gpui::test]

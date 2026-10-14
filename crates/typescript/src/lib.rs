@@ -28,7 +28,7 @@ use serde::Serialize;
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 use sound_notes::{EditorSpec, Editors};
 
-pub use window::{hear_midi, requests_sent, start_window};
+pub use window::{hear_midi, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo};
