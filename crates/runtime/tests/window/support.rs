@@ -13,13 +13,14 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta,
     ScrollWheelEvent, TestAppContext, VisualTestContext, point, px,
 };
-use plugin_host::WeakPlugins;
+use plugin_host::{Plugins, ScanCache, WeakPlugins};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use runtime::window::other_apps::AppSounds;
 use runtime::window::{DeviceAccess, ListDevices, Shell, TransportPill, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
+use sound_typescript::Extensions;
 use sound_ui::{POLL_INTERVAL, Playhead, Session};
 use tempfile::TempDir;
 
@@ -239,7 +240,29 @@ pub(crate) fn open_project(
         engine,
         plugins,
         DeviceAccess::default(),
+        None,
     )
+}
+
+/// Opens the window on the project in `folder` with the tools and clip editors of its
+/// `extensions/`, as the application does: Bun runs them. `None` without Bun.
+pub(crate) fn open_with_tools(cx: &mut TestAppContext, folder: TempDir) -> Option<Opened<'_>> {
+    if !sound_typescript::has_bun() {
+        eprintln!("skipped: Bun is not installed");
+        return None;
+    }
+    // Bun's answers wake the window's tasks from a thread of their own.
+    cx.executor().allow_parking();
+    let (control, engine) = Engine::new(OFFLINE);
+    let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
+    let (project, extensions) =
+        runtime::open_with_extensions(folder.path(), control, plugins.clone()).unwrap();
+    assert_eq!(project.problems(), []);
+    let device = DeviceAccess::default();
+    let plugins = plugins.downgrade();
+    Some(open_project_with_device(
+        cx, folder, project, engine, plugins, device, extensions,
+    ))
 }
 
 /// An audio input the window opens as its default input, with no device: two channels at
@@ -353,7 +376,7 @@ pub(crate) fn open_with_input(
         ..DeviceAccess::default()
     };
     let plugins = plugins.downgrade();
-    let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
+    let opened = open_project_with_device(cx, folder, project, engine, plugins, device, None);
     (opened, input)
 }
 
@@ -437,7 +460,7 @@ pub(crate) fn open_with_app(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedAp
         ..DeviceAccess::default()
     };
     let plugins = plugins.downgrade();
-    let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
+    let opened = open_project_with_device(cx, folder, project, engine, plugins, device, None);
     (opened, app)
 }
 
@@ -452,7 +475,7 @@ pub(crate) fn open_with_devices(cx: &mut TestAppContext, list: ListDevices) -> O
         ..DeviceAccess::default()
     };
     let plugins = plugins.downgrade();
-    open_project_with_device(cx, folder, project, engine, plugins, device)
+    open_project_with_device(cx, folder, project, engine, plugins, device, None)
 }
 
 fn open_project_with_device(
@@ -462,6 +485,7 @@ fn open_project_with_device(
     engine: Engine,
     plugins: WeakPlugins,
     device: DeviceAccess,
+    extensions: Option<Extensions>,
 ) -> Opened<'_> {
     cx.update(sound_ui::init);
     let session = cx.new(|cx| Session::new(project, cx));
@@ -470,7 +494,11 @@ fn open_project_with_device(
         let (session, plugins) = (session.clone(), plugins.clone());
         move |window, cx| {
             let name = "Test device".into();
-            Shell::with_device(session, views(plugins), name, device, window, cx)
+            let (mut views, mut devices) = views(plugins);
+            if let Some(extensions) = extensions {
+                sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
+            }
+            Shell::with_device(session, (views, devices), name, device, window, cx)
         }
     });
     cx.run_until_parked();

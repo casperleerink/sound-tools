@@ -1,14 +1,15 @@
 //! Tools of the project in the window, run by Bun: a key on a page and a note of the MIDI
 //! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes back; a save of a tool
-//! keeps the sample it plays. Bun is not part
-//! of the build, so where it is not installed, as in CI, these tests say so and pass.
+//! keeps the sample it plays. A clip editor of the code shows its rows with no word to Bun, and
+//! a save shows the new ones. Bun is not part of the build, so where it is not installed, as
+//! in CI, these tests say so and pass.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
     AppContext, Entity, FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    TestAppContext, VisualTestContext,
+    TestAppContext, VisualTestContext, point, px,
 };
 use midi::Played;
 use plugin_host::{Plugins, ScanCache};
@@ -20,7 +21,7 @@ use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
 
 use crate::plugin_hosts::scanner;
-use crate::support::{id, peak};
+use crate::support::{self, BAR, Opened, id, peak};
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
@@ -404,6 +405,8 @@ fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppC
     window.until("six keys in the record", |window| {
         window.record("keys")["count"] == 6
     });
+    // The page drew, and each key down and up went to Bun.
+    assert!(window.cx.read(sound_typescript::requests_sent) > 12);
 }
 
 #[gpui::test]
@@ -789,4 +792,109 @@ tool({
     };
     assert_eq!(problem.path, "extensions/");
     assert!(problem.message.contains("no tool to blame"), "{problem:?}");
+}
+
+/// The clip editor of the doc for agents: a drum kit.
+fn doc_editor() -> String {
+    let doc = sound_typescript::AGENT_DOC.markdown;
+    let section = doc.split("## A clip editor").nth(1).unwrap();
+    let block = section.split("```ts\n").nth(1).unwrap();
+    block.split("```").next().unwrap().to_string()
+}
+
+/// A scale editor whose rows go from C3 to C6.
+const SCALE: &str = include_str!("../shared/scale.ts");
+
+/// A project with one track whose clip `part`, from the second bar, is in the clip editor
+/// `editor` and holds `pitch` at its start, with the editor in `extensions/<editor>.ts`.
+fn clip_in_editor(editor: &str, code: &str, pitch: u8) -> TempDir {
+    let folder = tempfile::tempdir().unwrap();
+    let project = r#"{"format": 1, "extensions": ["arrangement", "instrument"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": []}"#;
+    let track = r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "order": 0}}"#;
+    let part = format!(
+        r#"{{"tool": "arrangement.clip", "state": {{"start": {BAR}, "length": {}, "editor": "{editor}", "notes": [{{"start": 0, "length": 240, "pitch": {pitch}, "velocity": 100}}]}}}}"#,
+        2 * BAR
+    );
+    let files = [
+        ("project.json", project),
+        (
+            "state/arrangement/instance.json",
+            r#"{"tool": "arrangement", "state": {}}"#,
+        ),
+        ("state/arrangement/track-1/instance.json", track),
+        (
+            "state/arrangement/track-1/instrument.json",
+            r#"{"tool": "instrument.synth", "state": {}}"#,
+        ),
+        ("state/arrangement/track-1/part.json", &part),
+        (&format!("extensions/{editor}.ts"), code),
+    ];
+    for (path, contents) in files {
+        write(folder.path(), path, contents);
+    }
+    folder
+}
+
+/// Opens the editor on `part`.
+fn open_part(opened: &mut Opened<'_>) {
+    let place = opened.at(BAR + 100, 0);
+    opened.double_click(place);
+    assert_eq!(opened.editor_clip(), Some(id("arrangement/track-1/part")));
+}
+
+fn row_count(opened: &mut Opened<'_>) -> usize {
+    let editor = opened.editor().unwrap();
+    opened.cx.read(|cx| editor.read(cx).rows().count())
+}
+
+#[gpui::test]
+fn a_drag_in_a_clip_editor_of_the_code_sends_nothing_to_bun(cx: &mut TestAppContext) {
+    let folder = clip_in_editor("drums", &doc_editor(), 38);
+    let Some(mut opened) = support::open_with_tools(cx, folder) else {
+        return;
+    };
+    open_part(&mut opened);
+    assert_eq!(row_count(&mut opened), 16);
+
+    let sent = opened.cx.read(sound_typescript::requests_sent);
+    // Inside the hit, a square at its start.
+    let inside = point(px(4.), px(0.));
+    let from = opened.in_editor(BAR, 38) + inside;
+    opened.press(from);
+    for step in 1..=20 {
+        let to = opened.in_editor(BAR + step * 60, 38) + inside;
+        opened.drag_to(to);
+    }
+    let end = opened.in_editor(BAR + 1200, 38) + inside;
+    opened.release(end);
+    let notes = opened.clip("arrangement/track-1/part").unwrap().notes;
+    assert_eq!(notes[0].start.0, 1200);
+    assert_eq!(opened.cx.read(sound_typescript::requests_sent), sent);
+}
+
+#[gpui::test]
+fn a_save_of_a_clip_editor_shows_its_new_rows_in_the_open_editor(cx: &mut TestAppContext) {
+    let folder = clip_in_editor("scale", SCALE, 60);
+    let Some(mut opened) = support::open_with_tools(cx, folder) else {
+        return;
+    };
+    open_part(&mut opened);
+    let editor = opened.editor().unwrap();
+    // C major from C3 to C6.
+    assert_eq!(row_count(&mut opened), 22);
+
+    let higher = SCALE.replace("const HIGHEST = 84;", "const HIGHEST = 96;");
+    write(opened.folder.path(), "extensions/scale.ts", &higher);
+    // C major from C3 to C7.
+    let start = Instant::now();
+    while row_count(&mut opened) != 29 {
+        assert!(start.elapsed() < Duration::from_secs(5), "no new rows");
+        opened.settle();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(opened.editor(), Some(editor));
+    let problems = opened.project(|project| project.problems());
+    assert_eq!(problems, []);
 }

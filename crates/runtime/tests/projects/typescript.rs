@@ -1,9 +1,12 @@
 //! Tools a project writes in TypeScript in its `extensions/` folder, run by Bun: the first
 //! example of their agent doc loads as it is written and plays, and a bank of combs whose shape
-//! is a choice plays with every choice. Bun is not part of the build, so where it is not
-//! installed, as in CI, these tests say so and pass.
+//! is a choice plays with every choice. The clip editor of the doc loads too, and a clip's view
+//! is checked against the editors without the window. Bun is not part of the build, so where it
+//! is not installed, as in CI, these tests say so and pass.
 
 use std::path::Path;
+
+use sound_notes::{Editors, NoteShape, View};
 
 use crate::automation::{gate, off_the_gate};
 use crate::support::{BAR, Harness, clip, synth};
@@ -13,6 +16,77 @@ fn doc_example() -> String {
     let doc = sound_typescript::AGENT_DOC.markdown;
     let block = doc.split("```ts\n").nth(1).unwrap();
     block.split("```").next().unwrap().to_string()
+}
+
+/// The clip editor of the doc for agents: a drum kit.
+fn doc_editor() -> String {
+    let doc = sound_typescript::AGENT_DOC.markdown;
+    let section = doc.split("## A clip editor").nth(1).unwrap();
+    let block = section.split("```ts\n").nth(1).unwrap();
+    block.split("```").next().unwrap().to_string()
+}
+
+/// A scale editor with the clip fields `scale` and `root` and the note field `accent`.
+const SCALE: &str = include_str!("../shared/scale.ts");
+
+/// A clip of one note in the clip editor `editor`, with `view`.
+fn clip_in(editor: &str, view: &str) -> String {
+    format!(
+        r#"{{"tool": "arrangement.clip", "state": {{"start": 0, "length": 3840, "editor": "{editor}", "view": {view}, "notes": [{{"start": 0, "length": 240, "pitch": 38, "velocity": 100}}]}}}}"#
+    )
+}
+
+/// A project whose `extensions/` holds the doc's drum editor and `SCALE`. `None` without Bun.
+fn with_editors() -> Option<Harness> {
+    if !sound_typescript::has_bun() {
+        eprintln!("skipped: Bun is not installed");
+        return None;
+    }
+    let folder = tempfile::tempdir().unwrap();
+    crate::support::write(folder.path(), "extensions/drums.ts", &doc_editor());
+    crate::support::write(folder.path(), "extensions/scale.ts", SCALE);
+    let harness = Harness::open(folder);
+    assert_eq!(harness.project.problems(), []);
+    Some(harness)
+}
+
+#[test]
+fn the_drum_editor_of_the_doc_loads_and_a_clip_that_names_it_has_no_problem() {
+    let Some(mut harness) = with_editors() else {
+        return;
+    };
+    let editors = harness.project.provided::<Editors>().unwrap().project();
+    let names: Vec<&str> = editors.iter().map(|spec| spec.name.as_str()).collect();
+    assert_eq!(names, ["drums", "scale"]);
+    let drums = editors[0].grid_for(&View::default());
+    assert_eq!((drums.rows.len(), drums.notes), (16, NoteShape::Hit));
+    assert_eq!(drums.rows[2].label.as_deref(), Some("Snare"));
+
+    harness.write_track("beat", 0, 0.2, &[("part", clip_in("drums", "{}"))]);
+    assert_eq!(harness.project.problems(), []);
+}
+
+#[test]
+fn a_view_the_scale_editor_does_not_take_is_a_problem_also_for_inspect() {
+    let Some(mut harness) = with_editors() else {
+        return;
+    };
+    let lydian = clip_in("scale", r#"{"scale": "lydian", "root": "D"}"#);
+    harness.write_track("lead", 0, 0.2, &[("part", lydian)]);
+    // As `--inspect` opens it: the editors are there before the clips load.
+    let inspected = runtime::open_for_inspect(harness.project.root()).unwrap();
+    for problems in [harness.project.problems(), inspected.problems()] {
+        let [problem] = problems.as_slice() else {
+            panic!("{problems:?}");
+        };
+        assert_eq!(problem.path, "state/arrangement/lead/instance.json");
+        assert!(
+            problem.message.starts_with(
+                r#"part.json has "lydian" in view.scale, which the editor scale does not take"#
+            ),
+            "{problem:?}"
+        );
+    }
 }
 
 /// Combs whose number is a choice: `sound` builds a different graph for each.
