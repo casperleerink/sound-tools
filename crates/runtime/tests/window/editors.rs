@@ -10,7 +10,7 @@ use gpui::{Modifiers, TestAppContext, point, px};
 use sound_core::Changes;
 use sound_notes::{Clip, EditorName, Editors, Note, Pitch};
 
-use crate::clip_editors::{c_major, drums};
+use crate::clip_editors::{c_major, drums, scale};
 use crate::support::{self, BAR, Opened, STEP, clip, id, note};
 
 const PART: &str = "arrangement/track-1/part";
@@ -270,11 +270,39 @@ fn a_choice_in_the_clip_menu_writes_the_view_and_changes_the_rows(cx: &mut TestA
     let e_flat = pitch(63);
     assert_eq!(rows(&mut opened).index_of(e_flat), None);
 
-    pick_in_clip_menu(&mut opened, &["choice:scale", "set:scale:1"]);
+    pick_in_clip_menu(&mut opened, &["choice:scale", "set:scale:scale:word:minor"]);
     let view = opened.clip(PART).unwrap().view;
     assert_eq!(view, serde_json::from_str(r#"{"scale": "minor"}"#).unwrap());
     assert_eq!(opened.undo_label().as_deref(), Some("Set scale to minor"));
     assert!(rows(&mut opened).index_of(e_flat).is_some());
+}
+
+/// The code of the editor changes while the menu is open: an option writes what it shows, or
+/// nothing once the editor lacks it.
+#[gpui::test]
+fn a_choice_picked_after_a_reload_writes_the_option_it_shows(cx: &mut TestAppContext) {
+    let mut opened = open(cx, part("scale", vec![note(0, 480, 60)]));
+    let reload = |opened: &mut Opened<'_>, scales: &[&str]| {
+        let refused = opened.project(|project| {
+            let editors = project.provided::<Editors>().unwrap();
+            editors.set_project(vec![drums(), scale(scales)])
+        });
+        assert!(refused.is_empty());
+    };
+    let minor = "set:scale:scale:word:minor";
+    pick_in_clip_menu(&mut opened, &["choice:scale"]);
+    reload(&mut opened, &["minor", "major"]);
+    let item = opened.control(&format!("menu-{minor}"));
+    opened.click(item);
+    let view = opened.clip(PART).unwrap().view;
+    assert_eq!(view, serde_json::from_str(r#"{"scale": "minor"}"#).unwrap());
+
+    pick_in_clip_menu(&mut opened, &["choice:scale"]);
+    reload(&mut opened, &["minor"]);
+    let item = opened.control("menu-set:scale:scale:word:major");
+    opened.click(item);
+    assert_eq!(opened.clip(PART).unwrap().view, view);
+    assert_eq!(opened.undo_label().as_deref(), Some("Set scale to minor"));
 }
 
 /// With only the piano roll there is nothing to pick, so the menu is as it was before editors.

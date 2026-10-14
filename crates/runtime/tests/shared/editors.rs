@@ -43,14 +43,18 @@ pub(crate) fn drums() -> EditorSpec {
 /// `scale`: the notes of C major or C minor from C3 to C6, the Cs named, with the clip field
 /// `scale` and the note toggle `accent`.
 pub(crate) fn c_major() -> EditorSpec {
-    let clip =
-        json!({"scale": {"kind": "choice", "options": ["major", "minor"], "default": "major"}});
+    scale(&["major", "minor"])
+}
+
+/// `scale` with these scales as the options of its field, the first the default.
+pub(crate) fn scale(scales: &[&str]) -> EditorSpec {
+    let clip = json!({"scale": {"kind": "choice", "options": scales, "default": scales[0]}});
     let note = json!({"accent": {"kind": "toggle", "default": false, "label": "Accent"}});
-    let grids = [
-        ("major", [0, 2, 4, 5, 7, 9, 11]),
-        ("minor", [0, 2, 3, 5, 7, 8, 10]),
-    ]
-    .map(|(scale, steps)| {
+    let grids = scales.iter().map(|scale| {
+        let steps = match *scale {
+            "minor" => [0, 2, 3, 5, 7, 8, 10],
+            _ => [0, 2, 4, 5, 7, 9, 11],
+        };
         let pitches = (48..=84).filter(|pitch| steps.contains(&(pitch % 12)));
         let rows: Vec<Value> = pitches
             .map(|pitch| match pitch % 12 {
@@ -63,7 +67,7 @@ pub(crate) fn c_major() -> EditorSpec {
             json!({"rows": rows, "rowHeight": 16}),
         )
     });
-    spec("scale", "Scale", clip, note, grids.to_vec())
+    spec("scale", "Scale", clip, note, grids.collect())
 }
 
 fn spec(

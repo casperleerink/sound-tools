@@ -40,16 +40,22 @@ const EDITOR: &str = "editor";
 const USE_EDITOR: &str = "editor:";
 /// Before the name of a clip field that is a choice: the row of its submenu.
 const CHOICE: &str = "choice:";
-/// Before `<field>:<index of the option>`.
+/// Before `<editor>:<field>:<kind>:<option>`, the kind `toggle`, `number` or `word`.
 const SET_CHOICE: &str = "set:";
 /// Before the name of a clip field that is a toggle.
 const TOGGLE: &str = "toggle:";
 
-/// A pick that changes the editor of the selected note clips or a field of their view.
+/// A pick that changes the editor of the selected note clips or a field of their view. A
+/// choice holds its option and its editor, not the place of the option: a reload of the editor
+/// while the menu is open may reorder the options.
 #[derive(Debug, PartialEq)]
 enum EditorPick {
     Use(EditorName),
-    Choice(FieldName, usize),
+    Choice {
+        editor: EditorName,
+        field: FieldName,
+        option: ViewValue,
+    },
     Toggle(FieldName),
 }
 
@@ -57,7 +63,19 @@ impl EditorPick {
     fn value(&self) -> String {
         match self {
             Self::Use(name) => format!("{USE_EDITOR}{}", name.as_str()),
-            Self::Choice(field, index) => format!("{SET_CHOICE}{}:{index}", field.as_str()),
+            Self::Choice {
+                editor,
+                field,
+                option,
+            } => {
+                let option = match option {
+                    ViewValue::Toggle(on) => format!("toggle:{on}"),
+                    ViewValue::Number(number) => format!("number:{number}"),
+                    ViewValue::Word(word) => format!("word:{word}"),
+                };
+                let (editor, field) = (editor.as_str(), field.as_str());
+                format!("{SET_CHOICE}{editor}:{field}:{option}")
+            }
             Self::Toggle(field) => format!("{TOGGLE}{}", field.as_str()),
         }
     }
@@ -69,11 +87,20 @@ impl EditorPick {
         if let Some(field) = value.strip_prefix(TOGGLE) {
             return FieldName::new(field).ok().map(Self::Toggle);
         }
-        let (field, index) = value.strip_prefix(SET_CHOICE)?.split_once(':')?;
-        Some(Self::Choice(
-            FieldName::new(field).ok()?,
-            index.parse().ok()?,
-        ))
+        let mut parts = value.strip_prefix(SET_CHOICE)?.splitn(4, ':');
+        let mut next = || parts.next();
+        let (editor, field, kind, option) = (next()?, next()?, next()?, next()?);
+        let option = match kind {
+            "toggle" => ViewValue::Toggle(option.parse().ok()?),
+            "number" => ViewValue::Number(option.parse().ok()?),
+            "word" => ViewValue::Word(option.to_owned()),
+            _ => return None,
+        };
+        Some(Self::Choice {
+            editor: EditorName::new(editor).ok()?,
+            field: FieldName::new(field).ok()?,
+            option,
+        })
     }
 }
 
@@ -130,12 +157,13 @@ fn editor_items(editors: &Editors, clip: &Clip) -> Vec<MenuItem> {
         let label = field_label(field, view_field);
         items.push(match view_field {
             ViewField::Choice { options, .. } => {
-                let options = options.iter().enumerate().map(|(index, option)| {
-                    row(
-                        EditorPick::Choice(field.clone(), index).value(),
-                        option_label(option),
-                    )
-                    .checked(*option == value)
+                let options = options.iter().map(|option| {
+                    let pick = EditorPick::Choice {
+                        editor: shown.spec.name.clone(),
+                        field: field.clone(),
+                        option: option.clone(),
+                    };
+                    row(pick.value(), option_label(option)).checked(*option == value)
                 });
                 row(format!("{CHOICE}{}", field.as_str()), label).submenu(options)
             }
@@ -341,16 +369,20 @@ impl Timeline {
                 self.change_note_clips(&label, |clip| clip.editor.clone_from(&editor), cx);
                 return;
             }
-            EditorPick::Choice(field, index) => {
+            EditorPick::Choice {
+                editor,
+                field,
+                option,
+            } => {
                 let Some(view_field @ ViewField::Choice { options, .. }) = declared(&field) else {
                     return;
                 };
-                let Some(option) = options.get(index) else {
+                if editor != spec.name || !options.contains(&option) {
                     return;
-                };
+                }
                 let label = field_label(&field, view_field).to_lowercase();
-                let label = format!("Set {label} to {}", option_label(option));
-                (label, field, option.clone())
+                let label = format!("Set {label} to {}", option_label(&option));
+                (label, field, option)
             }
             EditorPick::Toggle(field) => {
                 let Some(view_field @ ViewField::Toggle { .. }) = declared(&field) else {
