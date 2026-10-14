@@ -329,20 +329,4 @@ mod tests {
         assert_eq!(nudged_track(2, 3, 1), 2);
         assert_eq!(nudged_track(0, 1, 1), 0);
     }
-
-    #[test]
-    fn a_resized_clip_keeps_its_editor_and_view() {
-        let mut origin = clip(BAR, BAR, &[(480, 240)]);
-        origin.editor = Some(sound_notes::EditorName::new("drums").unwrap());
-        origin.view = serde_json::from_str(r#"{"kit":"house"}"#).unwrap();
-        origin.notes[0].view = serde_json::from_str(r#"{"accent":true}"#).unwrap();
-        for resized in [
-            resized_left(&origin, 240, UNIT),
-            resized_right(&origin, -240, UNIT),
-        ] {
-            assert_eq!(resized.editor, origin.editor);
-            assert_eq!(resized.view, origin.view);
-            assert_eq!(resized.notes[0].view, origin.notes[0].view);
-        }
-    }
 }

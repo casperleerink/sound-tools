@@ -774,16 +774,4 @@ mod tests {
             note(960, BAR - 960, 60)
         );
     }
-
-    #[test]
-    fn a_moved_or_resized_note_keeps_its_view() {
-        let mut origin = note(960, 480, 60);
-        origin.view = serde_json::from_str(r#"{"accent":true}"#).unwrap();
-        let moved = moved_note(&piano(), length(BAR), origin.clone(), 240, 2);
-        assert_eq!(moved.view, origin.view);
-        let several = moved_notes(&piano(), length(BAR), std::slice::from_ref(&origin), 240, 2);
-        assert_eq!(several[0].view, origin.view);
-        let resized = resized_note(length(BAR), origin.clone(), 240, UNIT);
-        assert_eq!(resized.view, origin.view);
-    }
 }

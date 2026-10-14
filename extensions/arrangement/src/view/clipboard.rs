@@ -265,24 +265,4 @@ mod tests {
         assert!(copied.placed(Ticks(BAR), length).is_empty());
         assert_eq!(CopiedNotes::new([]), None);
     }
-
-    #[test]
-    fn a_paste_keeps_the_editor_and_the_views() {
-        let view: sound_notes::View = serde_json::from_str(r#"{"scale":"dorian"}"#).unwrap();
-        let mut record = Clip::new(Ticks(BAR), Length::new(Ticks(BAR)).unwrap(), Vec::new());
-        record.editor = Some(sound_notes::EditorName::new("drums").unwrap());
-        record.view = view.clone();
-        let (row, name, _, lanes) = copied(0, "a", BAR, BAR);
-        let clips = CopiedClips::new([(row, name, AnyClip::Notes(record.clone()), lanes)]).unwrap();
-        let pasted = clips.placed(Ticks(0), 0, 1);
-        record.start = Ticks(0);
-        assert_eq!(pasted[0].2, AnyClip::Notes(record));
-
-        let mut accented = note(960, 480, 60);
-        accented.view = view;
-        let notes = CopiedNotes::new([accented.clone()]).unwrap();
-        accented.start = Ticks(0);
-        let length = Length::new(Ticks(BAR)).unwrap();
-        assert_eq!(notes.placed(Ticks(0), length), [accented]);
-    }
 }

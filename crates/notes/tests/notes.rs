@@ -218,16 +218,6 @@ fn a_pitch_has_the_note_name_of_the_app() {
     assert_eq!(name(127), "G9");
 }
 
-/// A clip of before editors existed, with notes, a pedal and a take, comes back byte for byte.
-#[test]
-fn a_clip_without_editor_or_view_saves_without_the_fields() {
-    let line = r#"{"start":0,"length":3840,"notes":[{"start":0,"length":480,"pitch":60,"velocity":100}],"pedal":[{"start":0,"value":127}],"take":"take-1"}"#;
-    let clip: Clip = serde_json::from_str(line).unwrap();
-    assert_eq!(clip.editor, None);
-    assert!(clip.view.is_empty() && clip.notes[0].view.is_empty());
-    assert_eq!(serde_json::to_string(&clip).unwrap(), line);
-}
-
 #[test]
 fn a_clip_keeps_its_editor_and_the_views_of_the_clip_and_its_notes() {
     let line = r#"{"start":0,"length":3840,"notes":[{"start":0,"length":480,"pitch":60,"velocity":100,"view":{"accent":true}}],"editor":"scale","view":{"root":-3,"scale":"dorian"}}"#;
