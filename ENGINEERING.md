@@ -18,7 +18,8 @@ Rules are traps to avoid, not general advice. Add a rule only when it is non-obv
       async move { state.update(); }
   });
   ```
-- GPUI: no `cx.notify()` or entity updates inside `render`; no blocking file I/O or sleeps on the UI thread. See the gpui skills in [.agents/skills/](.agents/skills/).
+- GPUI: no `cx.notify()` or entity updates inside `render`. See the gpui skills in [.agents/skills/](.agents/skills/).
+- Main thread: small record writes are fine there. Work whose size or time the user controls (assets, plugin state, folder listings, downloads, processes) goes to `cx.background_spawn`; its result and errors come back with `this.update`. Code inside `cx.spawn` still runs on the main thread.
 - Audio thread: nothing from "What may not happen on the audio thread" below.
 - Check a crate's current version and changelog before using it from memory. Agents tend to write code for older APIs.
 - Every dependency is declared once in `[workspace.dependencies]`. Every crate uses the workspace lints.
@@ -35,8 +36,7 @@ The engine is in `crates/core`. It follows what Pure Data, Elementary and simila
 
 | Thread | Owns | May |
 | --- | --- | --- |
-| UI (GPUI) | Views | Edit project state through the editing service. |
-| Control | Project graph, compiler, tempo map, assets | Allocate, lock, do I/O. Compiles schedules and builds processors. |
+| Main (GPUI), the "control side" in engine code | Views, project, graph, compiler, tempo map, plugin handles | Allocate, lock, small I/O. Compiles schedules and builds processors. |
 | Audio (device callback) | Live processors, current schedule, buffers | Only preallocated work. |
 
 The engine is a value, not global state. The device callback, offline rendering and tests all call the same `Engine::process_block`. Pd needed years to add multiple instances because it started with globals.

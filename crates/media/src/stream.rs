@@ -150,8 +150,8 @@ pub(crate) fn share(audio: &Arc<Audio>) {
 /// Requests from the audio thread: a streamed file by its number and the frame a note starts.
 type Request = (u64, u64);
 
-/// How many requests one processor may have waiting. More are dropped and counted: their
-/// notes then read from the disk as they play.
+/// How many requests one processor may have waiting. More are dropped: their notes then read
+/// from the disk as they play.
 const WAITING: usize = 256;
 
 /// One processor's way to ask for a streamed file to be read ahead. Made on the control side,

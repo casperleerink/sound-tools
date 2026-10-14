@@ -142,7 +142,7 @@ A release build is `cargo build --release -p runtime`. The binary is `target/rel
 ```sh
 cargo fmt --all --check
 typos
-cargo clippy --workspace --all-targets --locked --config .cargo/ci-config.toml
+cargo clippy --workspace --all-targets --locked
 cargo nextest run --workspace --locked
 cargo shear
 cargo deny check
