@@ -437,11 +437,15 @@ impl Editors {
             },
         };
         let clip_problem = clip.view.iter().find_map(|(field, value)| {
-            field_problem(&catalog, spec, Kind::Clip, field, value, "view")
+            field_problem(&catalog, spec, Kind::Clip, field, value, &|| {
+                "view".to_owned()
+            })
         });
         clip_problem.or_else(|| {
-            clip.notes.iter().enumerate().find_map(|(index, note)| {
-                let path = format!("notes[{index}].view");
+            let notes = clip.notes.iter().enumerate();
+            let mut viewed = notes.filter(|(_, note)| !note.view.is_empty());
+            viewed.find_map(|(index, note)| {
+                let path = || format!("notes[{index}].view");
                 note.view.iter().find_map(|(field, value)| {
                     field_problem(&catalog, spec, Kind::Note, field, value, &path)
                 })
@@ -472,14 +476,15 @@ impl Kind {
     }
 }
 
-/// The problem of one field of a view at `path`, or `None`.
+/// The problem of one field of a view at `path`, or `None`. The path is made only for a
+/// problem: a clip has thousands of notes.
 fn field_problem(
     catalog: &Catalog,
     spec: &EditorSpec,
     kind: Kind,
     field: &FieldName,
     value: &ViewValue,
-    path: &str,
+    path: &dyn Fn() -> String,
 ) -> Option<String> {
     fn declared<'a>(spec: &'a EditorSpec, kind: Kind, field: &FieldName) -> Option<&'a ViewField> {
         let mut fields = kind.fields(spec).iter();
@@ -490,7 +495,8 @@ fn field_problem(
     match declared(spec, kind, field) {
         Some(view_field) if view_field.accepts(value) => None,
         Some(view_field) => Some(format!(
-            "has {value} in {path}.{}, which the editor {} does not take, so it shows as {}. Use {}",
+            "has {value} in {}.{}, which the editor {} does not take, so it shows as {}. Use {}",
+            path(),
             field.as_str(),
             spec.name.as_str(),
             view_field.default_value(),
@@ -503,7 +509,8 @@ fn field_problem(
             None
         }
         None => Some(format!(
-            "has {path}.{}, which no editor of this project has as a {} field, so nothing reads it",
+            "has {}.{}, which no editor of this project has as a {} field, so nothing reads it",
+            path(),
             field.as_str(),
             kind.word()
         )),
