@@ -9,7 +9,7 @@
 //! gesture and one undo step, a key step, a reset or a pick is one commit. The ranges, the defaults
 //! and the travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. A
 //! number that an automation lane of the track moves shows the value that plays on its knob, and
-//! does not drag ([`Lanes`]).
+//! does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use gpui::{Context, Entity, Point, Task, Window, div, prelude::*};
 use sound_core::{Instance, ProjectEvent};
