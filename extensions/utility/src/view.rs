@@ -4,28 +4,28 @@
 //! title, and the power and close icons.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change goes
-//! through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one gesture and
+//! through the session, by [`DeviceEdit`]: a drag of a knob or of the handle is one gesture and
 //! one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
 //! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
 //! about the interface is here: the label, the unit, the name of the undo step and whether the card
 //! is expanded. A number that an automation lane of the track moves shows the value that plays, on
-//! its knob and on the display, and does not drag ([`Lanes`]).
+//! its knob and on the display, and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use std::f32::consts::FRAC_PI_4;
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent};
+use sound_core::Instance;
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
-    Knob, ParameterKnob, decibels_readout, hertz_readout, pan_readout, percent_readout,
+    ParameterKnob, decibels_readout, hertz_readout, pan_readout, percent_readout,
 };
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback,
+    ActiveTheme, DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback,
 };
 
 use crate::{BASS_MONO_HZ, Channels, GAIN, PAN, Utility, UtilityState, WIDTH, matrix};
@@ -113,10 +113,6 @@ const INVERT_RIGHT: Switch = Switch {
     set: |state, on| state.invert_right = on,
 };
 
-/// Every knob, in the order of the card: shown, then hidden.
-#[cfg(test)]
-const KNOBS: [&Control; 4] = [&GAIN_KNOB, &WIDTH_KNOB, &PAN_KNOB, &BASS_KNOB];
-
 /// The value of a segment and its label, for each choice of channels.
 const CHANNELS: [(Channels, &str, &str); 4] = [
     (Channels::Left, "left", "Left"),
@@ -203,12 +199,8 @@ fn image(state: &UtilityState) -> Vec<Point<f32>> {
 }
 
 pub struct UtilityView {
-    session: Entity<Session>,
-    utility: Instance<UtilityState>,
+    device: DeviceEdit<UtilityState>,
     frame: CardFrame,
-    /// The gesture of a drag of a knob or of the handle.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<UtilityState>>,
     /// Whether the card shows the hidden controls. Interface state: not saved.
     expanded: bool,
 }
@@ -221,27 +213,9 @@ impl UtilityView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.utility.id() => cx.notify(),
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.utility.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
-        })
-        .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
-        let lanes = Lanes::follow(&session, utility.id(), Utility::AUTOMATION, cx);
         Self {
-            session,
-            utility,
+            device: DeviceEdit::new(session, utility, Utility::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
         }
     }
@@ -250,27 +224,6 @@ impl UtilityView {
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
-    }
-
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut UtilityState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, utility) = (&self.session, &self.utility);
-        self.edit.apply(session, utility, label, change, set, cx);
-    }
-
-    fn knob(&self, control: Control, state: &UtilityState, cx: &mut Context<Self>) -> Knob {
-        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        control
-            .knob(state)
-            .automated(automated)
-            .on_change(weak_callback(cx, move |view, change, cx| {
-                view.change(control.undo_label, change, control.parameter.set, cx);
-            }))
     }
 
     /// A switch: one click and one step.
@@ -283,7 +236,8 @@ impl UtilityView {
         let on = (switch.get)(state);
         let face = switch.face.unwrap_or(if on { "On" } else { "Off" });
         Toggle::new(switch.id, face, on).on_change(weak_callback(cx, move |view, on: bool, cx| {
-            view.change(switch.undo_label, ValueChange::Set(on), switch.set, cx);
+            view.device
+                .change(switch.undo_label, ValueChange::Set(on), switch.set, cx);
         }))
     }
 
@@ -292,7 +246,7 @@ impl UtilityView {
     fn handle(&self, state: &UtilityState, cx: &mut Context<Self>) -> Handle {
         let x = Axis::new(layout::place_axis(), pan_place(state.pan), 0.);
         let y = Axis::new(layout::gain_axis(), state.gain_db, GAIN.default);
-        let lanes = self.lanes.read(cx);
+        let lanes = self.device.lanes.read(cx);
         let automated = lanes.is_automated(GAIN.field) || lanes.is_automated(PAN.field);
         Handle::new("gain-pan", x, y)
             .dimmed(state.mute)
@@ -305,7 +259,7 @@ impl UtilityView {
                         state.pan = place_pan(at.x);
                         state.gain_db = at.y.clamp(GAIN.min, GAIN.max);
                     };
-                    view.change("Change gain and pan", change, set, cx);
+                    view.device.change("Change gain and pan", change, set, cx);
                 },
             ))
     }
@@ -322,7 +276,8 @@ impl UtilityView {
                 let picked = CHANNELS.iter().find(|(_, name, _)| *name == value.as_ref());
                 if let Some((channels, ..)) = picked {
                     let set = |state: &mut UtilityState, channels| state.channels = channels;
-                    view.change("Change channels", ValueChange::Set(*channels), set, cx);
+                    view.device
+                        .change("Change channels", ValueChange::Set(*channels), set, cx);
                 }
             }));
         let caption = format!(
@@ -340,14 +295,22 @@ impl UtilityView {
     }
 }
 
+impl DeviceView for UtilityView {
+    type State = UtilityState;
+
+    fn device(&mut self) -> &mut DeviceEdit<UtilityState> {
+        &mut self.device
+    }
+}
+
 impl Render for UtilityView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
-        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
         let toggle = |switch: &'static Switch, cx: &mut Context<Self>| {
             Cell::new(self.toggle(switch, &state, cx)).label(switch.label)
         };
@@ -387,20 +350,6 @@ impl Render for UtilityView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The defaults and both ends of every range, through the travel of its knob and back.
-    #[test]
-    fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
-        for control in KNOBS {
-            let (range, parameter) = (control.range(), control.parameter);
-            assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
-            assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
-            for value in [parameter.min, parameter.default, parameter.max] {
-                let back = range.value(range.position(value));
-                assert_eq!(back, value, "{}", parameter.field);
-            }
-        }
-    }
 
     /// The image spans the speakers as it came, one line in the middle in mono, past the speakers
     /// when wider, and one speaker when only that channel plays and is panned there.

@@ -59,7 +59,7 @@ impl WavetableView {
                 set(route, value)
             }
         };
-        self.change(label, change, set, cx);
+        self.device.change(label, change, set, cx);
     }
 
     fn route(&self, index: usize, route: Route, cx: &mut Context<Self>) -> impl IntoElement {
@@ -110,7 +110,8 @@ impl WavetableView {
                         state.matrix.remove(index);
                     }
                 };
-                view.change("Remove route", ValueChange::Set(()), remove, cx);
+                view.device
+                    .change("Remove route", ValueChange::Set(()), remove, cx);
             }));
         div()
             .flex()
@@ -196,7 +197,8 @@ impl WavetableView {
                             state.matrix.push(NEW_ROUTE);
                         }
                     };
-                    view.change("Add route", ValueChange::Set(()), add, cx);
+                    view.device
+                        .change("Add route", ValueChange::Set(()), add, cx);
                 }))
         });
         let list = div()

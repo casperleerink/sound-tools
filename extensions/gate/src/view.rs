@@ -4,19 +4,19 @@
 //! sidechain picker. The rack gives the view a [`CardFrame`].
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session by [`ControlEdit`], as on the compressor. A number that an
+//! goes through the session by [`DeviceEdit`], as on the compressor. A number that an
 //! automation lane of the track moves shows the value that plays and does not drag
-//! ([`Lanes`]).
+//! ([`Lanes`](sound_ui::Lanes)).
 
 use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent};
+use sound_core::Instance;
 use sound_ui::components::device_card::{CardFrame, Column, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dynamics_display::{self, Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, ParameterKnob, decibels_readout, milliseconds_readout};
+use sound_ui::components::knob::{ParameterKnob, decibels_readout, milliseconds_readout};
 use sound_ui::{
-    ControlEdit, Devices, Lanes, OfferGroup, Session, Views, every_poll, weak_callback,
+    DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, every_poll, weak_callback,
 };
 
 use crate::{ATTACK, Gate, GateState, HOLD, Meters, RANGE, RELEASE, SUSTAIN, THRESHOLD, TRANSIENT};
@@ -86,12 +86,8 @@ fn curve(state: &GateState) -> Vec<Point<f32>> {
 }
 
 pub struct GateView {
-    session: Entity<Session>,
-    gate: Instance<GateState>,
+    device: DeviceEdit<GateState>,
     frame: CardFrame,
-    /// The gesture of a drag of a knob or of the handle.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<GateState>>,
     /// Whether the card shows hold and the sidechain. Interface state: not saved.
     expanded: bool,
     reading: Reading,
@@ -106,20 +102,6 @@ impl GateView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.gate.id() => cx.notify(),
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.gate.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
-        })
-        .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
         // What the gate did before this card was made is not what it does now.
         let project = session.read(cx).project();
         for name in [Meters::LEVEL, Meters::REDUCTION] {
@@ -128,13 +110,9 @@ impl GateView {
             }
         }
         let metering = every_poll(cx, Self::read_meters);
-        let lanes = Lanes::follow(&session, gate.id(), Gate::AUTOMATION, cx);
         Self {
-            session,
-            gate,
+            device: DeviceEdit::new(session, gate, Gate::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
             reading: Reading::default(),
             _metering: metering,
@@ -144,7 +122,8 @@ impl GateView {
     /// Takes what the gate heard and did since the last look, and draws again when that
     /// changes what the card shows. Called once per poll of the session.
     fn read_meters(&mut self, cx: &mut Context<Self>) {
-        let (project, id) = (self.session.read(cx).project(), self.gate.id());
+        let device = &self.device;
+        let (project, id) = (device.session.read(cx).project(), device.instance.id());
         let take = |name| project.peaks(id, name).map_or(0., |peaks| peaks.take()[0]);
         let reading = LEVELS.reading(take(Meters::LEVEL), take(Meters::REDUCTION));
         if reading != self.reading {
@@ -159,33 +138,12 @@ impl GateView {
         cx.notify();
     }
 
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut GateState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, gate) = (&self.session, &self.gate);
-        self.edit.apply(session, gate, label, change, set, cx);
-    }
-
-    fn knob(&self, control: Control, state: &GateState, cx: &mut Context<Self>) -> Knob {
-        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        control
-            .knob(state)
-            .automated(automated)
-            .on_change(weak_callback(cx, move |view, change, cx| {
-                view.change(control.undo_label, change, control.parameter.set, cx);
-            }))
-    }
-
     /// The handle at the top of the step: sideways is threshold.
     fn threshold_handle(&self, state: &GateState, cx: &mut Context<Self>) -> Handle {
         let threshold = state.threshold_db;
         let x = Axis::new(LEVELS.threshold_travel(), threshold, THRESHOLD.default);
         let y = Axis::fixed(LEVELS.up(threshold));
-        let automated = self.lanes.read(cx).is_automated(THRESHOLD.field);
+        let automated = self.device.is_automated(THRESHOLD.field, cx);
         Handle::new("threshold", x, y)
             .automated(automated)
             .on_change(weak_callback(
@@ -195,7 +153,8 @@ impl GateView {
                     let set = |state: &mut GateState, at: Point<f32>| {
                         state.threshold_db = THRESHOLD_KNOB.clamp(at.x);
                     };
-                    view.change(THRESHOLD_KNOB.undo_label, change, set, cx);
+                    view.device
+                        .change(THRESHOLD_KNOB.undo_label, change, set, cx);
                 },
             ))
     }
@@ -209,14 +168,22 @@ impl GateView {
     }
 }
 
+impl DeviceView for GateView {
+    type State = GateState;
+
+    fn device(&mut self) -> &mut DeviceEdit<GateState> {
+        &mut self.device
+    }
+}
+
 impl Render for GateView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
-        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
         let columns = [
             (THRESHOLD_KNOB, RANGE_KNOB),
             (ATTACK_KNOB, RELEASE_KNOB),

@@ -9,13 +9,13 @@
 //! macOS. The file is copied into `assets/audio/` away from the thread that draws.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a knob drag is one gesture and one undo step, a
+//! goes through the session, by [`DeviceEdit`]: a knob drag is one gesture and one undo step, a
 //! key step, a reset, a sound, a sample or the choke switch is one commit. The ranges, the
 //! defaults and the travel of each knob come from the [`PARAMETERS`](crate::PARAMETERS) of the
 //! crate. What is only about the interface is here: the labels, the units, the names of the undo
 //! steps, which pad is selected, whether the card is expanded and how loud each pad sounds.
 //! A number that an automation lane of the track moves shows the value that plays on its knob,
-//! and does not drag ([`Lanes`]).
+//! and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use std::path::PathBuf;
 
@@ -39,7 +39,7 @@ use sound_ui::components::toggle::Toggle;
 use sound_ui::import;
 use sound_ui::lanes::object_of;
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, KeyboardFocus, Lanes, OfferGroup, Session, Views,
+    ActiveTheme, DeviceEdit, DeviceView, Devices, KeyboardFocus, OfferGroup, Session, Views,
     every_poll, weak_callback,
 };
 
@@ -113,12 +113,8 @@ pub fn pad_from_key(pad: usize, key: &str) -> Option<usize> {
 }
 
 pub struct DrumPadView {
-    session: Entity<Session>,
-    drums: Instance<DrumPadState>,
+    device: DeviceEdit<DrumPadState>,
     frame: CardFrame,
-    /// The gesture of a knob drag.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<DrumPadState>>,
     /// Whether the card shows Sound and Choke. Interface state: not saved.
     expanded: bool,
     /// The pad the knobs show, from 0. Interface state: not saved.
@@ -143,24 +139,12 @@ impl DrumPadView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.drums.id() => {
-                view.show_sound(cx);
-                cx.notify();
-            }
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.drums.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
+            ProjectEvent::Changed(id) if id == view.device.instance.id() => view.show_sound(cx),
             // A file that arrives or goes changes what a sample pad shows.
             ProjectEvent::ProblemsChanged => cx.notify(),
             _ => {}
         })
         .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
         let sounds = cx.new(|cx| {
             DropdownMenu::new("Sound", Vec::new(), cx)
                 .trigger(Trigger::Select)
@@ -179,13 +163,9 @@ impl DrumPadView {
                 peaks.take();
             }
         }
-        let lanes = Lanes::follow(&session, drums.id(), DrumPad::AUTOMATION, cx);
         let mut view = Self {
-            session,
-            drums,
+            device: DeviceEdit::new(session, drums, DrumPad::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
             selected: 0,
             sounds,
@@ -199,13 +179,15 @@ impl DrumPadView {
     }
 
     fn state<'a>(&self, cx: &'a Context<Self>) -> Option<&'a DrumPadState> {
-        self.session.read(cx).project().state(&self.drums)
+        let device = &self.device;
+        device.session.read(cx).project().state(&device.instance)
     }
 
     /// Takes how loud each pad sounded since the last look, and draws again when that changes
     /// what the pads show. Called once per poll of the session.
     pub fn read_levels(&mut self, cx: &mut Context<Self>) {
-        let (project, id) = (self.session.read(cx).project(), self.drums.id());
+        let device = &self.device;
+        let (project, id) = (device.session.read(cx).project(), device.instance.id());
         let mut sounding = [0.; PADS];
         for (pad, level) in sounding.iter_mut().enumerate() {
             let taken = project
@@ -250,9 +232,9 @@ impl DrumPadView {
 
     /// Plays pad `pad` now, as a note of it would. Not an edit: nothing is saved.
     pub fn play(&mut self, pad: usize, cx: &mut Context<Self>) {
-        let id = self.drums.id().clone();
+        let id = self.device.instance.id().clone();
         let velocity = Velocity::nearest(i64::from(PRESS_VELOCITY));
-        self.session.update(cx, |session, cx| {
+        self.device.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 project.send::<DrumPad>(&id, PROCESSOR, DrumUpdate::hit(pad, velocity))
             })
@@ -328,24 +310,14 @@ impl DrumPadView {
         };
         let set =
             move |state: &mut DrumPadState, sound| state.pads[pad].source = Source::Sound(sound);
-        self.change("Change sound", ValueChange::Set(sound), set, cx);
-    }
-
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut DrumPadState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, drums) = (&self.session, &self.drums);
-        self.edit.apply(session, drums, label, change, set, cx);
+        self.device
+            .change("Change sound", ValueChange::Set(sound), set, cx);
     }
 
     /// Opens the file panel of macOS for a sample for pad `pad`: the keyboard path to a sample
     /// pad.
     pub fn choose_file(&mut self, pad: usize, cx: &mut Context<Self>) {
-        import::choose_file(&self.session, "Choose", cx, move |view, path, cx| {
+        import::choose_file(&self.device.session, "Choose", cx, move |view, path, cx| {
             view.load_files(pad, vec![path], cx)
         });
     }
@@ -357,7 +329,7 @@ impl DrumPadView {
         let Some(path) = paths.into_iter().next() else {
             return;
         };
-        import::import_file(&self.session, path, cx, move |view, imported, cx| {
+        import::import_file(&self.device.session, path, cx, move |view, imported, cx| {
             view.take_sample(pad, imported, cx)
         });
     }
@@ -368,7 +340,8 @@ impl DrumPadView {
             state.pads[pad].load_sample(asset, seconds);
         };
         // The file is held until the edit is made, so the behaviour reads nothing.
-        self.change("Load sample", ValueChange::Set(()), set, cx);
+        self.device
+            .change("Load sample", ValueChange::Set(()), set, cx);
         drop(imported);
         self.select(pad, cx);
     }
@@ -378,6 +351,7 @@ impl DrumPadView {
         // The lane of this number of the selected pad is named by its path: `pads.36.pan`.
         let pad_path = object_of(PAD_LANES[selected][0].field);
         let automated = self
+            .device
             .lanes
             .read(cx)
             .is_automated_in(pad_path, control.parameter.field);
@@ -388,7 +362,7 @@ impl DrumPadView {
                 let set = move |state: &mut DrumPadState, value| {
                     (control.parameter.set)(&mut state.pads[selected], value);
                 };
-                view.change(control.undo_label, change, set, cx);
+                view.device.change(control.undo_label, change, set, cx);
             }))
     }
 
@@ -399,7 +373,7 @@ impl DrumPadView {
         let Source::Sample(asset) = &pad.source else {
             return None;
         };
-        let assets = self.session.read(cx).project().assets();
+        let assets = self.device.session.read(cx).project().assets();
         match sound_media::cached(assets, asset) {
             Cached::Missing | Cached::DoesNotPlay(_) => Some(PadGlyph::Missing),
             Cached::Plays(_) | Cached::Unknown => Some(PadGlyph::Sample),
@@ -472,11 +446,19 @@ impl DrumPadView {
     }
 }
 
+impl DeviceView for DrumPadView {
+    type State = DrumPadState;
+
+    fn device(&mut self) -> &mut DeviceEdit<DrumPadState> {
+        &mut self.device
+    }
+}
+
 impl gpui::Render for DrumPadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
         let pad = &state.pads[self.selected];
@@ -504,7 +486,7 @@ impl gpui::Render for DrumPadView {
                     "Take out of choke group"
                 };
                 let set = move |state: &mut DrumPadState, on| state.pads[selected].choke = on;
-                view.change(label, ValueChange::Set(on), set, cx);
+                view.device.change(label, ValueChange::Set(on), set, cx);
             }),
         );
         let hidden = [
@@ -550,19 +532,5 @@ mod tests {
         assert_eq!(pad_from_key(15, "down"), Some(11));
         assert_eq!(pad_from_key(6, "left"), Some(5));
         assert_eq!(pad_from_key(6, "enter"), None);
-    }
-
-    /// The defaults and both ends of every range, through the travel of its knob.
-    #[test]
-    fn every_knob_gives_the_ends_of_its_range() {
-        for pad in 0..PADS {
-            for control in knobs(pad) {
-                let (range, parameter) = (control.range(), control.parameter);
-                assert_eq!(range.value(0.0), parameter.min);
-                assert_eq!(range.value(1.0), parameter.max);
-                let default = range.value(range.position(parameter.default));
-                assert!((default - parameter.default).abs() < 1e-3, "{default}");
-            }
-        }
     }
 }

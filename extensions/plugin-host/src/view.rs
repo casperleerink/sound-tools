@@ -31,7 +31,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, Context, Div, Entity, FocusHandle, SharedString, Task, Window, div, prelude::*, px,
+    AnyElement, App, Context, Div, Entity, FocusHandle, SharedString, Task, Window, div,
+    prelude::*, px,
 };
 use sound_core::{Instance, InstanceId, MAX_AUTOMATED, Project, ProjectEvent};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -49,7 +50,7 @@ use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
 use sound_ui::components::tooltip::Tooltip;
 use sound_ui::{
-    ActiveTheme, ControlEdit, DeviceLabel, Devices, LaneNumber, Lanes, Numbers, Session, Views,
+    ActiveTheme, DeviceEdit, DeviceLabel, DeviceView, Devices, LaneNumber, Numbers, Session, Views,
     weak_callback,
 };
 
@@ -204,23 +205,18 @@ impl<'a> Control<'a> {
 }
 
 pub struct PluginView {
-    session: Entity<Session>,
-    plugin: Instance<PluginRecord>,
+    device: DeviceEdit<PluginRecord>,
     plugins: WeakPlugins,
     /// The title and the close icon the rack gives the card.
     frame: CardFrame,
     /// The button takes one to be a tab stop and to show a focus ring.
     window_focus: FocusHandle,
-    /// The drag of the knob of a pin, and the steps of every control on the card.
-    edit: ControlEdit,
     /// Every parameter of the plugin, as the host last gave it. `None` while no plugin is
     /// loaded for the record.
     parameters: Option<Rc<BTreeMap<u32, Parameter>>>,
     /// The plugin's own text for the value each pin plays, with the value it is for. `None`
     /// when the plugin gives no text.
     readouts: BTreeMap<u32, (f64, Option<SharedString>)>,
-    /// What the automation lanes of the track play into the pins.
-    lanes: Entity<Lanes<PluginRecord>>,
     /// When the card last asked for the text of the value a lane plays, by pin, and the ask
     /// that waits for [`LANE_READ_OUT`] to pass.
     lane_asked: BTreeMap<u32, Instant>,
@@ -273,24 +269,15 @@ impl PluginView {
             cx.notify();
         })
         .detach();
-        cx.subscribe(&session, |view, _, event: &ProjectEvent, cx| match event {
-            ProjectEvent::Changed(id) if id == view.plugin.id() => {
+        cx.subscribe(&session, |view, _, event: &ProjectEvent, cx| {
+            if let ProjectEvent::Changed(id) = event
+                && id == view.device.instance.id()
+            {
                 view.ask_the_plugin(true, cx);
                 view.end_a_drag_whose_knob_changed(cx);
-                cx.notify();
             }
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.plugin.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
         })
         .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
         let menu = cx.new(|cx| {
             let mut menu = DropdownMenu::new("Parameters", Vec::new(), cx)
                 .searchable("Search", cx)
@@ -306,22 +293,19 @@ impl PluginView {
             view.pin_or_unpin(value, cx);
         })
         .detach();
-        let lanes = Lanes::follow_named(&session, plugin.id(), cx);
-        cx.observe(&lanes, |view, _, cx| {
+        let device = DeviceEdit::named(session, plugin, cx);
+        cx.observe(&device.lanes, |view, _, cx| {
             view.read_out(cx);
             view.fill_menu(false, cx);
         })
         .detach();
         let mut view = Self {
-            session,
-            plugin,
+            device,
             plugins,
             frame,
             window_focus: cx.focus_handle().tab_stop(true),
-            edit: ControlEdit::default(),
             parameters: None,
             readouts: BTreeMap::new(),
-            lanes,
             lane_asked: BTreeMap::new(),
             read_out_later: None,
             menu,
@@ -330,6 +314,11 @@ impl PluginView {
         };
         view.ask_the_plugin(true, cx);
         view
+    }
+
+    fn record<'a>(&self, cx: &'a App) -> Option<&'a PluginRecord> {
+        let device = &self.device;
+        device.session.read(cx).project().state(&device.instance)
     }
 
     /// The list that puts a parameter on the card, for a snapshot that shows it open.
@@ -344,11 +333,11 @@ impl PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
-        let record = self.session.read(cx).project().state(&self.plugin);
+        let record = self.record(cx);
         let Some(pins) = record.map(|record| record.parameters.clone()) else {
             return;
         };
-        let id = self.plugin.id().clone();
+        let id = self.device.instance.id().clone();
         let parameters = plugins.parameters(&id);
         let same_list = match (&parameters, &self.parameters) {
             (Some(now), Some(before)) => Rc::ptr_eq(now, before),
@@ -369,13 +358,10 @@ impl PluginView {
     /// Fills the list of parameters again, when `changed` says what it shows did or the pins a
     /// lane moves are others now.
     fn fill_menu(&mut self, changed: bool, cx: &mut Context<Self>) {
-        let (Some(parameters), Some(record)) = (
-            &self.parameters,
-            self.session.read(cx).project().state(&self.plugin),
-        ) else {
+        let (Some(parameters), Some(record)) = (&self.parameters, self.record(cx)) else {
             return;
         };
-        let lanes = self.lanes.read(cx);
+        let lanes = self.device.lanes.read(cx);
         let pins = record.parameters.keys();
         let laned: BTreeSet<u32> = pins
             .filter(|pin| lanes.is_automated(&lane_of_pin(**pin)))
@@ -398,10 +384,10 @@ impl PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
-        let Some(record) = self.session.read(cx).project().state(&self.plugin) else {
+        let Some(record) = self.record(cx) else {
             return;
         };
-        let lanes = self.lanes.read(cx);
+        let lanes = self.device.lanes.read(cx);
         let now = Instant::now();
         let mut wait: Option<Duration> = None;
         self.lane_asked
@@ -429,7 +415,7 @@ impl PluginView {
                 }
                 self.lane_asked.insert(*pin, now);
             }
-            let text = plugins.parameter_text(self.plugin.id(), *pin, value);
+            let text = plugins.parameter_text(self.device.instance.id(), *pin, value);
             self.readouts
                 .insert(*pin, (value, text.map(SharedString::from)));
         }
@@ -455,12 +441,12 @@ impl PluginView {
         let Some((dragged, began)) = &self.dragged else {
             return;
         };
-        let record = self.session.read(cx).project().state(&self.plugin);
+        let record = self.record(cx);
         let pinned = record.is_some_and(|record| record.parameters.contains_key(dragged));
         let now = self.mapping(*dragged);
         if !pinned || now.as_ref() != Some(began) {
             self.dragged = None;
-            self.edit.finish(&self.session, cx);
+            self.device.finish(cx);
         }
     }
 
@@ -476,7 +462,7 @@ impl PluginView {
         let Ok(parameter_id) = value.parse::<u32>() else {
             return;
         };
-        let Some(record) = self.session.read(cx).project().state(&self.plugin) else {
+        let Some(record) = self.record(cx) else {
             return;
         };
         if let Some(pin) = record.parameters.get(&parameter_id) {
@@ -487,9 +473,8 @@ impl PluginView {
             let remove = move |record: &mut PluginRecord, ()| {
                 record.parameters.remove(&parameter_id);
             };
-            let (session, plugin) = (&self.session, &self.plugin);
-            self.edit
-                .apply(session, plugin, &label, ValueChange::Set(()), remove, cx);
+            let change = ValueChange::Set(());
+            self.device.change(&label, change, remove, cx);
             return;
         }
         if record.parameters.len() >= MAX_AUTOMATED {
@@ -502,14 +487,12 @@ impl PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
-        let pin = pin_now(&plugins, self.plugin.id(), parameter);
+        let pin = pin_now(&plugins, self.device.instance.id(), parameter);
         let label = format!("Add {}", parameter.name);
         let add = move |record: &mut PluginRecord, pin| {
             record.parameters.insert(parameter_id, pin);
         };
-        let (session, plugin) = (&self.session, &self.plugin);
-        self.edit
-            .apply(session, plugin, &label, ValueChange::Set(pin), add, cx);
+        self.device.change(&label, ValueChange::Set(pin), add, cx);
     }
 
     /// Notes which knob a drag is on, see [`Self::dragged`].
@@ -537,8 +520,7 @@ impl PluginView {
                 pin.value = value(changed);
             }
         };
-        let (session, plugin) = (&self.session, &self.plugin);
-        self.edit.apply(session, plugin, label, change, set, cx);
+        self.device.change(label, change, set, cx);
     }
 
     /// Opens the plugin's own window, or closes the one that is open. Not an edit: nothing of
@@ -548,14 +530,15 @@ impl PluginView {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
         };
-        let id = self.plugin.id().clone();
+        let id = self.device.instance.id().clone();
         if plugins.window_is_open(&id) {
             plugins.close_window(&id, cx);
             cx.notify();
             return;
         }
         if let Err(problem) = plugins.open_window(&id, cx) {
-            self.session
+            self.device
+                .session
                 .update(cx, |session, cx| session.report(problem, cx));
         }
         cx.notify();
@@ -571,7 +554,12 @@ impl PluginView {
         let label = format!("Change {name}");
         let out_of_range = !parameter.takes(pin.value);
         // Only a knob over any value takes a lane, so only a knob shows one.
-        let lane = self.lanes.read(cx).value(&lane_of_pin(id)).map(f64::from);
+        let lane = self
+            .device
+            .lanes
+            .read(cx)
+            .value(&lane_of_pin(id))
+            .map(f64::from);
         let value = lane.unwrap_or(pin.value);
         // The text of what a lane plays may be a few frames old, see `LANE_READ_OUT`.
         let readout = self
@@ -752,10 +740,18 @@ fn missing(id: u32, pin: &Pin, cx: &mut Context<PluginView>) -> AnyElement {
         .into_any_element()
 }
 
+impl DeviceView for PluginView {
+    type State = PluginRecord;
+
+    fn device(&mut self) -> &mut DeviceEdit<PluginRecord> {
+        &mut self.device
+    }
+}
+
 impl Render for PluginView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
-        let Some(record) = self.session.read(cx).project().state(&self.plugin).cloned() else {
+        let Some(record) = self.record(cx).cloned() else {
             return div().into_any_element();
         };
         let Some(plugins) = self.plugins.upgrade() else {
@@ -793,7 +789,7 @@ impl Render for PluginView {
         };
         let detail = line(installed.detail());
 
-        let id = self.plugin.id();
+        let id = self.device.instance.id();
         // `None`: this machine has the plugin but it did not load, which is reported already.
         let Some(has_window) = plugins.window_offered(id) else {
             let text = "This plugin did not load, so there is nothing to open. See problems.txt.";

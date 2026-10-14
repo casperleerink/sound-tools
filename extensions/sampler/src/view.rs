@@ -19,11 +19,11 @@
 //! undo step.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session by [`ControlEdit`], as in the synth: a knob or a handle drag is one
+//! goes through the session by [`DeviceEdit`], as in the synth: a knob or a handle drag is one
 //! gesture and one undo step, a key step or a reset one commit. A handle edits the field of its
 //! knob, under the name of its knob in the history. A number that an automation lane of the
 //! track moves shows the value that plays, on its knob and on the display, and does not drag
-//! ([`Lanes`]).
+//! ([`Lanes`](sound_ui::Lanes)).
 
 use std::path::PathBuf;
 
@@ -48,7 +48,8 @@ use sound_ui::components::waveform_display::{
 };
 use sound_ui::import;
 use sound_ui::{
-    ControlEdit, Devices, Lanes, OfferGroup, Session, Views, Waveforms, every_poll, weak_callback,
+    DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, Waveforms, every_poll,
+    weak_callback,
 };
 
 use crate::instrument;
@@ -157,13 +158,9 @@ fn with_loop_start(state: &mut SamplerState, seconds: f64, file_seconds: f64) {
 }
 
 pub struct SamplerView {
-    session: Entity<Session>,
-    sampler: Instance<SamplerState>,
+    device: DeviceEdit<SamplerState>,
     /// The title and the icons the rack gives the card.
     frame: CardFrame,
-    /// The gesture of a knob or handle drag.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<SamplerState>>,
     /// Whether the card shows the knobs behind expand. Interface state.
     expanded: bool,
     /// Where the green line is, in seconds of the file, while a note sounds.
@@ -187,30 +184,21 @@ impl SamplerView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.sampler.id() => {
+        cx.subscribe(&session, |view, _, event, cx| {
+            if let ProjectEvent::Changed(id) = event
+                && id == view.device.instance.id()
+            {
                 view.show_instruments(cx);
-                cx.notify();
             }
-            // Deleted under a drag, from outside: the delete was the last write, so the gesture
-            // finishes and does not cancel.
-            ProjectEvent::Deleted(id) if id == view.sampler.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
         })
         .detach();
         // The waveform, and what is known of the file, arrive from a background thread.
         let waveforms = Waveforms::entity(cx);
         cx.observe(&waveforms, |_, _, cx| cx.notify()).detach();
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
         // Where the notes were before this card was made is not where they are now.
         if let Some(peaks) = session.read(cx).project().peaks(sampler.id(), POSITION) {
             peaks.take();
         }
-        let lanes = Lanes::follow(&session, sampler.id(), Sampler::AUTOMATION, cx);
         let instruments = cx.new(|cx| {
             DropdownMenu::new("Instrument", Vec::new(), cx)
                 .trigger(Trigger::Select)
@@ -224,11 +212,8 @@ impl SamplerView {
         })
         .detach();
         let mut view = Self {
-            session,
-            sampler,
+            device: DeviceEdit::new(session, sampler, Sampler::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
             playing_at: None,
             choose_focus: cx.focus_handle().tab_stop(true),
@@ -247,11 +232,12 @@ impl SamplerView {
     /// The Instrument select, after any change of the record or of what is downloaded: the
     /// file of the record, its SFZ file, and the library by category.
     fn show_instruments(&mut self, cx: &mut Context<Self>) {
-        let Some(state) = self
+        let device = &self.device;
+        let Some(state) = device
             .session
             .read(cx)
             .project()
-            .state(&self.sampler)
+            .state(&device.instance)
             .cloned()
         else {
             return;
@@ -308,7 +294,8 @@ impl SamplerView {
             state.sfz = None;
         };
         let entry = id.entry();
-        self.change(INSTRUMENT_LABEL, ValueChange::Set(id), set, cx);
+        self.device
+            .change(INSTRUMENT_LABEL, ValueChange::Set(id), set, cx);
         // Picking it from a list that shows its size is asking for it.
         library::download(entry);
         self.follow_download(cx);
@@ -317,8 +304,8 @@ impl SamplerView {
     /// Follows the download of the library instrument of the record, and its loading, once
     /// per poll of the session, and draws again when either moved on.
     fn follow_download(&mut self, cx: &mut Context<Self>) {
-        let project = self.session.read(cx).project();
-        let Some(state) = project.state(&self.sampler) else {
+        let project = self.device.session.read(cx).project();
+        let Some(state) = project.state(&self.device.instance) else {
             return;
         };
         let loading = instrument::is_loading(state, project.assets());
@@ -345,8 +332,9 @@ impl SamplerView {
     /// Starts the download of `entry`, and the Sampler waits for it.
     fn download(&mut self, entry: &'static Entry, cx: &mut Context<Self>) {
         library::download(entry);
-        let sampler = self.sampler.id().clone();
-        self.session
+        let sampler = self.device.instance.id().clone();
+        self.device
+            .session
             .update(cx, |session, cx| session.rebind(&[sampler], cx));
         self.follow_download(cx);
     }
@@ -370,8 +358,8 @@ impl SamplerView {
     /// Takes where the last note is from the audio thread, once per poll of the session. It
     /// moves in steps of a point of the display, so a note draws the card no more than it must.
     pub fn read_position(&mut self, cx: &mut Context<Self>) {
-        let project = self.session.read(cx).project();
-        let Some(peaks) = project.peaks(self.sampler.id(), POSITION) else {
+        let project = self.device.session.read(cx).project();
+        let Some(peaks) = project.peaks(self.device.instance.id(), POSITION) else {
             return;
         };
         let [seconds, _] = peaks.take();
@@ -388,8 +376,8 @@ impl SamplerView {
 
     /// The file of the sampler, when it is known to play. From memory only.
     fn file(&self, cx: &Context<Self>) -> Option<Info> {
-        let project = self.session.read(cx).project();
-        let asset = project.state(&self.sampler)?.sample.clone()?;
+        let project = self.device.session.read(cx).project();
+        let asset = project.state(&self.device.instance)?.sample.clone()?;
         match sound_media::cached(project.assets(), &asset) {
             Cached::Plays(file) => Some(file),
             _ => None,
@@ -399,15 +387,15 @@ impl SamplerView {
     /// Copies a file into `assets/audio/` on a background thread and makes it the sample, as
     /// one undo step. A file that does not play is not copied, and the notice says why.
     pub fn load_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        import::import_file(&self.session, path, cx, Self::use_imported);
+        import::import_file(&self.device.session, path, cx, Self::use_imported);
     }
 
     fn use_imported(&mut self, imported: Imported, cx: &mut Context<Self>) {
-        let session = self.session.clone();
-        let Some(mut state) = session.read(cx).project().state(&self.sampler).cloned() else {
+        let session = self.device.session.clone();
+        let sampler = self.device.instance.clone();
+        let Some(mut state) = session.read(cx).project().state(&sampler).cloned() else {
             return;
         };
-        let sampler = self.sampler.clone();
         // `imported` holds the file in memory until the edit is made, so the behaviour that
         // hands it to the sampler reads nothing.
         session.update(cx, |session, cx| {
@@ -436,28 +424,7 @@ impl SamplerView {
 
     /// The file panel of macOS, for one audio file.
     fn choose_file(&mut self, cx: &mut Context<Self>) {
-        import::choose_file(&self.session, "Load", cx, Self::load_file);
-    }
-
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut SamplerState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, sampler) = (&self.session, &self.sampler);
-        self.edit.apply(session, sampler, label, change, set, cx);
-    }
-
-    fn knob(&self, control: Control, state: &SamplerState, cx: &mut Context<Self>) -> Knob {
-        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        control
-            .knob(state)
-            .automated(automated)
-            .on_change(weak_callback(cx, move |view, change, cx| {
-                view.change(control.undo_label, change, control.parameter.set, cx);
-            }))
+        import::choose_file(&self.device.session, "Load", cx, Self::load_file);
     }
 
     /// Start and End: seconds of the file, whose length is their range. With no file that
@@ -478,7 +445,7 @@ impl SamplerView {
                 let set = |state: &mut SamplerState, value: f32| {
                     with_start(state, f64::from(value), length)
                 };
-                view.change("Change start", change, set, cx);
+                view.device.change("Change start", change, set, cx);
             }));
         let end_knob = Knob::new("end")
             .range(KnobRange::linear(0., length as f32))
@@ -492,7 +459,7 @@ impl SamplerView {
                     let set = |state: &mut SamplerState, value: f32| {
                         with_end(state, f64::from(value), &file)
                     };
-                    view.change("Change end", change, set, cx);
+                    view.device.change("Change end", change, set, cx);
                 }
             }));
         [start, end_knob]
@@ -515,7 +482,7 @@ impl SamplerView {
                 let set = |state: &mut SamplerState, value: f32| {
                     with_loop_start(state, f64::from(value), length)
                 };
-                view.change("Change loop start", change, set, cx);
+                view.device.change("Change loop start", change, set, cx);
             }))
     }
 
@@ -566,7 +533,7 @@ impl SamplerView {
             point(across(start + attack + decay), sustain),
             point(across(end.max(start + attack + decay)), sustain),
         ];
-        let lanes = self.lanes.read(cx);
+        let lanes = self.device.lanes.read(cx);
         let attack_held = lanes.is_automated(ATTACK.field);
         let corner_held = lanes.is_automated(DECAY.field) || lanes.is_automated(SUSTAIN.field);
         // The attack peak moves the attack: its range across the display is the file, offset
@@ -587,7 +554,8 @@ impl SamplerView {
                 let set = |state: &mut SamplerState, at: f32| {
                     state.attack_seconds = ATTACK_KNOB.clamp(at)
                 };
-                view.change(ATTACK_KNOB.undo_label, change.map(|at| at.x), set, cx);
+                view.device
+                    .change(ATTACK_KNOB.undo_label, change.map(|at| at.x), set, cx);
             },
         ));
         // The corner moves two values: the decay sideways, the sustain level up and down. One
@@ -614,7 +582,8 @@ impl SamplerView {
                     state.decay_seconds = DECAY_KNOB.clamp(at.x);
                     state.sustain = SUSTAIN_KNOB.clamp(at.y);
                 };
-                view.change("Change decay and sustain", change, set, cx);
+                view.device
+                    .change("Change decay and sustain", change, set, cx);
             },
         ));
         (curve, [attack_handle, corner])
@@ -684,7 +653,7 @@ impl SamplerView {
         let Some(asset) = state.sample.clone() else {
             return self.no_file(EMPTY.into(), false, cx).into_any_element();
         };
-        let assets = self.session.read(cx).project().assets().clone();
+        let assets = self.device.session.read(cx).project().assets().clone();
         let name = asset.to_string();
         let file = match sound_media::cached(&assets, &asset) {
             Cached::Plays(file) => file,
@@ -723,13 +692,13 @@ impl SamplerView {
                     let set = |state: &mut SamplerState, seconds: f32| {
                         with_start(state, f64::from(seconds), length)
                     };
-                    view.change("Change start", change, set, cx);
+                    view.device.change("Change start", change, set, cx);
                 }))
                 .on_end(weak_callback(cx, move |view, change: ValueChange, cx| {
                     let set = |state: &mut SamplerState, seconds: f32| {
                         with_end(state, f64::from(seconds), &file)
                     };
-                    view.change("Change end", change, set, cx);
+                    view.device.change("Change end", change, set, cx);
                 }))
                 .playhead(self.playing_at)
                 .curve(curve)
@@ -742,7 +711,7 @@ impl SamplerView {
                     let set = |state: &mut SamplerState, seconds: f32| {
                         with_loop_start(state, f64::from(seconds), length)
                     };
-                    view.change("Change loop start", change, set, cx);
+                    view.device.change("Change loop start", change, set, cx);
                 }),
             ),
             false => display,
@@ -758,10 +727,10 @@ impl Render for SamplerView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
-        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
         let instrument = Cell::new(self.instruments.clone())
             .span(2)
             .label("Instrument");
@@ -828,6 +797,14 @@ impl Render for SamplerView {
     }
 }
 
+impl DeviceView for SamplerView {
+    type State = SamplerState;
+
+    fn device(&mut self) -> &mut DeviceEdit<SamplerState> {
+        &mut self.device
+    }
+}
+
 /// An On/Off toggle of the record, one undo step a click.
 fn on_off(
     id: &'static str,
@@ -838,7 +815,7 @@ fn on_off(
 ) -> Toggle {
     Toggle::new(id, if on { "On" } else { "Off" }, on)
         .on_change(weak_callback(cx, move |view, on: bool, cx| {
-            view.change(label, ValueChange::Set(on), set, cx)
+            view.device.change(label, ValueChange::Set(on), set, cx)
         }))
 }
 

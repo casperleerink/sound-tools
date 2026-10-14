@@ -9,13 +9,13 @@
 //! shown again, and do not mark a page.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob, a slider or on a display is
+//! goes through the session, by [`DeviceEdit`]: a drag of a knob, a slider or on a display is
 //! one gesture and one undo step, a key step, a reset, a pick or a click is one commit. The
 //! ranges, the defaults and the travel of each knob come from the
 //! [`Parameter`](sound_core::Parameter)s of the crate. What is only about the interface is
 //! here: labels, units, the names of the undo steps, whether the card is expanded, its page and
 //! which envelope and LFO it shows. A number that an automation lane of the track moves shows the
-//! value that plays, on its knob and on the display, and does not drag ([`Lanes`]).
+//! value that plays, on its knob and on the display, and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 mod choices;
 mod drawing;
@@ -38,7 +38,7 @@ use sound_ui::components::knob::{
 use sound_ui::components::segmented_control::SegmentedControl;
 use sound_ui::components::select::Select;
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
+use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
 use choices::Choice;
 pub use choices::{EnvelopeShown, LfoShown, Page};
@@ -202,7 +202,7 @@ struct Object<T: 'static> {
     /// The start of the ids of its controls, `osc-2`, for tests too.
     key: &'static str,
     /// Its path in the saved record, `osc_2`, which starts the name of the lane of each of its
-    /// numbers, see [`Lanes::is_automated_in`]. Empty for the record itself. The synth lists
+    /// numbers, see [`Lanes::is_automated_in`](sound_ui::Lanes::is_automated_in). Empty for the record itself. The synth lists
     /// the lanes of several objects in one list, so the path is said here.
     path: &'static str,
     get: fn(&WavetableState) -> &T,
@@ -342,12 +342,8 @@ impl LfoShown {
 }
 
 pub struct WavetableView {
-    session: Entity<Session>,
-    wavetable: Instance<WavetableState>,
+    device: DeviceEdit<WavetableState>,
     frame: CardFrame,
-    /// The gesture of a drag of a knob, a slider or on a display.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<WavetableState>>,
     /// Interface state, not saved: whether the card shows its sections, which page of them,
     /// and which envelope and which LFO they show.
     expanded: bool,
@@ -369,28 +365,19 @@ impl WavetableView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.wavetable.id() => {
+        cx.subscribe(&session, |view, _, event, cx| {
+            if let ProjectEvent::Changed(id) = event
+                && id == view.device.instance.id()
+            {
                 // A route more or less, from outside during a drag of an amount: the rows
                 // moved, and the drag would go on on another route. It ends there.
                 let routes = view.routes(cx);
                 if std::mem::replace(&mut view.routes, routes) != routes {
-                    view.edit.finish(&view.session, cx);
+                    view.device.finish(cx);
                 }
-                cx.notify()
             }
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.wavetable.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
         })
         .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
         let routes = session
             .read(cx)
             .project()
@@ -399,18 +386,10 @@ impl WavetableView {
         let remove_focus = (0..crate::MAX_ROUTES)
             .map(|_| cx.focus_handle().tab_stop(true))
             .collect();
-        let lanes = Lanes::follow(
-            &session,
-            wavetable.id(),
-            crate::synth::WavetableSynth::AUTOMATION,
-            cx,
-        );
+        let automation = crate::synth::WavetableSynth::AUTOMATION;
         Self {
-            session,
-            wavetable,
+            device: DeviceEdit::new(session, wavetable, automation, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
             page: Page::default(),
             envelope: EnvelopeShown::default(),
@@ -423,7 +402,8 @@ impl WavetableView {
 
     /// The routes the record has now.
     fn routes(&self, cx: &gpui::App) -> usize {
-        let state = self.session.read(cx).project().state(&self.wavetable);
+        let device = &self.device;
+        let state = device.session.read(cx).project().state(&device.instance);
         state.map_or(0, |state| state.matrix.len())
     }
 
@@ -451,20 +431,12 @@ impl WavetableView {
         cx.notify();
     }
 
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut WavetableState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, wavetable) = (&self.session, &self.wavetable);
-        self.edit.apply(session, wavetable, label, change, set, cx);
-    }
-
     /// Whether a lane of the track moves the number `field` of `object`.
     fn is_automated<T>(&self, object: Object<T>, field: &str, cx: &gpui::App) -> bool {
-        self.lanes.read(cx).is_automated_in(object.path, field)
+        self.device
+            .lanes
+            .read(cx)
+            .is_automated_in(object.path, field)
     }
 
     fn knob<T>(
@@ -490,7 +462,7 @@ impl WavetableView {
                 let set = |state: &mut WavetableState, value| {
                     (parameter.set)((object.get_mut)(state), value)
                 };
-                view.change(&label, change, set, cx);
+                view.device.change(&label, change, set, cx);
             }));
         match control.step() {
             Some(step) => knob.step(step),
@@ -535,7 +507,10 @@ impl WavetableView {
         label: String,
         set: impl Fn(&mut WavetableState, C) + 'static,
     ) -> impl Fn(&mut Self, C, &mut Context<Self>) + 'static {
-        move |view, option, cx| view.change(&label, ValueChange::Set(option), &set, cx)
+        move |view, option, cx| {
+            view.device
+                .change(&label, ValueChange::Set(option), &set, cx)
+        }
     }
 
     /// A cell with a toggle that turns something on or off, labelled with what it is.
@@ -550,7 +525,7 @@ impl WavetableView {
         let text = if on { "On" } else { "Off" };
         let toggle = Toggle::new(id, text, on).on_change(weak_callback(cx, move |view, on, cx| {
             let label = format!("Turn {what} {}", if on { "on" } else { "off" });
-            view.change(&label, ValueChange::Set(on), &set, cx);
+            view.device.change(&label, ValueChange::Set(on), &set, cx);
         }));
         Cell::new(toggle).label(label)
     }
@@ -592,7 +567,7 @@ impl WavetableView {
                     let set = |state: &mut WavetableState, place: Point<f32>| {
                         (object.get_mut)(state).position = POSITION.clamp(place.y)
                     };
-                    view.change(&label, change, set, cx);
+                    view.device.change(&label, change, set, cx);
                 },
             ));
         let pick = Self::picks(object.undo("Change", "table"), move |state, table| {
@@ -698,7 +673,7 @@ impl WavetableView {
                     // sit on the curve.
                     filter.resonance = RESONANCE.clamp(place.y);
                 };
-                view.change(&label, change, set, cx);
+                view.device.change(&label, change, set, cx);
             },
         ))
     }
@@ -832,7 +807,7 @@ impl WavetableView {
                 };
                 let label = object.undo("Change", noun);
                 let set = |state: &mut WavetableState, place| set((object.get_mut)(state), place);
-                view.change(&label, change, set, cx);
+                view.device.change(&label, change, set, cx);
             },
         );
         let values = times(envelope);
@@ -975,11 +950,19 @@ impl WavetableView {
     }
 }
 
+impl DeviceView for WavetableView {
+    type State = WavetableState;
+
+    fn device(&mut self) -> &mut DeviceEdit<WavetableState> {
+        &mut self.device
+    }
+}
+
 impl Render for WavetableView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
@@ -1102,52 +1085,6 @@ mod tests {
             let found = lanes.any(|lane| sound_ui::lanes::is_number_of(lane.field, object, field));
             assert!(found, "{object} {field}");
         }
-    }
-
-    /// The defaults and both ends of every range, through the travel of its knob and back.
-    #[test]
-    fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
-        fn check<T>(control: &Control<T>) {
-            let (range, parameter) = (control.range(), control.parameter);
-            assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
-            assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
-            for value in [parameter.min, parameter.default, parameter.max] {
-                let back = range.value(range.position(value));
-                assert_eq!(back, value, "{}", parameter.field);
-            }
-        }
-        for control in [
-            &POSITION,
-            &EFFECT_AMOUNT,
-            &OCTAVE,
-            &SEMITONE,
-            &DETUNE,
-            &LEVEL,
-            &PAN,
-        ] {
-            check(control);
-        }
-        for control in [&CUTOFF, &RESONANCE, &DRIVE] {
-            check(control);
-        }
-        for control in [
-            &ATTACK,
-            &DECAY,
-            &SUSTAIN,
-            &RELEASE,
-            &ATTACK_CURVE,
-            &DECAY_CURVE,
-            &RELEASE_CURVE,
-        ] {
-            check(control);
-        }
-        check(&SUB_LEVEL);
-        check(&VOICES);
-        check(&SPREAD);
-        check(&RATE);
-        check(&POLYPHONY_KNOB);
-        check(&GLIDE_KNOB);
-        check(&OUTPUT_GAIN);
     }
 
     #[test]

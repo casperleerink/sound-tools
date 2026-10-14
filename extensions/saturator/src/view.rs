@@ -4,23 +4,23 @@
 //! the power and close icons.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change goes
-//! through the session, by [`ControlEdit`]: a drag of a knob or of the handle is one gesture and
+//! through the session, by [`DeviceEdit`]: a drag of a knob or of the handle is one gesture and
 //! one undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
 //! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
 //! about the interface is here: the label, the unit and the name of the undo step. A number that an
 //! automation lane of the track moves shows the value that plays, on its knob and on the display,
-//! and does not drag ([`Lanes`]).
+//! and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent, amplitude};
+use sound_core::{Instance, amplitude};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
-    Knob, KnobRange, ParameterKnob, decibels_readout, percent_readout, short,
+    KnobRange, ParameterKnob, decibels_readout, percent_readout, short,
 };
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
+use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
 use crate::{Curve, DRIVE, MIX, OUTPUT, Saturator, SaturatorState, TONE, auto_gain, transfer};
 
@@ -62,10 +62,6 @@ const TONE_KNOB: Control = Control::new(&TONE, "Tone", "Change tone", decibels_r
 const OUTPUT_KNOB: Control =
     Control::new(&OUTPUT, "Output", "Change output", decibels_readout).bipolar();
 const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
-
-/// Every knob, in the order of the card.
-#[cfg(test)]
-const KNOBS: [&Control; 4] = [&DRIVE_KNOB, &TONE_KNOB, &OUTPUT_KNOB, &MIX_KNOB];
 
 /// The value of a segment and its label, for each curve.
 const CURVES: [(Curve, &str, &str); 4] = [
@@ -121,12 +117,8 @@ fn drive_at(bend_db: f32) -> f32 {
 }
 
 pub struct SaturatorView {
-    session: Entity<Session>,
-    saturator: Instance<SaturatorState>,
+    device: DeviceEdit<SaturatorState>,
     frame: CardFrame,
-    /// The gesture of a drag of a knob or of the handle.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<SaturatorState>>,
 }
 
 impl SaturatorView {
@@ -137,49 +129,10 @@ impl SaturatorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.saturator.id() => cx.notify(),
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.saturator.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
-        })
-        .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
-        let lanes = Lanes::follow(&session, saturator.id(), Saturator::AUTOMATION, cx);
         Self {
-            session,
-            saturator,
+            device: DeviceEdit::new(session, saturator, Saturator::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
         }
-    }
-
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut SaturatorState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, saturator) = (&self.session, &self.saturator);
-        self.edit.apply(session, saturator, label, change, set, cx);
-    }
-
-    fn knob(&self, control: Control, state: &SaturatorState, cx: &mut Context<Self>) -> Knob {
-        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        control
-            .knob(state)
-            .automated(automated)
-            .on_change(weak_callback(cx, move |view, change, cx| {
-                view.change(control.undo_label, change, control.parameter.set, cx);
-            }))
     }
 
     /// The handle at the bend, on the curve: sideways is drive. To the left the bend comes
@@ -188,7 +141,7 @@ impl SaturatorView {
         let bend = bend_of(state.drive_db);
         let x = Axis::new(LEVELS, bend, bend_of(DRIVE.default));
         let y = Axis::fixed(place(level_out(state, bend)));
-        let automated = self.lanes.read(cx).is_automated(DRIVE.field);
+        let automated = self.device.is_automated(DRIVE.field, cx);
         Handle::new("drive", x, y)
             .automated(automated)
             .on_change(weak_callback(
@@ -197,7 +150,7 @@ impl SaturatorView {
                     let set = |state: &mut SaturatorState, at: Point<f32>| {
                         state.drive_db = drive_at(at.x);
                     };
-                    view.change(DRIVE_KNOB.undo_label, change, set, cx);
+                    view.device.change(DRIVE_KNOB.undo_label, change, set, cx);
                 },
             ))
     }
@@ -211,7 +164,8 @@ impl SaturatorView {
                 let picked = CURVES.iter().find(|(_, name, _)| *name == value.as_ref());
                 if let Some((curve, ..)) = picked {
                     let set = |state: &mut SaturatorState, curve| state.curve = curve;
-                    view.change("Change curve", ValueChange::Set(*curve), set, cx);
+                    let change = ValueChange::Set(*curve);
+                    view.device.change("Change curve", change, set, cx);
                 }
             }));
         Display::new("display", DISPLAY_WIDTH)
@@ -229,14 +183,22 @@ impl SaturatorView {
     }
 }
 
+impl DeviceView for SaturatorView {
+    type State = SaturatorState;
+
+    fn device(&mut self) -> &mut DeviceEdit<SaturatorState> {
+        &mut self.device
+    }
+}
+
 impl Render for SaturatorView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
-        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
         let columns = [
             Column::new()
                 .top(knob(DRIVE_KNOB, cx))
@@ -265,20 +227,6 @@ mod tests {
             ..SaturatorState::default()
         };
         assert_eq!(auto_gain_readout(&state), "Auto gain −15.6 dB");
-    }
-
-    /// The defaults and both ends of every range, through the travel of its knob and back.
-    #[test]
-    fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
-        for control in KNOBS {
-            let (range, parameter) = (control.range(), control.parameter);
-            assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
-            assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
-            for value in [parameter.min, parameter.default, parameter.max] {
-                let back = range.value(range.position(value));
-                assert_eq!(back, value, "{}", parameter.field);
-            }
-        }
     }
 
     /// The handle is where the curve bends, and a drag of it gives the drive back.

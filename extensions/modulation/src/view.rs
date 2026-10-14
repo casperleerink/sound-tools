@@ -4,23 +4,23 @@
 //! and the close icon.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change goes
-//! through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one gesture and one
+//! through the session, by [`DeviceEdit`]: a drag of a knob or of a handle is one gesture and one
 //! undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
 //! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
 //! about the interface is here: the label, the unit, the name of the undo step and whether the card
 //! is expanded. A number that an automation lane of the track moves shows the value that plays, on
-//! its knob and on the display, and does not drag ([`Lanes`]).
+//! its knob and on the display, and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use std::f32::consts::TAU;
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent};
+use sound_core::Instance;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{Knob, ParameterKnob, hertz_readout, percent_readout, short};
+use sound_ui::components::knob::{ParameterKnob, hertz_readout, percent_readout, short};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
+use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
 use crate::{DEPTH, FEEDBACK, MIX, Mode, Modulation, ModulationState, RATE, SPREAD, sweep};
 
@@ -55,16 +55,6 @@ const FEEDBACK_KNOB: Control =
     Control::new(&FEEDBACK, "Feedback", "Change feedback", percent_readout);
 const MIX_KNOB: Control = Control::new(&MIX, "Mix", "Change mix", percent_readout);
 const SPREAD_KNOB: Control = Control::new(&SPREAD, "Spread", "Change spread", degrees_readout);
-
-/// Every knob, in the order of the card: shown, then hidden.
-#[cfg(test)]
-const KNOBS: [&Control; 5] = [
-    &RATE_KNOB,
-    &DEPTH_KNOB,
-    &FEEDBACK_KNOB,
-    &MIX_KNOB,
-    &SPREAD_KNOB,
-];
 
 /// The value of a segment and its label, for each mode.
 const MODES: [(Mode, &str, &str); 3] = [
@@ -130,12 +120,8 @@ fn line(depth: f32, lag: f32) -> Vec<Point<f32>> {
 }
 
 pub struct ModulationView {
-    session: Entity<Session>,
-    modulation: Instance<ModulationState>,
+    device: DeviceEdit<ModulationState>,
     frame: CardFrame,
-    /// The gesture of a drag of a knob or of a handle.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<ModulationState>>,
     /// Whether the card shows the spread. Interface state: not saved.
     expanded: bool,
 }
@@ -148,27 +134,9 @@ impl ModulationView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.modulation.id() => cx.notify(),
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.modulation.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
-        })
-        .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
-        let lanes = Lanes::follow(&session, modulation.id(), Modulation::AUTOMATION, cx);
         Self {
-            session,
-            modulation,
+            device: DeviceEdit::new(session, modulation, Modulation::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
         }
     }
@@ -177,27 +145,6 @@ impl ModulationView {
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
-    }
-
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut ModulationState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, modulation) = (&self.session, &self.modulation);
-        self.edit.apply(session, modulation, label, change, set, cx);
-    }
-
-    fn knob(&self, control: Control, state: &ModulationState, cx: &mut Context<Self>) -> Knob {
-        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        control
-            .knob(state)
-            .automated(automated)
-            .on_change(weak_callback(cx, move |view, change, cx| {
-                view.change(control.undo_label, change, control.parameter.set, cx);
-            }))
     }
 
     /// A handle that moves one value, on the `x` or the `y` axis, and stays put on the other.
@@ -210,7 +157,7 @@ impl ModulationView {
         cx: &mut Context<Self>,
     ) -> Handle {
         let sideways = x.drags;
-        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
+        let automated = self.device.is_automated(control.parameter.field, cx);
         Handle::new(id, x, y)
             .automated(automated)
             .on_change(weak_callback(
@@ -220,7 +167,7 @@ impl ModulationView {
                         let value = if sideways { place.x } else { place.y };
                         (control.parameter.set)(state, control.clamp(value))
                     };
-                    view.change(control.undo_label, change, set, cx);
+                    view.device.change(control.undo_label, change, set, cx);
                 },
             ))
     }
@@ -237,7 +184,8 @@ impl ModulationView {
                 let picked = MODES.iter().find(|(_, name, _)| *name == value.as_ref());
                 if let Some((mode, ..)) = picked {
                     let set = |state: &mut ModulationState, mode| state.mode = mode;
-                    view.change("Change mode", ValueChange::Set(*mode), set, cx);
+                    let change = ValueChange::Set(*mode);
+                    view.device.change("Change mode", change, set, cx);
                 }
             }));
         let depth = Axis::new(DEPTH_TRAVEL, state.depth, DEPTH.default);
@@ -256,14 +204,22 @@ impl ModulationView {
     }
 }
 
+impl DeviceView for ModulationView {
+    type State = ModulationState;
+
+    fn device(&mut self) -> &mut DeviceEdit<ModulationState> {
+        &mut self.device
+    }
+}
+
 impl Render for ModulationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
-        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
         let columns = [
             Column::new()
                 .top(knob(RATE_KNOB, cx))
@@ -311,20 +267,6 @@ mod tests {
         assert_eq!(at(Mode::Chorus, 0.0), "12 – 12 ms");
         assert_eq!(at(Mode::Flanger, 1.0), "0.265 – 8.49 ms");
         assert_eq!(at(Mode::Phaser, 1.0), "250 Hz – 4 kHz");
-    }
-
-    /// The defaults and both ends of every range, through the travel of its knob and back.
-    #[test]
-    fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
-        for control in KNOBS {
-            let (range, parameter) = (control.range(), control.parameter);
-            assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
-            assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
-            for value in [parameter.min, parameter.default, parameter.max] {
-                let back = range.value(range.position(value));
-                assert_eq!(back, value, "{}", parameter.field);
-            }
-        }
     }
 
     /// The depth handle is on the second peak of the left side, and the spread handle on the

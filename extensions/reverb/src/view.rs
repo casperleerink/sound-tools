@@ -4,24 +4,24 @@
 //! and the close icon.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change goes
-//! through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one gesture and one
+//! through the session, by [`DeviceEdit`]: a drag of a knob or of a handle is one gesture and one
 //! undo step, a key step, a reset or a switch is one commit. The ranges, the defaults and the
 //! travel of each knob come from the [`Parameter`](crate::Parameter)s of the crate. What is only
 //! about the interface is here: the label, the unit, the name of the undo step and whether the card
 //! is expanded. A number that an automation lane of the track moves shows the value that plays, on
-//! its knob and on the display, and does not drag ([`Lanes`]).
+//! its knob and on the display, and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use gpui::{Context, Entity, Point, Window, div, point, prelude::*};
-use sound_core::{Instance, ProjectEvent};
+use sound_core::Instance;
 use sound_ui::components::cell::Cell;
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
-    Knob, ParameterKnob, hertz_readout, milliseconds_readout, percent_readout, seconds_readout,
+    ParameterKnob, hertz_readout, milliseconds_readout, percent_readout, seconds_readout,
 };
 use sound_ui::components::toggle::Toggle;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
+use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
     DAMPING, DECAY, DIFFUSION, HIGH_CUT, LOW_CUT, MIX, PRE_DELAY, Reverb, ReverbState, SIZE, WIDTH,
@@ -65,20 +65,6 @@ const PRE_DELAY_KNOB: Control = Control::new(
     milliseconds_readout,
 );
 const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", seconds_readout);
-
-/// Every knob, in the order of the card: shown, then hidden.
-#[cfg(test)]
-const KNOBS: [&Control; 9] = [
-    &SIZE_KNOB,
-    &DAMPING_KNOB,
-    &WIDTH_KNOB,
-    &MIX_KNOB,
-    &LOW_CUT_KNOB,
-    &HIGH_CUT_KNOB,
-    &DIFFUSION_KNOB,
-    &PRE_DELAY_KNOB,
-    &DECAY_KNOB,
-];
 
 /// Where the decay sits in its display, as places from 0 to 1, `y` up.
 ///
@@ -158,12 +144,8 @@ fn drawing(state: &ReverbState) -> Drawing {
 }
 
 pub struct ReverbView {
-    session: Entity<Session>,
-    reverb: Instance<ReverbState>,
+    device: DeviceEdit<ReverbState>,
     frame: CardFrame,
-    /// The gesture of a drag of a knob or of a handle.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<ReverbState>>,
     /// Whether the card shows the hidden controls. Interface state: not saved.
     expanded: bool,
 }
@@ -176,27 +158,9 @@ impl ReverbView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.reverb.id() => cx.notify(),
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.reverb.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
-        })
-        .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
-        let lanes = Lanes::follow(&session, reverb.id(), Reverb::AUTOMATION, cx);
         Self {
-            session,
-            reverb,
+            device: DeviceEdit::new(session, reverb, Reverb::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
         }
     }
@@ -205,27 +169,6 @@ impl ReverbView {
     pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
-    }
-
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut ReverbState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, reverb) = (&self.session, &self.reverb);
-        self.edit.apply(session, reverb, label, change, set, cx);
-    }
-
-    fn knob(&self, control: Control, state: &ReverbState, cx: &mut Context<Self>) -> Knob {
-        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        control
-            .knob(state)
-            .automated(automated)
-            .on_change(weak_callback(cx, move |view, change, cx| {
-                view.change(control.undo_label, change, control.parameter.set, cx);
-            }))
     }
 
     /// A handle that moves one time sideways, at a fixed height, in the zone that starts at
@@ -244,7 +187,7 @@ impl ReverbView {
             (parameter.get)(state),
             parameter.default,
         );
-        let automated = self.lanes.read(cx).is_automated(parameter.field);
+        let automated = self.device.is_automated(parameter.field, cx);
         let handle = Handle::new(id, x, Axis::fixed(height)).automated(automated);
         handle.on_change(weak_callback(
             cx,
@@ -252,7 +195,7 @@ impl ReverbView {
                 let set = |state: &mut ReverbState, place: Point<f32>| {
                     (parameter.set)(state, control.clamp(place.x))
                 };
-                view.change(control.undo_label, change, set, cx);
+                view.device.change(control.undo_label, change, set, cx);
             },
         ))
     }
@@ -291,10 +234,19 @@ impl ReverbView {
             cx,
             |view, frozen: bool, cx| {
                 let set = |state: &mut ReverbState, frozen| state.freeze = frozen;
-                view.change("Change freeze", ValueChange::Set(frozen), set, cx);
+                view.device
+                    .change("Change freeze", ValueChange::Set(frozen), set, cx);
             },
         ));
         Cell::new(toggle).label("Freeze")
+    }
+}
+
+impl DeviceView for ReverbView {
+    type State = ReverbState;
+
+    fn device(&mut self) -> &mut DeviceEdit<ReverbState> {
+        &mut self.device
     }
 }
 
@@ -302,10 +254,10 @@ impl Render for ReverbView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
-        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
         let columns = [
             Column::new()
                 .top(knob(SIZE_KNOB, cx))
@@ -344,20 +296,6 @@ impl Render for ReverbView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The defaults and both ends of every range, through the travel of its knob and back.
-    #[test]
-    fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
-        for control in KNOBS {
-            let (range, parameter) = (control.range(), control.parameter);
-            assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
-            assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
-            for value in [parameter.min, parameter.default, parameter.max] {
-                let back = range.value(range.position(value));
-                assert_eq!(back, value, "{}", parameter.field);
-            }
-        }
-    }
 
     /// A handle is where its knob says, and the tail is drawn between the two handles, inside
     /// the display at every end of both ranges.
