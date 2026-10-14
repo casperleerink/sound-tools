@@ -11,7 +11,7 @@
 //! The lowest 56 pt of the editor is the velocity lane: a bar at the start of each note, as tall
 //! as its velocity. Its coordinates start at the top of the lane.
 
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 
 use sound_core::{TICKS_PER_QUARTER, Ticks, TimeSignatures};
 use sound_notes::{Clip, Length, Note, NoteShape, Pitch, Velocity};
@@ -48,24 +48,45 @@ const OPENING_PIXELS_PER_QUARTER: RangeInclusive<f64> = 24.0..=192.0;
 const OPENING_ROOM: f32 = 96.0;
 
 /// Where a note of the clip is drawn: a bar that ends where the note ends, or with its clip
-/// when it is longer, as it sounds; a hit is a square at its start. `None` when its pitch has
-/// no row.
+/// when it is longer, as it sounds; a hit is a square at its start, cut where the clip ends.
+/// `None` when its pitch has no row.
 pub fn note_rect(viewport: &Viewport, rows: &Rows, clip: &Clip, note: &Note) -> Option<Rect> {
     let x = viewport.x_of(clip.start + note.start);
     // A gap of a pixel to the next note and to the next row.
     let height = rows.height() - 1.0;
+    let to_clip_end = viewport.x_of(clip.end()) - x - 1.0;
     let width = match rows.shape() {
         NoteShape::Bar => {
             let end = (clip.start + note.end()).min(clip.end());
             (viewport.x_of(end) - x - 1.0).max(2.0)
         }
-        NoteShape::Hit => height,
+        NoteShape::Hit => to_clip_end.min(height).max(2.0),
     };
     Some(Rect {
         x,
         y: rows.y_of(viewport, note.pitch)?,
         width,
         height,
+    })
+}
+
+/// The notes that show in a note area of this width, in the rows of `shown`, with where each
+/// is drawn. What shows is what is drawn: a hit is a square wider than a short note.
+pub fn shown_notes<'a>(
+    viewport: &'a Viewport,
+    rows: &'a Rows,
+    clip: &'a Clip,
+    width: f32,
+    shown: Range<usize>,
+) -> impl Iterator<Item = (&'a Note, Rect)> {
+    let in_rows = move |note: &&Note| {
+        rows.index_of(note.pitch)
+            .is_some_and(|index| shown.contains(&index))
+    };
+    let notes = clip.notes.iter().filter(in_rows);
+    notes.filter_map(move |note| {
+        let rect = note_rect(viewport, rows, clip, note)?;
+        (rect.x < width && rect.x + rect.width > 0.0).then_some((note, rect))
     })
 }
 
@@ -388,6 +409,27 @@ mod tests {
             note_at(&viewport, &drums(), &clip, LEAD_IN + 30.0, 25.0),
             None
         );
+    }
+
+    #[test]
+    fn a_hit_shows_while_its_square_does_and_ends_with_its_clip() {
+        // A sixteenth is 6 pt wide, a hit 19.
+        let viewport = Viewport {
+            pixels_per_quarter: 24.0,
+            ..Viewport::default()
+        };
+        let clip = clip(0, BAR, vec![note(0, 240, 38), note(BAR - 240, 240, 36)]);
+        let start = viewport.x_of(Ticks(0));
+        let scrolled = Viewport {
+            scroll_x: f64::from(start + 10.0),
+            ..viewport
+        };
+        let shown: Vec<f32> = shown_notes(&scrolled, &drums(), &clip, 50.0, 0..3)
+            .map(|(_, rect)| rect.x)
+            .collect();
+        assert_eq!(shown, [-10.0]);
+        let last = note_rect(&viewport, &drums(), &clip, &clip.notes[1]).unwrap();
+        assert_eq!(last.x + last.width, viewport.x_of(clip.end()) - 1.0);
     }
 
     #[test]

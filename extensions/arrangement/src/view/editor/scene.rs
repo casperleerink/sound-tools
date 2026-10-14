@@ -15,7 +15,7 @@ use crate::TrackState;
 use crate::view::lanes::Shown;
 use crate::view::layout::{HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use crate::view::paint::{Fit, accent, paint_ruler, paint_text, paint_track_label, placed};
-use crate::view::roll::{KEYS_WIDTH, VELOCITY_HEIGHT, clamped, note_rect, velocity_bar};
+use crate::view::roll::{KEYS_WIDTH, VELOCITY_HEIGHT, clamped, shown_notes, velocity_bar};
 use crate::view::rows::Rows;
 
 impl NoteEditor {
@@ -40,10 +40,6 @@ impl NoteEditor {
             let start = clip.start + note.start;
             start < ticks.end && clip.start + note.end() > ticks.start
         };
-        let visible = clip.notes.iter().filter(in_time).filter(|note| {
-            let index = rows.index_of(note.pitch);
-            index.is_some_and(|index| shown_rows.contains(&index))
-        });
         let selected = |note: &Note| self.selection.contains(note);
         let rows_shown = shown_rows.clone().filter_map(|index| {
             let look = rows.look(index)?;
@@ -71,11 +67,8 @@ impl NoteEditor {
             beats: viewport.beat_lines(time_signatures, width),
             clip_start: viewport.x_of(clip.start).clamp(0.0, width),
             clip_end: viewport.x_of(clip.end()).clamp(0.0, width),
-            notes: visible
-                .filter_map(|note| {
-                    let rect = note_rect(&viewport, &rows, clip, note)?;
-                    Some((rect, selected(note)))
-                })
+            notes: shown_notes(&viewport, &rows, clip, width, shown_rows)
+                .map(|(note, rect)| (rect, selected(note)))
                 .collect(),
             velocities: match self.shown {
                 Shown::Velocity => clip
