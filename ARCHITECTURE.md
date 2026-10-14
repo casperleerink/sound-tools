@@ -23,6 +23,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 - The agent works in the project folder: Claude Code in the sidebar, or any coding agent in a terminal. It edits files and the runtime applies them live. There is no separate edit API for agents.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name.
 - Rust for the core and extensions, GPUI for the window: a one-line extension edit reaches a new running window in about two seconds, and an agent wrote working GPUI views from our docs on the first try. Audio and saved data never depend on GPUI.
+- The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
 - macOS is the main platform. Linux and Windows build and pass the tests; platform code sits behind `cfg`. Plugin windows are not offered on Linux, where plugins need an X11 parent and a host run loop.
 - System programs come from the system, never the `PATH` (`sound_core::process`).
 - Sound Tools is a standalone app. Running it as a plugin inside another DAW is out of scope.
@@ -190,8 +191,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `extensions/plugin-host`. The core knows no plugins.
 
 - One `plugin` tool for every slot and both formats. Where the track names it decides instrument or effect; what the plugin says only decides which picker offers it, because plugins mislabel themselves.
-- A plugin's handle lives on the main thread, so the project lives on one thread and behaviours are not `Send`.
-- Nothing a plugin sends out is read, so a plugin cannot make our audio thread allocate. What it changed is asked for on the main thread.
+- Nothing a plugin sends out is read, so a plugin cannot make our audio thread allocate.
 - A pin is a parameter the record holds; the rest stays in the state asset. The record wins over the state. Automation of a pin is never an undo step.
 - Scanning runs plugin code, so it runs in child processes, one per bundle with a deadline. A bundle that crashed or hung is remembered and not tried again until the composer asks. The window never waits for a scan.
 - Plugin state is not project state: never an undo step, and unchanged bytes are not written again, so a session that changed nothing leaves no diff.
