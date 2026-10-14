@@ -5,6 +5,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod audio;
+mod editors;
 mod effects;
 mod held_notes;
 mod lanes;

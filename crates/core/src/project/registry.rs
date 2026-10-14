@@ -1,8 +1,8 @@
 //! Tool registration. Extensions register their tools here before a project opens.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -26,6 +26,8 @@ pub enum RegistryError {
         "invalid tool name {0:?}: a tool of the project names its doc file too, so it uses lowercase letters, digits, `-` and `_`"
     )]
     InvalidToolName(String),
+    #[error("a value of type {0} is already provided")]
+    DuplicateProvided(&'static str),
 }
 
 /// A tool whose saved state is JSON checked by a function instead of a Rust type: a tool the
@@ -174,6 +176,8 @@ pub struct Registry {
     /// In the order they were registered, which is the order of the list in the map. The doc
     /// of `project.json` is the first, so every project has it and its name is taken.
     agent_docs: Vec<RegisteredDoc>,
+    /// One value per type, see [`Registry::provide`].
+    provided: HashMap<TypeId, Box<dyn Any>>,
 }
 
 impl Default for Registry {
@@ -188,7 +192,24 @@ impl Registry {
             tools: BTreeMap::new(),
             // `project.json` is core, not an extension, so the core brings its doc itself.
             agent_docs: vec![RegisteredDoc::of(None, super::generated::PROJECT_FILE_DOC)],
+            provided: HashMap::new(),
         }
+    }
+
+    /// Shares a value of an extension with whoever holds the project, such as a catalog its
+    /// views and the runtime both read. One value per type; the core never looks inside.
+    pub fn provide<T: 'static>(&mut self, value: T) -> Result<(), RegistryError> {
+        let type_id = TypeId::of::<T>();
+        if self.provided.contains_key(&type_id) {
+            return Err(RegistryError::DuplicateProvided(std::any::type_name::<T>()));
+        }
+        self.provided.insert(type_id, Box::new(value));
+        Ok(())
+    }
+
+    /// The value of this type that an extension provided.
+    pub fn provided<T: 'static>(&self) -> Option<&T> {
+        self.provided.get(&TypeId::of::<T>())?.downcast_ref()
     }
 
     /// Registers the tool whose saved state is `S`, under `S::TOOL`, as part of `extension`.

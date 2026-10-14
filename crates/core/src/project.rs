@@ -372,6 +372,11 @@ impl Project {
         &self.project_file
     }
 
+    /// See [`Registry::provide`].
+    pub fn provided<T: 'static>(&self) -> Option<&T> {
+        self.registry.provided()
+    }
+
     /// Every live instance with its tool name, parents before children.
     pub fn instances(&self) -> impl Iterator<Item = (&InstanceId, &'static str)> {
         self.instances.iter().map(|(id, record)| (id, record.tool))

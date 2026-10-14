@@ -1,11 +1,11 @@
 //! The note contract: what a tool that sends notes and a tool that plays them agree on.
 //!
-//! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
-//! [`Clip`] with its expression lanes ([`Point`]), the saved [`RawTake`] a recording writes and
-//! a fit reads, the realtime [`NoteEvent`] with the wheels an instrument follows
-//! ([`Expression`]), and the port names of
-//! an instrument and an effect. The port names live here and not in a crate of their own,
-//! because both sides of a track already read this one.
+//! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and [`Clip`]
+//! with its expression lanes ([`Point`]), the saved [`RawTake`] a recording writes and a fit reads,
+//! the realtime [`NoteEvent`] with the wheels an instrument follows ([`Expression`]), and the port
+//! names of an instrument and an effect, and the clip editors a clip is shown in ([`Editors`]),
+//! which the arrangement and the runtime both read. The port names live here and not in a crate of
+//! their own, because both sides of a track already read this one.
 //!
 //! It also holds how the bundled instruments play notes, [`Voices`] and [`Wheels`], so they
 //! all play them the same way, and the note lengths a time that follows the tempo is picked
@@ -28,6 +28,7 @@
 //! stuck" a property of the contract and not of every sender.
 
 mod division;
+mod editor;
 mod expression;
 mod lane;
 mod take;
@@ -38,6 +39,7 @@ use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
 
 pub use division::{Division, Feel};
+pub use editor::{EditorSpec, Editors, Grid, NoteShape, Row, Shown, ViewField, piano_roll};
 pub use expression::{Expression, Wheels};
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
 pub use take::{

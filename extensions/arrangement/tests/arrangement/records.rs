@@ -357,7 +357,10 @@ fn an_edit_writes_an_old_clip_as_it_was_and_keeps_the_editor_and_the_views() {
         Harness::with_clips(vec![clip(0, 3840, Vec::new()), clip(0, 3840, Vec::new())]);
     harness.write_and_apply(CLIP, OLD_CLIP);
     harness.write_and_apply(other, EDITOR_CLIP);
-    assert!(harness.problems().is_empty(), "{:?}", harness.problems());
+    // Both load. This project has no editor `drums`, which is its only problem.
+    let problems = harness.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains(r#"clip-1.json names the clip editor "drums""#));
 
     set_velocity(&mut harness, other, 90);
     assert_eq!(

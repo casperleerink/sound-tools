@@ -25,6 +25,11 @@ impl EditorName {
         Self::try_from(name.to_owned())
     }
 
+    /// The built-in editor a clip without `editor` opens in.
+    pub fn piano_roll() -> Self {
+        Self("piano-roll".to_owned())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -109,6 +114,17 @@ pub enum ViewValue {
     Word(String),
 }
 
+/// As JSON writes it: a word in quotes.
+impl fmt::Display for ViewValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Toggle(toggle) => write!(formatter, "{toggle}"),
+            Self::Number(number) => write!(formatter, "{number}"),
+            Self::Word(word) => write!(formatter, "{word:?}"),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for ViewValue {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct ValueVisitor;
@@ -164,5 +180,20 @@ impl View {
 
     pub fn insert(&mut self, field: FieldName, value: ViewValue) {
         self.0.insert(field, value);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&FieldName, &ViewValue)> {
+        self.0.iter()
+    }
+}
+
+/// As JSON writes it, such as `{"scale": "dorian"}`.
+impl fmt::Display for View {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        let fields: Vec<String> = self
+            .iter()
+            .map(|(field, value)| format!("{:?}: {value}", field.as_str()))
+            .collect();
+        write!(formatter, "{{{}}}", fields.join(", "))
     }
 }

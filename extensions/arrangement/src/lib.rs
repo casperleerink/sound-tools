@@ -54,7 +54,8 @@ use sound_core::{
     OutputEndpoint, Peaks, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
 use sound_notes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, SIDECHAIN_INPUT, TRACK_TOOL, Velocity,
+    AUDIO_INPUT, AUDIO_OUTPUT, Clip, Editors, NOTES_INPUT, Pitch, SIDECHAIN_INPUT, TRACK_TOOL,
+    Velocity,
 };
 
 pub use audio::AudioClip;
@@ -396,8 +397,11 @@ pub const AUDIO_AGENT_DOC: AgentDoc = AgentDoc {
     markdown: include_str!("../audio-agent-doc.md"),
 };
 
-/// Registers the four tools and the agent docs. Call it before the project opens.
+/// Registers the four tools, the agent docs and the clip editors, which it provides as
+/// [`Editors`]. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
+    let editors = Editors::default();
+    registry.provide(editors.clone())?;
     registry
         .tool::<ArrangementState>(EXTENSION)?
         .behaviour(apply_arrangement)
@@ -406,7 +410,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     // A track whose clip names a file that is not there yet plays it once the file arrives.
     registry
         .tool::<TrackState>(EXTENSION)?
-        .behaviour(apply_track)
+        .behaviour(move |track, context| apply_track(track, &editors, context))
         .rebinds_on_assets(sound_media::AUDIO_FOLDER);
     registry.tool::<Clip>(EXTENSION)?;
     registry.tool::<AudioClip>(EXTENSION)?;
@@ -429,9 +433,11 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 /// keyed effect.
 fn apply_track(
     track: &TrackState,
+    editors: &Editors,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
     report_misplaced(track.kind, context);
+    report_editor_problems(editors, context);
     let source = match track.kind {
         TrackKind::Instrument => play_notes(context)?,
         TrackKind::Audio => play_audio(context)?,
@@ -562,6 +568,18 @@ fn report_misplaced(kind: TrackKind, context: &mut BehaviourContext<'_>) {
             ));
         }
     }
+    for problem in problems {
+        context.problem(problem);
+    }
+}
+
+/// Says which clips name an editor this project does not have, or hold a view their editor
+/// does not take. The clip plays all the same.
+fn report_editor_problems(editors: &Editors, context: &mut BehaviourContext<'_>) {
+    let problems: Vec<String> = context
+        .children::<Clip>()
+        .filter_map(|(name, clip)| Some(format!("{name}.json {}", editors.problem(clip)?)))
+        .collect();
     for problem in problems {
         context.problem(problem);
     }
