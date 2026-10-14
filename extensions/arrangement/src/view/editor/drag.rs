@@ -111,8 +111,7 @@ impl NoteEditor {
         let rows = self.rows();
         let next: Vec<Note> = match &drag.kind {
             NoteDragKind::Draw { down } => {
-                let shape = rows.shape();
-                let drawn = drawn_note(&clip, *down, pointer, first.pitch, &grid, shape);
+                let drawn = drawn_note(&clip, *down, pointer, first.pitch, &grid, &rows);
                 vec![drawn.unwrap_or(first)]
             }
             NoteDragKind::Move {

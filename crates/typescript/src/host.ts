@@ -238,7 +238,6 @@ function made(make: () => unknown) {
 /** Fields by name, each with every value it takes. */
 type Options = Array<[string, readonly Option[]]>;
 
-/** The choices of a tool. */
 function choicesOf(spec: Spec): Options {
   return Object.entries(spec.state).flatMap(([name, field]): Options => (field.kind === "choice" ? [[name, field.options]] : []));
 }
@@ -251,12 +250,10 @@ function clipChoicesOf(spec: Editor): Options {
   ]);
 }
 
-/** How many combinations `options` make. */
 function count(options: Options): number {
   return options.reduce((product, [, values]) => product * values.length, 1);
 }
 
-/** Every combination of `options`. */
 function combinations(options: Options): Choices[] {
   return options.reduce<Choices[]>(
     (all, [name, values]) => all.flatMap((choices) => values.map((value) => ({ ...choices, [name]: value }))),

@@ -5,7 +5,6 @@
 //! A step is one row, whatever pitches the rows have: up a step is the row above. An octave
 //! is 12 semitones.
 
-use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -22,12 +21,12 @@ pub struct Rows {
 }
 
 /// How one row looks.
-pub struct RowLook<'a> {
+pub struct RowLook {
     pub pitch: Pitch,
     pub shade: bool,
     /// An extra row: no row of the grid has its pitch.
     pub extra: bool,
-    pub label: Option<Cow<'a, str>>,
+    pub label: Option<String>,
 }
 
 impl Rows {
@@ -83,7 +82,7 @@ impl Rows {
         index.map(usize::from)
     }
 
-    pub fn look(&self, index: usize) -> Option<RowLook<'_>> {
+    pub fn look(&self, index: usize) -> Option<RowLook> {
         let (pitch, row) = *self.top_first.get(index)?;
         let row = row.and_then(|row| self.grid.rows.get(row));
         Some(match row {
@@ -91,18 +90,17 @@ impl Rows {
                 pitch,
                 shade: row.shade,
                 extra: false,
-                label: row.label.as_deref().map(Cow::Borrowed),
+                label: row.label.clone(),
             },
             None => RowLook {
                 pitch,
                 shade: false,
                 extra: true,
-                label: Some(Cow::Owned(pitch.name())),
+                label: Some(pitch.name()),
             },
         })
     }
 
-    /// The top of a row.
     pub fn top_of(&self, viewport: &Viewport, index: usize) -> f32 {
         (index as f64 * f64::from(self.height()) - viewport.scroll_y) as f32
     }

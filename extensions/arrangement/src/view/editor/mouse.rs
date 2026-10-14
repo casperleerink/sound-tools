@@ -226,8 +226,7 @@ impl NoteEditor {
         grid: Grid,
         cx: &mut Context<Self>,
     ) {
-        let shape = self.rows().shape();
-        let Some(note) = drawn_note(&clip, pointer, pointer, pitch, &grid, shape) else {
+        let Some(note) = drawn_note(&clip, pointer, pointer, pitch, &grid, &self.rows()) else {
             return;
         };
         // The start the grid gave at the press, as a project tick. Every move draws from it,

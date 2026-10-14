@@ -50,7 +50,7 @@ const OPENING_ROOM: f32 = 96.0;
 /// Where a note of the clip is drawn: a bar that ends where the note ends, or with its clip
 /// when it is longer, as it sounds; a hit is a square at its start, cut where the clip ends.
 /// `None` when its pitch has no row.
-pub fn note_rect(viewport: &Viewport, rows: &Rows, clip: &Clip, note: &Note) -> Option<Rect> {
+fn note_rect(viewport: &Viewport, rows: &Rows, clip: &Clip, note: &Note) -> Option<Rect> {
     let x = viewport.x_of(clip.start + note.start);
     // A gap of a pixel to the next note and to the next row.
     let height = rows.height() - 1.0;
@@ -158,12 +158,12 @@ pub fn drawn_note(
     pointer: Ticks,
     pitch: Pitch,
     grid: &Grid,
-    shape: NoteShape,
+    rows: &Rows,
 ) -> Option<Note> {
     if down < clip.start || down >= clip.end() {
         return None;
     }
-    let pointer = match shape {
+    let pointer = match rows.shape() {
         NoteShape::Bar => pointer,
         NoteShape::Hit => down,
     };
@@ -506,40 +506,19 @@ mod tests {
         let down = Ticks(BAR + 500);
         // A click without a move is one snap step.
         assert_eq!(
-            drawn_note(&clip, down, down, pitch(64), &grid(), NoteShape::Bar),
+            drawn_note(&clip, down, down, pitch(64), &grid(), &piano()),
             Some(note(480, 240, 64))
         );
-        let drawn = drawn_note(
-            &clip,
-            down,
-            Ticks(BAR + 1450),
-            pitch(64),
-            &grid(),
-            NoteShape::Bar,
-        );
+        let drawn = drawn_note(&clip, down, Ticks(BAR + 1450), pitch(64), &grid(), &piano());
         assert_eq!(drawn, Some(note(480, 960, 64)));
         // Back past the start: still one step. Past the clip end: it ends with the clip.
-        let back = drawn_note(&clip, down, Ticks(0), pitch(64), &grid(), NoteShape::Bar);
+        let back = drawn_note(&clip, down, Ticks(0), pitch(64), &grid(), &piano());
         assert_eq!(back, Some(note(480, 240, 64)));
-        let past = drawn_note(
-            &clip,
-            down,
-            Ticks(9 * BAR),
-            pitch(64),
-            &grid(),
-            NoteShape::Bar,
-        );
+        let past = drawn_note(&clip, down, Ticks(9 * BAR), pitch(64), &grid(), &piano());
         assert_eq!(past, Some(note(480, BAR - 480, 64)));
         assert_eq!(drawn.map(|note| note.velocity.value()), Some(100));
         // A hit is one step, wherever the pointer goes.
-        let hit = drawn_note(
-            &clip,
-            down,
-            Ticks(BAR + 1450),
-            pitch(38),
-            &grid(),
-            NoteShape::Hit,
-        );
+        let hit = drawn_note(&clip, down, Ticks(BAR + 1450), pitch(38), &grid(), &drums());
         assert_eq!(hit, Some(note(480, 240, 38)));
     }
 
@@ -553,7 +532,7 @@ mod tests {
                 Ticks(BAR + 960),
                 pitch(60),
                 &grid(),
-                NoteShape::Bar
+                &piano()
             ),
             None
         );
@@ -564,7 +543,7 @@ mod tests {
                 Ticks(3 * BAR),
                 pitch(60),
                 &grid(),
-                NoteShape::Bar
+                &piano()
             ),
             None
         );
@@ -574,7 +553,7 @@ mod tests {
             Ticks(3 * BAR),
             pitch(60),
             &grid(),
-            NoteShape::Bar,
+            &piano(),
         );
         assert_eq!(last_cell, Some(note(BAR - 240, 240, 60)));
 
@@ -586,7 +565,7 @@ mod tests {
             Ticks(150),
             pitch(60),
             &grid(),
-            NoteShape::Bar,
+            &piano(),
         );
         assert_eq!(first, Some(note(0, 240, 60)));
         // At tick 0 and at pitch 0 and 127.
@@ -598,7 +577,7 @@ mod tests {
                 Ticks(0),
                 pitch(number),
                 &grid(),
-                NoteShape::Bar,
+                &piano(),
             );
             assert_eq!(drawn, Some(note(0, 240, number)));
         }

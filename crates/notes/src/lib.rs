@@ -388,7 +388,6 @@ pub struct Note {
 }
 
 impl Note {
-    /// A note with an empty view.
     pub fn new(start: Ticks, length: Length, pitch: Pitch, velocity: Velocity) -> Self {
         Self {
             start,

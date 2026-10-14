@@ -5,6 +5,7 @@ use gpui::{
     App, BorderStyle, Bounds, ContentMask, FontWeight, Hsla, PathBuilder, Pixels, Point,
     SharedString, Window, fill, point, px, quad, size,
 };
+use std::ops::Range;
 use std::rc::Rc;
 
 use sound_notes::Note;
@@ -41,23 +42,11 @@ impl NoteEditor {
             start < ticks.end && clip.start + note.end() > ticks.start
         };
         let selected = |note: &Note| self.selection.contains(note);
-        let rows_shown = shown_rows.clone().filter_map(|index| {
-            let look = rows.look(index)?;
-            Some(SceneRow {
-                y: rows.top_of(&viewport, index),
-                shade: look.shade,
-                extra: look.extra,
-                label: look
-                    .label
-                    .map(|label| SharedString::from(label.into_owned())),
-            })
-        });
         Some(RollScene {
             viewport,
             width,
             height,
-            row_height: rows.height(),
-            rows_shown: rows_shown.collect(),
+            shown_rows: shown_rows.clone(),
             track_name: track
                 .map(|track| track.name.clone())
                 .unwrap_or_default()
@@ -99,11 +88,9 @@ pub(super) struct RollScene {
     pub(super) width: f32,
     /// The height of the pitch rows, without the lane.
     height: f32,
-    row_height: f32,
-    /// The rows that show.
-    rows_shown: Vec<SceneRow>,
-    /// Every row, for the mouse.
+    /// Every row, also for the mouse, and the ones that show.
     pub(super) rows: Rc<Rows>,
+    shown_rows: Range<usize>,
     track_name: SharedString,
     accent: Hsla,
     bars: Vec<RulerBar>,
@@ -121,14 +108,6 @@ pub(super) struct RollScene {
     middle: Option<f32>,
     /// The rectangle of a drag on empty space.
     marquee: Option<Rect>,
-}
-
-struct SceneRow {
-    /// Its top.
-    y: f32,
-    shade: bool,
-    extra: bool,
-    label: Option<SharedString>,
 }
 
 pub(super) fn paint_roll(
@@ -150,11 +129,17 @@ pub(super) fn paint_roll(
     );
     let (marquee_fill, marquee_border) = (theme.alpha_at(0.05), theme.alpha_at(0.20));
     let RollScene {
+        viewport,
         width,
         height,
-        row_height,
         ..
     } = *scene;
+    let row_height = scene.rows.height();
+    let shown_rows = || {
+        let rows = &scene.rows;
+        let shown = scene.shown_rows.clone();
+        shown.filter_map(|index| Some((rows.top_of(&viewport, index), rows.look(index)?)))
+    };
     let ruler = Bounds::new(
         bounds.origin + point(px(HEADER_WIDTH), px(0.)),
         size(px(width), px(RULER_HEIGHT)),
@@ -175,9 +160,9 @@ pub(super) fn paint_roll(
         bounds.origin + point(px(0.), px(RULER_HEIGHT)),
         size(px(HEADER_WIDTH - KEYS_WIDTH), px(height)),
     );
-    let row = |shown: &SceneRow, width: f32, height: f32| Rect {
+    let row = |y: f32, width: f32, height: f32| Rect {
         x: 0.0,
-        y: shown.y,
+        y,
         width,
         height,
     };
@@ -210,13 +195,13 @@ pub(super) fn paint_roll(
 
     window.with_content_mask(Some(ContentMask { bounds: area }), |window| {
         // A row no row of the grid has is shaded as what is outside the clip.
-        for shown in &scene.rows_shown {
-            let color = match (shown.extra, shown.shade) {
+        for (y, look) in shown_rows() {
+            let color = match (look.extra, look.shade) {
                 (true, _) => outside,
                 (false, true) => black_row,
                 (false, false) => continue,
             };
-            let tint = placed(row(shown, width, row_height), area.origin);
+            let tint = placed(row(y, width, row_height), area.origin);
             window.paint_quad(fill(tint, color));
         }
         for x in &scene.beats {
@@ -290,23 +275,23 @@ pub(super) fn paint_roll(
     });
 
     window.with_content_mask(Some(ContentMask { bounds: keys }), |window| {
-        for shown in &scene.rows_shown {
-            let color = if shown.shade { black_key } else { white_key };
-            let key = row(shown, KEYS_WIDTH - 1.0, row_height - 1.0);
+        for (y, look) in shown_rows() {
+            let color = if look.shade { black_key } else { white_key };
+            let key = row(y, KEYS_WIDTH - 1.0, row_height - 1.0);
             window.paint_quad(fill(placed(key, keys.origin), color));
         }
     });
     // The names of the rows, left of the keys. A name may reach over the rows next to it.
     window.with_content_mask(Some(ContentMask { bounds: names }), |window| {
-        for shown in &scene.rows_shown {
-            let Some(name) = shown.label.clone() else {
+        for (y, look) in shown_rows() {
+            let Some(name) = look.label else {
                 continue;
             };
-            let middle = shown.y + row_height / 2.0;
+            let middle = y + row_height / 2.0;
             let origin =
                 names.origin + point(names.size.width - px(8.), px((middle - 9.0).round()));
             let (weight, fit) = (FontWeight::NORMAL, Fit::AlignRight);
-            paint_text(name, origin, 12., weight, label, fit, window, cx);
+            paint_text(name.into(), origin, 12., weight, label, fit, window, cx);
         }
     });
 
