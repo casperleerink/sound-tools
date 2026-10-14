@@ -239,7 +239,6 @@ fn a_clip_gets_the_grid_of_its_choices_and_the_default_for_what_it_lacks() {
 #[test]
 fn the_piano_roll_is_a_built_in_name_and_a_name_is_taken_once() {
     let editors = Editors::default();
-    let before = editors.generation();
     let mut piano = scale();
     piano.name = EditorName::piano_roll();
     let replaced = editors.set_project(vec![piano, scale(), scale()]);
@@ -259,19 +258,15 @@ fn the_piano_roll_is_a_built_in_name_and_a_name_is_taken_once() {
         .map(|spec| spec.name.as_str().to_owned())
         .collect();
     assert_eq!(names, ["piano-roll", "scale"]);
-    assert!(editors.generation() > before);
 }
 
 #[test]
-fn the_same_editors_again_leave_the_generation() {
+fn the_same_editors_again_are_no_change() {
     let editors = editors();
-    let before = editors.generation();
     assert!(!editors.set_project(vec![scale(), drums()]).changed);
-    assert_eq!(editors.generation(), before);
     let mut retitled = scale();
     retitled.title = "Scales".to_owned();
     assert!(editors.set_project(vec![retitled, drums()]).changed);
-    assert!(editors.generation() > before);
 }
 
 #[test]

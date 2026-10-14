@@ -325,8 +325,6 @@ pub struct Editors(Rc<RefCell<Catalog>>);
 struct Catalog {
     piano_roll: Arc<EditorSpec>,
     project: Vec<Arc<EditorSpec>>,
-    /// Counts the changes, so a view knows when what it took from here is old.
-    generation: u64,
 }
 
 impl Default for Catalog {
@@ -334,7 +332,6 @@ impl Default for Catalog {
         Self {
             piano_roll: Arc::new(piano_roll()),
             project: Vec::new(),
-            generation: 0,
         }
     }
 }
@@ -352,7 +349,7 @@ impl Catalog {
 /// What [`Editors::set_project`] did.
 #[derive(Debug)]
 pub struct Replaced {
-    /// Whether the editors differ from those before. When they do not, the generation stays.
+    /// Whether the editors differ from those before.
     pub changed: bool,
     pub refused: Vec<Refused>,
 }
@@ -394,7 +391,6 @@ impl Editors {
         let changed = catalog.project != kept;
         if changed {
             catalog.project = kept;
-            catalog.generation += 1;
         }
         Replaced { changed, refused }
     }
@@ -406,10 +402,6 @@ impl Editors {
     /// The editors of the project: all but the piano roll.
     pub fn project(&self) -> Vec<Arc<EditorSpec>> {
         self.0.borrow().project.clone()
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.0.borrow().generation
     }
 
     pub fn of(&self, clip: &Clip) -> Shown {

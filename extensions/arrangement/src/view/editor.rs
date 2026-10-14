@@ -33,7 +33,7 @@ use gpui::{
     Point, ScrollWheelEvent, Subscription, Window, canvas, div, prelude::*, px,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent, Ticks};
-use sound_notes::{Clip, EditorName, Editors, Note, Pitch, Velocity, View};
+use sound_notes::{Clip, Editors, Note, Pitch, Velocity, View};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -157,8 +157,6 @@ pub struct NoteEditor {
     /// The rows of the last paint, for the mouse.
     painted_rows: RefCell<Rc<Rows>>,
     editors: Editors,
-    /// The grid of the clip's editor, and what it was found for.
-    grid: RefCell<Option<CachedGrid>>,
     /// The width of the note area at the last paint. Before the first paint it is the width
     /// of the timeline above, which is the same.
     painted_width: Rc<Cell<f32>>,
@@ -188,13 +186,6 @@ pub struct NoteEditor {
     keyboard_focus: KeyboardFocus,
     close_focus: FocusHandle,
     _project_events: Subscription,
-}
-
-struct CachedGrid {
-    generation: u64,
-    editor: Option<EditorName>,
-    view: View,
-    grid: Arc<sound_notes::Grid>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -289,7 +280,6 @@ impl NoteEditor {
             painted: Rc::default(),
             painted_rows: RefCell::new(Rc::new(Rows::new(piano_roll, []))),
             editors,
-            grid: RefCell::default(),
             painted_width: Rc::new(Cell::new(width)),
             selection: Selection::default(),
             known: Vec::new(),
@@ -350,33 +340,9 @@ impl NoteEditor {
         let dragged = self.drag.iter().flat_map(|drag| &drag.notes);
         let pitches = clip.notes.iter().map(|note| note.pitch);
         Rows::new(
-            self.grid_of(clip),
+            self.editors.of(clip).grid,
             pitches.chain(dragged.map(|tracked| tracked.origin.pitch)),
         )
-    }
-
-    fn grid_of(&self, clip: &Clip) -> Arc<sound_notes::Grid> {
-        let generation = self.editors.generation();
-        let mut cached = self.grid.borrow_mut();
-        match cached.as_ref() {
-            Some(found)
-                if found.generation == generation
-                    && found.editor == clip.editor
-                    && found.view == clip.view =>
-            {
-                found.grid.clone()
-            }
-            _ => {
-                let grid = self.editors.of(clip).grid;
-                *cached = Some(CachedGrid {
-                    generation,
-                    editor: clip.editor.clone(),
-                    view: clip.view.clone(),
-                    grid: grid.clone(),
-                });
-                grid
-            }
-        }
     }
 
     /// Whether the focus ring shows: the editor has the focus, and it came from the keyboard.
@@ -546,9 +512,12 @@ impl NoteEditor {
         let Some(state) = self.session.read(cx).project().state(&self.clip) else {
             return;
         };
-        let grid = self.grid_of(state);
+        let grid = self.editors.of(state).grid;
         let same = |shown: &Arc<sound_notes::Grid>| Arc::ptr_eq(shown, &grid) || *shown == grid;
-        if !self.viewport_grid.as_ref().is_some_and(same) {
+        if self.viewport_grid.as_ref().is_some_and(same) {
+            // A reload may have made the same grid again: the next render compares pointers.
+            self.viewport_grid = Some(grid);
+        } else {
             self.open_viewport(cx);
         }
     }
