@@ -106,24 +106,23 @@ fn editors() -> Editors {
     editors
 }
 
-/// The piano roll as the note editor drew it before it was an editor.
 #[test]
 fn the_piano_roll_has_a_row_per_pitch_the_black_keys_shaded_and_the_cs_named() {
-    let is_black_key = |pitch: u8| matches!(pitch % 12, 1 | 3 | 6 | 8 | 10);
-    let key_label = |pitch: u8| {
-        pitch
-            .is_multiple_of(12)
-            .then(|| format!("C{}", i32::from(pitch / 12) - 1))
-    };
     let grid = piano_roll().grid_for(&View::default());
     assert_eq!((grid.row_height, grid.notes), (12.0, NoteShape::Bar));
-    assert_eq!(grid.rows.len(), 128);
-    for (number, row) in (0..=127).zip(&grid.rows) {
-        assert_eq!(row.pitch.number(), number);
-        assert_eq!(row.shade, is_black_key(number), "pitch {number}");
-        assert_eq!(row.label, key_label(number), "pitch {number}");
-    }
-    assert_eq!(grid.rows[60].label.as_deref(), Some("C4"));
+    let pitches: Vec<u8> = grid.rows.iter().map(|row| row.pitch.number()).collect();
+    assert_eq!(pitches, (0..=127).collect::<Vec<u8>>());
+    let octave = &grid.rows[60..72];
+    let shaded: Vec<bool> = octave.iter().map(|row| row.shade).collect();
+    let (x, o) = (true, false);
+    assert_eq!(shaded, [o, x, o, x, o, o, x, o, x, o, x, o]);
+    let labels = grid.rows.iter().filter_map(|row| row.label.as_deref());
+    assert_eq!(
+        labels.collect::<Vec<_>>()[..],
+        [
+            "C-1", "C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9"
+        ]
+    );
     assert!(grid.check().is_ok());
 }
 

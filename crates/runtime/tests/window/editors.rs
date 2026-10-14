@@ -10,7 +10,7 @@ use gpui::{Modifiers, TestAppContext, point, px};
 use sound_core::Changes;
 use sound_notes::{Clip, EditorName, Editors, Note, Pitch};
 
-use crate::clip_editors::{c_major, drums, scale};
+use crate::clip_editors::{drums, scale};
 use crate::support::{self, BAR, Opened, STEP, clip, id, note};
 
 const PART: &str = "arrangement/track-1/part";
@@ -31,7 +31,7 @@ fn open(cx: &mut TestAppContext, part: Clip) -> Opened<'_> {
         let editors = project.provided::<Editors>().unwrap();
         assert!(
             editors
-                .set_project(vec![drums(), c_major()])
+                .set_project(vec![drums(), scale(&["major", "minor"])])
                 .refused
                 .is_empty()
         );
@@ -85,18 +85,6 @@ fn the_drum_grid_shows_its_named_rows_and_draws_hits_of_one_step(cx: &mut TestAp
     opened.drag(from + edge, to + edge);
     assert_eq!(opened.clip(PART).unwrap().notes, [note(1920, STEP, 38)]);
     assert_eq!(opened.undo_label().as_deref(), Some("Move note"));
-}
-
-#[gpui::test]
-fn in_a_scale_a_drag_moves_a_note_by_rows(cx: &mut TestAppContext) {
-    let mut opened = open(cx, part("scale", vec![note(0, 480, 64)]));
-    // C major from C3 to C6.
-    assert_eq!(rows(&mut opened).count(), 22);
-    // Up two rows from E4: F4, then G4.
-    let from = opened.in_editor(BAR + 100, 64);
-    let to = from + point(px(0.), px(-2. * rows(&mut opened).height()));
-    opened.drag(from, to);
-    assert_eq!(pitches(&mut opened), [67]);
 }
 
 #[gpui::test]

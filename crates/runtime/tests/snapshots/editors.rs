@@ -12,7 +12,7 @@ use gpui::HeadlessAppContext;
 use sound_core::{Changes, InstanceId, Ticks};
 use sound_notes::{Clip, EditorName, Editors, Length, Note, Pitch, Velocity};
 
-use super::clip_editors::{c_major, drums};
+use super::clip_editors::{drums, scale};
 use super::{BAR, Opened};
 
 const BEAT: &str = "arrangement/track-1/beat";
@@ -39,7 +39,9 @@ pub(crate) fn snapshots(
 ) -> Result<()> {
     let opened = Opened::new(cx, |project| {
         let editors = project.provided::<Editors>().context("no editors")?;
-        let refused = editors.set_project(vec![drums(), c_major()]).refused;
+        let refused = editors
+            .set_project(vec![drums(), scale(&["major", "minor"])])
+            .refused;
         anyhow::ensure!(refused.is_empty(), "refused: {refused:?}");
         let mut beat = Vec::new();
         for bar in 0..2 {

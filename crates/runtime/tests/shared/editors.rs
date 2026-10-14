@@ -40,13 +40,9 @@ pub(crate) fn drums() -> EditorSpec {
     )
 }
 
-/// `scale`: the notes of C major or C minor from C3 to C6, the Cs named, with the clip field
-/// `scale` and the note toggle `accent`.
-pub(crate) fn c_major() -> EditorSpec {
-    scale(&["major", "minor"])
-}
-
-/// `scale` with these scales as the options of its field, the first the default.
+/// `scale`: the notes of each of `scales`, major or minor, from C3 to C6, the Cs named, with the
+/// clip field `scale` whose options they are, the first the default, and the note toggle
+/// `accent`.
 pub(crate) fn scale(scales: &[&str]) -> EditorSpec {
     let clip = json!({"scale": {"kind": "choice", "options": scales, "default": scales[0]}});
     let note = json!({"accent": {"kind": "toggle", "default": false, "label": "Accent"}});

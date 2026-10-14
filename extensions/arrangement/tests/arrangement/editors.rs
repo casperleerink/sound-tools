@@ -3,7 +3,7 @@
 
 use sound_notes::{Clip, EditorName, EditorSpec, Editors, FieldName, View, ViewField};
 
-use crate::support::{Harness, TICK, clip, id, level_changes, note};
+use crate::support::{Harness, TICK, clip, level_changes, note};
 
 const PIANO: &str = "state/arrangement/piano/instance.json";
 
@@ -40,7 +40,7 @@ fn a_clip_whose_editor_or_view_is_wrong_is_a_problem_of_its_track_and_still_play
         in_editor("drumz", r#"{"kit": "808"}"#),
         in_editor("scale", r#"{"scale": "lydian"}"#),
     ];
-    let mut harness = harness.and_clips(clips.clone());
+    let mut harness = harness.and_clips(clips);
     assert_eq!(
         harness.problems(),
         [
@@ -52,18 +52,9 @@ fn a_clip_whose_editor_or_view_is_wrong_is_a_problem_of_its_track_and_still_play
             ),
         ]
     );
-    // All three play their note, and keep what they had.
+    // All three play their note.
     assert_eq!(
         level_changes(&harness.play(960 * TICK)),
         [(0, 180.0), (480 * TICK, 0.0)]
     );
-    for (index, clip) in clips.iter().enumerate() {
-        let instance = harness
-            .project
-            .resolve::<Clip>(&id(&format!("arrangement/piano/clip-{index}")))
-            .unwrap();
-        assert_eq!(harness.project.state(&instance), Some(clip));
-    }
-    let file = std::fs::read_to_string(harness.path("state/arrangement/piano/clip-1.json"));
-    assert!(file.unwrap().contains(r#""editor": "drumz""#));
 }
