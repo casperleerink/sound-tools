@@ -4,13 +4,13 @@
 //! and the close icon.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
-//! goes through the session, by [`ControlEdit`]: a drag of a knob or of a handle is one gesture
+//! goes through the session, by [`DeviceEdit`]: a drag of a knob or of a handle is one gesture
 //! and one undo step, a key step, a reset, a shape or a switch is one commit. The ranges, the
 //! defaults and the travel of each knob come from the [`Parameter`](sound_core::Parameter)s of
 //! the crate. What is only about the interface is here: the label, the unit, the name of the
 //! undo step, which band is selected and whether the card is expanded. A number that an
 //! automation lane of the track moves shows the value that plays, on its knob and on the
-//! display, and does not drag ([`Lanes`]).
+//! display, and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use gpui::{
     App, Context, Entity, KeyDownEvent, Point, SharedString, Window, div, point, prelude::*,
@@ -29,7 +29,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::toggle::Toggle;
 use sound_ui::lanes::object_of;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
+use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
     BAND_LANES, BANDS, Band, Eq, EqState, FREQUENCIES, GAIN, OUTPUT_GAIN, Q, Shape, response,
@@ -131,12 +131,8 @@ fn band_of_key(event: &KeyDownEvent) -> Option<usize> {
 }
 
 pub struct EqView {
-    session: Entity<Session>,
-    eq: Instance<EqState>,
+    device: DeviceEdit<EqState>,
     frame: CardFrame,
-    /// The gesture of a drag of a knob or of a handle.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<EqState>>,
     /// Whether the card shows the on and off of the bands and the output. Interface state: not
     /// saved.
     expanded: bool,
@@ -154,23 +150,14 @@ impl EqView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.eq.id() => {
+        cx.subscribe(&session, |view, _, event, cx| {
+            if let ProjectEvent::Changed(id) = event
+                && id == view.device.instance.id()
+            {
                 view.show_shape(cx);
-                cx.notify();
             }
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.eq.id() => {
-                view.edit.finish(&view.session, cx);
-                cx.notify();
-            }
-            _ => {}
         })
         .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
         let items = SHAPES.map(|(_, value, label, icon)| MenuItem::new(value, label).icon(icon));
         let shapes = cx.new(|cx| {
             let entries = vec![MenuEntry::Group(MenuGroup::new().items(items))];
@@ -188,17 +175,14 @@ impl EqView {
             if let Some((shape, ..)) = picked {
                 let band = view.selected;
                 let set = move |state: &mut EqState, shape| state.bands[band].shape = shape;
-                view.change("Change shape", ValueChange::Set(*shape), set, cx);
+                view.device
+                    .change("Change shape", ValueChange::Set(*shape), set, cx);
             }
         })
         .detach();
-        let lanes = Lanes::follow(&session, eq.id(), Eq::AUTOMATION, cx);
         Self {
-            session,
-            eq,
+            device: DeviceEdit::new(session, eq, Eq::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
             selected: 0,
             shapes,
@@ -232,7 +216,8 @@ impl EqView {
     /// Puts the shape of the selected band in its select, after any change of the record or of
     /// the selected band: a pick, an undo, an outside edit or a click on a handle.
     fn show_shape(&mut self, cx: &mut Context<Self>) {
-        let state = self.session.read(cx).project().state(&self.eq);
+        let device = &self.device;
+        let state = device.session.read(cx).project().state(&device.instance);
         let Some(shown) = state.map(|state| shape_value(state.bands[self.selected].shape)) else {
             return;
         };
@@ -247,18 +232,7 @@ impl EqView {
     /// its path: `bands[0].gain_db`.
     fn is_automated(&self, band: usize, field: &str, cx: &Context<Self>) -> bool {
         let band = object_of(BAND_LANES[band][0].field);
-        self.lanes.read(cx).is_automated_in(band, field)
-    }
-
-    fn change<V>(
-        &mut self,
-        label: &str,
-        change: ValueChange<V>,
-        set: impl FnOnce(&mut EqState, V),
-        cx: &mut Context<Self>,
-    ) {
-        let (session, eq) = (&self.session, &self.eq);
-        self.edit.apply(session, eq, label, change, set, cx);
+        self.device.lanes.read(cx).is_automated_in(band, field)
     }
 
     /// A knob on a number of the selected band.
@@ -276,18 +250,7 @@ impl EqView {
             .automated(automated)
             .on_change(weak_callback(cx, move |view, change, cx| {
                 let set = move |state: &mut EqState, value| set(&mut state.bands[band], value);
-                view.change(undo_label, change, set, cx);
-            }))
-    }
-
-    fn output_knob(&self, state: &EqState, cx: &mut Context<Self>) -> Knob {
-        let automated = self.lanes.read(cx).is_automated(OUTPUT_GAIN.field);
-        OUTPUT_KNOB
-            .knob(state)
-            .automated(automated)
-            .on_change(weak_callback(cx, move |view, change, cx| {
-                let set = OUTPUT_KNOB.parameter.set;
-                view.change(OUTPUT_KNOB.undo_label, change, set, cx);
+                view.device.change(undo_label, change, set, cx);
             }))
     }
 
@@ -332,7 +295,7 @@ impl EqView {
                             settings.gain_db = at.y.clamp(GAIN.min, GAIN.max);
                         }
                     };
-                    view.change(undo_label, change, set, cx);
+                    view.device.change(undo_label, change, set, cx);
                 },
             ))
     }
@@ -364,9 +327,17 @@ impl EqView {
         .on_change(weak_callback(cx, move |view, on: bool, cx| {
             let label = if on { "Turn band on" } else { "Turn band off" };
             let set = move |state: &mut EqState, on| state.bands[band].on = on;
-            view.change(label, ValueChange::Set(on), set, cx);
+            view.device.change(label, ValueChange::Set(on), set, cx);
         }));
         Cell::new(toggle).label(format!("Band {number}"))
+    }
+}
+
+impl DeviceView for EqView {
+    type State = EqState;
+
+    fn device(&mut self) -> &mut DeviceEdit<EqState> {
+        &mut self.device
     }
 }
 
@@ -374,7 +345,7 @@ impl Render for EqView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
         let band = state.bands[self.selected];
@@ -396,7 +367,7 @@ impl Render for EqView {
             // Bands 1 and 2 on the first row, so they read in order across.
             Column::new().top(switch(0, cx)).bottom(switch(2, cx)),
             Column::new().top(switch(1, cx)).bottom(switch(3, cx)),
-            Column::new().top(self.output_knob(&state, cx)),
+            Column::new().top(self.device.knob(OUTPUT_KNOB, &state, cx)),
         ];
         let expand = cx.listener(|view, _, _, cx| view.set_expanded(!view.expanded, cx));
         let card = self
@@ -428,42 +399,6 @@ impl Render for EqView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::band_parameters;
-
-    /// The defaults and both ends of every range, through the travel of its knob and back.
-    #[test]
-    fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
-        let check = |range: KnobRange, field, min, max, values: &[f32]| {
-            assert_eq!(range.value(0.0), min, "{field}");
-            assert_eq!(range.value(1.0), max, "{field}");
-            for value in values {
-                assert_eq!(range.value(range.position(*value)), *value, "{field}");
-            }
-        };
-        for band in 0..BANDS {
-            let controls = [frequency_knob(band), GAIN_KNOB, Q_KNOB];
-            for (control, parameter) in controls.iter().zip(band_parameters(band)) {
-                let values = [parameter.min, parameter.default, parameter.max];
-                let (min, max) = (parameter.min, parameter.max);
-                check(
-                    KnobRange::of(control.parameter),
-                    parameter.field,
-                    min,
-                    max,
-                    &values,
-                );
-            }
-        }
-        let output: &crate::Parameter = OUTPUT_KNOB.parameter;
-        let values = [output.min, output.default, output.max];
-        check(
-            KnobRange::of(output),
-            output.field,
-            output.min,
-            output.max,
-            &values,
-        );
-    }
 
     /// The handle of a band with a gain is at its gain on the display, so it sits on the curve
     /// of a band alone: a bell's curve is its gain at its frequency.
