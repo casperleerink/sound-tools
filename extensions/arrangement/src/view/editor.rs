@@ -146,6 +146,8 @@ pub struct NoteEditor {
     session: Entity<Session>,
     clip: Instance<Clip>,
     viewport: Viewport,
+    /// The grid `viewport` was opened for. When the clip gets another grid, it opens again.
+    viewport_grid: Option<Arc<sound_notes::Grid>>,
     /// The snap of the window, shared with the timeline.
     snap: SharedSnap,
     /// The clipboard of the window, shared with the timeline.
@@ -272,6 +274,7 @@ impl NoteEditor {
             session,
             clip: clip.clone(),
             viewport: Viewport::default(),
+            viewport_grid: None,
             snap,
             clipboard,
             painted: Rc::default(),
@@ -335,9 +338,18 @@ impl NoteEditor {
     /// The rows of the clip's editor, with an extra row for each pitch of its notes that has
     /// none, and of the notes a drag started from, so a row never goes away under a drag.
     fn rows_of(&self, clip: &Clip) -> Rows {
+        let dragged = self.drag.iter().flat_map(|drag| &drag.notes);
+        let pitches = clip.notes.iter().map(|note| note.pitch);
+        Rows::new(
+            self.grid_of(clip),
+            pitches.chain(dragged.map(|tracked| tracked.origin.pitch)),
+        )
+    }
+
+    fn grid_of(&self, clip: &Clip) -> Arc<sound_notes::Grid> {
         let generation = self.editors.generation();
         let mut cached = self.grid.borrow_mut();
-        let grid = match cached.as_ref() {
+        match cached.as_ref() {
             Some(found)
                 if found.generation == generation
                     && found.editor == clip.editor
@@ -355,13 +367,7 @@ impl NoteEditor {
                 });
                 grid
             }
-        };
-        let dragged = self.drag.iter().flat_map(|drag| &drag.notes);
-        let pitches = clip.notes.iter().map(|note| note.pitch);
-        Rows::new(
-            grid,
-            pitches.chain(dragged.map(|tracked| tracked.origin.pitch)),
-        )
+        }
     }
 
     /// Whether the focus ring shows: the editor has the focus, and it came from the keyboard.
@@ -500,19 +506,42 @@ impl NoteEditor {
         self.clip = clip;
         self.selection = Selection::default();
         self.seen_history = self.session.read(cx).history_moves();
-        let project = self.session.read(cx).project();
-        if let Some(state) = project.state(&self.clip) {
+        if let Some(state) = self.session.read(cx).project().state(&self.clip) {
             self.known = state.notes.clone();
-            let rows = self.rows_of(state);
-            let width = self.painted_width.get();
-            let viewport = opened(state, &rows, width, ROLL_HEIGHT);
-            let time_signatures = project.project_file().tempo_map.time_signatures();
-            // Rows that do not fill the area start at its top.
-            self.viewport = clamped(&viewport, &rows, state, time_signatures, width, ROLL_HEIGHT);
-            self.painted.set(self.viewport);
-            self.painted_rows.replace(Rc::new(rows));
         }
+        self.viewport_grid = None;
+        self.open_viewport(cx);
         cx.notify();
+    }
+
+    /// Zoomed to fit the clip, with the middle of its notes in the middle.
+    fn open_viewport(&mut self, cx: &App) {
+        let project = self.session.read(cx).project();
+        let Some(state) = project.state(&self.clip) else {
+            return;
+        };
+        let rows = self.rows_of(state);
+        let width = self.painted_width.get();
+        let viewport = opened(state, &rows, width, ROLL_HEIGHT);
+        let time_signatures = project.project_file().tempo_map.time_signatures();
+        // Rows that do not fill the area start at its top.
+        self.viewport = clamped(&viewport, &rows, state, time_signatures, width, ROLL_HEIGHT);
+        self.viewport_grid = Some(rows.grid().clone());
+        self.painted.set(self.viewport);
+        self.painted_rows.replace(Rc::new(rows));
+    }
+
+    /// The clip got another grid since the viewport opened: another editor, another choice or
+    /// a reload of the code. Its notes may be far from what shows, so it opens again.
+    fn follow_grid(&mut self, cx: &App) {
+        let Some(state) = self.session.read(cx).project().state(&self.clip) else {
+            return;
+        };
+        let grid = self.grid_of(state);
+        let same = |shown: &Arc<sound_notes::Grid>| Arc::ptr_eq(shown, &grid) || *shown == grid;
+        if !self.viewport_grid.as_ref().is_some_and(same) {
+            self.open_viewport(cx);
+        }
     }
 
     fn set_viewport(&mut self, viewport: Viewport, cx: &mut Context<Self>) {
@@ -614,6 +643,7 @@ impl Focusable for NoteEditor {
 
 impl Render for NoteEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.follow_grid(cx);
         let editor = cx.entity();
         let focus_handle = self.focus_handle.clone();
         let surface = canvas(

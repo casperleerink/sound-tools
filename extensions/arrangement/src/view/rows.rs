@@ -62,6 +62,10 @@ impl Rows {
         }
     }
 
+    pub fn grid(&self) -> &Arc<Grid> {
+        &self.grid
+    }
+
     pub fn count(&self) -> usize {
         self.top_first.len()
     }

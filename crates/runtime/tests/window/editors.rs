@@ -277,6 +277,33 @@ fn a_choice_in_the_clip_menu_writes_the_view_and_changes_the_rows(cx: &mut TestA
     assert!(rows(&mut opened).index_of(e_flat).is_some());
 }
 
+/// Another editor puts the notes elsewhere: the view opens again on them, as when the clip
+/// opens, and the next scroll starts there. An edit keeps the view where it is.
+#[gpui::test]
+fn another_grid_opens_the_view_again_and_an_edit_keeps_it(cx: &mut TestAppContext) {
+    let mut opened = open(cx, part("drums", vec![note(0, STEP, 38)]));
+    let viewport = |opened: &mut Opened<'_>| {
+        let editor = opened.editor().unwrap();
+        opened.cx.read(|cx| editor.read(cx).viewport())
+    };
+    pick_in_clip_menu(&mut opened, &["editor", "editor:scale"]);
+    let switched = viewport(&mut opened);
+    opened.keys("escape");
+    let on_part = opened.at(BAR + 100, 0);
+    opened.double_click(on_part);
+    assert_eq!(viewport(&mut opened), switched);
+
+    let in_rows = opened.in_editor(BAR, 60);
+    opened.scroll(in_rows, 0., 20.);
+    let scrolled = viewport(&mut opened);
+    assert_ne!(scrolled, switched);
+    let on_note = opened.in_editor(BAR + 10, 38);
+    opened.click(on_note);
+    opened.keys("right");
+    assert_eq!(opened.clip(PART).unwrap().notes, [note(STEP, STEP, 38)]);
+    assert_eq!(viewport(&mut opened), scrolled);
+}
+
 /// The code of the editor changes while the menu is open: an option writes what it shows, or
 /// nothing once the editor lacks it.
 #[gpui::test]
