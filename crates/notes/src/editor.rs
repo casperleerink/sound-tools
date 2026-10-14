@@ -245,8 +245,8 @@ impl EditorSpec {
         &self.clip_fields
     }
 
-    pub fn note_fields(&self) -> &[(FieldName, ViewField)] {
-        &self.note_fields
+    pub fn clip_field(&self, field: &FieldName) -> Option<&ViewField> {
+        Kind::Clip.field(self, field)
     }
 
     /// The grid for the view of a clip. A field it lacks, or whose value is not an option, is
@@ -344,6 +344,18 @@ impl Catalog {
     fn find(&self, name: &EditorName) -> Option<&Arc<EditorSpec>> {
         self.all().find(|spec| spec.name == *name)
     }
+
+    /// The editor of a clip, the piano roll when it names none or one this project lacks, and
+    /// then the name it lacks.
+    fn editor_of<'a>(&'a self, clip: &'a Clip) -> (&'a Arc<EditorSpec>, Option<&'a EditorName>) {
+        match &clip.editor {
+            None => (&self.piano_roll, None),
+            Some(name) => match self.find(name) {
+                Some(spec) => (spec, None),
+                None => (&self.piano_roll, Some(name)),
+            },
+        }
+    }
 }
 
 /// What [`Editors::set_project`] did.
@@ -404,18 +416,17 @@ impl Editors {
         self.0.borrow().project.clone()
     }
 
+    pub fn find(&self, name: &EditorName) -> Option<Arc<EditorSpec>> {
+        self.0.borrow().find(name).cloned()
+    }
+
     pub fn of(&self, clip: &Clip) -> Shown {
         let catalog = self.0.borrow();
-        let found = clip.editor.as_ref().map(|name| (name, catalog.find(name)));
-        let (spec, missing) = match found {
-            Some((_, Some(spec))) => (spec.clone(), None),
-            Some((name, None)) => (catalog.piano_roll.clone(), Some(name.clone())),
-            None => (catalog.piano_roll.clone(), None),
-        };
+        let (spec, missing) = catalog.editor_of(clip);
         Shown {
             grid: spec.grid_for(&clip.view),
-            spec,
-            missing,
+            spec: spec.clone(),
+            missing: missing.cloned(),
         }
     }
 
@@ -430,20 +441,15 @@ impl Editors {
             return None;
         }
         let catalog = self.0.borrow();
-        let spec = match &clip.editor {
-            None => &catalog.piano_roll,
-            Some(name) => match catalog.find(name) {
-                Some(spec) => spec,
-                None => {
-                    let names: Vec<&str> = catalog.all().map(|spec| spec.name.as_str()).collect();
-                    return Some(format!(
-                        "names the clip editor {:?}, which this project does not have, so the window shows it in the piano roll and keeps its editor and view. The editors: {}",
-                        name.as_str(),
-                        names.join(", ")
-                    ));
-                }
-            },
-        };
+        let (spec, missing) = catalog.editor_of(clip);
+        if let Some(name) = missing {
+            let names: Vec<&str> = catalog.all().map(|spec| spec.name.as_str()).collect();
+            return Some(format!(
+                "names the clip editor {:?}, which this project does not have, so the window shows it in the piano roll and keeps its editor and view. The editors: {}",
+                name.as_str(),
+                names.join(", ")
+            ));
+        }
         let clip_problem = clip.view.iter().find_map(|(field, value)| {
             field_problem(&catalog, spec, Kind::Clip, field, value, &|| {
                 "view".to_owned()
@@ -469,11 +475,13 @@ enum Kind {
 }
 
 impl Kind {
-    fn fields(self, spec: &EditorSpec) -> &[(FieldName, ViewField)] {
-        match self {
-            Self::Clip => spec.clip_fields(),
-            Self::Note => spec.note_fields(),
-        }
+    fn field<'a>(self, spec: &'a EditorSpec, field: &FieldName) -> Option<&'a ViewField> {
+        let fields = match self {
+            Self::Clip => &spec.clip_fields,
+            Self::Note => &spec.note_fields,
+        };
+        let found = fields.iter().find(|(name, _)| name == field);
+        found.map(|(_, view_field)| view_field)
     }
 
     fn word(self) -> &'static str {
@@ -494,13 +502,7 @@ fn field_problem(
     value: &ViewValue,
     path: &dyn Fn() -> String,
 ) -> Option<String> {
-    fn declared<'a>(spec: &'a EditorSpec, kind: Kind, field: &FieldName) -> Option<&'a ViewField> {
-        let mut fields = kind.fields(spec).iter();
-        fields
-            .find(|(name, _)| name == field)
-            .map(|(_, view_field)| view_field)
-    }
-    match declared(spec, kind, field) {
+    match kind.field(spec, field) {
         Some(view_field) if view_field.accepts(value) => None,
         Some(view_field) => Some(format!(
             "has {value} in {}.{}, which the editor {} does not take, so it shows as {}. Use {}",
@@ -512,7 +514,7 @@ fn field_problem(
         )),
         None if catalog
             .all()
-            .any(|other| declared(other, kind, field).is_some()) =>
+            .any(|other| kind.field(other, field).is_some()) =>
         {
             None
         }

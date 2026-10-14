@@ -40,7 +40,7 @@ const EDITOR: &str = "editor";
 const USE_EDITOR: &str = "editor:";
 /// Before the name of a clip field that is a choice: the row of its submenu.
 const CHOICE: &str = "choice:";
-/// Before `<editor>:<field>:<kind>:<option>`, the kind `toggle`, `number` or `word`.
+/// Before `<editor>:<field>:<option as JSON>`.
 const SET_CHOICE: &str = "set:";
 /// Before the name of a clip field that is a toggle.
 const TOGGLE: &str = "toggle:";
@@ -68,11 +68,7 @@ impl EditorPick {
                 field,
                 option,
             } => {
-                let option = match option {
-                    ViewValue::Toggle(on) => format!("toggle:{on}"),
-                    ViewValue::Number(number) => format!("number:{number}"),
-                    ViewValue::Word(word) => format!("word:{word}"),
-                };
+                let option = serde_json::to_string(option).unwrap_or_default();
                 let (editor, field) = (editor.as_str(), field.as_str());
                 format!("{SET_CHOICE}{editor}:{field}:{option}")
             }
@@ -87,19 +83,13 @@ impl EditorPick {
         if let Some(field) = value.strip_prefix(TOGGLE) {
             return FieldName::new(field).ok().map(Self::Toggle);
         }
-        let mut parts = value.strip_prefix(SET_CHOICE)?.splitn(4, ':');
+        let mut parts = value.strip_prefix(SET_CHOICE)?.splitn(3, ':');
         let mut next = || parts.next();
-        let (editor, field, kind, option) = (next()?, next()?, next()?, next()?);
-        let option = match kind {
-            "toggle" => ViewValue::Toggle(option.parse().ok()?),
-            "number" => ViewValue::Number(option.parse().ok()?),
-            "word" => ViewValue::Word(option.to_owned()),
-            _ => return None,
-        };
+        let (editor, field, option) = (next()?, next()?, next()?);
         Some(Self::Choice {
             editor: EditorName::new(editor).ok()?,
             field: FieldName::new(field).ok()?,
-            option,
+            option: serde_json::from_str(option).ok()?,
         })
     }
 }
@@ -311,12 +301,8 @@ impl Timeline {
     /// The selected clip when it is the only one and names a raw take. A fit follows a
     /// performance, so a clip drawn by hand offers none.
     fn take_clip(&self, cx: &App) -> Option<Clip> {
-        if self.clips.len() != 1 {
-            return None;
-        }
-        let project = self.session.read(cx).project();
-        let clip = project.state(&project.resolve::<Clip>(self.clips.primary()?)?)?;
-        clip.take.is_some().then(|| clip.clone())
+        let clip = self.primary_notes(cx).filter(|clip| clip.take.is_some());
+        clip.filter(|_| self.clips.len() == 1)
     }
 
     /// The first selected clip, when it is a note clip.
@@ -352,16 +338,9 @@ impl Timeline {
             return;
         };
         let spec = editors.of(&primary).spec;
-        let declared = |field: &FieldName| {
-            let mut fields = spec.clip_fields().iter();
-            fields
-                .find(|(name, _)| name == field)
-                .map(|(_, view_field)| view_field)
-        };
         let (label, field, value) = match pick {
             EditorPick::Use(name) => {
-                let all = editors.all();
-                let Some(picked) = all.iter().find(|spec| spec.name == name) else {
+                let Some(picked) = editors.find(&name) else {
                     return;
                 };
                 let label = format!("Use {} editor", picked.title);
@@ -374,7 +353,8 @@ impl Timeline {
                 field,
                 option,
             } => {
-                let Some(view_field @ ViewField::Choice { options, .. }) = declared(&field) else {
+                let Some(view_field @ ViewField::Choice { options, .. }) = spec.clip_field(&field)
+                else {
                     return;
                 };
                 if editor != spec.name || !options.contains(&option) {
@@ -385,7 +365,7 @@ impl Timeline {
                 (label, field, option)
             }
             EditorPick::Toggle(field) => {
-                let Some(view_field @ ViewField::Toggle { .. }) = declared(&field) else {
+                let Some(view_field @ ViewField::Toggle { .. }) = spec.clip_field(&field) else {
                     return;
                 };
                 let on = view_field.value_in(&primary.view, &field) != ViewValue::Toggle(true);

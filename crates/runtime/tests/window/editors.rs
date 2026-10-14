@@ -275,7 +275,7 @@ fn a_choice_in_the_clip_menu_writes_the_view_and_changes_the_rows(cx: &mut TestA
     let e_flat = pitch(63);
     assert_eq!(rows(&mut opened).index_of(e_flat), None);
 
-    pick_in_clip_menu(&mut opened, &["choice:scale", "set:scale:scale:word:minor"]);
+    pick_in_clip_menu(&mut opened, &["choice:scale", "set:scale:scale:\"minor\""]);
     let view = opened.clip(PART).unwrap().view;
     assert_eq!(view, serde_json::from_str(r#"{"scale": "minor"}"#).unwrap());
     assert_eq!(opened.undo_label().as_deref(), Some("Set scale to minor"));
@@ -321,7 +321,7 @@ fn a_choice_picked_after_a_reload_writes_the_option_it_shows(cx: &mut TestAppCon
         });
         assert!(refused.is_empty());
     };
-    let minor = "set:scale:scale:word:minor";
+    let minor = "set:scale:scale:\"minor\"";
     pick_in_clip_menu(&mut opened, &["choice:scale"]);
     reload(&mut opened, &["minor", "major"]);
     let item = opened.control(&format!("menu-{minor}"));
@@ -331,7 +331,7 @@ fn a_choice_picked_after_a_reload_writes_the_option_it_shows(cx: &mut TestAppCon
 
     pick_in_clip_menu(&mut opened, &["choice:scale"]);
     reload(&mut opened, &["minor"]);
-    let item = opened.control("menu-set:scale:scale:word:major");
+    let item = opened.control("menu-set:scale:scale:\"major\"");
     opened.click(item);
     assert_eq!(opened.clip(PART).unwrap().view, view);
     assert_eq!(opened.undo_label().as_deref(), Some("Set scale to minor"));
