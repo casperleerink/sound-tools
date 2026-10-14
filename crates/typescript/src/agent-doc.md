@@ -237,6 +237,34 @@ tool({
 });
 ```
 
+## A clip editor
+
+The window shows the notes of a clip in a piano roll. For notes that are no keys, such as a drum kit or the notes of a scale, write a clip editor in `extensions/<name>.ts`: it gives the rows, and every gesture of the piano roll works on them.
+
+```ts
+import { editor } from "./sdk";
+
+const KIT = ["Kick", "Side stick", "Snare", "Clap", "Snare 2", "Low floor tom", "Closed hat", "High floor tom", "Pedal hat", "Low tom", "Open hat", "Low mid tom", "High mid tom", "Crash", "High tom", "Ride"];
+
+editor({
+  name: "drums",
+  title: "Drums",
+  grid: () => ({
+    rows: KIT.map((label, index) => ({ pitch: 36 + index, label })),
+    rowHeight: 20,
+    notes: "hit",
+  }),
+});
+```
+
+A clip shows in it when its record has `"editor": "drums"` next to `start`, `length` and `notes`.
+
+- `grid` gives 1 to 128 rows, the lowest pitch first, each a `pitch` with an optional `label` (up to 24 characters) and `shade`. `rowHeight` is 8 to 40 points, 12 when left out. `notes: "hit"` draws a note as a square one snap step long that does not resize; `"bar"`, the default, as long as the note.
+- `clip` holds the fields of the clip's `view`, each a `choice` or a `toggle`, such as `scale: choice({ options: ["major", "dorian"], default: "major" })`; a clip then has `"view": {"scale": "dorian"}`. `grid` gets their values. It runs when the file loads, once for every combination (at most 256), and never after.
+- `note` holds the fields of each note's `view`, such as `accent: toggle({ default: false })`.
+- A note whose pitch has no row gets a row of its own. The editor changes no note, and the clip plays with its track's instrument as before.
+- A value the clip's editor does not take, or a field no editor has, is a problem of the clip; it still plays.
+
 ## Check your work
 
 1. `bun x tsc -p extensions` checks the types. The first run downloads TypeScript.
