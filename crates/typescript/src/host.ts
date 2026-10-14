@@ -220,8 +220,9 @@ function described(spec: Spec, file: string) {
 function describedEditor(spec: Editor, file: string) {
   return {
     info: { name: spec.name, file, title: spec.title, clip: spec.clip ?? {}, note: spec.note ?? {} },
-    // `null` for no grid: JSON leaves out `undefined`, and the runtime would not know the answer.
-    grids: combinations(clipChoicesOf(spec)).map((clip) => [clip, made(() => spec.grid(clip) ?? null)]),
+    // Each grid as JSON text, which the runtime reads once, straight into its type. `null` for no
+    // grid: JSON leaves out `undefined`, and the runtime would not know the answer.
+    grids: combinations(clipChoicesOf(spec)).map((clip) => [clip, made(() => JSON.stringify(spec.grid(clip) ?? null))]),
   };
 }
 

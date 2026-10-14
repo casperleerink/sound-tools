@@ -195,8 +195,8 @@ pub(crate) struct LoadedTool {
 #[serde(deny_unknown_fields)]
 pub(crate) struct LoadedEditor {
     pub info: EditorInfo,
-    /// The grid for every combination of its clip fields, read once it is checked.
-    pub grids: Vec<(View, Result<Value, String>)>,
+    /// The grid for every combination of its clip fields, as JSON text.
+    pub grids: Vec<(View, Result<String, String>)>,
 }
 
 /// A load as `host.ts` sends it. Each tool and editor is read on its own, so one that this

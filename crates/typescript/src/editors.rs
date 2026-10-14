@@ -43,7 +43,7 @@ pub(crate) fn spec_of(loaded: LoadedEditor) -> Result<EditorSpec, Problem> {
         .into_iter()
         .map(|(choices, grid)| {
             let grid = grid.and_then(|grid| {
-                serde_json::from_value::<Grid>(grid).map_err(|error| error.to_string())
+                serde_json::from_str::<Grid>(&grid).map_err(|error| error.to_string())
             });
             match grid {
                 Ok(grid) => Ok((choices, grid)),
@@ -98,8 +98,9 @@ mod tests {
         .unwrap()
     }
 
-    fn row(pitch: u8) -> serde_json::Value {
-        json!({"rows": [{"pitch": pitch}]})
+    /// A grid of one row, as JSON text.
+    fn row(pitch: u8) -> String {
+        json!({"rows": [{"pitch": pitch}]}).to_string()
     }
 
     #[test]
@@ -122,7 +123,7 @@ mod tests {
             "scale",
             json!([
                 [{"scale": "major"}, {"Ok": row(60)}],
-                [{"scale": "minor"}, {"Ok": {"rows": [{"pitch": 60, "colour": "red"}]}}]
+                [{"scale": "minor"}, {"Ok": r#"{"rows": [{"pitch": 60, "colour": "red"}]}"#}]
             ]),
         );
         let refused = spec_of(unread).unwrap_err();
