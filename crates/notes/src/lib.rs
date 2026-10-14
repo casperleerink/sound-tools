@@ -39,7 +39,9 @@ use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
 
 pub use division::{Division, Feel};
-pub use editor::{EditorSpec, Editors, Grid, NoteShape, Row, Shown, ViewField, piano_roll};
+pub use editor::{
+    EditorSpec, Editors, Grid, NoteShape, Refused, Replaced, Row, Shown, ViewField, piano_roll,
+};
 pub use expression::{Expression, Wheels};
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
 pub use take::{

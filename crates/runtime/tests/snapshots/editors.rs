@@ -39,7 +39,7 @@ pub(crate) fn snapshots(
 ) -> Result<()> {
     let opened = Opened::new(cx, |project| {
         let editors = project.provided::<Editors>().context("no editors")?;
-        let refused = editors.set_project(vec![drums(), c_major()]);
+        let refused = editors.set_project(vec![drums(), c_major()]).refused;
         anyhow::ensure!(refused.is_empty(), "refused: {refused:?}");
         let mut beat = Vec::new();
         for bar in 0..2 {

@@ -2385,7 +2385,7 @@ fn main() -> Result<()> {
     cx.update(|cx| {
         let project = opened.session.read(cx).project();
         let editors = project.provided::<Editors>().context("no editors")?;
-        let refused = editors.set_project(vec![labelled()?]);
+        let refused = editors.set_project(vec![labelled()?]).refused;
         anyhow::ensure!(refused.is_empty(), "refused: {refused:?}");
         anyhow::Ok(())
     })?;

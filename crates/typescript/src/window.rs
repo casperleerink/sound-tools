@@ -1005,8 +1005,8 @@ impl Live {
     }
 
     /// Makes `specs` the clip editors of the project. One gone from the code keeps its last
-    /// spec, as a tool does. Every track checks its clips again, which also draws an open
-    /// editor again.
+    /// spec, as a tool does. When they changed, every track checks its clips again, which also
+    /// draws an open editor again.
     fn set_editors(
         &self,
         session: &Entity<Session>,
@@ -1036,7 +1036,9 @@ impl Live {
             }
             specs.push(EditorSpec::clone(&spec));
         }
-        crate::editors::set_project(&editors, specs, problems);
+        if !crate::editors::set_project(&editors, specs, problems) {
+            return;
+        }
         let project = session.read(cx).project();
         let tracks: Vec<InstanceId> = (project.instances())
             .filter(|(_, tool)| *tool == TRACK_TOOL)

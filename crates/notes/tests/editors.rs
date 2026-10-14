@@ -97,7 +97,12 @@ fn clip(editor: Option<&str>, clip_view: Value, note_views: &[Value]) -> Clip {
 
 fn editors() -> Editors {
     let editors = Editors::default();
-    assert!(editors.set_project(vec![scale(), drums()]).is_empty());
+    assert!(
+        editors
+            .set_project(vec![scale(), drums()])
+            .refused
+            .is_empty()
+    );
     editors
 }
 
@@ -237,18 +242,15 @@ fn the_piano_roll_is_a_built_in_name_and_a_name_is_taken_once() {
     let before = editors.generation();
     let mut piano = scale();
     piano.name = EditorName::piano_roll();
-    let refused = editors.set_project(vec![piano, scale(), scale()]);
+    let replaced = editors.set_project(vec![piano, scale(), scale()]);
+    let refused: Vec<(&str, &str)> = (replaced.refused.iter())
+        .map(|refused| (refused.spec.name.as_str(), refused.reason))
+        .collect();
     assert_eq!(
         refused,
         [
-            (
-                "piano-roll".to_owned(),
-                "it is the name of a built-in editor".to_owned()
-            ),
-            (
-                "scale".to_owned(),
-                "another editor of the project has this name".to_owned()
-            ),
+            ("piano-roll", "it is the name of a built-in editor"),
+            ("scale", "another editor of the project has this name"),
         ]
     );
     let names: Vec<String> = editors
@@ -257,6 +259,18 @@ fn the_piano_roll_is_a_built_in_name_and_a_name_is_taken_once() {
         .map(|spec| spec.name.as_str().to_owned())
         .collect();
     assert_eq!(names, ["piano-roll", "scale"]);
+    assert!(editors.generation() > before);
+}
+
+#[test]
+fn the_same_editors_again_leave_the_generation() {
+    let editors = editors();
+    let before = editors.generation();
+    assert!(!editors.set_project(vec![scale(), drums()]).changed);
+    assert_eq!(editors.generation(), before);
+    let mut retitled = scale();
+    retitled.title = "Scales".to_owned();
+    assert!(editors.set_project(vec![retitled, drums()]).changed);
     assert!(editors.generation() > before);
 }
 

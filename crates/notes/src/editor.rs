@@ -168,7 +168,7 @@ impl ViewField {
 
 /// A clip editor: its fields, and its grid for every combination of its clip choices, made
 /// once when it loads.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EditorSpec {
     pub name: EditorName,
     pub title: String,
@@ -349,6 +349,21 @@ impl Catalog {
     }
 }
 
+/// What [`Editors::set_project`] did.
+#[derive(Debug)]
+pub struct Replaced {
+    /// Whether the editors differ from those before. When they do not, the generation stays.
+    pub changed: bool,
+    pub refused: Vec<Refused>,
+}
+
+/// An editor [`Editors::set_project`] did not take, and why.
+#[derive(Debug)]
+pub struct Refused {
+    pub spec: EditorSpec,
+    pub reason: &'static str,
+}
+
 /// What the window shows a clip in.
 pub struct Shown {
     pub spec: Arc<EditorSpec>,
@@ -359,28 +374,29 @@ pub struct Shown {
 }
 
 impl Editors {
-    /// Replaces the editors of the project. Gives the name of each refused one and why: the
-    /// name of the piano roll, or a name another one has.
-    pub fn set_project(&self, specs: Vec<EditorSpec>) -> Vec<(String, String)> {
+    /// Replaces the editors of the project. Refuses the name of the piano roll, and a name
+    /// another one has.
+    pub fn set_project(&self, specs: Vec<EditorSpec>) -> Replaced {
         let mut catalog = self.0.borrow_mut();
         let mut refused = Vec::new();
         let mut kept: Vec<Arc<EditorSpec>> = Vec::new();
         for spec in specs {
-            let name = spec.name.as_str().to_owned();
-            if spec.name == catalog.piano_roll.name {
-                refused.push((name, "it is the name of a built-in editor".to_owned()));
+            let reason = if spec.name == catalog.piano_roll.name {
+                "it is the name of a built-in editor"
             } else if kept.iter().any(|other| other.name == spec.name) {
-                refused.push((
-                    name,
-                    "another editor of the project has this name".to_owned(),
-                ));
+                "another editor of the project has this name"
             } else {
                 kept.push(Arc::new(spec));
-            }
+                continue;
+            };
+            refused.push(Refused { spec, reason });
         }
-        catalog.project = kept;
-        catalog.generation += 1;
-        refused
+        let changed = catalog.project != kept;
+        if changed {
+            catalog.project = kept;
+            catalog.generation += 1;
+        }
+        Replaced { changed, refused }
     }
 
     pub fn all(&self) -> Vec<Arc<EditorSpec>> {

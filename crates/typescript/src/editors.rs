@@ -6,7 +6,7 @@ use std::fmt;
 
 use serde::Deserialize;
 use sound_core::Problem;
-use sound_notes::{EditorName, EditorSpec, Editors, FieldName, Grid, ViewField};
+use sound_notes::{EditorName, EditorSpec, Editors, FieldName, Grid, Refused, ViewField};
 
 use crate::FOLDER;
 use crate::bun::LoadedEditor;
@@ -66,18 +66,18 @@ fn fields(named: Named<ViewField>) -> Result<Vec<(FieldName, ViewField)>, String
 }
 
 /// Makes `specs` the editors of the project in `editors`. Each one it refuses is a problem.
-pub(crate) fn set_project(editors: &Editors, specs: Vec<EditorSpec>, problems: &mut Vec<Problem>) {
-    let files: Vec<(String, String)> = (specs.iter())
-        .map(|spec| {
-            let file = spec.file.clone().unwrap_or_default();
-            (spec.name.as_str().to_owned(), file)
-        })
-        .collect();
-    for (name, why) in editors.set_project(specs) {
-        let file = files.iter().find(|(named, _)| *named == name);
-        let file = file.map_or("", |(_, file)| file.as_str());
-        problems.push(problem(file, &name, why));
+/// Whether the editors changed.
+pub(crate) fn set_project(
+    editors: &Editors,
+    specs: Vec<EditorSpec>,
+    problems: &mut Vec<Problem>,
+) -> bool {
+    let replaced = editors.set_project(specs);
+    for Refused { spec, reason } in replaced.refused {
+        let file = spec.file.as_deref().unwrap_or_default();
+        problems.push(problem(file, spec.name.as_str(), reason));
     }
+    replaced.changed
 }
 
 #[cfg(test)]

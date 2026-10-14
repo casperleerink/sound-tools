@@ -29,7 +29,12 @@ fn part(editor: &str, notes: Vec<Note>) -> Clip {
 fn open(cx: &mut TestAppContext, part: Clip) -> Opened<'_> {
     let mut opened = support::open_with(cx, |project| {
         let editors = project.provided::<Editors>().unwrap();
-        assert!(editors.set_project(vec![drums(), c_major()]).is_empty());
+        assert!(
+            editors
+                .set_project(vec![drums(), c_major()])
+                .refused
+                .is_empty()
+        );
         let mut changes = Changes::new();
         changes.create(id(PART), part);
         project.commit("Add clip", changes).unwrap();
@@ -312,7 +317,7 @@ fn a_choice_picked_after_a_reload_writes_the_option_it_shows(cx: &mut TestAppCon
     let reload = |opened: &mut Opened<'_>, scales: &[&str]| {
         let refused = opened.project(|project| {
             let editors = project.provided::<Editors>().unwrap();
-            editors.set_project(vec![drums(), scale(scales)])
+            editors.set_project(vec![drums(), scale(scales)]).refused
         });
         assert!(refused.is_empty());
     };

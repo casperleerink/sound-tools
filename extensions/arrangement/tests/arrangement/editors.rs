@@ -34,7 +34,7 @@ fn in_editor(editor: &str, clip_view: &str) -> Clip {
 fn a_clip_whose_editor_or_view_is_wrong_is_a_problem_of_its_track_and_still_plays() {
     let harness = Harness::new();
     let editors = harness.project.provided::<Editors>().unwrap();
-    assert!(editors.set_project(vec![scale()]).is_empty());
+    assert!(editors.set_project(vec![scale()]).refused.is_empty());
     let clips = vec![
         in_editor("scale", r#"{"scale": "minor"}"#),
         in_editor("drumz", r#"{"kit": "808"}"#),
