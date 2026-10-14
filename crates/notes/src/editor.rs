@@ -122,6 +122,12 @@ impl ViewField {
         }
     }
 
+    /// Its value in `view`: the default when `view` lacks it or has a value it does not take.
+    pub fn value_in(&self, view: &View, field: &FieldName) -> ViewValue {
+        let value = view.get(field.as_str()).filter(|value| self.accepts(value));
+        value.cloned().unwrap_or_else(|| self.default_value())
+    }
+
     pub fn accepts(&self, value: &ViewValue) -> bool {
         match self {
             Self::Choice { options, .. } => options.contains(value),
@@ -256,11 +262,7 @@ impl EditorSpec {
 fn chosen(fields: &[(FieldName, ViewField)], view: &View) -> View {
     let mut choices = View::default();
     for (field, view_field) in fields {
-        let value = view
-            .get(field.as_str())
-            .filter(|value| view_field.accepts(value));
-        let value = value.cloned().unwrap_or_else(|| view_field.default_value());
-        choices.insert(field.clone(), value);
+        choices.insert(field.clone(), view_field.value_in(view, field));
     }
     choices
 }

@@ -4,6 +4,8 @@
 //!   hits as squares, one selected.
 //! - `editors-scale.png`: a tune in C major: only the rows of the scale, the Cs named, and an
 //!   F# on an extra row of its own, shaded as outside the clip and named.
+//! - `editors-menu.png`: the menu of that clip, its Editor submenu open on Scale, and the row
+//!   of its scale choice.
 
 use anyhow::{Context as _, Result};
 use gpui::HeadlessAppContext;
@@ -76,5 +78,14 @@ pub(crate) fn snapshots(
     save(cx, &opened, "editors-drums")?;
     opened.open_editor(&InstanceId::new(TUNE)?, cx)?;
     save(cx, &opened, "editors-scale")?;
+    let timeline = opened.timeline_view(cx)?;
+    cx.update_window(opened.window.into(), |_, window, cx| {
+        timeline.update(cx, |timeline, cx| timeline.open_clip_menu(window, cx))
+    })?;
+    cx.run_until_parked();
+    for key in ["down", "right"] {
+        opened.key(key, cx)?;
+    }
+    save(cx, &opened, "editors-menu")?;
     Ok(())
 }

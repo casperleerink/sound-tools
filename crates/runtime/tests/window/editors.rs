@@ -1,6 +1,7 @@
 //! Clips in editors of the project, see `shared/editors.rs`: the rows of the editor show, a
 //! drag and the arrows move by rows, a drum hit is one step, and the editor and the views of a
 //! clip survive every edit. A clip that names an editor the project lacks opens as a piano roll.
+//! The clip menu picks the editor and its choices.
 
 use std::rc::Rc;
 
@@ -226,4 +227,81 @@ fn a_clip_whose_editor_is_missing_opens_as_a_piano_roll_and_keeps_it(cx: &mut Te
     let clip = opened.clip(PART).unwrap();
     assert_eq!(clip.notes, [note(0, 480, 61)]);
     assert_eq!((clip.editor, clip.view), (missing.editor, missing.view));
+}
+
+/// Opens the clip menu on `part` and clicks through `rows`.
+fn pick_in_clip_menu(opened: &mut Opened<'_>, rows: &[&str]) {
+    let on_part = opened.at(BAR + 100, 0);
+    opened.right_click(on_part);
+    for row in rows {
+        let row = opened.control(&format!("menu-{row}"));
+        opened.click(row);
+    }
+}
+
+#[gpui::test]
+fn the_clip_menu_picks_the_editor_as_one_undo_step(cx: &mut TestAppContext) {
+    let mut opened = open(cx, clip(BAR, 2 * BAR, vec![note(0, 480, 38)]));
+    let plain = opened.clip_file(PART).unwrap();
+    assert_eq!(rows(&mut opened).count(), 128);
+
+    pick_in_clip_menu(&mut opened, &["editor", "editor:drums"]);
+    assert_eq!(opened.clip(PART).unwrap().editor, drums().name.into());
+    assert_eq!(opened.undo_label().as_deref(), Some("Use Drums editor"));
+    assert_eq!(rows(&mut opened).count(), 16);
+    opened.keys("secondary-z");
+    assert_eq!(opened.clip(PART).unwrap().editor, None);
+    assert_eq!(rows(&mut opened).count(), 128);
+
+    // Back to the piano roll from the drums: the file is as it was, with no `editor`.
+    opened.keys("shift-secondary-z");
+    pick_in_clip_menu(&mut opened, &["editor", "editor:piano-roll"]);
+    assert_eq!(
+        opened.undo_label().as_deref(),
+        Some("Use Piano roll editor")
+    );
+    assert_eq!(opened.clip_file(PART).unwrap(), plain);
+}
+
+#[gpui::test]
+fn a_choice_in_the_clip_menu_writes_the_view_and_changes_the_rows(cx: &mut TestAppContext) {
+    let mut opened = open(cx, part("scale", vec![note(0, 480, 60)]));
+    let e_flat = pitch(63);
+    assert_eq!(rows(&mut opened).index_of(e_flat), None);
+
+    pick_in_clip_menu(&mut opened, &["choice:scale", "set:scale:1"]);
+    let view = opened.clip(PART).unwrap().view;
+    assert_eq!(view, serde_json::from_str(r#"{"scale": "minor"}"#).unwrap());
+    assert_eq!(opened.undo_label().as_deref(), Some("Set scale to minor"));
+    assert!(rows(&mut opened).index_of(e_flat).is_some());
+}
+
+/// With only the piano roll there is nothing to pick, so the menu is as it was before editors.
+/// A clip naming an editor the project lacks still offers the piano roll.
+#[gpui::test]
+fn with_only_the_piano_roll_the_clip_menu_has_no_editor_row(cx: &mut TestAppContext) {
+    let mut opened = support::open_with(cx, |project| {
+        let mut changes = Changes::new();
+        changes.create(id(PART), clip(BAR, BAR, vec![]));
+        let missing = "arrangement/track-1/missing";
+        let mut drumz = clip(4 * BAR, BAR, vec![]);
+        drumz.editor = Some(EditorName::new("drumz").unwrap());
+        changes.create(id(missing), drumz);
+        project.commit("Add clips", changes).unwrap();
+    });
+    let on_part = opened.at(BAR + 100, 0);
+    opened.right_click(on_part);
+    assert!(opened.find("menu-copy").is_some());
+    assert!(opened.find("menu-editor").is_none());
+    opened.keys("escape");
+
+    let on_missing = opened.at(4 * BAR + 100, 0);
+    opened.right_click(on_missing);
+    let editor = opened.control("menu-editor");
+    opened.click(editor);
+    assert!(opened.find("menu-editor:drumz").is_some());
+    let piano_roll = opened.control("menu-editor:piano-roll");
+    opened.click(piano_roll);
+    let missing = opened.clip("arrangement/track-1/missing").unwrap();
+    assert_eq!(missing.editor, None);
 }
