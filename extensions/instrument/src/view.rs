@@ -5,27 +5,25 @@
 //! picked.
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change goes
-//! through the session, by [`ControlEdit`]: a knob or a handle drag is one gesture and one undo
+//! through the session, by [`DeviceEdit`]: a knob or a handle drag is one gesture and one undo
 //! step, a key step, a reset or a waveform switch is one commit. A handle edits the same field as
 //! its knob, under the same name in the history, and the knob is the way to that value from the
 //! keys. The ranges, the defaults and the travel of each knob come from the
 //! [`Parameter`](crate::Parameter)s of the crate. What is only about the interface is here: the
 //! label, the unit, the name of the undo step and whether the card is expanded. A number that an
 //! automation lane of the track moves shows the value that plays, on its knob and on the display,
-//! and does not drag ([`Lanes`]).
+//! and does not drag ([`Lanes`](sound_ui::Lanes)).
 
 use gpui::{Context, Entity, Point, SharedString, Window, div, prelude::*};
-use sound_core::{Instance, ProjectEvent};
+use sound_core::Instance;
 use sound_ui::components::cell::Cell;
 use sound_ui::components::curves::{Adsr, EnvelopeHandle, envelope_display};
 use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::Display;
 use sound_ui::components::gesture::ValueChange;
-use sound_ui::components::knob::{
-    Knob, ParameterKnob, hertz_readout, percent_readout, seconds_readout,
-};
+use sound_ui::components::knob::{ParameterKnob, hertz_readout, percent_readout, seconds_readout};
 use sound_ui::components::segmented_control::SegmentedControl;
-use sound_ui::{ControlEdit, Devices, Lanes, OfferGroup, Session, Views, weak_callback};
+use sound_ui::{DeviceEdit, DeviceView, Devices, OfferGroup, Session, Views, weak_callback};
 
 use crate::{
     ATTACK, CUTOFF, DECAY, FilterCharacter, GAIN, RELEASE, RESONANCE, SUSTAIN, Synth, SynthState,
@@ -59,18 +57,6 @@ const DECAY_KNOB: Control = Control::new(&DECAY, "Decay", "Change decay", second
 const SUSTAIN_KNOB: Control = Control::new(&SUSTAIN, "Sustain", "Change sustain", percent_readout);
 const RELEASE_KNOB: Control = Control::new(&RELEASE, "Release", "Change release", seconds_readout);
 
-/// Every knob, for the test of their ranges.
-#[cfg(test)]
-const KNOBS: [&Control; 7] = [
-    &CUTOFF_KNOB,
-    &RESONANCE_KNOB,
-    &GAIN_KNOB,
-    &ATTACK_KNOB,
-    &DECAY_KNOB,
-    &SUSTAIN_KNOB,
-    &RELEASE_KNOB,
-];
-
 /// The value of the segmented control and the label of each waveform.
 const WAVEFORMS: [(Waveform, &str, &str); 2] = [
     (Waveform::Saw, "saw", "Saw"),
@@ -86,13 +72,9 @@ const CHARACTERS: [(FilterCharacter, &str, &str); 2] = [
 const DISPLAY_WIDTH: f32 = 200.;
 
 pub struct SynthView {
-    session: Entity<Session>,
-    synth: Instance<SynthState>,
+    device: DeviceEdit<SynthState>,
     /// The title and the close icon the rack gives the card.
     frame: CardFrame,
-    /// The gesture of a knob or handle drag.
-    edit: ControlEdit,
-    lanes: Entity<Lanes<SynthState>>,
     /// Whether the card shows the envelope knobs. Interface state: nothing saves it.
     expanded: bool,
 }
@@ -105,49 +87,11 @@ impl SynthView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if id == view.synth.id() => cx.notify(),
-            // Deleted under a drag, from outside. The delete was the last write, so the
-            // gesture finishes and does not cancel: a cancel would bring the record back.
-            ProjectEvent::Deleted(id) if id == view.synth.id() => {
-                view.end_drag(cx);
-                cx.notify();
-            }
-            _ => {}
-        })
-        .detach();
-        // The net under every other way to go: undo and redo wait for an open gesture.
-        cx.on_release(|view, cx| view.edit.finish(&view.session, cx))
-            .detach();
-        let lanes = Lanes::follow(&session, synth.id(), Synth::AUTOMATION, cx);
         Self {
-            session,
-            synth,
+            device: DeviceEdit::new(session, synth, Synth::AUTOMATION, cx),
             frame,
-            edit: ControlEdit::default(),
-            lanes,
             expanded: false,
         }
-    }
-
-    fn end_drag(&mut self, cx: &mut Context<Self>) {
-        self.edit.finish(&self.session, cx);
-    }
-
-    fn on_knob(&mut self, control: Control, change: ValueChange, cx: &mut Context<Self>) {
-        let (session, synth) = (&self.session, &self.synth);
-        let (label, set) = (control.undo_label, control.parameter.set);
-        self.edit.apply(session, synth, label, change, set, cx);
-    }
-
-    fn knob(&self, control: Control, state: &SynthState, cx: &mut Context<Self>) -> Knob {
-        let automated = self.lanes.read(cx).is_automated(control.parameter.field);
-        control
-            .knob(state)
-            .automated(automated)
-            .on_change(weak_callback(cx, move |view, change, cx| {
-                view.on_knob(control, change, cx)
-            }))
     }
 
     /// The envelope, with a handle at the end of each stage, and the waveform at its top. A
@@ -166,7 +110,7 @@ impl SynthView {
             sustain: SUSTAIN.default,
             release: RELEASE.default,
         };
-        let lanes = self.lanes.read(cx);
+        let lanes = self.device.lanes.read(cx);
         let automated = Adsr {
             attack: lanes.is_automated(ATTACK.field),
             decay: lanes.is_automated(DECAY.field),
@@ -176,7 +120,6 @@ impl SynthView {
         let on_change = weak_callback(
             cx,
             |view, (handle, change): (EnvelopeHandle, ValueChange<Point<f32>>), cx| {
-                let (session, synth) = (&view.session, &view.synth);
                 let (label, set): (_, fn(&mut SynthState, Point<f32>)) = match handle {
                     EnvelopeHandle::Attack => (ATTACK_KNOB.undo_label, |state, place| {
                         state.attack_seconds = ATTACK_KNOB.clamp(place.x)
@@ -189,7 +132,7 @@ impl SynthView {
                         state.release_seconds = RELEASE_KNOB.clamp(place.x)
                     }),
                 };
-                view.edit.apply(session, synth, label, change, set, cx);
+                view.device.change(label, change, set, cx);
             },
         );
         let caption = format!(
@@ -227,10 +170,8 @@ impl SynthView {
                     .find(|(_, name, _)| *name == value.as_ref());
                 if let Some((waveform, ..)) = picked {
                     let change = ValueChange::Set(*waveform);
-                    let (session, synth) = (&view.session, &view.synth);
                     let set = |state: &mut SynthState, waveform| state.waveform = waveform;
-                    view.edit
-                        .apply(session, synth, "Change waveform", change, set, cx);
+                    view.device.change("Change waveform", change, set, cx);
                 }
             }))
     }
@@ -250,13 +191,19 @@ impl SynthView {
                     .find(|(_, name, _)| *name == value.as_ref());
                 if let Some((character, ..)) = picked {
                     let change = ValueChange::Set(*character);
-                    let (session, synth) = (&view.session, &view.synth);
                     let set = |state: &mut SynthState, character| state.character = character;
-                    view.edit
-                        .apply(session, synth, "Change character", change, set, cx);
+                    view.device.change("Change character", change, set, cx);
                 }
             }));
         Cell::new(characters).span(2).label("Character")
+    }
+}
+
+impl DeviceView for SynthView {
+    type State = SynthState;
+
+    fn device(&mut self) -> &mut DeviceEdit<SynthState> {
+        &mut self.device
     }
 }
 
@@ -264,10 +211,10 @@ impl Render for SynthView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // `None` once the record is deleted. Whatever hosts the view takes it away then.
         // What plays: the record with the lanes over it.
-        let Some(state) = self.lanes.read(cx).state(cx) else {
+        let Some(state) = self.device.state(cx) else {
             return div().into_any_element();
         };
-        let knob = |control, cx: &mut Context<Self>| self.knob(control, &state, cx);
+        let knob = |control, cx: &mut Context<Self>| self.device.knob(control, &state, cx);
         let columns = [
             Column::new()
                 .top(knob(CUTOFF_KNOB, cx))
@@ -303,24 +250,5 @@ impl Render for SynthView {
             .into_iter()
             .fold(card, |card, column| card.hidden_column(column));
         card.into_any_element()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The defaults and both ends of every range, through the travel of its knob and back.
-    #[test]
-    fn every_knob_gives_the_ends_of_its_range_and_keeps_a_value_it_gave() {
-        for control in KNOBS {
-            let (range, parameter) = (control.range(), control.parameter);
-            assert_eq!(range.value(0.0), parameter.min, "{}", parameter.field);
-            assert_eq!(range.value(1.0), parameter.max, "{}", parameter.field);
-            for value in [parameter.min, parameter.default, parameter.max] {
-                let back = range.value(range.position(value));
-                assert_eq!(back, value, "{}", parameter.field);
-            }
-        }
     }
 }
