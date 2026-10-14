@@ -44,7 +44,26 @@ In 4/4 this clip covers bars 5 to 8. It plays a C chord for the whole of bar 5 a
 - A chord is several notes with the same `start`. Write one note per line, sorted by `start`.
 - Two notes of the same pitch that overlap on one track sound as one: the pitch is held until the last of them ends.
 - Clips on one track may overlap in time. The notes of both play.
-- A clip the composer recorded also has `pedal`, the sustain pedal, and `take`, the raw take it came from. Keep both as they are when you change, move or copy the clip, and leave `pedal` out of a clip you write. Read `agent-docs/takes.md` before you touch anything under `assets/takes/`.
+- A clip the composer recorded also has `pedal`, the sustain pedal, and `take`, the raw take it came from. Leave `pedal` out of a clip you write. Read `agent-docs/takes.md` before you touch anything under `assets/takes/`.
+- `editor`: the clip editor the window shows the clip in, the piano roll when left out. The project's own are `editor({...})` in `extensions/*.ts`: read the file for its name and fields. `agent-docs/extensions.md` covers writing one.
+- `view`: what the editor keeps, flat, on the clip and on each note, as in the example below.
+- Keep `pedal`, `take`, `editor` and `view` as they are when you change, move or copy a clip.
+
+```json state/arrangement/piano/verse.json
+{
+  "tool": "arrangement.clip",
+  "state": {
+    "start": 30720,
+    "length": 3840,
+    "notes": [
+      {"start": 0, "length": 960, "pitch": 62, "velocity": 90},
+      {"start": 960, "length": 960, "pitch": 65, "velocity": 90, "view": {"accent": true}}
+    ],
+    "editor": "scale",
+    "view": {"scale": "dorian"}
+  }
+}
+```
 
 ## Bend, mod wheel and pressure: the lanes of a clip
 

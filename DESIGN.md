@@ -9,7 +9,7 @@ The design principles of the Sound Tools UI, and the rules of how it is used. Wh
 Every element must earn its keep. Lots of air, colour only where it means something, calm type. Audio tools are usually crowded; we do not copy that.
 
 - A control that does nothing yet is not shown. It is noise.
-- No legends, no zoom controls, no scrollbars, no grid in the arrangement. The note editor is the one place with a grid, because notes are placed by it.
+- No legends, no zoom controls, no scrollbars, no grid in the arrangement. The clip editor is the one place with a grid, because notes are placed by it.
 - No toolbars and no tools: what the pointer is on decides what a drag does.
 - Chrome is one quiet menu on the project name. The transport is the one floating shape, in the title row, and floats over nothing.
 - Cards have no meta chips, rack ears, screws or gradients. Secondary parameters sit behind the expand icon of a card.
@@ -63,10 +63,11 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 - Every drag and every key that changes the piece is one undo step. Undo waits while a drag is going on.
 - There is no save. Every finished edit is already in the folder.
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.
-- The arrangement and the note editor select and edit the same way: click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes. They share one clipboard.
+- The arrangement and the clip editor select and edit the same way: click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes. They share one clipboard.
 - Double click on empty space makes what lives there: a clip, a note, a section. On a control it sets the default.
 - A right click in the ruler adds a tempo change, a time signature change or a section; the menu row under the pointer or the keys shows where it lands.
-- A right click on a clip opens its menu: what the keys do, and Fit tempo to take on a recorded clip. The menu opens and is picked from the way the system's own menus are.
+- A note clip shows in its clip editor: the piano roll or one of the project. Every clip editor selects, drags and takes keys as the piano roll does; up and down move a note to the next row.
+- A right click on a clip opens its menu: what the keys do, its editor and the editor's choices once the project has editors, and Fit tempo to take on a recorded clip. The menu opens and is picked from the way the system's own menus are.
 - Alt-drag copies clips and notes, and across a lane erases its points.
 - Adding something never changes the sound. A new tempo or time signature change keeps what played there; a new automation lane holds the value its number plays now.
 - A drag shows what it will do before the drop: a lavender ring where it lands, and the automation a clip takes along.

@@ -231,15 +231,17 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
     // Every plugin the docs name is one no machine is expected to have: two instruments,
     // one per format, and the effect of the arrangement doc, so the lane on a pin of one of
     // them moves nothing. The library instrument of the library doc is not on this machine
-    // either: the test has no library.
+    // either: the test has no library. Nor is the clip editor of the arrangement doc, which
+    // a project writes in its `extensions/`.
     let expected = [
+        "state/arrangement/piano/instance.json: verse.json names the clip editor \"scale\", which this project does not have",
         "state/arrangement/piano/warmth.json: this machine has no CLAP plugin with the id \"com.example.warmth\"",
         "state/arrangement/rhodes/instance.json: automation[0].device is \"instrument\", and instrument.json takes no automation",
         "state/arrangement/rhodes/instrument.json: this machine has no CLAP plugin with the id \"com.example.piano\"",
         "state/arrangement/strings/instrument.json: this machine has no VST 3 plugin",
         "state/arrangement/violins/instrument.json: Violin section, sustain cannot play",
     ];
-    assert_eq!(problems.len(), 5, "{problems:?}");
+    assert_eq!(problems.len(), 6, "{problems:?}");
     for (problem, expected) in problems.iter().zip(expected) {
         assert!(problem.starts_with(expected), "{problems:?}");
     }
@@ -281,6 +283,7 @@ fn every_json_example_of_the_map_and_the_docs_is_a_record_as_the_runtime_writes_
             "arrangement/piano",
             "arrangement/piano/instrument",
             "arrangement/piano/intro",
+            "arrangement/piano/verse",
             "arrangement/piano/warmth",
             "arrangement/rhodes",
             "arrangement/rhodes/instrument",
