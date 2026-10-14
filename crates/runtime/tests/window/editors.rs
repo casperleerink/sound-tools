@@ -95,16 +95,17 @@ fn in_a_scale_a_drag_moves_a_note_by_rows(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_arrows_step_by_rows_shift_goes_an_octave_and_both_stop_at_the_ends(cx: &mut TestAppContext) {
+fn the_arrows_step_by_rows_and_shift_goes_an_octave_where_it_has_a_row(cx: &mut TestAppContext) {
     let mut opened = open(cx, part("scale", vec![note(0, 480, 64)]));
     let on_note = opened.in_editor(BAR + 100, 64);
     opened.click(on_note);
     let steps = [
         ("up", 65),
         ("shift-up", 77),
-        // Four rows up to C6, the top row.
-        ("shift-up", 84),
-        ("up", 84),
+        // No row an octave above F5: the scale ends at C6.
+        ("shift-up", 77),
+        ("up", 79),
+        ("up up up up", 84),
         ("shift-down", 72),
         ("down", 71),
     ];

@@ -2,13 +2,14 @@
 //! first, and an extra row for each pitch a note has that the grid has no row for. Pure math,
 //! like [`super::roll`].
 //!
-//! A step is one row, whatever pitches the rows have: up a step is the row above.
+//! A step is one row, whatever pitches the rows have: up a step is the row above. An octave
+//! is 12 semitones.
 
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 
-use sound_notes::{Grid, NoteShape, Pitch, Row};
+use sound_notes::{Grid, Note, NoteShape, Pitch, Row};
 
 use super::layout::Viewport;
 
@@ -143,19 +144,31 @@ impl Rows {
         self.top_first.get(moved).map_or(pitch, |(pitch, _)| *pitch)
     }
 
-    /// The steps an octave up or down from a pitch is: the rows up to 12 semitones away. On
-    /// a piano roll that is 12 rows, and in a scale of seven notes 7.
-    pub fn octave(&self, pitch: Pitch, up: bool) -> i64 {
-        let number = i64::from(pitch.number());
-        let within = |(other, _): &&(Pitch, Option<usize>)| {
-            let distance = i64::from(other.number()) - number;
-            match up {
-                true => (1..=12).contains(&distance),
-                false => (-12..=-1).contains(&distance),
-            }
+    /// The notes an octave up or down: 12 semitones, fewer where pitch 0 or 127 stops them.
+    /// They stay when one would land on a pitch the grid has no row for, so the intervals of
+    /// a chord never change.
+    pub fn octave(&self, notes: &[Note], up: bool) -> Vec<Note> {
+        let pitches = notes.iter().map(|note| i64::from(note.pitch.number()));
+        let (lowest, highest) = (pitches.clone().min(), pitches.max());
+        let semitones = match up {
+            true => 12.min(127 - highest.unwrap_or(127)),
+            false => -(12.min(lowest.unwrap_or(0))),
         };
-        let count = self.top_first.iter().filter(within).count() as i64;
-        if up { count } else { -count }
+        let moved: Option<Vec<Note>> = notes
+            .iter()
+            .map(|note| {
+                let pitch = Pitch::nearest(i64::from(note.pitch.number()) + semitones);
+                let row = self
+                    .index_of(pitch)
+                    .and_then(|index| self.top_first.get(index));
+                let in_grid = row.is_some_and(|(_, row)| row.is_some());
+                in_grid.then(|| Note {
+                    pitch,
+                    ..note.clone()
+                })
+            })
+            .collect();
+        moved.unwrap_or_else(|| notes.to_vec())
     }
 
     /// The rows that show, whole or in part, in a note area of this height.
@@ -173,7 +186,8 @@ impl Rows {
 
 #[cfg(test)]
 mod tests {
-    use sound_notes::{View, piano_roll};
+    use sound_core::Ticks;
+    use sound_notes::{Length, Velocity, View, piano_roll};
 
     use super::*;
 
@@ -188,13 +202,17 @@ mod tests {
 
     /// C major from C4 to C5, 20 pt rows.
     fn c_major(extra: &[u8]) -> Rows {
-        let rows = [60, 62, 64, 65, 67, 69, 71, 72].map(|number| Row {
-            pitch: pitch(number),
+        scale(&[60, 62, 64, 65, 67, 69, 71, 72], extra)
+    }
+
+    fn scale(pitches: &[u8], extra: &[u8]) -> Rows {
+        let rows = pitches.iter().map(|number| Row {
+            pitch: pitch(*number),
             label: None,
             shade: false,
         });
         let grid = Grid {
-            rows: rows.to_vec(),
+            rows: rows.collect(),
             row_height: 20.0,
             notes: NoteShape::Hit,
         };
@@ -277,21 +295,42 @@ mod tests {
         assert_eq!(piano.stepped(pitch(126), 5), pitch(127));
     }
 
+    fn notes(pitches: &[u8]) -> Vec<Note> {
+        let length = Length::at_least_one(Ticks(480));
+        let notes = pitches
+            .iter()
+            .map(|number| Note::new(Ticks(0), length, pitch(*number), Velocity::nearest(100)));
+        notes.collect()
+    }
+
+    fn octave(rows: &Rows, pitches: &[u8], up: bool) -> Vec<u8> {
+        let moved = rows.octave(&notes(pitches), up);
+        moved.iter().map(|note| note.pitch.number()).collect()
+    }
+
     #[test]
-    fn an_octave_is_the_rows_up_to_twelve_semitones_away() {
+    fn an_octave_is_twelve_semitones_where_every_note_has_a_row() {
+        // C major from C3 to C6, and F#4 off the scale.
+        let pitches: Vec<u8> = (48..=84)
+            .filter(|number| [0, 2, 4, 5, 7, 9, 11].contains(&(number % 12)))
+            .collect();
+        let scale = scale(&pitches, &[66]);
+        // The rows between C4 and C5 include the extra row of F#4; the chord keeps its intervals.
+        assert_eq!(octave(&scale, &[60, 69], true), [72, 81]);
+        assert_eq!(octave(&scale, &[72, 81], false), [60, 69]);
+        // F#5 has no row: nothing moves.
+        assert_eq!(octave(&scale, &[66], true), [66]);
+        assert_eq!(octave(&scale, &[60, 66], true), [60, 66]);
+        // A6 is above the top row.
+        assert_eq!(octave(&scale, &[72, 81], true), [72, 81]);
+    }
+
+    #[test]
+    fn on_the_piano_roll_an_octave_stops_at_the_top_and_the_bottom_pitch() {
         let piano = piano(&[]);
-        assert_eq!(piano.octave(pitch(60), true), 12);
-        assert_eq!(piano.octave(pitch(60), false), -12);
-        // Near the ends there are fewer rows.
-        assert_eq!(piano.octave(pitch(120), true), 7);
-        assert_eq!(piano.octave(pitch(5), false), -5);
-        let scale = c_major(&[]);
-        assert_eq!(scale.octave(pitch(60), true), 7);
-        assert_eq!(
-            scale.stepped(pitch(60), scale.octave(pitch(60), true)),
-            pitch(72)
-        );
-        assert_eq!(scale.octave(pitch(64), true), 5);
-        assert_eq!(scale.octave(pitch(72), true), 0);
+        assert_eq!(octave(&piano, &[60, 64], true), [72, 76]);
+        assert_eq!(octave(&piano, &[118, 120], true), [125, 127]);
+        assert_eq!(octave(&piano, &[5, 9], false), [0, 4]);
+        assert_eq!(octave(&piano, &[127], true), [127]);
     }
 }
