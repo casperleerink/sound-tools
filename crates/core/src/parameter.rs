@@ -234,9 +234,10 @@ impl Scale {
 }
 
 /// For a tool's tests: whether `validate` of `record` takes the default and both ends of every
-/// parameter, and refuses a value past the top with an error that names the field. So a
-/// default outside its range, or a parameter that `validate` forgets, fails. `of` is the object
-/// of `record` that the parameters belong to, such as one band of an EQ.
+/// parameter, and refuses a value past the top with an error that names the field, and whether
+/// a knob gives each of those values back. So a default outside its range, a parameter that
+/// `validate` forgets, or a default a knob rounds away, fails. `of` is the object of `record`
+/// that the parameters belong to, such as one band of an EQ.
 pub fn check_parameter_ranges<R: State, S>(
     record: &R,
     parameters: &[&Parameter<S>],
@@ -257,14 +258,19 @@ pub fn check_parameter_ranges<R: State, S>(
             set(of(&mut record), value);
             record
         };
+        let range = ValueRange::of(parameter);
         for value in [*min, *default, *max] {
             let refused = |error| format!("{field} {value} is refused: {error}");
             with(value).validate().map_err(refused)?;
+            let back = range.value(range.position(value));
+            if back != value {
+                return Err(format!("a knob on {field} gives {back} for {value}"));
+            }
         }
         let past = max.abs() * 2.0 + 1.0;
         let mut record = with(past);
         // A field whose type cannot hold a value past the top, such as a pitch, needs no check.
-        if ValueRange::of(parameter).contains(get(of(&mut record))) {
+        if range.contains(get(of(&mut record))) {
             continue;
         }
         match record.validate() {
