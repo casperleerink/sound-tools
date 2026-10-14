@@ -108,14 +108,14 @@ pub enum ViewField {
 
 impl ViewField {
     /// Every value it takes.
-    pub fn options(&self) -> Vec<ViewValue> {
+    fn options(&self) -> Vec<ViewValue> {
         match self {
             Self::Choice { options, .. } => options.clone(),
             Self::Toggle { .. } => vec![ViewValue::Toggle(false), ViewValue::Toggle(true)],
         }
     }
 
-    pub fn default_value(&self) -> ViewValue {
+    fn default_value(&self) -> ViewValue {
         match self {
             Self::Choice { default, .. } => default.clone(),
             Self::Toggle { default, .. } => ViewValue::Toggle(*default),
@@ -128,7 +128,7 @@ impl ViewField {
         value.cloned().unwrap_or_else(|| self.default_value())
     }
 
-    pub fn accepts(&self, value: &ViewValue) -> bool {
+    fn accepts(&self, value: &ViewValue) -> bool {
         match self {
             Self::Choice { options, .. } => options.contains(value),
             Self::Toggle { .. } => matches!(value, ViewValue::Toggle(_)),
