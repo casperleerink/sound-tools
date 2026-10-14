@@ -233,12 +233,12 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 A composer asks the agent for a tool no extension has, and it plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
 
-- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun. A file change, a crash or a hang starts a fresh Bun; code that hangs is blamed and left out until the folder changes. The window never waits on Bun. Rejected: reloading code inside Bun, which cannot read a changed import again and has no answer to a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
+- **Written in TypeScript, run by Bun as a separate process.** A file change, a crash or a hang starts a fresh Bun; code that hangs is blamed and left out until the folder changes. The window never waits on Bun. Rejected: reloading code inside Bun, which cannot read a changed import again and has no answer to a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads, and an agent hears what is wrong with it, without Bun.
 - **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between, which nobody wrote by hand and needed a parser. Rejected: that language in a template, which an eval found no better for agents.
-- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without asking Bun: Bun sends a graph for every combination of choices up front.
+- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without asking Bun: Bun sends a graph for every combination of choices up front. A clip editor sends its rows for every combination of its clip choices the same way, so its gestures never ask Bun.
 - **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps every render bit for bit the same; `tooling/perf` measures them. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
-- **Cards and pages** are trees of elements Bun draws; the window draws them with `crates/ui`. A `tick` plays like a performer and never changes the record.
+- **Cards and pages** are trees of elements Bun draws. A `tick` plays like a performer and never changes the record.
 - **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, which would know nothing of where the notes went.
-- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills, which did no better in an eval and need project settings the agent runs without. `tooling/agent-eval` checks agent results.
+- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills, which did no better in an eval. `tooling/agent-eval` checks agent results.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

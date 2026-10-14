@@ -12,13 +12,16 @@ use std::process::{Child, ChildStdout, Stdio};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use sound_core::InstanceId;
+use sound_notes::View;
 use sound_signals::Graph;
 
 use crate::Midi;
+use crate::editors::EditorInfo;
 use crate::tools::ToolInfo;
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
@@ -170,6 +173,7 @@ pub(crate) struct Runs {
 #[serde(from = "SentLoad")]
 pub(crate) struct Loaded {
     pub tools: Vec<LoadedTool>,
+    pub editors: Vec<LoadedEditor>,
     pub errors: Vec<LoadError>,
 }
 
@@ -186,34 +190,60 @@ pub(crate) struct LoadedTool {
     pub page: Option<Result<Value, String>>,
 }
 
-/// A load as `host.ts` sends it. Each tool is read on its own, so one that this side cannot
-/// read is an error of its file, and the others load.
+/// A clip editor as Bun loaded it: all of it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LoadedEditor {
+    pub info: EditorInfo,
+    /// The grid for every combination of its clip fields, read once it is checked.
+    pub grids: Vec<(View, Result<Value, String>)>,
+}
+
+/// A load as `host.ts` sends it. Each tool and editor is read on its own, so one that this
+/// side cannot read is an error of its file, and the others load.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SentLoad {
     tools: Vec<Value>,
+    editors: Vec<Value>,
     errors: Vec<LoadError>,
 }
 
 impl From<SentLoad> for Loaded {
     fn from(sent: SentLoad) -> Self {
-        let SentLoad { tools, mut errors } = sent;
-        let tools = tools
-            .into_iter()
-            .filter_map(|tool| match LoadedTool::deserialize(&tool) {
-                Ok(tool) => Some(tool),
-                Err(error) => {
-                    let text = |key| tool["info"][key].as_str().unwrap_or_default();
-                    errors.push(LoadError {
-                        file: text("file").to_string(),
-                        message: format!("tool {}: {error}", text("name")),
-                    });
-                    None
-                }
-            })
-            .collect();
-        Self { tools, errors }
+        let SentLoad {
+            tools,
+            editors,
+            mut errors,
+        } = sent;
+        Self {
+            tools: read_each(tools, "tool", &mut errors),
+            editors: read_each(editors, "editor", &mut errors),
+            errors,
+        }
     }
+}
+
+/// Each of `sent` that reads as a `T`; each that does not is an error of its file.
+fn read_each<T: DeserializeOwned>(
+    sent: Vec<Value>,
+    kind: &str,
+    errors: &mut Vec<LoadError>,
+) -> Vec<T> {
+    let read = sent
+        .into_iter()
+        .filter_map(|each| match T::deserialize(&each) {
+            Ok(read) => Some(read),
+            Err(error) => {
+                let text = |key| each["info"][key].as_str().unwrap_or_default();
+                errors.push(LoadError {
+                    file: text("file").to_string(),
+                    message: format!("{kind} {}: {error}", text("name")),
+                });
+                None
+            }
+        });
+    read.collect()
 }
 
 /// What is wrong with a file of `extensions/`.
@@ -452,7 +482,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_tool_this_side_cannot_read_is_an_error_of_its_file_and_the_others_load() {
+    fn a_tool_or_an_editor_this_side_cannot_read_is_an_error_of_its_file_and_the_others_load() {
         let tool = |name: &str, unit: &str| {
             serde_json::json!({
                 "info": {
@@ -464,9 +494,19 @@ mod tests {
                 "sounds": [], "card": { "Err": "no card" }, "page": null
             })
         };
+        let editor = |name: &str, kind: &str| {
+            serde_json::json!({
+                "info": {
+                    "name": name, "file": format!("{name}.ts"), "title": name, "note": {},
+                    "clip": { "kit": { "kind": kind, "default": true } }
+                },
+                "grids": []
+            })
+        };
         let line = serde_json::json!({
             "type": "loaded",
             "tools": [tool("good", "hz"), tool("bad", "seconds")],
+            "editors": [editor("drums", "toggle"), editor("kit", "knob")],
             "errors": [{ "file": "broken.ts", "message": "SyntaxError" }]
         });
         let Ok(Line::Loaded(loaded)) = serde_json::from_value(line) else {
@@ -476,15 +516,24 @@ mod tests {
             .map(|tool| tool.info.name.as_str())
             .collect();
         assert_eq!(names, ["good"]);
+        let editors: Vec<&str> = (loaded.editors.iter())
+            .map(|editor| editor.info.name.as_str())
+            .collect();
+        assert_eq!(editors, ["drums"]);
         let files: Vec<&str> = loaded
             .errors
             .iter()
             .map(|error| error.file.as_str())
             .collect();
-        assert_eq!(files, ["broken.ts", "bad.ts"]);
+        assert_eq!(files, ["broken.ts", "bad.ts", "kit.ts"]);
         let message = &loaded.errors[1].message;
         assert!(
             message.starts_with("tool bad: unknown variant `seconds`"),
+            "{message}"
+        );
+        let message = &loaded.errors[2].message;
+        assert!(
+            message.starts_with("editor kit: unknown variant `knob`"),
             "{message}"
         );
     }

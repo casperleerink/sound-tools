@@ -5,7 +5,20 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec } from "./sdk";
+import type {
+  Child,
+  Controls,
+  EditorSpec,
+  Fields,
+  Graph,
+  Handler as Heard,
+  Midi,
+  Node,
+  Performer,
+  StateOf,
+  ToolSpec,
+  ViewFields,
+} from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -17,8 +30,10 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 }
 
 type Spec = ToolSpec<Fields, Controls, unknown>;
+type Editor = EditorSpec<ViewFields, ViewFields>;
 type State = StateOf<Fields>;
-type Choices = Record<string, string | number>;
+type Option = string | number | boolean;
+type Choices = Record<string, Option>;
 type Watches = Record<string, number>;
 type Size = { width: number; height: number };
 /** The room of a page in the check without a window: the default window's. */
@@ -107,7 +122,7 @@ function problemsOf(spec: Spec): string[] {
         problems.push(`${name}: a field and a control cannot share a name`);
       }
     }
-    const sounds = choiceFields(spec).reduce((count, [, field]) => count * field.options.length, 1);
+    const sounds = count(choicesOf(spec));
     if (sounds > MAX_SOUNDS) {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
@@ -118,13 +133,32 @@ function problemsOf(spec: Spec): string[] {
   return problems;
 }
 
+/** The same of a clip editor. The runtime checks its names, fields and grids. */
+function problemsOfEditor(spec: Editor): string[] {
+  try {
+    const problems: string[] = [];
+    if (!spec.title?.trim()) {
+      problems.push("title: write it, it is what the clip menu shows");
+    }
+    const grids = count(clipChoicesOf(spec));
+    if (grids > MAX_SOUNDS) {
+      problems.push(`its clip fields make ${grids} grids, at most ${MAX_SOUNDS}: make some of them note fields`);
+    }
+    return problems;
+  } catch (error) {
+    return [String(error)];
+  }
+}
+
 /** Loads the files, each after it says which, so a file that hangs is known. */
 async function load() {
   const tools: object[] = [];
+  const editors: object[] = [];
   const errors: Array<{ file: string; message: string }> = [];
   for (const file of files) {
     send({ type: "loading", file });
     const before = new Set(sdk.host.tools.keys());
+    const editorsBefore = new Set(sdk.host.editors.keys());
     try {
       await import(join(folder, file));
     } catch (error) {
@@ -141,8 +175,18 @@ async function load() {
         tools.push(described(spec, file));
       }
     }
+    for (const [name, spec] of sdk.host.editors) {
+      if (editorsBefore.has(name)) {
+        continue;
+      }
+      const problems = problemsOfEditor(spec);
+      errors.push(...problems.map((problem) => ({ file, message: `editor ${name}: ${problem}` })));
+      if (problems.length === 0) {
+        editors.push(describedEditor(spec, file));
+      }
+    }
   }
-  send({ type: "loaded", tools, errors });
+  send({ type: "loaded", tools, editors, errors });
 }
 
 /**
@@ -166,9 +210,18 @@ function described(spec: Spec, file: string) {
       keys: spec.onKey !== undefined,
       midi: spec.onMidi !== undefined,
     },
-    sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
+    sounds: combinations(choicesOf(spec)).map((choices) => [choices, made(() => sound(spec, choices))]),
     card: made(() => draw(spec, false)),
     page: spec.page === undefined ? null : made(() => draw(spec, true)),
+  };
+}
+
+/** A clip editor as the runtime reads it: its fields, and its grid for every combination of its clip fields. */
+function describedEditor(spec: Editor, file: string) {
+  return {
+    info: { name: spec.name, file, title: spec.title, clip: spec.clip ?? {}, note: spec.note ?? {} },
+    // `null` for no grid: JSON leaves out `undefined`, and the runtime would not know the answer.
+    grids: combinations(clipChoicesOf(spec)).map((clip) => [clip, made(() => spec.grid(clip) ?? null)]),
   };
 }
 
@@ -181,16 +234,31 @@ function made(make: () => unknown) {
   }
 }
 
-type ChoiceField = Extract<Fields[string], { kind: "choice" }>;
+/** Fields by name, each with every value it takes. */
+type Options = Array<[string, readonly Option[]]>;
 
-function choiceFields(spec: Spec): Array<[string, ChoiceField]> {
-  return Object.entries(spec.state).filter((entry): entry is [string, ChoiceField] => entry[1].kind === "choice");
+/** The choices of a tool. */
+function choicesOf(spec: Spec): Options {
+  return Object.entries(spec.state).flatMap(([name, field]): Options => (field.kind === "choice" ? [[name, field.options]] : []));
 }
 
-/** Every combination of the choices of a tool. */
-function combinations(spec: Spec): Choices[] {
-  return choiceFields(spec).reduce<Choices[]>(
-    (all, [name, field]) => all.flatMap((choices) => field.options.map((option) => ({ ...choices, [name]: option }))),
+/** The clip fields of an editor: a toggle is a choice of `false` and `true`. */
+function clipChoicesOf(spec: Editor): Options {
+  return Object.entries(spec.clip ?? {}).map(([name, field]): Options[number] => [
+    name,
+    field.kind === "choice" ? field.options : [false, true],
+  ]);
+}
+
+/** How many combinations `options` make. */
+function count(options: Options): number {
+  return options.reduce((product, [, values]) => product * values.length, 1);
+}
+
+/** Every combination of `options`. */
+function combinations(options: Options): Choices[] {
+  return options.reduce<Choices[]>(
+    (all, [name, values]) => all.flatMap((choices) => values.map((value) => ({ ...choices, [name]: value }))),
     [{}],
   );
 }

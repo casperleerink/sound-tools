@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
-use sound_notes::{Pitch, Velocity};
+use sound_notes::{EditorSpec, Editors, Pitch, TRACK_TOOL, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
 
@@ -53,6 +53,8 @@ pub(crate) struct Live {
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
     problems: Vec<Problem>,
+    /// How many requests went to Bun.
+    requests: u64,
     /// Hears the changes in `extensions/`.
     _watcher: Option<RecommendedWatcher>,
     /// What it cannot hear, a problem of its own.
@@ -80,10 +82,12 @@ enum Host {
 }
 
 impl Host {
-    /// Tells Bun something. Nothing while no Bun runs: the next one draws every card again.
-    fn send(&mut self, request: &Request) {
+    /// Tells Bun something, and counts it in `requests`. Nothing while no Bun runs: the next
+    /// one draws every card again.
+    fn send(&mut self, request: &Request, requests: &mut u64) {
         if let Self::Running { bun, .. } = self {
             bun.send(request);
+            *requests += 1;
         }
     }
 }
@@ -128,6 +132,12 @@ pub fn hear_midi(track: Option<&InstanceId>, messages: &[Midi], cx: &mut App) {
         return;
     };
     live.update(cx, |live, cx| live.midi(track, messages, cx));
+}
+
+/// How many requests the window sent to Bun, so a test can tell that a gesture sends none.
+pub fn requests_sent(cx: &App) -> u64 {
+    cx.try_global::<WindowTools>()
+        .map_or(0, |tools| tools.0.read(cx).requests)
 }
 
 /// Starts the live part of `extensions` for the window of `session`: the cards of its tools in
@@ -318,6 +328,7 @@ impl Live {
                 edits: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
+                requests: 0,
                 _watcher: watcher,
                 watch_problem,
                 changed,
@@ -487,7 +498,7 @@ impl Live {
 
     pub(crate) fn remove(&mut self, card: u64) {
         self.cards.remove(&card);
-        self.host.send(&Request::Drop { card });
+        self.host.send(&Request::Drop { card }, &mut self.requests);
     }
 
     /// Asks for the tree of the card again, from the record and the watches as they are now.
@@ -524,7 +535,7 @@ impl Live {
             watches: &entry.watches,
             page,
         };
-        self.host.send(&request);
+        self.host.send(&request, &mut self.requests);
     }
 
     /// The page was laid out at `size`: it draws again when that is new.
@@ -555,7 +566,7 @@ impl Live {
                 handler,
                 at,
             };
-            self.host.send(&request);
+            self.host.send(&request, &mut self.requests);
         }
     }
 
@@ -658,7 +669,7 @@ impl Live {
             key,
             down,
         };
-        self.host.send(&request);
+        self.host.send(&request, &mut self.requests);
     }
 
     /// What the MIDI keyboard played, for every instance whose tool hears it: on `track` or at
@@ -683,7 +694,7 @@ impl Live {
                 instances,
                 messages,
             };
-            self.host.send(&request);
+            self.host.send(&request, &mut self.requests);
         }
     }
 
@@ -726,7 +737,7 @@ impl Live {
                 time,
                 instances,
             };
-            self.host.send(&request);
+            self.host.send(&request, &mut self.requests);
             if let Host::Running { ticking, .. } = &mut self.host {
                 *ticking = true;
             }
@@ -918,17 +929,18 @@ impl Live {
             Ok(Some(Launched {
                 bun,
                 sounds,
+                editors,
                 skipped,
                 problems,
             })) => {
                 self.skipped = skipped;
                 self.host = Self::running(bun, cx);
-                self.loaded(sounds, problems, cx);
+                self.loaded(sounds, editors, problems, cx);
             }
             // The last tool file is gone.
             Ok(None) => {
                 self.host = Host::Stopped;
-                self.loaded(Vec::new(), Vec::new(), cx);
+                self.loaded(Vec::new(), Vec::new(), Vec::new(), cx);
             }
             Err(message) => {
                 self.host = Host::Stopped;
@@ -938,9 +950,15 @@ impl Live {
         }
     }
 
-    /// A new Bun loaded `sounds`, with these `problems`: every tool is defined again, and every
-    /// card draws again.
-    fn loaded(&mut self, sounds: Vec<Sounds>, mut problems: Vec<Problem>, cx: &mut Context<Self>) {
+    /// A new Bun loaded `sounds` and `editors`, with these `problems`: every tool is defined
+    /// again, every card draws again, and the clip editors are the new ones.
+    fn loaded(
+        &mut self,
+        sounds: Vec<Sounds>,
+        editors: Vec<EditorSpec>,
+        mut problems: Vec<Problem>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
@@ -971,6 +989,7 @@ impl Live {
         problems.extend(unexplained.map(|info| {
             info.problem("it is gone from the code; its records play as they did until the project opens again")
         }));
+        self.set_editors(&session, editors, &mut problems, cx);
         self.problems = problems;
         self.report(cx);
         *self.tools.borrow_mut() = gone.into_iter().chain(tools).collect();
@@ -983,6 +1002,47 @@ impl Live {
             }
             self.render(card, cx);
         }
+    }
+
+    /// Makes `specs` the clip editors of the project. One gone from the code keeps its last
+    /// spec, as a tool does. Every track checks its clips again, which also draws an open
+    /// editor again.
+    fn set_editors(
+        &self,
+        session: &Entity<Session>,
+        mut specs: Vec<EditorSpec>,
+        problems: &mut Vec<Problem>,
+        cx: &mut App,
+    ) {
+        let Some(editors) = session.read(cx).project().provided::<Editors>().cloned() else {
+            return;
+        };
+        let before = editors.project();
+        if before.is_empty() && specs.is_empty() {
+            return;
+        }
+        let gone: Vec<_> = (before.into_iter())
+            .filter(|old| specs.iter().all(|new| new.name != old.name))
+            .collect();
+        for spec in gone {
+            let file = spec.file.clone().unwrap_or_default();
+            // A file Bun runs without says why already.
+            if !self.skipped.contains_key(&file) {
+                problems.push(crate::editors::problem(
+                    &file,
+                    spec.name.as_str(),
+                    "it is gone from the code; its clips show in it as they did until the project opens again",
+                ));
+            }
+            specs.push(EditorSpec::clone(&spec));
+        }
+        crate::editors::set_project(&editors, specs, problems);
+        let project = session.read(cx).project();
+        let tracks: Vec<InstanceId> = (project.instances())
+            .filter(|(_, tool)| *tool == TRACK_TOOL)
+            .map(|(id, _)| id.clone())
+            .collect();
+        session.update(cx, |session, cx| session.rebind(&tracks, cx));
     }
 
     /// Lists what is wrong with `extensions/` among the problems of the project.

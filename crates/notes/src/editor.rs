@@ -385,6 +385,11 @@ impl Editors {
         self.0.borrow().all().cloned().collect()
     }
 
+    /// The editors of the project: all but the piano roll.
+    pub fn project(&self) -> Vec<Arc<EditorSpec>> {
+        self.0.borrow().project.clone()
+    }
+
     pub fn generation(&self) -> u64 {
         self.0.borrow().generation
     }

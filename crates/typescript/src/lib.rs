@@ -6,6 +6,8 @@
 //! fields of a record, a doc for agents, and the sound of every combination of its choices, a
 //! graph of signals that the SDK sends as JSON. The runtime registers each as a [`JsonTool`]
 //! before the records load, so a record of one loads like any other, and plays with no Bun.
+//! The clip editors of the files come with the grid of every combination of their clip fields,
+//! and go in the [`Editors`] of the project the same way.
 //!
 //! In the window, any change in `extensions/`, a crash or a hang of Bun starts a new Bun, which
 //! loads every file again and defines the tools again: one path. Nothing of it runs on the
@@ -13,6 +15,7 @@
 
 mod bun;
 mod card;
+mod editors;
 mod samples;
 mod tools;
 mod tree;
@@ -23,8 +26,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
+use sound_notes::{EditorSpec, Editors};
 
-pub use window::{hear_midi, start_window};
+pub use window::{hear_midi, requests_sent, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo};
@@ -127,6 +131,7 @@ impl FirstLoad {
             Ok(Some(Launched {
                 bun,
                 sounds,
+                editors,
                 skipped,
                 mut problems,
             })) => {
@@ -139,6 +144,9 @@ impl FirstLoad {
                         })
                         .collect()
                 });
+                if let Some(catalog) = registry.provided::<Editors>() {
+                    editors::set_project(catalog, editors, &mut problems);
+                }
                 (Some(bun), tools, skipped, problems)
             }
             Ok(None) => none(Vec::new()),
@@ -154,10 +162,11 @@ impl FirstLoad {
     }
 }
 
-/// The tools of `loaded` with their sounds compiled, and what is wrong: the errors of the
-/// files, the files Bun runs without, and every tool whose fields, sounds, card or page fail.
-/// Takes as long as compiling every sound: not on the thread that draws.
-fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<Problem>) {
+/// The tools of `loaded` with their sounds compiled, its clip editors, and what is wrong: the
+/// errors of the files, the files Bun runs without, every tool whose fields, sounds, card or
+/// page fail, and every editor that does not check. Takes as long as compiling every sound: not
+/// on the thread that draws.
+fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<EditorSpec>, Vec<Problem>) {
     let file_problem = |file: &str, message: &str| Problem {
         path: format!("{FOLDER}/{file}"),
         message: message.to_string(),
@@ -203,7 +212,14 @@ fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<Problem>) {
         }
         tools.push(sounds);
     }
-    (tools, problems)
+    let mut editors = Vec::new();
+    for loaded in loaded.editors {
+        match editors::spec_of(loaded) {
+            Ok(spec) => editors.push(spec),
+            Err(problem) => problems.push(problem),
+        }
+    }
+    (tools, editors, problems)
 }
 
 /// Defines the tools of `sounds` with `define`, which answers the ones it refused and why, and
@@ -256,6 +272,7 @@ struct Launched {
     bun: Bun,
     /// The tools it loaded, see [`checked`].
     sounds: Vec<Sounds>,
+    editors: Vec<EditorSpec>,
     /// The files it runs without: those given, and each whose code hung or stopped Bun while it
     /// loaded.
     skipped: Skipped,
@@ -283,10 +300,11 @@ fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, S
             .collect();
         match Bun::start(&program, &host, extensions, &loading) {
             Ok((bun, loaded)) => {
-                let (sounds, problems) = checked(loaded, &skipped);
+                let (sounds, editors, problems) = checked(loaded, &skipped);
                 return Ok(Some(Launched {
                     bun,
                     sounds,
+                    editors,
                     skipped,
                     problems,
                 }));

@@ -2,7 +2,8 @@
 // an edit here is lost. Read `agent-docs/extensions.md` first.
 //
 // A tool is a `.ts` or `.tsx` file next to this one that calls `tool`: the fields of its
-// record, the controls its card plays, its doc for agents, its sound and its card.
+// record, the controls its card plays, its doc for agents, its sound and its card. A clip
+// editor is a file that calls `editor`.
 
 // ---------------------------------------------------------------------------------------------
 // Fields of a record: saved, undoable, and what an agent writes.
@@ -836,7 +837,67 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Clip editors: the rows the window shows the notes of a clip in, instead of the piano roll.
+
+/** A row of a clip editor: the notes of one pitch. */
+export interface Row {
+  /** MIDI: 60 is C4. */
+  pitch: number;
+  /** What the row says at its left, at most 24 characters. */
+  label?: string;
+  /** A darker row, such as a black key. */
+  shade?: boolean;
+}
+
+/** What a clip editor shows for one combination of its clip fields. */
+export interface Grid {
+  /** 1 to 128 rows, the lowest pitch first. */
+  rows: Row[];
+  /** In points, 8 to 40. 12 when left out. */
+  rowHeight?: number;
+  /**
+   * `"bar"` (the default): as long as the note, with an end to drag. `"hit"`: a square at its
+   * start, drawn one snap step long and never resized, as a drum hit.
+   */
+  notes?: "bar" | "hit";
+}
+
+/** A field an editor keeps in the `view` of a clip or a note. Options are words or whole numbers. */
+export type ViewField = ToggleField | ChoiceField;
+export type ViewFields = Record<string, ViewField>;
+
+/** The value of every clip field of an editor: what its `grid` gets. */
+export type ViewOf<C extends ViewFields> = { -readonly [Name in keyof C]: ValueOf<C[Name]> };
+
+export interface EditorSpec<C extends ViewFields, N extends ViewFields> {
+  /** What a clip names in `editor`: lowercase letters, digits, `-` and `_`, not `piano-roll`. */
+  name: string;
+  /** What the clip menu calls it. */
+  title: string;
+  /** Fields of the clip's `view`, such as its scale. */
+  clip?: C;
+  /** Fields of each note's `view`, such as an accent. */
+  note?: N;
+  /**
+   * Its rows for these clip fields. It runs when the file loads, once for every combination of
+   * the clip fields (at most 256), and never again: every gesture of the editor runs without it.
+   */
+  grid: (clip: ViewOf<C>) => Grid;
+}
+
+/** Makes a clip editor of the project. */
+export function editor<const C extends ViewFields = {}, const N extends ViewFields = {}>(
+  spec: EditorSpec<C, N>,
+): void {
+  if (host.editors.has(spec.name)) {
+    throw new Error(`an editor named ${spec.name} is already defined`);
+  }
+  host.editors.set(spec.name, spec as unknown as EditorSpec<ViewFields, ViewFields>);
+}
+
 /** What the host reads. Not for tools. */
 export const host = {
   tools: new Map<string, ToolSpec<Fields, Controls, unknown>>(),
+  editors: new Map<string, EditorSpec<ViewFields, ViewFields>>(),
 };
