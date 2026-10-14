@@ -11,8 +11,8 @@ use crate::view::gesture::Zone;
 use crate::view::lanes::{Lane, LaneEdit, Shown, Stroke};
 use crate::view::layout::{Rect, Viewport, ordered};
 use crate::view::roll::{
-    DRAWN_VELOCITY, KEYS_WIDTH, ROLL_HEIGHT, drawn_note, note_at, notes_in, pitch_at,
-    velocity_bars_at, velocity_y,
+    DRAWN_VELOCITY, KEYS_WIDTH, ROLL_HEIGHT, drawn_note, note_at, notes_in, velocity_bars_at,
+    velocity_y,
 };
 use crate::view::snap::Grid;
 
@@ -45,7 +45,8 @@ impl NoteEditor {
             }
             return;
         }
-        let Some(pitch) = pitch_at(&viewport, y) else {
+        let rows = self.rows();
+        let Some(pitch) = rows.pitch_at(&viewport, y) else {
             return;
         };
         if x < 0.0 {
@@ -60,7 +61,7 @@ impl NoteEditor {
             return;
         };
         let pointer = viewport.tick_at(x);
-        let hit = note_at(&viewport, clip, x, y);
+        let hit = note_at(&viewport, &rows, clip, x, y);
         let hit = hit.and_then(|(index, zone)| Some((zone, clip.notes.get(index)?.clone())));
         if let Some((zone, note)) = hit {
             let kind = match zone {
@@ -225,7 +226,8 @@ impl NoteEditor {
         grid: Grid,
         cx: &mut Context<Self>,
     ) {
-        let Some(note) = drawn_note(&clip, pointer, pointer, pitch, &grid) else {
+        let shape = self.rows().shape();
+        let Some(note) = drawn_note(&clip, pointer, pointer, pitch, &grid, shape) else {
             return;
         };
         // The start the grid gave at the press, as a project tick. Every move draws from it,
@@ -302,7 +304,7 @@ impl NoteEditor {
             return;
         };
         if let Some(clip) = self.session.read(cx).project().state(&self.clip) {
-            let touched = notes_in(&viewport, clip, area);
+            let touched = notes_in(&viewport, &self.rows(), clip, area);
             selected.extend(
                 touched
                     .iter()
@@ -370,10 +372,12 @@ impl NoteEditor {
                     false => Hover::Bar,
                 }
             }
-            Some(clip) if x >= 0.0 && y >= 0.0 => match note_at(&viewport, clip, x, y) {
-                Some((_, Zone::RightEdge)) => Hover::Edge,
-                _ => Hover::Nothing,
-            },
+            Some(clip) if x >= 0.0 && y >= 0.0 => {
+                match note_at(&viewport, &self.rows(), clip, x, y) {
+                    Some((_, Zone::RightEdge)) => Hover::Edge,
+                    _ => Hover::Nothing,
+                }
+            }
             _ => Hover::Nothing,
         };
         if self.hover != hover {

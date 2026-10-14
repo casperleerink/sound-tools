@@ -131,7 +131,6 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 `extensions/arrangement`.
 
-- It owns tracks, clips, the track mixer and the master. Mixer values are fields of the track record.
 - A track's chain is its instrument, then the effects its `effects` list names. One list decides the order, so a reorder is one record and one undo step. Rejected: an order number in each effect record (two files per move, and ties).
 - Bypass and sidechain are saved on the track's effect slot, not in the effect's record, so plugins and built-in effects share them. The arrangement wires sidechains and names a loop of keys by its tracks, because the core's cycle message names processors an agent cannot act on.
 - A return is a track of kind `return`. Sends are a map on the sending track. No return sends to another yet.
@@ -148,7 +147,9 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
 - A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.
 - An audio clip plays at its file's speed, so a tempo change moves only its start. Every audio clip edge and jump gets a short ramp, so nothing clicks.
-- Selection, snap, zoom, scroll and the clipboard are interface state: not saved, no undo step, invisible to agents. A file is already how an agent shares a clip.
+- A clip names its editor (`editor`; absent means the piano roll). An editor is rows and fields made once; every gesture runs in the one Rust note editor. Rejected: editor code per gesture.
+- Editor data is a flat `view` on clips and notes that playback never reads. A missing editor or bad value is a track problem; the clip still plays.
+- Editors are shared through `Registry::provide`, one value per type; the core never looks inside.
 
 ## Audio files and the Sampler
 
@@ -206,11 +207,10 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `crates/ui` and `crates/runtime/src/window`.
 
-- `Session` is the one GPUI entity that owns the `Project`.
 - Views read state when they render and keep no copy of saved state, so an outside edit shows at once, also mid-drag.
 - Views and device offers are registered per tool, so the track panel knows no instrument or plugin.
 - The playhead is its own entity, because GPUI redraws a notified view and everything above it.
-- `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to an extension.
+- `crates/ui` holds the design system and general components; musical interfaces belong to an extension.
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows correctly for free.
 - The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
 - Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
@@ -221,7 +221,6 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/agent`.
 
 - The sidebar runs Claude Code as a child process in the project folder. It edits files like a terminal agent. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is the way to add more agents later.
-- The window has a generic left panel slot and names no agent type.
 - Each message is one request, so all its writes are one undo step named after the message.
 - The thread state is built from provider-neutral events and holds no process, so tests feed it events.
 - Threads, settings and whether the panel is open are kept per machine, never in the project: an agent writes in the project folder, and must not change the interface or raise its own access by editing a file.

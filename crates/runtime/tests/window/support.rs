@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use arrangement::view::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT};
-use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
+use arrangement::view::roll::{self, EDITOR_HEIGHT};
 use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
     AppContext, BackgroundExecutor, Bounds, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton,
@@ -786,8 +786,12 @@ impl Opened<'_> {
     /// middle of the row.
     pub(crate) fn in_editor(&mut self, tick: u64, pitch: u8) -> Point<Pixels> {
         let editor = self.editor().unwrap();
-        let viewport = self.cx.read(|cx| editor.read(cx).viewport());
-        let y = roll::y_of(&viewport, Pitch::new(pitch).unwrap()) + KEY_HEIGHT / 2.;
+        let (viewport, rows) = self.cx.read(|cx| {
+            let editor = editor.read(cx);
+            (editor.viewport(), editor.rows())
+        });
+        let top = rows.y_of(&viewport, Pitch::new(pitch).unwrap());
+        let y = top.expect("the pitch has no row") + rows.height() / 2.;
         point(
             px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
             px(self.editor_top() + RULER_HEIGHT + y),

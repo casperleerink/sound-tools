@@ -5,7 +5,9 @@ use gpui::{
     App, BorderStyle, Bounds, ContentMask, FontWeight, Hsla, PathBuilder, Pixels, Point,
     SharedString, Window, fill, point, px, quad, size,
 };
-use sound_notes::{Note, Pitch};
+use std::rc::Rc;
+
+use sound_notes::Note;
 use sound_ui::ActiveTheme;
 
 use super::NoteEditor;
@@ -13,10 +15,8 @@ use crate::TrackState;
 use crate::view::lanes::Shown;
 use crate::view::layout::{HEADER_WIDTH, NAME_LEFT, RULER_HEIGHT, Rect, RulerBar, Viewport};
 use crate::view::paint::{Fit, accent, paint_ruler, paint_text, paint_track_label, placed};
-use crate::view::roll::{
-    KEY_HEIGHT, KEYS_WIDTH, VELOCITY_HEIGHT, clamped, is_black_key, key_label, note_rect,
-    velocity_bar, visible_pitches, y_of,
-};
+use crate::view::roll::{KEYS_WIDTH, VELOCITY_HEIGHT, clamped, note_rect, velocity_bar};
+use crate::view::rows::Rows;
 
 impl NoteEditor {
     /// Everything to paint into a panel of this size, read from the project now. `None` when
@@ -31,24 +31,37 @@ impl NoteEditor {
         let time_signatures = project.project_file().tempo_map.time_signatures();
         let width = f32::from(bounds.size.width) - HEADER_WIDTH;
         let height = f32::from(bounds.size.height) - RULER_HEIGHT - VELOCITY_HEIGHT;
-        let viewport = clamped(&self.viewport, clip, time_signatures, width, height);
+        let rows = self.rows_of(clip);
+        let viewport = clamped(&self.viewport, &rows, clip, time_signatures, width, height);
         // Only what shows: a long clip has many notes and the editor shows a few bars of it.
         let ticks = viewport.visible_ticks(width);
-        let pitches = visible_pitches(&viewport, height);
+        let shown_rows = rows.visible(&viewport, height);
         let in_time = |note: &&Note| {
             let start = clip.start + note.start;
             start < ticks.end && clip.start + note.end() > ticks.start
         };
-        let visible = clip
-            .notes
-            .iter()
-            .filter(in_time)
-            .filter(|note| pitches.contains(&note.pitch.number()));
+        let visible = clip.notes.iter().filter(in_time).filter(|note| {
+            let index = rows.index_of(note.pitch);
+            index.is_some_and(|index| shown_rows.contains(&index))
+        });
         let selected = |note: &Note| self.selection.contains(note);
+        let rows_shown = shown_rows.clone().filter_map(|index| {
+            let look = rows.look(index)?;
+            Some(SceneRow {
+                y: rows.top_of(&viewport, index),
+                shade: look.shade,
+                extra: look.extra,
+                label: look
+                    .label
+                    .map(|label| SharedString::from(label.into_owned())),
+            })
+        });
         Some(RollScene {
             viewport,
             width,
             height,
+            row_height: rows.height(),
+            rows_shown: rows_shown.collect(),
             track_name: track
                 .map(|track| track.name.clone())
                 .unwrap_or_default()
@@ -59,7 +72,10 @@ impl NoteEditor {
             clip_start: viewport.x_of(clip.start).clamp(0.0, width),
             clip_end: viewport.x_of(clip.end()).clamp(0.0, width),
             notes: visible
-                .map(|note| (note_rect(&viewport, clip, note), selected(note)))
+                .filter_map(|note| {
+                    let rect = note_rect(&viewport, &rows, clip, note)?;
+                    Some((rect, selected(note)))
+                })
                 .collect(),
             velocities: match self.shown {
                 Shown::Velocity => clip
@@ -79,6 +95,7 @@ impl NoteEditor {
                 Shown::Lane(lane) => lane.middle(),
             },
             marquee: self.marquee_rect(&viewport),
+            rows: Rc::new(rows),
         })
     }
 }
@@ -89,6 +106,11 @@ pub(super) struct RollScene {
     pub(super) width: f32,
     /// The height of the pitch rows, without the lane.
     height: f32,
+    row_height: f32,
+    /// The rows that show.
+    rows_shown: Vec<SceneRow>,
+    /// Every row, for the mouse.
+    pub(super) rows: Rc<Rows>,
     track_name: SharedString,
     accent: Hsla,
     bars: Vec<RulerBar>,
@@ -106,6 +128,14 @@ pub(super) struct RollScene {
     middle: Option<f32>,
     /// The rectangle of a drag on empty space.
     marquee: Option<Rect>,
+}
+
+struct SceneRow {
+    /// Its top.
+    y: f32,
+    shade: bool,
+    extra: bool,
+    label: Option<SharedString>,
 }
 
 pub(super) fn paint_roll(
@@ -127,9 +157,9 @@ pub(super) fn paint_roll(
     );
     let (marquee_fill, marquee_border) = (theme.alpha_at(0.05), theme.alpha_at(0.20));
     let RollScene {
-        viewport,
         width,
         height,
+        row_height,
         ..
     } = *scene;
     let ruler = Bounds::new(
@@ -152,12 +182,11 @@ pub(super) fn paint_roll(
         bounds.origin + point(px(0.), px(RULER_HEIGHT)),
         size(px(HEADER_WIDTH - KEYS_WIDTH), px(height)),
     );
-    let pitches = visible_pitches(&viewport, height);
-    let row = |pitch: u8, row_width: f32, row_height: f32| Rect {
+    let row = |shown: &SceneRow, width: f32, height: f32| Rect {
         x: 0.0,
-        y: y_of(&viewport, Pitch::nearest(i64::from(pitch))),
-        width: row_width,
-        height: row_height,
+        y: shown.y,
+        width,
+        height,
     };
     let upright = |x: f32, top: Point<Pixels>, tall: f32| {
         Bounds::new(top + point(px(x.round()), px(0.)), size(px(1.), px(tall)))
@@ -187,9 +216,15 @@ pub(super) fn paint_roll(
     paint_track_label(name, scene.accent, top, label_size, false, window, cx);
 
     window.with_content_mask(Some(ContentMask { bounds: area }), |window| {
-        for pitch in pitches.clone().filter(|pitch| is_black_key(*pitch)) {
-            let tint = placed(row(pitch, width, KEY_HEIGHT), area.origin);
-            window.paint_quad(fill(tint, black_row));
+        // A row no row of the grid has is shaded as what is outside the clip.
+        for shown in &scene.rows_shown {
+            let color = match (shown.extra, shown.shade) {
+                (true, _) => outside,
+                (false, true) => black_row,
+                (false, false) => continue,
+            };
+            let tint = placed(row(shown, width, row_height), area.origin);
+            window.paint_quad(fill(tint, color));
         }
         for x in &scene.beats {
             window.paint_quad(fill(upright(*x, area.origin, height), beat_line));
@@ -262,24 +297,23 @@ pub(super) fn paint_roll(
     });
 
     window.with_content_mask(Some(ContentMask { bounds: keys }), |window| {
-        for pitch in pitches.clone() {
-            let black = is_black_key(pitch);
-            let color = if black { black_key } else { white_key };
-            let key = row(pitch, KEYS_WIDTH - 1.0, KEY_HEIGHT - 1.0);
+        for shown in &scene.rows_shown {
+            let color = if shown.shade { black_key } else { white_key };
+            let key = row(shown, KEYS_WIDTH - 1.0, row_height - 1.0);
             window.paint_quad(fill(placed(key, keys.origin), color));
         }
     });
-    // The names of the Cs, left of the keys. A name may reach over the rows next to it.
+    // The names of the rows, left of the keys. A name may reach over the rows next to it.
     window.with_content_mask(Some(ContentMask { bounds: names }), |window| {
-        for pitch in pitches {
-            let Some(name) = key_label(pitch) else {
+        for shown in &scene.rows_shown {
+            let Some(name) = shown.label.clone() else {
                 continue;
             };
-            let middle = row(pitch, 0.0, KEY_HEIGHT).y + KEY_HEIGHT / 2.0;
+            let middle = shown.y + row_height / 2.0;
             let origin =
                 names.origin + point(names.size.width - px(8.), px((middle - 9.0).round()));
             let (weight, fit) = (FontWeight::NORMAL, Fit::AlignRight);
-            paint_text(name.into(), origin, 12., weight, label, fit, window, cx);
+            paint_text(name, origin, 12., weight, label, fit, window, cx);
         }
     });
 

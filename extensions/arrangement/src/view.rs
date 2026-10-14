@@ -36,6 +36,7 @@ mod paint;
 mod recording_overlay;
 pub mod returns;
 pub mod roll;
+pub mod rows;
 pub mod selection;
 mod sidechain;
 pub mod snap;

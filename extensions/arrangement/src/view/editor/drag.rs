@@ -8,8 +8,8 @@ use super::{NoteDrag, NoteDragKind, NoteEditor, located};
 use crate::view::lanes::height_at;
 use crate::view::layout::Viewport;
 use crate::view::roll::{
-    ROLL_HEIGHT, drawn_note, moved_notes, moved_velocity, nearest_pitch, resized_note, velocity_at,
-    velocity_bar, velocity_bars_between,
+    ROLL_HEIGHT, drawn_note, moved_notes, moved_velocity, resized_note, velocity_at, velocity_bar,
+    velocity_bars_between,
 };
 use crate::view::snap::Grid;
 
@@ -108,9 +108,12 @@ impl NoteEditor {
             .map(|tracked| tracked.origin.clone())
             .collect();
         let pointer = viewport.tick_at(x);
+        let rows = self.rows();
         let next: Vec<Note> = match &drag.kind {
             NoteDragKind::Draw { down } => {
-                vec![drawn_note(&clip, *down, pointer, first.pitch, &grid).unwrap_or(first)]
+                let shape = rows.shape();
+                let drawn = drawn_note(&clip, *down, pointer, first.pitch, &grid, shape);
+                vec![drawn.unwrap_or(first)]
             }
             NoteDragKind::Move {
                 grab,
@@ -118,10 +121,12 @@ impl NoteEditor {
                 grabbed,
                 ..
             } => {
-                let semitones = i32::from(nearest_pitch(&viewport, y).number())
-                    - i32::from(grab_pitch.number());
+                // Up is towards the first row.
+                let steps = rows.index_of(*grab_pitch).map_or(0, |grabbed| {
+                    grabbed as i64 - rows.nearest(&viewport, y) as i64
+                });
                 let delta = grid.delta(clip.start + grabbed.start, *grab, pointer);
-                moved_notes(clip.length, &origins, delta, semitones)
+                moved_notes(&rows, clip.length, &origins, delta, steps)
             }
             NoteDragKind::Resize { grab } => {
                 let end = clip.start + first.end();

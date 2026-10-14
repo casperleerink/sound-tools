@@ -102,6 +102,7 @@
 //! - `track-panel-plugin-*.png`: parameters pinned on the card of a plugin, see
 //!   `snapshots/plugin.rs`.
 //! - `returns-*.png`: the returns and the sends of a track, see `snapshots/returns.rs`.
+//! - `editors-*.png`: clips in editors of the project, see `snapshots/editors.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times
@@ -114,7 +115,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use arrangement::view::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT, Viewport};
-use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
+use arrangement::view::roll::EDITOR_HEIGHT;
 use arrangement::view::{ArrangementView, NoteEditor, RulerMark};
 use arrangement::{Colour, TrackState};
 use compressor::CompressorState;
@@ -145,7 +146,7 @@ use sound_core::{
     Changes, DeviceChoice, Engine, Instance, InstanceId, Project, Tempo, TempoChange, TempoMap,
     Ticks, TimeSignature,
 };
-use sound_notes::{Clip, Length, Note, Pitch, Velocity};
+use sound_notes::{Clip, EditorName, EditorSpec, Editors, Length, Note, Pitch, Velocity, View};
 use sound_ui::{Assets, Loop, Session};
 use tempfile::TempDir;
 
@@ -159,8 +160,13 @@ mod audio;
 mod automated;
 #[path = "snapshots/automation.rs"]
 mod automation;
+#[path = "shared/editors.rs"]
+#[allow(clippy::unwrap_used)]
+mod clip_editors;
 #[path = "snapshots/drums.rs"]
 mod drums;
+#[path = "snapshots/editors.rs"]
+mod editors;
 #[path = "projects/generated_take.rs"]
 mod generated_take;
 #[path = "snapshots/lanes.rs"]
@@ -423,6 +429,35 @@ impl Opened {
         cx.run_until_parked();
         let editor = cx.update(|cx| view.read(cx).editor().cloned());
         editor.context("the editor did not open")
+    }
+
+    /// Opens the editor on a clip and drags its first note up ten rows and back, a row and a
+    /// little in time per mouse move. The time of each move.
+    fn drag_first_note(
+        &self,
+        clip: &InstanceId,
+        cx: &mut HeadlessAppContext,
+    ) -> Result<Vec<Duration>> {
+        let editor = self.open_editor(clip, cx)?;
+        let (viewport, rows) = cx.update(|cx| (editor.read(cx).viewport(), editor.read(cx).rows()));
+        let state = cx.update(|cx| {
+            let project = self.session.read(cx).project();
+            let instance = project.resolve::<Clip>(clip)?;
+            project.state(&instance).cloned()
+        });
+        let state = state.context("the clip has no state")?;
+        let first = state.notes.first().context("the clip has no notes")?;
+        let editor_top = WINDOW_HEIGHT - EDITOR_HEIGHT + RULER_HEIGHT;
+        let top = rows.y_of(&viewport, first.pitch).context("no row")?;
+        let row = rows.height();
+        let on_note = point(
+            px(HEADER_WIDTH + viewport.x_of(state.start + first.start) + 40.),
+            px(editor_top + top + row / 2.),
+        );
+        let mut moves = self.drag(on_note, point(px(12.), px(-row)), 10, cx)?;
+        let back = on_note + point(px(120.), px(-10. * row));
+        moves.extend(self.drag(back, point(px(-12.), px(row)), 10, cx)?);
+        Ok(moves)
     }
 
     /// A real click on the name line of a track header, which selects the track and opens its
@@ -870,12 +905,33 @@ fn panel_lines(pixel: impl Fn(u32, u32) -> [u8; 3]) -> Result<PanelLines> {
     Ok(lines)
 }
 
-fn print_times(what: &str, mut times: Vec<Duration>) {
+/// An editor of the project with a row for every pitch, each with a label, as the piano roll
+/// has only on its Cs.
+fn labelled() -> Result<EditorSpec> {
+    let rows: Vec<serde_json::Value> = (0..128)
+        .map(|pitch| serde_json::json!({"pitch": pitch, "label": format!("Row {pitch}")}))
+        .collect();
+    let grid = serde_json::from_value(serde_json::json!({ "rows": rows }))?;
+    let name = EditorName::new("labelled")?;
+    let spec = EditorSpec::new(
+        name,
+        "Labelled".into(),
+        None,
+        vec![],
+        vec![],
+        [(View::default(), grid)],
+    );
+    spec.map_err(anyhow::Error::msg)
+}
+
+/// Prints the mean, the median and the worst time, and gives the median.
+fn print_times(what: &str, mut times: Vec<Duration>) -> Duration {
     times.sort();
     let mean = times.iter().sum::<Duration>() / times.len().max(1) as u32;
     let worst = times.last().copied().unwrap_or_default();
     let median = times.get(times.len() / 2).copied().unwrap_or_default();
     println!("{what}: mean {mean:?}, median {median:?}, worst {worst:?}");
+    median
 }
 
 fn note(start: u64, length: u64, pitch: u8) -> Result<Note> {
@@ -1036,7 +1092,8 @@ fn main() -> Result<()> {
     // Audio tracks and clips, the Sampler, the Drum pad and the Utility first, so a run that
     // only looks at one of them does not wait for the rest. `WINDOW_SNAPSHOT_ONLY=agent`, `=audio`,
     // `=sampler`, `=drums`, `=utility`, `=saturator`, `=modulation`, `=lanes`, `=automation`,
-    // `=automated`, `=plugin`, `=returns` or `=wavetable` renders the default project and those alone.
+    // `=automated`, `=plugin`, `=returns`, `=editors` or `=wavetable` renders the default project and
+    // those alone.
     let only = std::env::var("WINDOW_SNAPSHOT_ONLY").ok();
     let runs = |name: &str| only.as_deref().is_none_or(|only| only == name);
     if runs("agent") {
@@ -1083,6 +1140,9 @@ fn main() -> Result<()> {
     }
     if runs("returns") {
         returns::snapshots(&mut cx, &save)?;
+    }
+    if runs("editors") {
+        editors::snapshots(&mut cx, &save)?;
     }
     if only.is_some() {
         return Ok(());
@@ -1559,10 +1619,11 @@ fn main() -> Result<()> {
     cx.run_until_parked();
     save(&mut cx, &opened, "editor-velocity")?;
     // A rectangle on empty space, the button still down.
-    let viewport = cx.update(|cx| editor.read(cx).viewport());
+    let (viewport, rows) = cx.update(|cx| (editor.read(cx).viewport(), editor.read(cx).rows()));
     let editor_top = WINDOW_HEIGHT - EDITOR_HEIGHT + RULER_HEIGHT;
     let at = |tick: u64, pitch: u8| -> Result<Point<Pixels>> {
-        let y = roll::y_of(&viewport, Pitch::new(pitch)?) + KEY_HEIGHT / 2.;
+        let top = rows.y_of(&viewport, Pitch::new(pitch)?).context("no row")?;
+        let y = top + rows.height() / 2.;
         Ok(point(
             px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
             px(editor_top + y),
@@ -2267,26 +2328,16 @@ fn main() -> Result<()> {
         "the drag did not move a clip"
     );
 
-    // A drag of a note in the editor of a clip of that project, a semitone per move.
+    // A drag of a note in the editor of a clip of that project, a row per move.
     let clip = InstanceId::new("arrangement/track-60/clip-050")?;
-    let editor = opened.open_editor(&clip, &mut cx)?;
-    let viewport = cx.update(|cx| editor.read(cx).viewport());
+    let note_moves = opened.drag_first_note(&clip, &mut cx)?;
     let state = cx.update(|cx| {
         let project = opened.session.read(cx).project();
         let instance = project.resolve::<Clip>(&clip)?;
         project.state(&instance).cloned()
     });
     let state = state.context("the clip has no state")?;
-    let first = state.notes.first().context("the clip has no notes")?;
-    let editor_top = WINDOW_HEIGHT - EDITOR_HEIGHT + RULER_HEIGHT;
-    let on_note = point(
-        px(HEADER_WIDTH + viewport.x_of(state.start + first.start) + 40.),
-        px(editor_top + roll::y_of(&viewport, first.pitch) + KEY_HEIGHT / 2.),
-    );
-    let mut note_moves = opened.drag(on_note, point(px(12.), px(-KEY_HEIGHT)), 10, &mut cx)?;
-    let back = on_note + point(px(120.), px(-10. * KEY_HEIGHT));
-    note_moves.extend(opened.drag(back, point(px(-12.), px(KEY_HEIGHT)), 10, &mut cx)?);
-    print_times("note drag, per mouse move", note_moves);
+    let piano_roll_median = print_times("note drag, per mouse move", note_moves);
     let label = cx.update(|cx| {
         opened
             .session
@@ -2329,5 +2380,35 @@ fn main() -> Result<()> {
             .update(cx, |session, cx| session.cancel_gesture(cx))
     });
     print_times("publish of one clip move", publishes);
+
+    // The same drag in an editor of the project with a label on each of its 128 rows.
+    cx.update(|cx| {
+        let project = opened.session.read(cx).project();
+        let editors = project.provided::<Editors>().context("no editors")?;
+        let refused = editors.set_project(vec![labelled()?]);
+        anyhow::ensure!(refused.is_empty(), "refused: {refused:?}");
+        anyhow::Ok(())
+    })?;
+    cx.update(|cx| {
+        opened.session.update(cx, |session, cx| {
+            let mut labelled = state.clone();
+            labelled.editor = Some(EditorName::new("labelled")?);
+            session.edit(cx, |project| {
+                let mut changes = Changes::new();
+                changes.set(&instance, labelled);
+                project.commit("Name the editor", changes)
+            });
+            anyhow::Ok(())
+        })
+    })?;
+    let labelled_moves = opened.drag_first_note(&clip, &mut cx)?;
+    let labelled_median = print_times(
+        "note drag in a project editor, per mouse move",
+        labelled_moves,
+    );
+    anyhow::ensure!(
+        labelled_median <= 2 * piano_roll_median,
+        "a drag in an editor of 128 labelled rows is more than twice as slow as in the piano roll"
+    );
     Ok(())
 }

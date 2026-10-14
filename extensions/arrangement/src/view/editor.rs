@@ -1,13 +1,14 @@
-//! The note editor: the notes of one clip as a piano roll, in a panel below the timeline, with
-//! a lane at its bottom. Notes are added, selected, moved, resized, copied, pasted and deleted
-//! here, and a note that is touched sounds for a moment through the instrument of its track.
-//! The lane shows the velocities, which are dragged and drawn there, or one expression lane of
-//! the clip, which is drawn, erased and cleared there ([`super::lanes`]).
+//! The note editor: the notes of one clip in the rows of its clip editor, the piano roll unless the
+//! clip names another, in a panel below the timeline, with a lane at its bottom. Notes are added,
+//! selected, moved, resized, copied, pasted and deleted here, and a note that is touched sounds for
+//! a moment through the instrument of its track. The lane shows the velocities, which are dragged
+//! and drawn there, or one expression lane of the clip, which is drawn, erased and cleared there
+//! ([`super::lanes`]).
 //!
-//! All positions and what a drag does to a note come from [`super::roll`]. The editor keeps
-//! no copy of the clip: it reads it when it paints and when a mouse event arrives. The selected
-//! notes are kept by value in a [`Selection`], the same one the timeline keeps its clips in,
-//! and follow the rules of the clips: a click, shift-click and cmd-click, and a rectangle.
+//! All positions and what a drag does to a note come from [`super::roll`] and [`super::rows`]. The
+//! editor keeps no copy of the clip: it reads it when it paints and when a mouse event arrives. The
+//! selected notes are kept by value in a [`Selection`], the same one the timeline keeps its clips
+//! in, and follow the rules of the clips: a click, shift-click and cmd-click, and a rectangle.
 //!
 //! This file holds the view itself: its fields, what the mouse holds, the project events, the
 //! selection, the viewport, the render and the mouse listeners. The rest is in `editor/`, as
@@ -22,8 +23,9 @@ mod keys;
 mod mouse;
 mod scene;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{
     App, Bounds, Context, DispatchPhase, Entity, EventEmitter, FocusHandle, Focusable, Hitbox,
@@ -31,7 +33,7 @@ use gpui::{
     Point, ScrollWheelEvent, Subscription, Window, canvas, div, prelude::*, px,
 };
 use sound_core::{Changes, Instance, InstanceId, ProjectEvent, Ticks};
-use sound_notes::{Clip, Note, Pitch, Velocity};
+use sound_notes::{Clip, EditorName, Editors, Note, Pitch, Velocity, View};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
@@ -45,6 +47,7 @@ use super::layout::{HEADER_WIDTH, RULER_HEIGHT, Viewport};
 use super::paint::paint_focus_ring;
 use super::plural;
 use super::roll::{ROLL_HEIGHT, VELOCITY_HEIGHT, clamped, opened};
+use super::rows::Rows;
 use super::scrolled_or_zoomed;
 use super::selection::Selection;
 use super::snap::{Grid, SharedSnap};
@@ -149,6 +152,11 @@ pub struct NoteEditor {
     clipboard: SharedClipboard,
     /// The viewport of the last paint, for the playhead line and the mouse.
     painted: Rc<Cell<Viewport>>,
+    /// The rows of the last paint, for the mouse.
+    painted_rows: RefCell<Rc<Rows>>,
+    editors: Editors,
+    /// The grid of the clip's editor, and what it was found for.
+    grid: RefCell<Option<CachedGrid>>,
     /// The width of the note area at the last paint. Before the first paint it is the width
     /// of the timeline above, which is the same.
     painted_width: Rc<Cell<f32>>,
@@ -178,6 +186,13 @@ pub struct NoteEditor {
     keyboard_focus: KeyboardFocus,
     close_focus: FocusHandle,
     _project_events: Subscription,
+}
+
+struct CachedGrid {
+    generation: u64,
+    editor: Option<EditorName>,
+    view: View,
+    grid: Arc<sound_notes::Grid>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -249,6 +264,10 @@ impl NoteEditor {
             }
         })
         .detach();
+        let editors = session.read(cx).project().provided::<Editors>();
+        let editors = editors.cloned().unwrap_or_default();
+        // Until the clip is there: `set_clip` below finds its rows.
+        let piano_roll = sound_notes::piano_roll().grid_for(&View::default());
         let mut editor = Self {
             session,
             clip: clip.clone(),
@@ -256,6 +275,9 @@ impl NoteEditor {
             snap,
             clipboard,
             painted: Rc::default(),
+            painted_rows: RefCell::new(Rc::new(Rows::new(piano_roll, []))),
+            editors,
+            grid: RefCell::default(),
             painted_width: Rc::new(Cell::new(width)),
             selection: Selection::default(),
             known: Vec::new(),
@@ -303,6 +325,43 @@ impl NoteEditor {
 
     pub(super) fn painted(&self) -> Rc<Cell<Viewport>> {
         self.painted.clone()
+    }
+
+    /// The rows of the last paint.
+    pub fn rows(&self) -> Rc<Rows> {
+        self.painted_rows.borrow().clone()
+    }
+
+    /// The rows of the clip's editor, with an extra row for each pitch of its notes that has
+    /// none, and of the notes a drag started from, so a row never goes away under a drag.
+    fn rows_of(&self, clip: &Clip) -> Rows {
+        let generation = self.editors.generation();
+        let mut cached = self.grid.borrow_mut();
+        let grid = match cached.as_ref() {
+            Some(found)
+                if found.generation == generation
+                    && found.editor == clip.editor
+                    && found.view == clip.view =>
+            {
+                found.grid.clone()
+            }
+            _ => {
+                let grid = self.editors.of(clip).grid;
+                *cached = Some(CachedGrid {
+                    generation,
+                    editor: clip.editor.clone(),
+                    view: clip.view.clone(),
+                    grid: grid.clone(),
+                });
+                grid
+            }
+        };
+        let dragged = self.drag.iter().flat_map(|drag| &drag.notes);
+        let pitches = clip.notes.iter().map(|note| note.pitch);
+        Rows::new(
+            grid,
+            pitches.chain(dragged.map(|tracked| tracked.origin.pitch)),
+        )
     }
 
     /// Whether the focus ring shows: the editor has the focus, and it came from the keyboard.
@@ -441,10 +500,17 @@ impl NoteEditor {
         self.clip = clip;
         self.selection = Selection::default();
         self.seen_history = self.session.read(cx).history_moves();
-        if let Some(state) = self.session.read(cx).project().state(&self.clip) {
+        let project = self.session.read(cx).project();
+        if let Some(state) = project.state(&self.clip) {
             self.known = state.notes.clone();
-            self.viewport = opened(state, self.painted_width.get(), ROLL_HEIGHT);
+            let rows = self.rows_of(state);
+            let width = self.painted_width.get();
+            let viewport = opened(state, &rows, width, ROLL_HEIGHT);
+            let time_signatures = project.project_file().tempo_map.time_signatures();
+            // Rows that do not fill the area start at its top.
+            self.viewport = clamped(&viewport, &rows, state, time_signatures, width, ROLL_HEIGHT);
             self.painted.set(self.viewport);
+            self.painted_rows.replace(Rc::new(rows));
         }
         cx.notify();
     }
@@ -464,7 +530,8 @@ impl NoteEditor {
         };
         let time_signatures = project.project_file().tempo_map.time_signatures();
         let width = self.painted_width.get();
-        clamped(&viewport, clip, time_signatures, width, ROLL_HEIGHT)
+        let rows = self.rows_of(clip);
+        clamped(&viewport, &rows, clip, time_signatures, width, ROLL_HEIGHT)
     }
 
     /// The grid of the snap setting over the time signatures of the project.
@@ -557,6 +624,7 @@ impl Render for NoteEditor {
                 };
                 editor.read(cx).painted.set(scene.viewport);
                 editor.read(cx).painted_width.set(scene.width);
+                editor.read(cx).painted_rows.replace(scene.rows.clone());
                 paint_roll(&scene, bounds, window, cx);
                 let keyboard_focus = &editor.read(cx).keyboard_focus;
                 if keyboard_focus.shows_ring(&focus_handle, window) {

@@ -67,7 +67,12 @@ impl NoteEditor {
         let grid = self.grid(cx);
         let earliest = selected.iter().map(|(_, note)| note.start).min();
         let anchor = clip.start + earliest.unwrap_or_default();
-        let (delta, semitones) = match (key, shift) {
+        let rows = self.rows_of(&clip);
+        // The octave of the lowest note: on a piano roll every note moves 12 rows, as far as
+        // the top and the bottom row let them all.
+        let lowest = selected.iter().map(|(_, note)| note.pitch).min();
+        let octave = |up| lowest.map_or(0, |pitch| rows.octave(pitch, up));
+        let (delta, steps) = match (key, shift) {
             ("backspace" | "delete", false) => {
                 self.delete(&clip, &selected, "Delete note", "Delete notes", cx);
                 return true;
@@ -76,12 +81,12 @@ impl NoteEditor {
             ("right", false) => (grid.nudge(anchor, true), 0),
             ("up", false) => (0, 1),
             ("down", false) => (0, -1),
-            ("up", true) => (0, 12),
-            ("down", true) => (0, -12),
+            ("up", true) => (0, octave(true)),
+            ("down", true) => (0, octave(false)),
             _ => return false,
         };
         let origins: Vec<Note> = selected.iter().map(|(_, note)| note.clone()).collect();
-        let next = moved_notes(clip.length, &origins, delta, semitones);
+        let next = moved_notes(&rows, clip.length, &origins, delta, steps);
         if next == origins {
             return true;
         }

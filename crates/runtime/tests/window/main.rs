@@ -10,12 +10,15 @@ mod audio;
 mod automation_lanes;
 mod built_in_effects;
 mod clip_automation;
+#[path = "../shared/editors.rs"]
+mod clip_editors;
 mod clips;
 mod compressor;
 mod computer_keys;
 mod delay;
 mod drum_pad;
 mod editing;
+mod editors;
 mod effects;
 mod eq;
 mod filter;
