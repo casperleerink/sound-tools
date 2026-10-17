@@ -354,7 +354,9 @@ impl Processor for NotePlayer {
                 launch => shown(launch.and_then(|launch| launch.pattern)),
             });
             let phase = playing(*launched).map(|(pattern, launched)| {
-                let phase = pattern.phase(launched.anchor, transport.heard_tick);
+                // Before the anchor, as a launch is while the latency after the player passes.
+                let heard = transport.heard_tick.max(launched.anchor);
+                let phase = pattern.phase(launched.anchor, heard);
                 (phase.0 as f64 / pattern.length().ticks().0 as f64) as f32
             });
             watches.phase.set(phase.unwrap_or(0.0));

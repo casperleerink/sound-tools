@@ -99,6 +99,38 @@ tool({
     ),
 ];
 
+/// A page that counts its clicks from the record it drew with, and shows nothing that changes.
+const COUNTER: [(&str, &str); 3] = [
+    ONLY_THE_TOOL[0],
+    (
+        "state/counter.json",
+        r#"{"tool": "counter", "state": {"count": 0}}"#,
+    ),
+    (
+        "extensions/counter.ts",
+        r#"import { h, input, knob, tool } from "./sdk";
+
+tool({
+  name: "counter",
+  title: "Counter",
+  when: "You want to count clicks",
+  doc: "Counts the clicks on its page.",
+  state: { count: knob({ min: 0, max: 100, default: 0 }) },
+  sound: () => input,
+  page: ({ size, state, update }) =>
+    h(
+      "div",
+      {
+        style: { width: size.width, height: size.height },
+        onClick: () => update("Count", (next) => { next.count = state.count + 1; }),
+      },
+      "Count",
+    ),
+});
+"#,
+    ),
+];
+
 /// The tool `keys`, and no record of it yet.
 const ONLY_THE_TOOL: [(&str, &str); 2] = [
     (
@@ -382,6 +414,32 @@ fn a_page_that_asks_for_the_transport_plays_it_and_draws_as_it_moves(cx: &mut Te
             .as_f64()
             .is_some_and(|tick| tick > 0.)
     });
+}
+
+/// The tree stays the same, so a click runs the handler of the last draw, with the new record.
+#[gpui::test]
+fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
+    cx: &mut TestAppContext,
+) {
+    let Some(mut window) = open(cx, &COUNTER) else {
+        return;
+    };
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    let middle = point(middle.width, middle.height);
+    let count = |window: &mut Window| window.record("counter")["count"].as_f64();
+    // Clicked again until it counts: the first click may come before the first tree.
+    for wanted in [1.0, 2.0] {
+        window.until("the click counts", |window| {
+            window.cx.simulate_click(middle, Modifiers::default());
+            (0..40).any(|_| {
+                window.poll();
+                std::thread::sleep(Duration::from_millis(5));
+                count(window) == Some(wanted)
+            })
+        });
+    }
+    window.wait_for_bun();
+    assert_eq!(count(&mut window), Some(2.0));
 }
 
 #[gpui::test]
