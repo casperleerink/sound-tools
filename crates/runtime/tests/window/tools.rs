@@ -1099,3 +1099,120 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
     assert_eq!(window.loudest(2 * BAR_FRAMES), 0.0);
     assert_eq!(window.problems(), []);
 }
+
+/// A parent whose page plays its children, one click each: a note on the built-in `synth`, a
+/// note on the tool `keys`, the live control and the trigger of `drop`; then a trigger `drop`
+/// does not have, and a child it does not own.
+const CONDUCTOR: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "conductor",
+  title: "Conductor",
+  when: "You want to play children from a page",
+  doc: "Each click plays the next child.",
+  state: {},
+  memory: () => ({ clicks: 0 }),
+  behaviour: () => ({ connections: ["synth", "keys", "drop"].map((child) => ({ from: { child }, to: "sound" })) }),
+  page: ({ size, memory, play, set, fire }) =>
+    h("div", {
+      style: { width: size.width, height: size.height },
+      onClick: () => {
+        memory.clicks += 1;
+        if (memory.clicks === 1) play(45, { child: "synth", seconds: 0.1 });
+        if (memory.clicks === 2) play(69, { child: "keys", seconds: 0.1 });
+        if (memory.clicks === 3) {
+          set({ child: "drop", live: "gain" }, 1);
+          fire({ child: "drop", trigger: "hit" });
+        }
+        if (memory.clicks === 4) fire({ child: "drop", trigger: "hat" });
+        if (memory.clicks === 5) play(60, { child: "drum" });
+      },
+    }, "Play"),
+});
+"#;
+
+/// Noise that jumps up when `hit` fires and falls away, silent until `gain` is up.
+const DROP: &str = r#"import { feedback, live, max, noise, tool, trigger } from "./sdk";
+
+tool({
+  name: "drop",
+  title: "Drop",
+  when: "You want a hit",
+  doc: "A burst of noise.",
+  kind: "source",
+  state: {},
+  controls: { hit: trigger(), gain: live({ min: 0, max: 1, default: 0 }) },
+  sound: ({ hit, gain }) => {
+    const level = feedback();
+    level.set(max(hit, level.times(0.9995)));
+    return noise().times(level).times(gain);
+  },
+});
+"#;
+
+#[gpui::test]
+fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
+    cx: &mut TestAppContext,
+) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project
+        .replace("\"keys\"", "\"conductor\"")
+        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/conductor/instance.json",
+            r#"{"tool": "conductor", "state": {}}"#,
+        ),
+        (
+            "state/conductor/synth.json",
+            r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
+        ),
+        (
+            "state/conductor/keys.json",
+            r#"{"tool": "keys", "state": {}}"#,
+        ),
+        (
+            "state/conductor/drop.json",
+            r#"{"tool": "drop", "state": {}}"#,
+        ),
+        ("extensions/conductor.ts", CONDUCTOR),
+        ("extensions/keys.ts", KEYS),
+        ("extensions/drop.ts", DROP),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    let middle = point(middle.width, middle.height);
+    window.wait_for_bun();
+    for child in ["synth", "keys", "drop"] {
+        assert_eq!(window.loudest(4_800), 0.0, "before the click for {child}");
+        window.cx.simulate_click(middle, Modifiers::default());
+        window.until(child, |window| window.loudest(480) > 0.05);
+        window.until("silence", |window| {
+            window.loudest(4_800) == 0.0 || child == "drop"
+        });
+    }
+    assert_eq!(window.problems(), []);
+
+    let problem = |message: &str| Problem {
+        path: "extensions/conductor.ts".to_string(),
+        message: format!("tool conductor: a performer plays the child {message}"),
+    };
+    window.cx.simulate_click(middle, Modifiers::default());
+    window.until("the problem of the trigger", |window| {
+        !window.problems().is_empty()
+    });
+    let trigger =
+        problem("\"drop\", which is drop, which has no trigger hat: its triggers are hit");
+    assert_eq!(window.problems(), [trigger.clone()]);
+    window.cx.simulate_click(middle, Modifiers::default());
+    // A file shows its newest problem.
+    window.until("the problem of the child", |window| {
+        window.problems() != [trigger.clone()]
+    });
+    let child =
+        problem("\"drum\", which conductor does not own: its children are drop, keys, synth");
+    assert_eq!(window.problems(), [child]);
+}

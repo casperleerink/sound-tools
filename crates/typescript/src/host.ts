@@ -316,20 +316,22 @@ function checkAt(at: number | undefined) {
 function players(instance: string): Performer<Controls> {
   return {
     set(control, value) {
-      send({ type: "control", instance, name: control, value });
+      const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.live];
+      send({ type: "control", instance, child, name, value });
     },
     fire(control, { at } = {}) {
       checkAt(at);
-      send({ type: "control", instance, name: control, at });
+      const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.trigger];
+      send({ type: "control", instance, child, name, at });
     },
-    play(pitch, { seconds = 0.25, hold = false, velocity = 0.8, at } = {}) {
+    play(pitch, { seconds = 0.25, hold = false, velocity = 0.8, at, child } = {}) {
       checkAt(at);
       // A held note has no length: it ends at its release.
-      send({ type: "note", instance, pitch: keyOf(pitch), velocity, seconds: hold ? undefined : seconds, at });
+      send({ type: "note", instance, child, pitch: keyOf(pitch), velocity, seconds: hold ? undefined : seconds, at });
     },
-    release(pitch, { at } = {}) {
+    release(pitch, { at, child } = {}) {
       checkAt(at);
-      send({ type: "release", instance, pitch: keyOf(pitch), at });
+      send({ type: "release", instance, child, pitch: keyOf(pitch), at });
     },
     launch(player, pattern, { quantize = "bar" } = {}) {
       if (pattern !== null && !(Number.isInteger(pattern) && pattern >= 0)) {

@@ -165,8 +165,11 @@ impl TypeScriptCard {
     /// Moves a live control, or fires a trigger with no value.
     fn control(&mut self, name: &str, value: Option<f32>, cx: &mut Context<Self>) {
         let id = self.id.clone();
-        self.live
-            .update(cx, |live, cx| live.control(&id, name, value, None, cx));
+        let controlled =
+            (self.live).update(cx, |live, cx| live.control(&id, name, value, None, cx));
+        if let Err(error) = controlled {
+            eprintln!("error: {id} {error}");
+        }
     }
 
     /// A handler of the tree of `version`, with where the pointer is on a canvas.
