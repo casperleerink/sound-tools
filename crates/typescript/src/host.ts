@@ -332,8 +332,19 @@ function players(instance: string): Performer<Controls> {
       checkAt(at);
       send({ type: "release", instance, pitch: keyOf(pitch), at });
     },
+    launch(player, pattern, { quantize = "bar" } = {}) {
+      if (pattern !== null && !(Number.isInteger(pattern) && pattern >= 0)) {
+        throw new RangeError(`launch takes the index of a pattern, from 0, or null to stop, not ${pattern}`);
+      }
+      if (!QUANTIZE.includes(quantize)) {
+        throw new RangeError(`quantize is "bar", "beat" or "now", not ${JSON.stringify(quantize)}`);
+      }
+      send({ type: "launch", instance, player, pattern, quantize });
+    },
   };
 }
+
+const QUANTIZE: readonly unknown[] = ["bar", "beat", "now"];
 
 /** The MIDI key of a pitch. */
 function keyOf(pitch: number): number {
@@ -399,7 +410,7 @@ function render(request: Render) {
 /** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec, page: boolean): Sent {
   const memory = spec.memory ? spec.memory() : {};
-  const quiet = { set() {}, fire() {}, play() {}, release() {} };
+  const quiet = { set() {}, fire() {}, play() {}, release() {}, launch() {} };
   try {
     spec.tick?.({ state: {}, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
   } catch (error) {
