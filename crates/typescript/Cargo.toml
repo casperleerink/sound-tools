@@ -13,6 +13,7 @@ gpui.workspace = true
 notify.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_path_to_error.workspace = true
 smol.workspace = true
 sound-core.workspace = true
 sound-media.workspace = true

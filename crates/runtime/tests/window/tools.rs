@@ -141,6 +141,7 @@ const TWO_TRACKS: [(&str, &str); 8] = [
 struct Window<'a> {
     _folder: TempDir,
     engine: Engine,
+    plugins: Plugins,
     session: Entity<Session>,
     shell: Entity<Shell>,
     cx: &'a mut VisualTestContext,
@@ -179,7 +180,7 @@ fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
     let (shell, cx) = cx.add_window_view({
-        let session = session.clone();
+        let (session, plugins) = (session.clone(), plugins.clone());
         move |window, cx| {
             let (mut views, mut devices) = views(plugins.downgrade());
             let extensions = extensions.unwrap();
@@ -192,6 +193,7 @@ fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
     Some(Window {
         _folder: folder,
         engine,
+        plugins,
         session,
         shell,
         cx,
@@ -208,11 +210,14 @@ impl Window<'_> {
         peak(&output)
     }
 
-    /// One poll of the window, after a block of the engine: what Bun said is heard.
+    /// One poll of the window, after a block of the engine: what Bun said is heard, and the
+    /// tick of the window runs.
     fn poll(&mut self) {
         self.loudest(64);
         self.cx.executor().advance_clock(POLL_INTERVAL);
         self.cx.run_until_parked();
+        let (session, plugins) = (self.session.clone(), self.plugins.clone());
+        (self.cx).update(|_, cx| runtime::window::tick(&session, &plugins, &mut 0, cx));
     }
 
     /// Polls until `done` holds: Bun answers on a thread of its own, in real time.
@@ -789,4 +794,81 @@ tool({
     };
     assert_eq!(problem.path, "extensions/");
     assert!(problem.message.contains("no tool to blame"), "{problem:?}");
+}
+
+/// Plays the drone its record names into its own sound.
+const BAND: &str = r#"import { text, tool } from "./sdk";
+
+tool({
+  name: "band",
+  title: "Band",
+  when: "You want one of two drones",
+  doc: "Plays the drone `lead` names.",
+  state: { lead: text({ default: "low" }) },
+  behaviour: ({ state }) => ({ connections: [{ from: { child: state.lead }, to: "sound" }] }),
+});
+"#;
+
+/// A sine at `hz`, all the time.
+const DRONE: &str = r#"import { knob, sine, tool } from "./sdk";
+
+tool({
+  name: "drone",
+  title: "Drone",
+  when: "You want a drone",
+  doc: "A sine.",
+  kind: "source",
+  state: { hz: knob({ min: 20, max: 2000, default: 220 }) },
+  sound: ({ hz }) => sine(hz).times(0.25),
+});
+"#;
+
+#[gpui::test]
+fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project.replace("\"keys\"", "\"band\"");
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/band/instance.json",
+            r#"{"tool": "band", "state": {}}"#,
+        ),
+        ("state/band/low.json", r#"{"tool": "drone", "state": {}}"#),
+        (
+            "state/band/high.json",
+            r#"{"tool": "drone", "state": {"hz": 880}}"#,
+        ),
+        ("extensions/band.ts", BAND),
+        ("extensions/drone.ts", DRONE),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    // A tenth of a second of the left channel: how often it rises through zero.
+    let rises = |window: &mut Window| {
+        let mut output = vec![0.0_f32; 4_800 * OFFLINE.channels];
+        window.engine.process_block(&mut output);
+        let left: Vec<f32> = output.iter().step_by(OFFLINE.channels).copied().collect();
+        left.windows(2)
+            .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+            .count()
+    };
+    window.until("the low drone", |window| rises(window).abs_diff(22) <= 1);
+
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut edit = project.begin("Lead high");
+                project.update_json(&mut edit, &id("band"), |state| {
+                    state["lead"] = "high".into()
+                })?;
+                project.finish(edit)
+            })
+        })
+    });
+    // The edit plays what was declared before, until Bun answers.
+    assert!(rises(&mut window).abs_diff(22) <= 1);
+    window.until("the high drone", |window| rises(window).abs_diff(88) <= 1);
+    assert_eq!(window.problems(), []);
 }

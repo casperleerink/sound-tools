@@ -345,12 +345,17 @@ pub const SCAN_AGAIN: &str = "plugins:scan-again";
 /// files in it, such as `.git` or `.DS_Store`, do not make it an existing project.
 ///
 /// Making the default content is not something to undo, so a new project has no history.
+///
+/// With no window, it waits for what the behaviours of its own tools declare, so it plays what
+/// the records say from the start.
 pub fn open_or_create_with(
     folder: &Path,
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
-    Ok(open_with_extensions(folder, control, plugins)?.0)
+    let mut project = open_with_extensions(folder, control, plugins)?.0;
+    first(settle_behaviours(&mut project))?;
+    Ok(project)
 }
 
 /// [`open_or_create_with`], and the project's own tools in `extensions/` for a window to keep
@@ -414,6 +419,7 @@ pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, 
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);
     }
+    first(settle_behaviours(&mut project))?;
     Ok((project, engine))
 }
 
@@ -642,6 +648,7 @@ pub fn render_block(
     // with the rest of the tick.
     drum_pad::wait_for_sounds();
     first(take_drum_sounds(project))?;
+    first(settle_behaviours(project))?;
     engine.process_block(output);
     project.engine().poll()?;
     let (problems, errors) = tick(project, plugins);
@@ -672,6 +679,9 @@ pub fn tick(
     // inspect and the tests load at once, so there is nothing here for them.
     let loaded = sampler::take_ready(project.assets());
     errors.extend(rebind(project, &loaded));
+    // A tool of the project that owns children, whose behaviour Bun answered.
+    let declared = sound_typescript::take_declared(project.assets());
+    errors.extend(rebind(project, &declared));
     // The main-thread callbacks the plugins ask for, and the state they say changed.
     let mut problems = plugins.poll(project);
     // A plugin that is started again is handed to the engine. After the poll, which is what
@@ -693,6 +703,21 @@ pub fn tick(
 fn rebind(project: &mut Project, instances: &[InstanceId]) -> Vec<ProjectError> {
     let failed = instances.iter().filter_map(|id| project.rebind(id).err());
     failed.collect()
+}
+
+/// Waits for Bun to answer every behaviour it was asked, and runs each of them again, which
+/// plays the answer, until none asks again: what a render plays from its first block, and what
+/// `--inspect` prints. An answer for a record that changed since asks again.
+fn settle_behaviours(project: &mut Project) -> Vec<ProjectError> {
+    let mut errors = Vec::new();
+    loop {
+        sound_typescript::wait_for_behaviours();
+        let declared = sound_typescript::take_declared(project.assets());
+        if declared.is_empty() {
+            return errors;
+        }
+        errors.extend(rebind(project, &declared));
+    }
 }
 
 /// Runs the behaviour of every Drum pad whose sounds were made since the last call, which puts

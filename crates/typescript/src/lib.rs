@@ -11,6 +11,7 @@
 //! loads every file again and defines the tools again: one path. Nothing of it runs on the
 //! audio thread, and the window never waits for Bun.
 
+mod behaviours;
 mod bun;
 mod card;
 mod samples;
@@ -20,10 +21,12 @@ mod window;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 
+pub use behaviours::{take_declared, wait_for_behaviours};
 pub use window::{hear_midi, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
@@ -80,7 +83,7 @@ pub struct Extensions {
     folder: PathBuf,
     /// Bun after its first load, for the window. `None` when the folder has no tool file, or
     /// Bun did not start.
-    bun: Option<Bun>,
+    bun: Option<Arc<Bun>>,
     /// The tools of the first load that the registry took.
     tools: Vec<ToolInfo>,
     skipped: Skipped,
@@ -154,10 +157,10 @@ impl FirstLoad {
     }
 }
 
-/// The tools of `loaded` with their sounds compiled, and what is wrong: the errors of the
-/// files, the files Bun runs without, and every tool whose fields, sounds, card or page fail.
-/// Takes as long as compiling every sound: not on the thread that draws.
-fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<Problem>) {
+/// The tools of `loaded` by `bun` with their sounds compiled, and what is wrong: the errors of
+/// the files, the files Bun runs without, and every tool whose fields, sounds, card or page
+/// fail. Takes as long as compiling every sound: not on the thread that draws.
+fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, Vec<Problem>) {
     let file_problem = |file: &str, message: &str| Problem {
         path: format!("{FOLDER}/{file}"),
         message: message.to_string(),
@@ -179,7 +182,7 @@ fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<Problem>) {
             problems.push(info.problem(error));
             continue;
         }
-        let sounds = Sounds::new(&info, sounds);
+        let sounds = Sounds::new(&info, sounds, bun);
         // One problem a file: a list keeps one.
         let mut sounds_failed: Vec<&String> = sounds.failures().collect();
         sounds_failed.sort();
@@ -253,7 +256,7 @@ fn tool_files(extensions: &Path) -> Vec<String> {
 
 /// A Bun that loaded.
 struct Launched {
-    bun: Bun,
+    bun: Arc<Bun>,
     /// The tools it loaded, see [`checked`].
     sounds: Vec<Sounds>,
     /// The files it runs without: those given, and each whose code hung or stopped Bun while it
@@ -283,7 +286,10 @@ fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, S
             .collect();
         match Bun::start(&program, &host, extensions, &loading) {
             Ok((bun, loaded)) => {
-                let (sounds, problems) = checked(loaded, &skipped);
+                // The tools that own children ask it what they declare while their records
+                // play, also outside the window.
+                let bun = Arc::new(bun);
+                let (sounds, problems) = checked(loaded, &skipped, &bun);
                 return Ok(Some(Launched {
                     bun,
                     sounds,

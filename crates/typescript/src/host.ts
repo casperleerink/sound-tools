@@ -34,7 +34,8 @@ type Request =
   | { type: "frame"; dt: number; time: number; instances: Looped[] }
   | { type: "key"; time: number; instance: Looped; key: string; down: boolean }
   | { type: "midi"; time: number; instances: Looped[]; messages: Midi[] }
-  | { type: "drop"; card: number };
+  | { type: "drop"; card: number }
+  | { type: "behaviour"; question: number; tool: string; state: State; children: unknown[] };
 
 type Canvas = Extract<Node, { type: "canvas" }>;
 /** What the runtime gets of a node: a handler is its index. */
@@ -111,6 +112,9 @@ function problemsOf(spec: Spec): string[] {
     if (sounds > MAX_SOUNDS) {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
+    if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
+      problems.push("kind: an owner's sound hears its children through `input`, so leave `kind` out");
+    }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
     problems.push(String(error));
@@ -165,6 +169,7 @@ function described(spec: Spec, file: string) {
       page: spec.page !== undefined,
       keys: spec.onKey !== undefined,
       midi: spec.onMidi !== undefined,
+      behaviour: spec.behaviour !== undefined,
     },
     sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
     card: made(() => draw(spec, false)),
@@ -203,10 +208,15 @@ function specOf(tool: string): Spec {
   return spec;
 }
 
+const DATA = new Set(["notes", "text", "number", "list"]);
+
 /** The sound graph of a tool for these choices. */
 function sound(spec: Spec, choices: Choices): Graph {
   const fields: Record<string, unknown> = {};
   for (const [name, field] of Object.entries(spec.state)) {
+    if (DATA.has(field.kind)) {
+      continue;
+    }
     fields[name] =
       field.kind === "choice"
         ? (choices[name] ?? field.default)
@@ -217,7 +227,22 @@ function sound(spec: Spec, choices: Choices): Graph {
   for (const name of Object.keys(spec.controls ?? {})) {
     fields[name] = new sdk.Param(name);
   }
-  return sdk.graphToJson(() => spec.sound(fields as never));
+  const build = spec.sound ?? (() => sdk.input);
+  return sdk.graphToJson(() => build(fields as never));
+}
+
+/** Answers what the behaviour of an owner declares, or why it does not. */
+function declare({ question, tool, state, children }: Extract<Request, { type: "behaviour" }>) {
+  const declaration = made(() => {
+    const spec = specOf(tool);
+    if (!spec.behaviour) {
+      throw new Error(`${tool} has no behaviour`);
+    }
+    runs(tool, "behaviour");
+    // What the runtime reads: a function or a class in it would be lost on the way.
+    return JSON.parse(JSON.stringify(spec.behaviour({ state, children } as never)));
+  });
+  send({ type: "declared", question, declaration });
 }
 
 function flatten(child: Child, handlers: Handler[], into: Sent[]) {
@@ -467,6 +492,9 @@ function handle(request: Request) {
     case "drop":
       handlers.delete(request.card);
       drawn.delete(request.card);
+      break;
+    case "behaviour":
+      declare(request);
       break;
   }
 }

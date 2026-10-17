@@ -11,6 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
@@ -64,7 +65,7 @@ pub(crate) struct Live {
 /// The Bun of the window.
 enum Host {
     Running {
-        bun: Bun,
+        bun: Arc<Bun>,
         /// A step of the control loops is out. One at a time, so a slow loop does not pile
         /// steps up.
         ticking: bool,
@@ -332,7 +333,7 @@ impl Live {
     }
 
     /// `bun` as the Bun of the window, heard until it ends.
-    fn running(bun: Bun, cx: &mut Context<Self>) -> Host {
+    fn running(bun: Arc<Bun>, cx: &mut Context<Self>) -> Host {
         let events = bun.events();
         let hearing = cx.spawn(async move |live, cx| {
             while let Ok(event) = events.recv().await {
@@ -408,9 +409,12 @@ fn engine_time(session: &Entity<Session>, cx: &mut App) -> f64 {
     })
 }
 
-/// What a picker offers of the tools of `kind`: each one's record at its defaults.
+/// What a picker offers of the tools of `kind`: each one's record at its defaults. Not an owner,
+/// whose place is the top of the project.
 fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
-    let tools = tools.iter().filter(|info| kind(info.kind));
+    let tools = tools
+        .iter()
+        .filter(|info| kind(info.kind) && !info.behaviour);
     tools
         .map(|info| {
             let tool = info.name.clone();
@@ -861,7 +865,7 @@ impl Live {
             // Ending a Bun waits for it: not on the thread that draws.
             if let Host::Running { bun, .. } = std::mem::replace(&mut self.host, Host::Stopped) {
                 cx.background_executor()
-                    .spawn(async move { drop(bun) })
+                    .spawn(async move { bun.end() })
                     .detach();
             }
             let message = format!(
@@ -888,14 +892,16 @@ impl Live {
     }
 
     /// Starts a new Bun on a thread of its own, once `old` ended there.
-    fn launch(&mut self, old: Option<Bun>, cx: &mut Context<Self>) {
+    fn launch(&mut self, old: Option<Arc<Bun>>, cx: &mut Context<Self>) {
         let (folder, skipped) = (self.folder.clone(), self.skipped.clone());
         cx.spawn(async move |live, cx| {
             // Ending a Bun waits for it, and a load up to a timeout of each step: not on the
             // thread that draws.
             let launched = (cx.background_executor())
                 .spawn(async move {
-                    drop(old);
+                    if let Some(old) = old {
+                        old.end();
+                    }
                     crate::launch(&folder, skipped)
                 })
                 .await;
