@@ -4,8 +4,8 @@ import { list, number, ownSound, text, tool } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
-// @ts-expect-error: an item has no field `nmae`.
-list({ name: text() }, { default: [{ nmae: "x" }] });
+// @ts-expect-error: an item has no field `title`.
+list({ name: text() }, { default: [{ title: "x" }] });
 
 tool({
   name: "types",
@@ -17,8 +17,8 @@ tool({
     const name: string = state.rows[0]!.name;
     const steps: number = state.rows[0]!.steps;
     const plain: string = state.plain[0]!;
-    // @ts-expect-error: an item has no field `nmae`.
-    state.rows[0]!.nmae;
+    // @ts-expect-error: an item has no field `title`.
+    state.rows[0]!.title;
     const connections = [{ from: { child: name + steps + plain }, to: ownSound }];
     return { connections };
   },
