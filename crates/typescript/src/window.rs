@@ -18,8 +18,8 @@ use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
 use sound_notes::{
-    Launch, NOTES_INPUT, NoteFeed, NoteFeedUpdate, NotePlayer, NotePlayerUpdate, PerformedNote,
-    Pitch, Velocity,
+    Launch, NOTES_INPUT, NoteFeed, NoteFeedUpdate, NotePlayer, NotePlayerUpdate, Performed, Pitch,
+    Velocity,
 };
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
@@ -659,7 +659,7 @@ impl Live {
         let tool = session.read(cx).project().tool_of(id);
         let Some(info) = tool.and_then(|tool| find(&tools, tool)) else {
             let tool = tool.unwrap_or("nothing");
-            return Err(format!("is {tool}, which has no live controls or triggers"));
+            return Err(format!("has no live controls or triggers: it is {tool}"));
         };
         let update = update(info, session.read(cx))?;
         let processor = info.processor();
@@ -708,10 +708,7 @@ impl Live {
                     true => "none".to_string(),
                     false => names.join(", "),
                 };
-                Err(format!(
-                    "is {}, which has no {kind} {name}: its {kind}s are {names}",
-                    info.name
-                ))
+                Err(format!("has no {kind} {name}: its {kind}s are {names}"))
             }
         };
         self.send_update(id, update, cx)?;
@@ -726,24 +723,6 @@ impl Live {
         Ok(())
     }
 
-    /// Plays a key of the voices of an instance, or lets go of one, as the keyboard would:
-    /// `update` makes what the processor gets.
-    fn note(&self, id: &InstanceId, update: impl FnOnce(&Session) -> SignalsUpdate, cx: &mut App) {
-        let sent = self.send_update(
-            id,
-            |info, session| match info.kind {
-                ToolKind::Effect => {
-                    Err(format!("is {}, an effect, which plays no notes", info.name))
-                }
-                ToolKind::Instrument | ToolKind::Source => Ok(update(session)),
-            },
-            cx,
-        );
-        if let Err(error) = sent {
-            eprintln!("error: {id} {error}");
-        }
-    }
-
     /// The child `child` of `parent`, which a performer of `parent` plays. One it does not own
     /// is a problem of its tool.
     fn child_of(
@@ -754,7 +733,9 @@ impl Live {
     ) -> Option<InstanceId> {
         let session = self.session.upgrade()?;
         let project = session.read(cx).project();
-        let id = (parent.child(child).ok()).filter(|id| project.tool_of(id).is_some());
+        // Not a grandchild, as a name with a `/` would give.
+        let id = (parent.child(child).ok())
+            .filter(|id| id.parent().as_ref() == Some(parent) && project.tool_of(id).is_some());
         if id.is_none() {
             let children: Vec<&str> = (project.instances())
                 .filter(|(id, _)| id.parent().as_ref() == Some(parent))
@@ -767,19 +748,20 @@ impl Live {
             let problem = format!(
                 "a performer plays the child {child:?}, which {parent} does not own: {children}"
             );
-            self.tool_failed(parent, problem, cx);
+            self.tool_problem(parent, problem, cx);
         }
         id
     }
 
     /// Moves a live control of instance `id`, or of its child `child`, or fires a trigger. What
-    /// does not play there is a problem of its tool when it names a child, which its types do
-    /// not check.
+    /// a child does not have is a problem of the tool, as its types do not check it.
     fn perform_control(
         &mut self,
-        (id, child): (&InstanceId, Option<&str>),
+        id: &InstanceId,
+        child: Option<&str>,
         name: &str,
-        (value, at): (Option<f32>, Option<f64>),
+        value: Option<f32>,
+        at: Option<f64>,
         cx: &mut Context<Self>,
     ) {
         let Some(child) = child else {
@@ -793,20 +775,31 @@ impl Live {
         };
         if let Err(error) = self.control(&played, name, value, at, cx) {
             let problem = format!("a performer plays the child {child:?}, which {error}");
-            self.tool_failed(id, problem, cx);
+            self.tool_problem(id, problem, cx);
         }
     }
 
-    /// Plays a key of the child `child` of `parent`, or lets go of one, through the feed its
-    /// parent declares: any child with `notes`, a built-in instrument too.
-    fn child_note(
+    /// Plays a key of instance `id`, or lets go of one, as the keyboard would: on its own
+    /// voices, or into the `notes` of its child `child` through the feed it declares, so a
+    /// built-in instrument plays it too.
+    fn perform_note(
         &mut self,
-        (parent, child): (&InstanceId, &str),
-        update: impl FnOnce(&Session) -> NoteFeedUpdate,
+        id: &InstanceId,
+        child: Option<&str>,
+        performed: Performed,
         cx: &mut Context<Self>,
     ) {
-        let (Some(session), Some(played)) =
-            (self.session.upgrade(), self.child_of(parent, child, cx))
+        let Some(child) = child else {
+            let update = |info: &ToolInfo, _: &Session| match info.kind {
+                ToolKind::Effect => Err("has no notes: it is an effect".to_string()),
+                ToolKind::Instrument | ToolKind::Source => Ok(SignalsUpdate::Note(performed)),
+            };
+            if let Err(error) = self.send_update(id, update, cx) {
+                eprintln!("error: {id} {error}");
+            }
+            return;
+        };
+        let (Some(session), Some(played)) = (self.session.upgrade(), self.child_of(id, child, cx))
         else {
             return;
         };
@@ -814,14 +807,13 @@ impl Live {
             let problem = format!(
                 "a performer plays notes on the child {child:?}, which has no `notes` input"
             );
-            return self.tool_failed(parent, problem, cx);
+            return self.tool_problem(id, problem, cx);
         }
         session.update(cx, |session, cx| {
-            let update = update(session);
+            let update = NoteFeedUpdate::Note(performed);
             let feed = feed_processor(child);
-            let sent = session.background(cx, |project| {
-                project.send::<NoteFeed>(parent, &feed, update)
-            });
+            let sent =
+                session.background(cx, |project| project.send::<NoteFeed>(id, &feed, update));
             if let Err(error) = sent {
                 session.report(error, cx);
             }
@@ -829,7 +821,7 @@ impl Live {
     }
 
     /// `message` as a problem of the tool of `id`, once.
-    fn tool_failed(&mut self, id: &InstanceId, message: String, cx: &mut Context<Self>) {
+    fn tool_problem(&mut self, id: &InstanceId, message: String, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
@@ -878,7 +870,7 @@ impl Live {
             _ => None,
         };
         if let Some(wrong) = wrong {
-            return self.tool_failed(id, wrong, cx);
+            return self.tool_problem(id, wrong, cx);
         }
         let update = NotePlayerUpdate::Launch(launch);
         session.update(cx, |session, cx| {
@@ -1094,7 +1086,7 @@ impl Live {
                 name,
                 value,
                 at,
-            } => self.perform_control((&instance, child.as_deref()), &name, (value, at), cx),
+            } => self.perform_control(&instance, child.as_deref(), &name, value, at, cx),
             Event::Note {
                 instance,
                 child,
@@ -1103,20 +1095,22 @@ impl Live {
                 seconds,
                 at,
             } => {
-                let note = |session: &Session| PerformedNote {
-                    pitch: Pitch::nearest(i64::from(pitch)),
-                    velocity: Velocity::nearest((velocity.clamp(0.0, 1.0) * 127.0).round() as i64),
-                    at: at.map(|at| frames_of(at, session)),
-                    frames: seconds.map(|seconds| frames_of(f64::from(seconds), session)),
+                let Some(session) = self.session.upgrade() else {
+                    return;
                 };
-                match child {
-                    None => self.note(&instance, |session| SignalsUpdate::Note(note(session)), cx),
-                    Some(child) => self.child_note(
-                        (&instance, &child),
-                        |session| NoteFeedUpdate::Note(note(session)),
-                        cx,
-                    ),
-                }
+                let at = at.unwrap_or_else(|| engine_time(&session, cx));
+                let performed = {
+                    let session = session.read(cx);
+                    Performed::Play {
+                        pitch: Pitch::nearest(i64::from(pitch)),
+                        velocity: Velocity::nearest(
+                            (velocity.clamp(0.0, 1.0) * 127.0).round() as i64
+                        ),
+                        at: frames_of(at, session),
+                        frames: seconds.map(|seconds| frames_of(f64::from(seconds), session)),
+                    }
+                };
+                self.perform_note(&instance, child.as_deref(), performed, cx);
             }
             Event::Release {
                 instance,
@@ -1124,26 +1118,14 @@ impl Live {
                 pitch,
                 at,
             } => {
-                let pitch = Pitch::nearest(i64::from(pitch));
-                let at = |session: &Session| at.map(|at| frames_of(at, session));
-                match child {
-                    None => self.note(
-                        &instance,
-                        |session| SignalsUpdate::Release {
-                            pitch,
-                            at: at(session),
-                        },
-                        cx,
-                    ),
-                    Some(child) => self.child_note(
-                        (&instance, &child),
-                        |session| NoteFeedUpdate::Release {
-                            pitch,
-                            at: at(session),
-                        },
-                        cx,
-                    ),
-                }
+                let Some(session) = self.session.upgrade() else {
+                    return;
+                };
+                let performed = Performed::Release {
+                    pitch: Pitch::nearest(i64::from(pitch)),
+                    at: at.map(|at| frames_of(at, session.read(cx))),
+                };
+                self.perform_note(&instance, child.as_deref(), performed, cx);
             }
             Event::Launch {
                 instance,

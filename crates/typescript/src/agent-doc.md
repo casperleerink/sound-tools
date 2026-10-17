@@ -289,8 +289,8 @@ tool({
 - `ownSound` is the parent's own `sound`, which hears what reaches it as `input`. Its output is the parent's `audio` output. Put the parent at the top of a project that is one tool, or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound, not its notes, and plays into the track's mixer.
 - The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
 - `{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } }` makes the number `lfo` sends with `output` turn a knob of `filter`: a knob of a tool of this project, or any number of a built-in device a lane can automate. Send it in that number's units, Hz here. It follows within 64 samples, gliding, and nothing is saved; without the connection the knob glides back to its record.
-- A parent plays its children as it plays itself: `play(45, { child: "synth" })` and `release` reach a child's `notes`, a built-in instrument's too; `set({ child: "lfo", live: "rate" }, 2)` and `fire({ child: "drop", trigger: "hit" })` a live control and a trigger of a tool of this project. A knob of a child is its record: a cable moves it.
-- A child or a port it names that is not there, or a behaviour that throws, is a problem of the parent's record. The rest plays.
+- A parent plays its children: `play(45, { child: "synth" })` and `release` reach a child's `notes`, a built-in instrument's too; `set({ child: "lfo", live: "rate" }, 2)` and `fire({ child: "drop", trigger: "hit" })` a live control and a trigger of a tool of this project. A knob of a child is its record: a cable moves it.
+- A child or a port it names that is not there, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
 ### Players: patterns in time with the bars
 

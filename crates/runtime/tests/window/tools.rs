@@ -1190,9 +1190,10 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
         assert_eq!(window.loudest(4_800), 0.0, "before the click for {child}");
         window.cx.simulate_click(middle, Modifiers::default());
         window.until(child, |window| window.loudest(480) > 0.05);
-        window.until("silence", |window| {
-            window.loudest(4_800) == 0.0 || child == "drop"
-        });
+        // The notes end; the noise of `drop` only fades.
+        if child != "drop" {
+            window.until("silence", |window| window.loudest(4_800) == 0.0);
+        }
     }
     assert_eq!(window.problems(), []);
 
@@ -1204,8 +1205,7 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
     window.until("the problem of the trigger", |window| {
         !window.problems().is_empty()
     });
-    let trigger =
-        problem("\"drop\", which is drop, which has no trigger hat: its triggers are hit");
+    let trigger = problem("\"drop\", which has no trigger hat: its triggers are hit");
     assert_eq!(window.problems(), std::slice::from_ref(&trigger));
     window.cx.simulate_click(middle, Modifiers::default());
     // A file shows its newest problem.

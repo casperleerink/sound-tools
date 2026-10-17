@@ -1,13 +1,14 @@
 //! Notes a performer plays into a feed, rendered offline into a probe whose level is the sum of
-//! the pitches it holds: each lands on its frame, also inside a block, and lets go on time.
+//! the pitches it holds: each lands on its frame, also inside a block, and lets go on time, also
+//! when its schedule or the output is full.
 
 #![allow(clippy::unwrap_used)]
 
 use sound_core::{
-    AudioOutput, Connection, Engine, EngineConfig, EngineControl, EventInput, Node, Ports,
-    PrepareConfig, ProcessContext, Processor,
+    AudioOutput, Connection, Engine, EngineConfig, EngineControl, EventInput, EventOutput, Node,
+    Ports, PrepareConfig, ProcessContext, Processor,
 };
-use sound_notes::{NoteEvent, NoteFeed, NoteFeedUpdate, PerformedNote, Pitch, Velocity};
+use sound_notes::{NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 
 struct Probe {
     held: [bool; 128],
@@ -50,10 +51,47 @@ impl Processor for Probe {
     }
 }
 
+/// Fills its output with offs of pitch 0, which the probe does not count, for as many blocks
+/// as it is told.
+#[derive(Default)]
+struct Flood {
+    blocks: u32,
+}
+
+impl Flood {
+    const OUTPUT: EventOutput<NoteEvent> = EventOutput::new(0);
+}
+
+impl Processor for Flood {
+    type Update = u32;
+
+    fn ports(&self) -> Ports {
+        Ports::new().event_output(Self::OUTPUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, blocks: &mut u32) {
+        self.blocks = *blocks;
+    }
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if self.blocks > 0 {
+            self.blocks -= 1;
+            let pitch = Pitch::new(0).unwrap();
+            while context
+                .event_outputs
+                .push(Self::OUTPUT, 0, NoteEvent::Off { pitch })
+            {}
+        }
+    }
+}
+
 struct Harness {
     control: EngineControl,
     engine: Engine,
     feed: Node<NoteFeed>,
+    flood: Node<Flood>,
 }
 
 impl Harness {
@@ -61,6 +99,9 @@ impl Harness {
         let (mut control, engine) = Engine::new(EngineConfig::new(48_000, 1));
         let mut edit = control.edit();
         let feed = edit.add_processor("feed", NoteFeed::default()).unwrap();
+        let flood = edit.add_processor("flood", Flood::default()).unwrap();
+        let flooded = Connection::new(flood.id(), Flood::OUTPUT, feed.id(), NoteFeed::INPUT);
+        edit.connect(flooded).unwrap();
         let probe = Probe { held: [false; 128] };
         let probe = edit.add_processor("probe", probe).unwrap();
         let notes = Connection::new(feed.id(), NoteFeed::OUTPUT, probe.id(), Probe::NOTES);
@@ -72,6 +113,7 @@ impl Harness {
             control,
             engine,
             feed,
+            flood,
         }
     }
 
@@ -91,8 +133,8 @@ impl Harness {
     }
 }
 
-fn note(pitch: u8, at: Option<u64>, frames: Option<u64>) -> NoteFeedUpdate {
-    NoteFeedUpdate::Note(PerformedNote {
+fn note(pitch: u8, at: u64, frames: Option<u64>) -> NoteFeedUpdate {
+    NoteFeedUpdate::Note(Performed::Play {
         pitch: Pitch::new(pitch).unwrap(),
         velocity: Velocity::new(100).unwrap(),
         at,
@@ -102,7 +144,7 @@ fn note(pitch: u8, at: Option<u64>, frames: Option<u64>) -> NoteFeedUpdate {
 
 fn release(pitch: u8, at: Option<u64>) -> NoteFeedUpdate {
     let pitch = Pitch::new(pitch).unwrap();
-    NoteFeedUpdate::Release { pitch, at }
+    NoteFeedUpdate::Note(Performed::Release { pitch, at })
 }
 
 /// The frames where the level changes, with the new level.
@@ -119,8 +161,8 @@ fn level_changes(samples: &[f32]) -> Vec<(usize, f32)> {
 #[test]
 fn a_performed_note_lands_on_its_frame_and_ends_after_its_length() {
     let mut harness = Harness::new();
-    harness.send(note(60, Some(1_234), Some(500)));
-    harness.send(note(62, Some(1_500), None));
+    harness.send(note(60, 1_234, Some(500)));
+    harness.send(note(62, 1_500, None));
     harness.send(release(62, Some(2_345)));
     let changes = level_changes(&harness.render(4_000));
     let expected = [(1_234, 60.0), (1_500, 122.0), (1_734, 62.0), (2_345, 0.0)];
@@ -131,20 +173,29 @@ fn a_performed_note_lands_on_its_frame_and_ends_after_its_length() {
 fn a_note_whose_frame_has_passed_plays_in_the_next_block() {
     let mut harness = Harness::new();
     harness.render(1_000);
-    harness.send(note(60, Some(10), Some(50)));
+    harness.send(note(60, 10, Some(50)));
     assert_eq!(level_changes(&harness.render(200)), [(0, 60.0), (50, 0.0)]);
 }
 
 #[test]
 fn a_release_when_the_feed_is_full_lets_go_of_its_key_at_once() {
     let mut harness = Harness::new();
-    harness.send(note(60, None, None));
+    harness.send(note(60, 0, None));
     assert_eq!(harness.render(100).last(), Some(&60.0));
     // Room for 256 waiting: 128 notes far ahead, an on and an off each.
     for pitch in 0..128 {
-        harness.send(note(pitch, Some(1_000_000), Some(1)));
+        harness.send(note(pitch, 1_000_000, Some(1)));
     }
     harness.send(release(60, None));
     // The engine takes a few updates a block, so the release lands a few blocks later.
     assert_eq!(harness.render(4_800).last(), Some(&0.0));
+}
+
+#[test]
+fn an_end_that_finds_the_output_full_comes_in_the_next_block_that_has_room() {
+    let mut harness = Harness::new();
+    harness.send(note(60, 0, Some(150)));
+    assert_eq!(harness.render(100).last(), Some(&60.0));
+    harness.control.update(harness.flood, 3).unwrap();
+    assert_eq!(harness.render(1_000).last(), Some(&0.0));
 }

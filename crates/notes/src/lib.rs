@@ -50,7 +50,7 @@ pub use player::{
     HELD_CAPACITY, NO_PATTERN, NotePlayer, NotePlayerUpdate, PREVIEW_SECONDS, PlayerWatches,
     QUEUED_STOP,
 };
-pub use schedule::{PerformedNote, Schedule, Scheduled};
+pub use schedule::{Performed, Schedule, Scheduled};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };

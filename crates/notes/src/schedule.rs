@@ -3,14 +3,20 @@
 
 use crate::{NoteEvent, Pitch, Velocity};
 
-/// A key a performer plays: held for `frames` from the frame `at` of engine time, or from the
-/// next frame; with no `frames`, until a release of its pitch.
+/// What a performer does with a key.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PerformedNote {
-    pub pitch: Pitch,
-    pub velocity: Velocity,
-    pub at: Option<u64>,
-    pub frames: Option<u64>,
+pub enum Performed {
+    /// Holds a key for `frames` from the frame `at` of engine time, or from the next frame once
+    /// that has passed; with no `frames`, until its release. `at` is never left out: a
+    /// processor made since the last block does not know the frame of now.
+    Play {
+        pitch: Pitch,
+        velocity: Velocity,
+        at: u64,
+        frames: Option<u64>,
+    },
+    /// Lets go of a key at the frame `at`, or in the next frame.
+    Release { pitch: Pitch, at: Option<u64> },
 }
 
 /// What a [`Schedule`] holds: a note, or more, such as a trigger.
@@ -59,41 +65,44 @@ impl<T: Scheduled> Schedule<T> {
         true
     }
 
-    pub fn play(&mut self, note: PerformedNote) {
-        // Both or neither, so no key stays down.
-        if self.waiting.len() + 2 > self.room {
-            return;
-        }
-        let PerformedNote {
-            pitch,
-            velocity,
-            at,
-            frames,
-        } = note;
-        let start = at.unwrap_or(0).max(self.next_frame);
-        self.add(Some(start), NoteEvent::On { pitch, velocity }.into());
-        if let Some(frames) = frames {
-            let end = start.saturating_add(frames.max(1));
-            self.add(Some(end), NoteEvent::Off { pitch }.into());
-        }
-    }
-
-    /// Lets go of `pitch` at `at`. A full schedule lets go at once: it gives the off back to
-    /// play now, as a dropped release would hold the note for ever. A note of the key still
-    /// waiting would too, and a waiting end of one would end a newer note, so both go.
+    /// Keeps what a performer does for its frame. A release that finds the schedule full gives
+    /// its off back to play now, as a dropped release would hold the note for ever. A note of
+    /// the key still waiting would too, and a waiting end of one would end a newer note, so
+    /// both go.
     #[must_use]
-    pub fn release(&mut self, pitch: Pitch, at: Option<u64>) -> Option<NoteEvent> {
-        let off = NoteEvent::Off { pitch };
-        if self.add(at, off.into()) {
-            return None;
-        }
-        self.waiting.retain(|(_, what)| match what.note() {
-            Some(NoteEvent::On { pitch: waiting, .. } | NoteEvent::Off { pitch: waiting }) => {
-                waiting != pitch
+    pub fn perform(&mut self, performed: Performed) -> Option<NoteEvent> {
+        match performed {
+            Performed::Play {
+                pitch,
+                velocity,
+                at,
+                frames,
+            } => {
+                // Both or neither, so no key stays down.
+                if self.waiting.len() + 2 <= self.room {
+                    let start = at.max(self.next_frame);
+                    self.add(Some(start), NoteEvent::On { pitch, velocity }.into());
+                    if let Some(frames) = frames {
+                        let end = start.saturating_add(frames.max(1));
+                        self.add(Some(end), NoteEvent::Off { pitch }.into());
+                    }
+                }
+                None
             }
-            _ => true,
-        });
-        Some(off)
+            Performed::Release { pitch, at } => {
+                let off = NoteEvent::Off { pitch };
+                if self.add(at, off.into()) {
+                    return None;
+                }
+                self.waiting.retain(|(_, what)| match what.note() {
+                    Some(
+                        NoteEvent::On { pitch: waiting, .. } | NoteEvent::Off { pitch: waiting },
+                    ) => waiting != pitch,
+                    _ => true,
+                });
+                Some(off)
+            }
+        }
     }
 
     /// The frame of what comes next.
@@ -104,5 +113,10 @@ impl<T: Scheduled> Schedule<T> {
     /// What is due at `frame`, the earliest first, with its frame.
     pub fn take(&mut self, frame: u64) -> Option<(u64, T)> {
         self.waiting.pop_if(|(at, _)| *at <= frame)
+    }
+
+    /// Puts back what [`Self::take`] gave, to be taken first again.
+    pub fn put_back(&mut self, taken: (u64, T)) {
+        self.waiting.push(taken);
     }
 }

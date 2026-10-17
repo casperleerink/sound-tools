@@ -16,7 +16,7 @@ use sound_core::{
     PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
 };
 use sound_notes::{
-    NoteEvent, PerformedNote, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
+    NoteEvent, Performed, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
 };
 
 use crate::cable::Number;
@@ -77,10 +77,7 @@ pub enum SignalsUpdate {
     /// frame when there is none or it has passed. Not saved.
     Trigger { index: usize, at: Option<u64> },
     /// From the interface: a key, as if it came in on [`Signals::NOTES`]. Not saved.
-    Note(PerformedNote),
-    /// From the interface: lets go of a key at the frame `at` of engine time, or in the next
-    /// frame.
-    Release { pitch: Pitch, at: Option<u64> },
+    Note(Performed),
 }
 
 /// What the interface plays at a frame.
@@ -682,9 +679,8 @@ impl Processor for Signals {
                     self.scheduled.add(*at, Played::Trigger(*index));
                 }
             }
-            SignalsUpdate::Note(note) => self.scheduled.play(*note),
-            SignalsUpdate::Release { pitch, at } => {
-                if let Some(off) = self.scheduled.release(*pitch, *at) {
+            SignalsUpdate::Note(performed) => {
+                if let Some(off) = self.scheduled.perform(*performed) {
                     self.follow(off);
                 }
             }

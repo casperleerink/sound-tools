@@ -5,7 +5,7 @@
 
 use sound_core::{EventInput, EventOutput, Ports, PrepareConfig, ProcessContext, Processor};
 
-use crate::{NoteEvent, PerformedNote, Pitch, Schedule};
+use crate::{NoteEvent, Performed, Pitch, Schedule};
 
 /// The most performed notes that wait for their frame: a control loop plays a little ahead.
 const WAITING: usize = 256;
@@ -15,7 +15,8 @@ const WAITING: usize = 256;
 pub struct NoteFeed {
     release: bool,
     performed: Schedule<NoteEvent>,
-    /// The pitches whose release found the schedule full, which let go in the next block.
+    /// The pitches whose release found the schedule full, which let go in the next block, or
+    /// the one after when the output is full.
     let_go: u128,
 }
 
@@ -33,11 +34,7 @@ pub enum NoteFeedUpdate {
     /// What plays into the feed changed: the next block releases everything the instrument
     /// holds before it passes anything on.
     Senders,
-    Note(PerformedNote),
-    Release {
-        pitch: Pitch,
-        at: Option<u64>,
-    },
+    Note(Performed),
 }
 
 impl NoteFeed {
@@ -59,9 +56,8 @@ impl Processor for NoteFeed {
     fn update(&mut self, update: &mut NoteFeedUpdate) {
         match update {
             NoteFeedUpdate::Senders => self.release = true,
-            NoteFeedUpdate::Note(note) => self.performed.play(*note),
-            NoteFeedUpdate::Release { pitch, at } => {
-                if self.performed.release(*pitch, *at).is_some() {
+            NoteFeedUpdate::Note(performed) => {
+                if let Some(NoteEvent::Off { pitch }) = self.performed.perform(*performed) {
                     self.let_go |= 1 << pitch.number();
                 }
             }
@@ -76,9 +72,12 @@ impl Processor for NoteFeed {
         }
         let mut let_go = std::mem::take(&mut self.let_go);
         while let_go != 0 {
-            let pitch = Pitch::nearest(i64::from(let_go.trailing_zeros()));
-            outputs.push(Self::OUTPUT, 0, NoteEvent::Off { pitch });
-            let_go &= let_go - 1;
+            let bit = let_go & let_go.wrapping_neg();
+            let pitch = Pitch::nearest(i64::from(bit.trailing_zeros()));
+            if !outputs.push(Self::OUTPUT, 0, NoteEvent::Off { pitch }) {
+                self.let_go |= bit;
+            }
+            let_go &= !bit;
         }
         for timed in context.event_inputs.get(Self::INPUT) {
             outputs.push(Self::OUTPUT, timed.offset, timed.event);
@@ -87,7 +86,11 @@ impl Processor for NoteFeed {
         let last = context.start_frame + context.frames.saturating_sub(1) as u64;
         while let Some((at, event)) = self.performed.take(last) {
             let offset = usize::try_from(at.saturating_sub(context.start_frame)).unwrap_or(0);
-            outputs.push(Self::OUTPUT, offset, event);
+            // A dropped off would hold its note for ever: what does not fit waits, in order.
+            if !outputs.push(Self::OUTPUT, offset, event) {
+                self.performed.put_back((at, event));
+                break;
+            }
         }
     }
 }
