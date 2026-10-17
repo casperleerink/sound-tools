@@ -117,7 +117,7 @@ function problemsOf(spec: Spec): string[] {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
     if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
-      problems.push("kind: an owner's sound hears its children through `input`, so leave `kind` out");
+      problems.push("kind: a parent hears its children through `input`, so leave `kind` out");
     }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
