@@ -223,7 +223,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - The thread state is built from provider-neutral events and holds no process, so tests feed it events.
 - Threads, settings and whether the panel is open are kept per machine, never in the project: an agent writes in the project folder, and must not change the interface or raise its own access by editing a file.
 - The provider keeps the conversation; the app keeps only its session id and a log to show it.
-- The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling `claude`, which adds 215 MB to every download and needs an app release to move its version.
+- The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling `claude`: 215 MB more per download, and an app release per version.
 - Sign-in is Claude Code's own. The app never reads or keeps a credential.
 - New problems after a turn are shown to the composer. Nothing goes back to the agent; its docs tell it to read `problems.txt`.
 
@@ -234,13 +234,13 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one, and code that hangs is left out until the folder changes. The window never waits on it. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
-- **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
+- **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
-- **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
-- **Cards and pages** are trees of elements Bun draws and the window shows with `crates/ui`. A `tick` plays like a performer and never changes the record. `set` moves no knob: knobs are the composition.
-- **A number one tool sends drives another as a lane does**: sent every block into the device's `AutomationInput`, so built-in devices need nothing new.
-- **Patterns in time are note players an owner declares.** `NotePlayer` loops Bun's patterns and quantizes launches on the audio thread. A launch is performance: never saved or undone. A declared start pattern makes a render sound. Rejected: `tick` with `at`, a block late and window-only.
-- **A child's notes, a player's or a performer's, pass its own feed**, so built-in instruments need nothing new. It releases the child when its senders change: a removed or moved player sends no off there. Rejected: a reset in the core, for every instrument to declare.
+- **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
+- **Cards and pages** are trees Bun draws and `crates/ui` shows. A `tick` plays like a performer and never changes the record. `set` moves no knob: knobs are the composition.
+- **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end names its kind, so a wrong pair is a type error. A number drives a knob as a lane does, through `AutomationInput`, so built-in devices need nothing new. An instrument sends no notes or bangs: its voices come and go.
+- **Patterns in time are a `sequencer` child**, a `NotePlayer` that quantizes launches on the audio thread. Its record names what plays first, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
+- **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved sender sends no off there. Rejected: a reset in the core, for every instrument to declare.
 - **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, blind to where the notes went.
 - **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills: no better in an eval, and they need project settings the agent runs without.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.
