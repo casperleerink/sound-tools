@@ -26,6 +26,8 @@ const BAR: u64 = 3840;
 /// releases every note of its pitch, as the note contract says.
 struct Probe {
     held: [u32; 128],
+    /// What it says its output lags by, so the player before it is led by that much.
+    latency: u32,
 }
 
 impl Probe {
@@ -50,6 +52,10 @@ impl Processor for Probe {
     }
 
     fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn latency(&self) -> u32 {
+        self.latency
+    }
 
     fn update(&mut self, (): &mut ()) {}
 
@@ -81,13 +87,24 @@ struct Harness {
 
 impl Harness {
     fn new(patterns: Vec<Pattern>) -> Self {
+        Self::with_latency(patterns, 0)
+    }
+
+    /// A player into a probe that says its output lags by `latency` frames.
+    fn with_latency(patterns: Vec<Pattern>, latency: u32) -> Self {
         let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 1));
         let watches = PlayerWatches::default();
         let mut edit = control.edit();
         let player = NotePlayer::watched(watches.clone());
         let player = edit.add_processor("player", player).unwrap();
         let probe = edit
-            .add_processor("probe", Probe { held: [0; 128] })
+            .add_processor(
+                "probe",
+                Probe {
+                    held: [0; 128],
+                    latency,
+                },
+            )
             .unwrap();
         let notes = Connection::new(player.id(), NotePlayer::NOTES, probe.id(), Probe::NOTES);
         edit.connect(notes).unwrap();
@@ -231,6 +248,27 @@ fn a_launch_while_stopped_takes_effect_at_once_anchored_where_play_starts() {
     harness.launch(Some(0), Quantize::Bar);
     output.extend(harness.render(100));
     assert_eq!(harness.watched(), (0.0, NO_PATTERN, 0.0));
+    harness.control.play();
+    output.extend(harness.render_ticks(960));
+    let played = |tick: usize| 200 + tick * TICK;
+    assert_eq!(
+        level_changes(&output),
+        [
+            (played(0), 60.0),
+            (played(240), 0.0),
+            (played(480), 62.0),
+            (played(720), 0.0)
+        ]
+    );
+}
+
+#[test]
+fn a_launch_while_stopped_is_anchored_where_play_starts_also_with_latency_after_the_player() {
+    // 2400 frames are 96 ticks: the player sees the transport that far ahead while stopped.
+    let mut harness = Harness::with_latency(vec![two_notes()], 2400);
+    let mut output = harness.render(100);
+    harness.launch(Some(0), Quantize::Bar);
+    output.extend(harness.render(100));
     harness.control.play();
     output.extend(harness.render_ticks(960));
     let played = |tick: usize| 200 + tick * TICK;

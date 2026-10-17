@@ -295,10 +295,11 @@ impl Processor for NotePlayer {
         }
 
         // A launch lands on its point inside this block. While the project does not play it
-        // lands at once, anchored where play will start.
+        // lands at once, anchored where play will start: the tick the device stands on, not
+        // the range, which is ahead of it by the latency after this player.
         let landing = queued.and_then(|launch| {
             if !transport.playing {
-                return Some((launch, range.start));
+                return Some((launch, transport.heard_tick));
             }
             let time_signatures = transport.clock.tempo_map().time_signatures();
             let at = launch.quantize.point_from(range.start, time_signatures);
