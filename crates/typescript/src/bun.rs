@@ -51,7 +51,8 @@ pub(crate) enum Request<'a> {
         card: u64,
         instance: &'a InstanceId,
         tool: &'a str,
-        state: Value,
+        /// `None` when it is the record of the last render of the card.
+        state: Option<Value>,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
         /// The size of the page, the whole window; `None` for a card.
@@ -144,6 +145,8 @@ pub(crate) enum Event {
         card: u64,
         tree: Result<(u64, Value), String>,
     },
+    /// A card drew the tree it drew last.
+    Unchanged { card: u64 },
     /// A card, a key or the MIDI keyboard changed the record of an instance.
     Edit {
         instance: InstanceId,

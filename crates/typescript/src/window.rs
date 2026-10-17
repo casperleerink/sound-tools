@@ -23,7 +23,7 @@ use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session,
 
 use crate::behaviours;
 use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped, Transport};
-use crate::card::TypeScriptCard;
+use crate::card::{Page, TypeScriptCard};
 use crate::tools::{Control, Sounds, ToolInfo, ToolKind, player_processor};
 use crate::tree::Node;
 use crate::{Extensions, FOLDER, Launched, Midi, OWNED};
@@ -106,6 +106,8 @@ struct Card {
     transport: Option<Transport>,
     /// A render was asked for and its tree has not come yet.
     asked: bool,
+    /// Bun has the record as it is, so a render sends none.
+    record_sent: bool,
     /// The record or a watch changed while a render was out, so one more is due when it comes.
     stale: bool,
 }
@@ -178,7 +180,7 @@ pub fn start_window(
         move |session, id, window, cx| {
             let (live, session, id) = (live.clone(), session.clone(), id.clone());
             let page = cx.new(|cx| TypeScriptCard::new(live, session, id, None, window, cx));
-            Some(page.into())
+            Some(cx.new(|_| Page(page)).into())
         },
     );
     devices.effects({
@@ -530,6 +532,7 @@ impl Live {
             watches: BTreeMap::new(),
             transport: None,
             asked: false,
+            record_sent: false,
             stale: false,
         };
         self.cards.insert(card, entry);
@@ -567,10 +570,16 @@ impl Live {
         let Some(tool) = project.tool_of(&entry.id) else {
             return;
         };
-        let Some(state) = played_state(project, &tools, &entry.id, tool) else {
-            return;
+        let state = if entry.record_sent {
+            None
+        } else {
+            let Some(state) = played_state(project, &tools, &entry.id, tool) else {
+                return;
+            };
+            Some(state)
         };
         entry.asked = true;
+        entry.record_sent = true;
         let transport = transport_of(session.read(cx), cx);
         entry.transport = Some(transport);
         let request = Request::Render {
@@ -583,6 +592,14 @@ impl Live {
             transport,
         };
         self.host.send(&request);
+    }
+
+    /// The record of the instance of the card changed: it draws again with it.
+    pub(crate) fn record_changed(&mut self, card: u64, cx: &mut Context<Self>) {
+        if let Some(entry) = self.cards.get_mut(&card) {
+            entry.record_sent = false;
+        }
+        self.render(card, cx);
     }
 
     /// The page was laid out at `size`: it draws again when that is new.
@@ -853,6 +870,7 @@ impl Live {
             return;
         };
         let mut moved = Vec::new();
+        let mut watches_moved_anywhere = false;
         let tools = self.tools.borrow();
         let transport = transport_of(session.read(cx), cx);
         for (card, entry) in &mut self.cards {
@@ -864,7 +882,9 @@ impl Live {
                 .collect();
             // The control loop draws the card of its tool after every step anyway, but with
             // the transport of its last draw.
-            let watches_moved = watches != entry.watches && !info.is_some_and(|info| info.tick);
+            let watches_changed = watches != entry.watches;
+            let watches_moved = watches_changed && !info.is_some_and(|info| info.tick);
+            watches_moved_anywhere |= watches_changed;
             entry.watches = watches;
             let transport_moved =
                 info.is_some_and(|info| info.transport) && entry.transport != Some(transport);
@@ -876,7 +896,8 @@ impl Live {
         for card in &moved {
             self.render(*card, cx);
         }
-        if !moved.is_empty() {
+        // A meter shows the watches as they are; what the transport moves comes with a tree.
+        if watches_moved_anywhere {
             cx.notify();
         }
     }
@@ -909,6 +930,15 @@ impl Live {
                 if std::mem::take(&mut entry.stale) {
                     self.render(card, cx);
                 }
+            }
+            Event::Unchanged { card } => {
+                if let Some(entry) = self.cards.get_mut(&card) {
+                    entry.asked = false;
+                    if std::mem::take(&mut entry.stale) {
+                        self.render(card, cx);
+                    }
+                }
+                return;
             }
             Event::Edit {
                 instance,
@@ -1116,9 +1146,10 @@ impl Live {
         self.generation.set(self.generation.get() + 1);
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
-            // A tree asked of the Bun before never comes.
+            // A tree asked of the Bun before never comes, and this one has no record yet.
             if let Some(entry) = self.cards.get_mut(&card) {
                 entry.asked = false;
+                entry.record_sent = false;
             }
             self.render(card, cx);
         }

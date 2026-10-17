@@ -8,8 +8,8 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, FocusHandle,
     KeyDownEvent, KeyUpEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, WeakEntity, Window, canvas, div,
-    fill, point, prelude::*, px, size,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StyleRefinement, WeakEntity, Window,
+    canvas, div, fill, point, prelude::*, px, size,
 };
 use serde_json::Value;
 use sound_core::{InstanceId, ProjectEvent};
@@ -44,6 +44,18 @@ pub(crate) struct TypeScriptCard {
     /// The keys that went down and not up yet. They go up when it loses the keys, when cmd
     /// goes down and when it closes, so a note a key holds is not held for ever.
     keys_down: BTreeSet<String>,
+}
+
+/// A page, which draws again only when it changed, while the window draws every frame as it
+/// plays.
+pub(crate) struct Page(pub(crate) Entity<TypeScriptCard>);
+
+impl Render for Page {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.0
+            .clone()
+            .cached(StyleRefinement::default().size_full())
+    }
 }
 
 /// A surface of a card that follows the pointer from a press until the button comes up.
@@ -87,7 +99,10 @@ impl TypeScriptCard {
             .detach();
         cx.subscribe(&session, |view, _, event, cx| match event {
             ProjectEvent::Changed(id) if *id == view.id => {
-                view.live.update(cx, |live, cx| live.render(view.card, cx));
+                view.live
+                    .update(cx, |live, cx| live.record_changed(view.card, cx));
+                // Its knobs and steps show the record, also when the tree stays the same.
+                cx.notify();
             }
             ProjectEvent::Deleted(id) if *id == view.id => view.edit.finish(&view.session, cx),
             _ => {}

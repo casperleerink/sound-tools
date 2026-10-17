@@ -26,7 +26,9 @@ const CHECKED_PAGE: Size = { width: 1422, height: 824 };
 /** An instance as it is now, for its control loop or what it hears: `edits` counts the edits from here its `state` has. */
 type Looped = { instance: string; tool: string; state: State; watches: Watches; edits: number };
 
-type Render = { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: Size | null; transport: Transport };
+/** A render with no record draws with the record of the last render of the card. */
+type Render = { type: "render"; card: number; instance: string; tool: string; state: State | null; watches: Watches; page: Size | null; transport: Transport };
+type Drawn = Render & { state: State };
 type Request =
   | Render
   /** A click, or a press or a drag on a canvas `at` across and down. */
@@ -67,8 +69,10 @@ const handlers = new Map<number, Map<number, Handler[]>>();
 let treeVersion = Date.now() * 1000;
 /** The trees of a card whose clicks still count: the window may still show an older one. */
 const KEPT_TREES = 8;
+/** The last tree sent of each card, so the same tree again is not sent. */
+const lastTrees = new Map<number, { text: string; version: number }>();
 /** What each card was last drawn from, so it draws again after a tick or a click. */
-const drawn = new Map<number, Render>();
+const drawn = new Map<number, Drawn>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
 /** The tools whose tick or a click on whose card failed. */
@@ -376,9 +380,16 @@ function latest({ instance, state, edits }: Looped): State {
 }
 
 /** Draws a card and sends its tree, or why there is none: the window waits for one or the other. */
-function render(request: Render) {
-  const { card, instance, tool, state, watches, page, transport } = request;
+function render(asked: Render) {
+  const state = asked.state ?? drawn.get(asked.card)?.state;
+  if (state === undefined) {
+    send({ type: "tree", card: asked.card, tree: { Err: "drawn without a record" } });
+    return;
+  }
+  const request = { ...asked, state };
+  const { card, instance, tool, watches, page, transport } = request;
   drawn.set(card, request);
+  let same = false;
   const tree = made(() => {
     // Such as a tool whose file this Bun runs without.
     const spec = specOf(tool);
@@ -394,8 +405,17 @@ function render(request: Render) {
       ...players(instance),
     });
     const drawnTree = serialize(node, kept);
-    treeVersion += 1;
+    const text = JSON.stringify(drawnTree);
     const trees = handlers.get(card) ?? new Map<number, Handler[]>();
+    const last = lastTrees.get(card);
+    // The same tree keeps its version, with the handlers of this draw.
+    if (last?.text === text && trees.has(last.version)) {
+      trees.set(last.version, kept);
+      same = true;
+      return null;
+    }
+    treeVersion += 1;
+    lastTrees.set(card, { text, version: treeVersion });
     trees.set(treeVersion, kept);
     if (trees.size > KEPT_TREES) {
       const [oldest] = trees.keys();
@@ -404,7 +424,10 @@ function render(request: Render) {
     handlers.set(card, trees);
     return [treeVersion, drawnTree];
   });
-  send({ type: "tree", card, tree });
+  if ("Err" in tree) {
+    lastTrees.delete(card);
+  }
+  send(same ? { type: "unchanged", card } : { type: "tree", card, tree });
 }
 
 /** `value` of `field` as the window gives it: at its default when left out, and so each item. */
@@ -539,6 +562,7 @@ function handle(request: Request) {
       break;
     case "drop":
       handlers.delete(request.card);
+      lastTrees.delete(request.card);
       drawn.delete(request.card);
       break;
     case "behaviour":
