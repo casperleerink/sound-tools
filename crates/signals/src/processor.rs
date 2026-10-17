@@ -12,12 +12,13 @@
 use std::ops::Range;
 
 use sound_core::{
-    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, Lane, MAX_BLOCK, Ports,
+    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, EventOutput, Lane, MAX_BLOCK, Ports,
     PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
 };
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice, Voices, frequency_hz};
 
-use crate::code::{Code, MAX_LIVES, MAX_PARAMETERS};
+use crate::cable::Number;
+use crate::code::{Code, MAX_LIVES, MAX_NUMBERS, MAX_PARAMETERS};
 use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values};
 
 /// How long the old code fades out while the new one fades in.
@@ -178,6 +179,11 @@ impl Signals {
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     pub const AUTOMATION: EventInput<Automation> = EventInput::new(1);
+
+    /// The port of the number at `index` of [`Code::numbers`].
+    pub const fn number(index: usize) -> EventOutput<Number> {
+        EventOutput::new(index)
+    }
 
     /// `machine` is the first voice; an instrument plays copies of it.
     pub fn new(kind: Kind, machine: Box<Machine>, values: Values, watches: Vec<Watch>) -> Self {
@@ -643,11 +649,14 @@ impl Processor for Signals {
     type Update = SignalsUpdate;
 
     fn ports(&self) -> Ports {
-        Ports::new()
+        let ports = Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
             .event_input(Self::NOTES)
-            .event_input(Self::AUTOMATION)
+            .event_input(Self::AUTOMATION);
+        (0..MAX_NUMBERS).fold(ports, |ports, index| {
+            ports.event_output(Self::number(index))
+        })
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -756,6 +765,7 @@ impl Processor for Signals {
         {
             left_out.fill(0.0);
             right_out.fill(0.0);
+            self.send(context);
             return;
         }
         let input = context.audio_inputs.get(Self::INPUT);
@@ -808,6 +818,32 @@ impl Processor for Signals {
             for (watch, value) in self.watches.iter().zip(voice.machine.watched()) {
                 watch.set(*value);
             }
+        }
+        self.send(context);
+    }
+}
+
+impl Signals {
+    /// Sends each number of the code, added up over the voices that sound, as their sound is.
+    /// Every block, so a device it drives hears it is still there.
+    fn send(&self, context: &mut ProcessContext<'_>) {
+        let Some(code) = self.players.code() else {
+            return;
+        };
+        let mut sums = [0.0; MAX_NUMBERS];
+        let mut add = |voice: &SignalsVoice| {
+            for (sum, value) in sums.iter_mut().zip(voice.machine.sent()) {
+                *sum += value;
+            }
+        };
+        match &self.players {
+            Players::One(single) => add(&single.voice),
+            Players::Many(voices) => voices.iter().filter(|voice| !voice.is_idle()).for_each(add),
+        }
+        for (index, sum) in sums.iter().take(code.numbers.len()).enumerate() {
+            context
+                .event_outputs
+                .push(Self::number(index), 0, Number(*sum));
         }
     }
 }

@@ -36,3 +36,20 @@ tool({
     player: {},
   }),
 });
+
+tool({
+  name: "cables",
+  title: "Cables",
+  when: "Never",
+  doc: "Cables.",
+  state: {},
+  behaviour: (): Declaration => ({
+    connections: [
+      { from: { child: "lfo", number: "wave" }, to: { child: "filter", number: "cutoff_hz" } },
+      // @ts-expect-error: a number goes into a number, not into a sound.
+      { from: { child: "lfo", number: "wave" }, to: { child: "filter" } },
+      // @ts-expect-error: and a sound not into a number.
+      { from: { child: "lfo" }, to: { child: "filter", number: "cutoff_hz" } },
+    ],
+  }),
+});

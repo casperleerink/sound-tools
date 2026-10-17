@@ -12,8 +12,8 @@ use serde::Deserialize;
 
 use crate::code::{
     ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_LIVES, MAX_OPERATIONS, MAX_PARAMETERS, MAX_WATCHES, Operation, Output,
-    ParameterSpec, Register, Slots, Table, Unary,
+    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_PARAMETERS, MAX_WATCHES, Operation,
+    Output, ParameterSpec, Register, Slots, Table, Unary,
 };
 
 /// A sound as the SDK sends it.
@@ -25,13 +25,15 @@ pub struct Graph {
     feedbacks: Vec<usize>,
     /// The seconds of each `buffer`.
     buffers: Vec<f32>,
-    watches: Vec<WatchNode>,
+    watches: Vec<NamedNode>,
+    #[serde(default)]
+    numbers: Vec<NamedNode>,
     output: OutputNode,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WatchNode {
+struct NamedNode {
     name: String,
     node: usize,
 }
@@ -273,6 +275,23 @@ impl Graph {
         let watch_registers = (self.watches.iter())
             .map(|watch| lowering.read(watch.node))
             .collect::<Result<_, _>>()?;
+        if self.numbers.len() > MAX_NUMBERS {
+            return error(format!("a sound sends out at most {MAX_NUMBERS} numbers"));
+        }
+        let mut numbers: Vec<String> = Vec::new();
+        for number in &self.numbers {
+            // A parent finds a number by name among the outputs, and `audio` is one already.
+            if number.name == "audio" {
+                return error("output `audio` is the sound itself: give the number another name");
+            }
+            if numbers.contains(&number.name) {
+                return error(format!("output `{}` is sent twice", number.name));
+            }
+            numbers.push(number.name.clone());
+        }
+        let number_registers = (self.numbers.iter())
+            .map(|number| lowering.read(number.node))
+            .collect::<Result<_, _>>()?;
         let output = match self.output {
             OutputNode::Mono { mono } => Output::Mono(lowering.read(mono)?),
             OutputNode::Stereo { left, right } => {
@@ -287,11 +306,13 @@ impl Graph {
             lives: lowering.lives,
             triggers: lowering.triggers,
             watches,
+            numbers,
             hash: hasher.finish(),
             operations: lowering.operations,
             output,
             feedbacks,
             watch_registers,
+            number_registers,
             slots: lowering.slots,
         })
     }

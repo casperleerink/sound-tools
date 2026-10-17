@@ -114,6 +114,8 @@ pub struct Machine {
     position: usize,
     /// The last value of each watch, of the left channel.
     watched: Vec<f32>,
+    /// The last value of each number it sends out, of the left channel.
+    sent: Vec<f32>,
 }
 
 /// The memory of one channel.
@@ -289,6 +291,7 @@ impl Machine {
             channels,
             position: 0,
             watched: vec![0.0; code.watches.len()],
+            sent: vec![0.0; code.numbers.len()],
             code,
         }
     }
@@ -325,6 +328,11 @@ impl Machine {
         &self.watched
     }
 
+    /// The last value of each number it sends out, in the order of [`Code::numbers`].
+    pub(crate) fn sent(&self) -> &[f32] {
+        &self.sent
+    }
+
     /// The `frames` of a block, both channels, into the same frames of `output`.
     pub(crate) fn render(
         &mut self,
@@ -344,9 +352,11 @@ impl Machine {
             self.run(channel, inputs, frames.clone());
             let registers = &self.registers;
             if channel == 0 {
-                // The watches show the left channel.
-                for (watched, register) in self.watched.iter_mut().zip(&self.code.watch_registers) {
-                    *watched = value_at(registers, *register, last);
+                // The watches show the left channel, and the numbers send it.
+                let watches = self.watched.iter_mut().zip(&self.code.watch_registers);
+                let numbers = self.sent.iter_mut().zip(&self.code.number_registers);
+                for (value, register) in watches.chain(numbers) {
+                    *value = value_at(registers, *register, last);
                 }
             }
             match self.code.output {

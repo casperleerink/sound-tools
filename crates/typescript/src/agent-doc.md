@@ -289,6 +289,20 @@ tool({
 - The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
 - A child or a port it names that is not there, or a behaviour that throws, is a problem of the parent's record. The rest plays.
 
+### Numbers: a child that turns a knob of another
+
+Inside `sound`, `output(name, signal)` sends a number out, as `watch` shows one. The parent connects it to a number another child takes: a knob of a tool of this project, or a number of a built-in device by its field, any number a lane can automate. Send it in that number's units: Hz for `cutoff_hz`. The number follows it, updated every 64 samples at most and gliding in between, and nothing is saved; with the connection gone, it glides back to its record.
+
+```ts
+// extensions/lfo.ts, a source: no sound of its own, a cutoff that sweeps
+sound: ({ rate }) => {
+  output("cutoff", mix(300, 3000, sine(rate).times(0.5).plus(0.5)));
+  return 0;
+},
+// in the behaviour of the parent, with the children lfo.json and filter.json
+{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } },
+```
+
 ### Players: patterns in time with the bars
 
 A parent may also declare note players. A player loops one of its patterns at a time, to the sample, and plays it into a child's `notes`; a performer picks which with `launch`. A clip launcher, with an instrument `synth` and an effect `fx` as its children:

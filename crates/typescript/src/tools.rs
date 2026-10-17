@@ -23,12 +23,12 @@ use sound_notes::{
     NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
 };
 use sound_signals::{
-    ArraySpec, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec, Signals,
-    SignalsUpdate, Values,
+    ArraySpec, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec,
+    Signals, SignalsUpdate, Values,
 };
 
 use crate::behaviours::{
-    self, Declaration, FromPort, Own, Player, PlayerPattern, PlayerPort, ToPort,
+    self, ChildNumber, Declaration, FromPort, Own, Player, PlayerPattern, PlayerPort, ToPort,
 };
 use crate::bun::Bun;
 use crate::{FOLDER, samples, tree};
@@ -1021,6 +1021,9 @@ impl Sounds {
             }
         }
         context.output(AUDIO_OUTPUT, OutputEndpoint::new(signals, Signals::OUTPUT));
+        for (index, name) in code.numbers.iter().enumerate() {
+            context.output(name, OutputEndpoint::new(signals, Signals::number(index)));
+        }
         // Every knob can be automated, as a number of any device. A toggle or a pattern is no
         // straight line, and a lane cannot move it.
         let numbers: Vec<(ParameterInfo, f32)> = (self.knobs())
@@ -1089,7 +1092,7 @@ pub(crate) fn player_processor(name: &str) -> String {
 ///
 /// What plays into the `notes` of a child goes through a [`NoteFeed`] of that child, which
 /// releases what the child holds when that changes: a player that went away or plays elsewhere
-/// sends no off there.
+/// sends no off there. A number goes through a [`Cable`] into the automation input of a child.
 fn wire(
     declaration: &Declaration,
     sound: InputEndpoint,
@@ -1128,6 +1131,15 @@ fn wire(
                 };
                 (OutputEndpoint::new(*node, NotePlayer::NOTES), NOTES_INPUT)
             }
+            FromPort::Number(from) => {
+                let Some(output) = context.child_output(&from.child, &from.number) else {
+                    let at = format!("{at}.from");
+                    let port = (from.child.as_str(), from.number.as_str());
+                    context.problem(missing(context, &at, port, Side::Output));
+                    continue;
+                };
+                (output, AUDIO_INPUT)
+            }
         };
         let (input, feed) = match &connection.to {
             ToPort::Own(Own::Sound) => (sound, None),
@@ -1148,6 +1160,10 @@ fn wire(
                     }
                 }
             }
+            ToPort::Number(to) => match cable(&connection.from, to, &at, context)? {
+                Some(input) => (input, None),
+                None => continue,
+            },
         };
         match context.connect(output.to(input)) {
             Err(BehaviourError::Graph(GraphError::PortTypeMismatch { description, .. })) => {
@@ -1168,6 +1184,44 @@ fn wire(
         }
     }
     Ok(())
+}
+
+/// A [`Cable`] from `from` into the number `to` takes automation for, connected to the
+/// automation input of its child. `None`, and a problem, when the child takes no such number.
+fn cable(
+    from: &FromPort,
+    to: &ChildNumber,
+    at: &str,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Option<InputEndpoint>, BehaviourError> {
+    let ChildNumber { child, number } = to;
+    let Some((automation, numbers)) = context.child_automation(child) else {
+        let problem = match context.child_names().any(|name| name == child) {
+            true => format!(
+                "its behaviour names the number {number:?} of {child:?} at {at}.to, and {child:?} takes no number"
+            ),
+            false => missing(context, &format!("{at}.to"), (child, number), Side::Input),
+        };
+        context.problem(problem);
+        return Ok(None);
+    };
+    let Some(place) = numbers.iter().position(|info| *info.field == **number) else {
+        let names: Vec<&str> = numbers.iter().map(|info| &*info.field).collect();
+        context.problem(format!(
+            "its behaviour names the number {number:?} of {child:?} at {at}.to, which it does not take: it takes {}",
+            names.join(", ")
+        ));
+        return Ok(None);
+    };
+    // At most `MAX_AUTOMATED` numbers, far under `u16::MAX`.
+    let parameter = u16::try_from(place).unwrap_or(u16::MAX);
+    let name = format!("cable:{from:?}>{child:?}.{number:?}");
+    let cable = context.processor(&name, Cable::default)?;
+    if context.changed(&name, key(&parameter)) {
+        context.update(cable, parameter)?;
+    }
+    context.connect(OutputEndpoint::new(cable, Cable::OUTPUT).to(automation))?;
+    Ok(Some(InputEndpoint::new(cable, Cable::INPUT)))
 }
 
 /// The [`NoteFeed`] of every child that has `notes`, by the child's name. Declared whatever
