@@ -32,6 +32,7 @@ mod expression;
 mod lane;
 mod player;
 mod take;
+mod timeline;
 mod voices;
 
 use serde::{Deserialize, Serialize};
@@ -40,10 +41,11 @@ use sound_core::{Place, State, Ticks};
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
-pub use player::{HELD_CAPACITY, NotePlayer, NotePlayerUpdate, NoteTimeline, PREVIEW_SECONDS};
+pub use player::{HELD_CAPACITY, NotePlayer, NotePlayerUpdate, PREVIEW_SECONDS};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };
+pub use timeline::NoteTimeline;
 pub use voices::{Voice, Voices, frequency_hz};
 
 /// The event input of an instrument. It carries [`NoteEvent`].
