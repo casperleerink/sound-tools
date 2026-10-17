@@ -616,9 +616,9 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   /**
    * Makes it an owner: its record is `state/<name>/instance.json` and the records next to it
    * are its children. A pure function of its record and its children that says how they
-   * connect. It runs in Bun when either changes, and what it declares plays a moment later;
-   * the sound plays on meanwhile. Its own `sound` hears what it connects to `"sound"` as
-   * `input`, and is its `audio` output.
+   * connect and what its note players loop. It runs in Bun when either changes, and what it
+   * declares plays a moment later; the sound plays on meanwhile. Its own `sound` hears what it
+   * connects to `"sound"` as `input`, and is its `audio` output.
    */
   behaviour?: (owner: Owner<S>) => Declaration;
   /**

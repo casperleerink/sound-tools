@@ -6,7 +6,8 @@
 //! fields of a record, a doc for agents, and the sound of every combination of its choices, a
 //! graph of signals that the SDK sends as JSON. The runtime registers each as a [`JsonTool`]
 //! before the records load, so a record of one loads like any other, and plays with no Bun.
-//! Only an owner asks Bun while it plays: how its children connect (`behaviours`).
+//! Only an owner asks Bun while it plays: how its children connect and what its note players
+//! loop (`behaviours`).
 //!
 //! In the window, any change in `extensions/`, a crash or a hang of Bun starts a new Bun, which
 //! loads every file again and defines the tools again: one path. Nothing of it runs on the
