@@ -1092,7 +1092,7 @@ pub(crate) fn player_processor(name: &str) -> String {
 ///
 /// What plays into the `notes` of a child goes through a [`NoteFeed`] of that child, which
 /// releases what the child holds when that changes: a player that went away or plays elsewhere
-/// sends no off there. A number goes through a [`Cable`] into the automation input of a child.
+/// sends no off there.
 fn wire(
     declaration: &Declaration,
     sound: InputEndpoint,
@@ -1103,9 +1103,20 @@ fn wire(
         players.insert(name.as_str(), play(name, player, context)?);
     }
     let feeds = feeds(context)?;
+    let mut cables = BTreeSet::new();
     let mut fed: BTreeMap<&str, BTreeSet<&FromPort>> = BTreeMap::new();
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
+        let numbers = (
+            matches!(connection.from, FromPort::Number(_)),
+            matches!(connection.to, ToPort::Number(_)),
+        );
+        if numbers.0 != numbers.1 {
+            context.problem(format!(
+                "its behaviour declares {at} between a number and a sound or notes: a number goes from {{ child, number }} to {{ child, number }}"
+            ));
+            continue;
+        }
         let (output, to_port) = match &connection.from {
             FromPort::Child(from) => {
                 let port = from.port.as_deref().unwrap_or(AUDIO_OUTPUT);
@@ -1160,7 +1171,7 @@ fn wire(
                     }
                 }
             }
-            ToPort::Number(to) => match cable(&connection.from, to, &at, context)? {
+            ToPort::Number(to) => match cable((&connection.from, to), &at, &mut cables, context)? {
                 Some(input) => (input, None),
                 None => continue,
             },
@@ -1187,35 +1198,32 @@ fn wire(
 }
 
 /// A [`Cable`] from `from` into the number `to` takes automation for, connected to the
-/// automation input of its child. `None`, and a problem, when the child takes no such number.
+/// automation input of its child. `None` when the child takes no such number, a problem, and
+/// for a cable `made` already: the same connection twice is one.
 fn cable(
-    from: &FromPort,
-    to: &ChildNumber,
+    (from, to): (&FromPort, &ChildNumber),
     at: &str,
+    made: &mut BTreeSet<String>,
     context: &mut BehaviourContext<'_>,
 ) -> Result<Option<InputEndpoint>, BehaviourError> {
     let ChildNumber { child, number } = to;
-    let Some((automation, numbers)) = context.child_automation(child) else {
-        let problem = match context.child_names().any(|name| name == child) {
-            true => format!(
-                "its behaviour names the number {number:?} of {child:?} at {at}.to, and {child:?} takes no number"
-            ),
-            false => missing(context, &format!("{at}.to"), (child, number), Side::Input),
-        };
+    let found = context
+        .child_automation(child)
+        .and_then(|(automation, numbers)| {
+            let place = numbers.iter().position(|info| *info.field == **number)?;
+            Some((automation, place))
+        });
+    let Some((automation, place)) = found else {
+        let problem = missing(context, &format!("{at}.to"), (child, number), Side::Number);
         context.problem(problem);
-        return Ok(None);
-    };
-    let Some(place) = numbers.iter().position(|info| *info.field == **number) else {
-        let names: Vec<&str> = numbers.iter().map(|info| &*info.field).collect();
-        context.problem(format!(
-            "its behaviour names the number {number:?} of {child:?} at {at}.to, which it does not take: it takes {}",
-            names.join(", ")
-        ));
         return Ok(None);
     };
     // At most `MAX_AUTOMATED` numbers, far under `u16::MAX`.
     let parameter = u16::try_from(place).unwrap_or(u16::MAX);
     let name = format!("cable:{from:?}>{child:?}.{number:?}");
+    if !made.insert(name.clone()) {
+        return Ok(None);
+    }
     let cable = context.processor(&name, Cable::default)?;
     if context.changed(&name, key(&parameter)) {
         context.update(cable, parameter)?;
@@ -1326,6 +1334,8 @@ fn key(value: &impl Hash) -> u64 {
 enum Side {
     Output,
     Input,
+    /// A number the child takes automation for.
+    Number,
 }
 
 /// What is wrong with the port `(child, port)` at `at` of a declaration, whose child or port is
@@ -1349,6 +1359,11 @@ fn missing(
     let (side, ports) = match side {
         Side::Output => ("output", outputs),
         Side::Input => ("input", inputs),
+        Side::Number => {
+            let numbers = context.child_automation(child).map(|(_, numbers)| numbers);
+            let numbers = numbers.unwrap_or_default().iter();
+            ("number", numbers.map(|info| &*info.field).collect())
+        }
     };
     let ports = match ports.is_empty() {
         true => "none".to_string(),

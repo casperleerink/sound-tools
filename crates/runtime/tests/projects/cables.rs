@@ -4,8 +4,8 @@
 use crate::support::{Harness, write};
 
 /// Noise, and the number `cutoff` at 200 Hz for the first half of each second and 20 kHz for the
-/// second.
-const SOURCES: &str = r#"import { knob, mix, noise, output, phasor, sine, tool } from "./sdk";
+/// second. `broken` is no number for the first tenth of each second.
+const SOURCES: &str = r#"import { knob, mix, noise, output, phasor, pow, sine, tool } from "./sdk";
 
 tool({
   name: "hiss",
@@ -27,6 +27,7 @@ tool({
   sound: () => {
     output("cutoff", mix(200, 20000, phasor(1).ge(0.5)));
     output("pitch", 440);
+    output("broken", pow(phasor(1).minus(0.1), 0.5));
     return 0;
   },
 });
@@ -43,22 +44,32 @@ tool({
 "#;
 
 /// Plays `lead` through the child `filter`, and connects `send` of the child `lfo` to the number
-/// `to` of the child `target` while `to` is not empty.
-const RIG: &str = r#"import { text, tool, type Declaration } from "./sdk";
+/// `to` of the child `target` while `to` is not empty, `copies` times. `to` of `"sound"` is a
+/// number into its own sound, which plain JavaScript can write and TypeScript refuses.
+const RIG: &str = r#"import { number, text, tool, type Connection, type Declaration } from "./sdk";
 
 tool({
   name: "rig",
   title: "Rig",
   when: "Never",
   doc: "Plays a child through a filter, with a number of an LFO into one of a child.",
-  state: { lead: text({ default: "hiss" }), send: text(), target: text(), to: text() },
-  behaviour: ({ state: { lead, send, target, to } }): Declaration => ({
-    connections: [
+  state: {
+    lead: text({ default: "hiss" }),
+    send: text(),
+    target: text(),
+    to: text(),
+    copies: number({ min: 1, max: 2, integer: true }),
+  },
+  behaviour: ({ state: { lead, send, target, to, copies } }): Declaration => {
+    const cable: Connection = { from: { child: "lfo", number: send }, to: { child: target, number: to } };
+    const connections: Connection[] = [
       { from: { child: lead }, to: { child: "filter" } },
       { from: { child: "filter" }, to: "sound" },
-      ...(to ? [{ from: { child: "lfo", number: send }, to: { child: target, number: to } }] : []),
-    ],
-  }),
+    ];
+    if (to === "sound") connections.push({ ...cable, to: "sound" } as unknown as Connection);
+    else if (to) connections.push(...Array(copies).fill(cable));
+    return { connections };
+  },
 });
 "#;
 
@@ -151,6 +162,23 @@ fn a_number_drives_a_knob_of_a_tool_of_the_project_until_its_cable_goes() {
 }
 
 #[test]
+fn a_cable_declared_twice_is_one_and_a_number_that_is_none_does_not_silence_its_knob() {
+    let state =
+        r#"{"lead": "drone", "send": "broken", "target": "drone", "to": "hz", "copies": 2}"#;
+    let Some(mut harness) = rig(state) else {
+        return;
+    };
+    assert_eq!(harness.project.problems(), []);
+    let played = harness.play(48_000);
+    // After the tenth of a second of no number, the knob plays at the bottom of its range.
+    let after = &played[2 * 9_600..];
+    let peak = after
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    assert!(peak > 0.1, "peak {peak}");
+}
+
+#[test]
 fn a_number_a_child_does_not_send_or_take_is_a_problem_that_names_what_it_has() {
     let state = r#"{"send": "cutoff", "target": "filter", "to": "cutoff"}"#;
     let Some(mut harness) = rig(state) else {
@@ -163,7 +191,7 @@ fn a_number_a_child_does_not_send_or_take_is_a_problem_that_names_what_it_has() 
     assert_eq!(
         messages(&harness),
         [
-            "its behaviour names the number \"cutoff\" of \"filter\" at connections[2].to, which it does not take: it takes cutoff_hz, resonance, drive_db, mix, lfo_rate_hz, lfo_depth_octaves"
+            "its behaviour names the number \"cutoff\" of \"filter\" at connections[2].to, which it does not have: its numbers are cutoff_hz, resonance, drive_db, mix, lfo_rate_hz, lfo_depth_octaves"
         ]
     );
     let state = r#"{"send": "cutof", "target": "filter", "to": "cutoff_hz"}"#;
@@ -172,7 +200,16 @@ fn a_number_a_child_does_not_send_or_take_is_a_problem_that_names_what_it_has() 
     assert_eq!(
         messages(&harness),
         [
-            "its behaviour names the output \"cutof\" of \"lfo\" at connections[2].from, which it does not have: its outputs are audio, cutoff, pitch"
+            "its behaviour names the output \"cutof\" of \"lfo\" at connections[2].from, which it does not have: its outputs are audio, broken, cutoff, pitch"
+        ]
+    );
+    let state = r#"{"send": "cutoff", "to": "sound"}"#;
+    harness.write_and_apply("state/rig/instance.json", &record(state));
+    harness.render(64);
+    assert_eq!(
+        messages(&harness),
+        [
+            "its behaviour declares connections[2] between a number and a sound or notes: a number goes from { child, number } to { child, number }"
         ]
     );
 }

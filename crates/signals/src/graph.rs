@@ -26,7 +26,6 @@ pub struct Graph {
     /// The seconds of each `buffer`.
     buffers: Vec<f32>,
     watches: Vec<NamedNode>,
-    #[serde(default)]
     numbers: Vec<NamedNode>,
     output: OutputNode,
 }
@@ -262,36 +261,13 @@ impl Graph {
         let feedbacks = (self.feedbacks.iter())
             .map(|node| lowering.read(*node))
             .collect::<Result<_, _>>()?;
-        if self.watches.len() > MAX_WATCHES {
-            return error(format!("a sound has at most {MAX_WATCHES} watches"));
+        let (watches, watch_registers) =
+            lowering.named(&self.watches, MAX_WATCHES, ("watch", "watches"))?;
+        if self.numbers.iter().any(|number| number.name == "audio") {
+            return error("output `audio` is the sound itself: give the number another name");
         }
-        let mut watches: Vec<String> = Vec::new();
-        for watch in &self.watches {
-            if watches.contains(&watch.name) {
-                return error(format!("watch `{}` is shown twice", watch.name));
-            }
-            watches.push(watch.name.clone());
-        }
-        let watch_registers = (self.watches.iter())
-            .map(|watch| lowering.read(watch.node))
-            .collect::<Result<_, _>>()?;
-        if self.numbers.len() > MAX_NUMBERS {
-            return error(format!("a sound sends out at most {MAX_NUMBERS} numbers"));
-        }
-        let mut numbers: Vec<String> = Vec::new();
-        for number in &self.numbers {
-            // A parent finds a number by name among the outputs, and `audio` is one already.
-            if number.name == "audio" {
-                return error("output `audio` is the sound itself: give the number another name");
-            }
-            if numbers.contains(&number.name) {
-                return error(format!("output `{}` is sent twice", number.name));
-            }
-            numbers.push(number.name.clone());
-        }
-        let number_registers = (self.numbers.iter())
-            .map(|number| lowering.read(number.node))
-            .collect::<Result<_, _>>()?;
+        let (numbers, number_registers) =
+            lowering.named(&self.numbers, MAX_NUMBERS, ("output", "outputs"))?;
         let output = match self.output {
             OutputNode::Mono { mono } => Output::Mono(lowering.read(mono)?),
             OutputNode::Stereo { left, right } => {
@@ -366,6 +342,27 @@ impl<'a> Lowering<'a> {
         }
         self.operations.push(operation);
         Ok((self.operations.len() - 1) as Register)
+    }
+
+    /// The names of `nodes` and the register each reads, at most `most` of them, each name once.
+    fn named(
+        &self,
+        nodes: &[NamedNode],
+        most: usize,
+        (one, many): (&str, &str),
+    ) -> Result<(Vec<String>, Vec<Register>), GraphError> {
+        if nodes.len() > most {
+            return error(format!("a sound has at most {most} {many}"));
+        }
+        let mut names: Vec<String> = Vec::new();
+        for node in nodes {
+            if names.contains(&node.name) {
+                return error(format!("{one} `{}` is given twice", node.name));
+            }
+            names.push(node.name.clone());
+        }
+        let registers = nodes.iter().map(|node| self.read(node.node));
+        Ok((names, registers.collect::<Result<_, _>>()?))
     }
 
     /// The register of a node lowered before.

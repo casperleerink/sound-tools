@@ -524,9 +524,8 @@ export function watch(name: string, value: Operand): void {
 }
 
 /**
- * Sends `value` out as the number `name`, which a parent connects to a number of another child.
- * It is sent once a block, at most 64 samples apart, in the units of the number it drives.
- * Inside `sound` only.
+ * Sends `value` out as the number `name`, which a parent connects to a number of another child,
+ * in that number's units. Inside `sound` only.
  */
 export function output(name: string, value: Operand): void {
   building().numbers.push({ name, value });
@@ -694,6 +693,8 @@ export interface OwnedChild {
 export interface ChildPort {
   child: string;
   port?: string;
+  /** None: a connection joins two ports or two numbers. */
+  number?: never;
 }
 
 /**
@@ -718,11 +719,8 @@ export const ownSound = "sound" as const;
  * a number one child sends to a number of another.
  */
 export type Connection =
-  | { from: Port<ChildPort | PlayerPort>; to: Port<ChildPort> | typeof ownSound }
+  | { from: ChildPort | PlayerPort; to: ChildPort | typeof ownSound }
   | { from: ChildNumber; to: ChildNumber };
-
-/** A port that is no number, so TypeScript refuses a connection that mixes the two. */
-type Port<P> = P & { number?: never };
 
 /** Notes that loop for as long as they play. */
 export interface Pattern {

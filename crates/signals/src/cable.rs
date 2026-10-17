@@ -1,6 +1,3 @@
-//! A cable: carries a number one tool sends out into an automated number of another, block by
-//! block, as an automation lane does.
-
 use sound_core::{
     Automation, EventInput, EventOutput, Ports, PrepareConfig, ProcessContext, Processor,
 };

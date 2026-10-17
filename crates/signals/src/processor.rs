@@ -317,10 +317,16 @@ impl Signals {
     /// lane that moves ramps over the block; one that takes a param over or lets it go glides.
     fn aim(&mut self, context: &ProcessContext<'_>) {
         let mut heard = [None; MAX_PARAMETERS];
+        let specs = self.players.code().map(|code| &code.parameters[..]);
         for lane in context.event_inputs.get(Self::AUTOMATION) {
-            let param = self.automated.get(usize::from(lane.event.parameter));
-            if let Some(heard) = param.and_then(|param| heard.get_mut(usize::from(*param))) {
-                *heard = Some(lane.event.value);
+            let Some(param) = self.automated.get(usize::from(lane.event.parameter)) else {
+                continue;
+            };
+            let param = usize::from(*param);
+            let spec = specs.and_then(|specs| specs.get(param));
+            if let (Some(heard), Some(spec)) = (heard.get_mut(param), spec) {
+                // Not `clamp`: it panics on a NaN, and nothing may panic on the audio thread.
+                *heard = Some(lane.event.value.max(spec.min).min(spec.max));
             }
         }
         let first = !std::mem::replace(&mut self.followed, true);
@@ -765,7 +771,6 @@ impl Processor for Signals {
         {
             left_out.fill(0.0);
             right_out.fill(0.0);
-            self.send(context);
             return;
         }
         let input = context.audio_inputs.get(Self::INPUT);
@@ -818,32 +823,11 @@ impl Processor for Signals {
             for (watch, value) in self.watches.iter().zip(voice.machine.watched()) {
                 watch.set(*value);
             }
-        }
-        self.send(context);
-    }
-}
-
-impl Signals {
-    /// Sends each number of the code, added up over the voices that sound, as their sound is.
-    /// Every block, so a device it drives hears it is still there.
-    fn send(&self, context: &mut ProcessContext<'_>) {
-        let Some(code) = self.players.code() else {
-            return;
-        };
-        let mut sums = [0.0; MAX_NUMBERS];
-        let mut add = |voice: &SignalsVoice| {
-            for (sum, value) in sums.iter_mut().zip(voice.machine.sent()) {
-                *sum += value;
+            // Every block, so a device it drives hears it is still there. An instrument with no
+            // note sends none, and lets go.
+            for (index, value) in voice.machine.sent().iter().enumerate() {
+                (context.event_outputs).push(Self::number(index), 0, Number(*value));
             }
-        };
-        match &self.players {
-            Players::One(single) => add(&single.voice),
-            Players::Many(voices) => voices.iter().filter(|voice| !voice.is_idle()).for_each(add),
-        }
-        for (index, sum) in sums.iter().take(code.numbers.len()).enumerate() {
-            context
-                .event_outputs
-                .push(Self::number(index), 0, Number(*sum));
         }
     }
 }

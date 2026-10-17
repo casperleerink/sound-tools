@@ -15,7 +15,7 @@ mod processor;
 mod program;
 
 pub use cable::{Cable, Number};
-pub use code::{ArraySpec, Code, MAX_NUMBERS, ParameterSpec};
+pub use code::{ArraySpec, Code, ParameterSpec};
 pub use graph::{ControlSpec, Declarations, Graph, GraphError};
 pub use machine::{Machine, Values};
 pub use processor::{Kind, MAX_VOICES, Signals, SignalsUpdate};

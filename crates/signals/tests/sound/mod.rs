@@ -316,6 +316,7 @@ pub(crate) fn compile<O: Into<Output>>(build: impl FnOnce() -> O) -> Code {
         "feedbacks": feedbacks,
         "buffers": building.buffers,
         "watches": building.watches,
+        "numbers": [],
         "output": output.0,
     });
     let graph: Graph = serde_json::from_value(graph).unwrap();
