@@ -12,12 +12,13 @@
 use std::ops::Range;
 
 use sound_core::{
-    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, Lane, MAX_BLOCK, Ports,
+    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, EventOutput, Lane, MAX_BLOCK, Ports,
     PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
 };
 use sound_notes::{NoteEvent, Pitch, Velocity, Voice, Voices, frequency_hz};
 
-use crate::code::{Code, MAX_LIVES, MAX_PARAMETERS};
+use crate::cable::Number;
+use crate::code::{Code, MAX_LIVES, MAX_NUMBERS, MAX_PARAMETERS};
 use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values};
 
 /// How long the old code fades out while the new one fades in.
@@ -179,6 +180,11 @@ impl Signals {
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     pub const AUTOMATION: EventInput<Automation> = EventInput::new(1);
 
+    /// The port of the number at `index` of [`Code::numbers`].
+    pub const fn number(index: usize) -> EventOutput<Number> {
+        EventOutput::new(index)
+    }
+
     /// `machine` is the first voice; an instrument plays copies of it.
     pub fn new(kind: Kind, machine: Box<Machine>, values: Values, watches: Vec<Watch>) -> Self {
         let code = machine.code();
@@ -311,10 +317,16 @@ impl Signals {
     /// lane that moves ramps over the block; one that takes a param over or lets it go glides.
     fn aim(&mut self, context: &ProcessContext<'_>) {
         let mut heard = [None; MAX_PARAMETERS];
+        let specs = self.players.code().map(|code| &code.parameters[..]);
         for lane in context.event_inputs.get(Self::AUTOMATION) {
-            let param = self.automated.get(usize::from(lane.event.parameter));
-            if let Some(heard) = param.and_then(|param| heard.get_mut(usize::from(*param))) {
-                *heard = Some(lane.event.value);
+            let Some(param) = self.automated.get(usize::from(lane.event.parameter)) else {
+                continue;
+            };
+            let param = usize::from(*param);
+            let spec = specs.and_then(|specs| specs.get(param));
+            if let (Some(heard), Some(spec)) = (heard.get_mut(param), spec) {
+                // Not `clamp`: it panics on a NaN, and nothing may panic on the audio thread.
+                *heard = Some(lane.event.value.max(spec.min).min(spec.max));
             }
         }
         let first = !std::mem::replace(&mut self.followed, true);
@@ -643,11 +655,14 @@ impl Processor for Signals {
     type Update = SignalsUpdate;
 
     fn ports(&self) -> Ports {
-        Ports::new()
+        let ports = Ports::new()
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
             .event_input(Self::NOTES)
-            .event_input(Self::AUTOMATION)
+            .event_input(Self::AUTOMATION);
+        (0..MAX_NUMBERS).fold(ports, |ports, index| {
+            ports.event_output(Self::number(index))
+        })
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -807,6 +822,11 @@ impl Processor for Signals {
         if let Some(voice) = shown {
             for (watch, value) in self.watches.iter().zip(voice.machine.watched()) {
                 watch.set(*value);
+            }
+            // Every block, so a device it drives hears it is still there. An instrument with no
+            // note sends none, and lets go.
+            for (index, value) in voice.machine.sent().iter().enumerate() {
+                (context.event_outputs).push(Self::number(index), 0, Number(*value));
             }
         }
     }

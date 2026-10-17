@@ -58,12 +58,13 @@ pub(crate) struct Connection {
     pub to: ToPort,
 }
 
-/// Where a connection starts: a child, or a player of the owner.
+/// Where a connection starts: a child, a player of the owner, or a number a child sends.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum FromPort {
     Child(ChildPort),
     Player(PlayerPort),
+    Number(ChildNumber),
 }
 
 /// The `notes` output of a player of the owner, by its name.
@@ -73,12 +74,13 @@ pub(crate) struct PlayerPort {
     pub player: String,
 }
 
-/// Where a connection goes: a child, or the owner's own sound.
+/// Where a connection goes: a child, the owner's own sound, or a number a child takes.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum ToPort {
     Own(Own),
     Child(ChildPort),
+    Number(ChildNumber),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -94,6 +96,15 @@ pub(crate) struct ChildPort {
     pub child: String,
     /// `audio` when left out, and `notes` for the input a player connects to.
     pub port: Option<String>,
+}
+
+/// A number of a child, by the child's name and the number's: one it sends out, or one it
+/// takes automation for.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChildNumber {
+    pub child: String,
+    pub number: String,
 }
 
 /// What Bun answered: the declaration, or why there is none, as a sentence.

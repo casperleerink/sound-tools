@@ -438,7 +438,7 @@ fn a_graph_that_does_not_hold_says_what_is_wrong_in_the_words_of_the_sdk() {
             .unwrap_err()
             .to_string()
     };
-    let graph = |nodes: serde_json::Value| json!({ "nodes": nodes, "feedbacks": [], "buffers": [], "watches": [], "output": { "mono": 0 } });
+    let graph = |nodes: serde_json::Value| json!({ "nodes": nodes, "feedbacks": [], "buffers": [], "watches": [], "numbers": [], "output": { "mono": 0 } });
     let found = error(graph(json!([{ "op": "add", "a": 0, "b": 1 }])));
     assert_eq!(found, "node 0 is read before it is made");
     let found = error(graph(json!([{ "op": "param", "name": "rate" }])));

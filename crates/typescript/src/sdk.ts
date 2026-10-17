@@ -281,6 +281,7 @@ export interface Graph {
   /** The seconds of each `buffer`. */
   buffers: number[];
   watches: Array<{ name: string; node: number }>;
+  numbers: Array<{ name: string; node: number }>;
   output: { mono: number } | { left: number; right: number };
 }
 
@@ -365,12 +366,13 @@ interface Building {
   buffers: number[];
   writes: Array<{ buffer: number; index: Operand; value: Operand }>;
   watches: Array<{ name: string; value: Operand }>;
+  numbers: Array<{ name: string; value: Operand }>;
 }
 
 let current: Building | undefined;
 
 function building(): Building {
-  if (!current) throw new Error("feedback, buffer, write and watch belong inside `sound`");
+  if (!current) throw new Error("feedback, buffer, write, watch and output belong inside `sound`");
   return current;
 }
 
@@ -522,12 +524,20 @@ export function watch(name: string, value: Operand): void {
 }
 
 /**
+ * Sends `value` out as the number `name`, which a parent connects to a number of another child,
+ * in that number's units. Inside `sound` only.
+ */
+export function output(name: string, value: Operand): void {
+  building().numbers.push({ name, value });
+}
+
+/**
  * For the host: the graph of a sound. `build` makes the output; what it declares is kept
  * meanwhile. A signal is one node, after the nodes it reads; a number or a `Named` is a node
  * of its own wherever it is read.
  */
 export function graphToJson(build: () => Operand | Stereo): Graph {
-  current = { feedbacks: [], buffers: [], writes: [], watches: [] };
+  current = { feedbacks: [], buffers: [], writes: [], watches: [], numbers: [] };
   try {
     const declared = current;
     const output = build();
@@ -553,6 +563,7 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
     const outputs = typeof output === "object" && !(output instanceof Signal) ? [output.left, output.right] : [output];
     outputs.forEach(prepare);
     const watches = declared.watches.map(({ name, value }) => ({ name, node: use(value) }));
+    const numbers = declared.numbers.map(({ name, value }) => ({ name, node: use(value) }));
     for (const { buffer, index, value } of declared.writes) {
       prepare(index);
       prepare(value);
@@ -570,6 +581,7 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
       feedbacks,
       buffers: declared.buffers.map(quantize),
       watches,
+      numbers,
       output: second === undefined ? { mono: first } : { left: first, right: second },
     };
   } finally {
@@ -681,6 +693,17 @@ export interface OwnedChild {
 export interface ChildPort {
   child: string;
   port?: string;
+  /** None: a connection joins two ports or two numbers. */
+  number?: never;
+}
+
+/**
+ * A number of a child: one it sends out with `output`, or one it takes, such as the knob
+ * `cutoff_hz` of a `filter` or a knob of a tool of the project.
+ */
+export interface ChildNumber {
+  child: string;
+  number: string;
 }
 
 /** The notes a player of the parent plays, by its name in `players`. */
@@ -691,11 +714,13 @@ export interface PlayerPort {
 /** The parent's own `sound` as the end of a connection: what reaches it is its `input`. */
 export const ownSound = "sound" as const;
 
-/** Joins an output to an input: of two children, of a player and a child, or into `ownSound`. */
-export interface Connection {
-  from: ChildPort | PlayerPort;
-  to: ChildPort | typeof ownSound;
-}
+/**
+ * Joins an output to an input: of two children, of a player and a child, or into `ownSound`; or
+ * a number one child sends to a number of another.
+ */
+export type Connection =
+  | { from: ChildPort | PlayerPort; to: ChildPort | typeof ownSound }
+  | { from: ChildNumber; to: ChildNumber };
 
 /** Notes that loop for as long as they play. */
 export interface Pattern {

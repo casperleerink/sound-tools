@@ -12,6 +12,8 @@ pub(crate) const MAX_PARAMETERS: usize = 32;
 pub(crate) const MAX_LIVES: usize = 32;
 /// The most watches.
 pub(crate) const MAX_WATCHES: usize = 16;
+/// The most numbers a sound sends out: each is an event port of every processor.
+pub(crate) const MAX_NUMBERS: usize = 8;
 /// The longest a `delay` can be.
 pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
 /// Each delay holds up to [`MAX_DELAY_MS`] per channel and voice, so their number is held too.
@@ -58,6 +60,8 @@ pub struct Code {
     pub triggers: Vec<String>,
     /// Names of the values the interface reads.
     pub watches: Vec<String>,
+    /// Names of the numbers it sends out, which a parent connects to a number of another tool.
+    pub numbers: Vec<String>,
     /// Of the graph and what it reads, so a behaviour tells new code from new values.
     pub hash: u64,
     pub(crate) operations: Vec<Operation>,
@@ -66,6 +70,8 @@ pub struct Code {
     pub(crate) feedbacks: Vec<Register>,
     /// The register of each watch, in the order of [`Self::watches`].
     pub(crate) watch_registers: Vec<Register>,
+    /// The register of each number, in the order of [`Self::numbers`].
+    pub(crate) number_registers: Vec<Register>,
     pub(crate) slots: Slots,
 }
 

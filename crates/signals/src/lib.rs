@@ -7,12 +7,14 @@
 //! buffer run frame by frame. A [`Signals`] processor plays one machine per voice as an effect,
 //! an instrument or a source, and fades to new ones when the code changes.
 
+mod cable;
 mod code;
 mod graph;
 mod machine;
 mod processor;
 mod program;
 
+pub use cable::{Cable, Number};
 pub use code::{ArraySpec, Code, ParameterSpec};
 pub use graph::{ControlSpec, Declarations, Graph, GraphError};
 pub use machine::{Machine, Values};

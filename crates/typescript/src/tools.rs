@@ -23,12 +23,12 @@ use sound_notes::{
     NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
 };
 use sound_signals::{
-    ArraySpec, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec, Signals,
-    SignalsUpdate, Values,
+    ArraySpec, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec,
+    Signals, SignalsUpdate, Values,
 };
 
 use crate::behaviours::{
-    self, Declaration, FromPort, Own, Player, PlayerPattern, PlayerPort, ToPort,
+    self, ChildNumber, Declaration, FromPort, Own, Player, PlayerPattern, PlayerPort, ToPort,
 };
 use crate::bun::Bun;
 use crate::{FOLDER, samples, tree};
@@ -1021,6 +1021,9 @@ impl Sounds {
             }
         }
         context.output(AUDIO_OUTPUT, OutputEndpoint::new(signals, Signals::OUTPUT));
+        for (index, name) in code.numbers.iter().enumerate() {
+            context.output(name, OutputEndpoint::new(signals, Signals::number(index)));
+        }
         // Every knob can be automated, as a number of any device. A toggle or a pattern is no
         // straight line, and a lane cannot move it.
         let numbers: Vec<(ParameterInfo, f32)> = (self.knobs())
@@ -1100,9 +1103,20 @@ fn wire(
         players.insert(name.as_str(), play(name, player, context)?);
     }
     let feeds = feeds(context)?;
+    let mut cables = BTreeSet::new();
     let mut fed: BTreeMap<&str, BTreeSet<&FromPort>> = BTreeMap::new();
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
+        let numbers = (
+            matches!(connection.from, FromPort::Number(_)),
+            matches!(connection.to, ToPort::Number(_)),
+        );
+        if numbers.0 != numbers.1 {
+            context.problem(format!(
+                "its behaviour declares {at} between a number and a sound or notes: a number goes from {{ child, number }} to {{ child, number }}"
+            ));
+            continue;
+        }
         let (output, to_port) = match &connection.from {
             FromPort::Child(from) => {
                 let port = from.port.as_deref().unwrap_or(AUDIO_OUTPUT);
@@ -1128,6 +1142,15 @@ fn wire(
                 };
                 (OutputEndpoint::new(*node, NotePlayer::NOTES), NOTES_INPUT)
             }
+            FromPort::Number(from) => {
+                let Some(output) = context.child_output(&from.child, &from.number) else {
+                    let at = format!("{at}.from");
+                    let port = (from.child.as_str(), from.number.as_str());
+                    context.problem(missing(context, &at, port, Side::Output));
+                    continue;
+                };
+                (output, AUDIO_INPUT)
+            }
         };
         let (input, feed) = match &connection.to {
             ToPort::Own(Own::Sound) => (sound, None),
@@ -1148,6 +1171,10 @@ fn wire(
                     }
                 }
             }
+            ToPort::Number(to) => match cable((&connection.from, to), &at, &mut cables, context)? {
+                Some(input) => (input, None),
+                None => continue,
+            },
         };
         match context.connect(output.to(input)) {
             Err(BehaviourError::Graph(GraphError::PortTypeMismatch { description, .. })) => {
@@ -1168,6 +1195,41 @@ fn wire(
         }
     }
     Ok(())
+}
+
+/// A [`Cable`] from `from` into the number `to` takes automation for, connected to the
+/// automation input of its child. `None` when the child takes no such number, a problem, and
+/// for a cable `made` already: the same connection twice is one.
+fn cable(
+    (from, to): (&FromPort, &ChildNumber),
+    at: &str,
+    made: &mut BTreeSet<String>,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Option<InputEndpoint>, BehaviourError> {
+    let ChildNumber { child, number } = to;
+    let found = context
+        .child_automation(child)
+        .and_then(|(automation, numbers)| {
+            let place = numbers.iter().position(|info| *info.field == **number)?;
+            Some((automation, place))
+        });
+    let Some((automation, place)) = found else {
+        let problem = missing(context, &format!("{at}.to"), (child, number), Side::Number);
+        context.problem(problem);
+        return Ok(None);
+    };
+    // At most `MAX_AUTOMATED` numbers, far under `u16::MAX`.
+    let parameter = u16::try_from(place).unwrap_or(u16::MAX);
+    let name = format!("cable:{from:?}>{child:?}.{number:?}");
+    if !made.insert(name.clone()) {
+        return Ok(None);
+    }
+    let cable = context.processor(&name, Cable::default)?;
+    if context.changed(&name, key(&parameter)) {
+        context.update(cable, parameter)?;
+    }
+    context.connect(OutputEndpoint::new(cable, Cable::OUTPUT).to(automation))?;
+    Ok(Some(InputEndpoint::new(cable, Cable::INPUT)))
 }
 
 /// The [`NoteFeed`] of every child that has `notes`, by the child's name. Declared whatever
@@ -1272,6 +1334,8 @@ fn key(value: &impl Hash) -> u64 {
 enum Side {
     Output,
     Input,
+    /// A number the child takes automation for.
+    Number,
 }
 
 /// What is wrong with the port `(child, port)` at `at` of a declaration, whose child or port is
@@ -1295,6 +1359,11 @@ fn missing(
     let (side, ports) = match side {
         Side::Output => ("output", outputs),
         Side::Input => ("input", inputs),
+        Side::Number => {
+            let numbers = context.child_automation(child).map(|(_, numbers)| numbers);
+            let numbers = numbers.unwrap_or_default().iter();
+            ("number", numbers.map(|info| &*info.field).collect())
+        }
     };
     let ports = match ports.is_empty() {
         true => "none".to_string(),
