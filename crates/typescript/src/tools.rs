@@ -1445,6 +1445,26 @@ mod tests {
     }
 
     #[test]
+    fn a_default_of_a_list_is_filled_like_a_record_and_checked_like_one() {
+        let fields = |default: Value| -> Named<Field> {
+            serde_json::from_value(json!({
+                "scenes": { "kind": "list", "default": default, "item": { "kind": "object", "fields": {
+                    "bars": { "kind": "number", "min": 1, "max": 16, "integer": true },
+                    "notes": { "kind": "notes" }
+                } } }
+            }))
+            .unwrap()
+        };
+        let good = fields(json!([{ "notes": [] }]));
+        assert_eq!(good.check_defaults("state."), Ok(()));
+        let filled = good.with_defaults(json!({}));
+        assert_eq!(filled, json!({ "scenes": [{ "bars": 1, "notes": [] }] }));
+        let bad = fields(json!([{ "bars": 0 }]));
+        let error = "state.scenes.default[0].bars: 0 is outside [1, 16]";
+        assert_eq!(bad.check_defaults("state."), Err(error.to_string()));
+    }
+
+    #[test]
     fn the_doc_of_an_owner_says_where_its_children_go_and_lists_the_fields_of_its_items() {
         let band = band();
         let doc = band.doc();

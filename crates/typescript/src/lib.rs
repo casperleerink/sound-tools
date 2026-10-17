@@ -180,13 +180,12 @@ fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, V
             page,
         } = tool;
         // Before anything is made from the fields, such as a pattern at its defaults.
-        let defaults = info.fields.check_defaults("state.");
-        if let Err(error) = info
+        let checked = (info
             .declarations()
             .check()
-            .map_err(|error| error.to_string())
-            .and(defaults)
-        {
+            .map_err(|error| error.to_string()))
+        .and_then(|()| info.fields.check_defaults("state."));
+        if let Err(error) = checked {
             problems.push(info.problem(error));
             continue;
         }
