@@ -30,6 +30,7 @@
 mod division;
 mod expression;
 mod lane;
+mod pattern;
 mod player;
 mod take;
 mod timeline;
@@ -41,7 +42,10 @@ use sound_core::{Place, State, Ticks};
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
-pub use player::{HELD_CAPACITY, NotePlayer, NotePlayerUpdate, PREVIEW_SECONDS};
+pub use pattern::{Launch, Pattern, PatternError, Quantize};
+pub use player::{
+    HELD_CAPACITY, NO_PATTERN, NotePlayer, NotePlayerUpdate, PREVIEW_SECONDS, PlayerWatches,
+};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };

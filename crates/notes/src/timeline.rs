@@ -50,8 +50,7 @@ impl NoteTimeline {
                 });
             }
         }
-        // The whole note is the key, so the same clips always give the same order.
-        notes.sort_unstable_by_key(|note| (note.start, note.pitch, note.end, note.velocity));
+        sort(&mut notes);
         one_per_tick(&mut pedal);
         Self {
             notes,
@@ -67,9 +66,7 @@ impl NoteTimeline {
     }
 
     pub(crate) fn starting_in(&self, range: &Range<Ticks>) -> &[PlacedNote] {
-        let first = self.notes.partition_point(|note| note.start < range.start);
-        let last = self.notes.partition_point(|note| note.start < range.end);
-        self.notes.get(first..last).unwrap_or_default()
+        starting_in(&self.notes, range)
     }
 
     pub(crate) fn pedal_starting_in(&self, range: &Range<Ticks>) -> &[PlacedPedal] {
@@ -101,17 +98,31 @@ impl NoteTimeline {
         }
     }
 
-    /// Where the note that started at `start` with `pitch` ends now. `None` when it is gone.
-    /// Of several such notes, in clips that overlap, the last end.
     pub(crate) fn end_of(&self, start: Ticks, pitch: Pitch) -> Option<Ticks> {
-        let first = self
-            .notes
-            .partition_point(|note| (note.start, note.pitch) < (start, pitch));
-        let same = self.notes.get(first..).unwrap_or_default().iter();
-        same.take_while(|note| (note.start, note.pitch) == (start, pitch))
-            .map(|note| note.end)
-            .max()
+        end_of(&self.notes, start, pitch)
     }
+}
+
+/// The whole note is the key, so the same notes always give the same order.
+pub(crate) fn sort(notes: &mut [PlacedNote]) {
+    notes.sort_unstable_by_key(|note| (note.start, note.pitch, note.end, note.velocity));
+}
+
+/// The notes of `notes`, sorted with [`sort`], that start in `range`.
+pub(crate) fn starting_in<'a>(notes: &'a [PlacedNote], range: &Range<Ticks>) -> &'a [PlacedNote] {
+    let first = notes.partition_point(|note| note.start < range.start);
+    let last = notes.partition_point(|note| note.start < range.end);
+    notes.get(first..last).unwrap_or_default()
+}
+
+/// Where the note of `notes`, sorted with [`sort`], that started at `start` with `pitch` ends
+/// now. `None` when it is gone. Of several such notes, in clips that overlap, the last end.
+pub(crate) fn end_of(notes: &[PlacedNote], start: Ticks, pitch: Pitch) -> Option<Ticks> {
+    let first = notes.partition_point(|note| (note.start, note.pitch) < (start, pitch));
+    let same = notes.get(first..).unwrap_or_default().iter();
+    same.take_while(|note| (note.start, note.pitch) == (start, pitch))
+        .map(|note| note.end)
+        .max()
 }
 
 /// One expression lane of the clips as it plays: stretches of straight line on the project
