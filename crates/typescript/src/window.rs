@@ -17,13 +17,14 @@ use std::time::{Duration, Instant};
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
-use sound_notes::{Pitch, Velocity};
+use sound_notes::{Launch, NotePlayer, NotePlayerUpdate, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
+use crate::behaviours;
 use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped, Transport};
 use crate::card::TypeScriptCard;
-use crate::tools::{Control, Sounds, ToolInfo, ToolKind};
+use crate::tools::{Control, Sounds, ToolInfo, ToolKind, player_processor};
 use crate::tree::Node;
 use crate::{Extensions, FOLDER, Launched, Midi, OWNED};
 
@@ -676,6 +677,60 @@ impl Live {
         );
     }
 
+    /// Sends `launch` to the player `player` of the owner `id`, as a performer plays: nothing
+    /// is saved. A player or a pattern it does not have is a failure of its tool.
+    fn launch_pattern(
+        &mut self,
+        id: &InstanceId,
+        player: &str,
+        launch: Launch,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let project = session.read(cx).project();
+        let players = behaviours::players(project.assets(), id);
+        let wrong = match (players.get(player), launch.pattern) {
+            (None, _) => {
+                let names: Vec<&str> = players.keys().map(String::as_str).collect();
+                let names = match names.is_empty() {
+                    true => "it declares none".to_string(),
+                    false => format!("its players are {}", names.join(", ")),
+                };
+                Some(format!(
+                    "a launch names the player {player:?}, which {id} does not declare: {names}"
+                ))
+            }
+            (Some(patterns), Some(pattern)) if pattern >= *patterns => Some(format!(
+                "a launch names pattern {pattern} of the player {player:?} of {id}, which has {patterns}, from 0"
+            )),
+            _ => None,
+        };
+        if let Some(wrong) = wrong {
+            let tools = self.tools.borrow();
+            let info = project.tool_of(id).and_then(|tool| find(&tools, tool));
+            let problem = info.map(|info| info.problem(wrong));
+            drop(tools);
+            if let Some(problem) = problem
+                && !self.problems.contains(&problem)
+            {
+                self.problems.push(problem);
+                self.report(cx);
+            }
+            return;
+        }
+        let update = NotePlayerUpdate::Launch(launch);
+        session.update(cx, |session, cx| {
+            let sent = session.background(cx, |project| {
+                project.send::<NotePlayer>(id, &player_processor(player), update)
+            });
+            if let Err(error) = sent {
+                session.report(error, cx);
+            }
+        });
+    }
+
     /// A key of the computer keyboard went down or up on a card that has the keys.
     pub(crate) fn key(&mut self, card: u64, key: &str, down: bool, cx: &mut Context<Self>) {
         let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
@@ -877,6 +932,12 @@ impl Live {
                 },
                 cx,
             ),
+            Event::Launch {
+                instance,
+                player,
+                pattern,
+                quantize,
+            } => self.launch_pattern(&instance, &player, Launch { pattern, quantize }, cx),
         }
         cx.notify();
     }

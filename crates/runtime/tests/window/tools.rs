@@ -943,3 +943,101 @@ fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestApp
     window.until("the high drone", |window| rises(window).abs_diff(88) <= 1);
     assert_eq!(window.problems(), []);
 }
+
+/// A note a bar long that loops on its child `synth` once a click on the page launches it; a
+/// click while it plays stops it. Nothing plays before.
+const LAUNCHER: &str = r#"import { h, playerOf, tool } from "./sdk";
+
+tool({
+  name: "launcher",
+  title: "Launcher",
+  when: "You want to launch a pattern",
+  doc: "A click launches a long note, another stops it.",
+  state: {},
+  behaviour: () => ({
+    players: { bass: { patterns: [{ length: 3840, notes: [{ start: 0, length: 3840, pitch: 45, velocity: 100 }] }] } },
+    connections: [
+      { from: { player: "bass" }, to: { child: "synth" } },
+      { from: { child: "synth" }, to: "sound" },
+    ],
+  }),
+  transport: true,
+  page: ({ size, watches, launch }) =>
+    h("div", {
+      style: { width: size.width, height: size.height },
+      onClick: () => launch("bass", playerOf(watches, "bass").playing === null ? 0 : null),
+    }, "Launch"),
+});
+"#;
+
+/// Frames in a bar of 4/4 at 120 bpm.
+const BAR_FRAMES: usize = 96_000;
+
+#[gpui::test]
+fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
+    cx: &mut TestAppContext,
+) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project
+        .replace("\"keys\"", "\"launcher\"")
+        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/launcher/instance.json",
+            r#"{"tool": "launcher", "state": {}}"#,
+        ),
+        (
+            "state/launcher/synth.json",
+            r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
+        ),
+        ("extensions/launcher.ts", LAUNCHER),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let play = window.find("play").expect("the play button");
+    window.cx.simulate_click(play, Modifiers::default());
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    let middle = point(middle.width, middle.height);
+    let queued = |window: &mut Window| {
+        let session = window.session.clone();
+        let watches = (window.cx).read(|cx| session.read(cx).project().watches(&id("launcher")));
+        let queued = watches.iter().find(|(name, _)| name == "bass.queued");
+        queued.map(|(_, watch)| watch.get())
+    };
+    window.until("the declared player", |window| queued(window).is_some());
+    window.cx.simulate_click(middle, Modifiers::default());
+    window.until("the launch", |window| queued(window) == Some(0.0));
+    assert!(window.playing());
+
+    // Frames from the bar line on, in blocks of 64 as the device asks: silent until it.
+    let to_the_bar = |window: &mut Window| {
+        let session = window.session.clone();
+        let status = window
+            .cx
+            .update(|_, cx| session.update(cx, |session, _| session.engine().poll().unwrap()));
+        let frame = status.playhead_frame.0 as usize;
+        let bar = frame.div_ceil(BAR_FRAMES) * BAR_FRAMES;
+        let before = window.loudest(bar - frame);
+        (bar, before)
+    };
+    let (bar, before) = to_the_bar(&mut window);
+    assert_eq!(before, 0.0, "before the bar line at {bar}");
+    let mut first = vec![0.0_f32; 64 * OFFLINE.channels];
+    window.engine.process_block(&mut first);
+    let left: Vec<f32> = first.iter().step_by(OFFLINE.channels).copied().collect();
+    let sounding = left.iter().position(|sample| sample.abs() > 1e-4);
+    assert!(sounding.is_some_and(|frame| frame < 48), "{left:?}");
+
+    window.until("the stop", |window| {
+        window.cx.simulate_click(middle, Modifiers::default());
+        queued(window) == Some(sound_notes::QUEUED_STOP)
+    });
+    // It plays on to the bar line, and is silent from a release after it.
+    let (bar, before) = to_the_bar(&mut window);
+    assert!(before > 0.1, "{before} before the bar line at {bar}");
+    window.loudest(960);
+    assert_eq!(window.loudest(2 * BAR_FRAMES), 0.0);
+    assert_eq!(window.problems(), []);
+}

@@ -7,7 +7,7 @@
 //! picks another graph; a knob, a toggle or a pattern only moves a value of the sound that
 //! plays.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
@@ -16,15 +16,20 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
     Assets, BehaviourContext, BehaviourError, GraphError, InputEndpoint, InstanceId, JsonTool,
-    JsonToolDoc, OutputEndpoint, ParameterInfo, Problem, ValueRange, Watch,
+    JsonToolDoc, Node, OutputEndpoint, ParameterInfo, Problem, Ticks, ValueRange, Watch,
 };
-use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note};
+use sound_notes::{
+    AUDIO_INPUT, AUDIO_OUTPUT, Launch, Length, NOTES_INPUT, Note, NotePlayer, NotePlayerUpdate,
+    Pattern, PlayerWatches, Quantize,
+};
 use sound_signals::{
     ArraySpec, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec, Signals,
     SignalsUpdate, Values,
 };
 
-use crate::behaviours::{self, ChildPort, Declaration, FromPort, Own, ToPort};
+use crate::behaviours::{
+    self, Declaration, FromPort, Own, Player, PlayerPattern, PlayerPort, ToPort,
+};
 use crate::bun::Bun;
 use crate::{FOLDER, samples};
 
@@ -113,7 +118,11 @@ pub(crate) enum Field {
         label: Option<String>,
     },
     /// Notes in ticks. This and the kinds below are data a behaviour reads: no signal.
-    Notes { label: Option<String> },
+    Notes {
+        /// `[]` when left out.
+        default: Option<Value>,
+        label: Option<String>,
+    },
     Text {
         default: Option<String>,
         label: Option<String>,
@@ -130,6 +139,8 @@ pub(crate) enum Field {
     List {
         item: Box<Field>,
         max: Option<usize>,
+        /// `[]` when left out.
+        default: Option<Value>,
         label: Option<String>,
     },
     /// An item of a list that holds several fields.
@@ -220,7 +231,11 @@ impl Field {
                 length, default, ..
             } => Value::from(vec![*default; *length]),
             Self::Sample { .. } => Value::from(""),
-            Self::Notes { .. } | Self::List { .. } => Value::Array(Vec::new()),
+            Self::Notes { default, .. } => default.clone().unwrap_or(Value::Array(Vec::new())),
+            Self::List { default, .. } => {
+                let items = default.clone().unwrap_or(Value::Array(Vec::new()));
+                self.filled(items)
+            }
             Self::Text { default, .. } => Value::from(default.clone().unwrap_or_default()),
             Self::Number {
                 min,
@@ -414,6 +429,25 @@ impl Named<Field> {
                 ));
             };
             field.check(value, &format!("{at}.{name}"))?;
+        }
+        Ok(())
+    }
+
+    /// Whether the default of each field is a value it takes, inside the items of lists too.
+    /// `prefix` starts the path of each.
+    pub(crate) fn check_defaults(&self, prefix: &str) -> Result<(), String> {
+        for (name, field) in &self.0 {
+            let mut path = format!("{prefix}{name}");
+            field.check(&field.default_value(), &format!("{path}.default"))?;
+            let mut item = field;
+            while let Field::List { item: inner, .. } = item {
+                item = inner;
+                path.push_str("[]");
+                item.check(&item.default_value(), &format!("{path}.default"))?;
+            }
+            if let Field::Object { fields } = item {
+                fields.check_defaults(&format!("{path}."))?;
+            }
         }
         Ok(())
     }
@@ -1015,34 +1049,65 @@ impl Sounds {
     }
 }
 
-/// Makes the connections of `declaration`. One that names a child or a port the owner does not
-/// have, or joins ports of two kinds, is a problem, and the others play.
+/// The name of the processor of the player `name` of an owner, which a launch is sent to.
+pub(crate) fn player_processor(name: &str) -> String {
+    format!("player:{name}")
+}
+
+/// Makes the players of `declaration` and its connections. A connection that names a child, a
+/// player or a port the owner does not have, or joins ports of two kinds, is a problem, and the
+/// others play.
 fn wire(
     declaration: &Declaration,
     sound: InputEndpoint,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    if let Some(player) = declaration.players.values().next() {
-        match *player {}
+    let mut players = BTreeMap::new();
+    for (name, player) in &declaration.players {
+        players.insert(name.as_str(), play(name, player, context)?);
     }
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
-        let FromPort::Child(from) = &connection.from;
-        let Some(output) = context.child_output(&from.child, &from.port) else {
-            let problem = missing(context, &format!("{at}.from"), from, Side::Output);
-            context.problem(problem);
-            continue;
+        let (output, to_port) = match &connection.from {
+            FromPort::Child(from) => {
+                let port = from.port.as_deref().unwrap_or(AUDIO_OUTPUT);
+                let Some(output) = context.child_output(&from.child, port) else {
+                    let at = format!("{at}.from");
+                    let problem = missing(context, &at, (&from.child, port), Side::Output);
+                    context.problem(problem);
+                    continue;
+                };
+                (output, AUDIO_INPUT)
+            }
+            FromPort::Player(PlayerPort { player }) => {
+                let Some(node) = players.get(player.as_str()) else {
+                    let names: Vec<&str> = players.keys().copied().collect();
+                    let players = match names.is_empty() {
+                        true => "it declares none".to_string(),
+                        false => format!("its players are {}", names.join(", ")),
+                    };
+                    context.problem(format!(
+                        "its behaviour names the player {player:?} at {at}.from, which it does not declare: {players}"
+                    ));
+                    continue;
+                };
+                (OutputEndpoint::new(*node, NotePlayer::NOTES), NOTES_INPUT)
+            }
         };
         let input = match &connection.to {
             ToPort::Own(Own::Sound) => sound,
-            ToPort::Child(to) => match context.child_input(&to.child, &to.port) {
-                Some(input) => input,
-                None => {
-                    let problem = missing(context, &format!("{at}.to"), to, Side::Input);
-                    context.problem(problem);
-                    continue;
+            ToPort::Child(to) => {
+                let port = to.port.as_deref().unwrap_or(to_port);
+                match context.child_input(&to.child, port) {
+                    Some(input) => input,
+                    None => {
+                        let at = format!("{at}.to");
+                        let problem = missing(context, &at, (&to.child, port), Side::Input);
+                        context.problem(problem);
+                        continue;
+                    }
                 }
-            },
+            }
         };
         match context.connect(output.to(input)) {
             Err(BehaviourError::Graph(GraphError::PortTypeMismatch { description, .. })) => {
@@ -1056,15 +1121,96 @@ fn wire(
     Ok(())
 }
 
+/// Makes the note player `name` of an owner, which shows what it plays in the watches
+/// `<name>.playing`, `<name>.queued` and `<name>.phase`. Its patterns are sent when they change.
+///
+/// What plays before any launch is decided here: the pattern `plays` names is launched when the
+/// player is first declared, and again each time `plays` changes, as a launch at the next bar
+/// is. While the project does not play that lands at once, so a render from the start plays it
+/// from tick 0. A launch of a performer plays until `plays` changes. Nothing of it is saved.
+fn play(
+    name: &str,
+    player: &Player,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Node<NotePlayer>, BehaviourError> {
+    let watches = PlayerWatches {
+        playing: context.watch(&format!("{name}.playing")),
+        queued: context.watch(&format!("{name}.queued")),
+        phase: context.watch(&format!("{name}.phase")),
+    };
+    let processor = player_processor(name);
+    let node = context.processor(&processor, || NotePlayer::watched(watches))?;
+    // Checked every run, so a problem stays as long as the pattern does.
+    let mut patterns = Vec::with_capacity(player.patterns.len());
+    for (index, pattern) in player.patterns.iter().enumerate() {
+        let at = format!("players.{name}.patterns[{index}]");
+        patterns.push(pattern_of(pattern, &at, context)?);
+    }
+    if let Some(plays) = player.plays
+        && plays >= patterns.len()
+    {
+        context.problem(format!(
+            "its behaviour declares players.{name}.plays {plays}, which is no pattern: it has {}, from 0",
+            patterns.len()
+        ));
+    }
+    if context.changed(&format!("{processor}.patterns"), key(&player.patterns)) {
+        context.update(node, NotePlayerUpdate::Patterns(Arc::new(patterns)))?;
+    }
+    if context.changed(&format!("{processor}.plays"), key(&player.plays)) {
+        let launch = Launch {
+            pattern: player.plays,
+            quantize: Quantize::Bar,
+        };
+        context.update(node, NotePlayerUpdate::Launch(launch))?;
+    }
+    Ok(node)
+}
+
+/// The pattern `declared` at `at` of a declaration. One that cannot play, such as one with a
+/// note outside it, is silent and a problem.
+fn pattern_of(
+    declared: &PlayerPattern,
+    at: &str,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Pattern, BehaviourError> {
+    let made = Length::new(Ticks(declared.length))
+        .map_err(|error| format!("{at}.{error}"))
+        .and_then(|length| {
+            Pattern::new(length, &declared.notes).map_err(|error| format!("{at}.{error}"))
+        });
+    match made {
+        Ok(pattern) => Ok(pattern),
+        Err(error) => {
+            context.problem(format!(
+                "its behaviour declares a pattern that cannot play, so it is silent: {error}"
+            ));
+            let silent = Pattern::new(Length::at_least_one(Ticks(declared.length)), &[]);
+            silent.map_err(|error| BehaviourError::Other(error.to_string()))
+        }
+    }
+}
+
+fn key(value: &impl Hash) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[derive(Clone, Copy)]
 enum Side {
     Output,
     Input,
 }
 
-/// What is wrong with `port` at `at` of a declaration, whose child or port is not there.
-fn missing(context: &BehaviourContext<'_>, at: &str, port: &ChildPort, side: Side) -> String {
-    let ChildPort { child, port } = port;
+/// What is wrong with the port `(child, port)` at `at` of a declaration, whose child or port is
+/// not there.
+fn missing(
+    context: &BehaviourContext<'_>,
+    at: &str,
+    (child, port): (&str, &str),
+    side: Side,
+) -> String {
     let Some((outputs, inputs)) = context.child_ports(child) else {
         let children: Vec<&str> = context.child_names().collect();
         let children = match children.is_empty() {
@@ -1296,6 +1442,26 @@ mod tests {
             "gain": 0.5
         });
         assert_eq!(band().with_defaults(state), expected);
+    }
+
+    #[test]
+    fn a_default_of_a_list_is_filled_like_a_record_and_checked_like_one() {
+        let fields = |default: Value| -> Named<Field> {
+            serde_json::from_value(json!({
+                "scenes": { "kind": "list", "default": default, "item": { "kind": "object", "fields": {
+                    "bars": { "kind": "number", "min": 1, "max": 16, "integer": true },
+                    "notes": { "kind": "notes" }
+                } } }
+            }))
+            .unwrap()
+        };
+        let good = fields(json!([{ "notes": [] }]));
+        assert_eq!(good.check_defaults("state."), Ok(()));
+        let filled = good.with_defaults(json!({}));
+        assert_eq!(filled, json!({ "scenes": [{ "bars": 1, "notes": [] }] }));
+        let bad = fields(json!([{ "bars": 0 }]));
+        let error = "state.scenes.default[0].bars: 0 is outside [1, 16]";
+        assert_eq!(bad.check_defaults("state."), Err(error.to_string()));
     }
 
     #[test]

@@ -14,6 +14,7 @@ use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use serde::Deserialize;
 use serde_json::Value;
 use sound_core::{Assets, InstanceId};
+use sound_notes::Note;
 
 use crate::bun::{Bun, Request};
 
@@ -21,20 +22,34 @@ use crate::bun::{Bun, Request};
 /// forth, and for a few records an agent writes in turn.
 const KEPT: usize = 16;
 
-/// What the behaviour of an owner declares: how its children connect.
+/// What the behaviour of an owner declares: how its children connect, and its note players.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Declaration {
     #[serde(default)]
     pub connections: Vec<Connection>,
-    /// The note players of the owner, by name. None can be declared yet.
+    /// The note players of the owner, by name.
     #[serde(default)]
     pub players: BTreeMap<String, Player>,
 }
 
-/// A note player of an owner. It has no kind yet.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub(crate) enum Player {}
+/// A note player of an owner: a `NotePlayer` processor with the patterns a launch picks from.
+#[derive(Clone, Debug, PartialEq, Hash, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Player {
+    pub patterns: Vec<PlayerPattern>,
+    /// The pattern it plays before any launch, by index.
+    #[serde(default)]
+    pub plays: Option<usize>,
+}
+
+/// Notes that loop: `length` in ticks, and note starts counted from the start of the pattern.
+#[derive(Clone, Debug, PartialEq, Hash, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PlayerPattern {
+    pub length: u64,
+    pub notes: Vec<Note>,
+}
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,11 +58,19 @@ pub(crate) struct Connection {
     pub to: ToPort,
 }
 
-/// Where a connection starts.
+/// Where a connection starts: a child, or a player of the owner.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum FromPort {
     Child(ChildPort),
+    Player(PlayerPort),
+}
+
+/// The `notes` output of a player of the owner, by its name.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PlayerPort {
+    pub player: String,
 }
 
 /// Where a connection goes: a child, or the owner's own sound.
@@ -64,17 +87,13 @@ pub(crate) enum Own {
     Sound,
 }
 
-/// A port of a child, by the child's name and the port's: `audio` when left out.
+/// A port of a child, by the child's name and the port's.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ChildPort {
     pub child: String,
-    #[serde(default = "audio")]
-    pub port: String,
-}
-
-fn audio() -> String {
-    sound_notes::AUDIO_OUTPUT.to_string()
+    /// `audio` when left out, and `notes` for the input a player connects to.
+    pub port: Option<String>,
 }
 
 /// What Bun answered: the declaration, or why there is none, as a sentence.
@@ -257,6 +276,15 @@ pub fn take_declared(assets: &Assets) -> Vec<InstanceId> {
         .partition(|(project, _)| project == assets);
     store.ready = others;
     ours.into_iter().map(|(_, instance)| instance).collect()
+}
+
+/// The players `instance` of the project of `assets` plays now, by name, with how many patterns
+/// each has: for a launch, which never waits for Bun.
+pub(crate) fn players(assets: &Assets, instance: &InstanceId) -> BTreeMap<String, usize> {
+    let store = store();
+    let owner = store.owners.get(&(assets.clone(), instance.clone()));
+    let players = owner.into_iter().flat_map(|owner| &owner.last.players);
+    (players.map(|(name, player)| (name.clone(), player.patterns.len()))).collect()
 }
 
 /// Waits until Bun answered everything it was asked, or stopped. For a render, which plays what

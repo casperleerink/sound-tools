@@ -64,6 +64,8 @@ export interface SampleField {
 /** Notes in ticks, 960 to a quarter note, from where the owner's code plays them. */
 export interface NotesField {
   kind: "notes";
+  /** `[]` when left out. */
+  default?: Note[];
   label?: string;
 }
 
@@ -97,6 +99,8 @@ export interface ListField<I extends Field | ObjectItem = Field | ObjectItem> {
   item: I;
   /** The most items it holds. */
   max?: number;
+  /** `[]` when left out. `list` types it from `item`. */
+  default?: unknown[];
   label?: string;
 }
 
@@ -133,10 +137,13 @@ export const number = (field: Omit<NumberField, "kind">): NumberField => ({ kind
 /** The item of a list: a field as it is, an object of fields as an `ObjectItem`. */
 type ItemOf<I extends Field | Fields> = I extends Field ? I : ObjectItem<I & Fields>;
 
-/** A list whose items are `item`: a field, such as `notes()`, or an object of fields. */
+/**
+ * A list whose items are `item`: a field, such as `notes()`, or an object of fields. A field an
+ * item of `default` leaves out is at its own default.
+ */
 export function list<const I extends Field | Fields>(
   item: I,
-  options: { max?: number; label?: string } = {},
+  options: { max?: number; label?: string; default?: ValueOf<ListField<ItemOf<I>>, false> } = {},
 ): ListField<ItemOf<I>> {
   const field = typeof item.kind === "string" ? item : { kind: "object", fields: item };
   return { kind: "list", item: field as ItemOf<I>, ...options };
@@ -609,9 +616,9 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   /**
    * Makes it an owner: its record is `state/<name>/instance.json` and the records next to it
    * are its children. A pure function of its record and its children that says how they
-   * connect. It runs in Bun when either changes, and what it declares plays a moment later;
-   * the sound plays on meanwhile. Its own `sound` hears what it connects to `"sound"` as
-   * `input`, and is its `audio` output.
+   * connect and what its note players loop. It runs in Bun when either changes, and what it
+   * declares plays a moment later; the sound plays on meanwhile. Its own `sound` hears what it
+   * connects to `"sound"` as `input`, and is its `audio` output.
    */
   behaviour?: (owner: Owner<S>) => Declaration;
   /**
@@ -663,23 +670,74 @@ export interface OwnedChild {
   state: unknown;
 }
 
-/** A port of a child: `audio` when left out. A synth has a `notes` input and an `audio` output, an effect an `audio` input and output. */
+/**
+ * A port of a child: `audio` when left out, `notes` when a player connects to it. A synth has a
+ * `notes` input and an `audio` output, an effect an `audio` input and output.
+ */
 export interface ChildPort {
   child: string;
   port?: string;
 }
 
-/** Joins an output to an input: of two children, or of a child and the owner's own sound. */
+/** The notes a player of the owner plays, by its name in `players`. */
+export interface PlayerPort {
+  player: string;
+}
+
+/** Joins an output to an input: of two children, of a player and a child, or into the owner's own sound. */
 export interface Connection {
-  from: ChildPort;
+  from: ChildPort | PlayerPort;
   to: ChildPort | "sound";
+}
+
+/** Notes that loop for as long as they play. */
+export interface Pattern {
+  /** In ticks: 3840 is a bar of 4/4. */
+  length: number;
+  /** Each starts inside the pattern, from 0. */
+  notes: Note[];
+}
+
+/**
+ * Plays one of its patterns at a time, in time with the bars: which one is a performance, `launch`,
+ * which nothing saves.
+ */
+export interface Player {
+  patterns: Pattern[];
+  /**
+   * The index of the pattern it plays before a launch, so a render plays it: it starts when the
+   * player is first declared, and again as a launch at the next bar when this changes. None when
+   * left out.
+   */
+  plays?: number | null;
 }
 
 /** What a behaviour declares. A JSON value: no functions, no classes. */
 export interface Declaration {
   connections: Connection[];
-  /** Note players of the owner, by name. None can be declared yet. */
-  players?: Record<string, never>;
+  /** Note players of the owner, by name. Each shows what it plays in `watches`, see `playerOf`. */
+  players?: Record<string, Player>;
+}
+
+/** What a player plays, as the owner's card and page see it. */
+export interface Playing {
+  /** The index of the pattern that plays, or null. */
+  playing: number | null;
+  /** The pattern of a launch that has not landed yet, `"stop"` for a stop, or null. */
+  queued: number | "stop" | null;
+  /** How far the pattern that plays is into its round, 0 to 1. */
+  phase: number;
+}
+
+/** What the player `player` plays, from the `watches` of its owner. */
+export function playerOf(watches: Record<string, number>, player: string): Playing {
+  const index = (value: number | undefined) => (value === undefined || value < 0 ? null : value);
+  const queued = watches[`${player}.queued`];
+  return {
+    playing: index(watches[`${player}.playing`]),
+    queued: queued === -2 ? "stop" : index(queued),
+    phase: watches[`${player}.phase`] ?? 0,
+  };
 }
 
 /** A key of the computer keyboard: its name, such as `"a"`, `"1"`, `"space"` or `"left"`. */
@@ -731,6 +789,12 @@ export interface Performer<C extends Controls> {
   ): void;
   /** Lets go of a note `play` holds. */
   release(pitch: number, options?: { at?: number }): void;
+  /**
+   * Plays the pattern of index `pattern` of the owner's player `player`, or stops it with
+   * `null`, from the next bar line (`quantize` when given) while the piece plays, else at once.
+   * What played goes on until then.
+   */
+  launch(player: string, pattern: number | null, options?: { quantize?: "bar" | "beat" | "now" }): void;
 }
 
 /** What the control loop, the cards and the handlers of an instance get. */

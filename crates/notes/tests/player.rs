@@ -14,7 +14,7 @@ use sound_core::{
 };
 use sound_notes::{
     Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer, NotePlayerUpdate, Pattern, Pitch,
-    PlayerWatches, Quantize, Velocity,
+    PlayerWatches, QUEUED_STOP, Quantize, Velocity,
 };
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -288,7 +288,9 @@ fn a_switch_and_a_stop_end_the_held_notes() {
     harness.launch(Some(1), Quantize::Now);
     output.extend(harness.render_ticks(200));
     harness.launch(None, Quantize::Bar);
-    output.extend(harness.render_ticks(2 * BAR));
+    output.extend(harness.render_ticks(100));
+    assert_eq!(harness.watched(), (1.0, QUEUED_STOP, 0.3125));
+    output.extend(harness.render_ticks(2 * BAR - 100));
     assert_eq!(
         level_changes(&output),
         at_ticks(&[(0, 60.0), (500, 64.0), (BAR, 0.0)])
