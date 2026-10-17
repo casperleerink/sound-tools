@@ -199,13 +199,14 @@ type ValueOf<F, Filled extends boolean> = F extends KnobField | NumberField
               ? Array<I extends ObjectItem<infer G> ? (Filled extends true ? ValuesOf<G> : StateOf<G>) : ValueOf<I, Filled>>
               : never;
 
-/**
- * The `state` of a record of a tool with these fields, as a card gets it. A field left out is
- * at its default. Not readonly as the fields of a tool are, so `update` can change it.
- */
+/** The `state` of a record as a file may hold it: a field left out is at its default. */
 export type StateOf<S extends Fields> = { -readonly [Name in keyof S]?: ValueOf<S[Name], false> };
 
-/** The `state` of a record as a behaviour gets it: every field, at its default where it is left out. */
+/**
+ * The `state` of a record as a behaviour, a card, a page and the control loop get it: every
+ * field, at its default where the record leaves it out. Not readonly as the fields of a tool
+ * are, so `update` can change it.
+ */
 export type ValuesOf<S extends Fields> = { -readonly [Name in keyof S]: ValueOf<S[Name], true> };
 
 /**
@@ -631,11 +632,11 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * plays the sound with `set` and `fire`, as a performer would, and keeps what it needs in
    * `memory`. It does not change the record: that is the composer's.
    */
-  tick?: (tool: Tick<StateOf<S>, C, M>) => void;
+  tick?: (tool: Tick<ValuesOf<S>, C, M>) => void;
   /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
-  card?: (card: Card<StateOf<S>, C, M>) => Node;
+  card?: (card: Card<ValuesOf<S>, C, M>) => Node;
   /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
-  page?: (page: Page<StateOf<S>, C, M>) => Node;
+  page?: (page: Page<ValuesOf<S>, C, M>) => Node;
   /**
    * Its page shows the transport (play, stop, position, tempo, time signature, click), and its
    * card and page draw again as `transport` moves. Recording is the arrangement's.
@@ -645,12 +646,12 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * A key of the computer keyboard goes down or up, while its page shows or after a click on
    * its card. Plain keys are then the tool's: space and `r` do not play or record.
    */
-  onKey?: (tool: Handler<StateOf<S>, C, M>, key: Key) => void;
+  onKey?: (tool: Handler<ValuesOf<S>, C, M>, key: Key) => void;
   /**
    * The MIDI keyboard plays, while the tool is on the track it plays or at the top of the
    * project. An instrument plays the notes by itself as well.
    */
-  onMidi?: (tool: Handler<StateOf<S>, C, M>, message: Midi) => void;
+  onMidi?: (tool: Handler<ValuesOf<S>, C, M>, message: Midi) => void;
 }
 
 /** What a behaviour gets. */

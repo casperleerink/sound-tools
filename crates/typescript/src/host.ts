@@ -5,7 +5,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec, Transport } from "./sdk";
+import type { Child, Controls, Field, Fields, Graph, Handler as Heard, Midi, Node, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -17,7 +17,7 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 }
 
 type Spec = ToolSpec<Fields, Controls, unknown>;
-type State = StateOf<Fields>;
+type State = ValuesOf<Fields>;
 type Choices = Record<string, string | number>;
 type Watches = Record<string, number>;
 type Size = { width: number; height: number };
@@ -407,17 +407,51 @@ function render(request: Render) {
   send({ type: "tree", card, tree });
 }
 
+/** `value` of `field` as the window gives it: at its default when left out, and so each item. */
+function filled(field: Field, value: unknown): unknown {
+  const given = value ?? defaultOf(field);
+  if (field.kind !== "list" || !Array.isArray(given)) {
+    return given;
+  }
+  const item = field.item;
+  return given.map((each) => (item.kind === "object" ? filledObject(item.fields, each) : filled(item, each)));
+}
+
+function filledObject(fields: Fields, value: unknown): State {
+  const object = (value ?? {}) as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, filled(field, object[name])])) as State;
+}
+
+function defaultOf(field: Field): unknown {
+  switch (field.kind) {
+    case "pattern":
+      return Array(field.length).fill(field.default);
+    case "sample":
+      return "";
+    case "notes":
+    case "list":
+      return field.default ?? [];
+    case "text":
+      return field.default ?? "";
+    case "number":
+      return field.default ?? field.min;
+    default:
+      return field.default;
+  }
+}
+
 /** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec, page: boolean): Sent {
   const memory = spec.memory ? spec.memory() : {};
+  const state = filledObject(spec.state, {});
   const quiet = { set() {}, fire() {}, play() {}, release() {}, launch() {} };
   try {
-    spec.tick?.({ state: {}, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
+    spec.tick?.({ state, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
   const node = drawerOf(spec, page)({
-    state: {},
+    state,
     watches: {},
     ...(page && { size: CHECKED_PAGE }),
     transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 },

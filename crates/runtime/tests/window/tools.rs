@@ -404,7 +404,7 @@ fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestA
         window.record("keys")["count"] == 1
     });
     window.wait_for_bun();
-    assert_eq!(window.record("keys")["last"], serde_json::Value::Null);
+    assert_eq!(window.record("keys")["last"], 0);
 }
 
 /// A key that went down before the page had the keys starts nothing there as it repeats. A key
@@ -425,7 +425,7 @@ fn a_key_that_went_down_elsewhere_repeats_into_nothing_on_the_page(cx: &mut Test
     window.key_down("a", false);
     window.key_down("q", true);
     window.wait_for_bun();
-    assert_eq!(window.record("keys")["count"], serde_json::Value::Null);
+    assert_eq!(window.record("keys")["count"], 0);
 }
 
 /// A key the page held repeats on once the focus left it, and starts no note of the computer
@@ -443,7 +443,7 @@ fn a_key_the_page_held_repeats_into_nothing_on_the_computer_keys(cx: &mut TestAp
     window.focus_the_window();
     window.key_down("a", true);
     window.wait_for_bun();
-    assert_eq!(window.record("keys")["last"], serde_json::Value::Null);
+    assert_eq!(window.record("keys")["last"], 0);
 }
 
 #[gpui::test]

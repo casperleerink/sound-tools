@@ -183,7 +183,7 @@ tool({
     const bass = playerOf(watches, "bass");
     const button = (lit: boolean) => ({ padding: 8, radius: 6, background: lit ? "#7c3aed" : "#2a2f3a" }) as const;
     return h("div", { style: { direction: "row", gap: 8, padding: 16 } },
-      (state.bass ?? []).map((_, index) => h("div", { style: button(bass.playing === index), onClick: () => launch("bass", index) }, `Bass ${index + 1}`)),
+      state.bass.map((_, index) => h("div", { style: button(bass.playing === index), onClick: () => launch("bass", index) }, `Bass ${index + 1}`)),
       h("div", { style: button(bass.queued === "stop"), onClick: () => launch("bass", null) }, "Stop"),
     );
   },
@@ -193,7 +193,7 @@ tool({
 - `players` holds each player by name: `{ patterns, plays? }`. A pattern is `{ length, notes }`, its length in ticks (960 a quarter, 3840 a bar of 4/4) and each note starting inside it. `{ from: { player: "bass" }, to: { child: "synth" } }` plays it into the child's `notes`.
 - `plays` is the index of the pattern it plays before any launch, so `--render` plays it. It starts when the player is first declared; a change of it launches the new one at the next bar.
 - `launch(player, pattern, { quantize? })`, in a card, a page, `tick`, `onKey` and `onMidi`, plays the pattern of that index from the next bar line (`quantize: "beat"` or `"now"`), or stops with `null`; while the piece is stopped, at once. A launch is a performance: nothing saves it, no undo takes it back, and a render does not hear it.
-- `playerOf(watches, "bass")` says what plays: `{ playing, queued, phase }`. A card or a page gets the record as the file holds it, so `state.bass` is missing at its defaults.
+- `playerOf(watches, "bass")` says what plays: `{ playing, queued, phase }`.
 - A pattern with a note outside it is silent and a problem of the owner's record; a player or a pattern a launch names that is not there is a problem of the tool.
 
 ## Controls
@@ -243,7 +243,7 @@ tool({
 | `<Meter watch label?>` | A bar that shows a watch from 0 to 1. |
 | `<Pad x y size?>` | A square for the pointer: across moves the live control `x`, up moves `y`. |
 
-The card gets `state`, the record; `watches`, the last value of each watch, and draws again as they move; `update(label, change)`, which changes the record as one undo step; `set(control, value)`, which moves a live control; `fire(control)`, which fires a trigger; and `play(pitch, { seconds?, velocity? })`, which plays a note on the tool's own voices, as a key held for `seconds` (an instrument or a source).
+The card gets `state`, the record with every field it leaves out at its default; `watches`, the last value of each watch, and draws again as they move; `update(label, change)`, which changes the record as one undo step; `set(control, value)`, which moves a live control; `fire(control)`, which fires a trigger; and `play(pitch, { seconds?, velocity? })`, which plays a note on the tool's own voices, as a key held for `seconds` (an instrument or a source).
 
 ## Experiments: a control loop, a canvas, a page
 

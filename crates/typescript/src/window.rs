@@ -377,6 +377,21 @@ pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json:
     serde_json::from_str(&project.state_json(id)?).ok()
 }
 
+/// The record of `id` as the code of `tool` gets it: each field at its default where the record
+/// leaves it out, as a behaviour gets it.
+fn played_state(
+    project: &Project,
+    tools: &[ToolInfo],
+    id: &InstanceId,
+    tool: &str,
+) -> Option<serde_json::Value> {
+    let state = state_of(project, id)?;
+    Some(match find(tools, tool) {
+        Some(info) => info.with_defaults(state),
+        None => state,
+    })
+}
+
 /// Changes the record of `id` as one undo step called `label`.
 pub(crate) fn edit_record(
     session: &Entity<Session>,
@@ -398,6 +413,7 @@ pub(crate) fn edit_record(
 /// how many of the `edits` Bun sent the record has.
 fn looped<'a>(
     project: &Project,
+    tools: &[ToolInfo],
     edits: &HashMap<InstanceId, u64>,
     id: &'a InstanceId,
     tool: &'a str,
@@ -405,7 +421,7 @@ fn looped<'a>(
     Looped {
         instance: id,
         tool,
-        state: state_of(project, id).unwrap_or_default(),
+        state: played_state(project, tools, id, tool).unwrap_or_default(),
         watches: (project.watches(id).into_iter())
             .map(|(name, watch)| (name, watch.get()))
             .collect(),
@@ -543,8 +559,11 @@ impl Live {
             Surface::Page(None) => return,
         };
         let project = session.read(cx).project();
-        let (Some(tool), Some(state)) = (project.tool_of(&entry.id), state_of(project, &entry.id))
-        else {
+        let tools = self.tools.borrow();
+        let Some(tool) = project.tool_of(&entry.id) else {
+            return;
+        };
+        let Some(state) = played_state(project, &tools, &entry.id, tool) else {
             return;
         };
         entry.asked = true;
@@ -741,9 +760,10 @@ impl Live {
         let Some(tool) = project.tool_of(&entry.id) else {
             return;
         };
+        let tools = self.tools.borrow();
         let request = Request::Key {
             time,
-            instance: looped(project, &self.edits, &entry.id, tool),
+            instance: looped(project, &tools, &self.edits, &entry.id, tool),
             key,
             down,
         };
@@ -764,7 +784,7 @@ impl Live {
         let project = session.read(cx).project();
         let instances: Vec<Looped> = (project.instances())
             .filter(|(id, tool)| hears(id) && find(&tools, tool).is_some_and(|info| info.midi))
-            .map(|(id, tool)| looped(project, &self.edits, id, tool))
+            .map(|(id, tool)| looped(project, &tools, &self.edits, id, tool))
             .collect();
         if !instances.is_empty() {
             let request = Request::Midi {
@@ -807,7 +827,7 @@ impl Live {
         self.played.retain(|id, _| project.tool_of(id).is_some());
         let instances: Vec<Looped> = (project.instances())
             .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.tick))
-            .map(|(id, tool)| looped(project, &self.edits, id, tool))
+            .map(|(id, tool)| looped(project, &tools, &self.edits, id, tool))
             .collect();
         if !instances.is_empty() {
             let request = Request::Frame {
