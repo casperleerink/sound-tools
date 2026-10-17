@@ -920,7 +920,20 @@ impl Live {
                 };
                 // Heard, applied or not: Bun starts from the record here again.
                 *self.edits.entry(instance.clone()).or_default() += 1;
-                edit_record(&session, &instance, &label, |old| *old = state, cx);
+                let tool = session.read(cx).project().tool_of(&instance);
+                let info = tool.and_then(|tool| find(&self.tools.borrow(), tool).cloned());
+                edit_record(
+                    &session,
+                    &instance,
+                    &label,
+                    |old| {
+                        *old = match info {
+                            Some(info) => info.untouched_defaults_left_out(old, state),
+                            None => state,
+                        }
+                    },
+                    cx,
+                );
             }
             Event::Control {
                 instance,
