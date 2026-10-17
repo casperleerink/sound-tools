@@ -244,6 +244,56 @@ fn a_render_plays_the_declaration_from_its_first_block_and_the_same_every_time()
 }
 
 #[test]
+fn a_render_starts_with_every_owner_wired_also_more_than_the_engine_takes_in_one_block() {
+    if !sound_typescript::has_bun() {
+        eprintln!("skipped: Bun is not installed");
+        return;
+    }
+    // More owners than the 64 edits the engine takes between two polls, each one an edit once
+    // Bun answers.
+    const OWNERS: usize = 80;
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    let connections: Vec<String> = (0..OWNERS)
+        .map(|owner| {
+            format!(r#"{{"from": {{"instance": "band-{owner}", "port": "audio"}}, "to": {{"device_output": 0}}}}"#)
+        })
+        .collect();
+    let project = format!(
+        r#"{{"format": 1, "extensions": [],
+  "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}},
+  "connections": [{}]}}"#,
+        connections.join(", ")
+    );
+    write(root, "project.json", &project);
+    write(root, "extensions/drone.ts", &DRONE.replace("0.25", "0.01"));
+    write(root, "extensions/band.ts", BAND);
+    for owner in 0..OWNERS {
+        write(
+            root,
+            &format!("state/band-{owner}/instance.json"),
+            &record("{}"),
+        );
+        let drone = r#"{"tool": "drone", "state": {}}"#;
+        write(root, &format!("state/band-{owner}/low.json"), drone);
+    }
+    let played = rendered_frames(root, 4_800);
+    let peak = |samples: &[f32]| {
+        samples
+            .iter()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
+    };
+    // The drones start together in phase: every one of them sounds in the first block.
+    let all = OWNERS as f32 * 0.01;
+    assert!(
+        (peak(&played[..2 * 512]) - all).abs() < 0.01,
+        "{}",
+        peak(&played[..2 * 512])
+    );
+    assert!((peak(&played) - all).abs() < 0.01, "{}", peak(&played));
+}
+
+#[test]
 fn the_example_of_the_doc_of_an_owner_loads() {
     let Some(harness) = band(&record("{}")) else {
         return;

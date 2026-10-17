@@ -645,10 +645,14 @@ pub fn render_block(
 ) -> Result<Vec<plugin_host::PluginProblem>> {
     // A render plays what the records say from its first block: the sounds of the Drum pads
     // that were asked for are waited for and put in their kits before it, and not after it
-    // with the rest of the tick.
+    // with the rest of the tick, and every edit that waits for room in the rings is taken.
     drum_pad::wait_for_sounds();
     first(take_drum_sounds(project))?;
     first(settle_behaviours(project))?;
+    while project.engine().pending_edits() > 0 {
+        engine.apply_edits();
+        project.engine().poll()?;
+    }
     engine.process_block(output);
     project.engine().poll()?;
     let (problems, errors) = tick(project, plugins);
