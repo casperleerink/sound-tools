@@ -15,7 +15,9 @@ use sound_core::{
     AudioInput, AudioOutput, Automation, CHANNELS, EventInput, EventOutput, Lane, MAX_BLOCK, Ports,
     PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
 };
-use sound_notes::{NoteEvent, Pitch, Velocity, Voice, Voices, frequency_hz};
+use sound_notes::{
+    NoteEvent, PerformedNote, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
+};
 
 use crate::cable::Number;
 use crate::code::{Code, MAX_LIVES, MAX_NUMBERS, MAX_PARAMETERS};
@@ -74,15 +76,8 @@ pub enum SignalsUpdate {
     /// From the interface: a trigger fires at the frame `at` of engine time, or in the next
     /// frame when there is none or it has passed. Not saved.
     Trigger { index: usize, at: Option<u64> },
-    /// From the interface: a key held for `frames` from the frame `at` of engine time, or from
-    /// the next frame, as if it came in on [`Signals::NOTES`]; with no `frames`, until a
-    /// [`SignalsUpdate::Release`] of its pitch. Not saved.
-    Note {
-        pitch: Pitch,
-        velocity: Velocity,
-        at: Option<u64>,
-        frames: Option<u64>,
-    },
+    /// From the interface: a key, as if it came in on [`Signals::NOTES`]. Not saved.
+    Note(PerformedNote),
     /// From the interface: lets go of a key at the frame `at` of engine time, or in the next
     /// frame.
     Release { pitch: Pitch, at: Option<u64> },
@@ -90,9 +85,24 @@ pub enum SignalsUpdate {
 
 /// What the interface plays at a frame.
 #[derive(Copy, Clone)]
-enum Scheduled {
+enum Played {
     Note(NoteEvent),
     Trigger(usize),
+}
+
+impl From<NoteEvent> for Played {
+    fn from(event: NoteEvent) -> Self {
+        Self::Note(event)
+    }
+}
+
+impl Scheduled for Played {
+    fn note(&self) -> Option<NoteEvent> {
+        match self {
+            Self::Note(event) => Some(*event),
+            Self::Trigger(_) => None,
+        }
+    }
 }
 
 pub struct Signals {
@@ -117,11 +127,8 @@ pub struct Signals {
     /// How many params and live controls the code has, so a block moves only those.
     counts: (usize, usize),
     arrays: Vec<Vec<f32>>,
-    /// What the interface plays at a frame of engine time, the latest first. It never grows
-    /// past what it was made with, so the audio thread does not allocate.
-    scheduled: Vec<(u64, Scheduled)>,
-    /// The engine time of the next frame, where what has no time of its own plays.
-    next_frame: u64,
+    /// What the interface plays at a frame of engine time.
+    scheduled: Schedule<Played>,
     watches: Vec<Watch>,
     /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
@@ -234,8 +241,7 @@ impl Signals {
             voice_frames: [[[0.0; MAX_BLOCK]; CHANNELS]; 2],
             counts,
             arrays: values.arrays.unwrap_or_default(),
-            scheduled: Vec::with_capacity(MAX_SCHEDULED),
-            next_frame: 0,
+            scheduled: Schedule::new(MAX_SCHEDULED),
             watches,
             beat: 0.0,
             bend: 0.0,
@@ -346,18 +352,6 @@ impl Signals {
             }
             *aimed = target;
         }
-    }
-
-    /// Keeps `what` for its frame, after what is already there for that frame. A full list
-    /// drops it, and says so.
-    fn schedule(&mut self, at: Option<u64>, what: Scheduled) -> bool {
-        if self.scheduled.len() == MAX_SCHEDULED {
-            return false;
-        }
-        let at = at.unwrap_or(0).max(self.next_frame);
-        let index = self.scheduled.partition_point(|(other, _)| *other > at);
-        self.scheduled.insert(index, (at, what));
-        true
     }
 
     fn follow(&mut self, event: NoteEvent) {
@@ -685,43 +679,12 @@ impl Processor for Signals {
             }
             SignalsUpdate::Trigger { index, at } => {
                 if *index < MAX_LIVES {
-                    self.schedule(*at, Scheduled::Trigger(*index));
+                    self.scheduled.add(*at, Played::Trigger(*index));
                 }
             }
-            SignalsUpdate::Note {
-                pitch,
-                velocity,
-                at,
-                frames,
-            } => {
-                // Both or neither, so no key stays down.
-                if self.scheduled.len() + 2 <= MAX_SCHEDULED {
-                    let start = at.unwrap_or(0).max(self.next_frame);
-                    let (pitch, velocity) = (*pitch, *velocity);
-                    self.schedule(
-                        Some(start),
-                        Scheduled::Note(NoteEvent::On { pitch, velocity }),
-                    );
-                    if let Some(frames) = frames {
-                        let end = start.saturating_add((*frames).max(1));
-                        self.schedule(Some(end), Scheduled::Note(NoteEvent::Off { pitch }));
-                    }
-                }
-            }
+            SignalsUpdate::Note(note) => self.scheduled.play(*note),
             SignalsUpdate::Release { pitch, at } => {
-                let pitch = *pitch;
-                let off = NoteEvent::Off { pitch };
-                // A full list lets go at once: a dropped release would hold the note for ever.
-                // A note of the key still waiting would too, and a waiting end of one would end
-                // a newer note, so both go.
-                if !self.schedule(*at, Scheduled::Note(off)) {
-                    self.scheduled.retain(|(_, what)| match what {
-                        Scheduled::Note(
-                            NoteEvent::On { pitch: waiting, .. }
-                            | NoteEvent::Off { pitch: waiting },
-                        ) => *waiting != pitch,
-                        _ => true,
-                    });
+                if let Some(off) = self.scheduled.release(*pitch, *at) {
                     self.follow(off);
                 }
             }
@@ -748,7 +711,7 @@ impl Processor for Signals {
         let quiet_limit = (QUIET_SECONDS * self.sample_rate) as usize;
         // Also in a block that plays silence: a stop reads where it ended.
         self.move_beat(frames, beats_per_frame, playing);
-        self.next_frame = context.start_frame + context.frames as u64;
+        self.scheduled.playing(context.start_frame, context.frames);
         let (parameters, lives) = self.counts;
         let block = &mut *self.block;
         block.steady_parameters = advance_rows(
@@ -764,10 +727,10 @@ impl Processor for Signals {
             Players::Many(voices) => voices.is_idle(),
             Players::One(_) => false,
         };
-        let next = self.next_frame;
+        let next = context.start_frame + context.frames as u64;
         if silent
             && context.event_inputs.get(Self::NOTES).is_empty()
-            && self.scheduled.last().is_none_or(|(at, _)| *at >= next)
+            && self.scheduled.next().is_none_or(|at| at >= next)
         {
             left_out.fill(0.0);
             right_out.fill(0.0);
@@ -787,13 +750,10 @@ impl Processor for Signals {
                 self.follow(timed.event);
             }
             let now = context.start_frame + start as u64;
-            while let Some(&(at, what)) = self.scheduled.last()
-                && at <= now
-            {
-                self.scheduled.pop();
+            while let Some((_, what)) = self.scheduled.take(now) {
                 match what {
-                    Scheduled::Note(event) => self.follow(event),
-                    Scheduled::Trigger(index) => {
+                    Played::Note(event) => self.follow(event),
+                    Played::Trigger(index) => {
                         if let Some(triggers) = self.block.triggers.get_mut(start) {
                             *triggers |= 1 << index;
                         }
@@ -801,7 +761,7 @@ impl Processor for Signals {
                 }
             }
             let next_event = events.peek().map_or(frames, |timed| timed.offset);
-            let next_scheduled = self.scheduled.last().map_or(frames, |(at, _)| {
+            let next_scheduled = self.scheduled.next().map_or(frames, |at| {
                 usize::try_from(at - context.start_frame).unwrap_or(frames)
             });
             let end = next_event.min(next_scheduled).min(frames);

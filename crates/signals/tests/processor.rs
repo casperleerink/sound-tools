@@ -9,7 +9,7 @@ use sound_core::{
     Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput, Node, Ports,
     PrepareConfig, ProcessContext, Processor, Watch,
 };
-use sound_notes::{NoteEvent, Pitch, Velocity};
+use sound_notes::{NoteEvent, PerformedNote, Pitch, Velocity};
 use sound_signals::{Code, Kind, Machine, Signals, SignalsUpdate, Values};
 
 mod score;
@@ -335,12 +335,12 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
 fn a_note_from_the_interface_plays_a_voice_for_its_length() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     assert_eq!(loudest(&played.render(4_800)), 0.0);
-    let note = SignalsUpdate::Note {
+    let note = SignalsUpdate::Note(PerformedNote {
         pitch: Pitch::new(69).unwrap(),
         velocity: Velocity::new(100).unwrap(),
         at: None,
         frames: Some(24_000),
-    };
+    });
     played.control.update(played.signals, note).unwrap();
     let output = played.render(48_000);
     assert!((frequency(&output[2_400..24_000]) - 440.0).abs() < 1.0);
@@ -352,12 +352,12 @@ fn a_note_from_the_interface_plays_a_voice_for_its_length() {
 fn a_note_with_no_length_plays_until_it_is_released() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = SignalsUpdate::Note {
+    let note = SignalsUpdate::Note(PerformedNote {
         pitch,
         velocity: Velocity::new(100).unwrap(),
         at: None,
         frames: None,
-    };
+    });
     played.control.update(played.signals, note).unwrap();
     assert!(loudest(&played.render(96_000)[48_000..]) > 0.1);
     let release = SignalsUpdate::Release { pitch, at: None };
@@ -369,11 +369,13 @@ fn a_note_with_no_length_plays_until_it_is_released() {
 fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_key_at_once() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = |at, frames| SignalsUpdate::Note {
-        pitch,
-        velocity: Velocity::new(100).unwrap(),
-        at,
-        frames,
+    let note = |at, frames| {
+        SignalsUpdate::Note(PerformedNote {
+            pitch,
+            velocity: Velocity::new(100).unwrap(),
+            at,
+            frames,
+        })
     };
     played
         .control

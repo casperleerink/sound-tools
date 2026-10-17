@@ -33,6 +33,7 @@ mod feed;
 mod lane;
 mod pattern;
 mod player;
+mod schedule;
 mod take;
 mod timeline;
 mod voices;
@@ -42,13 +43,14 @@ use sound_core::{Place, State, Ticks};
 
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
-pub use feed::NoteFeed;
+pub use feed::{NoteFeed, NoteFeedUpdate};
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
 pub use pattern::{Launch, Pattern, PatternError, Quantize};
 pub use player::{
     HELD_CAPACITY, NO_PATTERN, NotePlayer, NotePlayerUpdate, PREVIEW_SECONDS, PlayerWatches,
     QUEUED_STOP,
 };
+pub use schedule::{PerformedNote, Schedule, Scheduled};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };
