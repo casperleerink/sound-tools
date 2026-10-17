@@ -1,8 +1,9 @@
 //! The preview note: it sounds at once, also while the project is stopped, and its off always
 //! comes, from the sequencer and not from the interface.
 
-use arrangement::{PREVIEW_SECONDS, preview_note};
+use arrangement::preview_note;
 use sound_core::EngineConfig;
+use sound_notes::PREVIEW_SECONDS;
 use sound_notes::{Pitch, Velocity};
 
 use crate::support::{Harness, SAMPLE_RATE, TICK, clip, id, level_changes, note};
