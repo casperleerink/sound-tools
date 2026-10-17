@@ -7,7 +7,7 @@
 //! picks another graph; a knob, a toggle or a pattern only moves a value of the sound that
 //! plays.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
@@ -19,8 +19,8 @@ use sound_core::{
     JsonToolDoc, Node, OutputEndpoint, ParameterInfo, Problem, Ticks, ValueRange, Watch,
 };
 use sound_notes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, Launch, Length, NOTES_INPUT, Note, NotePlayer, NotePlayerUpdate,
-    Pattern, PlayerWatches, Quantize,
+    AUDIO_INPUT, AUDIO_OUTPUT, Launch, Length, NOTES_INPUT, Note, NoteFeed, NoteFeedUpdate,
+    NotePlayer, NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
 };
 use sound_signals::{
     ArraySpec, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec, Signals,
@@ -1058,6 +1058,10 @@ pub(crate) fn player_processor(name: &str) -> String {
 /// Makes the players of `declaration` and its connections. A connection that names a child, a
 /// player or a port the owner does not have, or joins ports of two kinds, is a problem, and the
 /// others play.
+///
+/// What plays into the `notes` of a child goes through a [`NoteFeed`] of that child, which
+/// releases what the child holds when that changes: a player that went away or plays elsewhere
+/// sends no off there.
 fn wire(
     declaration: &Declaration,
     sound: InputEndpoint,
@@ -1067,6 +1071,8 @@ fn wire(
     for (name, player) in &declaration.players {
         players.insert(name.as_str(), play(name, player, context)?);
     }
+    let feeds = feeds(context)?;
+    let mut fed: BTreeMap<&str, BTreeSet<&FromPort>> = BTreeMap::new();
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
         let (output, to_port) = match &connection.from {
@@ -1095,13 +1101,18 @@ fn wire(
                 (OutputEndpoint::new(*node, NotePlayer::NOTES), NOTES_INPUT)
             }
         };
-        let input = match &connection.to {
-            ToPort::Own(Own::Sound) => sound,
+        let (input, feed) = match &connection.to {
+            ToPort::Own(Own::Sound) => (sound, None),
             ToPort::Child(to) => {
                 let port = to.port.as_deref().unwrap_or(to_port);
-                match context.child_input(&to.child, port) {
-                    Some(input) => input,
-                    None => {
+                let feed = (feeds.get_key_value(to.child.as_str())).filter(|_| port == NOTES_INPUT);
+                match (feed, context.child_input(&to.child, port)) {
+                    (Some((child, feed)), _) => (
+                        InputEndpoint::new(*feed, NoteFeed::INPUT),
+                        Some(child.as_str()),
+                    ),
+                    (None, Some(input)) => (input, None),
+                    (None, None) => {
                         let at = format!("{at}.to");
                         let problem = missing(context, &at, (&to.child, port), Side::Input);
                         context.problem(problem);
@@ -1118,8 +1129,39 @@ fn wire(
             }
             connected => connected?,
         }
+        if let Some(child) = feed {
+            fed.entry(child).or_default().insert(&connection.from);
+        }
+    }
+    for (child, feed) in &feeds {
+        let senders = fed.get(child.as_str());
+        if context.changed(&format!("feed:{child}.senders"), key(&senders)) {
+            context.update(*feed, NoteFeedUpdate::Release)?;
+        }
     }
     Ok(())
+}
+
+/// The [`NoteFeed`] of every child that has `notes`, by the child's name. Declared whatever
+/// plays into it, so it is there to release what a sender that went away left sounding.
+fn feeds(
+    context: &mut BehaviourContext<'_>,
+) -> Result<BTreeMap<String, Node<NoteFeed>>, BehaviourError> {
+    let children: Vec<String> = context.child_names().map(str::to_string).collect();
+    let mut feeds = BTreeMap::new();
+    for child in children {
+        let Some(notes) = context.child_input(&child, NOTES_INPUT) else {
+            continue;
+        };
+        let feed = context.processor(&format!("feed:{child}"), NoteFeed::default)?;
+        match context.connect(OutputEndpoint::new(feed, NoteFeed::OUTPUT).to(notes)) {
+            // An input named so that takes something else than notes.
+            Err(BehaviourError::Graph(GraphError::PortTypeMismatch { .. })) => continue,
+            connected => connected?,
+        }
+        feeds.insert(child, feed);
+    }
+    Ok(feeds)
 }
 
 /// Makes the note player `name` of an owner, which shows what it plays in the watches

@@ -29,6 +29,7 @@
 
 mod division;
 mod expression;
+mod feed;
 mod lane;
 mod pattern;
 mod player;
@@ -41,6 +42,7 @@ use sound_core::{Place, State, Ticks};
 
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
+pub use feed::{NoteFeed, NoteFeedUpdate};
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
 pub use pattern::{Launch, Pattern, PatternError, Quantize};
 pub use player::{

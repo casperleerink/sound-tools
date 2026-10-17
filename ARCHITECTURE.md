@@ -20,7 +20,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 ## Shape of the system
 
 - One process, the runtime (`crates/runtime`), opens one project folder: as a window, headless, or read-only to inspect, render or analyze.
-- The agent works in the project folder: Claude Code in the sidebar, or any coding agent in a terminal. It edits files and the runtime applies them live. There is no separate edit API for agents.
+- The agent works in the project folder: Claude Code in the sidebar, or any coding agent in a terminal. It edits files and the runtime applies them live; there is no edit API for agents.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name.
 - Rust for the core and extensions, GPUI for the window: a one-line extension edit reaches a new running window in about two seconds, and an agent wrote working GPUI views from our docs on the first try. Audio and saved data never depend on GPUI.
 - The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
@@ -44,8 +44,8 @@ This is the main rule of the codebase.
 `crates/core/src/project`.
 
 - A tool is its saved state type. There is no separate tool handle to mix up. Its records load only when its extension is enabled.
-- A behaviour is declarative: it runs for every valid state from every source (file, window, undo, load) and declares everything each time. The core sends only the difference. So a behaviour cannot leak processors, and a processor declared again keeps its phase and voices.
-- A parent's behaviour reads the typed state of its children and runs again when anything below it changes.
+- A behaviour is declarative: it runs for every valid state from every source (file, window, undo, load) and declares everything each time. The core sends only the difference, so a behaviour cannot leak processors, and a processor declared again keeps its phase and voices.
+- A parent's behaviour reads the state of its children and runs again when anything below it changes.
 - One edit group is one engine batch: if a behaviour or the graph refuses, nothing of the group applies. On open, an instance whose behaviour fails is left out and reported instead, so one bad file does not block a project.
 - Refusing is for invalid state. State that is valid but cannot be live now (a missing plugin or file) is a problem: that slot is silent and the rest plays.
 - Ownership is the folder tree. References are saved ids that keep nothing alive. A reference may arrive before its target; data of a missing extension stays intact.
@@ -179,7 +179,6 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter`: validation, knobs, reset, automation and doc tests all read it.
 - Every change glides (about 20 ms), including choices, so no edit clicks.
-- Shared DSP lives in the SDK (`sound_core`), not in copies: devices kept copying filters, envelopes and helpers.
 - Each effect has an exact response function, and tests hold the measured sound to it.
 - A time that follows the tempo saves the note, not the seconds, and follows a tempo change while playing.
 - A latency is a choice, not a knob: one moving with a drag would make every track jump. The Filter always reports its 4x latency, so drive automated across 0 stays in phase with the dry mix. Instruments report none; a bent voice is 1.3 ms late.
@@ -234,14 +233,15 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 A tool an agent writes plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
 
-- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one. The window never waits on it. Rejected: reloading code inside Bun, which cannot read a changed import again and has no answer to a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
-- **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads, and an agent hears what is wrong with it, without Bun.
-- **An owner's behaviour runs in Bun and lands as a service.** A change plays the last declaration until Bun answers; then the behaviour runs again with the record it has. Renders and inspect wait for the answers. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
-- **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between, which nobody wrote by hand and needed a parser. Rejected: that language in a template, which an eval found no better for agents.
-- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without asking Bun: Bun sends a graph for every combination of choices up front.
-- **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps every render bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
-- **Cards and pages** are trees of elements Bun draws; the window draws them with `crates/ui`. A `tick` plays like a performer and never changes the record.
-- **Patterns in time are note players an owner declares.** Bun names the patterns; `NotePlayer`, also the arrangement's, loops them and quantizes launches on the audio thread. A launch is performance: never saved or undone. A declared start pattern makes a render sound. Rejected: `tick` with `at`, a block late and window-only.
-- **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, which would know nothing of where the notes went.
-- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills, which did no better in an eval and need project settings the agent runs without.
+- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one. The window never waits on it. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
+- **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
+- **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays; then the behaviour runs again with the record it has. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
+- **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between, also in a template: nobody wrote it, it needed a parser, and an eval found it no better.
+- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
+- **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
+- **Cards and pages** are trees of elements Bun draws and the window shows with `crates/ui`. A `tick` plays like a performer and never changes the record.
+- **Patterns in time are note players an owner declares.** `NotePlayer`, also the arrangement's, loops Bun's patterns and quantizes launches on the audio thread. A launch is performance: never saved or undone. A declared start pattern makes a render sound. Rejected: `tick` with `at`, a block late and window-only.
+- **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved player sends no off there. Rejected: a reset in the core, for every instrument to declare.
+- **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, blind to where the notes went.
+- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills: no better in an eval, and they need project settings the agent runs without.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

@@ -59,7 +59,7 @@ pub(crate) struct Connection {
 }
 
 /// Where a connection starts: a child, or a player of the owner.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum FromPort {
     Child(ChildPort),
@@ -67,7 +67,7 @@ pub(crate) enum FromPort {
 }
 
 /// The `notes` output of a player of the owner, by its name.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PlayerPort {
     pub player: String,
@@ -88,7 +88,7 @@ pub(crate) enum Own {
 }
 
 /// A port of a child, by the child's name and the port's.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ChildPort {
     pub child: String,

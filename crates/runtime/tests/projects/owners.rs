@@ -405,3 +405,60 @@ fn an_edit_of_a_pattern_plays_once_bun_answers_and_a_note_outside_it_is_a_proble
     let message = "players.bass.patterns[0].notes[0].start must be less than the pattern length 3840, not 4000";
     assert!(problem.message.contains(message), "{problem:?}");
 }
+
+/// Holds one note for most of a bar on the child `to` names, or on none.
+const KEYS: &str = r#"import { text, tool } from "./sdk";
+
+tool({
+  name: "keys",
+  title: "Keys",
+  when: "You want a note held on a child",
+  doc: "Holds one note on the child `to` names.",
+  state: { to: text({ default: "synth" }) },
+  behaviour: ({ state: { to } }) => ({
+    players: to === "none" ? {} : {
+      held: { patterns: [{ length: 3840, notes: [{ start: 0, length: 3800, pitch: 60, velocity: 100 }] }], plays: 0 },
+    },
+    connections: [
+      ...(to === "none" ? [] : [{ from: { player: "held" }, to: { child: to } }]),
+      { from: { child: "synth" }, to: "sound" },
+      { from: { child: "other" }, to: "sound" },
+    ],
+  }),
+});
+"#;
+
+#[test]
+fn a_note_a_player_holds_ends_when_the_player_goes_away_or_plays_into_another_child() {
+    for to in ["none", "other"] {
+        if !sound_typescript::has_bun() {
+            eprintln!("skipped: Bun is not installed");
+            return;
+        }
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path();
+        let project = r#"{"format": 1, "extensions": ["instrument"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": [{"from": {"instance": "keys", "port": "audio"}, "to": {"device_output": 0}}]}"#;
+        write(root, "project.json", project);
+        write(root, "extensions/keys.ts", KEYS);
+        write(
+            root,
+            "state/keys/instance.json",
+            r#"{"tool": "keys", "state": {}}"#,
+        );
+        let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
+        write(root, "state/keys/synth.json", synth);
+        write(root, "state/keys/other.json", synth);
+        let mut harness = Harness::open(folder);
+        assert_eq!(harness.project.problems(), []);
+        let held = harness.play(12_000);
+        assert!(first_sound(&held, 0).is_some_and(|frame| frame < 48));
+
+        let record = format!(r#"{{"tool": "keys", "state": {{"to": "{to}"}}}}"#);
+        harness.write_and_apply("state/keys/instance.json", &record);
+        let after = harness.render(24_000);
+        // `other` gets the note of the player at the next bar, not before.
+        assert_eq!(first_sound(&after, 1_200), None, "{to}");
+    }
+}
