@@ -46,6 +46,8 @@ pub(crate) struct ToolInfo {
     pub tick: bool,
     /// It has a page: a view of the whole window, for an instance at the top of the project.
     pub page: bool,
+    /// Its page shows the transport, and its cards and page draw again as the transport moves.
+    pub transport: bool,
     /// It hears the computer keyboard, `onKey`.
     pub keys: bool,
     /// It hears the MIDI keyboard, `onMidi`.
@@ -773,6 +775,7 @@ mod tests {
             },
             "tick": false,
             "page": false,
+            "transport": false,
             "keys": false,
             "midi": false
         }))

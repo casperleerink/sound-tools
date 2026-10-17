@@ -5,7 +5,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec } from "./sdk";
+import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -26,7 +26,7 @@ const CHECKED_PAGE: Size = { width: 1422, height: 824 };
 /** An instance as it is now, for its control loop or what it hears: `edits` counts the edits from here its `state` has. */
 type Looped = { instance: string; tool: string; state: State; watches: Watches; edits: number };
 
-type Render = { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: Size | null };
+type Render = { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: Size | null; transport: Transport };
 type Request =
   | Render
   /** A click, or a press or a drag on a canvas `at` across and down. */
@@ -163,6 +163,7 @@ function described(spec: Spec, file: string) {
       controls: spec.controls ?? {},
       tick: spec.tick !== undefined,
       page: spec.page !== undefined,
+      transport: spec.transport === true,
       keys: spec.onKey !== undefined,
       midi: spec.onMidi !== undefined,
     },
@@ -340,7 +341,7 @@ function latest({ instance, state, edits }: Looped): State {
 
 /** Draws a card and sends its tree, or why there is none: the window waits for one or the other. */
 function render(request: Render) {
-  const { card, instance, tool, state, watches, page } = request;
+  const { card, instance, tool, state, watches, page, transport } = request;
   drawn.set(card, request);
   const tree = made(() => {
     // Such as a tool whose file this Bun runs without.
@@ -351,6 +352,7 @@ function render(request: Render) {
       state,
       watches,
       ...(page && { size: page }),
+      transport,
       memory: memoryOf(instance, spec),
       update: updater(instance, state),
       ...players(instance),
@@ -382,6 +384,7 @@ function draw(spec: Spec, page: boolean): Sent {
     state: {},
     watches: {},
     ...(page && { size: CHECKED_PAGE }),
+    transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 },
     memory,
     update() {},
     ...quiet,

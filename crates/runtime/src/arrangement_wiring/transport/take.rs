@@ -9,7 +9,7 @@ use sound_core::{Changes, Clock, Instance, InstanceId, Ticks};
 use sound_media::Imported;
 use sound_ui::{LiveBody, LiveSound, LiveTake, Playhead};
 
-use super::{Take, TransportPill};
+use super::{Shown, Take, TransportPill};
 use crate::arrangement_wiring::recording;
 use crate::recorder::{
     Placement, RecorderCommand, RecorderReport, StartedTake, TakeRequest, take_seconds_at,
@@ -73,7 +73,7 @@ impl TransportPill {
         }
         // The last one is still being written: its clips come first. Without the arrangement
         // in the main area there is nothing to record onto.
-        if self.take.is_some() || !self.arrangement_is_main {
+        if self.take.is_some() || self.shown != Shown::Arrangement {
             return;
         }
         let session = self.session.clone();

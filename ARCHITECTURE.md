@@ -33,11 +33,11 @@ The technical decisions, why we made them, and what we rejected. How something w
 This is the main rule of the codebase.
 
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no bundled crate. `tooling/workspace-rules` checks this.
-- Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. So a main view other than the arrangement gets no transport.
+- Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. A tool's page may ask for the transport, but only the arrangement records.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (notes, clips, the realtime note events, port names, voice handling) and `sound-media` (audio files and measuring a sound).
 - Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`; an effect an audio input and output named `audio`, and maybe a `sidechain` input. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
 - The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
-- `extensions/tone`, a small non-musical tool, proves the core rules hold for a tool shaped unlike the arrangement.
+- `extensions/tone`, a non-musical tool, proves the core rules hold for a tool unlike the arrangement.
 
 ## Tools, instances and behaviours
 

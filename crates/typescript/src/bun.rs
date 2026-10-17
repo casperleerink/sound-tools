@@ -54,6 +54,7 @@ pub(crate) enum Request<'a> {
         watches: &'a BTreeMap<String, f32>,
         /// The size of the page, the whole window; `None` for a card.
         page: Option<PageSize>,
+        transport: Transport,
     },
     /// A click, or a press or a drag on a canvas `at` across and down, 0 to 1.
     Event {
@@ -94,6 +95,17 @@ pub(crate) enum Request<'a> {
 pub(crate) struct PageSize {
     pub width: u32,
     pub height: u32,
+}
+
+/// Where the project plays, as the window's playhead shows it.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
+pub(crate) struct Transport {
+    pub playing: bool,
+    pub tick: u64,
+    pub bar: u64,
+    pub beat: u32,
+    /// The tempo at `tick`.
+    pub bpm: f64,
 }
 
 /// An instance whose tool has a control loop, as it is now.
@@ -457,7 +469,7 @@ mod tests {
             serde_json::json!({
                 "info": {
                     "name": name, "file": format!("{name}.ts"), "title": name, "when": "w",
-                    "doc": "d", "kind": "effect", "tick": false, "page": false, "keys": false,
+                    "doc": "d", "kind": "effect", "tick": false, "page": false, "transport": false, "keys": false,
                     "midi": false, "controls": {},
                     "fields": { "rate": { "kind": "knob", "min": 0, "max": 1, "default": 0, "unit": unit } }
                 },

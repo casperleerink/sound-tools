@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AppContext, Entity, FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    TestAppContext, VisualTestContext,
+    Pixels, Point, TestAppContext, VisualTestContext, point,
 };
 use midi::Played;
 use plugin_host::{Plugins, ScanCache};
@@ -64,6 +64,39 @@ const EXPERIMENT: [(&str, &str); 3] = [
     ),
     ("state/keys.json", r#"{"tool": "keys", "state": {}}"#),
     ("extensions/keys.ts", KEYS),
+];
+
+/// A page that asks for the transport, at the top. A click keeps the tick it drew with.
+const BEAT: [(&str, &str); 3] = [
+    ONLY_THE_TOOL[0],
+    (
+        "state/beat.json",
+        r#"{"tool": "beat", "state": {"tick": 0}}"#,
+    ),
+    (
+        "extensions/beat.ts",
+        r#"import { h, input, knob, tool } from "./sdk";
+
+tool({
+  name: "beat",
+  title: "Beat",
+  when: "You want to see the beat",
+  doc: "Shows the bar and the beat.",
+  state: { tick: knob({ min: 0, max: 1000000, default: 0 }) },
+  sound: () => input,
+  transport: true,
+  page: ({ size, transport, update }) =>
+    h(
+      "div",
+      {
+        style: { width: size.width, height: size.height },
+        onClick: () => update("Keep the tick", (state) => { state.tick = transport.tick; }),
+      },
+      `${transport.bar}.${transport.beat}`,
+    ),
+});
+"#,
+    ),
 ];
 
 /// The tool `keys`, and no record of it yet.
@@ -236,6 +269,14 @@ impl Window<'_> {
         }
     }
 
+    /// The middle of a control that names itself for tests, after a whole frame. `None` when it
+    /// is not on screen.
+    fn find(&mut self, selector: &'static str) -> Option<Point<Pixels>> {
+        self.cx.update(|window, _| window.refresh());
+        self.cx.run_until_parked();
+        self.cx.debug_bounds(selector).map(|bounds| bounds.center())
+    }
+
     fn focused(&mut self) -> FocusHandle {
         self.cx.update(|window, cx| window.focused(cx)).unwrap()
     }
@@ -314,6 +355,36 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
     window.until("the release of the key", |window| {
         window.loudest(480) == 0.0
     });
+}
+
+#[gpui::test]
+fn a_page_that_asks_for_the_transport_plays_it_and_draws_as_it_moves(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &BEAT) else {
+        return;
+    };
+    assert!(window.find("record").is_none());
+    let play = window.find("play").expect("the play button");
+    window.cx.simulate_click(play, Modifiers::default());
+    window.poll();
+    assert!(window.playing());
+
+    // A click keeps the tick of the tree it clicked: the page drew again as the playhead moved.
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    let middle = point(middle.width, middle.height);
+    window.until("a draw at a later tick", |window| {
+        window.cx.simulate_click(middle, Modifiers::default());
+        window.record("beat")["tick"]
+            .as_f64()
+            .is_some_and(|tick| tick > 0.)
+    });
+}
+
+#[gpui::test]
+fn a_page_that_does_not_ask_for_the_transport_has_no_play(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    assert!(window.find("play").is_none());
 }
 
 /// The computer keys play as a MIDI keyboard, but a page that hears keys keeps them.

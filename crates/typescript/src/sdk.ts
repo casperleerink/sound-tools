@@ -542,6 +542,11 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
   page?: (page: Page<StateOf<S>, C, M>) => Node;
   /**
+   * Its page shows the transport (play, stop, position, tempo, time signature, click), and its
+   * card and page draw again as `transport` moves. Recording is the arrangement's.
+   */
+  transport?: boolean;
+  /**
    * A key of the computer keyboard goes down or up, while its page shows or after a click on
    * its card. Plain keys are then the tool's: space and `r` do not play or record.
    */
@@ -622,9 +627,9 @@ export interface Tick<State, C extends Controls, M> extends Instance<State, C, M
   time: number;
 }
 
-/** What `onKey` and `onMidi` get: what a card gets, and the `time` of a tick. */
+/** What `onKey` and `onMidi` get: what a card gets but `transport`, and the `time` of a tick. */
 export interface Handler<State, C extends Controls, M>
-  extends Card<State, C, M>,
+  extends Omit<Card<State, C, M>, "transport">,
     Pick<Tick<State, C, M>, "time"> {}
 
 // ---------------------------------------------------------------------------------------------
@@ -657,8 +662,22 @@ export interface Style {
   borderWidth?: number;
 }
 
+/** Where the project plays, as the window shows it. */
+export interface Transport {
+  playing: boolean;
+  /** The position in ticks, 960 to a quarter note. */
+  tick: number;
+  /** The bar and the beat of `tick`, from 1. */
+  bar: number;
+  beat: number;
+  /** The tempo at `tick`, in beats per minute. */
+  bpm: number;
+}
+
 /** What a card or a page gets each time it draws. */
 export interface Card<State, C extends Controls = Controls, M = unknown> extends Instance<State, C, M> {
+  /** As of this draw. It draws again as it moves only when the tool sets `transport: true`. */
+  transport: Transport;
   /**
    * Changes the record as one undo step called `label`. `change` gets a copy to edit. A record
    * the tool does not accept is refused, and the window says why.
