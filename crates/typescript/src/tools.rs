@@ -113,7 +113,11 @@ pub(crate) enum Field {
         label: Option<String>,
     },
     /// Notes in ticks. This and the kinds below are data a behaviour reads: no signal.
-    Notes { label: Option<String> },
+    Notes {
+        /// `[]` when left out.
+        default: Option<Value>,
+        label: Option<String>,
+    },
     Text {
         default: Option<String>,
         label: Option<String>,
@@ -130,6 +134,8 @@ pub(crate) enum Field {
     List {
         item: Box<Field>,
         max: Option<usize>,
+        /// `[]` when left out.
+        default: Option<Value>,
         label: Option<String>,
     },
     /// An item of a list that holds several fields.
@@ -220,7 +226,11 @@ impl Field {
                 length, default, ..
             } => Value::from(vec![*default; *length]),
             Self::Sample { .. } => Value::from(""),
-            Self::Notes { .. } | Self::List { .. } => Value::Array(Vec::new()),
+            Self::Notes { default, .. } => default.clone().unwrap_or(Value::Array(Vec::new())),
+            Self::List { default, .. } => {
+                let items = default.clone().unwrap_or(Value::Array(Vec::new()));
+                self.filled(items)
+            }
             Self::Text { default, .. } => Value::from(default.clone().unwrap_or_default()),
             Self::Number {
                 min,
@@ -414,6 +424,25 @@ impl Named<Field> {
                 ));
             };
             field.check(value, &format!("{at}.{name}"))?;
+        }
+        Ok(())
+    }
+
+    /// Whether the default of each field is a value it takes, inside the items of lists too.
+    /// `prefix` starts the path of each.
+    pub(crate) fn check_defaults(&self, prefix: &str) -> Result<(), String> {
+        for (name, field) in &self.0 {
+            let mut path = format!("{prefix}{name}");
+            field.check(&field.default_value(), &format!("{path}.default"))?;
+            let mut item = field;
+            while let Field::List { item: inner, .. } = item {
+                item = inner;
+                path.push_str("[]");
+                item.check(&item.default_value(), &format!("{path}.default"))?;
+            }
+            if let Field::Object { fields } = item {
+                fields.check_defaults(&format!("{path}."))?;
+            }
         }
         Ok(())
     }

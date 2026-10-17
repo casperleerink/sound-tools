@@ -64,6 +64,8 @@ export interface SampleField {
 /** Notes in ticks, 960 to a quarter note, from where the owner's code plays them. */
 export interface NotesField {
   kind: "notes";
+  /** `[]` when left out. */
+  default?: Note[];
   label?: string;
 }
 
@@ -97,6 +99,8 @@ export interface ListField<I extends Field | ObjectItem = Field | ObjectItem> {
   item: I;
   /** The most items it holds. */
   max?: number;
+  /** `[]` when left out. `list` types it from `item`. */
+  default?: unknown[];
   label?: string;
 }
 
@@ -133,10 +137,13 @@ export const number = (field: Omit<NumberField, "kind">): NumberField => ({ kind
 /** The item of a list: a field as it is, an object of fields as an `ObjectItem`. */
 type ItemOf<I extends Field | Fields> = I extends Field ? I : ObjectItem<I & Fields>;
 
-/** A list whose items are `item`: a field, such as `notes()`, or an object of fields. */
+/**
+ * A list whose items are `item`: a field, such as `notes()`, or an object of fields. A field an
+ * item of `default` leaves out is at its own default.
+ */
 export function list<const I extends Field | Fields>(
   item: I,
-  options: { max?: number; label?: string } = {},
+  options: { max?: number; label?: string; default?: ValueOf<ListField<ItemOf<I>>, false> } = {},
 ): ListField<ItemOf<I>> {
   const field = typeof item.kind === "string" ? item : { kind: "object", fields: item };
   return { kind: "list", item: field as ItemOf<I>, ...options };
