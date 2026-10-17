@@ -6,8 +6,8 @@
 //! fields of a record, a doc for agents, and the sound of every combination of its choices, a
 //! graph of signals that the SDK sends as JSON. The runtime registers each as a [`JsonTool`]
 //! before the records load, so a record of one loads like any other, and plays with no Bun.
-//! Only an owner asks Bun while it plays: how its children connect and what its note players
-//! loop (`behaviours`).
+//! Only an owner asks Bun while it plays: how its children connect (`behaviours`). The
+//! `sequencer` a parent plays patterns with is a tool of this crate, defined with them.
 //!
 //! In the window, any change in `extensions/`, a crash or a hang of Bun starts a new Bun, which
 //! loads every file again and defines the tools again: one path. Nothing of it runs on the
@@ -17,6 +17,7 @@ mod behaviours;
 mod bun;
 mod card;
 mod samples;
+mod sequencer;
 mod tools;
 mod tree;
 mod window;
@@ -32,7 +33,7 @@ pub use behaviours::{take_declared, wait_for_behaviours};
 pub use window::{hear_midi, page_shows_transport, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
-use crate::tools::{Sounds, ToolInfo};
+use crate::tools::{Sounds, ToolInfo, Tools};
 
 /// The folder of a project that holds its own tools and cards.
 pub const FOLDER: &str = "extensions";
@@ -184,25 +185,30 @@ fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, V
         .map(|error| file_problem(&error.file, &error.message))
         .chain(skipped.iter().map(|(file, why)| file_problem(file, why)))
         .collect();
-    let mut tools = Vec::new();
+    let mut kept = Vec::new();
     for tool in loaded.tools {
+        // Before anything is made from the fields, such as a pattern at its defaults.
+        let checked = (tool.info.declarations().check())
+            .map_err(|error| error.to_string())
+            .and_then(|()| tool.info.fields.check_defaults("state."));
+        match checked {
+            Ok(()) => kept.push(tool),
+            Err(error) => problems.push(tool.info.problem(error)),
+        }
+    }
+    let infos = kept
+        .iter()
+        .map(|tool| (tool.info.name.clone(), tool.info.clone()));
+    let infos: Arc<Tools> = Arc::new(infos.collect());
+    let mut tools = Vec::new();
+    for tool in kept {
         let LoadedTool {
             info,
             sounds,
             card,
             page,
         } = tool;
-        // Before anything is made from the fields, such as a pattern at its defaults.
-        let checked = (info
-            .declarations()
-            .check()
-            .map_err(|error| error.to_string()))
-        .and_then(|()| info.fields.check_defaults("state."));
-        if let Err(error) = checked {
-            problems.push(info.problem(error));
-            continue;
-        }
-        let sounds = Sounds::new(&info, sounds, bun);
+        let sounds = Sounds::new(&info, sounds, (bun, &infos));
         // One problem a file: a list keeps one.
         let mut sounds_failed: Vec<&String> = sounds.failures().collect();
         sounds_failed.sort();
@@ -237,7 +243,13 @@ fn define(
     define: impl FnOnce(Vec<JsonTool>) -> Vec<(String, String)>,
 ) -> Vec<ToolInfo> {
     let mut infos: Vec<ToolInfo> = sounds.iter().map(|sounds| sounds.info().clone()).collect();
-    let refused = define(sounds.into_iter().map(Sounds::json_tool).collect());
+    // First, so a tool of the project of its name is the one refused.
+    let tools = std::iter::once(sequencer::json_tool());
+    let refused = define(
+        tools
+            .chain(sounds.into_iter().map(Sounds::json_tool))
+            .collect(),
+    );
     infos.retain(|info| {
         let Some((_, message)) = refused.iter().find(|(name, _)| *name == info.name) else {
             return true;

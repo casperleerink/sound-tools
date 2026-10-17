@@ -112,6 +112,11 @@ function problemsOf(spec: Spec): string[] {
         problems.push(`${name}: a field and a control cannot share a name`);
       }
     }
+    for (const name of Object.keys(spec.controls ?? {})) {
+      if (name === "audio" || name === "notes") {
+        problems.push(`${name}: a control is not named ${name}, the input of the sound`);
+      }
+    }
     const sounds = choiceFields(spec).reduce((count, [, field]) => count * field.options.length, 1);
     if (sounds > MAX_SOUNDS) {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
@@ -240,7 +245,14 @@ function declare({ question, tool, state, children }: Extract<Request, { type: "
     }
     runs(tool, "behaviour");
     // Here, so a value JSON cannot hold, such as a cycle, is the parent's problem and does not throw in `send`.
-    return JSON.parse(JSON.stringify(spec.behaviour({ state, children })));
+    const declared = JSON.parse(JSON.stringify(spec.behaviour({ state, children })));
+    if (declared !== null && typeof declared === "object" && "players" in declared) {
+      throw new Error(
+        "`players` are gone: a child of tool `sequencer` loops the patterns now (agent-docs/sequencer.md), " +
+          'connected by { from: { child, notes: "notes" }, to: { child, notes: "notes" } }, and set({ child, live: "launch" }, index) launches',
+      );
+    }
+    return declared;
   });
   send({ type: "declared", question, declaration });
 }
@@ -313,7 +325,7 @@ function checkAt(at: number | undefined) {
 }
 
 /** What a card, a page and the control loop use to play an instance. */
-function players(instance: string): Performer<Controls> {
+function performer(instance: string): Performer<Controls> {
   return {
     set(control, value) {
       const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.live];
@@ -333,19 +345,8 @@ function players(instance: string): Performer<Controls> {
       checkAt(at);
       send({ type: "release", instance, child, pitch: keyOf(pitch), at });
     },
-    launch(player, pattern, { quantize = "bar" } = {}) {
-      if (pattern !== null && !(Number.isInteger(pattern) && pattern >= 0)) {
-        throw new RangeError(`launch takes the index of a pattern, from 0, or null to stop, not ${pattern}`);
-      }
-      if (!QUANTIZE.includes(quantize)) {
-        throw new RangeError(`quantize is "bar", "beat" or "now", not ${JSON.stringify(quantize)}`);
-      }
-      send({ type: "launch", instance, player, pattern, quantize });
-    },
   };
 }
-
-const QUANTIZE: readonly unknown[] = ["bar", "beat", "now"];
 
 /** The MIDI key of a pitch. */
 function keyOf(pitch: number): number {
@@ -399,7 +400,7 @@ function render(asked: Render) {
       transport,
       memory: memoryOf(instance, spec),
       update: updater(instance, state),
-      ...players(instance),
+      ...performer(instance),
     });
     const drawnTree = serialize(node, kept);
     const text = JSON.stringify(drawnTree);
@@ -464,7 +465,7 @@ function defaultOf(field: Field): unknown {
 function draw(spec: Spec, page: boolean): Sent {
   const memory = spec.memory ? spec.memory() : {};
   const state = filledObject(spec.state, {});
-  const quiet = { set() {}, fire() {}, play() {}, release() {}, launch() {} };
+  const quiet = { set() {}, fire() {}, play() {}, release() {} };
   try {
     spec.tick?.({ state, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
   } catch (error) {
@@ -502,7 +503,7 @@ function run(
     const state = latest(looped);
     try {
       runs(tool, what);
-      call(spec, { state, watches, memory: memoryOf(instance, spec), time, update: updater(instance, state), ...players(instance) });
+      call(spec, { state, watches, memory: memoryOf(instance, spec), time, update: updater(instance, state), ...performer(instance) });
     } catch (error) {
       fail(tool, `its ${what} failed: ${error}`);
       continue;

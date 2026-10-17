@@ -17,17 +17,14 @@ use std::time::{Duration, Instant};
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
-use sound_notes::{
-    Launch, NOTES_INPUT, NoteFeed, NoteFeedUpdate, NotePlayer, NotePlayerUpdate, Performed, Pitch,
-    Velocity,
-};
+use sound_notes::{NOTES_INPUT, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
-use crate::behaviours;
 use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped, Transport};
 use crate::card::{Page, TypeScriptCard};
-use crate::tools::{Control, Sounds, ToolInfo, ToolKind, feed_processor, player_processor};
+use crate::sequencer::{self, Sequencer, SequencerUpdate};
+use crate::tools::{Control, Sounds, ToolInfo, ToolKind, feed_processor};
 use crate::tree::Node;
 use crate::{Extensions, FOLDER, Launched, Midi, OWNED};
 
@@ -773,10 +770,43 @@ impl Live {
         let Some(played) = self.child_of(id, child, cx) else {
             return;
         };
+        if let Some(session) = self.session.upgrade()
+            && session.read(cx).project().tool_of(&played) == Some(sequencer::NAME)
+        {
+            return self.launch_on(id, &played, (name, value), &session, cx);
+        }
         if let Err(error) = self.control(&played, name, value, at, cx) {
             let problem = format!("a performer plays the child {child:?}, which {error}");
             self.tool_problem(id, problem, cx);
         }
+    }
+
+    /// Launches what `value` says on the sequencer `played`, a child of `id`, as a performer
+    /// moves its input `launch` like a live control: nothing is saved.
+    fn launch_on(
+        &mut self,
+        id: &InstanceId,
+        played: &InstanceId,
+        (name, value): (&str, Option<f32>),
+        session: &Entity<Session>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(value) = value.filter(|_| name == sequencer::LAUNCH) else {
+            let problem = format!(
+                "a performer plays {name:?} of the sequencer {:?}, which takes only the live control `launch`",
+                played.name()
+            );
+            return self.tool_problem(id, problem, cx);
+        };
+        let update = SequencerUpdate::Launch(sequencer::launched(value));
+        session.update(cx, |session, cx| {
+            let sent = session.background(cx, |project| {
+                project.send::<Sequencer>(played, sequencer::PROCESSOR, update)
+            });
+            if let Err(error) = sent {
+                session.report(error, cx);
+            }
+        });
     }
 
     /// Plays a key of instance `id`, or lets go of one, as the keyboard would: on its own
@@ -837,50 +867,6 @@ impl Live {
             self.problems.push(problem);
             self.report(cx);
         }
-    }
-
-    /// Sends `launch` to the player `player` of the owner `id`, as a performer plays: nothing
-    /// is saved. A player or a pattern it does not have is a failure of its tool.
-    fn launch_pattern(
-        &mut self,
-        id: &InstanceId,
-        player: &str,
-        launch: Launch,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(session) = self.session.upgrade() else {
-            return;
-        };
-        let project = session.read(cx).project();
-        let players = behaviours::players(project.assets(), id);
-        let wrong = match (players.get(player), launch.pattern) {
-            (None, _) => {
-                let names: Vec<&str> = players.keys().map(String::as_str).collect();
-                let names = match names.is_empty() {
-                    true => "it declares none".to_string(),
-                    false => format!("its players are {}", names.join(", ")),
-                };
-                Some(format!(
-                    "a launch names the player {player:?}, which {id} does not declare: {names}"
-                ))
-            }
-            (Some(patterns), Some(pattern)) if pattern >= *patterns => Some(format!(
-                "a launch names pattern {pattern} of the player {player:?} of {id}, which has {patterns}, from 0"
-            )),
-            _ => None,
-        };
-        if let Some(wrong) = wrong {
-            return self.tool_problem(id, wrong, cx);
-        }
-        let update = NotePlayerUpdate::Launch(launch);
-        session.update(cx, |session, cx| {
-            let sent = session.background(cx, |project| {
-                project.send::<NotePlayer>(id, &player_processor(player), update)
-            });
-            if let Err(error) = sent {
-                session.report(error, cx);
-            }
-        });
     }
 
     /// A key of the computer keyboard went down or up on a card that has the keys.
@@ -1127,12 +1113,6 @@ impl Live {
                 };
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
-            Event::Launch {
-                instance,
-                player,
-                pattern,
-                quantize,
-            } => self.launch_pattern(&instance, &player, Launch { pattern, quantize }, cx),
         }
         cx.notify();
     }

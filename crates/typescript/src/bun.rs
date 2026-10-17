@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use sound_core::InstanceId;
-use sound_notes::Quantize;
 use sound_signals::Graph;
 
 use crate::tools::ToolInfo;
@@ -179,14 +178,6 @@ pub(crate) enum Event {
         child: Option<String>,
         pitch: u8,
         at: Option<f64>,
-    },
-    /// Launches the pattern of index `pattern` on the player `player` of an owner, or stops it
-    /// with none, from the next point of `quantize`.
-    Launch {
-        instance: InstanceId,
-        player: String,
-        pattern: Option<usize>,
-        quantize: Quantize,
     },
     /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
     /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as

@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { list, number, ownSound, text, tool, trigger, type Declaration } from "./sdk";
+import { input, list, number, output, ownSound, rise, text, tool, trigger, type Declaration } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -50,6 +50,15 @@ tool({
       { from: { child: "lfo", number: "wave" }, to: { child: "filter" } },
       // @ts-expect-error: and a sound not into a number.
       { from: { child: "lfo" }, to: { child: "filter", number: "cutoff_hz" } },
+      { from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } },
+      { from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } },
+      { from: { child: "lfo", number: "wave" }, to: { child: "drop", live: "rate" } },
+      // @ts-expect-error: notes go into notes, not into a number.
+      { from: { child: "ears", notes: "hits" }, to: { child: "filter", number: "cutoff_hz" } },
+      // @ts-expect-error: a bang fires a trigger, and moves no live control.
+      { from: { child: "ears", bang: "onset" }, to: { child: "drop", live: "rate" } },
+      // @ts-expect-error: and notes are no sound.
+      { from: { child: "ears", notes: "hits" }, to: { child: "fx" } },
     ],
   }),
 });
@@ -74,5 +83,21 @@ tool({
     fire({ child: "lfo", live: "rate" });
     // @ts-expect-error: a knob of a child is the composition: a cable moves it.
     set({ child: "filter", number: "cutoff_hz" }, 800);
+  },
+});
+
+tool({
+  name: "ears",
+  title: "Ears",
+  when: "Never",
+  doc: "Sends what it hears.",
+  state: {},
+  sound: () => {
+    output("level", input);
+    output("onset", { bang: rise(input) });
+    output("hits", { gate: input, pitch: 60 });
+    // @ts-expect-error: notes need a pitch.
+    output("broken", { gate: input });
+    return input;
   },
 });

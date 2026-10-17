@@ -15,20 +15,19 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
-    Assets, BehaviourContext, BehaviourError, GraphError, InputEndpoint, InstanceId, JsonTool,
-    JsonToolDoc, Node, OutputEndpoint, ParameterInfo, Problem, Ticks, ValueRange, Watch,
+    Assets, Automation, BehaviourContext, BehaviourError, Event, GraphError, InputEndpoint,
+    InstanceId, JsonTool, JsonToolDoc, Node, OutputEndpoint, ParameterInfo, Problem, ValueRange,
+    Watch,
 };
-use sound_notes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, Launch, Length, NOTES_INPUT, Note, NoteFeed, NoteFeedUpdate,
-    NotePlayer, NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
-};
+use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note, NoteFeed, NoteFeedUpdate};
 use sound_signals::{
-    ArraySpec, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec,
-    Signals, SignalsUpdate, Values,
+    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, Number,
+    ParameterSpec, Placed, Signals, SignalsUpdate, Values,
 };
 
 use crate::behaviours::{
-    self, ChildNumber, Declaration, FromPort, Own, Player, PlayerPattern, PlayerPort, ToPort,
+    self, ChildLive, ChildNotes, ChildNumber, ChildPort, ChildTrigger, Declaration, FromPort, Own,
+    ToPort,
 };
 use crate::bun::Bun;
 use crate::{FOLDER, samples, tree};
@@ -782,13 +781,16 @@ fn described(field: &Field) -> (&'static str, String) {
 /// which waits for a sample read on its thread.
 type Read<'a> = (&'a Assets, u32, &'a InstanceId);
 
+/// The tools of one load by name, so a parent finds the controls of a child.
+pub(crate) type Tools = BTreeMap<String, ToolInfo>;
+
 /// The behaviour of a tool: its sound per combination of choices.
 pub(crate) struct Sounds {
     info: Arc<ToolInfo>,
     /// Compiled, by [`ToolInfo::sound_key`], or why that sound does not build.
     sounds: HashMap<String, Result<Arc<Code>, String>>,
-    /// The Bun that runs its behaviour, for a tool that owns children.
-    bun: Option<Arc<Bun>>,
+    /// The Bun that runs its behaviour and the tools of its load, for a tool that owns children.
+    parent: Option<(Arc<Bun>, Arc<Tools>)>,
 }
 
 impl Sounds {
@@ -797,14 +799,19 @@ impl Sounds {
     pub(crate) fn new(
         info: &ToolInfo,
         graphs: Vec<(Map<String, Value>, Result<Graph, String>)>,
-        bun: &Arc<Bun>,
+        (bun, tools): (&Arc<Bun>, &Arc<Tools>),
     ) -> Self {
         let declarations = info.declarations();
         let sounds = (graphs.into_iter())
             .map(|(choices, graph)| {
                 let key = info.sound_key(&Value::Object(choices));
                 let code = graph.and_then(|graph| {
-                    (graph.compile(&declarations).map(Arc::new)).map_err(|error| error.to_string())
+                    let code = graph.compile(&declarations).map_err(|error| error.to_string())?;
+                    let events = !code.bangs.is_empty() || !code.notes.is_empty();
+                    if events && info.kind == ToolKind::Instrument {
+                        return Err("an instrument sends no bangs or notes, as each of its voices would: make it a `source`, which follows the newest note".to_string());
+                    }
+                    Ok(Arc::new(code))
                 });
                 let code = code.map_err(|error| match info.has_choices() {
                     true => format!("its sound with the choices {key} does not build: {error}"),
@@ -816,7 +823,7 @@ impl Sounds {
         Self {
             info: Arc::new(info.clone()),
             sounds,
-            bun: info.behaviour.then(|| bun.clone()),
+            parent: info.behaviour.then(|| (bun.clone(), tools.clone())),
         }
     }
 
@@ -1024,6 +1031,16 @@ impl Sounds {
         for (index, name) in code.numbers.iter().enumerate() {
             context.output(name, OutputEndpoint::new(signals, Signals::number(index)));
         }
+        for (index, name) in code.bangs.iter().enumerate() {
+            context.output(name, OutputEndpoint::new(signals, Signals::bang(index)));
+        }
+        for (index, name) in code.notes.iter().enumerate() {
+            context.output(name, OutputEndpoint::new(signals, Signals::notes(index)));
+        }
+        // A parent's cable reaches a live control or a trigger here; the place comes with it.
+        for (name, _) in &self.info.controls.0 {
+            context.input(name, InputEndpoint::new(signals, Signals::CONTROLS));
+        }
         // Every knob can be automated, as a number of any device. A toggle or a pattern is no
         // straight line, and a lane cannot move it.
         let numbers: Vec<(ParameterInfo, f32)> = (self.knobs())
@@ -1040,9 +1057,9 @@ impl Sounds {
             let input = InputEndpoint::new(signals, Signals::AUTOMATION);
             context.runtime_automation(input, numbers)?;
         }
-        if let Some(bun) = &self.bun {
+        if let Some(parent) = &self.parent {
             let sound = InputEndpoint::new(signals, Signals::INPUT);
-            self.declare(bun, state, sound, context)?;
+            self.declare(parent, state, sound, context)?;
         }
         Ok(())
     }
@@ -1052,13 +1069,17 @@ impl Sounds {
     /// Bun works it out.
     fn declare(
         &self,
-        bun: &Bun,
+        (bun, tools): &(Arc<Bun>, Arc<Tools>),
         state: &Value,
         sound: InputEndpoint,
         context: &mut BehaviourContext<'_>,
     ) -> Result<(), BehaviourError> {
+        let mut controls = BTreeMap::new();
         let children = (context.child_records())
             .map(|(name, tool, state)| {
+                if let Some(info) = tools.get(tool) {
+                    controls.insert(name.to_string(), info.clone());
+                }
                 let state: Value = serde_json::from_str(&state?)?;
                 Ok(serde_json::json!({ "name": name, "tool": tool, "state": state }))
             })
@@ -1077,13 +1098,8 @@ impl Sounds {
         if let Some(problem) = declared.problem {
             context.problem(format!("{problem}. It plays what it declared last"));
         }
-        wire(&declared.declaration, sound, context)
+        wire(&declared.declaration, (sound, &controls), context)
     }
-}
-
-/// The name of the processor of the player `name` of an owner, which a launch is sent to.
-pub(crate) fn player_processor(name: &str) -> String {
-    format!("player:{name}")
 }
 
 /// The name of the [`NoteFeed`] of the child `name` of an owner, which a performer plays it
@@ -1092,95 +1108,99 @@ pub(crate) fn feed_processor(name: &str) -> String {
     format!("feed:{name}")
 }
 
-/// Makes the players of `declaration` and its connections. A connection that names a child, a
-/// player or a port the owner does not have, or joins ports of two kinds, is a problem, and the
-/// others play.
+/// What a connection carries. Each end of one names its kind, and both ends name the same.
+#[derive(Clone, Copy, PartialEq)]
+enum Carries {
+    Sound,
+    Notes,
+    Number,
+    Bang,
+}
+
+impl fmt::Display for Carries {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Sound => "a sound",
+            Self::Notes => "notes",
+            Self::Number => "a number",
+            Self::Bang => "a bang",
+        })
+    }
+}
+
+/// Makes the connections of `declaration`, into `sound`, the owner's own, and into the children
+/// of the tools of this project in `controls`, by name. A connection that names a child or a
+/// port the owner does not have, or joins two kinds, is a problem, and the others play.
 ///
 /// What plays into the `notes` of a child goes through a [`NoteFeed`] of that child, which
-/// releases what the child holds when that changes: a player that went away or plays elsewhere
+/// releases what the child holds when that changes: a sender that went away or plays elsewhere
 /// sends no off there.
 fn wire(
     declaration: &Declaration,
-    sound: InputEndpoint,
+    (sound, controls): (InputEndpoint, &BTreeMap<String, ToolInfo>),
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    let mut players = BTreeMap::new();
-    for (name, player) in &declaration.players {
-        players.insert(name.as_str(), play(name, player, context)?);
-    }
     let feeds = feeds(context)?;
     let mut cables = BTreeSet::new();
     let mut fed: BTreeMap<&str, BTreeSet<&FromPort>> = BTreeMap::new();
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
-        let numbers = (
-            matches!(connection.from, FromPort::Number(_)),
-            matches!(connection.to, ToPort::Number(_)),
-        );
-        if numbers.0 != numbers.1 {
+        let (child, port, from) = match &connection.from {
+            FromPort::Child(from) => {
+                let port = from.port.as_deref().unwrap_or(AUDIO_OUTPUT);
+                (&from.child, port, Carries::Sound)
+            }
+            FromPort::Notes(from) => (&from.child, from.notes.as_str(), Carries::Notes),
+            FromPort::Number(from) => (&from.child, from.number.as_str(), Carries::Number),
+            FromPort::Bang(from) => (&from.child, from.bang.as_str(), Carries::Bang),
+        };
+        let to = match &connection.to {
+            ToPort::Own(_) | ToPort::Child(_) => Carries::Sound,
+            ToPort::Notes(_) => Carries::Notes,
+            ToPort::Number(_) | ToPort::Live(_) => Carries::Number,
+            ToPort::Trigger(_) => Carries::Bang,
+        };
+        if from != to {
             context.problem(format!(
-                "its behaviour declares {at} between a number and a sound or notes: a number goes from {{ child, number }} to {{ child, number }}"
+                "its behaviour declares {at} from {from} to {to}: a sound goes to {{ child, port? }} or ownSound, notes to {{ child, notes }}, a number to {{ child, number }} or {{ child, live }}, a bang to {{ child, trigger }}"
             ));
             continue;
         }
-        let (output, to_port) = match &connection.from {
-            FromPort::Child(from) => {
-                let port = from.port.as_deref().unwrap_or(AUDIO_OUTPUT);
-                let Some(output) = context.child_output(&from.child, port) else {
-                    let at = format!("{at}.from");
-                    let problem = missing(context, &at, (&from.child, port), Side::Output);
-                    context.problem(problem);
-                    continue;
-                };
-                (output, AUDIO_INPUT)
-            }
-            FromPort::Player(PlayerPort { player }) => {
-                let Some(node) = players.get(player.as_str()) else {
-                    let names: Vec<&str> = players.keys().copied().collect();
-                    let players = match names.is_empty() {
-                        true => "it declares none".to_string(),
-                        false => format!("its players are {}", names.join(", ")),
-                    };
-                    context.problem(format!(
-                        "its behaviour names the player {player:?} at {at}.from, which it does not declare: {players}"
-                    ));
-                    continue;
-                };
-                (OutputEndpoint::new(*node, NotePlayer::NOTES), NOTES_INPUT)
-            }
-            FromPort::Number(from) => {
-                let Some(output) = context.child_output(&from.child, &from.number) else {
-                    let at = format!("{at}.from");
-                    let port = (from.child.as_str(), from.number.as_str());
-                    context.problem(missing(context, &at, port, Side::Output));
-                    continue;
-                };
-                (output, AUDIO_INPUT)
-            }
+        let Some(output) = context.child_output(child, port) else {
+            let problem = missing(context, &format!("{at}.from"), (child, port), Side::Output);
+            context.problem(problem);
+            continue;
         };
-        let (input, feed) = match &connection.to {
-            ToPort::Own(Own::Sound) => (sound, None),
-            ToPort::Child(to) => {
-                let port = to.port.as_deref().unwrap_or(to_port);
-                let feed = (feeds.get_key_value(to.child.as_str())).filter(|_| port == NOTES_INPUT);
-                match (feed, context.child_input(&to.child, port)) {
-                    (Some((child, feed)), _) => (
-                        InputEndpoint::new(*feed, NoteFeed::INPUT),
-                        Some(child.as_str()),
-                    ),
-                    (None, Some(input)) => (input, None),
-                    (None, None) => {
-                        let at = format!("{at}.to");
-                        let problem = missing(context, &at, (&to.child, port), Side::Input);
-                        context.problem(problem);
-                        continue;
-                    }
+        let at = format!("{at}.to");
+        let name = format!("cable:{:?}>{:?}", connection.from, connection.to);
+        let into = match &connection.to {
+            ToPort::Own(Own::Sound) => Some((sound, None)),
+            ToPort::Child(ChildPort { child, port }) => into(
+                &feeds,
+                (child, port.as_deref().unwrap_or(AUDIO_INPUT)),
+                &at,
+                context,
+            ),
+            ToPort::Notes(ChildNotes { child, notes }) => {
+                into(&feeds, (child, notes), &at, context)
+            }
+            ToPort::Number(ChildNumber { child, number }) => {
+                match automation(child, number, &at, context) {
+                    Some(into) => cable::<Number, Automation>(name, into, &mut cables, context)?,
+                    None => None,
                 }
             }
-            ToPort::Number(to) => match cable((&connection.from, to), &at, &mut cables, context)? {
-                Some(input) => (input, None),
-                None => continue,
-            },
+            ToPort::Live(ChildLive { child, live }) => {
+                let live = (child.as_str(), live.as_str(), true);
+                control::<Number>(name, live, controls, &mut cables, &at, context)?
+            }
+            ToPort::Trigger(ChildTrigger { child, trigger }) => {
+                let trigger = (child.as_str(), trigger.as_str(), false);
+                control::<Bang>(name, trigger, controls, &mut cables, &at, context)?
+            }
+        };
+        let Some((input, feed)) = into else {
+            continue;
         };
         match context.connect(output.to(input)) {
             Err(BehaviourError::Graph(GraphError::PortTypeMismatch { description, .. })) => {
@@ -1203,39 +1223,120 @@ fn wire(
     Ok(())
 }
 
-/// A [`Cable`] from `from` into the number `to` takes automation for, connected to the
-/// automation input of its child. `None` when the child takes no such number, a problem, and
-/// for a cable `made` already: the same connection twice is one.
-fn cable(
-    (from, to): (&FromPort, &ChildNumber),
+/// Where a connection `at` into the port `port` of `child` goes: its feed for its `notes`, with
+/// the name of the child it feeds. `None` when the child has no such input, a problem.
+fn into<'a>(
+    feeds: &'a BTreeMap<String, Node<NoteFeed>>,
+    (child, port): (&str, &str),
     at: &str,
-    made: &mut BTreeSet<String>,
     context: &mut BehaviourContext<'_>,
-) -> Result<Option<InputEndpoint>, BehaviourError> {
-    let ChildNumber { child, number } = to;
+) -> Option<(InputEndpoint, Option<&'a str>)> {
+    let feed = feeds.get_key_value(child).filter(|_| port == NOTES_INPUT);
+    match (feed, context.child_input(child, port)) {
+        (Some((child, feed)), _) => Some((
+            InputEndpoint::new(*feed, NoteFeed::INPUT),
+            Some(child.as_str()),
+        )),
+        (None, Some(input)) => Some((input, None)),
+        (None, None) => {
+            let problem = missing(context, at, (child, port), Side::Input);
+            context.problem(problem);
+            None
+        }
+    }
+}
+
+/// The automation input of `child` and the place of `number` there, the knob or the number of a
+/// built-in device a lane moves. `None` when it takes no such number, a problem.
+fn automation(
+    child: &str,
+    number: &str,
+    at: &str,
+    context: &mut BehaviourContext<'_>,
+) -> Option<(InputEndpoint, u16)> {
     let found = context
         .child_automation(child)
         .and_then(|(automation, numbers)| {
-            let place = numbers.iter().position(|info| *info.field == **number)?;
-            Some((automation, place))
+            let place = numbers.iter().position(|info| *info.field == *number)?;
+            // At most `MAX_AUTOMATED` numbers, far under `u16::MAX`.
+            Some((automation, u16::try_from(place).unwrap_or(u16::MAX)))
         });
-    let Some((automation, place)) = found else {
-        let problem = missing(context, &format!("{at}.to"), (child, number), Side::Number);
+    if found.is_none() {
+        let problem = missing(context, at, (child, number), Side::Number);
+        context.problem(problem);
+    }
+    found
+}
+
+/// Where a connection `at` into the live control `name` of `child` goes, or its trigger when
+/// not `live`. A child
+/// that is a tool of this project in `controls` takes each on one input, so a cable says which;
+/// another, such as a sequencer, takes it on an input of its own.
+fn control<From: Event>(
+    cable_name: String,
+    (child, name, live): (&str, &str, bool),
+    controls: &BTreeMap<String, ToolInfo>,
+    made: &mut BTreeSet<String>,
+    at: &str,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Option<(InputEndpoint, Option<&'static str>)>, BehaviourError>
+where
+    sound_signals::Control: Placed<From>,
+{
+    let Some(input) = context.child_input(child, name) else {
+        let problem = missing(context, at, (child, name), Side::Input);
         context.problem(problem);
         return Ok(None);
     };
-    // At most `MAX_AUTOMATED` numbers, far under `u16::MAX`.
-    let parameter = u16::try_from(place).unwrap_or(u16::MAX);
-    let name = format!("cable:{from:?}>{child:?}.{number:?}");
+    let Some(info) = controls.get(child) else {
+        return Ok(Some((input, None)));
+    };
+    match info.control(name) {
+        Some((index, control)) if matches!(control, Control::Live { .. }) == live => {
+            // At most `MAX_LIVES` of each kind, far under `u16::MAX`.
+            let place = u16::try_from(index).unwrap_or(u16::MAX);
+            let into = (input, place);
+            let cable = cable::<From, sound_signals::Control>(cable_name, into, made, context)?;
+            Ok(cable.map(|(input, _)| (input, None)))
+        }
+        _ => {
+            let kind = if live { "live control" } else { "trigger" };
+            let names: Vec<&str> = (info.controls.0.iter())
+                .filter(|(_, control)| matches!(control, Control::Live { .. }) == live)
+                .map(|(name, _)| name.as_str())
+                .collect();
+            let names = match names.is_empty() {
+                true => "none".to_string(),
+                false => names.join(", "),
+            };
+            context.problem(format!(
+                "its behaviour names the {kind} {name:?} of {child:?} at {at}, which it does not have: its {kind}s are {names}"
+            ));
+            Ok(None)
+        }
+    }
+}
+
+/// A [`Cable`] named `name` that delivers what reaches it at `place` of `into`. `None` for a
+/// cable `made` already: the same connection twice is one.
+fn cable<From: Event, To: Placed<From>>(
+    name: String,
+    (into, place): (InputEndpoint, u16),
+    made: &mut BTreeSet<String>,
+    context: &mut BehaviourContext<'_>,
+) -> Result<Option<(InputEndpoint, Option<&'static str>)>, BehaviourError> {
     if !made.insert(name.clone()) {
         return Ok(None);
     }
-    let cable = context.processor(&name, Cable::default)?;
-    if context.changed(&name, key(&parameter)) {
-        context.update(cable, parameter)?;
+    let cable = context.processor(&name, Cable::<From, To>::default)?;
+    if context.changed(&name, key(&place)) {
+        context.update(cable, place)?;
     }
-    context.connect(OutputEndpoint::new(cable, Cable::OUTPUT).to(automation))?;
-    Ok(Some(InputEndpoint::new(cable, Cable::INPUT)))
+    context.connect(OutputEndpoint::new(cable, Cable::<From, To>::OUTPUT).to(into))?;
+    Ok(Some((
+        InputEndpoint::new(cable, Cable::<From, To>::INPUT),
+        None,
+    )))
 }
 
 /// The [`NoteFeed`] of every child that has `notes`, by the child's name. Declared whatever
@@ -1259,76 +1360,6 @@ fn feeds(
         feeds.insert(child, feed);
     }
     Ok(feeds)
-}
-
-/// Makes the note player `name` of an owner, which shows what it plays in the watches
-/// `<name>.playing`, `<name>.queued` and `<name>.phase`. Its patterns are sent when they change.
-///
-/// What plays before any launch is decided here: the pattern `plays` names is launched when the
-/// player is first declared, and again each time `plays` changes, as a launch at the next bar
-/// is. While the project does not play that lands at once, so a render from the start plays it
-/// from tick 0. A launch of a performer plays until `plays` changes. Nothing of it is saved.
-fn play(
-    name: &str,
-    player: &Player,
-    context: &mut BehaviourContext<'_>,
-) -> Result<Node<NotePlayer>, BehaviourError> {
-    let watches = PlayerWatches {
-        playing: context.watch(&format!("{name}.playing")),
-        queued: context.watch(&format!("{name}.queued")),
-        phase: context.watch(&format!("{name}.phase")),
-    };
-    let processor = player_processor(name);
-    let node = context.processor(&processor, || NotePlayer::watched(watches))?;
-    // Checked every run, so a problem stays as long as the pattern does.
-    let mut patterns = Vec::with_capacity(player.patterns.len());
-    for (index, pattern) in player.patterns.iter().enumerate() {
-        let at = format!("players.{name}.patterns[{index}]");
-        patterns.push(pattern_of(pattern, &at, context)?);
-    }
-    if let Some(plays) = player.plays
-        && plays >= patterns.len()
-    {
-        context.problem(format!(
-            "its behaviour declares players.{name}.plays {plays}, which is no pattern: it has {}, from 0",
-            patterns.len()
-        ));
-    }
-    if context.changed(&format!("{processor}.patterns"), key(&player.patterns)) {
-        context.update(node, NotePlayerUpdate::Patterns(Arc::new(patterns)))?;
-    }
-    if context.changed(&format!("{processor}.plays"), key(&player.plays)) {
-        let launch = Launch {
-            pattern: player.plays,
-            quantize: Quantize::Bar,
-        };
-        context.update(node, NotePlayerUpdate::Launch(launch))?;
-    }
-    Ok(node)
-}
-
-/// The pattern `declared` at `at` of a declaration. One that cannot play, such as one with a
-/// note outside it, is silent and a problem.
-fn pattern_of(
-    declared: &PlayerPattern,
-    at: &str,
-    context: &mut BehaviourContext<'_>,
-) -> Result<Pattern, BehaviourError> {
-    let made = Length::new(Ticks(declared.length))
-        .map_err(|error| format!("{at}.{error}"))
-        .and_then(|length| {
-            Pattern::new(length, &declared.notes).map_err(|error| format!("{at}.{error}"))
-        });
-    match made {
-        Ok(pattern) => Ok(pattern),
-        Err(error) => {
-            context.problem(format!(
-                "its behaviour declares a pattern that cannot play, so it is silent: {error}"
-            ));
-            let silent = Pattern::new(Length::at_least_one(Ticks(declared.length)), &[]);
-            silent.map_err(|error| BehaviourError::Other(error.to_string()))
-        }
-    }
 }
 
 fn key(value: &impl Hash) -> u64 {

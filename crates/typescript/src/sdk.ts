@@ -282,6 +282,8 @@ export interface Graph {
   buffers: number[];
   watches: Array<{ name: string; node: number }>;
   numbers: Array<{ name: string; node: number }>;
+  bangs: Array<{ name: string; node: number }>;
+  notes: Array<{ name: string; gate: number; pitch: number; velocity: number }>;
   output: { mono: number } | { left: number; right: number };
 }
 
@@ -367,6 +369,8 @@ interface Building {
   writes: Array<{ buffer: number; index: Operand; value: Operand }>;
   watches: Array<{ name: string; value: Operand }>;
   numbers: Array<{ name: string; value: Operand }>;
+  bangs: Array<{ name: string; value: Operand }>;
+  notes: Array<{ name: string } & Required<Notes>>;
 }
 
 let current: Building | undefined;
@@ -523,12 +527,28 @@ export function watch(name: string, value: Operand): void {
   building().watches.push({ name, value });
 }
 
+/** Notes from signals: one sounds while `gate` is above 0, at the MIDI `pitch` it starts with. */
+export interface Notes {
+  gate: Operand;
+  pitch: Operand;
+  /** 0 to 1, as it starts; 0.8 when left out. */
+  velocity?: Operand;
+}
+
 /**
- * Sends `value` out as the number `name`, which a parent connects to a number of another child,
- * in that number's units. Inside `sound` only.
+ * Sends out what a parent connects to another child: a number, in the units of the number it
+ * drives; `{ bang }`, a bang where it goes above 0; or `Notes`, a note that ends where the gate
+ * falls or the pitch moves. Inside `sound` only; not in an instrument but a number.
  */
-export function output(name: string, value: Operand): void {
-  building().numbers.push({ name, value });
+export function output(name: string, value: Operand | { bang: Operand } | Notes): void {
+  const declared = building();
+  if (typeof value === "number" || value instanceof Signal) {
+    declared.numbers.push({ name, value });
+  } else if ("bang" in value) {
+    declared.bangs.push({ name, value: value.bang });
+  } else {
+    declared.notes.push({ name, gate: value.gate, pitch: value.pitch, velocity: value.velocity ?? 0.8 });
+  }
 }
 
 /**
@@ -537,7 +557,7 @@ export function output(name: string, value: Operand): void {
  * of its own wherever it is read.
  */
 export function graphToJson(build: () => Operand | Stereo): Graph {
-  current = { feedbacks: [], buffers: [], writes: [], watches: [], numbers: [] };
+  current = { feedbacks: [], buffers: [], writes: [], watches: [], numbers: [], bangs: [], notes: [] };
   try {
     const declared = current;
     const output = build();
@@ -564,6 +584,13 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
     outputs.forEach(prepare);
     const watches = declared.watches.map(({ name, value }) => ({ name, node: use(value) }));
     const numbers = declared.numbers.map(({ name, value }) => ({ name, node: use(value) }));
+    const bangs = declared.bangs.map(({ name, value }) => ({ name, node: use(value) }));
+    const notes = declared.notes.map(({ name, gate, pitch, velocity }) => ({
+      name,
+      gate: use(gate),
+      pitch: use(pitch),
+      velocity: use(velocity),
+    }));
     for (const { buffer, index, value } of declared.writes) {
       prepare(index);
       prepare(value);
@@ -582,6 +609,8 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
       buffers: declared.buffers.map(quantize),
       watches,
       numbers,
+      bangs,
+      notes,
       output: second === undefined ? { mono: first } : { left: first, right: second },
     };
   } finally {
@@ -632,7 +661,7 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   /**
    * Makes it a parent: its record is `state/<name>/instance.json` and the records next to it
    * are its children. A pure function of its record and its children that says how they
-   * connect and what its note players loop. It runs in Bun when either changes, and what it
+   * connect. It runs in Bun when either changes, and what it
    * declares plays a moment later; the sound plays on meanwhile. Its own `sound` hears what it
    * connects to `ownSound` as `input`, and is its `audio` output.
    */
@@ -686,19 +715,24 @@ export interface OwnedChild {
   state: unknown;
 }
 
-/**
- * A port of a child: `audio` when left out, `notes` when a player connects to it. A synth has a
- * `notes` input and an `audio` output, an effect an `audio` input and output.
- */
+/** A sound port of a child: `audio` when left out. An effect has an `audio` input and output. */
 export interface ChildPort {
   child: string;
   port?: string;
-  /** None: a connection joins two ports or two numbers. */
+  /** None: a connection joins two of one kind. */
+  notes?: never;
   number?: never;
+  bang?: never;
+}
+
+/** Notes of a child: its input `notes`, such as an instrument's, or notes it sends out. */
+export interface ChildNotes {
+  child: string;
+  notes: string;
 }
 
 /**
- * A number of a child: one it sends out with `output`, or one it takes, such as the knob
+ * A number of a child: one it sends out with `output`, or a knob it takes, such as the knob
  * `cutoff_hz` of a `filter` or a knob of a tool of the project.
  */
 export interface ChildNumber {
@@ -706,70 +740,37 @@ export interface ChildNumber {
   number: string;
 }
 
-/** The notes a player of the parent plays, by its name in `players`. */
-export interface PlayerPort {
-  player: string;
+/** A bang a child sends out with `output`. */
+export interface ChildBang {
+  child: string;
+  bang: string;
+}
+
+/** A live control of a child, or another number it plays from, such as `launch` of a `sequencer`. */
+export interface ChildLive {
+  child: string;
+  live: string;
+}
+
+/** A trigger of a child. */
+export interface ChildTrigger {
+  child: string;
+  trigger: string;
 }
 
 /** The parent's own `sound` as the end of a connection: what reaches it is its `input`. */
 export const ownSound = "sound" as const;
 
-/**
- * Joins an output to an input: of two children, of a player and a child, or into `ownSound`; or
- * a number one child sends to a number of another.
- */
+/** Joins an output of a child to an input of another child, or to `ownSound`, of one kind. */
 export type Connection =
-  | { from: ChildPort | PlayerPort; to: ChildPort | typeof ownSound }
-  | { from: ChildNumber; to: ChildNumber };
-
-/** Notes that loop for as long as they play. */
-export interface Pattern {
-  /** In ticks: 3840 is a bar of 4/4. */
-  length: number;
-  /** Each starts inside the pattern, from 0. */
-  notes: Note[];
-}
-
-/**
- * Plays one of its patterns at a time, in time with the bars: which one is a performance, `launch`,
- * which nothing saves.
- */
-export interface Player {
-  patterns: Pattern[];
-  /**
-   * The index of the pattern it plays before a launch, so a render plays it: it starts when the
-   * player is first declared, and again as a launch at the next bar when this changes. None when
-   * left out.
-   */
-  plays?: number;
-}
+  | { from: ChildPort; to: ChildPort | typeof ownSound }
+  | { from: ChildNotes; to: ChildNotes }
+  | { from: ChildNumber; to: ChildNumber | ChildLive }
+  | { from: ChildBang; to: ChildTrigger };
 
 /** What a behaviour declares. A JSON value: no functions, no classes. */
 export interface Declaration {
   connections: Connection[];
-  /** Note players of the parent, by name. Each shows what it plays in `watches`, see `playerOf`. */
-  players?: Record<string, Player>;
-}
-
-/** What a player plays, as the parent's card and page see it. */
-export interface Playing {
-  /** The index of the pattern that plays, or null. */
-  playing: number | null;
-  /** The pattern of a launch that has not landed yet, `"stop"` for a stop, or null. */
-  queued: number | "stop" | null;
-  /** How far the pattern that plays is into its round, 0 to 1. */
-  phase: number;
-}
-
-/** What the player `player` plays, from the `watches` of its parent. */
-export function playerOf(watches: Record<string, number>, player: string): Playing {
-  const index = (value: number | undefined) => (value === undefined || value < 0 ? null : value);
-  const queued = watches[`${player}.queued`];
-  return {
-    playing: index(watches[`${player}.playing`]),
-    queued: queued === -2 ? "stop" : index(queued),
-    phase: watches[`${player}.phase`] ?? 0,
-  };
 }
 
 /** A key of the computer keyboard: its name, such as `"a"`, `"1"`, `"space"` or `"left"`. */
@@ -802,14 +803,14 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
 /**
  * What plays an instance as a performer would: nothing saves it and no undo takes it back.
  * `at` is a `time` of the control loop: what has one happens on that sample, or at once when
- * it has passed. A parent plays a child the same way, by its name: `{ child, live }`,
- * `{ child, trigger }`, or `child` among the options of `play` and `release`.
+ * it has passed. A parent plays a child the same way, by its name: `ChildLive`,
+ * `ChildTrigger`, or `child` among the options of `play` and `release`.
  */
 export interface Performer<C extends Controls> {
   /** Moves a live control. */
-  set(control: ControlNames<C, "live"> | { child: string; live: string }, value: number): void;
+  set(control: ControlNames<C, "live"> | ChildLive, value: number): void;
   /** Fires a trigger. */
-  fire(control: ControlNames<C, "trigger"> | { child: string; trigger: string }, options?: { at?: number }): void;
+  fire(control: ControlNames<C, "trigger"> | ChildTrigger, options?: { at?: number }): void;
   /**
    * Plays a note on the tool's own voices, or into the `notes` of `child`, as a key held for
    * `seconds` (0.25 when left out), or with `hold` until `release`: `pitch` is MIDI, 69 is A4,
@@ -822,12 +823,6 @@ export interface Performer<C extends Controls> {
   ): void;
   /** Lets go of a note `play` holds. */
   release(pitch: number, options?: { at?: number; child?: string }): void;
-  /**
-   * Plays the pattern of index `pattern` of the parent's player `player`, or stops it with
-   * `null`, from the next bar line (`quantize` when given) while the piece plays, else at once.
-   * What played goes on until then.
-   */
-  launch(player: string, pattern: number | null, options?: { quantize?: "bar" | "beat" | "now" }): void;
 }
 
 /** What the control loop, the cards and the handlers of an instance get. */
