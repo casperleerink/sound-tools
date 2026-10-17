@@ -802,25 +802,26 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
 /**
  * What plays an instance as a performer would: nothing saves it and no undo takes it back.
  * `at` is a `time` of the control loop: what has one happens on that sample, or at once when
- * it has passed.
+ * it has passed. A parent plays a child the same way, by its name: `{ child, live }`,
+ * `{ child, trigger }`, or `child` among the options of `play` and `release`.
  */
 export interface Performer<C extends Controls> {
   /** Moves a live control. */
-  set(control: ControlNames<C, "live">, value: number): void;
+  set(control: ControlNames<C, "live"> | { child: string; live: string }, value: number): void;
   /** Fires a trigger. */
-  fire(control: ControlNames<C, "trigger">, options?: { at?: number }): void;
+  fire(control: ControlNames<C, "trigger"> | { child: string; trigger: string }, options?: { at?: number }): void;
   /**
-   * Plays a note on the tool's own voices, as a key held for `seconds` (0.25 when left out),
-   * or with `hold` until `release`: `pitch` is MIDI, 69 is A4, and `velocity` is 0 to 1 (0.8
-   * when left out). An instrument plays each note on a voice of its own; a source follows the
-   * newest.
+   * Plays a note on the tool's own voices, or into the `notes` of `child`, as a key held for
+   * `seconds` (0.25 when left out), or with `hold` until `release`: `pitch` is MIDI, 69 is A4,
+   * and `velocity` is 0 to 1 (0.8 when left out). An instrument plays each note on a voice of
+   * its own; a source follows the newest.
    */
   play(
     pitch: number,
-    options?: { seconds?: number; hold?: boolean; velocity?: number; at?: number },
+    options?: { seconds?: number; hold?: boolean; velocity?: number; at?: number; child?: string },
   ): void;
   /** Lets go of a note `play` holds. */
-  release(pitch: number, options?: { at?: number }): void;
+  release(pitch: number, options?: { at?: number; child?: string }): void;
   /**
    * Plays the pattern of index `pattern` of the parent's player `player`, or stops it with
    * `null`, from the next bar line (`quantize` when given) while the piece plays, else at once.

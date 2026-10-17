@@ -153,27 +153,30 @@ pub(crate) enum Event {
         label: String,
         state: Value,
     },
-    /// A card or a control loop moved a live control of an instance, or fired a trigger when
-    /// there is no value: at `at`, engine time in seconds, or at once.
+    /// A card or a control loop moved a live control of an instance, or of its child `child`,
+    /// or fired a trigger when there is no value: at `at`, engine time in seconds, or at once.
     Control {
         instance: InstanceId,
+        child: Option<String>,
         name: String,
         value: Option<f32>,
         at: Option<f64>,
     },
-    /// A card or a control loop played a note of an instance: a key held for `seconds` from
-    /// `at`, engine time in seconds, or from now; `velocity` from 0 to 1. With no `seconds` it
-    /// is held until its release.
+    /// A card or a control loop played a note of an instance, or of its child `child`: a key
+    /// held for `seconds` from `at`, engine time in seconds, or from now; `velocity` from 0 to
+    /// 1. With no `seconds` it is held until its release.
     Note {
         instance: InstanceId,
+        child: Option<String>,
         pitch: u8,
         velocity: f32,
         seconds: Option<f32>,
         at: Option<f64>,
     },
-    /// Lets go of a held note of an instance, at `at` or now.
+    /// Lets go of a held note of an instance, or of its child `child`, at `at` or now.
     Release {
         instance: InstanceId,
+        child: Option<String>,
         pitch: u8,
         at: Option<f64>,
     },

@@ -19,8 +19,8 @@ use sound_core::{
     JsonToolDoc, Node, OutputEndpoint, ParameterInfo, Problem, Ticks, ValueRange, Watch,
 };
 use sound_notes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, Launch, Length, NOTES_INPUT, Note, NoteFeed, NotePlayer,
-    NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
+    AUDIO_INPUT, AUDIO_OUTPUT, Launch, Length, NOTES_INPUT, Note, NoteFeed, NoteFeedUpdate,
+    NotePlayer, NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
 };
 use sound_signals::{
     ArraySpec, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec,
@@ -1086,6 +1086,12 @@ pub(crate) fn player_processor(name: &str) -> String {
     format!("player:{name}")
 }
 
+/// The name of the [`NoteFeed`] of the child `name` of an owner, which a performer plays it
+/// through.
+pub(crate) fn feed_processor(name: &str) -> String {
+    format!("feed:{name}")
+}
+
 /// Makes the players of `declaration` and its connections. A connection that names a child, a
 /// player or a port the owner does not have, or joins ports of two kinds, is a problem, and the
 /// others play.
@@ -1191,7 +1197,7 @@ fn wire(
     for (child, feed) in &feeds {
         let senders = fed.get(child.as_str());
         if context.changed(&format!("feed:{child}.senders"), key(&senders)) {
-            context.update(*feed, ())?;
+            context.update(*feed, NoteFeedUpdate::Senders)?;
         }
     }
     Ok(())
@@ -1233,7 +1239,8 @@ fn cable(
 }
 
 /// The [`NoteFeed`] of every child that has `notes`, by the child's name. Declared whatever
-/// plays into it, so it is there to release what a sender that went away left sounding.
+/// plays into it, so it is there to release what a sender that went away left sounding, and
+/// for a performer to play the child.
 fn feeds(
     context: &mut BehaviourContext<'_>,
 ) -> Result<BTreeMap<String, Node<NoteFeed>>, BehaviourError> {
@@ -1243,7 +1250,7 @@ fn feeds(
         let Some(notes) = context.child_input(&child, NOTES_INPUT) else {
             continue;
         };
-        let feed = context.processor(&format!("feed:{child}"), NoteFeed::default)?;
+        let feed = context.processor(&feed_processor(&child), NoteFeed::default)?;
         match context.connect(OutputEndpoint::new(feed, NoteFeed::OUTPUT).to(notes)) {
             // An input named so that takes something else than notes.
             Err(BehaviourError::Graph(GraphError::PortTypeMismatch { .. })) => continue,

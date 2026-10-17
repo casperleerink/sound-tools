@@ -7,7 +7,7 @@ use sound_core::{
     AudioOutput, Automation, Connection, Engine, EngineConfig, EventOutput, Ports, PrepareConfig,
     ProcessContext, Processor, Watch, xorshift32,
 };
-use sound_notes::{Bend, NoteEvent, Pitch, Velocity};
+use sound_notes::{Bend, NoteEvent, Performed, Pitch, Velocity};
 use sound_signals::{Code, Kind, Machine, Signals, SignalsUpdate, Values};
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -57,12 +57,12 @@ pub(crate) fn render(tool: &Tool, buffer: usize) -> (Vec<f32>, Vec<f32>) {
     let mut steps: Vec<(usize, SignalsUpdate)> = vec![
         (
             5_000,
-            SignalsUpdate::Note {
+            SignalsUpdate::Note(Performed::Play {
                 pitch: pitch(72),
                 velocity,
-                at: Some(5_500),
+                at: 5_500,
                 frames: Some(2_000),
-            },
+            }),
         ),
         (7_000, SignalsUpdate::Trigger { index: 0, at: None }),
         (
@@ -95,19 +95,19 @@ pub(crate) fn render(tool: &Tool, buffer: usize) -> (Vec<f32>, Vec<f32>) {
         ),
         (
             11_000,
-            SignalsUpdate::Note {
+            SignalsUpdate::Note(Performed::Play {
                 pitch: pitch(74),
                 velocity,
-                at: None,
+                at: 0,
                 frames: None,
-            },
+            }),
         ),
         (
             11_000,
-            SignalsUpdate::Release {
+            SignalsUpdate::Note(Performed::Release {
                 pitch: pitch(74),
-                at: Some(13_000),
-            },
+                at: 13_000,
+            }),
         ),
         (
             28_000,

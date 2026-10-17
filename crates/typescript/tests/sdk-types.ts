@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { list, number, ownSound, text, tool, type Declaration } from "./sdk";
+import { list, number, ownSound, text, tool, trigger, type Declaration } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -52,4 +52,27 @@ tool({
       { from: { child: "lfo" }, to: { child: "filter", number: "cutoff_hz" } },
     ],
   }),
+});
+
+tool({
+  name: "conductor",
+  title: "Conductor",
+  when: "Never",
+  doc: "Plays its children.",
+  state: {},
+  controls: { hit: trigger() },
+  behaviour: (): Declaration => ({ connections: [] }),
+  tick: ({ set, fire, play, release }) => {
+    fire("hit");
+    set({ child: "lfo", live: "rate" }, 2);
+    fire({ child: "drums", trigger: "kick" }, { at: 1 });
+    play(60, { child: "synth", hold: true });
+    release(60, { child: "synth" });
+    // @ts-expect-error: a trigger of a child is fired, not set.
+    set({ child: "drums", trigger: "kick" }, 1);
+    // @ts-expect-error: and a live control of a child set, not fired.
+    fire({ child: "lfo", live: "rate" });
+    // @ts-expect-error: a knob of a child is the composition: a cable moves it.
+    set({ child: "filter", number: "cutoff_hz" }, 800);
+  },
 });

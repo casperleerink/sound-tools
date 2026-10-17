@@ -164,7 +164,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 ## Recording and fit tempo
 
-- MIDI input and the computer keys have no tool and no record. Both write into one lock-free ring the audio thread reads each block, so nothing the interface does can delay sound. Rejected: a tool of the project that plays from the keys, which plays only its own sound.
+- MIDI input and the computer keys have no tool and no record. Both write into one lock-free ring the audio thread reads each block, so nothing the interface does can delay sound. Rejected: a tool of the project that plays from the keys.
 - A recorded note is saved at the tick the engine sounded it, so playback matches what was heard. The raw performance is also saved as an asset, written before the clip, so it survives the clip. Its times are microseconds, because a tick means nothing without a tempo map and a fit changes the map.
 - Audio recording does not pass through the engine. A take is placed by mapping its capture time to the engine frame sounding then, which works with any latency compensation.
 - Live input and the sound of other apps are `project.json` connections. Input and output keep their own clocks: the engine drops old frames or plays silence instead of resampling, so the delay stays bounded. The window opens an input only while something needs it, so a project without one never asks for the microphone. Rejected for app sound: a virtual device of our own, which needs a driver install.
@@ -233,14 +233,14 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 
 - **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one, and code that hangs is left out until the folder changes. The window never waits on it. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
-- **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays; then the behaviour runs again with the record it has. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
+- **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
-- **Cards and pages** are trees of elements Bun draws and the window shows with `crates/ui`. A `tick` plays like a performer and never changes the record.
+- **Cards and pages** are trees of elements Bun draws and the window shows with `crates/ui`. A `tick` plays like a performer and never changes the record. `set` moves no knob: knobs are the composition.
 - **A number one tool sends drives another as a lane does**: sent every block into the device's `AutomationInput`, so built-in devices need nothing new.
-- **Patterns in time are note players an owner declares.** `NotePlayer`, also the arrangement's, loops Bun's patterns and quantizes launches on the audio thread. A launch is performance: never saved or undone. A declared start pattern makes a render sound. Rejected: `tick` with `at`, a block late and window-only.
-- **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved player sends no off there. Rejected: a reset in the core, for every instrument to declare.
+- **Patterns in time are note players an owner declares.** `NotePlayer` loops Bun's patterns and quantizes launches on the audio thread. A launch is performance: never saved or undone. A declared start pattern makes a render sound. Rejected: `tick` with `at`, a block late and window-only.
+- **A child's notes, a player's or a performer's, pass its own feed**, so built-in instruments need nothing new. It releases the child when its senders change: a removed or moved player sends no off there. Rejected: a reset in the core, for every instrument to declare.
 - **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, blind to where the notes went.
 - **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills: no better in an eval, and they need project settings the agent runs without.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

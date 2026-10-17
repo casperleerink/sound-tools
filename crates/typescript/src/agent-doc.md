@@ -170,14 +170,14 @@ tool({
 | `<Meter watch label?>` | A bar that shows a watch from 0 to 1. |
 | `<Pad x y size?>` | A square for the pointer: across moves the live control `x`, up moves `y`. |
 
-The card gets `state`, the record with every field it leaves out at its default; `watches`, the last value of each watch, and draws again as they move; `update(label, change)`, which changes the record as one undo step; `set(control, value)`, which moves a live control; `fire(control)`, which fires a trigger; and `play(pitch, { seconds?, velocity? })`, which plays a note on the tool's own voices, as a key held for `seconds` (an instrument or a source).
+The card gets `state`, the record with every field it leaves out at its default; `watches`, the last value of each watch, and draws again as they move; `update(label, change)`, which changes the record as one undo step; and `set`, `fire` and `play`, which play its live controls, triggers and voices as a performer would (`Performer` in `sdk.ts`).
 
 ## A control loop, a canvas, the keys
 
 For more than knobs, such as a simulation that plays notes as balls bounce, a tool keeps a `memory` and runs a control loop:
 
 - `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance. The card and the loop get it, and a click may change it.
-- `tick: ({ state, watches, memory, dt, time, set, fire, play }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. It plays the sound as a performer would, with `set`, `fire` and `play`, and moves what is in `memory`; it does not change the record. Offline, in `--render`, it does not run. With `play`, an instrument is a voice per note the loop makes up: a melody of a rule, a chord a collision strikes.
+- `tick: ({ state, watches, memory, dt, time, set, fire, play }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. It plays as a performer would and moves what is in `memory`; it does not change the record. Offline, in `--render`, it does not run.
 - What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a player (see "Children"). For a rhythm the loop makes up, play ahead on the clock of the sound: `time` is where it is, in seconds, and `fire(control, { at })` and `play(pitch, { at })` happen on the sample of `at`:
 
   ```ts
@@ -212,7 +212,7 @@ To make the project one tool:
 
 1. Delete `state/arrangement/`.
 2. Put one record of the tool at the top: `state/<name>.json`, or `state/<name>/instance.json` for a parent.
-3. Make the tool a `source`, or an `instrument` when its loop plays notes with `play`.
+3. Make the tool a `source`, or an `instrument` when it plays notes with `play`; a parent leaves `kind` out.
 4. Connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`.
 
 The window shows its page, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and the page and cards get `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`) and draw again as it moves. An `effect` at the top with `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well hears the microphone live as `input`; tell the composer to use headphones, as speakers feed back into it. `{"from": {"app": "Music"}, ...}` in place of `device_input` hears another app instead, such as a song playing in Music, and `{"app": "all"}` every app.
@@ -261,7 +261,7 @@ tool({
 
 ## Children: a tool that plays other tools
 
-A tool with a `behaviour` is a parent: it has children, as a band has its players. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth` or `delay` (enable its extension in `project.json`), or a tool of this project, such as a `source`. The behaviour is a pure function of the record and the children that says how they connect. A parent leaves `kind` out.
+A tool with a `behaviour` is a parent: it has children. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth` or `delay` (enable its extension in `project.json`), or a tool of this project, such as a `source`. The behaviour is a pure function of the record and the children that says how they connect. A parent leaves `kind` out.
 
 ```ts
 import { list, ownSound, text, tool, type Connection, type Declaration } from "./sdk";
@@ -289,7 +289,8 @@ tool({
 - `ownSound` is the parent's own `sound`, which hears what reaches it as `input`. Its output is the parent's `audio` output. Put the parent at the top of a project that is one tool, or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound, not its notes, and plays into the track's mixer.
 - The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
 - `{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } }` makes the number `lfo` sends with `output` turn a knob of `filter`: a knob of a tool of this project, or any number of a built-in device a lane can automate. Send it in that number's units, Hz here. It follows within 64 samples, gliding, and nothing is saved; without the connection the knob glides back to its record.
-- A child or a port it names that is not there, or a behaviour that throws, is a problem of the parent's record. The rest plays.
+- A parent plays its children: `play(45, { child: "synth" })` and `release` reach a child's `notes`, a built-in instrument's too; `set({ child: "lfo", live: "rate" }, 2)` and `fire({ child: "drop", trigger: "hit" })` a live control and a trigger of a tool of this project. A knob of a child is its record: a cable moves it.
+- A child or a port it names that is not there, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
 ### Players: patterns in time with the bars
 
@@ -333,7 +334,7 @@ tool({
 
 - `players` holds each player by name: `{ patterns, plays? }`. A pattern is `{ length, notes }`, its length in ticks and each note starting inside it. `{ from: { player: "bass" }, to: { child: "synth" } }` plays it into the child's `notes`.
 - `plays` is the index of the pattern it plays before any launch, so `--render` plays it. It starts when the player is first declared; a change of it launches the new one at the next bar.
-- `launch(player, pattern, { quantize? })`, in a card, a page, `tick`, `onKey` and `onMidi`, plays the pattern of that index from the next bar line (`quantize: "beat"` or `"now"`), or stops with `null`; while the piece is stopped, at once. A launch is a performance: nothing saves it, no undo takes it back, and a render does not hear it.
+- `launch(player, pattern, { quantize? })` plays the pattern of that index from the next bar line (`quantize: "beat"` or `"now"`), or stops with `null`; while the piece is stopped, at once. Like `play`, it is a performance: a render does not hear it.
 - `playerOf(watches, "bass")` says what plays: `{ playing, queued, phase }`.
 - A pattern with a note outside it is silent and a problem of the parent's record; a player or a pattern a launch names that is not there is a problem of the tool.
 
