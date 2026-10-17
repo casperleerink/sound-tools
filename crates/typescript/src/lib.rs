@@ -75,7 +75,7 @@ const TSCONFIG: &str = r#"{
 /// How an agent writes a tool of the project.
 pub const AGENT_DOC: AgentDoc = AgentDoc {
     name: "extensions",
-    when: "No tool does what you need: write a new effect, instrument or experiment for this project",
+    when: "No tool does what you need: write a device for a track, or make the whole project one tool",
     markdown: include_str!("agent-doc.md"),
 };
 

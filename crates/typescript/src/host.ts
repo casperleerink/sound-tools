@@ -5,7 +5,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Field, Fields, Graph, Handler as Heard, Midi, Node, Owner, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Controls, Field, Fields, Graph, Handler as Heard, Midi, Node, Parent, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -37,7 +37,7 @@ type Request =
   | { type: "key"; time: number; instance: Looped; key: string; down: boolean }
   | { type: "midi"; time: number; instances: Looped[]; messages: Midi[] }
   | { type: "drop"; card: number }
-  | ({ type: "behaviour"; question: number; tool: string } & Owner<Fields>);
+  | ({ type: "behaviour"; question: number; tool: string } & Parent<Fields>);
 
 type Canvas = Extract<Node, { type: "canvas" }>;
 /** What the runtime gets of a node: a handler is its index. */
@@ -117,7 +117,7 @@ function problemsOf(spec: Spec): string[] {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
     if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
-      problems.push("kind: an owner's sound hears its children through `input`, so leave `kind` out");
+      problems.push("kind: a parent hears its children through `input`, so leave `kind` out");
     }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
@@ -231,7 +231,7 @@ function sound(spec: Spec, choices: Choices): Graph {
   return sdk.graphToJson(() => build(fields as never));
 }
 
-/** Answers what the behaviour of an owner declares, or why it does not. */
+/** Answers what the behaviour of a parent declares, or why it does not. */
 function declare({ question, tool, state, children }: Extract<Request, { type: "behaviour" }>) {
   const declaration = made(() => {
     const spec = specOf(tool);
@@ -239,7 +239,7 @@ function declare({ question, tool, state, children }: Extract<Request, { type: "
       throw new Error(`${tool} has no behaviour`);
     }
     runs(tool, "behaviour");
-    // Here, so a value JSON cannot hold, such as a cycle, is the owner's problem and does not throw in `send`.
+    // Here, so a value JSON cannot hold, such as a cycle, is the parent's problem and does not throw in `send`.
     return JSON.parse(JSON.stringify(spec.behaviour({ state, children })));
   });
   send({ type: "declared", question, declaration });

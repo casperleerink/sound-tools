@@ -13,6 +13,9 @@ ignore = [
   { id = "RUSTSEC-2024-0436", reason = "paste, through gpui" },
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser, through gpui" },
   { id = "RUSTSEC-2026-0206", reason = "rustybuzz, through gpui" },
+  { id = "RUSTSEC-2026-0370", reason = "zvariant, through gpui on Linux" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names, through gpui on Linux" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, through gpui on Linux" },
 ]
 
 [licenses]

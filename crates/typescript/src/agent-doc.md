@@ -1,12 +1,17 @@
 # Writing a tool for this project
 
-When no tool does what the composer asks, write one: an effect, an instrument or a sound source that is part of this project, in TypeScript. It plays as soon as you save the file, with no build, and it is a tool like any other: its records go in a track, the window gives it a card and offers it under "This project", and the runtime writes a doc for it so the next agent can use it.
+When no tool does what the composer asks, write one in TypeScript. It plays as soon as you save the file, with no build, and the runtime writes a doc for it so the next agent can use it. A tool takes one of two shapes:
+
+- **A device in a track**: an effect, an instrument or a sound source, used in the arrangement as a built-in one is. Its records go in tracks, it shows a card in the row under the tracks, and the pickers offer it under "This project".
+- **The project is the tool**: an experiment, a game, a thing to play live. There is no arrangement: one record at the top, and a page that fills the window. See "A project that is one tool".
+
+Both are the same `tool(...)`, and the sound, the fields, the control loop and children work in both.
 
 To play a track from the computer keyboard, write nothing: tell the composer to turn on the computer keys (cmd-K, or the keyboard button in the transport). The letter rows then play the selected track as a MIDI keyboard does, with any instrument, and record into a take.
 
 ## Where it goes
 
-One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card. Make the folder if it is not there, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
+One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card or page. Make the folder if it is not there, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
 
 The runtime runs them with Bun, which the app ships and puts on your `PATH`; a build from source uses the one installed from https://bun.sh. While the app has the project open, a save of a TypeScript, JavaScript or JSON file in `extensions/` starts the tools again in a moment: every file loads again, also a helper a tool imports, every record plays the new sound, every `memory` starts again, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 
@@ -117,85 +122,6 @@ const wet = combs.reduce((sum, comb) => sum.plus(comb)).over(combs.length);
 
 `unit` is `"hz"`, `"ms"`, `"db"` or `"percent"`: the card shows it, a knob in `"hz"` turns on a log scale, and one in `"percent"` still holds 0 to 1. At most 32 knobs and toggles.
 
-The runtime checks data fields, also inside lists, and a message names the path, such as `state.lanes[1].notes[3].pitch`.
-
-## An owner: children and a behaviour
-
-A tool with a `behaviour` owns children, as a band owns its players. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth` or `delay` (enable its extension in `project.json`), or a tool of this project, such as a `source`. The behaviour is a pure function of the record and the children that says how they connect:
-
-```ts
-import { list, ownSound, text, tool, type Connection, type Declaration } from "./sdk";
-
-tool({
-  name: "band",
-  title: "Band",
-  when: "You want a sound through a chain of effects that a record names",
-  doc: "Plays the child `lead` through the children `effects` names, in order.",
-  state: { lead: text({ default: "drone" }), effects: list(text(), { max: 4 }) },
-  behaviour: ({ state: { lead, effects } }): Declaration => {
-    const chain = [lead, ...effects];
-    const connections: Connection[] = chain.slice(1).map((effect, index) => ({
-      from: { child: chain[index] },
-      to: { child: effect },
-    }));
-    connections.push({ from: { child: chain[chain.length - 1] }, to: ownSound });
-    return { connections };
-  },
-});
-```
-
-- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`: each from an output of a child to an input of another child, or to `ownSound`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through.
-- A port is `audio` when left out; an instrument also has the input `notes`.
-- `ownSound` is the owner's own `sound`, which hears what reaches it as `input`. Its output is the owner's `audio` output. Put the owner at the top of the project and connect that to the speakers in `project.json`, as a page does below; or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound, not its notes, and plays into the track's mixer.
-- The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
-- A child or a port it names that is not there, or a behaviour that throws, is a problem of the owner's record. The rest plays.
-
-### Players: patterns in time with the bars
-
-An owner may also declare note players. A player loops one of its patterns at a time, to the sample, and plays it into a child's `notes`; a performer picks which with `launch`. A clip launcher, with an instrument `synth` and an effect `fx` as its children:
-
-```ts
-import { h, list, notes, number, ownSound, playerOf, tool, type Declaration } from "./sdk";
-
-const BAR = 3840; // ticks in a bar of 4/4
-
-tool({
-  name: "loops",
-  title: "Loops",
-  when: "You want bass patterns to launch in time with the bars",
-  doc: "Loops the patterns of `bass` on the child `synth`, through the child `fx`. `scene` is the one that plays before a launch.",
-  state: {
-    bass: list({ bars: number({ min: 1, max: 8, integer: true, default: 1 }), notes: notes() }, {
-      default: [{ notes: [{ start: 0, length: 480, pitch: 36, velocity: 100 }, { start: 1920, length: 480, pitch: 43, velocity: 100 }] }],
-    }),
-    scene: number({ min: 0, max: 7, integer: true }),
-  },
-  behaviour: ({ state }): Declaration => ({
-    players: { bass: { patterns: state.bass.map(({ bars, notes }) => ({ length: bars * BAR, notes })), plays: state.scene } },
-    connections: [
-      { from: { player: "bass" }, to: { child: "synth" } },
-      { from: { child: "synth" }, to: { child: "fx" } },
-      { from: { child: "fx" }, to: ownSound },
-    ],
-  }),
-  transport: true,
-  page: ({ state, watches, launch }) => {
-    const bass = playerOf(watches, "bass");
-    const button = (lit: boolean) => ({ padding: 8, radius: 6, background: lit ? "#7c3aed" : "#2a2f3a" }) as const;
-    return h("div", { style: { direction: "row", gap: 8, padding: 16 } },
-      state.bass.map((_, index) => h("div", { style: button(bass.playing === index), onClick: () => launch("bass", index) }, `Bass ${index + 1}`)),
-      h("div", { style: button(bass.queued === "stop"), onClick: () => launch("bass", null) }, "Stop"),
-    );
-  },
-});
-```
-
-- `players` holds each player by name: `{ patterns, plays? }`. A pattern is `{ length, notes }`, its length in ticks and each note starting inside it. `{ from: { player: "bass" }, to: { child: "synth" } }` plays it into the child's `notes`.
-- `plays` is the index of the pattern it plays before any launch, so `--render` plays it. It starts when the player is first declared; a change of it launches the new one at the next bar.
-- `launch(player, pattern, { quantize? })`, in a card, a page, `tick`, `onKey` and `onMidi`, plays the pattern of that index from the next bar line (`quantize: "beat"` or `"now"`), or stops with `null`; while the piece is stopped, at once. A launch is a performance: nothing saves it, no undo takes it back, and a render does not hear it.
-- `playerOf(watches, "bass")` says what plays: `{ playing, queued, phase }`.
-- A pattern with a note outside it is silent and a problem of the owner's record; a player or a pattern a launch names that is not there is a problem of the tool.
-
 ## Controls
 
 What the card plays as a performer plays, which nothing saves and no undo takes back:
@@ -207,7 +133,7 @@ What the card plays as a performer plays, which nothing saves and no undo takes 
 
 Without `card`, the card has a knob per knob and live control, a row of steps per pattern, and a button per option, toggle and trigger. For your own, give `card` in a `.tsx` file. It draws from the record and the watches and plays what it needs; it keeps no state of its own.
 
-A card sits in the row of cards under the tracks. What it draws is 144 points tall at most: more is cut off. It is as wide as it needs, at least 200, and the row scrolls sideways. So put things side by side rather than stacked: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16. A `page` has the whole window.
+A card sits in the row of cards under the tracks. What it draws is 144 points tall at most: more is cut off. It is as wide as it needs, at least 200, and the row scrolls sideways. So put things side by side rather than stacked: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
 
 ```tsx
 import { Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
@@ -245,13 +171,13 @@ tool({
 
 The card gets `state`, the record with every field it leaves out at its default; `watches`, the last value of each watch, and draws again as they move; `update(label, change)`, which changes the record as one undo step; `set(control, value)`, which moves a live control; `fire(control)`, which fires a trigger; and `play(pitch, { seconds?, velocity? })`, which plays a note on the tool's own voices, as a key held for `seconds` (an instrument or a source).
 
-## Experiments: a control loop, a canvas, a page
+## A control loop, a canvas, the keys
 
 For more than knobs, such as a simulation that plays notes as balls bounce, a tool keeps a `memory` and runs a control loop:
 
 - `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance. The card and the loop get it, and a click may change it.
 - `tick: ({ state, watches, memory, dt, time, set, fire, play }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. It plays the sound as a performer would, with `set`, `fire` and `play`, and moves what is in `memory`; it does not change the record. Offline, in `--render`, it does not run. With `play`, an instrument is a voice per note the loop makes up: a melody of a rule, a chord a collision strikes.
-- What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a player of an owner (above). For a rhythm the loop makes up, play ahead on the clock of the sound: `time` is where it is, in seconds, and `fire(control, { at })` and `play(pitch, { at })` happen on the sample of `at`:
+- What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a player (see "Children"). For a rhythm the loop makes up, play ahead on the clock of the sound: `time` is where it is, in seconds, and `fire(control, { at })` and `play(pitch, { at })` happen on the sample of `at`:
 
   ```ts
   tick: ({ memory, time, play }) => {
@@ -275,8 +201,20 @@ For more than knobs, such as a simulation that plays notes as balls bounce, a to
     else release(60 + step);
   },
   ```
-- `<Canvas width height shapes background? onPress? onDrag?>` draws `shapes` (`{ kind: "circle", x, y, radius, color }`, `{ kind: "rect", x, y, width, height, color, radius? }`, `{ kind: "line", from: [x, y], to: [x, y], color, width? }`, in points from its top left) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. The card draws again after every tick.
-- `page: (page) => ...` draws the whole window instead of a card, from what a card gets and `size`, its width and height in points. Fill it: the window may be any size, and the page draws again when it changes. Keep positions from 0 to 1 and scale them by `size` as it draws. A project that is one experiment has no arrangement: delete `state/arrangement/`, put one record of the tool at the top, `state/<name>.json`, make the tool a `source` (or an `instrument` when its loop plays notes with `play`), and connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`. The window shows its page, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and the page and cards get `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`) and draw again as it moves. An `effect` at the top with `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well hears the microphone live as `input`; tell the composer to use headphones, as speakers feed back into it. `{"from": {"app": "Music"}, ...}` in place of `device_input` hears another app instead, such as a song playing in Music, and `{"app": "all"}` every app.
+- `<Canvas width height shapes background? onPress? onDrag?>` draws `shapes` (`{ kind: "circle", x, y, radius, color }`, `{ kind: "rect", x, y, width, height, color, radius? }`, `{ kind: "line", from: [x, y], to: [x, y], color, width? }`, in points from its top left) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. A card or page draws again after every tick.
+
+## A project that is one tool
+
+`page: (page) => ...` draws the whole window, from what a card gets and `size`, its width and height in points. Fill it: the window may be any size, and the page draws again when it changes. Keep positions from 0 to 1 and scale them by `size` as it draws.
+
+To make the project one tool:
+
+1. Delete `state/arrangement/`.
+2. Put one record of the tool at the top: `state/<name>.json`, or `state/<name>/instance.json` for a parent.
+3. Make the tool a `source`, or an `instrument` when its loop plays notes with `play`.
+4. Connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`.
+
+The window shows its page, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and the page and cards get `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`) and draw again as it moves. An `effect` at the top with `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well hears the microphone live as `input`; tell the composer to use headphones, as speakers feed back into it. `{"from": {"app": "Music"}, ...}` in place of `device_input` hears another app instead, such as a song playing in Music, and `{"app": "all"}` every app.
 
 ```tsx
 import { Canvas, feedback, h, live, lowpass, max, noise, tool, trigger, type Shape } from "./sdk";
@@ -320,12 +258,85 @@ tool({
 });
 ```
 
+## Children: a tool that plays other tools
+
+A tool with a `behaviour` is a parent: it has children, as a band has its players. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth` or `delay` (enable its extension in `project.json`), or a tool of this project, such as a `source`. The behaviour is a pure function of the record and the children that says how they connect. A parent leaves `kind` out.
+
+```ts
+import { list, ownSound, text, tool, type Connection, type Declaration } from "./sdk";
+
+tool({
+  name: "band",
+  title: "Band",
+  when: "You want a sound through a chain of effects that a record names",
+  doc: "Plays the child `lead` through the children `effects` names, in order.",
+  state: { lead: text({ default: "drone" }), effects: list(text(), { max: 4 }) },
+  behaviour: ({ state: { lead, effects } }): Declaration => {
+    const chain = [lead, ...effects];
+    const connections: Connection[] = chain.slice(1).map((effect, index) => ({
+      from: { child: chain[index] },
+      to: { child: effect },
+    }));
+    connections.push({ from: { child: chain[chain.length - 1] }, to: ownSound });
+    return { connections };
+  },
+});
+```
+
+- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`: each from an output of a child to an input of another child, or to `ownSound`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through.
+- A port is `audio` when left out; an instrument also has the input `notes`.
+- `ownSound` is the parent's own `sound`, which hears what reaches it as `input`. Its output is the parent's `audio` output. Put the parent at the top of a project that is one tool, or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound, not its notes, and plays into the track's mixer.
+- The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
+- A child or a port it names that is not there, or a behaviour that throws, is a problem of the parent's record. The rest plays.
+
+### Players: patterns in time with the bars
+
+A parent may also declare note players. A player loops one of its patterns at a time, to the sample, and plays it into a child's `notes`; a performer picks which with `launch`. A clip launcher, with an instrument `synth` and an effect `fx` as its children:
+
+```ts
+import { h, list, notes, number, ownSound, playerOf, tool, type Declaration } from "./sdk";
+
+const BAR = 3840; // ticks in a bar of 4/4
+
+tool({
+  name: "loops",
+  title: "Loops",
+  when: "You want bass patterns to launch in time with the bars",
+  doc: "Loops the patterns of `bass` on the child `synth`, through the child `fx`. `scene` is the one that plays before a launch.",
+  state: {
+    bass: list({ bars: number({ min: 1, max: 8, integer: true, default: 1 }), notes: notes() }, {
+      default: [{ notes: [{ start: 0, length: 480, pitch: 36, velocity: 100 }, { start: 1920, length: 480, pitch: 43, velocity: 100 }] }],
+    }),
+    scene: number({ min: 0, max: 7, integer: true }),
+  },
+  behaviour: ({ state }): Declaration => ({
+    players: { bass: { patterns: state.bass.map(({ bars, notes }) => ({ length: bars * BAR, notes })), plays: state.scene } },
+    connections: [
+      { from: { player: "bass" }, to: { child: "synth" } },
+      { from: { child: "synth" }, to: { child: "fx" } },
+      { from: { child: "fx" }, to: ownSound },
+    ],
+  }),
+  transport: true,
+  page: ({ state, watches, launch }) => {
+    const bass = playerOf(watches, "bass");
+    const button = (lit: boolean) => ({ padding: 8, radius: 6, background: lit ? "#7c3aed" : "#2a2f3a" }) as const;
+    return h("div", { style: { direction: "row", gap: 8, padding: 16 } },
+      state.bass.map((_, index) => h("div", { style: button(bass.playing === index), onClick: () => launch("bass", index) }, `Bass ${index + 1}`)),
+      h("div", { style: button(bass.queued === "stop"), onClick: () => launch("bass", null) }, "Stop"),
+    );
+  },
+});
+```
+
+- `players` holds each player by name: `{ patterns, plays? }`. A pattern is `{ length, notes }`, its length in ticks and each note starting inside it. `{ from: { player: "bass" }, to: { child: "synth" } }` plays it into the child's `notes`.
+- `plays` is the index of the pattern it plays before any launch, so `--render` plays it. It starts when the player is first declared; a change of it launches the new one at the next bar.
+- `launch(player, pattern, { quantize? })`, in a card, a page, `tick`, `onKey` and `onMidi`, plays the pattern of that index from the next bar line (`quantize: "beat"` or `"now"`), or stops with `null`; while the piece is stopped, at once. A launch is a performance: nothing saves it, no undo takes it back, and a render does not hear it.
+- `playerOf(watches, "bass")` says what plays: `{ playing, queued, phase }`.
+- A pattern with a note outside it is silent and a problem of the parent's record; a player or a pattern a launch names that is not there is a problem of the tool.
+
 ## Check your work
 
 1. `bun x tsc -p extensions` checks the types. The first run downloads TypeScript.
-2. `problems.txt`, or the problems `sound-tools . --inspect` prints, list what is wrong under `extensions/<file>`: a file that does not load, a tool definition that does not hold, a sound that does not build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change. Fix it and save; the problem goes.
-3. Use the tool as the composer will: write its record in a track (`"state": {}` is its defaults; an effect is also named in the track's `effects`). `--inspect` lists each track's instrument and effects with their tools. Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.
-
-## Limits
-
-A tool is sound in or out, with notes for an instrument or a source; an owner also plays its children and its patterns. Its control loop, `onKey` and `onMidi` run only while the window is open. Its knobs can be automated by the lanes of a track, as the numbers of any device. For a sound a built-in tool already makes, use the built-in one.
+2. `problems.txt`, or the problems `sound-tools . --inspect` prints, list what is wrong under `extensions/<file>`: a file that does not load, a tool definition that does not hold, a sound that does not build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change.
+3. Use the tool as the composer will: write its record (`"state": {}` is its defaults; an effect in a track is also named in the track's `effects`). `--inspect` lists each track's instrument and effects with their tools. Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.

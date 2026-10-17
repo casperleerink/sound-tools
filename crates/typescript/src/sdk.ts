@@ -61,7 +61,7 @@ export interface SampleField {
 
 // Data a behaviour, a card and a page read: no signal, so `sound` does not get them.
 
-/** Notes in ticks, 960 to a quarter note, from where the owner's code plays them. */
+/** Notes in ticks, 960 to a quarter note, from where the parent's code plays them. */
 export interface NotesField {
   kind: "notes";
   /** `[]` when left out. */
@@ -618,13 +618,13 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    */
   sound?: (fields: SoundOf<S, C>) => Operand | Stereo;
   /**
-   * Makes it an owner: its record is `state/<name>/instance.json` and the records next to it
+   * Makes it a parent: its record is `state/<name>/instance.json` and the records next to it
    * are its children. A pure function of its record and its children that says how they
    * connect and what its note players loop. It runs in Bun when either changes, and what it
    * declares plays a moment later; the sound plays on meanwhile. Its own `sound` hears what it
    * connects to `ownSound` as `input`, and is its `audio` output.
    */
-  behaviour?: (owner: Owner<S>) => Declaration;
+  behaviour?: (parent: Parent<S>) => Declaration;
   /**
    * What the control loop and the card of an instance keep, and nothing saves: positions of
    * a simulation, the last thing played. Made new for each instance, and when the code loads.
@@ -658,13 +658,13 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
 }
 
 /** What a behaviour gets. */
-export interface Owner<S extends Fields> {
+export interface Parent<S extends Fields> {
   state: ValuesOf<S>;
   /** The records next to its own, in name order. */
   children: OwnedChild[];
 }
 
-/** A child of an owner: its record. */
+/** A child of a parent: its record. */
 export interface OwnedChild {
   /** Its file name without `.json`. */
   name: string;
@@ -683,12 +683,12 @@ export interface ChildPort {
   port?: string;
 }
 
-/** The notes a player of the owner plays, by its name in `players`. */
+/** The notes a player of the parent plays, by its name in `players`. */
 export interface PlayerPort {
   player: string;
 }
 
-/** The owner's own `sound` as the end of a connection: what reaches it is its `input`. */
+/** The parent's own `sound` as the end of a connection: what reaches it is its `input`. */
 export const ownSound = "sound" as const;
 
 /** Joins an output to an input: of two children, of a player and a child, or into `ownSound`. */
@@ -722,11 +722,11 @@ export interface Player {
 /** What a behaviour declares. A JSON value: no functions, no classes. */
 export interface Declaration {
   connections: Connection[];
-  /** Note players of the owner, by name. Each shows what it plays in `watches`, see `playerOf`. */
+  /** Note players of the parent, by name. Each shows what it plays in `watches`, see `playerOf`. */
   players?: Record<string, Player>;
 }
 
-/** What a player plays, as the owner's card and page see it. */
+/** What a player plays, as the parent's card and page see it. */
 export interface Playing {
   /** The index of the pattern that plays, or null. */
   playing: number | null;
@@ -736,7 +736,7 @@ export interface Playing {
   phase: number;
 }
 
-/** What the player `player` plays, from the `watches` of its owner. */
+/** What the player `player` plays, from the `watches` of its parent. */
 export function playerOf(watches: Record<string, number>, player: string): Playing {
   const index = (value: number | undefined) => (value === undefined || value < 0 ? null : value);
   const queued = watches[`${player}.queued`];
@@ -797,7 +797,7 @@ export interface Performer<C extends Controls> {
   /** Lets go of a note `play` holds. */
   release(pitch: number, options?: { at?: number }): void;
   /**
-   * Plays the pattern of index `pattern` of the owner's player `player`, or stops it with
+   * Plays the pattern of index `pattern` of the parent's player `player`, or stops it with
    * `null`, from the next bar line (`quantize` when given) while the piece plays, else at once.
    * What played goes on until then.
    */
