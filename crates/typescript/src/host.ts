@@ -5,7 +5,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Field, Fields, Graph, Handler as Heard, Midi, Node, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Controls, Field, Fields, Graph, Handler as Heard, Midi, Node, Owner, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -37,7 +37,7 @@ type Request =
   | { type: "key"; time: number; instance: Looped; key: string; down: boolean }
   | { type: "midi"; time: number; instances: Looped[]; messages: Midi[] }
   | { type: "drop"; card: number }
-  | { type: "behaviour"; question: number; tool: string; state: State; children: unknown[] };
+  | ({ type: "behaviour"; question: number; tool: string } & Owner<Fields>);
 
 type Canvas = Extract<Node, { type: "canvas" }>;
 /** What the runtime gets of a node: a handler is its index. */
@@ -213,15 +213,10 @@ function specOf(tool: string): Spec {
   return spec;
 }
 
-const DATA = new Set(["notes", "text", "number", "list"]);
-
 /** The sound graph of a tool for these choices. */
 function sound(spec: Spec, choices: Choices): Graph {
   const fields: Record<string, unknown> = {};
   for (const [name, field] of Object.entries(spec.state)) {
-    if (DATA.has(field.kind)) {
-      continue;
-    }
     fields[name] =
       field.kind === "choice"
         ? (choices[name] ?? field.default)
@@ -244,8 +239,8 @@ function declare({ question, tool, state, children }: Extract<Request, { type: "
       throw new Error(`${tool} has no behaviour`);
     }
     runs(tool, "behaviour");
-    // What the runtime reads: a function or a class in it would be lost on the way.
-    return JSON.parse(JSON.stringify(spec.behaviour({ state, children } as never)));
+    // Here, so a value JSON cannot hold, such as a cycle, is the owner's problem and does not throw in `send`.
+    return JSON.parse(JSON.stringify(spec.behaviour({ state, children })));
   });
   send({ type: "declared", question, declaration });
 }
@@ -409,7 +404,7 @@ function render(asked: Render) {
     const trees = handlers.get(card) ?? new Map<number, Handler[]>();
     const last = lastTrees.get(card);
     // The same tree keeps its version, with the handlers of this draw.
-    if (last?.text === text && trees.has(last.version)) {
+    if (last?.text === text) {
       trees.set(last.version, kept);
       same = true;
       return null;

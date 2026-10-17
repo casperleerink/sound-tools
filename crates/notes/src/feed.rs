@@ -6,13 +6,6 @@ use sound_core::{EventInput, EventOutput, Ports, PrepareConfig, ProcessContext, 
 
 use crate::NoteEvent;
 
-/// What the control side sends to a [`NoteFeed`].
-pub enum NoteFeedUpdate {
-    /// What plays into the feed changed: the next block releases everything the instrument
-    /// holds before it passes anything on.
-    Release,
-}
-
 /// Connected to one instrument for as long as that instrument is there, with the senders of
 /// notes connected to it instead of to the instrument.
 #[derive(Default)]
@@ -26,7 +19,9 @@ impl NoteFeed {
 }
 
 impl Processor for NoteFeed {
-    type Update = NoteFeedUpdate;
+    /// What plays into the feed changed: the next block releases everything the instrument
+    /// holds before it passes anything on.
+    type Update = ();
 
     fn ports(&self) -> Ports {
         Ports::new()
@@ -36,10 +31,8 @@ impl Processor for NoteFeed {
 
     fn prepare(&mut self, _: &PrepareConfig) {}
 
-    fn update(&mut self, update: &mut NoteFeedUpdate) {
-        match update {
-            NoteFeedUpdate::Release => self.release = true,
-        }
+    fn update(&mut self, (): &mut ()) {
+        self.release = true;
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {

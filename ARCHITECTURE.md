@@ -144,7 +144,6 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Each automated device gets its own small player on the track, so it sees that device's latency lead and its events need no device id.
 - A player sends every lane every block, also while stopped, and a number that hears nothing goes back to its record. Rejected: sending only what moved, as the expression lanes do, because a removed player cannot say it is gone.
 - Where a lane bends inside a block, the engine plays the device's block in pieces, so no device needs code for it.
-- How fast a number moves is decided once, in `Lane`, for built-in devices and tools of the project alike.
 - Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
 - A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.
 - An audio clip plays at its file's speed, so a tempo change moves only its start. Every audio clip edge and jump gets a short ramp, so nothing clicks.
@@ -205,13 +204,12 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `crates/ui` and `crates/runtime/src/window`.
 
-- `Session` is the one GPUI entity that owns the `Project`.
 - Views read state when they render and keep no copy of saved state, so an outside edit shows at once, also mid-drag.
 - Views and device offers are registered per tool, so the track panel knows no instrument or plugin.
 - The playhead is its own entity, because GPUI redraws a notified view and everything above it.
 - `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to an extension.
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
-- The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app.
+- The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
 - Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 - No error tracking in the cloud. The window's stdout and stderr go to `log.txt` in the support folder, which the composer can send.
 
@@ -233,7 +231,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 A tool an agent writes plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
 
-- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one. The window never waits on it. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
+- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one, and code that hangs is left out until the folder changes. The window never waits on it. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays; then the behaviour runs again with the record it has. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between, also in a template: nobody wrote it, it needed a parser, and an eval found it no better.

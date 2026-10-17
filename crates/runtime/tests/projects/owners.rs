@@ -1,6 +1,6 @@
 //! Tools of the project that own children: a behaviour in TypeScript says how the children
 //! connect, Bun works it out while the sound plays, and a render waits for it. Bun is not part
-//! of the build, so where it is not installed, as in CI, these tests say so and pass.
+//! of the build, so where it is not installed, these tests say so and pass.
 
 use std::path::Path;
 

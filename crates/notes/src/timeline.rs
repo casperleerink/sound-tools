@@ -66,7 +66,9 @@ impl NoteTimeline {
     }
 
     pub(crate) fn starting_in(&self, range: &Range<Ticks>) -> &[PlacedNote] {
-        starting_in(&self.notes, range)
+        let first = self.notes.partition_point(|note| note.start < range.start);
+        let last = self.notes.partition_point(|note| note.start < range.end);
+        self.notes.get(first..last).unwrap_or_default()
     }
 
     pub(crate) fn pedal_starting_in(&self, range: &Range<Ticks>) -> &[PlacedPedal] {
@@ -106,13 +108,6 @@ impl NoteTimeline {
 /// The whole note is the key, so the same notes always give the same order.
 pub(crate) fn sort(notes: &mut [PlacedNote]) {
     notes.sort_unstable_by_key(|note| (note.start, note.pitch, note.end, note.velocity));
-}
-
-/// The notes of `notes`, sorted with [`sort`], that start in `range`.
-pub(crate) fn starting_in<'a>(notes: &'a [PlacedNote], range: &Range<Ticks>) -> &'a [PlacedNote] {
-    let first = notes.partition_point(|note| note.start < range.start);
-    let last = notes.partition_point(|note| note.start < range.end);
-    notes.get(first..last).unwrap_or_default()
 }
 
 /// Where the note of `notes`, sorted with [`sort`], that started at `start` with `pitch` ends

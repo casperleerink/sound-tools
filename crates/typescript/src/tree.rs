@@ -48,6 +48,20 @@ pub(crate) enum Node {
     Canvas(CanvasNode),
 }
 
+impl Node {
+    /// Whether it draws a watch here, as it is now, and not from the tree.
+    pub(crate) fn shows_watches(&self) -> bool {
+        match self {
+            Self::Meter { .. }
+            | Self::Steps {
+                playing: Some(_), ..
+            } => true,
+            Self::Div { children, .. } => children.iter().any(Self::shows_watches),
+            _ => false,
+        }
+    }
+}
+
 /// A surface the code draws shapes on, which hears the pointer.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

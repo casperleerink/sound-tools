@@ -42,7 +42,7 @@ use sound_core::{Place, State, Ticks};
 
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
-pub use feed::{NoteFeed, NoteFeedUpdate};
+pub use feed::NoteFeed;
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
 pub use pattern::{Launch, Pattern, PatternError, Quantize};
 pub use player::{

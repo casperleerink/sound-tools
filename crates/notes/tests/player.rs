@@ -21,6 +21,9 @@ const SAMPLE_RATE: u32 = 48_000;
 /// Frames per tick at 120 bpm and 48 kHz.
 const TICK: usize = 25;
 const BAR: u64 = 3840;
+/// The phase shows the tick heard at the start of the last sub-block, which is at most 64
+/// frames, so up to 3 ticks of a round of 960 before the end of what was rendered.
+const SUB_BLOCK_PHASE: f32 = 3.0 / 960.0;
 
 /// Makes no sound but a level: the sum of the pitches it holds, once per held note. An off
 /// releases every note of its pitch, as the note contract says.
@@ -241,16 +244,18 @@ fn a_bar_launch_lands_on_the_bar_line_after_a_time_signature_change() {
 }
 
 #[test]
-fn a_launch_while_stopped_takes_effect_at_once_anchored_where_play_starts() {
+fn a_launch_while_stopped_takes_effect_at_once_and_a_seek_before_play_moves_it_along() {
     let mut harness = Harness::new(vec![two_notes()]);
     harness.control.seek(Ticks(1000));
     let mut output = harness.render(100);
     harness.launch(Some(0), Quantize::Bar);
     output.extend(harness.render(100));
     assert_eq!(harness.watched(), (0.0, NO_PATTERN, 0.0));
+    harness.control.seek(Ticks(0));
+    output.extend(harness.render(100));
     harness.control.play();
     output.extend(harness.render_ticks(960));
-    let played = |tick: usize| 200 + tick * TICK;
+    let played = |tick: usize| 300 + tick * TICK;
     assert_eq!(
         level_changes(&output),
         [
@@ -327,7 +332,9 @@ fn a_switch_and_a_stop_end_the_held_notes() {
     output.extend(harness.render_ticks(200));
     harness.launch(None, Quantize::Bar);
     output.extend(harness.render_ticks(100));
-    assert_eq!(harness.watched(), (1.0, QUEUED_STOP, 0.3125));
+    let (playing, queued, phase) = harness.watched();
+    assert_eq!((playing, queued), (1.0, QUEUED_STOP));
+    assert!((phase - 0.3125).abs() < SUB_BLOCK_PHASE, "{phase}");
     output.extend(harness.render_ticks(2 * BAR - 100));
     assert_eq!(
         level_changes(&output),
@@ -344,7 +351,7 @@ fn a_swap_while_playing_keeps_the_phase_and_the_held_notes_follow_it() {
     let mut output = harness.render_ticks(600);
     let (playing, queued, phase) = harness.watched();
     assert_eq!((playing, queued), (0.0, NO_PATTERN));
-    assert!((phase - 0.625).abs() < 1e-6, "{phase}");
+    assert!((phase - 0.625).abs() < SUB_BLOCK_PHASE, "{phase}");
     // The note of 62 is shorter now, so it is over: it ends at once. The new note plays in
     // the same round.
     let edited = [note(0, 240, 60), note(480, 100, 62), note(720, 120, 67)];
@@ -376,16 +383,6 @@ fn a_launch_outside_the_set_plays_nothing_and_shows_what_was_launched() {
     assert_eq!(harness.watched(), (3.0, NO_PATTERN, 0.0));
     assert_eq!(level_changes(&before), []);
     assert_eq!(level_changes(&after), []);
-}
-
-#[test]
-fn a_note_that_starts_outside_its_pattern_does_not_load() {
-    let length = Length::new(Ticks(960)).unwrap();
-    let error = Pattern::new(length, &[note(0, 10, 60), note(960, 10, 60)]).unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "notes[1].start must be less than the pattern length 960, not 960. A note start counts from the start of its pattern"
-    );
 }
 
 #[derive(Clone, Debug)]

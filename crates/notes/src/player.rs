@@ -220,6 +220,14 @@ impl Processor for NotePlayer {
             // `AllOff` puts the pedal of the instrument up and its lanes at rest as well.
             *sent_pedal = Pedal::UP;
             *sent_expression = Expression::REST;
+            // A seek while stopped moves where play starts, so a launch there moves with it. A
+            // pause keeps the anchor, so play from the same spot keeps the phase.
+            if transport.jumped
+                && !transport.playing
+                && let Some(launched) = launched
+            {
+                launched.anchor = transport.heard_tick;
+            }
         }
         // The pedal, before the notes of this block: an off at the first tick of the block must
         // see the pedal the clips ask for. Only while playing, because the pedal of a stopped
@@ -346,7 +354,7 @@ impl Processor for NotePlayer {
                 launch => shown(launch.and_then(|launch| launch.pattern)),
             });
             let phase = playing(*launched).map(|(pattern, launched)| {
-                let phase = pattern.phase(launched.anchor, range.end);
+                let phase = pattern.phase(launched.anchor, transport.heard_tick);
                 (phase.0 as f64 / pattern.length().ticks().0 as f64) as f32
             });
             watches.phase.set(phase.unwrap_or(0.0));

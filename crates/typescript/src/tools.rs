@@ -19,8 +19,8 @@ use sound_core::{
     JsonToolDoc, Node, OutputEndpoint, ParameterInfo, Problem, Ticks, ValueRange, Watch,
 };
 use sound_notes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, Launch, Length, NOTES_INPUT, Note, NoteFeed, NoteFeedUpdate,
-    NotePlayer, NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
+    AUDIO_INPUT, AUDIO_OUTPUT, Launch, Length, NOTES_INPUT, Note, NoteFeed, NotePlayer,
+    NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
 };
 use sound_signals::{
     ArraySpec, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec, Signals,
@@ -31,7 +31,7 @@ use crate::behaviours::{
     self, Declaration, FromPort, Own, Player, PlayerPattern, PlayerPort, ToPort,
 };
 use crate::bun::Bun;
-use crate::{FOLDER, samples};
+use crate::{FOLDER, samples, tree};
 
 /// A tool as `host.ts` sends it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -224,12 +224,12 @@ impl Field {
     /// The value a record that leaves the field out has.
     fn default_value(&self) -> Value {
         match self {
-            Self::Knob { default, .. } => Value::from(*default),
+            Self::Knob { default, .. } => tree::decimal(*default),
             Self::Toggle { default, .. } => Value::from(*default),
             Self::Choice { default, .. } => default.to_value(),
             Self::Pattern {
                 length, default, ..
-            } => Value::from(vec![*default; *length]),
+            } => Value::from(vec![tree::decimal(*default); *length]),
             Self::Sample { .. } => Value::from(""),
             Self::Notes { default, .. } => default.clone().unwrap_or(Value::Array(Vec::new())),
             Self::List { default, .. } => {
@@ -1063,14 +1063,12 @@ impl Sounds {
         let children =
             Value::Array(children.map_err(|error| BehaviourError::Other(error.to_string()))?);
         let state = self.info.with_defaults(state.clone());
-        let mut hasher = DefaultHasher::new();
-        (&self.info.name, state.to_string(), children.to_string()).hash(&mut hasher);
         let instance = (context.assets(), context.id());
         let declared = behaviours::declared(
             bun,
             instance,
             &self.info.name,
-            hasher.finish(),
+            key(&(&self.info.name, state.to_string(), children.to_string())),
             (&state, &children),
         );
         if let Some(problem) = declared.problem {
@@ -1166,7 +1164,7 @@ fn wire(
     for (child, feed) in &feeds {
         let senders = fed.get(child.as_str());
         if context.changed(&format!("feed:{child}.senders"), key(&senders)) {
-            context.update(*feed, NoteFeedUpdate::Release)?;
+            context.update(*feed, ())?;
         }
     }
     Ok(())

@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { list, number, ownSound, text, tool } from "./sdk";
+import { list, number, ownSound, text, tool, type Declaration } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -22,4 +22,17 @@ tool({
     const connections = [{ from: { child: name + steps + plain }, to: ownSound }];
     return { connections };
   },
+});
+
+tool({
+  name: "typo",
+  title: "Typo",
+  when: "Never",
+  doc: "Typo.",
+  state: {},
+  behaviour: (): Declaration => ({
+    connections: [],
+    // @ts-expect-error: a misspelled key, which only the annotated return type catches.
+    player: {},
+  }),
 });

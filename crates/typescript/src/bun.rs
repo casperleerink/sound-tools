@@ -411,7 +411,6 @@ impl Bun {
         self.events.clone()
     }
 
-    /// Which Bun of the process this is.
     pub(crate) fn number(&self) -> u64 {
         self.number
     }

@@ -366,8 +366,7 @@ fn write_sdk(extensions: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Whether this machine has a Bun to run the tools with. Tests that need one pass without it,
-/// as in CI.
+/// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
 pub fn has_bun() -> bool {
     bun_program().is_some()
 }

@@ -1,7 +1,7 @@
 //! Tools of the project in the window, run by Bun: a key on a page and a note of the MIDI
-//! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes back; a save of a tool
-//! keeps the sample it plays. Bun is not part
-//! of the build, so where it is not installed, as in CI, these tests say so and pass.
+//! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes
+//! back; a save of a tool keeps the sample it plays. Bun is not part of the build, so where it
+//! is not installed, these tests say so and pass.
 
 use std::path::Path;
 use std::time::{Duration, Instant};

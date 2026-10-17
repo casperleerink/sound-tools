@@ -716,7 +716,7 @@ export interface Player {
    * player is first declared, and again as a launch at the next bar when this changes. None when
    * left out.
    */
-  plays?: number | null;
+  plays?: number;
 }
 
 /** What a behaviour declares. A JSON value: no functions, no classes. */
@@ -1002,10 +1002,8 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
         rows.push(Steps({ path: name, max: field.max }));
       } else if (field.kind === "sample") {
         rows.push(SampleChooser({ path: name, label }));
-      } else if (field.kind !== "toggle" && field.kind !== "choice") {
-        // Data its own card draws, if it has one.
       } else if (field.kind === "toggle") {
-        const on = (state[name] as boolean | undefined) ?? field.default;
+        const on = state[name] as boolean;
         buttons.push(
           h("div", {
             style: on ? CHOSEN : BUTTON,
@@ -1014,8 +1012,8 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
             }),
           }, label),
         );
-      } else {
-        const chosen = (state[name] as string | number | undefined) ?? field.default;
+      } else if (field.kind === "choice") {
+        const chosen = state[name];
         rows.push(
           h("div", { style: { direction: "row", gap: 4, align: "center" } },
             h("div", { style: { color: "#9ca3af" } }, label),

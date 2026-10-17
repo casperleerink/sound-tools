@@ -1238,10 +1238,10 @@ impl FreeIds {
     }
 }
 
-/// Plays one note now through the instrument of a track, for [`sound_notes::PREVIEW_SECONDS`], also while
-/// the project does not play: what a note editor calls when a note is clicked, drawn or moved
-/// to a new pitch. The off comes from the sequencer of the track, so the caller has nothing
-/// to end. Not an edit: nothing is saved.
+/// Plays one note now through the instrument of a track, for
+/// [`sound_notes::PREVIEW_SECONDS`], also while the project does not play: what a note editor
+/// calls when a note is clicked, drawn or moved to a new pitch. The off comes from the
+/// sequencer of the track, so the caller has nothing to end. Not an edit: nothing is saved.
 pub fn preview_note(
     project: &mut Project,
     track: &InstanceId,

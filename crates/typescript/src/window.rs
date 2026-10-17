@@ -85,9 +85,11 @@ enum Host {
 
 impl Host {
     /// Tells Bun something. Nothing while no Bun runs: the next one draws every card again.
-    fn send(&mut self, request: &Request) {
-        if let Self::Running { bun, .. } = self {
-            bun.send(request);
+    /// Whether it went.
+    fn send(&mut self, request: &Request) -> bool {
+        match self {
+            Self::Running { bun, .. } => bun.send(request),
+            _ => false,
         }
     }
 }
@@ -102,6 +104,8 @@ struct Card {
     tree: Option<Result<(u64, Rc<Node>), String>>,
     /// The watches the last tree was drawn with, which native elements read too.
     watches: BTreeMap<String, f32>,
+    /// The last tree has a meter or steps, which show the watches as they are.
+    shows_watches: bool,
     /// The transport the last tree was asked with.
     transport: Option<Transport>,
     /// A render was asked for and its tree has not come yet.
@@ -530,6 +534,7 @@ impl Live {
             surface,
             tree: None,
             watches: BTreeMap::new(),
+            shows_watches: false,
             transport: None,
             asked: false,
             record_sent: false,
@@ -578,10 +583,7 @@ impl Live {
             };
             Some(state)
         };
-        entry.asked = true;
-        entry.record_sent = true;
         let transport = transport_of(session.read(cx), cx);
-        entry.transport = Some(transport);
         let request = Request::Render {
             card,
             instance: &entry.id,
@@ -591,7 +593,12 @@ impl Live {
             page,
             transport,
         };
-        self.host.send(&request);
+        // A render that did not go is not waited for: the next change asks again.
+        if self.host.send(&request) {
+            entry.asked = true;
+            entry.record_sent = true;
+            entry.transport = Some(transport);
+        }
     }
 
     /// The record of the instance of the card changed: it draws again with it.
@@ -856,9 +863,9 @@ impl Live {
                 time,
                 instances,
             };
-            self.host.send(&request);
+            let sent = self.host.send(&request);
             if let Host::Running { ticking, .. } = &mut self.host {
-                *ticking = true;
+                *ticking = sent;
             }
         }
     }
@@ -870,7 +877,7 @@ impl Live {
             return;
         };
         let mut moved = Vec::new();
-        let mut watches_moved_anywhere = false;
+        let mut shown_watches_moved = false;
         let tools = self.tools.borrow();
         let transport = transport_of(session.read(cx), cx);
         for (card, entry) in &mut self.cards {
@@ -884,7 +891,7 @@ impl Live {
             // the transport of its last draw.
             let watches_changed = watches != entry.watches;
             let watches_moved = watches_changed && !info.is_some_and(|info| info.tick);
-            watches_moved_anywhere |= watches_changed;
+            shown_watches_moved |= watches_changed && entry.shows_watches;
             entry.watches = watches;
             let transport_moved =
                 info.is_some_and(|info| info.transport) && entry.transport != Some(transport);
@@ -896,8 +903,8 @@ impl Live {
         for card in &moved {
             self.render(*card, cx);
         }
-        // A meter shows the watches as they are; what the transport moves comes with a tree.
-        if watches_moved_anywhere {
+        // What else the watches and the transport move comes with a tree.
+        if shown_watches_moved {
             cx.notify();
         }
     }
@@ -924,9 +931,12 @@ impl Live {
                 };
                 entry.asked = false;
                 entry.tree = Some(tree.and_then(|(version, tree)| {
-                    let node = serde_json::from_value(tree).map_err(|error| error.to_string())?;
+                    let node: Node =
+                        serde_json::from_value(tree).map_err(|error| error.to_string())?;
                     Ok((version, Rc::new(node)))
                 }));
+                entry.shows_watches =
+                    matches!(&entry.tree, Some(Ok((_, node))) if node.shows_watches());
                 if std::mem::take(&mut entry.stale) {
                     self.render(card, cx);
                 }

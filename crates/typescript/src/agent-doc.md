@@ -110,21 +110,21 @@ const wet = combs.reduce((sum, comb) => sum.plus(comb)).over(combs.length);
 | `choice({ options, default, label? })` | one of `options` | the option itself | switches to the sound of that option; it fades in over 10 ms |
 | `pattern({ length, min, max, default, label? })` | a list of `length` numbers | a table: `.at(index)` | at once |
 | `sample({ label? })` | the name of a file under `assets/audio/`, such as `"voice.wav"`, or `""` | a table of its sound: one channel at the engine's rate, up to 60 s | at once, once the file is there |
-| `notes({ label? })` | a list of notes, `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`, times in ticks (960 a quarter) | nothing: data | its behaviour runs again |
+| `notes({ default?, label? })` | a list of notes, `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`, times in ticks (960 a quarter) | nothing: data | its behaviour runs again |
 | `text({ default?, label? })` | text | nothing: data | its behaviour runs again |
 | `number({ min, max, integer?, default?, label? })` | a number; `default` is `min` when left out | nothing: data | its behaviour runs again |
-| `list(item, { max?, label? })` | a list of `item`: a field, or an object of fields such as `{ name: text(), notes: notes() }` | nothing: data | its behaviour runs again |
+| `list(item, { max?, default?, label? })` | a list of `item`: a field, or an object of fields such as `{ name: text(), notes: notes() }` | nothing: data | its behaviour runs again |
 
 `unit` is `"hz"`, `"ms"`, `"db"` or `"percent"`: the card shows it, a knob in `"hz"` turns on a log scale, and one in `"percent"` still holds 0 to 1. At most 32 knobs and toggles.
 
-Data fields are for a behaviour, a card and a page; `sound` does not get them. The runtime checks them, also inside lists, and a message names the path, such as `state.lanes[1].notes[3].pitch`.
+The runtime checks data fields, also inside lists, and a message names the path, such as `state.lanes[1].notes[3].pitch`.
 
 ## An owner: children and a behaviour
 
 A tool with a `behaviour` owns children, as a band owns its players. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth` or `delay` (enable its extension in `project.json`), or a tool of this project, such as a `source`. The behaviour is a pure function of the record and the children that says how they connect:
 
 ```ts
-import { list, ownSound, text, tool, type Connection } from "./sdk";
+import { list, ownSound, text, tool, type Connection, type Declaration } from "./sdk";
 
 tool({
   name: "band",
@@ -132,7 +132,7 @@ tool({
   when: "You want a sound through a chain of effects that a record names",
   doc: "Plays the child `lead` through the children `effects` names, in order.",
   state: { lead: text({ default: "drone" }), effects: list(text(), { max: 4 }) },
-  behaviour: ({ state: { lead, effects } }) => {
+  behaviour: ({ state: { lead, effects } }): Declaration => {
     const chain = [lead, ...effects];
     const connections: Connection[] = chain.slice(1).map((effect, index) => ({
       from: { child: chain[index] },
@@ -144,7 +144,7 @@ tool({
 });
 ```
 
-- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. It returns `{ connections }`: each from an output of a child to an input of another child, or to `ownSound`.
+- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`: each from an output of a child to an input of another child, or to `ownSound`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through.
 - A port is `audio` when left out; an instrument also has the input `notes`.
 - `ownSound` is the owner's own `sound`, which hears what reaches it as `input`. Its output is the owner's `audio` output. Put the owner at the top of the project and connect that to the speakers in `project.json`, as a page does below; or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound, not its notes, and plays into the track's mixer.
 - The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
@@ -155,7 +155,7 @@ tool({
 An owner may also declare note players. A player loops one of its patterns at a time, to the sample, and plays it into a child's `notes`; a performer picks which with `launch`. A clip launcher, with an instrument `synth` and an effect `fx` as its children:
 
 ```ts
-import { h, list, notes, number, ownSound, playerOf, tool } from "./sdk";
+import { h, list, notes, number, ownSound, playerOf, tool, type Declaration } from "./sdk";
 
 const BAR = 3840; // ticks in a bar of 4/4
 
@@ -170,7 +170,7 @@ tool({
     }),
     scene: number({ min: 0, max: 7, integer: true }),
   },
-  behaviour: ({ state }) => ({
+  behaviour: ({ state }): Declaration => ({
     players: { bass: { patterns: state.bass.map(({ bars, notes }) => ({ length: bars * BAR, notes })), plays: state.scene } },
     connections: [
       { from: { player: "bass" }, to: { child: "synth" } },
@@ -190,7 +190,7 @@ tool({
 });
 ```
 
-- `players` holds each player by name: `{ patterns, plays? }`. A pattern is `{ length, notes }`, its length in ticks (960 a quarter, 3840 a bar of 4/4) and each note starting inside it. `{ from: { player: "bass" }, to: { child: "synth" } }` plays it into the child's `notes`.
+- `players` holds each player by name: `{ patterns, plays? }`. A pattern is `{ length, notes }`, its length in ticks and each note starting inside it. `{ from: { player: "bass" }, to: { child: "synth" } }` plays it into the child's `notes`.
 - `plays` is the index of the pattern it plays before any launch, so `--render` plays it. It starts when the player is first declared; a change of it launches the new one at the next bar.
 - `launch(player, pattern, { quantize? })`, in a card, a page, `tick`, `onKey` and `onMidi`, plays the pattern of that index from the next bar line (`quantize: "beat"` or `"now"`), or stops with `null`; while the piece is stopped, at once. A launch is a performance: nothing saves it, no undo takes it back, and a render does not hear it.
 - `playerOf(watches, "bass")` says what plays: `{ playing, queued, phase }`.
