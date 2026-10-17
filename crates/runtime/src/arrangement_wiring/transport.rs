@@ -74,6 +74,19 @@ struct Take {
 /// The height of the pill, in the 48 pt title row.
 const HEIGHT: f32 = 36.;
 
+/// What the pill shows, by the main view.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    /// The arrangement: everything.
+    Arrangement,
+    /// A page that asks for the transport: no record, seek strip, duration or steadiness,
+    /// which belong to the arrangement.
+    Transport,
+    /// The computer keys, while something takes notes, and the master meter: a tool that needs
+    /// more draws it in its own page.
+    KeysAndMeter,
+}
+
 /// A drag of the tempo, from the press to its end.
 struct TempoDrag {
     /// The tick of the tempo change this drag edits, picked at the press. By its tick and
@@ -95,8 +108,8 @@ pub struct TransportPill {
     /// The fit of the project, when it has one. Finding it walks every instance, and this is
     /// read on every frame, so it is kept between events like the end of the project.
     fit: Option<Instance<FitState>>,
-    /// Whether the main area shows the arrangement.
-    arrangement_is_main: bool,
+    /// By the main view, as of the last refresh or poll.
+    shown: Shown,
     /// Whether something takes the notes of the keyboard, as of the last poll.
     takes_notes: bool,
     end_is_stale: bool,
@@ -269,7 +282,7 @@ impl TransportPill {
         Self {
             end: session.read(cx).project().end(),
             fit: fit_tempo::fit_of(session.read(cx).project()),
-            arrangement_is_main: arrangement_is_main(&session, cx),
+            shown: shown(&session, cx),
             takes_notes: false,
             end_is_stale: false,
             seen: *session.read(cx).playhead().read(cx),
@@ -315,8 +328,12 @@ impl TransportPill {
         let track = track.map(|track| track.id().clone());
         let timing = self.timing.clone();
         let recording_track = self.take.as_ref().map(|take| take.midi_track.clone());
-        if self.takes_notes != destination.is_some() {
+        // A tool of the project may ask for the transport in a new load of its code, which is
+        // no project event.
+        let shown = shown(&session, cx);
+        if self.takes_notes != destination.is_some() || self.shown != shown {
             self.takes_notes = destination.is_some();
+            self.shown = shown;
             cx.notify();
         }
         self.poll_audio(cx);
@@ -692,7 +709,7 @@ impl TransportPill {
         let project = self.session.read(cx).project();
         self.end = project.end();
         self.fit = fit_tempo::fit_of(project);
-        self.arrangement_is_main = arrangement_is_main(&self.session, cx);
+        self.shown = shown(&self.session, cx);
         self.end_is_stale = false;
         // Without an end there is no strip, and no mouse up on it would end a drag.
         if self.end.is_none() {
@@ -723,10 +740,15 @@ fn print_midi_report(latency: Latency, lost: Lost) {
     }
 }
 
-fn arrangement_is_main(session: &Entity<Session>, cx: &App) -> bool {
+fn shown(session: &Entity<Session>, cx: &App) -> Shown {
     let project = session.read(cx).project();
-    Views::main_instance(session, cx)
-        .is_some_and(|main| project.resolve::<ArrangementState>(&main).is_some())
+    match Views::main_instance(session, cx) {
+        Some(main) if project.resolve::<ArrangementState>(&main).is_some() => Shown::Arrangement,
+        Some(main) if sound_typescript::page_shows_transport(project, &main, cx) => {
+            Shown::Transport
+        }
+        _ => Shown::KeysAndMeter,
+    }
 }
 
 /// Minutes and seconds, as `1:07`.
@@ -772,9 +794,7 @@ impl TransportPill {
             }))
     }
 
-    /// No play, tempo, record or seek: a tool that needs them draws them in its own page. The
-    /// computer keys, while something takes notes, and the master meter stay.
-    fn without_arrangement(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn keys_and_meter(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex()
             .flex_none()
@@ -791,9 +811,11 @@ impl TransportPill {
 impl Render for TransportPill {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh(cx);
-        if !self.arrangement_is_main {
-            return self.without_arrangement(cx);
-        }
+        let arrangement = match self.shown {
+            Shown::Arrangement => true,
+            Shown::Transport => false,
+            Shown::KeysAndMeter => return self.keys_and_meter(cx),
+        };
         let theme = cx.theme();
         let (fill, border, muted, green, red) = (
             theme.gray_200.blend(theme.alpha_at(0.06)),
@@ -805,13 +827,12 @@ impl Render for TransportPill {
         let Playhead { playing, tick, .. } = *self.playhead.read(cx);
         let project = self.session.read(cx).project();
         let (bar_beat, time) = position_texts(project, tick);
-        let duration = self
-            .end
-            .map(|end| clock_time(project.clock().seconds_of(end)));
+        let end = self.end.filter(|_| arrangement);
+        let duration = end.map(|end| clock_time(project.clock().seconds_of(end)));
         let tempo = self.tempo(cx);
         let time_signature = self.time_signature(cx);
-        let steadiness = self.steadiness(cx);
-        let strip = self.end.map(|end| self.strip(end, cx));
+        let steadiness = arrangement.then(|| self.steadiness(cx)).flatten();
+        let strip = end.map(|end| self.strip(end, cx));
         let click_on = self.click_is_on();
         let has_click = self.click.is_some();
         let recording = self.is_recording();
@@ -869,7 +890,7 @@ impl Render for TransportPill {
                     )
                     // Red, like every record control anywhere: a red ring while it is off, and
                     // solid red while it records, which a laptop screen shows from afar.
-                    .child(
+                    .children(arrangement.then(|| {
                         Button::icon_only("record", "circle")
                             .variant(match recording {
                                 true => ButtonVariant::Solid(red),
@@ -880,8 +901,8 @@ impl Render for TransportPill {
                             .disabled(!can_record)
                             .debug_selector(|| "record".to_string())
                             .focus_handle(&self.record_focus)
-                            .on_click(cx.listener(|pill, _, _, cx| pill.toggle_recording(cx))),
-                    ),
+                            .on_click(cx.listener(|pill, _, _, cx| pill.toggle_recording(cx)))
+                    })),
             )
             // No fixed widths: tabular numbers keep the pill still, and it grows by one digit
             // at bar 100 or at ten minutes.
