@@ -59,6 +59,12 @@ tool({
       { from: { child: "ears", bang: "onset" }, to: { child: "drop", live: "rate" } },
       // @ts-expect-error: and notes are no sound.
       { from: { child: "ears", notes: "hits" }, to: { child: "fx" } },
+      // @ts-expect-error: a sound moves no live control.
+      { from: { child: "lfo" }, to: { child: "drop", live: "rate" } },
+      // @ts-expect-error: and fires no trigger.
+      { from: { child: "lfo" }, to: { child: "drop", trigger: "hit" } },
+      // @ts-expect-error: one port has the key of one kind.
+      { from: { child: "ears", notes: "hits", number: "level" }, to: { child: "synth", notes: "notes" } },
     ],
   }),
 });
@@ -98,6 +104,8 @@ tool({
     output("hits", { gate: input, pitch: 60 });
     // @ts-expect-error: notes need a pitch.
     output("broken", { gate: input });
+    // @ts-expect-error: a bang or notes, not both.
+    output("both", { bang: input, gate: input, pitch: 60 });
     return input;
   },
 });

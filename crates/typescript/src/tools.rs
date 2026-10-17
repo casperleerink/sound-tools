@@ -1143,7 +1143,8 @@ fn wire(
 ) -> Result<(), BehaviourError> {
     let feeds = feeds(context)?;
     let mut cables = BTreeSet::new();
-    let mut fed: BTreeMap<&str, BTreeSet<&FromPort>> = BTreeMap::new();
+    // By the port too, so a sender that is another processor now is another sender.
+    let mut fed: BTreeMap<&str, BTreeSet<(&FromPort, String)>> = BTreeMap::new();
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
         let (child, port, from) = match &connection.from {
@@ -1211,11 +1212,13 @@ fn wire(
                 context.problem(format!(
                     "its behaviour declares {at}, {description}, between ports of two kinds, such as sound and notes"
                 ));
+                continue;
             }
             connected => connected?,
         }
         if let Some(child) = feed {
-            fed.entry(child).or_default().insert(&connection.from);
+            let sender = (&connection.from, format!("{output:?}"));
+            fed.entry(child).or_default().insert(sender);
         }
     }
     for (child, feed) in &feeds {

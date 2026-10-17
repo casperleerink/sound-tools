@@ -191,7 +191,8 @@ impl Processor for Sequencer {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        for timed in context.event_inputs.get(Self::LAUNCH) {
+        // The last of the block: two cables would launch each other's pattern again every block.
+        if let Some(timed) = context.event_inputs.get(Self::LAUNCH).last() {
             let pattern = launched(timed.event.0);
             if self.heard != Some(pattern) {
                 self.heard = Some(pattern);

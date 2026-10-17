@@ -79,7 +79,7 @@ fn a_render_of_the_launcher_of_the_doc_plays_the_pattern_its_sequencer_names_on_
 }
 
 #[test]
-fn an_edit_of_a_pattern_plays_at_once_and_a_note_outside_it_is_a_problem() {
+fn an_edit_of_a_pattern_plays_and_a_note_outside_it_is_a_problem() {
     let record = |start: u64| {
         let note = format!(r#"{{"start": {start}, "length": 240, "pitch": 48, "velocity": 100}}"#);
         let patterns = format!(r#"[{{"length": 3840, "notes": [{note}]}}]"#);

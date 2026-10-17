@@ -300,6 +300,7 @@ impl Signals {
                         std::mem::swap(live, &mut was[index]);
                     }
                 }
+                self.sending.follow(old, code);
             }
             self.parameters = values.parameters.map(Smoothed::new);
             self.aimed = values.parameters;
@@ -838,10 +839,35 @@ impl Processor for Signals {
 }
 
 impl Sending {
+    /// Follows the outputs from `old` code to `new` by name: the port of an output may move. An
+    /// output that is gone forgets its note: the feed it played into lets go when it changes.
+    fn follow(&mut self, old: &Code, new: &Code) {
+        let mut sending = Self {
+            bangs: [false; MAX_OUTPUTS],
+            notes: [None; MAX_OUTPUTS],
+        };
+        for (index, name) in new.bangs.iter().enumerate() {
+            if let (Some(old), Some(bang)) = (
+                old.bangs.iter().position(|old| old == name),
+                sending.bangs.get_mut(index),
+            ) {
+                *bang = self.bangs.get(old).copied().unwrap_or(false);
+            }
+        }
+        for (index, name) in new.notes.iter().enumerate() {
+            if let (Some(old), Some(note)) = (
+                old.notes.iter().position(|old| old == name),
+                sending.notes.get_mut(index),
+            ) {
+                *note = self.notes.get(old).copied().flatten();
+            }
+        }
+        *self = sending;
+    }
+
     /// Sends what `events` of the bangs and the notes of the code give in the first `frames`:
     /// a bang where its signal goes above 0, and a note while its gate is above 0, at the
-    /// pitch and velocity it starts with, ended where the gate falls or the pitch moves. A
-    /// note of an output the code no longer has ends.
+    /// pitch and velocity it starts with, ended where the gate falls or the pitch moves.
     fn send(
         &mut self,
         events: &[[f32; MAX_BLOCK]],
@@ -863,9 +889,6 @@ impl Sending {
         for (index, held) in self.notes.iter_mut().enumerate() {
             let port = Signals::notes(index);
             let Some([gate, pitch, velocity]) = rows.next() else {
-                if let Some(pitch) = held.take() {
-                    outputs.push(port, 0, NoteEvent::Off { pitch });
-                }
                 continue;
             };
             let frames = gate
@@ -879,8 +902,12 @@ impl Sending {
                 if wanted == *held {
                     continue;
                 }
-                if let Some(pitch) = held.take() {
-                    outputs.push(port, frame, NoteEvent::Off { pitch });
+                if let Some(pitch) = *held {
+                    // A dropped off would hold the note for ever: what follows waits for it.
+                    if !outputs.push(port, frame, NoteEvent::Off { pitch }) {
+                        break;
+                    }
+                    *held = None;
                 }
                 if let Some(pitch) = wanted {
                     let velocity = Velocity::nearest((velocity * 127.0).round() as i64);

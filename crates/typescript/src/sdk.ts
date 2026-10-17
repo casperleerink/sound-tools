@@ -370,7 +370,7 @@ interface Building {
   watches: Array<{ name: string; value: Operand }>;
   numbers: Array<{ name: string; value: Operand }>;
   bangs: Array<{ name: string; value: Operand }>;
-  notes: Array<{ name: string } & Required<Notes>>;
+  notes: Array<{ name: string; gate: Operand; pitch: Operand; velocity: Operand }>;
 }
 
 let current: Building | undefined;
@@ -533,6 +533,7 @@ export interface Notes {
   pitch: Operand;
   /** 0 to 1, as it starts; 0.8 when left out. */
   velocity?: Operand;
+  bang?: never;
 }
 
 /**
@@ -540,14 +541,14 @@ export interface Notes {
  * drives; `{ bang }`, a bang where it goes above 0; or `Notes`, a note that ends where the gate
  * falls or the pitch moves. Inside `sound` only; an instrument sends only numbers.
  */
-export function output(name: string, value: Operand | { bang: Operand } | Notes): void {
+export function output(name: string, value: Operand | { bang: Operand; gate?: never } | Notes): void {
   const declared = building();
   if (typeof value === "number" || value instanceof Signal) {
     declared.numbers.push({ name, value });
-  } else if ("bang" in value) {
-    declared.bangs.push({ name, value: value.bang });
-  } else {
+  } else if (value.bang === undefined) {
     declared.notes.push({ name, gate: value.gate, pitch: value.pitch, velocity: value.velocity ?? 0.8 });
+  } else {
+    declared.bangs.push({ name, value: value.bang });
   }
 }
 
@@ -715,48 +716,27 @@ export interface OwnedChild {
   state: unknown;
 }
 
+/** The keys that name a port of a child, one for each kind of what it carries. */
+type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger";
+
+/** A port of a child under the key `K` and no other, so a connection joins two of one kind. */
+type PortOf<K extends PortKey> = { child: string } & Record<K, string> & { [Other in Exclude<PortKey, K>]?: never };
+
 /** A sound port of a child: `audio` when left out. An effect has an `audio` input and output. */
-export interface ChildPort {
-  child: string;
-  port?: string;
-  /** None: a connection joins two of one kind. */
-  notes?: never;
-  number?: never;
-  bang?: never;
-}
-
+export type ChildPort = Partial<PortOf<"port">> & { child: string };
 /** Notes of a child: its input `notes`, such as an instrument's, or notes it sends out. */
-export interface ChildNotes {
-  child: string;
-  notes: string;
-}
-
+export type ChildNotes = PortOf<"notes">;
 /**
  * A number of a child: one it sends out with `output`, or a knob it takes, such as the knob
  * `cutoff_hz` of a `filter` or a knob of a tool of the project.
  */
-export interface ChildNumber {
-  child: string;
-  number: string;
-}
-
+export type ChildNumber = PortOf<"number">;
 /** A bang a child sends out with `output`. */
-export interface ChildBang {
-  child: string;
-  bang: string;
-}
-
+export type ChildBang = PortOf<"bang">;
 /** A live control of a child, or another number it plays from, such as `launch` of a `sequencer`. */
-export interface ChildLive {
-  child: string;
-  live: string;
-}
-
+export type ChildLive = PortOf<"live">;
 /** A trigger of a child. */
-export interface ChildTrigger {
-  child: string;
-  trigger: string;
-}
+export type ChildTrigger = PortOf<"trigger">;
 
 /** The parent's own `sound` as the end of a connection: what reaches it is its `input`. */
 export const ownSound = "sound" as const;

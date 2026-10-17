@@ -761,12 +761,28 @@ fn patched(
     (kind, receiver): (Kind, Code),
     join: impl FnOnce(&mut sound_core::Edit<'_>, Node<Signals>, Node<Signals>),
 ) -> Played {
+    patched_in(
+        EngineConfig::new(SAMPLE_RATE, 2),
+        sender,
+        (kind, receiver),
+        join,
+    )
+    .0
+}
+
+/// [`patched`] in an engine of `config`, and the sender.
+fn patched_in(
+    config: EngineConfig,
+    sender: Code,
+    (kind, receiver): (Kind, Code),
+    join: impl FnOnce(&mut sound_core::Edit<'_>, Node<Signals>, Node<Signals>),
+) -> (Played, Node<Signals>) {
     let signals = |kind, code: Code| {
         let watches: Vec<Watch> = code.watches.iter().map(|_| Watch::new()).collect();
         let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
         Signals::new(kind, machine, Values::default(), watches)
     };
-    let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let (mut control, engine) = Engine::new(config);
     let mut edit = control.edit();
     let sender = edit
         .add_processor("sender", signals(Kind::Source, sender))
@@ -778,12 +794,13 @@ fn patched(
         .unwrap();
     join(&mut edit, sender, receiver);
     edit.commit().unwrap();
-    Played {
+    let played = Played {
         control,
         engine,
         signals: receiver,
         watches: Vec::new(),
-    }
+    };
+    (played, sender)
 }
 
 /// A [`Cable`] from `output` of `sender` into the controls of `receiver`, at `place`.
@@ -882,4 +899,91 @@ fn notes_a_sound_makes_from_a_signal_play_an_instrument_on_their_frames() {
         [at(99), at(100), at(299), at(300), at(499), at(500)],
         [0.0, 69.0, 69.0, 81.0, 81.0, 0.0]
     );
+}
+
+/// Notes of `notes(index)` of a sender into an instrument that plays `pitch / 100` while held.
+fn notes_into(
+    index: usize,
+) -> impl FnOnce(&mut sound_core::Edit<'_>, Node<Signals>, Node<Signals>) {
+    move |edit, sender, receiver| {
+        let notes = Connection::new(
+            sender.id(),
+            Signals::notes(index),
+            receiver.id(),
+            Signals::NOTES,
+        );
+        edit.connect(notes).unwrap();
+    }
+}
+
+#[test]
+fn a_note_off_that_finds_no_room_is_sent_in_the_next_block() {
+    // One event a block: the off at frame 20 comes after the on at frame 10.
+    let sender = compile(|| {
+        output_notes(
+            "notes",
+            between(frame_count(), 10.0, 20.0),
+            69.0.into(),
+            0.8.into(),
+        );
+        0.0
+    });
+    let config = EngineConfig {
+        event_capacity: 1,
+        ..EngineConfig::new(SAMPLE_RATE, 2)
+    };
+    let receiver = (
+        Kind::Instrument { voices: 1 },
+        compile(|| gate() * pitch() / 100.0),
+    );
+    let (mut played, _) = patched_in(config, sender, receiver, notes_into(0));
+    let mut output = vec![0.0; 2 * 1_024];
+    for block in output.chunks_mut(2 * 64) {
+        played.engine.process_block(block);
+    }
+    let at = |frame: usize| (output[2 * frame] * 100.0).round();
+    assert_eq!(
+        [at(9), at(10), at(63), at(64), at(1_023)],
+        [0.0, 69.0, 69.0, 0.0, 0.0]
+    );
+}
+
+#[test]
+fn a_held_note_follows_its_output_to_another_port_when_the_code_changes() {
+    let held = compile(|| {
+        output_notes("a", 1.0.into(), 60.0.into(), 0.8.into());
+        output_notes("b", 1.0.into(), 72.0.into(), 0.8.into());
+        0.0
+    });
+    let receiver = (
+        Kind::Instrument { voices: 2 },
+        compile(|| gate() * pitch() / 100.0),
+    );
+    let (mut played, sender) = patched_in(
+        EngineConfig::new(SAMPLE_RATE, 2),
+        held,
+        receiver,
+        notes_into(1),
+    );
+    assert_eq!((played.render(128)[127] * 100.0).round(), 72.0);
+
+    // `a` goes, so `b` moves to the first port, and lets go.
+    let let_go = compile(|| {
+        output_notes("b", 0.0.into(), 72.0.into(), 0.8.into());
+        0.0
+    });
+    let mut edit = played.control.edit();
+    edit.update(sender, new_code(Kind::Source, let_go)).unwrap();
+    let from = |index| {
+        Connection::new(
+            sender.id(),
+            Signals::notes(index),
+            played.signals.id(),
+            Signals::NOTES,
+        )
+    };
+    edit.disconnect(&from(1)).unwrap();
+    edit.connect(from(0)).unwrap();
+    edit.commit().unwrap();
+    assert_eq!(played.render(128)[127], 0.0);
 }
