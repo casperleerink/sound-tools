@@ -37,7 +37,7 @@ tool({
 - `kind`: `"effect"` (the default) goes in a track's `effects` and hears the track through `input`. `"instrument"` is what a track plays, its `instrument.json`: the sound runs once per note, up to 8 at a time. `"source"` is what a track plays too, but one voice that runs all the time, notes or not: a drone, a texture, a generative part; it follows the newest held note.
 - `state`: the fields of its record. A field name is lowercase letters, digits and `_`.
 - `controls`: what its card plays and nothing saves, see below.
-- `sound`: the sound, as a `Signal`.
+- `sound`: the sound, as a `Signal`. Left out, it passes `input` through.
 
 ## The sound
 
@@ -110,8 +110,45 @@ const wet = combs.reduce((sum, comb) => sum.plus(comb)).over(combs.length);
 | `choice({ options, default, label? })` | one of `options` | the option itself | switches to the sound of that option; it fades in over 10 ms |
 | `pattern({ length, min, max, default, label? })` | a list of `length` numbers | a table: `.at(index)` | at once |
 | `sample({ label? })` | the name of a file under `assets/audio/`, such as `"voice.wav"`, or `""` | a table of its sound: one channel at the engine's rate, up to 60 s | at once, once the file is there |
+| `notes({ label? })` | a list of notes, `{"start": 0, "length": 480, "pitch": 60, "velocity": 100}`, times in ticks (960 a quarter) | nothing: data | its behaviour runs again |
+| `text({ default?, label? })` | text | nothing: data | its behaviour runs again |
+| `number({ min, max, integer?, default?, label? })` | a number; `default` is `min` when left out | nothing: data | its behaviour runs again |
+| `list(item, { max?, label? })` | a list of `item`: a field, or an object of fields such as `{ name: text(), notes: notes() }` | nothing: data | its behaviour runs again |
 
 `unit` is `"hz"`, `"ms"`, `"db"` or `"percent"`: the card shows it, a knob in `"hz"` turns on a log scale, and one in `"percent"` still holds 0 to 1. At most 32 knobs and toggles.
+
+Data fields are for a behaviour, a card and a page; `sound` does not get them. The runtime checks them, also inside lists, and a message names the path, such as `state.lanes[1].notes[3].pitch`.
+
+## An owner: children and a behaviour
+
+A tool with a `behaviour` owns children, as a band owns its players. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth` or `delay` (enable its extension in `project.json`), or a tool of this project, such as a `source`. The behaviour is a pure function of the record and the children that says how they connect:
+
+```ts
+import { list, text, tool, type Connection } from "./sdk";
+
+tool({
+  name: "band",
+  title: "Band",
+  when: "You want a sound through a chain of effects that a record names",
+  doc: "Plays the child `lead` through the children `effects` names, in order.",
+  state: { lead: text({ default: "drone" }), effects: list(text(), { max: 4 }) },
+  behaviour: ({ state: { lead, effects } }) => {
+    const chain = [lead, ...effects];
+    const connections: Connection[] = chain.slice(1).map((effect, index) => ({
+      from: { child: chain[index] },
+      to: { child: effect },
+    }));
+    connections.push({ from: { child: chain[chain.length - 1] }, to: "sound" });
+    return { connections };
+  },
+});
+```
+
+- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. It returns `{ connections }`: each from an output of a child to an input of another child, or to `"sound"`.
+- A port is `audio` when left out; an instrument also has the input `notes`.
+- `"sound"` is the owner's own `sound`, which hears what reaches it as `input`. Its output is the owner's `audio` output: put the owner at the top of the project and connect it to the speakers in `project.json`, as a page does below.
+- The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
+- A child or a port it names that is not there, or a behaviour that throws, is a problem of the owner's record. The rest plays.
 
 ## Controls
 
@@ -245,4 +282,4 @@ tool({
 
 ## Limits
 
-A tool is sound in or out, with notes for an instrument or a source. Its control loop, `onKey` and `onMidi` run only while the window is open. Its knobs can be automated by the lanes of a track, as the numbers of any device. For a sound a built-in tool already makes, use the built-in one.
+A tool is sound in or out, with notes for an instrument or a source; an owner also plays its children. Its control loop, `onKey` and `onMidi` run only while the window is open. Its knobs can be automated by the lanes of a track, as the numbers of any device. For a sound a built-in tool already makes, use the built-in one.

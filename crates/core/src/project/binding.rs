@@ -445,6 +445,25 @@ impl BehaviourContext<'_> {
         self.id.children_in(self.instances).map(|(id, _)| id.name())
     }
 
+    /// Every owned child as (name, tool, its state as JSON), in name order, for an owner whose
+    /// behaviour reads its children without their types, such as a tool written in another
+    /// language.
+    pub fn child_records(
+        &self,
+    ) -> impl Iterator<Item = (&str, &'static str, Result<String, serde_json::Error>)> {
+        let children = self.id.children_in(self.instances);
+        children.map(|(id, record)| (id.name(), record.tool, record.state.to_json()))
+    }
+
+    /// The names of the outputs and the inputs the owned child `name` exposed, for a message
+    /// that says what it has. `None` when there is no such child with ports.
+    pub fn child_ports(&self, name: &str) -> Option<(Vec<&str>, Vec<&str>)> {
+        let binding = self.bindings.get(&self.id.child(name).ok()?)?;
+        let outputs = binding.outputs.keys().map(String::as_str).collect();
+        let inputs = binding.inputs.keys().map(String::as_str).collect();
+        Some((outputs, inputs))
+    }
+
     /// The state of the owned child `name`, when it exists and holds a `C`.
     pub fn child<C: State>(&self, name: &str) -> Option<&C> {
         self.instances.get(&self.id.child(name).ok()?)?.state()

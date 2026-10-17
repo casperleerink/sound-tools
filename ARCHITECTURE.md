@@ -26,7 +26,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 - The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
 - macOS is the main platform. Linux and Windows build and pass the tests; platform code sits behind `cfg`. Plugin windows are not offered on Linux, where plugins need an X11 parent and a host run loop.
 - System programs come from the system, never the `PATH` (`sound_core::process`).
-- Sound Tools is a standalone app. Running it as a plugin inside another DAW is out of scope.
+- Running Sound Tools as a plugin inside another DAW is out of scope.
 
 ## The core knows no music
 
@@ -100,7 +100,7 @@ my-piece/
 
 `crates/core/src/project/generated.rs`.
 
-- The runtime writes `AGENTS.md` (a map, with one line per doc on when to open it), `CLAUDE.md` (imports the map), and one file per doc in `agent-docs/`. A map plus docs, because one big doc stopped scaling with the extensions; agents read only the docs their task needs.
+- The runtime writes `AGENTS.md` (a map), `CLAUDE.md`, and one file per doc in `agent-docs/`. A map plus docs, because one big doc stopped scaling with the extensions; agents read only the docs their task needs.
 - Extensions register their docs; the sources are product content (`extensions/*/agent-doc.md`, `crates/core/src/project/*.md`). A doc never outlives its tools, and the generated docs contain nothing of the machine.
 - A runtime test loads every JSON example in every doc, so the docs cannot drift from the formats.
 - The composer's instructions are plain text: `instructions.md` in the project travels with the piece; one file in the support folder is for every project. Both are edited in the sidebar, so a composer never needs a text editor.
@@ -212,7 +212,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - The playhead is its own entity, because GPUI redraws a notified view and everything above it.
 - `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to an extension.
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows correctly for free.
-- The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
+- The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app.
 - Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 - No error tracking in the cloud. The window's stdout and stderr go to `log.txt` in the support folder, which the composer can send.
 
@@ -232,14 +232,15 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 ## Tools of the project
 
-A composer asks the agent for a tool no extension has, and it plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
+A tool an agent writes plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
 
-- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun. A file change, a crash or a hang starts a fresh Bun; code that hangs is blamed and left out until the folder changes. The window never waits on Bun. Rejected: reloading code inside Bun, which cannot read a changed import again and has no answer to a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
+- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun. A code change, a crash or a hang starts a fresh Bun. The window never waits on Bun. Rejected: reloading code inside Bun, which cannot read a changed import again and has no answer to a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads, and an agent hears what is wrong with it, without Bun.
+- **An owner's behaviour runs in Bun and lands as a service.** A change plays the last declaration until Bun answers; then the behaviour runs again with the record it has. Renders and inspect wait for the answers. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between, which nobody wrote by hand and needed a parser. Rejected: that language in a template, which an eval found no better for agents.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without asking Bun: Bun sends a graph for every combination of choices up front.
-- **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps every render bit for bit the same; `tooling/perf` measures them. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
+- **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps every render bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
 - **Cards and pages** are trees of elements Bun draws; the window draws them with `crates/ui`. A `tick` plays like a performer and never changes the record.
 - **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, which would know nothing of where the notes went.
-- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills, which did no better in an eval and need project settings the agent runs without. `tooling/agent-eval` checks agent results.
+- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills, which did no better in an eval and need project settings the agent runs without.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

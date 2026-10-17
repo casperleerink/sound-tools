@@ -15,15 +15,17 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
-    Assets, BehaviourContext, BehaviourError, InputEndpoint, InstanceId, JsonTool, JsonToolDoc,
-    OutputEndpoint, ParameterInfo, Problem, ValueRange, Watch,
+    Assets, BehaviourContext, BehaviourError, GraphError, InputEndpoint, InstanceId, JsonTool,
+    JsonToolDoc, OutputEndpoint, ParameterInfo, Problem, ValueRange, Watch,
 };
-use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT};
+use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note};
 use sound_signals::{
     ArraySpec, Code, ControlSpec, Declarations, Graph, Kind, Machine, ParameterSpec, Signals,
     SignalsUpdate, Values,
 };
 
+use crate::behaviours::{self, ChildPort, Declaration, FromPort, Own, ToPort};
+use crate::bun::Bun;
 use crate::{FOLDER, samples};
 
 /// A tool as `host.ts` sends it.
@@ -52,6 +54,8 @@ pub(crate) struct ToolInfo {
     pub keys: bool,
     /// It hears the MIDI keyboard, `onMidi`.
     pub midi: bool,
+    /// It owns children and has a behaviour, which declares how they connect.
+    pub behaviour: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -108,6 +112,28 @@ pub(crate) enum Field {
         default: f32,
         label: Option<String>,
     },
+    /// Notes in ticks. This and the kinds below are data a behaviour reads: no signal.
+    Notes { label: Option<String> },
+    Text {
+        default: Option<String>,
+        label: Option<String>,
+    },
+    Number {
+        min: f64,
+        max: f64,
+        #[serde(default)]
+        integer: bool,
+        /// `min` when left out.
+        default: Option<f64>,
+        label: Option<String>,
+    },
+    List {
+        item: Box<Field>,
+        max: Option<usize>,
+        label: Option<String>,
+    },
+    /// An item of a list that holds several fields.
+    Object { fields: Named<Field> },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -194,7 +220,216 @@ impl Field {
                 length, default, ..
             } => Value::from(vec![*default; *length]),
             Self::Sample { .. } => Value::from(""),
+            Self::Notes { .. } | Self::List { .. } => Value::Array(Vec::new()),
+            Self::Text { default, .. } => Value::from(default.clone().unwrap_or_default()),
+            Self::Number {
+                min,
+                default,
+                integer,
+                ..
+            } => number_value(default.unwrap_or(*min), *integer),
+            Self::Object { fields } => fields.with_defaults(Value::Object(Map::new())),
         }
+    }
+
+    /// Whether it is data a behaviour reads, which the sound does not get.
+    pub(crate) fn is_data(&self) -> bool {
+        matches!(
+            self,
+            Self::Notes { .. }
+                | Self::Text { .. }
+                | Self::Number { .. }
+                | Self::List { .. }
+                | Self::Object { .. }
+        )
+    }
+
+    /// Whether `value` is one this field takes. `at` is its path, which the message starts
+    /// with, such as `state.lanes[1].notes[3].pitch: ...`.
+    fn check(&self, value: &Value, at: &str) -> Result<(), String> {
+        let in_range =
+            |number: f64, min: f32, max: f32| number >= f64::from(min) && number <= f64::from(max);
+        match self {
+            Self::Knob { min, max, .. } => {
+                let Some(number) = value.as_f64() else {
+                    return Err(format!("{at}: must be a number from {min} to {max}"));
+                };
+                if !in_range(number, *min, *max) {
+                    return Err(format!("{at}: {number} is outside [{min}, {max}]"));
+                }
+            }
+            Self::Toggle { .. } => {
+                if !value.is_boolean() {
+                    return Err(format!("{at}: must be true or false"));
+                }
+            }
+            Self::Choice { options, .. } => {
+                if !Choice::of(value).is_some_and(|choice| options.contains(&choice)) {
+                    let options: Vec<String> = options.iter().map(Choice::to_string).collect();
+                    return Err(format!("{at}: must be one of {}", options.join(", ")));
+                }
+            }
+            Self::Sample { .. } => {
+                let Some(file) = value.as_str() else {
+                    return Err(format!(
+                        "{at}: must be the name of a file under assets/audio/, such as \"voice.wav\", or \"\" for none"
+                    ));
+                };
+                if !file.is_empty() {
+                    sound_media::AudioAsset::new(file).map_err(|error| format!("{at}: {error}"))?;
+                }
+            }
+            Self::Pattern {
+                length, min, max, ..
+            } => {
+                let numbers = value.as_array().map(|items| {
+                    items
+                        .iter()
+                        .map(Value::as_f64)
+                        .collect::<Option<Vec<f64>>>()
+                });
+                let Some(Some(numbers)) = numbers else {
+                    return Err(format!("{at}: must be a list of {length} numbers"));
+                };
+                if numbers.len() != *length {
+                    return Err(format!(
+                        "{at}: must be a list of {length} numbers, not {}",
+                        numbers.len()
+                    ));
+                }
+                if let Some((index, number)) =
+                    (numbers.iter().enumerate()).find(|(_, number)| !in_range(**number, *min, *max))
+                {
+                    return Err(format!("{at}[{index}]: {number} is outside [{min}, {max}]"));
+                }
+            }
+            Self::Notes { .. } => {
+                let Some(notes) = value.as_array() else {
+                    return Err(format!(
+                        "{at}: must be a list of notes such as {NOTE_EXAMPLE}"
+                    ));
+                };
+                for (index, note) in notes.iter().enumerate() {
+                    if let Err(error) = serde_path_to_error::deserialize::<_, Note>(note) {
+                        let path = error.path().to_string();
+                        let path = if path == "." {
+                            String::new()
+                        } else {
+                            format!(".{path}")
+                        };
+                        return Err(format!("{at}[{index}]{path}: {}", error.inner()));
+                    }
+                }
+            }
+            Self::Text { .. } => {
+                if !value.is_string() {
+                    return Err(format!("{at}: must be text in quotes"));
+                }
+            }
+            Self::Number {
+                min, max, integer, ..
+            } => {
+                let whole = if *integer {
+                    "a whole number"
+                } else {
+                    "a number"
+                };
+                let Some(number) = value.as_f64() else {
+                    return Err(format!("{at}: must be {whole} from {min} to {max}"));
+                };
+                if *integer && number.fract() != 0.0 {
+                    return Err(format!("{at}: {number} is no whole number"));
+                }
+                if number < *min || number > *max {
+                    return Err(format!("{at}: {number} is outside [{min}, {max}]"));
+                }
+            }
+            Self::List { item, max, .. } => {
+                let Some(items) = value.as_array() else {
+                    return Err(format!("{at}: must be a list"));
+                };
+                if let Some(max) = max
+                    && items.len() > *max
+                {
+                    return Err(format!("{at}: holds {} items, at most {max}", items.len()));
+                }
+                for (index, value) in items.iter().enumerate() {
+                    item.check(value, &format!("{at}[{index}]"))?;
+                }
+            }
+            Self::Object { fields } => fields.check(value, at)?,
+        }
+        Ok(())
+    }
+
+    /// `value` with what it leaves out at its default, inside its lists and items too.
+    fn filled(&self, value: Value) -> Value {
+        match (self, value) {
+            (Self::List { item, .. }, Value::Array(items)) => {
+                Value::Array(items.into_iter().map(|value| item.filled(value)).collect())
+            }
+            (Self::Object { fields }, value) => fields.with_defaults(value),
+            (_, value) => value,
+        }
+    }
+}
+
+/// A note as a message shows it.
+const NOTE_EXAMPLE: &str = r#"{"start": 0, "length": 480, "pitch": 60, "velocity": 100}"#;
+
+/// A number as a record writes it: `4`, not `4.0`, when it is whole.
+fn number_value(number: f64, integer: bool) -> Value {
+    match integer {
+        true => Value::from(number as i64),
+        false => Value::from(number),
+    }
+}
+
+impl Named<Field> {
+    fn get(&self, name: &str) -> Option<&Field> {
+        let mut fields = self.0.iter();
+        fields
+            .find(|(field, _)| field == name)
+            .map(|(_, field)| field)
+    }
+
+    fn names(&self) -> String {
+        let names: Vec<&str> = self.0.iter().map(|(name, _)| name.as_str()).collect();
+        names.join(", ")
+    }
+
+    /// Whether `value` is an object of these fields. `at` is its path.
+    fn check(&self, value: &Value, at: &str) -> Result<(), String> {
+        let Value::Object(object) = value else {
+            return Err(format!(
+                "{at}: must be an object of the fields {}",
+                self.names()
+            ));
+        };
+        for (name, value) in object {
+            let Some(field) = self.get(name) else {
+                return Err(format!(
+                    "{at}.{name}: there is no field {name}; the fields are {}",
+                    self.names()
+                ));
+            };
+            field.check(value, &format!("{at}.{name}"))?;
+        }
+        Ok(())
+    }
+
+    /// `value` with each field it leaves out at its default, inside lists and items too.
+    fn with_defaults(&self, mut value: Value) -> Value {
+        if let Value::Object(object) = &mut value {
+            for (name, field) in &self.0 {
+                let filled = match object.remove(name) {
+                    Some(value) => field.filled(value),
+                    None => field.default_value(),
+                };
+                object.insert(name.clone(), filled);
+            }
+        }
+        value
     }
 }
 
@@ -249,6 +484,11 @@ impl ToolInfo {
                 Field::Sample { .. } => {
                     (declarations.arrays).push(list(name, None, 0.0, -1.0, 1.0))
                 }
+                Field::Notes { .. }
+                | Field::Text { .. }
+                | Field::Number { .. }
+                | Field::List { .. }
+                | Field::Object { .. } => {}
             }
         }
         for (name, control) in &self.controls.0 {
@@ -295,104 +535,26 @@ impl ToolInfo {
 
     /// Whether `state` is a record this tool takes. The message names the field.
     pub(crate) fn check(&self, state: &Value) -> Result<(), String> {
-        let Value::Object(object) = state else {
-            return Err("state: must be an object of the fields".to_string());
-        };
-        for (name, value) in object {
-            let Some(field) = self.field(name) else {
-                let names: Vec<&str> = self
-                    .fields
-                    .0
-                    .iter()
-                    .map(|(name, _)| name.as_str())
-                    .collect();
-                return Err(format!(
-                    "state.{name}: {} has no field {name}; its fields are {}",
-                    self.name,
-                    names.join(", ")
-                ));
-            };
-            let at = format!("state.{name}");
-            let in_range = |number: f64, min: f32, max: f32| {
-                number >= f64::from(min) && number <= f64::from(max)
-            };
-            match field {
-                Field::Knob { min, max, .. } => {
-                    let Some(number) = value.as_f64() else {
-                        return Err(format!("{at}: must be a number from {min} to {max}"));
-                    };
-                    if !in_range(number, *min, *max) {
-                        return Err(format!("{at}: {number} is outside [{min}, {max}]"));
-                    }
-                }
-                Field::Toggle { .. } => {
-                    if !value.is_boolean() {
-                        return Err(format!("{at}: must be true or false"));
-                    }
-                }
-                Field::Choice { options, .. } => {
-                    if !Choice::of(value).is_some_and(|choice| options.contains(&choice)) {
-                        let options: Vec<String> = options.iter().map(Choice::to_string).collect();
-                        return Err(format!("{at}: must be one of {}", options.join(", ")));
-                    }
-                }
-                Field::Sample { .. } => {
-                    let Some(file) = value.as_str() else {
-                        return Err(format!(
-                            "{at}: must be the name of a file under assets/audio/, such as \"voice.wav\", or \"\" for none"
-                        ));
-                    };
-                    if !file.is_empty() {
-                        sound_media::AudioAsset::new(file)
-                            .map_err(|error| format!("{at}: {error}"))?;
-                    }
-                }
-                Field::Pattern {
-                    length, min, max, ..
-                } => {
-                    let numbers = value.as_array().map(|items| {
-                        items
-                            .iter()
-                            .map(Value::as_f64)
-                            .collect::<Option<Vec<f64>>>()
-                    });
-                    let Some(Some(numbers)) = numbers else {
-                        return Err(format!("{at}: must be a list of {length} numbers"));
-                    };
-                    if numbers.len() != *length {
-                        return Err(format!(
-                            "{at}: must be a list of {length} numbers, not {}",
-                            numbers.len()
-                        ));
-                    }
-                    if let Some((index, number)) = (numbers.iter().enumerate())
-                        .find(|(_, number)| !in_range(**number, *min, *max))
-                    {
-                        return Err(format!("{at}[{index}]: {number} is outside [{min}, {max}]"));
-                    }
-                }
-            }
+        if let Value::Object(object) = state
+            && let Some(name) = object.keys().find(|name| self.field(name).is_none())
+        {
+            return Err(format!(
+                "state.{name}: {} has no field {name}; its fields are {}",
+                self.name,
+                self.fields.names()
+            ));
         }
-        Ok(())
+        self.fields.check(state, "state")
     }
 
     pub(crate) fn field(&self, name: &str) -> Option<&Field> {
-        let mut fields = self.fields.0.iter();
-        fields
-            .find(|(field, _)| field == name)
-            .map(|(_, field)| field)
+        self.fields.get(name)
     }
 
-    /// `state` with each field it leaves out at its default: the record as it plays.
-    pub(crate) fn with_defaults(&self, mut state: Value) -> Value {
-        if let Value::Object(object) = &mut state {
-            for (name, field) in &self.fields.0 {
-                if !object.contains_key(name) {
-                    object.insert(name.clone(), field.default_value());
-                }
-            }
-        }
-        state
+    /// `state` with each field it leaves out at its default: the record as it plays, in the
+    /// order of the fields, and inside lists too, as a behaviour reads it.
+    pub(crate) fn with_defaults(&self, state: Value) -> Value {
+        self.fields.with_defaults(state)
     }
 
     fn has_choices(&self) -> bool {
@@ -423,63 +585,131 @@ impl ToolInfo {
             doc,
             ..
         } = self;
-        let mut defaults = Vec::new();
         let mut rows =
             String::from("| Field | Kind | Values | Default |\n| --- | --- | --- | --- |\n");
-        for (field_name, field) in &self.fields.0 {
-            let (kind, values) = match field {
-                Field::Knob { min, max, unit, .. } => (
-                    "knob",
-                    format!("{min} to {max}{}", unit.map_or("", Unit::word)),
+        field_rows(&self.fields, "", &mut rows);
+        let defaults: Vec<String> = (self.fields.0.iter())
+            .map(|(name, field)| format!("{name:?}: {}", field.default_value()))
+            .collect();
+        let (place, example, path) = match (self.behaviour, self.kind) {
+            (true, _) => (
+                format!(
+                    "a tool of this project that owns children. Its record is \
+                     `state/{name}/instance.json`, and every record next to it, \
+                     `state/{name}/<child>.json`, is a child: any tool, such as a built-in \
+                     device whose extension `project.json` enables, or a tool of this project. Its \
+                     behaviour connects them, and connects them into its own sound, which is its \
+                     `audio` output. At the top of the project, connect that to the speakers in \
+                     `project.json`: `{{\"from\": {{\"instance\": \"{name}\", \"port\": \"audio\"}}, \
+                     \"to\": {{\"device_output\": 0}}}}`"
                 ),
-                Field::Toggle { .. } => ("toggle", "`true` or `false`".to_string()),
-                Field::Choice { options, .. } => {
-                    let options: Vec<String> = options.iter().map(|o| format!("`{o}`")).collect();
-                    ("choice", options.join(", "))
-                }
-                Field::Pattern {
-                    length, min, max, ..
-                } => (
-                    "pattern",
-                    format!("a list of {length} numbers from {min} to {max}"),
-                ),
-                Field::Sample { .. } => (
-                    "sample",
-                    "the name of a file under `assets/audio/`, such as `voice.wav`".to_string(),
-                ),
-            };
-            let default = field.default_value();
-            rows.push_str(&format!(
-                "| `{field_name}` | {kind} | {values} | `{default}` |\n"
-            ));
-            defaults.push(format!("{field_name:?}: {default}"));
-        }
-        let (place, path) = match self.kind {
-            ToolKind::Effect => (
+                "one at its defaults",
+                format!("state/{name}/instance.json"),
+            ),
+            (false, ToolKind::Effect) => (
                 "an effect of this project. It goes in a track's `effects` like any effect: the \
                  record sits in the track's folder and its file name is in `effects` of the \
-                 track's `instance.json`",
+                 track's `instance.json`"
+                    .to_string(),
+                "a track `pad` with one, at its defaults",
                 format!("state/arrangement/pad/{name}.json"),
             ),
-            ToolKind::Instrument | ToolKind::Source => (
+            (false, ToolKind::Instrument | ToolKind::Source) => (
                 "an instrument of this project. It is what a track plays, like any instrument: \
-                 its record is the track's `instrument.json`",
+                 its record is the track's `instrument.json`"
+                    .to_string(),
+                "a track `pad` with one, at its defaults",
                 "state/arrangement/pad/instrument.json".to_string(),
             ),
         };
+        let data = (self.fields.0.iter().any(|(_, field)| field.is_data()))
+            .then_some(
+                " A notes, text, number or list field is data for its behaviour, card and page, \
+                 not its sound: a change plays once Bun has run the behaviour again.",
+            )
+            .unwrap_or_default();
         format!(
             "# {title}\n\n{doc}\n\n\
-             `{name}` is {place}. It needs no entry in `project.json`, and is defined in \
-             `extensions/{file}`. An example, not a record of this project: a track `pad` \
-             with one, at its defaults:\n\n\
+             `{name}` is {place}. It is defined in `extensions/{file}`, and the `extensions` of \
+             `project.json` do not list it. An example, not a record of this project: {example}:\n\n\
              ```json {path}\n{{\n  \"tool\": \"{name}\",\n  \"state\": {{{}}}\n}}\n```\n\n\
              {rows}\n\
              A field left out is at its default, so `\"state\": {{}}` is the tool at its defaults. \
              A knob, a toggle or a pattern changes the sound at once. A choice changes what the \
              sound is made of: the new sound fades in over 10 ms. A knob can be automated by a \
-             lane of its track, as the numbers of any device (`agent-docs/arrangement.md`).\n",
+             lane of its track, as the numbers of any device (`agent-docs/arrangement.md`).{data}\n",
             defaults.join(", "),
         )
+    }
+}
+
+/// The rows of the doc of `fields`, whose paths start with `prefix`. The fields of the items
+/// of a list follow it, as `lanes[].name`.
+fn field_rows(fields: &Named<Field>, prefix: &str, rows: &mut String) {
+    for (name, field) in &fields.0 {
+        let path = format!("{prefix}{name}");
+        let (kind, values) = described(field);
+        let default = field.default_value();
+        rows.push_str(&format!("| `{path}` | {kind} | {values} | `{default}` |\n"));
+        let (mut item, mut items) = (field, path);
+        while let Field::List { item: inner, .. } = item {
+            item = inner;
+            items.push_str("[]");
+        }
+        if let Field::Object { fields } = item {
+            field_rows(fields, &format!("{items}."), rows);
+        }
+    }
+}
+
+/// The kind of a field and the values it takes, as the doc says them.
+fn described(field: &Field) -> (&'static str, String) {
+    match field {
+        Field::Knob { min, max, unit, .. } => (
+            "knob",
+            format!("{min} to {max}{}", unit.map_or("", Unit::word)),
+        ),
+        Field::Toggle { .. } => ("toggle", "`true` or `false`".to_string()),
+        Field::Choice { options, .. } => {
+            let options: Vec<String> = options.iter().map(|o| format!("`{o}`")).collect();
+            ("choice", options.join(", "))
+        }
+        Field::Pattern {
+            length, min, max, ..
+        } => (
+            "pattern",
+            format!("a list of {length} numbers from {min} to {max}"),
+        ),
+        Field::Sample { .. } => (
+            "sample",
+            "the name of a file under `assets/audio/`, such as `voice.wav`".to_string(),
+        ),
+        Field::Notes { .. } => (
+            "notes",
+            format!(
+                "a list of notes such as `{NOTE_EXAMPLE}`: `start` and `length` in ticks, 960 to a \
+                 quarter note, `pitch` 0 to 127, `velocity` 1 to 127"
+            ),
+        ),
+        Field::Text { .. } => ("text", "text in quotes".to_string()),
+        Field::Number {
+            min, max, integer, ..
+        } => {
+            let whole = if *integer {
+                "a whole number"
+            } else {
+                "a number"
+            };
+            ("number", format!("{whole} from {min} to {max}"))
+        }
+        Field::List { item, max, .. } => {
+            let items = match max {
+                Some(max) => format!("up to {max} items"),
+                None => "items".to_string(),
+            };
+            ("list", format!("{items}, each {}", described(item).1))
+        }
+        Field::Object { .. } => ("object", "with the fields below".to_string()),
     }
 }
 
@@ -492,6 +722,8 @@ pub(crate) struct Sounds {
     info: Arc<ToolInfo>,
     /// Compiled, by [`ToolInfo::sound_key`], or why that sound does not build.
     sounds: HashMap<String, Result<Arc<Code>, String>>,
+    /// The Bun that runs its behaviour, for a tool that owns children.
+    bun: Option<Arc<Bun>>,
 }
 
 impl Sounds {
@@ -500,6 +732,7 @@ impl Sounds {
     pub(crate) fn new(
         info: &ToolInfo,
         graphs: Vec<(Map<String, Value>, Result<Graph, String>)>,
+        bun: &Arc<Bun>,
     ) -> Self {
         let declarations = info.declarations();
         let sounds = (graphs.into_iter())
@@ -518,6 +751,7 @@ impl Sounds {
         Self {
             info: Arc::new(info.clone()),
             sounds,
+            bun: info.behaviour.then(|| bun.clone()),
         }
     }
 
@@ -546,6 +780,7 @@ impl Sounds {
             behaviour: Box::new(move |state, context| self.apply(state, context)),
             // A sample its record names may come after the record, as an audio clip's may.
             asset_folders: vec![sound_media::AUDIO_FOLDER],
+            owns_children: info.behaviour,
         }
     }
 
@@ -737,8 +972,120 @@ impl Sounds {
             let input = InputEndpoint::new(signals, Signals::AUTOMATION);
             context.runtime_automation(input, numbers)?;
         }
+        if let Some(bun) = &self.bun {
+            let sound = InputEndpoint::new(signals, Signals::INPUT);
+            self.declare(bun, state, sound, context)?;
+        }
         Ok(())
     }
+
+    /// Connects the children of an owner as its behaviour declares, and into `sound`, its own
+    /// sound: what Bun answered for its record and its children, or the last declaration while
+    /// Bun works it out.
+    fn declare(
+        &self,
+        bun: &Bun,
+        state: &Value,
+        sound: InputEndpoint,
+        context: &mut BehaviourContext<'_>,
+    ) -> Result<(), BehaviourError> {
+        let children = (context.child_records())
+            .map(|(name, tool, state)| {
+                let state: Value = serde_json::from_str(&state?)?;
+                Ok(serde_json::json!({ "name": name, "tool": tool, "state": state }))
+            })
+            .collect::<Result<Vec<Value>, serde_json::Error>>();
+        let children =
+            Value::Array(children.map_err(|error| BehaviourError::Other(error.to_string()))?);
+        let state = self.info.with_defaults(state.clone());
+        let mut hasher = DefaultHasher::new();
+        (&self.info.name, state.to_string(), children.to_string()).hash(&mut hasher);
+        let instance = (context.assets(), context.id());
+        let declared = behaviours::declared(
+            bun,
+            instance,
+            &self.info.name,
+            hasher.finish(),
+            (&state, &children),
+        );
+        if let Some(problem) = declared.problem {
+            context.problem(format!("{problem}. It plays what it declared last"));
+        }
+        wire(&declared.declaration, sound, context)
+    }
+}
+
+/// Makes the connections of `declaration`. One that names a child or a port the owner does not
+/// have, or joins ports of two kinds, is a problem, and the others play.
+fn wire(
+    declaration: &Declaration,
+    sound: InputEndpoint,
+    context: &mut BehaviourContext<'_>,
+) -> Result<(), BehaviourError> {
+    if let Some(player) = declaration.players.values().next() {
+        match *player {}
+    }
+    for (index, connection) in declaration.connections.iter().enumerate() {
+        let at = format!("connections[{index}]");
+        let FromPort::Child(from) = &connection.from;
+        let Some(output) = context.child_output(&from.child, &from.port) else {
+            let problem = missing(context, &format!("{at}.from"), from, Side::Output);
+            context.problem(problem);
+            continue;
+        };
+        let input = match &connection.to {
+            ToPort::Own(Own::Sound) => sound,
+            ToPort::Child(to) => match context.child_input(&to.child, &to.port) {
+                Some(input) => input,
+                None => {
+                    let problem = missing(context, &format!("{at}.to"), to, Side::Input);
+                    context.problem(problem);
+                    continue;
+                }
+            },
+        };
+        match context.connect(output.to(input)) {
+            Err(BehaviourError::Graph(GraphError::PortTypeMismatch { description, .. })) => {
+                context.problem(format!(
+                    "its behaviour declares {at}, {description}, between ports of two kinds, such as sound and notes"
+                ));
+            }
+            connected => connected?,
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum Side {
+    Output,
+    Input,
+}
+
+/// What is wrong with `port` at `at` of a declaration, whose child or port is not there.
+fn missing(context: &BehaviourContext<'_>, at: &str, port: &ChildPort, side: Side) -> String {
+    let ChildPort { child, port } = port;
+    let Some((outputs, inputs)) = context.child_ports(child) else {
+        let children: Vec<&str> = context.child_names().collect();
+        let children = match children.is_empty() {
+            true => "it owns none".to_string(),
+            false => format!("its children are {}", children.join(", ")),
+        };
+        return format!(
+            "its behaviour names the child {child:?} at {at}, which it does not own: {children}"
+        );
+    };
+    let (side, ports) = match side {
+        Side::Output => ("output", outputs),
+        Side::Input => ("input", inputs),
+    };
+    let ports = match ports.is_empty() {
+        true => "none".to_string(),
+        false => ports.join(", "),
+    };
+    format!(
+        "its behaviour names the {side} {port:?} of {child:?} at {at}, which it does not have: its {side}s are {ports}"
+    )
 }
 
 /// How a knob turns: a frequency on a log scale, as it is heard, anything else straight.
@@ -777,7 +1124,8 @@ mod tests {
             "page": false,
             "transport": false,
             "keys": false,
-            "midi": false
+            "midi": false,
+            "behaviour": false
         }))
         .unwrap()
     }
@@ -859,5 +1207,108 @@ mod tests {
             doc.contains("| `rate` | knob | 0.1 to 20 Hz | `4.0` |"),
             "{doc}"
         );
+    }
+
+    /// An owner with lanes of patterns of notes, as a clip launcher keeps them.
+    fn band() -> ToolInfo {
+        serde_json::from_value(json!({
+            "name": "band",
+            "file": "band.ts",
+            "title": "Band",
+            "when": "You want lanes of patterns",
+            "doc": "Lanes of patterns.",
+            "kind": "effect",
+            "fields": {
+                "lanes": {
+                    "kind": "list",
+                    "max": 4,
+                    "item": { "kind": "object", "fields": {
+                        "name": { "kind": "text" },
+                        "patterns": { "kind": "list", "item": { "kind": "object", "fields": {
+                            "bars": { "kind": "number", "min": 1, "max": 16, "integer": true },
+                            "notes": { "kind": "notes" }
+                        } } }
+                    } }
+                },
+                "gain": { "kind": "number", "min": 0, "max": 1, "default": 0.5 }
+            },
+            "controls": {},
+            "tick": false,
+            "page": false,
+            "transport": false,
+            "keys": false,
+            "midi": false,
+            "behaviour": true
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn data_is_checked_without_bun_and_the_message_names_its_path() {
+        let band = band();
+        let note =
+            |pitch: u32| json!({ "start": 0, "length": 240, "pitch": pitch, "velocity": 100 });
+        let lanes = |notes: Value, bars: Value| {
+            let lane = json!({ "name": "bass", "patterns": [{ "bars": bars, "notes": notes }] });
+            json!({ "lanes": [{ "name": "lead" }, lane] })
+        };
+        let good = lanes(json!([note(60), note(64)]), json!(2));
+        assert_eq!(band.check(&good), Ok(()));
+        let refused = [
+            (
+                lanes(json!([note(60), note(60), note(60), note(200)]), json!(1)),
+                "state.lanes[1].patterns[0].notes[3].pitch: pitch must be from 0 to 127, not 200",
+            ),
+            (
+                lanes(
+                    json!([{ "start": 0, "length": 240, "pitch": 60 }]),
+                    json!(1),
+                ),
+                "state.lanes[1].patterns[0].notes[0]: missing field `velocity`",
+            ),
+            (
+                lanes(json!([]), json!(1.5)),
+                "state.lanes[1].patterns[0].bars: 1.5 is no whole number",
+            ),
+            (
+                json!({ "lanes": [{ "nme": "lead" }] }),
+                "state.lanes[0].nme: there is no field nme; the fields are name, patterns",
+            ),
+            (
+                json!({ "lanes": [{}, {}, {}, {}, {}] }),
+                "state.lanes: holds 5 items, at most 4",
+            ),
+            (
+                json!({ "gain": "loud" }),
+                "state.gain: must be a number from 0 to 1",
+            ),
+        ];
+        for (state, message) in refused {
+            assert_eq!(band.check(&state), Err(message.to_string()));
+        }
+    }
+
+    #[test]
+    fn a_behaviour_reads_every_field_at_its_default_inside_lists_too() {
+        let state = json!({ "lanes": [{ "patterns": [{}] }] });
+        let expected = json!({
+            "lanes": [{ "name": "", "patterns": [{ "bars": 1, "notes": [] }] }],
+            "gain": 0.5
+        });
+        assert_eq!(band().with_defaults(state), expected);
+    }
+
+    #[test]
+    fn the_doc_of_an_owner_says_where_its_children_go_and_lists_the_fields_of_its_items() {
+        let band = band();
+        let doc = band.doc();
+        let start = doc.find("```json state/band/instance.json\n").unwrap();
+        let body = &doc[start..];
+        let json = &body[body.find('\n').unwrap() + 1..body.find("\n```\n").unwrap()];
+        let record: Value = serde_json::from_str(json).unwrap();
+        assert_eq!(band.check(&record["state"]), Ok(()));
+        assert!(doc.contains("`state/band/<child>.json`"), "{doc}");
+        let row = "| `lanes[].patterns[].bars` | number | a whole number from 1 to 16 | `1` |";
+        assert!(doc.contains(row), "{doc}");
     }
 }

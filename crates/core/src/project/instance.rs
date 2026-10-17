@@ -341,11 +341,11 @@ impl Record {
         }
     }
 
-    /// A record of a JSON tool, which lives anywhere and owns no children.
-    pub(crate) fn json(tool: &'static str, state: JsonState) -> Self {
+    /// A record of a JSON tool, which lives anywhere.
+    pub(crate) fn json(tool: &'static str, state: JsonState, owns_children: bool) -> Self {
         Self {
             tool,
-            owns_children: false,
+            owns_children,
             place: Place::Anywhere,
             state: Arc::new(state),
         }
