@@ -1098,7 +1098,7 @@ impl Live {
                 let Some(session) = self.session.upgrade() else {
                     return;
                 };
-                let at = at.unwrap_or_else(|| engine_time(&session, cx));
+                let at = performed_frame(at, &session, cx);
                 let performed = {
                     let session = session.read(cx);
                     Performed::Play {
@@ -1106,7 +1106,7 @@ impl Live {
                         velocity: Velocity::nearest(
                             (velocity.clamp(0.0, 1.0) * 127.0).round() as i64
                         ),
-                        at: frames_of(at, session),
+                        at,
                         frames: seconds.map(|seconds| frames_of(f64::from(seconds), session)),
                     }
                 };
@@ -1123,7 +1123,7 @@ impl Live {
                 };
                 let performed = Performed::Release {
                     pitch: Pitch::nearest(i64::from(pitch)),
-                    at: at.map(|at| frames_of(at, session.read(cx))),
+                    at: performed_frame(at, &session, cx),
                 };
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
@@ -1296,6 +1296,13 @@ impl Live {
             });
         });
     }
+}
+
+/// The frame of what a performer plays at `at`, engine time in seconds, or now: never before
+/// now, as a processor made since the last block does not know where engine time is.
+fn performed_frame(at: Option<f64>, session: &Entity<Session>, cx: &mut App) -> u64 {
+    let now = engine_time(session, cx);
+    frames_of(at.map_or(now, |at| at.max(now)), session.read(cx))
 }
 
 /// The frame of engine time at `seconds` of it.

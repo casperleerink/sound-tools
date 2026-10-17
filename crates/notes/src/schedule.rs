@@ -7,16 +7,16 @@ use crate::{NoteEvent, Pitch, Velocity};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Performed {
     /// Holds a key for `frames` from the frame `at` of engine time, or from the next frame once
-    /// that has passed; with no `frames`, until its release. `at` is never left out: a
-    /// processor made since the last block does not know the frame of now.
+    /// that has passed; with no `frames`, until its release. Give `at` as now or later: a
+    /// processor made since the last block does not know where engine time is.
     Play {
         pitch: Pitch,
         velocity: Velocity,
         at: u64,
         frames: Option<u64>,
     },
-    /// Lets go of a key at the frame `at`, or in the next frame.
-    Release { pitch: Pitch, at: Option<u64> },
+    /// Lets go of a key at the frame `at`, or in the next frame once that has passed.
+    Release { pitch: Pitch, at: u64 },
 }
 
 /// What a [`Schedule`] holds: a note, or more, such as a trigger.
@@ -91,7 +91,7 @@ impl<T: Scheduled> Schedule<T> {
             }
             Performed::Release { pitch, at } => {
                 let off = NoteEvent::Off { pitch };
-                if self.add(at, off.into()) {
+                if self.add(Some(at), off.into()) {
                     return None;
                 }
                 self.waiting.retain(|(_, what)| match what.note() {

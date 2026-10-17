@@ -106,7 +106,7 @@ pub(crate) fn render(tool: &Tool, buffer: usize) -> (Vec<f32>, Vec<f32>) {
             11_000,
             SignalsUpdate::Note(Performed::Release {
                 pitch: pitch(74),
-                at: Some(13_000),
+                at: 13_000,
             }),
         ),
         (

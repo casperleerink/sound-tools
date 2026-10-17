@@ -51,19 +51,27 @@ impl Processor for Probe {
     }
 }
 
-/// Fills its output with offs of pitch 0, which the probe does not count, for as many blocks
-/// as it is told.
+/// Another sender into the feed, such as a player.
 #[derive(Default)]
-struct Flood {
-    blocks: u32,
+struct Sender {
+    /// How many more blocks it fills its output with offs of pitch 0, which the probe does
+    /// not count.
+    flood: u32,
+    /// What it sends in its next block, at that offset.
+    once: Option<(usize, NoteEvent)>,
 }
 
-impl Flood {
+enum Send {
+    Flood(u32),
+    Once(usize, NoteEvent),
+}
+
+impl Sender {
     const OUTPUT: EventOutput<NoteEvent> = EventOutput::new(0);
 }
 
-impl Processor for Flood {
-    type Update = u32;
+impl Processor for Sender {
+    type Update = Send;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::OUTPUT)
@@ -71,13 +79,19 @@ impl Processor for Flood {
 
     fn prepare(&mut self, _: &PrepareConfig) {}
 
-    fn update(&mut self, blocks: &mut u32) {
-        self.blocks = *blocks;
+    fn update(&mut self, send: &mut Send) {
+        match send {
+            Send::Flood(blocks) => self.flood = *blocks,
+            Send::Once(offset, event) => self.once = Some((*offset, *event)),
+        }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        if self.blocks > 0 {
-            self.blocks -= 1;
+        if let Some((offset, event)) = self.once.take() {
+            context.event_outputs.push(Self::OUTPUT, offset, event);
+        }
+        if self.flood > 0 {
+            self.flood -= 1;
             let pitch = Pitch::new(0).unwrap();
             while context
                 .event_outputs
@@ -91,7 +105,7 @@ struct Harness {
     control: EngineControl,
     engine: Engine,
     feed: Node<NoteFeed>,
-    flood: Node<Flood>,
+    sender: Node<Sender>,
 }
 
 impl Harness {
@@ -99,8 +113,8 @@ impl Harness {
         let (mut control, engine) = Engine::new(EngineConfig::new(48_000, 1));
         let mut edit = control.edit();
         let feed = edit.add_processor("feed", NoteFeed::default()).unwrap();
-        let flood = edit.add_processor("flood", Flood::default()).unwrap();
-        let flooded = Connection::new(flood.id(), Flood::OUTPUT, feed.id(), NoteFeed::INPUT);
+        let sender = edit.add_processor("sender", Sender::default()).unwrap();
+        let flooded = Connection::new(sender.id(), Sender::OUTPUT, feed.id(), NoteFeed::INPUT);
         edit.connect(flooded).unwrap();
         let probe = Probe { held: [false; 128] };
         let probe = edit.add_processor("probe", probe).unwrap();
@@ -113,7 +127,7 @@ impl Harness {
             control,
             engine,
             feed,
-            flood,
+            sender,
         }
     }
 
@@ -142,7 +156,7 @@ fn note(pitch: u8, at: u64, frames: Option<u64>) -> NoteFeedUpdate {
     })
 }
 
-fn release(pitch: u8, at: Option<u64>) -> NoteFeedUpdate {
+fn release(pitch: u8, at: u64) -> NoteFeedUpdate {
     let pitch = Pitch::new(pitch).unwrap();
     NoteFeedUpdate::Note(Performed::Release { pitch, at })
 }
@@ -163,7 +177,7 @@ fn a_performed_note_lands_on_its_frame_and_ends_after_its_length() {
     let mut harness = Harness::new();
     harness.send(note(60, 1_234, Some(500)));
     harness.send(note(62, 1_500, None));
-    harness.send(release(62, Some(2_345)));
+    harness.send(release(62, 2_345));
     let changes = level_changes(&harness.render(4_000));
     let expected = [(1_234, 60.0), (1_500, 122.0), (1_734, 62.0), (2_345, 0.0)];
     assert_eq!(changes, expected);
@@ -186,7 +200,7 @@ fn a_release_when_the_feed_is_full_lets_go_of_its_key_at_once() {
     for pitch in 0..128 {
         harness.send(note(pitch, 1_000_000, Some(1)));
     }
-    harness.send(release(60, None));
+    harness.send(release(60, 0));
     // The engine takes a few updates a block, so the release lands a few blocks later.
     assert_eq!(harness.render(4_800).last(), Some(&0.0));
 }
@@ -196,6 +210,23 @@ fn an_end_that_finds_the_output_full_comes_in_the_next_block_that_has_room() {
     let mut harness = Harness::new();
     harness.send(note(60, 0, Some(150)));
     assert_eq!(harness.render(100).last(), Some(&60.0));
-    harness.control.update(harness.flood, 3).unwrap();
+    harness
+        .control
+        .update(harness.sender, Send::Flood(3))
+        .unwrap();
     assert_eq!(harness.render(1_000).last(), Some(&0.0));
+}
+
+#[test]
+fn a_performed_end_on_the_frame_another_sender_starts_the_key_comes_first() {
+    let mut harness = Harness::new();
+    harness.render(800);
+    harness.send(note(60, 900, Some(110)));
+    assert_eq!(harness.render(200).last(), Some(&60.0));
+    let pitch = Pitch::new(60).unwrap();
+    let velocity = Velocity::new(100).unwrap();
+    let on = Send::Once(10, NoteEvent::On { pitch, velocity });
+    harness.control.update(harness.sender, on).unwrap();
+    // The end of the performed note at frame 1010, then the other's start: it holds.
+    assert_eq!(harness.render(100).last(), Some(&60.0));
 }

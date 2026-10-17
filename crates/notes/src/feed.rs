@@ -79,7 +79,10 @@ impl Processor for NoteFeed {
             }
             let_go &= !bit;
         }
-        for timed in context.event_inputs.get(Self::INPUT) {
+        // On one frame, the offs before the ons, as the note contract says, whoever sends them.
+        let inputs = context.event_inputs.get(Self::INPUT);
+        let is_on = |event: &NoteEvent| matches!(event, NoteEvent::On { .. });
+        for timed in inputs.iter().filter(|timed| !is_on(&timed.event)) {
             outputs.push(Self::OUTPUT, timed.offset, timed.event);
         }
         self.performed.playing(context.start_frame, context.frames);
@@ -91,6 +94,9 @@ impl Processor for NoteFeed {
                 self.performed.put_back((at, event));
                 break;
             }
+        }
+        for timed in inputs.iter().filter(|timed| is_on(&timed.event)) {
+            outputs.push(Self::OUTPUT, timed.offset, timed.event);
         }
     }
 }

@@ -360,7 +360,7 @@ fn a_note_with_no_length_plays_until_it_is_released() {
     });
     played.control.update(played.signals, note).unwrap();
     assert!(loudest(&played.render(96_000)[48_000..]) > 0.1);
-    let release = SignalsUpdate::Note(Performed::Release { pitch, at: None });
+    let release = SignalsUpdate::Note(Performed::Release { pitch, at: 0 });
     played.control.update(played.signals, release).unwrap();
     assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
 }
@@ -395,7 +395,7 @@ fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_ke
         played.render(64);
     }
     assert!(loudest(&played.render(4_800)) > 0.1);
-    let release = SignalsUpdate::Note(Performed::Release { pitch, at: None });
+    let release = SignalsUpdate::Note(Performed::Release { pitch, at: 0 });
     played.control.update(played.signals, release).unwrap();
     // Past frame 48000, where the waiting note would start.
     assert_eq!(loudest(&played.render(48_000)[4_800..]), 0.0);
