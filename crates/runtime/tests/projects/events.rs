@@ -9,7 +9,7 @@ use crate::support::{Harness, first_sound, write};
 /// Frames of the hits in `drums.wav`.
 const HITS: [usize; 4] = [4_800, 16_000, 30_000, 41_000];
 
-const TOOLS: &str = r#"import { feedback, input, live, max, output, sample, tool, trigger } from "./sdk";
+const TOOLS: &str = r#"import { choice, feedback, input, live, max, output, sample, tool, trigger } from "./sdk";
 
 tool({
   name: "tape",
@@ -39,6 +39,21 @@ tool({
     output("onset", { bang: level.gt(0.01) });
     output("half", 0.5);
     return input;
+  },
+});
+
+tool({
+  name: "pair",
+  title: "Pair",
+  when: "Never",
+  doc: "Holds C4 on `low` and C5 on `high`, sent in the order `order` names.",
+  kind: "source",
+  state: { order: choice({ options: ["low first", "high first"], default: "low first" }) },
+  sound: ({ order }) => {
+    const low = () => output("low", { gate: 1, pitch: 60 });
+    const high = () => output("high", { gate: 1, pitch: 72 });
+    if (order === "low first") { low(); high(); } else { high(); low(); }
+    return 0;
   },
 });
 
@@ -220,4 +235,24 @@ fn a_behaviour_that_declares_players_says_a_sequencer_plays_patterns_now() {
         message.contains("`players` are gone: a child of tool `sequencer`"),
         "{message}"
     );
+}
+
+#[test]
+fn a_held_note_sounds_on_when_new_code_of_its_sender_moves_its_output() {
+    let connections = r#"[
+    { from: { child: "pair", notes: "high" }, to: { child: "synth", notes: "notes" } },
+    { from: { child: "synth" }, to: "sound" },
+  ]"#;
+    let Some(mut harness) = project(connections) else {
+        return;
+    };
+    let pair = |order: &str| format!(r#"{{"tool": "pair", "state": {{"order": "{order}"}}}}"#);
+    harness.write_and_apply("state/listener/pair.json", &pair("low first"));
+    assert_eq!(messages(&harness), Vec::<String>::new());
+    assert!(first_sound(&harness.play(4_800), 0).is_some());
+
+    harness.write_and_apply("state/listener/pair.json", &pair("high first"));
+    // After the fade from the old sound of `pair`, and the synth's release were it let go.
+    let played = harness.render(9_600);
+    assert!(first_sound(&played, 4_800).is_some());
 }

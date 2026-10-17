@@ -16,8 +16,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
     Assets, Automation, BehaviourContext, BehaviourError, Event, GraphError, InputEndpoint,
-    InstanceId, JsonTool, JsonToolDoc, Node, OutputEndpoint, ParameterInfo, Problem, ValueRange,
-    Watch,
+    InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo, Problem,
+    ValueRange, Watch,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note, NoteFeed, NoteFeedUpdate};
 use sound_signals::{
@@ -1143,8 +1143,9 @@ fn wire(
 ) -> Result<(), BehaviourError> {
     let feeds = feeds(context)?;
     let mut cables = BTreeSet::new();
-    // By the port too, so a sender that is another processor now is another sender.
-    let mut fed: BTreeMap<&str, BTreeSet<(&FromPort, String)>> = BTreeMap::new();
+    // By its processor too, so a sender made again is another sender; not by its port, which
+    // new code of the same sender may move.
+    let mut fed: BTreeMap<&str, BTreeSet<(&FromPort, NodeId)>> = BTreeMap::new();
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
         let (child, port, from) = match &connection.from {
@@ -1217,7 +1218,7 @@ fn wire(
             connected => connected?,
         }
         if let Some(child) = feed {
-            let sender = (&connection.from, format!("{output:?}"));
+            let sender = (&connection.from, output.node);
             fed.entry(child).or_default().insert(sender);
         }
     }
