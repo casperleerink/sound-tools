@@ -172,9 +172,10 @@ struct SignalsVoice {
     loudness: f32,
 }
 
-/// What the bangs and the notes a sound sends out were in the last frame.
+/// What the bangs and the notes a sound sends out were in the last frame: whether the signal of
+/// each bang was above 0, and the note each notes holds.
 struct Sending {
-    bangs: [f32; MAX_OUTPUTS],
+    bangs: [bool; MAX_OUTPUTS],
     notes: [Option<Pitch>; MAX_OUTPUTS],
 }
 
@@ -260,7 +261,7 @@ impl Signals {
             scheduled: Schedule::new(MAX_SCHEDULED),
             watches,
             sending: Sending {
-                bangs: [0.0; MAX_OUTPUTS],
+                bangs: [false; MAX_OUTPUTS],
                 notes: [None; MAX_OUTPUTS],
             },
             beat: 0.0,
@@ -855,13 +856,13 @@ impl Sending {
         outputs: &mut EventOutputs<'_>,
     ) {
         let (bang_rows, note_rows) = events.split_at(bangs.min(events.len()));
-        for (index, (row, before)) in bang_rows.iter().zip(&mut self.bangs).enumerate() {
+        for (index, (row, was_above)) in bang_rows.iter().zip(&mut self.bangs).enumerate() {
             for (frame, value) in row.iter().take(frames).enumerate() {
-                // Not `before <= 0.0`, which a NaN would keep false for good.
-                if *value > 0.0 && !(*before > 0.0) {
+                let above = *value > 0.0;
+                if above && !*was_above {
                     outputs.push(Signals::bang(index), frame, Bang);
                 }
-                *before = *value;
+                *was_above = above;
             }
         }
         let mut rows = note_rows.chunks_exact(3).take(notes);

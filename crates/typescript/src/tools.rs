@@ -1283,16 +1283,18 @@ fn control<From: Event>(
 where
     sound_signals::Control: Placed<From>,
 {
-    let Some(input) = context.child_input(child, name) else {
-        let problem = missing(context, at, (child, name), Side::Input);
-        context.problem(problem);
-        return Ok(None);
-    };
+    let input = context.child_input(child, name);
     let Some(info) = controls.get(child) else {
-        return Ok(Some((input, None)));
+        if input.is_none() {
+            let problem = missing(context, at, (child, name), Side::Input);
+            context.problem(problem);
+        }
+        return Ok(input.map(|input| (input, None)));
     };
-    match info.control(name) {
-        Some((index, control)) if matches!(control, Control::Live { .. }) == live => {
+    match (info.control(name), input) {
+        (Some((index, control)), Some(input))
+            if matches!(control, Control::Live { .. }) == live =>
+        {
             // At most `MAX_LIVES` of each kind, far under `u16::MAX`.
             let place = u16::try_from(index).unwrap_or(u16::MAX);
             let into = (input, place);
