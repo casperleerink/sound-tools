@@ -168,6 +168,23 @@ fn a_change_of_the_record_plays_the_last_wiring_until_bun_answers() {
 }
 
 #[test]
+fn a_project_opened_again_plays_nothing_an_earlier_opening_declared() {
+    let Some(mut harness) = band(&record(r#"{"lead": "high"}"#)) else {
+        return;
+    };
+    let high = harness.play(48_000);
+    assert!((rises(&high) as i64 - 880).abs() <= 2, "{}", rises(&high));
+
+    // The behaviour throws from the start of the next opening, which has declared nothing.
+    harness.write("state/band/instance.json", &record(r#"{"lead": "boom"}"#));
+    let mut harness = harness.reopen();
+    let played = harness.play(4_800);
+    assert!(played.iter().all(|sample| *sample == 0.0));
+    let problems = harness.project.problems();
+    assert!(problems[0].message.contains("Error: boom"), "{problems:?}");
+}
+
+#[test]
 fn a_missing_child_is_a_problem_that_names_it_and_the_rest_plays() {
     let Some(mut harness) = band(&record(r#"{"effects": ["reverb", "echo"]}"#)) else {
         return;

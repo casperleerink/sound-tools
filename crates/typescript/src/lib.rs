@@ -86,6 +86,8 @@ pub struct Extensions {
     /// Bun after its first load, for the window. `None` when the folder has no tool file, or
     /// Bun did not start.
     bun: Option<Arc<Bun>>,
+    /// The opening of the project every Bun of it runs for.
+    opening: u64,
     /// The tools of the first load that the registry took.
     tools: Vec<ToolInfo>,
     skipped: Skipped,
@@ -96,6 +98,7 @@ pub struct Extensions {
 /// The first load of the tools of a project, before a registry takes them.
 pub struct FirstLoad {
     folder: PathBuf,
+    opening: u64,
     launched: Result<Option<Launched>, String>,
 }
 
@@ -110,10 +113,15 @@ impl Extensions {
         if !folder.is_dir() {
             return None;
         }
+        let opening = bun::new_opening();
         let launched = write_sdk(&folder)
             .map_err(|error| error.to_string())
-            .and_then(|()| launch(&folder, Skipped::new()));
-        Some(FirstLoad { folder, launched })
+            .and_then(|()| launch((&folder, opening), Skipped::new()));
+        Some(FirstLoad {
+            folder,
+            opening,
+            launched,
+        })
     }
 
     /// Lists what is wrong with `extensions/` among the problems of the project.
@@ -126,7 +134,11 @@ impl FirstLoad {
     /// Registers the tools in `registry`. Call it before the project opens, so their records
     /// load with it.
     pub fn register(self, registry: &mut Registry) -> Extensions {
-        let Self { folder, launched } = self;
+        let Self {
+            folder,
+            opening,
+            launched,
+        } = self;
         let none = |problems| (None, Vec::new(), Skipped::new(), problems);
         let (bun, tools, skipped, problems) = match launched {
             Ok(Some(Launched {
@@ -152,6 +164,7 @@ impl FirstLoad {
         Extensions {
             folder,
             bun,
+            opening,
             tools,
             skipped,
             problems,
@@ -272,10 +285,14 @@ struct Launched {
     problems: Vec<Problem>,
 }
 
-/// Starts Bun on the tools of `extensions` without the `skipped` files, and waits for its load.
-/// A file whose code hangs or stops Bun while it loads is skipped too, and Bun starts again
-/// without it. `None` when the folder has no tool file. Blocks for as long as the load takes.
-fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, String> {
+/// Starts Bun on the tools of `extensions` for the project's `opening` without the `skipped`
+/// files, and waits for its load. A file whose code hangs or stops Bun while it loads is
+/// skipped too, and Bun starts again without it. `None` when the folder has no tool file.
+/// Blocks for as long as the load takes.
+fn launch(
+    (extensions, opening): (&Path, u64),
+    mut skipped: Skipped,
+) -> Result<Option<Launched>, String> {
     let files = tool_files(extensions);
     if files.is_empty() {
         return Ok(None);
@@ -291,7 +308,7 @@ fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, S
             .filter(|file| !skipped.contains_key(*file))
             .map(String::as_str)
             .collect();
-        match Bun::start(&program, &host, extensions, &loading) {
+        match Bun::start(&program, &host, (extensions, opening), &loading) {
             Ok((bun, loaded)) => {
                 // The tools that own children ask it what they declare while their records
                 // play, also outside the window.

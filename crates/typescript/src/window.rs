@@ -38,6 +38,8 @@ pub(crate) struct Live {
     folder: PathBuf,
     session: WeakEntity<Session>,
     host: Host,
+    /// The opening of the project every Bun of the window runs for.
+    opening: u64,
     skipped: Skipped,
     /// The tools of the last load, shared with the pickers.
     tools: Rc<RefCell<Vec<ToolInfo>>>,
@@ -283,6 +285,7 @@ impl Live {
         let Extensions {
             folder,
             bun,
+            opening,
             tools: loaded,
             skipped,
             problems,
@@ -323,6 +326,7 @@ impl Live {
                 folder,
                 session: session.downgrade(),
                 host,
+                opening,
                 skipped,
                 tools: tools.clone(),
                 generation: generation.clone(),
@@ -1009,7 +1013,7 @@ impl Live {
 
     /// Starts a new Bun on a thread of its own, once `old` ended there.
     fn launch(&mut self, old: Option<Arc<Bun>>, cx: &mut Context<Self>) {
-        let (folder, skipped) = (self.folder.clone(), self.skipped.clone());
+        let (folder, opening, skipped) = (self.folder.clone(), self.opening, self.skipped.clone());
         cx.spawn(async move |live, cx| {
             // Ending a Bun waits for it, and a load up to a timeout of each step: not on the
             // thread that draws.
@@ -1018,7 +1022,7 @@ impl Live {
                     if let Some(old) = old {
                         old.end();
                     }
-                    crate::launch(&folder, skipped)
+                    crate::launch((&folder, opening), skipped)
                 })
                 .await;
             live.update(cx, |live, cx| live.launched(launched, cx)).ok();

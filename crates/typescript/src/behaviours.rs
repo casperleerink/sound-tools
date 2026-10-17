@@ -133,6 +133,9 @@ impl Store {
 }
 
 struct Owner {
+    /// The opening of the project it was declared in. What another one declared plays nothing
+    /// here.
+    opening: u64,
     /// The number of the Bun the answers came from: another one runs other code.
     bun: u64,
     /// By key, the oldest first.
@@ -172,13 +175,17 @@ pub(crate) fn declared(
         ..
     } = &mut *store;
     let owner_key = (assets.clone(), instance.clone());
-    let owner = owners.entry(owner_key.clone()).or_insert_with(|| Owner {
+    let new = || Owner {
+        opening: bun.opening(),
         bun: bun.number(),
         known: VecDeque::new(),
         last: Declaration::default(),
         asking: None,
-    });
-    if owner.bun != bun.number() {
+    };
+    let owner = owners.entry(owner_key.clone()).or_insert_with(new);
+    if owner.opening != bun.opening() {
+        *owner = new();
+    } else if owner.bun != bun.number() {
         owner.bun = bun.number();
         owner.known.clear();
         owner.asking = None;

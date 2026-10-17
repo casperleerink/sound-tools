@@ -295,6 +295,8 @@ struct Busy {
 pub(crate) struct Bun {
     /// Which Bun of the process this is, counted from its start.
     number: u64,
+    /// Which opening of a project it runs for, see [`new_opening`].
+    opening: u64,
     /// Lines on their way to Bun, which a thread of their own writes: a Bun that stops reading
     /// does not block the window.
     lines: mpsc::SyncSender<String>,
@@ -308,13 +310,23 @@ pub(crate) struct Bun {
 /// The number of the next Bun of the process.
 static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
 
+static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
+
+/// A number for one opening of a project, which every Bun of it runs for: the first, and those
+/// the window starts again after a change of the code. A project opened again in the same
+/// process, as by a test, is another opening.
+pub(crate) fn new_opening() -> u64 {
+    NEXT_OPENING.fetch_add(1, Ordering::Relaxed)
+}
+
 impl Bun {
-    /// Starts Bun on `host_script` in `folder`, to load `files` of it, and waits for its load.
-    /// Blocks for as long as the load takes: never call it on the thread that draws.
+    /// Starts Bun on `host_script` in `folder`, to load `files` of it for the project's
+    /// `opening`, and waits for its load. Blocks for as long as the load takes: never call it
+    /// on the thread that draws.
     pub(crate) fn start(
         program: &Path,
         host_script: &Path,
-        folder: &Path,
+        (folder, opening): (&Path, u64),
         files: &[&str],
     ) -> Result<(Self, Loaded), LoadFailure> {
         let failure = |why: String| LoadFailure { file: None, why };
@@ -343,6 +355,7 @@ impl Bun {
         let number = NEXT_BUN.fetch_add(1, Ordering::Relaxed);
         let bun = Self {
             number,
+            opening,
             lines,
             busy: busy.clone(),
             events: received,
@@ -398,6 +411,10 @@ impl Bun {
     /// Which Bun of the process this is.
     pub(crate) fn number(&self) -> u64 {
         self.number
+    }
+
+    pub(crate) fn opening(&self) -> u64 {
+        self.opening
     }
 
     /// Tells Bun something and does not wait. Whether it went: not when Bun stopped reading,
