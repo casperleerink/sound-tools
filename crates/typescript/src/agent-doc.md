@@ -150,6 +150,52 @@ tool({
 - The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
 - A child or a port it names that is not there, or a behaviour that throws, is a problem of the owner's record. The rest plays.
 
+### Players: patterns in time with the bars
+
+An owner may also declare note players. A player loops one of its patterns at a time, to the sample, and plays it into a child's `notes`; a performer picks which with `launch`. A clip launcher, with an instrument `synth` and an effect `fx` as its children:
+
+```ts
+import { h, list, notes, number, playerOf, tool } from "./sdk";
+
+const BAR = 3840; // ticks in a bar of 4/4
+
+tool({
+  name: "loops",
+  title: "Loops",
+  when: "You want bass patterns to launch in time with the bars",
+  doc: "Loops the patterns of `bass` on the child `synth`, through the child `fx`. `scene` is the one that plays before a launch.",
+  state: {
+    bass: list({ bars: number({ min: 1, max: 8, integer: true, default: 1 }), notes: notes() }, {
+      default: [{ notes: [{ start: 0, length: 480, pitch: 36, velocity: 100 }, { start: 1920, length: 480, pitch: 43, velocity: 100 }] }],
+    }),
+    scene: number({ min: 0, max: 7, integer: true }),
+  },
+  behaviour: ({ state }) => ({
+    players: { bass: { patterns: state.bass.map(({ bars, notes }) => ({ length: bars * BAR, notes })), plays: state.scene } },
+    connections: [
+      { from: { player: "bass" }, to: { child: "synth" } },
+      { from: { child: "synth" }, to: { child: "fx" } },
+      { from: { child: "fx" }, to: "sound" },
+    ],
+  }),
+  transport: true,
+  page: ({ state, watches, launch }) => {
+    const bass = playerOf(watches, "bass");
+    const button = (lit: boolean) => ({ padding: 8, radius: 6, background: lit ? "#7c3aed" : "#2a2f3a" }) as const;
+    return h("div", { style: { direction: "row", gap: 8, padding: 16 } },
+      (state.bass ?? []).map((_, index) => h("div", { style: button(bass.playing === index), onClick: () => launch("bass", index) }, `Bass ${index + 1}`)),
+      h("div", { style: button(bass.queued === "stop"), onClick: () => launch("bass", null) }, "Stop"),
+    );
+  },
+});
+```
+
+- `players` holds each player by name: `{ patterns, plays? }`. A pattern is `{ length, notes }`, its length in ticks (960 a quarter, 3840 a bar of 4/4) and each note starting inside it. `{ from: { player: "bass" }, to: { child: "synth" } }` plays it into the child's `notes`.
+- `plays` is the index of the pattern it plays before any launch, so `--render` plays it. It starts when the player is first declared; a change of it launches the new one at the next bar.
+- `launch(player, pattern, { quantize? })`, in a card, a page, `tick`, `onKey` and `onMidi`, plays the pattern of that index from the next bar line (`quantize: "beat"` or `"now"`), or stops with `null`; while the piece is stopped, at once. A launch is a performance: nothing saves it, no undo takes it back, and a render does not hear it.
+- `playerOf(watches, "bass")` says what plays: `{ playing, queued, phase }`. A card or a page gets the record as the file holds it, so `state.bass` is missing at its defaults.
+- A pattern with a note outside it is silent and a problem of the owner's record; a player or a pattern a launch names that is not there is a problem of the tool.
+
 ## Controls
 
 What the card plays as a performer plays, which nothing saves and no undo takes back:
@@ -205,7 +251,7 @@ For more than knobs, such as a simulation that plays notes as balls bounce, a to
 
 - `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance. The card and the loop get it, and a click may change it.
 - `tick: ({ state, watches, memory, dt, time, set, fire, play }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. It plays the sound as a performer would, with `set`, `fire` and `play`, and moves what is in `memory`; it does not change the record. Offline, in `--render`, it does not run. With `play`, an instrument is a voice per note the loop makes up: a melody of a rule, a chord a collision strikes.
-- What the loop plays at once lands up to 30 ms late. For a steady rhythm, play ahead on the clock of the sound: `time` is where it is, in seconds, and `fire(control, { at })` and `play(pitch, { at })` happen on the sample of `at`:
+- What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a player of an owner (above). For a rhythm the loop makes up, play ahead on the clock of the sound: `time` is where it is, in seconds, and `fire(control, { at })` and `play(pitch, { at })` happen on the sample of `at`:
 
   ```ts
   tick: ({ memory, time, play }) => {
@@ -282,4 +328,4 @@ tool({
 
 ## Limits
 
-A tool is sound in or out, with notes for an instrument or a source; an owner also plays its children. Its control loop, `onKey` and `onMidi` run only while the window is open. Its knobs can be automated by the lanes of a track, as the numbers of any device. For a sound a built-in tool already makes, use the built-in one.
+A tool is sound in or out, with notes for an instrument or a source; an owner also plays its children and its patterns. Its control loop, `onKey` and `onMidi` run only while the window is open. Its knobs can be automated by the lanes of a track, as the numbers of any device. For a sound a built-in tool already makes, use the built-in one.
