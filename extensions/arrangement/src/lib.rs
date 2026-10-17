@@ -40,7 +40,6 @@ mod input;
 mod master;
 mod mixer;
 mod player;
-mod sequencer;
 mod slot;
 mod summary;
 pub mod view;
@@ -54,7 +53,8 @@ use sound_core::{
     OutputEndpoint, Peaks, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
 };
 use sound_notes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, Pitch, SIDECHAIN_INPUT, TRACK_TOOL, Velocity,
+    AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, NotePlayer, NotePlayerUpdate, NoteTimeline,
+    Pitch, SIDECHAIN_INPUT, TRACK_TOOL, Velocity,
 };
 
 pub use audio::AudioClip;
@@ -69,7 +69,6 @@ use master::Master;
 pub use master::{LimiterState, MasterState};
 pub use mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
 pub use player::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
-pub use sequencer::{HELD_CAPACITY, PREVIEW_SECONDS, Sequencer, SequencerUpdate, TrackSnapshot};
 pub use slot::{EffectSlot, Sidechain, Tap};
 
 /// The name to enable in `project.json`.
@@ -497,11 +496,11 @@ fn expose_sidechain(slot: &EffectSlot, context: &mut BehaviourContext<'_>) {
 fn play_notes(
     context: &mut BehaviourContext<'_>,
 ) -> Result<Option<OutputEndpoint>, BehaviourError> {
-    let snapshot = TrackSnapshot::new(context.children::<Clip>().map(|(_, clip)| clip));
-    let sequencer = context.processor(SEQUENCER, Sequencer::default)?;
-    context.update(sequencer, SequencerUpdate::Snapshot(Arc::new(snapshot)))?;
+    let timeline = NoteTimeline::new(context.children::<Clip>().map(|(_, clip)| clip));
+    let sequencer = context.processor(SEQUENCER, NotePlayer::default)?;
+    context.update(sequencer, NotePlayerUpdate::Timeline(Arc::new(timeline)))?;
     if let Some(notes) = context.child_input(INSTRUMENT, NOTES_INPUT) {
-        context.connect(OutputEndpoint::new(sequencer, Sequencer::NOTES).to(notes))?;
+        context.connect(OutputEndpoint::new(sequencer, NotePlayer::NOTES).to(notes))?;
     }
     Ok(context.child_output(INSTRUMENT, AUDIO_OUTPUT))
 }
@@ -1239,7 +1238,7 @@ impl FreeIds {
     }
 }
 
-/// Plays one note now through the instrument of a track, for [`PREVIEW_SECONDS`], also while
+/// Plays one note now through the instrument of a track, for [`sound_notes::PREVIEW_SECONDS`], also while
 /// the project does not play: what a note editor calls when a note is clicked, drawn or moved
 /// to a new pitch. The off comes from the sequencer of the track, so the caller has nothing
 /// to end. Not an edit: nothing is saved.
@@ -1249,8 +1248,8 @@ pub fn preview_note(
     pitch: Pitch,
     velocity: Velocity,
 ) -> Result<(), ProjectError> {
-    let preview = SequencerUpdate::Preview { pitch, velocity };
-    project.send::<Sequencer>(track, SEQUENCER, preview)
+    let preview = NotePlayerUpdate::Preview { pitch, velocity };
+    project.send::<NotePlayer>(track, SEQUENCER, preview)
 }
 
 /// The default project: one arrangement with no tracks. The tempo map of a new project is

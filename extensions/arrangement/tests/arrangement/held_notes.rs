@@ -260,7 +260,7 @@ fn of_two_holders_of_a_pitch_the_one_that_is_deleted_leaves_the_other_sounding()
 #[test]
 fn more_notes_than_the_held_list_takes_are_counted_and_nothing_is_stuck() {
     let extra = 12;
-    let count = (arrangement::HELD_CAPACITY + extra) as u64;
+    let count = (sound_notes::HELD_CAPACITY + extra) as u64;
     // Long notes two ticks apart: all of them want to sound at once.
     let notes = (0..count).map(|index| note(index * 2, 2000, (index % 128) as u8));
     let mut harness = Harness::with_clips(vec![clip(0, 3840, notes.collect())]);

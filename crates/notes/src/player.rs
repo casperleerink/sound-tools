@@ -1,4 +1,4 @@
-//! Plays the clips of one track: one immutable snapshot of its notes on the control side, one
+//! Plays notes on the timeline: one immutable snapshot of them on the control side, one
 //! processor that sends them from the transport tick range on the audio thread.
 //!
 //! The rule that shapes this file: a note that started always gets its off. The processor keeps
@@ -14,7 +14,8 @@ use std::sync::Arc;
 use sound_core::{
     EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks, Transport,
 };
-use sound_notes::{
+
+use crate::{
     Amount, Bend, Clip, Expression, ExpressionValue, NoteEvent, Pedal, Pitch, PlacedNote,
     PlacedPedal, Point, Velocity,
 };
@@ -23,15 +24,15 @@ use sound_notes::{
 /// interface can leave one sounding.
 pub const PREVIEW_SECONDS: f32 = 0.3;
 
-/// How many notes one track can hold at a time. A note that would be one more is not played
+/// How many notes one player can hold at a time. A note that would be one more is not played
 /// and counts in `EngineStatus::event_overflows`. The synth has 16 voices.
 pub const HELD_CAPACITY: usize = 128;
 
-/// Every note of a track at its place on the timeline, sorted by start and then pitch, so a
+/// Every note of the clips at their place on the timeline, sorted by start and then pitch, so a
 /// block finds its notes with one binary search. The sustain pedal and the lanes are kept the
 /// same way.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct TrackSnapshot {
+pub struct NoteTimeline {
     notes: Vec<PlacedNote>,
     pedal: Vec<PlacedPedal>,
     bend: PlayedLane<Bend>,
@@ -39,7 +40,7 @@ pub struct TrackSnapshot {
     pressure: PlayedLane<Amount>,
 }
 
-impl TrackSnapshot {
+impl NoteTimeline {
     /// Clips may overlap: the notes and the pedal moves of all of them play. A lane has one
     /// owner at a time, see [`PlayedLane::new`].
     pub fn new<'a>(clips: impl IntoIterator<Item = &'a Clip>) -> Self {
@@ -131,7 +132,7 @@ impl TrackSnapshot {
     }
 }
 
-/// One expression lane of a track as it plays: stretches of straight line on the project
+/// One expression lane of the clips as it plays: stretches of straight line on the project
 /// timeline, in time order and never overlapping, from the clips that own the lane. Outside
 /// them the lane is at rest.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -228,10 +229,10 @@ fn one_per_tick(pedal: &mut Vec<PlacedPedal>) {
     });
 }
 
-/// What the control side sends to a [`Sequencer`].
-pub enum SequencerUpdate {
-    /// The notes of the track, from its behaviour on every change.
-    Snapshot(Arc<TrackSnapshot>),
+/// What the control side sends to a [`NotePlayer`].
+pub enum NotePlayerUpdate {
+    /// The notes on the timeline, from the behaviour on every change.
+    Timeline(Arc<NoteTimeline>),
     /// A note from an interface that sounds now, for [`PREVIEW_SECONDS`], also while the
     /// project does not play. A new one ends the one before it.
     Preview { pitch: Pitch, velocity: Velocity },
@@ -252,8 +253,8 @@ struct Held {
     pitch: Pitch,
 }
 
-pub struct Sequencer {
-    snapshot: Arc<TrackSnapshot>,
+pub struct NotePlayer {
+    snapshot: Arc<NoteTimeline>,
     /// A new snapshot came since the last block.
     swapped: bool,
     /// Never grows past [`HELD_CAPACITY`], so it never allocates on the audio thread.
@@ -262,20 +263,20 @@ pub struct Sequencer {
     preview_wanted: Option<(Pitch, Velocity)>,
     previewed: Option<Previewed>,
     preview_frames: usize,
-    /// Where this sequencer last put the pedal of its instrument. Every block compares it with
+    /// Where this player last put the pedal of its instrument. Every block compares it with
     /// the snapshot, so a seek into a held pedal, and an edit that removes one, both arrive
     /// with no case of their own.
     sent_pedal: Pedal,
-    /// Where this sequencer last put the wheels and the pressure, compared with the lanes of
+    /// Where this player last put the wheels and the pressure, compared with the lanes of
     /// the snapshot every block as the pedal is.
     sent_expression: Expression,
 }
 
-impl Sequencer {
+impl NotePlayer {
     pub const NOTES: EventOutput<NoteEvent> = EventOutput::new(0);
 }
 
-impl Default for Sequencer {
+impl Default for NotePlayer {
     fn default() -> Self {
         Self {
             snapshot: Arc::default(),
@@ -290,8 +291,8 @@ impl Default for Sequencer {
     }
 }
 
-impl Processor for Sequencer {
-    type Update = SequencerUpdate;
+impl Processor for NotePlayer {
+    type Update = NotePlayerUpdate;
 
     fn ports(&self) -> Ports {
         Ports::new().event_output(Self::NOTES)
@@ -301,14 +302,14 @@ impl Processor for Sequencer {
         self.preview_frames = (config.sample_rate as f32 * PREVIEW_SECONDS) as usize;
     }
 
-    fn update(&mut self, update: &mut SequencerUpdate) {
+    fn update(&mut self, update: &mut NotePlayerUpdate) {
         match update {
-            SequencerUpdate::Snapshot(snapshot) => {
+            NotePlayerUpdate::Timeline(snapshot) => {
                 // The old snapshot rides back to the control thread inside the update.
                 std::mem::swap(&mut self.snapshot, snapshot);
                 self.swapped = true;
             }
-            SequencerUpdate::Preview { pitch, velocity } => {
+            NotePlayerUpdate::Preview { pitch, velocity } => {
                 self.preview_wanted = Some((*pitch, *velocity));
             }
         }
@@ -492,7 +493,7 @@ impl Sender<'_, '_> {
     /// For an event that is sent again later when it does not fit: an off.
     fn send(&mut self, offset: usize, event: NoteEvent) -> bool {
         if !self.full {
-            self.full = !self.event_outputs.push(Sequencer::NOTES, offset, event);
+            self.full = !self.event_outputs.push(NotePlayer::NOTES, offset, event);
         }
         !self.full
     }
