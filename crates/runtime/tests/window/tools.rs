@@ -1206,11 +1206,11 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
     });
     let trigger =
         problem("\"drop\", which is drop, which has no trigger hat: its triggers are hit");
-    assert_eq!(window.problems(), [trigger.clone()]);
+    assert_eq!(window.problems(), std::slice::from_ref(&trigger));
     window.cx.simulate_click(middle, Modifiers::default());
     // A file shows its newest problem.
     window.until("the problem of the child", |window| {
-        window.problems() != [trigger.clone()]
+        window.problems() != std::slice::from_ref(&trigger)
     });
     let child =
         problem("\"drum\", which conductor does not own: its children are drop, keys, synth");

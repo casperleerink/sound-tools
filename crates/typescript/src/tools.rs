@@ -1239,7 +1239,8 @@ fn cable(
 }
 
 /// The [`NoteFeed`] of every child that has `notes`, by the child's name. Declared whatever
-/// plays into it, so it is there to release what a sender that went away left sounding.
+/// plays into it, so it is there to release what a sender that went away left sounding, and
+/// for a performer to play the child.
 fn feeds(
     context: &mut BehaviourContext<'_>,
 ) -> Result<BTreeMap<String, Node<NoteFeed>>, BehaviourError> {

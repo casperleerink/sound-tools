@@ -659,9 +659,7 @@ impl Live {
         let tool = session.read(cx).project().tool_of(id);
         let Some(info) = tool.and_then(|tool| find(&tools, tool)) else {
             let tool = tool.unwrap_or("nothing");
-            return Err(format!(
-                "is {tool}, which has no live controls or triggers"
-            ));
+            return Err(format!("is {tool}, which has no live controls or triggers"));
         };
         let update = update(info, session.read(cx))?;
         let processor = info.processor();
