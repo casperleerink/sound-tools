@@ -544,6 +544,7 @@ impl Sounds {
             behaviour: Box::new(move |state, context| self.apply(state, context)),
             // A sample its record names may come after the record, as an audio clip's may.
             asset_folders: vec![sound_media::AUDIO_FOLDER],
+            owns_children: false,
         }
     }
 

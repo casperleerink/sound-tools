@@ -36,6 +36,27 @@ fn wobble(max: f64, version: u32, seen: &Seen) -> JsonTool {
             markdown: format!("# Wobble {version}\n"),
         }),
         asset_folders: Vec::new(),
+        owns_children: false,
+    }
+}
+
+/// A tool `band` that owns children. Its behaviour notes `version` and its children as JSON.
+fn band(version: u32, seen: &Seen) -> JsonTool {
+    let seen = seen.clone();
+    JsonTool {
+        name: "band".to_string(),
+        check: Arc::new(|_: &Value| Ok(())),
+        behaviour: Box::new(move |_, context| {
+            let children: Vec<Value> = (context.child_records())
+                .map(|(name, tool, state)| json!([name, tool, state.unwrap()]))
+                .collect();
+            seen.borrow_mut()
+                .push(json!({ "version": version, "children": children }));
+            Ok(())
+        }),
+        doc: None,
+        asset_folders: Vec::new(),
+        owns_children: true,
     }
 }
 
@@ -228,4 +249,31 @@ fn a_tool_of_the_project_cannot_take_the_name_of_a_built_in_tool_or_doc() {
     // Its doc would take the place of the runtime's.
     let error = registry.json_tool(named("project-json")).unwrap_err();
     assert_eq!(error, RegistryError::DuplicateAgentDoc("project-json"));
+}
+
+#[test]
+fn a_tool_of_the_project_that_owns_children_reads_them_as_json_and_is_defined_again_from_its_folder()
+ {
+    let seen = Seen::default();
+    let mut registry = Registry::new();
+    registry.json_tool(wobble(10.0, 1, &seen)).unwrap();
+    registry.json_tool(band(1, &seen)).unwrap();
+    let (mut project, _folder) = open(registry);
+    let root = project.root().to_path_buf();
+    write(
+        &root,
+        "state/band/instance.json",
+        r#"{"tool": "band", "state": {}}"#,
+    );
+    write(&root, "state/band/lead.json", RECORD);
+    let band_folder = root.join("state/band");
+    project.apply_outside_changes(&[band_folder]).unwrap();
+    assert!(project.problems().is_empty(), "{:?}", project.problems());
+    let ran = json!({ "version": 1, "children": [["lead", "wobble", r#"{"rate":3}"#]] });
+    assert_eq!(seen.borrow().last(), Some(&ran));
+
+    project.define_json_tools([band(2, &seen)]).unwrap();
+    assert!(project.problems().is_empty(), "{:?}", project.problems());
+    assert_eq!(seen.borrow().last().unwrap()["version"], 2);
+    assert_eq!(project.tool_of(&id("band/lead")), Some("wobble"));
 }
