@@ -124,7 +124,7 @@ Data fields are for a behaviour, a card and a page; `sound` does not get them. T
 A tool with a `behaviour` owns children, as a band owns its players. Its record is `state/<name>/instance.json`, and every record next to it, `state/<name>/<child>.json`, is a child of any tool: a built-in device such as `instrument.synth` or `delay` (enable its extension in `project.json`), or a tool of this project, such as a `source`. The behaviour is a pure function of the record and the children that says how they connect:
 
 ```ts
-import { list, text, tool, type Connection } from "./sdk";
+import { list, ownSound, text, tool, type Connection } from "./sdk";
 
 tool({
   name: "band",
@@ -138,15 +138,15 @@ tool({
       from: { child: chain[index] },
       to: { child: effect },
     }));
-    connections.push({ from: { child: chain[chain.length - 1] }, to: "sound" });
+    connections.push({ from: { child: chain[chain.length - 1] }, to: ownSound });
     return { connections };
   },
 });
 ```
 
-- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. It returns `{ connections }`: each from an output of a child to an input of another child, or to `"sound"`.
+- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. It returns `{ connections }`: each from an output of a child to an input of another child, or to `ownSound`.
 - A port is `audio` when left out; an instrument also has the input `notes`.
-- `"sound"` is the owner's own `sound`, which hears what reaches it as `input`. Its output is the owner's `audio` output: put the owner at the top of the project and connect it to the speakers in `project.json`, as a page does below.
+- `ownSound` is the owner's own `sound`, which hears what reaches it as `input`. Its output is the owner's `audio` output. Put the owner at the top of the project and connect that to the speakers in `project.json`, as a page does below; or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound, not its notes, and plays into the track's mixer.
 - The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
 - A child or a port it names that is not there, or a behaviour that throws, is a problem of the owner's record. The rest plays.
 
@@ -155,7 +155,7 @@ tool({
 An owner may also declare note players. A player loops one of its patterns at a time, to the sample, and plays it into a child's `notes`; a performer picks which with `launch`. A clip launcher, with an instrument `synth` and an effect `fx` as its children:
 
 ```ts
-import { h, list, notes, number, playerOf, tool } from "./sdk";
+import { h, list, notes, number, ownSound, playerOf, tool } from "./sdk";
 
 const BAR = 3840; // ticks in a bar of 4/4
 
@@ -175,7 +175,7 @@ tool({
     connections: [
       { from: { player: "bass" }, to: { child: "synth" } },
       { from: { child: "synth" }, to: { child: "fx" } },
-      { from: { child: "fx" }, to: "sound" },
+      { from: { child: "fx" }, to: ownSound },
     ],
   }),
   transport: true,

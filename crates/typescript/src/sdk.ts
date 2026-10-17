@@ -622,7 +622,7 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * are its children. A pure function of its record and its children that says how they
    * connect and what its note players loop. It runs in Bun when either changes, and what it
    * declares plays a moment later; the sound plays on meanwhile. Its own `sound` hears what it
-   * connects to `"sound"` as `input`, and is its `audio` output.
+   * connects to `ownSound` as `input`, and is its `audio` output.
    */
   behaviour?: (owner: Owner<S>) => Declaration;
   /**
@@ -688,10 +688,13 @@ export interface PlayerPort {
   player: string;
 }
 
-/** Joins an output to an input: of two children, of a player and a child, or into the owner's own sound. */
+/** The owner's own `sound` as the end of a connection: what reaches it is its `input`. */
+export const ownSound = "sound" as const;
+
+/** Joins an output to an input: of two children, of a player and a child, or into `ownSound`. */
 export interface Connection {
   from: ChildPort | PlayerPort;
-  to: ChildPort | "sound";
+  to: ChildPort | typeof ownSound;
 }
 
 /** Notes that loop for as long as they play. */

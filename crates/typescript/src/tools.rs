@@ -636,7 +636,9 @@ impl ToolInfo {
                      behaviour connects them, and connects them into its own sound, which is its \
                      `audio` output. At the top of the project, connect that to the speakers in \
                      `project.json`: `{{\"from\": {{\"instance\": \"{name}\", \"port\": \"audio\"}}, \
-                     \"to\": {{\"device_output\": 0}}}}`"
+                     \"to\": {{\"device_output\": 0}}}}`. Or put it in a track's `effects` as \
+                     `state/arrangement/<track>/{name}/instance.json`, where it hears the track's \
+                     sound and plays into its mixer"
                 ),
                 "one at its defaults",
                 format!("state/{name}/instance.json"),

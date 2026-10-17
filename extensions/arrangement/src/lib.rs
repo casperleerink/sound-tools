@@ -790,7 +790,7 @@ fn missing_effect(context: &BehaviourContext<'_>, name: &str) -> String {
             "`effects` names {name:?}, and {name}.json in this track holds no tool with an `audio` input and an `audio` output, so the sound passes it by. Put a plugin record there, or take {name:?} out of `effects`"
         ),
         false => format!(
-            "`effects` names {name:?}, and this track has no {name}.json that loads, so the sound passes it by. Write that record or fix what `problems.txt` says of it, or take {name:?} out of `effects`"
+            "`effects` names {name:?}, and this track has no {name}.json, or {name}/instance.json for a tool that owns children, that loads, so the sound passes it by. Write that record or fix what `problems.txt` says of it, or take {name:?} out of `effects`"
         ),
     }
 }

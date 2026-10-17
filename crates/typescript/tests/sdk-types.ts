@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { list, number, text, tool } from "./sdk";
+import { list, number, ownSound, text, tool } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -19,6 +19,7 @@ tool({
     const plain: string = state.plain[0]!;
     // @ts-expect-error: an item has no field `nmae`.
     state.rows[0]!.nmae;
-    return { connections: [{ from: { child: name + steps + plain }, to: "sound" }] };
+    const connections = [{ from: { child: name + steps + plain }, to: ownSound }];
+    return { connections };
   },
 });

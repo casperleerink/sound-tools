@@ -314,6 +314,32 @@ fn the_example_of_the_doc_of_an_owner_loads() {
     assert_eq!(project.tool_of(&band), Some("band"));
 }
 
+#[test]
+fn an_owner_in_the_effects_of_a_track_plays_its_children_into_the_track() {
+    if !sound_typescript::has_bun() {
+        eprintln!("skipped: Bun is not installed");
+        return;
+    }
+    let harness = Harness::new();
+    harness.write("extensions/drone.ts", DRONE);
+    harness.write("extensions/band.ts", &doc_owner());
+    let track = r#"{"tool": "arrangement.track", "state": {"name": "pad", "order": 1, "effects": ["band"]}}"#;
+    harness.write("state/arrangement/pad/instance.json", track);
+    harness.write("state/arrangement/pad/band/instance.json", &record("{}"));
+    harness.write(
+        "state/arrangement/pad/band/drone.json",
+        r#"{"tool": "drone", "state": {"hz": 330}}"#,
+    );
+    let harness = harness.reopen();
+    assert_eq!(harness.project.problems(), []);
+    let played = rendered(closed(harness).path());
+    assert!(
+        (rises(&played) as i64 - 330).abs() <= 2,
+        "{}",
+        rises(&played)
+    );
+}
+
 /// The launcher of the doc for agents that write tools, as it is written there.
 fn doc_launcher() -> String {
     let doc = sound_typescript::AGENT_DOC.markdown;
