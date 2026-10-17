@@ -405,6 +405,13 @@ def check_launcher(folder: Path) -> dict:
     }
 
 
+def check_tracker(folder: Path) -> dict:
+    checks = check_launcher(folder)
+    checks.pop("note players and launches")
+    text = "".join(project_tools(folder).values())
+    return {**checks, "note players": "players" in text, "edits from the page": "update(" in text}
+
+
 SCENARIOS = {
     "builtin": (setup_builtin, check_builtin,
                 "Put a dotted-eighth echo on the lead, quieter than the dry sound, and make the "
@@ -519,6 +526,15 @@ SCENARIOS = {
                          "which patterns play and which wait for the bar, and give me play and "
                          "stop. Start me off with patterns in A minor at 120 BPM that groove "
                          "together, and the first scene playing when I press play."),
+    "tracker-builder": (setup_tape_builder, check_tracker,
+                        "Turn this project into a step sequencer on one screen instead of a song, "
+                        "no timeline: a grid of 16 steps across and two octaves of C minor up the "
+                        "side, for two parts, a bass on the built-in synth through a filter and a "
+                        "lead on the built-in synth through a delay. I click cells to add or "
+                        "remove notes while it plays and hear the change on the next pass, and a "
+                        "column lights up as it plays. Each part has a length of 1 to 4 bars and "
+                        "I can switch which bar of it I'm looking at. Give me play and stop, and "
+                        "start me off with a groove."),
 }
 
 
