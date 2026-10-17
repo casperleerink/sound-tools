@@ -1003,7 +1003,7 @@ fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestApp
 }
 
 /// A note a bar long that its sequencer `bass` loops on its child `synth` once a click on the
-/// page launches it; a click while it plays stops it. Nothing plays before.
+/// page launches it; a click while the page sees it play stops it. Nothing plays before.
 const LAUNCHER: &str = r#"import { h, tool } from "./sdk";
 
 tool({
@@ -1019,14 +1019,10 @@ tool({
     ],
   }),
   transport: true,
-  memory: () => ({ playing: false }),
-  page: ({ size, memory, set }) =>
+  page: ({ size, watches, set }) =>
     h("div", {
       style: { width: size.width, height: size.height },
-      onClick: () => {
-        memory.playing = !memory.playing;
-        set({ child: "bass", live: "launch" }, memory.playing ? 0 : -1);
-      },
+      onClick: () => set({ child: "bass", live: "launch" }, watches["bass.playing"] === 0 ? -1 : 0),
     }, "Launch"),
 });
 "#;
@@ -1096,8 +1092,8 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
     let sounding = left.iter().position(|sample| sample.abs() > 1e-4);
     assert!(sounding.is_some_and(|frame| frame < 48), "{left:?}");
 
-    window.cx.simulate_click(middle, Modifiers::default());
     window.until("the stop", |window| {
+        window.cx.simulate_click(middle, Modifiers::default());
         queued(window) == Some(sound_notes::QUEUED_STOP)
     });
     // It plays on to the bar line, and is silent from a release after it.

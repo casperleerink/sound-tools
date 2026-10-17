@@ -3,7 +3,6 @@
 //! launch, so a render plays it; a launch is a number into its input `launch`, from a cable or
 //! from a performer, and nothing saves it.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -16,6 +15,8 @@ use sound_notes::{
     Launch, Length, Note, NoteEvent, NotePlayer, NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
 };
 use sound_signals::Number;
+
+use crate::tools::key;
 
 pub(crate) const NAME: &str = "sequencer";
 /// Its input of launches, which a performer reaches as a live control.
@@ -32,12 +33,8 @@ struct Record {
     /// The pattern it plays before any launch, by index.
     #[serde(default)]
     plays: Option<usize>,
-    #[serde(default = "bar")]
+    #[serde(default)]
     quantize: Quantize,
-}
-
-fn bar() -> Quantize {
-    Quantize::Bar
 }
 
 /// Notes that loop: `length` in ticks, and note starts counted from the start of the pattern.
@@ -87,7 +84,7 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     };
     let node = context.processor(PROCESSOR, || Sequencer {
         player: NotePlayer::watched(watches),
-        quantize: Quantize::Bar,
+        quantize: Quantize::default(),
         heard: None,
     })?;
     // Checked every run, so a problem stays as long as the pattern does.
@@ -138,12 +135,6 @@ fn pattern_of(
             silent.map_err(|error| BehaviourError::Other(error.to_string()))
         }
     }
-}
-
-fn key(value: &impl Hash) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// A [`NotePlayer`] of patterns that launches what its input `launch` hears.

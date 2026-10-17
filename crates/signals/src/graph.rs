@@ -280,7 +280,7 @@ impl Graph {
         let (bangs, mut event_registers) =
             lowering.named(&self.bangs, MAX_OUTPUTS, ("bang", "bangs"))?;
         if self.notes.len() > MAX_OUTPUTS {
-            return error(format!("a sound sends at most {MAX_OUTPUTS} notes"));
+            return error(format!("a sound has at most {MAX_OUTPUTS} notes"));
         }
         let mut notes = Vec::new();
         for NotesNode {

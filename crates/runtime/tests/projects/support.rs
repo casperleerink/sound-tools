@@ -331,3 +331,10 @@ pub(crate) fn difference(a: &[f32], b: &[f32]) -> Option<(usize, usize)> {
     let last = a.chunks(2).zip(b.chunks(2)).rposition(differs)?;
     Some((first, last))
 }
+
+/// The first frame from `from` on whose left channel sounds.
+pub(crate) fn first_sound(samples: &[f32], from: usize) -> Option<usize> {
+    let left = samples.iter().step_by(2).enumerate().skip(from);
+    let mut sounding = left.filter(|(_, sample)| sample.abs() > 1e-4);
+    sounding.next().map(|(frame, _)| frame)
+}

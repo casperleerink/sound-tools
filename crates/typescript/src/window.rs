@@ -432,11 +432,21 @@ fn looped<'a>(
         instance: id,
         tool,
         state: played_state(project, tools, id, tool).unwrap_or_default(),
-        watches: (project.watches(id).into_iter())
-            .map(|(name, watch)| (name, watch.get()))
-            .collect(),
+        watches: watches_of(project, id),
         edits: edits.get(id).copied().unwrap_or(0),
     }
+}
+
+/// The watches of `id` as its code reads them: its own, and those of each child as
+/// `<child>.<watch>`, such as what a sequencer plays.
+fn watches_of(project: &Project, id: &InstanceId) -> BTreeMap<String, f32> {
+    let children = (project.instances()).filter(|(child, _)| child.parent().as_ref() == Some(id));
+    let children = children.flat_map(|(child, _)| {
+        let watches = project.watches(child).into_iter();
+        watches.map(|(name, watch)| (format!("{}.{name}", child.name()), watch))
+    });
+    let watches = project.watches(id).into_iter().chain(children);
+    watches.map(|(name, watch)| (name, watch.get())).collect()
 }
 
 /// Where the engine is now, in seconds: the clock `at` counts on.
@@ -973,11 +983,7 @@ impl Live {
         let transport = transport_of(session.read(cx), cx);
         for (card, entry) in &mut self.cards {
             let info = find(&tools, &entry.tool);
-            let watches = session.read(cx).project().watches(&entry.id);
-            let watches: BTreeMap<String, f32> = watches
-                .into_iter()
-                .map(|(name, watch)| (name, watch.get()))
-                .collect();
+            let watches = watches_of(session.read(cx).project(), &entry.id);
             // The control loop draws the card of its tool after every step anyway, but with
             // the transport of its last draw.
             let watches_changed = watches != entry.watches;

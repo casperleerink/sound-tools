@@ -84,6 +84,15 @@ impl Block {
             playing: false,
         }
     }
+
+    /// Fires the trigger of `index` in `frame`.
+    pub(crate) fn fire(&mut self, index: usize, frame: usize) {
+        if let Some(triggers) = self.triggers.get_mut(frame)
+            && index < MAX_LIVES
+        {
+            *triggers |= 1 << index;
+        }
+    }
 }
 
 /// What one voice reads over a span of frames.

@@ -293,7 +293,7 @@ tool({
   - `{ from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } }` fires a trigger.
   - `{ from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } }` plays an instrument; `notes` is the input of each.
 - A parent plays its children: `play(45, { child: "synth" })` and `release` reach a child's `notes`, a built-in instrument's too; `set({ child: "lfo", live: "rate" }, 2)` and `fire({ child: "drop", trigger: "hit" })` a live control and a trigger of a tool of this project. A knob of a child is its record: a cable moves it.
-- A `sequencer` child loops note patterns in time with the bars, also in a render, out of its output `notes` (`agent-docs/sequencer.md`). `set({ child: "bass", live: "launch" }, 1)` launches its second pattern at the next bar.
+- A `sequencer` child loops note patterns in time with the bars, also in a render, out of its output `notes` (`agent-docs/sequencer.md`). `set({ child: "bass", live: "launch" }, 1)` launches its second pattern at the next bar. A parent's card and page see the watches of each child as `<child>.<watch>`: a sequencer's `playing` and `queued` are a pattern's index, -1 for none, -2 for a stop that waits.
 - A child or a port it names that is not there, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
 A clip launcher, with a sequencer `bass`, an instrument `synth` and an effect `fx` as its children:
@@ -315,18 +315,15 @@ tool({
     ],
   }),
   transport: true,
-  memory: () => ({ launched: 0 }),
-  page: ({ memory, set }) =>
+  page: ({ watches, set }) =>
     h("div", { style: { direction: "row", gap: 8, padding: 16 } },
-      [0, 1, -1].map((pattern) =>
-        h("div", {
-          style: { padding: 8, radius: 6, background: memory.launched === pattern ? "#7c3aed" : "#2a2f3a" },
-          onClick: () => {
-            memory.launched = pattern;
-            set({ child: "bass", live: "launch" }, pattern);
-          },
-        }, pattern < 0 ? "Stop" : `Bass ${pattern + 1}`),
-      ),
+      [0, 1, -1].map((pattern) => {
+        const plays = watches["bass.playing"] === pattern, waits = watches["bass.queued"] === pattern;
+        return h("div", {
+          style: { padding: 8, radius: 6, background: plays ? "#7c3aed" : waits ? "#4c1d95" : "#2a2f3a" },
+          onClick: () => set({ child: "bass", live: "launch" }, pattern),
+        }, pattern < 0 ? "Stop" : `Bass ${pattern + 1}`);
+      }),
     ),
 });
 ```

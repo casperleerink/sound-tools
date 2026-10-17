@@ -395,7 +395,8 @@ def check_launcher(folder: Path) -> dict:
         "no arrangement": not (folder / "state/arrangement").exists(),
         "a project tool owns the parts": owner is not None,
         "it owns the built-in synth": "instrument.synth" in children,
-        "and an effect": any(child not in ("instrument.synth", None) for child in children),
+        "and an effect": any(child not in ("instrument.synth", "sequencer", None)
+                             for child in children),
         "sequencers and launches": "sequencer" in children and '"launch"' in text,
         "a page with the transport": "page:" in text and "transport: true" in text,
         "connected to the device": owner is not None
@@ -407,12 +408,9 @@ def check_launcher(folder: Path) -> dict:
 
 def check_tracker(folder: Path) -> dict:
     checks = check_launcher(folder)
-    checks.pop("sequencers and launches")
+    sequencers = checks.pop("sequencers and launches")
     text = "".join(project_tools(folder).values())
-    owner = next(iter((folder / "state").glob("*/instance.json")), None)
-    children = [record(folder, str(path.relative_to(folder))).get("tool")
-                for path in owner.parent.glob("*.json")] if owner else []
-    return {**checks, "sequencers": "sequencer" in children, "edits from the page": "update(" in text}
+    return {**checks, "sequencers": sequencers, "edits from the page": "update(" in text}
 
 
 SCENARIOS = {

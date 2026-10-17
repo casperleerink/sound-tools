@@ -3,7 +3,7 @@
 //! it holds when what it plays into changes.
 
 use crate::owners::{closed, rendered_frames};
-use crate::support::{BAR, Harness, write};
+use crate::support::{BAR, Harness, first_sound, write};
 
 /// The launcher of the doc for agents that write tools, as it is written there.
 fn doc_launcher() -> String {
@@ -58,13 +58,6 @@ fn loops(bass: Option<&str>, extra: &str) -> Option<Harness> {
     let bass = bass.map_or_else(|| doc_sequencer(&harness), str::to_string);
     harness.write_and_apply("state/loops/bass.json", &bass);
     Some(harness)
-}
-
-/// The first frame from `from` on whose left channel sounds.
-fn first_sound(samples: &[f32], from: usize) -> Option<usize> {
-    let left = samples.iter().step_by(2).enumerate().skip(from);
-    let mut sounding = left.filter(|(_, sample)| sample.abs() > 1e-4);
-    sounding.next().map(|(frame, _)| frame)
 }
 
 #[test]

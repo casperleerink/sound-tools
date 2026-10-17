@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use crate::support::{Harness, write};
+use crate::support::{Harness, first_sound, write};
 
 /// Frames of the hits in `drums.wav`.
 const HITS: [usize; 4] = [4_800, 16_000, 30_000, 41_000];
@@ -132,13 +132,6 @@ fn drums(root: &Path) {
         writer.write_sample(burst).unwrap();
     }
     writer.finalize().unwrap();
-}
-
-/// The first frame from `from` on whose left channel sounds.
-fn first_sound(samples: &[f32], from: usize) -> Option<usize> {
-    let left = samples.iter().step_by(2).enumerate().skip(from);
-    let mut sounding = left.filter(|(_, sample)| sample.abs() > 1e-4);
-    sounding.next().map(|(frame, _)| frame)
 }
 
 fn messages(harness: &Harness) -> Vec<String> {

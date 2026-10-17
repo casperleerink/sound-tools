@@ -538,7 +538,7 @@ export interface Notes {
 /**
  * Sends out what a parent connects to another child: a number, in the units of the number it
  * drives; `{ bang }`, a bang where it goes above 0; or `Notes`, a note that ends where the gate
- * falls or the pitch moves. Inside `sound` only; not in an instrument but a number.
+ * falls or the pitch moves. Inside `sound` only; an instrument sends only numbers.
  */
 export function output(name: string, value: Operand | { bang: Operand } | Notes): void {
   const declared = building();

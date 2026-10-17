@@ -774,12 +774,10 @@ impl Processor for Signals {
         }
         let input = context.audio_inputs.get(Self::INPUT);
         self.fill(input, frames, bpm, playing);
+        // After `fill`, which clears the triggers, where the live controls had to come before.
         for timed in context.event_inputs.get(Self::CONTROLS) {
-            if let Control::Trigger { index } = timed.event
-                && let Some(triggers) = self.block.triggers.get_mut(timed.offset)
-                && usize::from(index) < MAX_LIVES
-            {
-                *triggers |= 1 << index;
+            if let Control::Trigger { index } = timed.event {
+                self.block.fire(usize::from(index), timed.offset);
             }
         }
         for channel in &mut self.mix {
@@ -797,11 +795,7 @@ impl Processor for Signals {
             while let Some((_, what)) = self.scheduled.take(now) {
                 match what {
                     Played::Note(event) => self.follow(event),
-                    Played::Trigger(index) => {
-                        if let Some(triggers) = self.block.triggers.get_mut(start) {
-                            *triggers |= 1 << index;
-                        }
-                    }
+                    Played::Trigger(index) => self.block.fire(index, start),
                 }
             }
             let next_event = events.peek().map_or(frames, |timed| timed.offset);
