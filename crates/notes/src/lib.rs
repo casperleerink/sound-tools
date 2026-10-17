@@ -20,7 +20,7 @@
 //!   off does not see where the pedal stands, a note does not start where the wheels stand, or
 //!   the end of one note releases the next note of the same pitch.
 //! - A sender whose notes can change while they sound keeps a fixed list of what it started,
-//!   and sends the offs from that list. `extensions/arrangement/src/sequencer.rs` does this.
+//!   and sends the offs from that list, as [`NotePlayer`] does.
 //!
 //! A known limit, accepted: `AllOff` releases everything an instrument holds, also the keys
 //! held on a MIDI keyboard, because live input plays into the same port, and it puts the wheels
@@ -29,8 +29,12 @@
 
 mod division;
 mod expression;
+mod feed;
 mod lane;
+mod pattern;
+mod player;
 mod take;
+mod timeline;
 mod voices;
 
 use serde::{Deserialize, Serialize};
@@ -38,10 +42,17 @@ use sound_core::{Place, State, Ticks};
 
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
+pub use feed::NoteFeed;
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
+pub use pattern::{Launch, Pattern, PatternError, Quantize};
+pub use player::{
+    HELD_CAPACITY, NO_PATTERN, NotePlayer, NotePlayerUpdate, PREVIEW_SECONDS, PlayerWatches,
+    QUEUED_STOP,
+};
 pub use take::{
     MAX_PROJECT_MICROS, MAX_TAKE_MICROS, RawEvent, RawTake, TAKES_FOLDER, TakeError, take_asset,
 };
+pub use timeline::NoteTimeline;
 pub use voices::{Voice, Voices, frequency_hz};
 
 /// The event input of an instrument. It carries [`NoteEvent`].

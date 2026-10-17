@@ -379,6 +379,39 @@ def check_generative(folder: Path) -> dict:
     }
 
 
+def check_launcher(folder: Path) -> dict:
+    tools = project_tools(folder)
+    owners = [path.parent for path in (folder / "state").glob("*/instance.json")
+              if record(folder, str(path.relative_to(folder))).get("tool") in tools]
+    owner = owners[0] if owners else None
+    children = [record(folder, str(path.relative_to(folder))).get("tool")
+                for path in owner.glob("*.json") if path.name != "instance.json"] if owner else []
+    tool = record(folder, f"state/{owner.name}/instance.json").get("tool") if owner else None
+    text = tools.get(tool, "")
+    connections = json.loads((folder / "project.json").read_text()).get("connections", [])
+    report = runtime(folder, "--analyze", "--seconds", "8")
+    loudness = re.search(r"loudness (-?[0-9.]+) LUFS", report)
+    return {
+        "no arrangement": not (folder / "state/arrangement").exists(),
+        "a project tool owns the parts": owner is not None,
+        "it owns the built-in synth": "instrument.synth" in children,
+        "and an effect": any(child not in ("instrument.synth", None) for child in children),
+        "note players and launches": "players" in text and "launch(" in text,
+        "a page with the transport": "page:" in text and "transport: true" in text,
+        "connected to the device": owner is not None
+        and any(c.get("from", {}).get("instance") == owner.name for c in connections),
+        "it sounds": bool(loudness) and float(loudness.group(1)) > -60,
+        "no problems": no_problems(folder),
+    }
+
+
+def check_tracker(folder: Path) -> dict:
+    checks = check_launcher(folder)
+    checks.pop("note players and launches")
+    text = "".join(project_tools(folder).values())
+    return {**checks, "note players": "players" in text, "edits from the page": "update(" in text}
+
+
 SCENARIOS = {
     "builtin": (setup_builtin, check_builtin,
                 "Put a dotted-eighth echo on the lead, quieter than the dry sound, and make the "
@@ -483,6 +516,25 @@ SCENARIOS = {
                     "XY pad, across is how dark or bright, up is how wild, plus a 'thunder' "
                     "button that sets off a deep rumble. It should run by itself, no notes "
                     "needed."),
+    "launcher-builder": (setup_tape_builder, check_launcher,
+                         "Turn this project into a clip launcher instead of a song: one screen "
+                         "with a grid and no timeline. Three lanes, bass, chords and lead, each "
+                         "playing the built-in synth through its own effect: the bass through a "
+                         "filter, the chords through a reverb, the lead through a delay. Each lane "
+                         "has four patterns. I click a pattern to launch it and it starts on the "
+                         "next bar; a column of scene buttons launches a whole row at once. Show "
+                         "which patterns play and which wait for the bar, and give me play and "
+                         "stop. Start me off with patterns in A minor at 120 BPM that groove "
+                         "together, and the first scene playing when I press play."),
+    "tracker-builder": (setup_tape_builder, check_tracker,
+                        "Turn this project into a step sequencer on one screen instead of a song, "
+                        "no timeline: a grid of 16 steps across and two octaves of C minor up the "
+                        "side, for two parts, a bass on the built-in synth through a filter and a "
+                        "lead on the built-in synth through a delay. I click cells to add or "
+                        "remove notes while it plays and hear the change on the next pass, and a "
+                        "column lights up as it plays. Each part has a length of 1 to 4 bars and "
+                        "I can switch which bar of it I'm looking at. Give me play and stop, and "
+                        "start me off with a groove."),
 }
 
 

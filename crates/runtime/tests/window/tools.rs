@@ -1,14 +1,14 @@
 //! Tools of the project in the window, run by Bun: a key on a page and a note of the MIDI
-//! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes back; a save of a tool
-//! keeps the sample it plays. Bun is not part
-//! of the build, so where it is not installed, as in CI, these tests say so and pass.
+//! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes
+//! back; a save of a tool keeps the sample it plays. Bun is not part of the build, so where it
+//! is not installed, these tests say so and pass.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
     AppContext, Entity, FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    TestAppContext, VisualTestContext,
+    Pixels, Point, TestAppContext, VisualTestContext, point,
 };
 use midi::Played;
 use plugin_host::{Plugins, ScanCache};
@@ -64,6 +64,71 @@ const EXPERIMENT: [(&str, &str); 3] = [
     ),
     ("state/keys.json", r#"{"tool": "keys", "state": {}}"#),
     ("extensions/keys.ts", KEYS),
+];
+
+/// A page that asks for the transport, at the top. A click keeps the tick it drew with.
+const BEAT: [(&str, &str); 3] = [
+    ONLY_THE_TOOL[0],
+    (
+        "state/beat.json",
+        r#"{"tool": "beat", "state": {"tick": 0}}"#,
+    ),
+    (
+        "extensions/beat.ts",
+        r#"import { h, input, knob, tool } from "./sdk";
+
+tool({
+  name: "beat",
+  title: "Beat",
+  when: "You want to see the beat",
+  doc: "Shows the bar and the beat.",
+  state: { tick: knob({ min: 0, max: 1000000, default: 0 }) },
+  sound: () => input,
+  transport: true,
+  page: ({ size, transport, update }) =>
+    h(
+      "div",
+      {
+        style: { width: size.width, height: size.height },
+        onClick: () => update("Keep the tick", (state) => { state.tick = transport.tick; }),
+      },
+      `${transport.bar}.${transport.beat}`,
+    ),
+});
+"#,
+    ),
+];
+
+/// A page that counts its clicks from the record it drew with, and shows nothing that changes.
+const COUNTER: [(&str, &str); 3] = [
+    ONLY_THE_TOOL[0],
+    (
+        "state/counter.json",
+        r#"{"tool": "counter", "state": {"count": 0}}"#,
+    ),
+    (
+        "extensions/counter.ts",
+        r#"import { h, input, knob, tool } from "./sdk";
+
+tool({
+  name: "counter",
+  title: "Counter",
+  when: "You want to count clicks",
+  doc: "Counts the clicks on its page.",
+  state: { count: knob({ min: 0, max: 100, default: 0 }) },
+  sound: () => input,
+  page: ({ size, state, update }) =>
+    h(
+      "div",
+      {
+        style: { width: size.width, height: size.height },
+        onClick: () => update("Count", (next) => { next.count = state.count + 1; }),
+      },
+      "Count",
+    ),
+});
+"#,
+    ),
 ];
 
 /// The tool `keys`, and no record of it yet.
@@ -141,6 +206,7 @@ const TWO_TRACKS: [(&str, &str); 8] = [
 struct Window<'a> {
     _folder: TempDir,
     engine: Engine,
+    plugins: Plugins,
     session: Entity<Session>,
     shell: Entity<Shell>,
     cx: &'a mut VisualTestContext,
@@ -179,7 +245,7 @@ fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
     let (shell, cx) = cx.add_window_view({
-        let session = session.clone();
+        let (session, plugins) = (session.clone(), plugins.clone());
         move |window, cx| {
             let (mut views, mut devices) = views(plugins.downgrade());
             let extensions = extensions.unwrap();
@@ -192,6 +258,7 @@ fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
     Some(Window {
         _folder: folder,
         engine,
+        plugins,
         session,
         shell,
         cx,
@@ -208,11 +275,14 @@ impl Window<'_> {
         peak(&output)
     }
 
-    /// One poll of the window, after a block of the engine: what Bun said is heard.
+    /// One poll of the window, after a block of the engine: what Bun said is heard, and the
+    /// tick of the window runs.
     fn poll(&mut self) {
         self.loudest(64);
         self.cx.executor().advance_clock(POLL_INTERVAL);
         self.cx.run_until_parked();
+        let (session, plugins) = (self.session.clone(), self.plugins.clone());
+        (self.cx).update(|_, cx| runtime::window::tick(&session, &plugins, &mut 0, cx));
     }
 
     /// Polls until `done` holds: Bun answers on a thread of its own, in real time.
@@ -234,6 +304,14 @@ impl Window<'_> {
             self.poll();
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// The middle of a control that names itself for tests, after a whole frame. `None` when it
+    /// is not on screen.
+    fn find(&mut self, selector: &'static str) -> Option<Point<Pixels>> {
+        self.cx.update(|window, _| window.refresh());
+        self.cx.run_until_parked();
+        self.cx.debug_bounds(selector).map(|bounds| bounds.center())
     }
 
     fn focused(&mut self) -> FocusHandle {
@@ -314,6 +392,62 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
     window.until("the release of the key", |window| {
         window.loudest(480) == 0.0
     });
+}
+
+#[gpui::test]
+fn a_page_that_asks_for_the_transport_plays_it_and_draws_as_it_moves(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &BEAT) else {
+        return;
+    };
+    assert!(window.find("record").is_none());
+    let play = window.find("play").expect("the play button");
+    window.cx.simulate_click(play, Modifiers::default());
+    window.poll();
+    assert!(window.playing());
+
+    // A click keeps the tick of the tree it clicked: the page drew again as the playhead moved.
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    let middle = point(middle.width, middle.height);
+    window.until("a draw at a later tick", |window| {
+        window.cx.simulate_click(middle, Modifiers::default());
+        window.record("beat")["tick"]
+            .as_f64()
+            .is_some_and(|tick| tick > 0.)
+    });
+}
+
+/// The tree stays the same, so a click runs the handler of the last draw, with the new record.
+#[gpui::test]
+fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
+    cx: &mut TestAppContext,
+) {
+    let Some(mut window) = open(cx, &COUNTER) else {
+        return;
+    };
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    let middle = point(middle.width, middle.height);
+    let count = |window: &mut Window| window.record("counter")["count"].as_f64();
+    // Clicked again until it counts: the first click may come before the first tree.
+    for wanted in [1.0, 2.0] {
+        window.until("the click counts", |window| {
+            window.cx.simulate_click(middle, Modifiers::default());
+            (0..40).any(|_| {
+                window.poll();
+                std::thread::sleep(Duration::from_millis(5));
+                count(window) == Some(wanted)
+            })
+        });
+    }
+    window.wait_for_bun();
+    assert_eq!(count(&mut window), Some(2.0));
+}
+
+#[gpui::test]
+fn a_page_that_does_not_ask_for_the_transport_has_no_play(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EXPERIMENT) else {
+        return;
+    };
+    assert!(window.find("play").is_none());
 }
 
 /// The computer keys play as a MIDI keyboard, but a page that hears keys keeps them.
@@ -789,4 +923,179 @@ tool({
     };
     assert_eq!(problem.path, "extensions/");
     assert!(problem.message.contains("no tool to blame"), "{problem:?}");
+}
+
+/// Plays the drone its record names into its own sound.
+const BAND: &str = r#"import { text, tool } from "./sdk";
+
+tool({
+  name: "band",
+  title: "Band",
+  when: "You want one of two drones",
+  doc: "Plays the drone `lead` names.",
+  state: { lead: text({ default: "low" }) },
+  behaviour: ({ state }) => ({ connections: [{ from: { child: state.lead }, to: "sound" }] }),
+});
+"#;
+
+/// A sine at `hz`, all the time.
+const DRONE: &str = r#"import { knob, sine, tool } from "./sdk";
+
+tool({
+  name: "drone",
+  title: "Drone",
+  when: "You want a drone",
+  doc: "A sine.",
+  kind: "source",
+  state: { hz: knob({ min: 20, max: 2000, default: 220 }) },
+  sound: ({ hz }) => sine(hz).times(0.25),
+});
+"#;
+
+#[gpui::test]
+fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project.replace("\"keys\"", "\"band\"");
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/band/instance.json",
+            r#"{"tool": "band", "state": {}}"#,
+        ),
+        ("state/band/low.json", r#"{"tool": "drone", "state": {}}"#),
+        (
+            "state/band/high.json",
+            r#"{"tool": "drone", "state": {"hz": 880}}"#,
+        ),
+        ("extensions/band.ts", BAND),
+        ("extensions/drone.ts", DRONE),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    // A tenth of a second of the left channel: how often it rises through zero.
+    let rises = |window: &mut Window| {
+        let mut output = vec![0.0_f32; 4_800 * OFFLINE.channels];
+        window.engine.process_block(&mut output);
+        let left: Vec<f32> = output.iter().step_by(OFFLINE.channels).copied().collect();
+        left.windows(2)
+            .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+            .count()
+    };
+    window.until("the low drone", |window| rises(window).abs_diff(22) <= 1);
+
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut edit = project.begin("Lead high");
+                project.update_json(&mut edit, &id("band"), |state| {
+                    state["lead"] = "high".into()
+                })?;
+                project.finish(edit)
+            })
+        })
+    });
+    // The edit plays what was declared before, until Bun answers.
+    assert!(rises(&mut window).abs_diff(22) <= 1);
+    window.until("the high drone", |window| rises(window).abs_diff(88) <= 1);
+    assert_eq!(window.problems(), []);
+}
+
+/// A note a bar long that loops on its child `synth` once a click on the page launches it; a
+/// click while it plays stops it. Nothing plays before.
+const LAUNCHER: &str = r#"import { h, playerOf, tool } from "./sdk";
+
+tool({
+  name: "launcher",
+  title: "Launcher",
+  when: "You want to launch a pattern",
+  doc: "A click launches a long note, another stops it.",
+  state: {},
+  behaviour: () => ({
+    players: { bass: { patterns: [{ length: 3840, notes: [{ start: 0, length: 3840, pitch: 45, velocity: 100 }] }] } },
+    connections: [
+      { from: { player: "bass" }, to: { child: "synth" } },
+      { from: { child: "synth" }, to: "sound" },
+    ],
+  }),
+  transport: true,
+  page: ({ size, watches, launch }) =>
+    h("div", {
+      style: { width: size.width, height: size.height },
+      onClick: () => launch("bass", playerOf(watches, "bass").playing === null ? 0 : null),
+    }, "Launch"),
+});
+"#;
+
+/// Frames in a bar of 4/4 at 120 bpm.
+const BAR_FRAMES: usize = 96_000;
+
+#[gpui::test]
+fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
+    cx: &mut TestAppContext,
+) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project
+        .replace("\"keys\"", "\"launcher\"")
+        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/launcher/instance.json",
+            r#"{"tool": "launcher", "state": {}}"#,
+        ),
+        (
+            "state/launcher/synth.json",
+            r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
+        ),
+        ("extensions/launcher.ts", LAUNCHER),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let play = window.find("play").expect("the play button");
+    window.cx.simulate_click(play, Modifiers::default());
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    let middle = point(middle.width, middle.height);
+    let queued = |window: &mut Window| {
+        let session = window.session.clone();
+        let watches = (window.cx).read(|cx| session.read(cx).project().watches(&id("launcher")));
+        let queued = watches.iter().find(|(name, _)| name == "bass.queued");
+        queued.map(|(_, watch)| watch.get())
+    };
+    window.until("the declared player", |window| queued(window).is_some());
+    window.cx.simulate_click(middle, Modifiers::default());
+    window.until("the launch", |window| queued(window) == Some(0.0));
+    assert!(window.playing());
+
+    // Frames from the bar line on, in blocks of 64 as the device asks: silent until it.
+    let to_the_bar = |window: &mut Window| {
+        let session = window.session.clone();
+        let status = window
+            .cx
+            .update(|_, cx| session.update(cx, |session, _| session.engine().poll().unwrap()));
+        let frame = status.playhead_frame.0 as usize;
+        let bar = frame.div_ceil(BAR_FRAMES) * BAR_FRAMES;
+        let before = window.loudest(bar - frame);
+        (bar, before)
+    };
+    let (bar, before) = to_the_bar(&mut window);
+    assert_eq!(before, 0.0, "before the bar line at {bar}");
+    let mut first = vec![0.0_f32; 64 * OFFLINE.channels];
+    window.engine.process_block(&mut first);
+    let left: Vec<f32> = first.iter().step_by(OFFLINE.channels).copied().collect();
+    let sounding = left.iter().position(|sample| sample.abs() > 1e-4);
+    assert!(sounding.is_some_and(|frame| frame < 48), "{left:?}");
+
+    window.until("the stop", |window| {
+        window.cx.simulate_click(middle, Modifiers::default());
+        queued(window) == Some(sound_notes::QUEUED_STOP)
+    });
+    // It plays on to the bar line, and is silent from a release after it.
+    let (bar, before) = to_the_bar(&mut window);
+    assert!(before > 0.1, "{before} before the bar line at {bar}");
+    window.loudest(960);
+    assert_eq!(window.loudest(2 * BAR_FRAMES), 0.0);
+    assert_eq!(window.problems(), []);
 }

@@ -59,8 +59,66 @@ export interface SampleField {
   label?: string;
 }
 
-export type Field = KnobField | ToggleField | ChoiceField | PatternField | SampleField;
+// Data a behaviour, a card and a page read: no signal, so `sound` does not get them.
+
+/** Notes in ticks, 960 to a quarter note, from where the owner's code plays them. */
+export interface NotesField {
+  kind: "notes";
+  /** `[]` when left out. */
+  default?: Note[];
+  label?: string;
+}
+
+export interface TextField {
+  kind: "text";
+  /** `""` when left out. */
+  default?: string;
+  label?: string;
+}
+
+export interface NumberField {
+  kind: "number";
+  min: number;
+  max: number;
+  /** Only whole numbers. */
+  integer?: boolean;
+  /** `min` when left out. */
+  default?: number;
+  label?: string;
+}
+
+/** The fields of each item of a list. */
+export interface ObjectItem<F extends Fields = Fields> {
+  kind: "object";
+  fields: F;
+}
+
+/** Items of one kind: a field, or an object of fields. `[]` when left out. */
+export interface ListField<I extends Field | ObjectItem = Field | ObjectItem> {
+  kind: "list";
+  item: I;
+  /** The most items it holds. */
+  max?: number;
+  /** `[]` when left out. `list` types it from `item`. */
+  default?: unknown[];
+  label?: string;
+}
+
+export type DataField = NotesField | TextField | NumberField | ListField;
+export type Field = KnobField | ToggleField | ChoiceField | PatternField | SampleField | DataField;
 export type Fields = Record<string, Field>;
+
+/** A note of a `notes` field. */
+export interface Note {
+  /** In ticks from where it is played from. */
+  start: number;
+  /** In ticks, 1 or more. */
+  length: number;
+  /** MIDI, 0 to 127: 60 is middle C. */
+  pitch: number;
+  /** 1 to 127. */
+  velocity: number;
+}
 
 export const knob = (field: Omit<KnobField, "kind">): KnobField => ({ kind: "knob", ...field });
 export const toggle = (field: Omit<ToggleField, "kind">): ToggleField => ({ kind: "toggle", ...field });
@@ -72,6 +130,27 @@ export const choice = <const Option extends string | number>(field: {
 }): ChoiceField<Option> => ({ kind: "choice", ...field });
 export const pattern = (field: Omit<PatternField, "kind">): PatternField => ({ kind: "pattern", ...field });
 export const sample = (field: Omit<SampleField, "kind"> = {}): SampleField => ({ kind: "sample", ...field });
+export const notes = (field: Omit<NotesField, "kind"> = {}): NotesField => ({ kind: "notes", ...field });
+export const text = (field: Omit<TextField, "kind"> = {}): TextField => ({ kind: "text", ...field });
+export const number = (field: Omit<NumberField, "kind">): NumberField => ({ kind: "number", ...field });
+
+/**
+ * The item of a list: a field as it is, an object of fields as an `ObjectItem`. Not `I & Fields`,
+ * whose index signature would let a misspelled field of an item through.
+ */
+type ItemOf<I extends Field | Fields> = I extends Field ? I : I extends Fields ? ObjectItem<I> : never;
+
+/**
+ * A list whose items are `item`: a field, such as `notes()`, or an object of fields. A field an
+ * item of `default` leaves out is at its own default.
+ */
+export function list<const I extends Field | Fields>(
+  item: I,
+  options: { max?: number; label?: string; default?: ValueOf<ListField<ItemOf<I>>, false> } = {},
+): ListField<ItemOf<I>> {
+  const field = typeof item.kind === "string" ? item : { kind: "object", fields: item };
+  return { kind: "list", item: field as ItemOf<I>, ...options };
+}
 
 // ---------------------------------------------------------------------------------------------
 // Controls: what the card plays and nothing saves, as a performer plays an instrument.
@@ -106,7 +185,8 @@ export const trigger = (control: Omit<TriggerControl, "kind"> = {}): TriggerCont
   ...control,
 });
 
-type ValueOf<F> = F extends KnobField
+/** A value of a field as a record holds it; `Filled` says whether the fields of an item may be left out. */
+type ValueOf<F, Filled extends boolean> = F extends KnobField | NumberField
   ? number
   : F extends ToggleField
     ? boolean
@@ -114,22 +194,30 @@ type ValueOf<F> = F extends KnobField
       ? Option
       : F extends PatternField
         ? number[]
-        : F extends SampleField
+        : F extends SampleField | TextField
           ? string
-          : never;
+          : F extends NotesField
+            ? Note[]
+            : F extends ListField<infer I>
+              ? Array<I extends ObjectItem<infer G> ? (Filled extends true ? ValuesOf<G> : StateOf<G>) : ValueOf<I, Filled>>
+              : never;
+
+/** The `state` of a record as a file may hold it: a field left out is at its default. */
+export type StateOf<S extends Fields> = { -readonly [Name in keyof S]?: ValueOf<S[Name], false> };
 
 /**
- * The `state` of a record of a tool with these fields. A field left out is at its default.
- * Not readonly as the fields of a tool are, so `update` can change it.
+ * The `state` of a record as a behaviour, a card, a page and the control loop get it: every
+ * field, at its default where the record leaves it out. Not readonly as the fields of a tool
+ * are, so `update` can change it.
  */
-export type StateOf<S extends Fields> = { -readonly [Name in keyof S]?: ValueOf<S[Name]> };
+export type ValuesOf<S extends Fields> = { -readonly [Name in keyof S]: ValueOf<S[Name], true> };
 
 /**
- * What `sound` gets: a choice as its value, a pattern as a `Table`, anything else as a `Param`,
- * which is a `Signal`.
+ * What `sound` gets: a choice as its value, a pattern as a `Table`, a data field not at all,
+ * anything else as a `Param`, which is a `Signal`.
  */
 export type SoundOf<S extends Fields, C extends Controls> = {
-  [Name in keyof S]: S[Name] extends ChoiceField<infer Option>
+  [Name in keyof S as S[Name] extends DataField ? never : Name]: S[Name] extends ChoiceField<infer Option>
     ? Option
     : S[Name] extends PatternField | SampleField
       ? Table
@@ -524,8 +612,19 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   state: S;
   /** What its card plays and nothing saves. Names are as field names. */
   controls?: C;
-  /** Its sound: a `Signal` made with the functions of the sound graph, or a `Stereo` pair. */
-  sound: (fields: SoundOf<S, C>) => Operand | Stereo;
+  /**
+   * Its sound: a `Signal` made with the functions of the sound graph, or a `Stereo` pair.
+   * `input` when left out, which passes the sound through.
+   */
+  sound?: (fields: SoundOf<S, C>) => Operand | Stereo;
+  /**
+   * Makes it an owner: its record is `state/<name>/instance.json` and the records next to it
+   * are its children. A pure function of its record and its children that says how they
+   * connect and what its note players loop. It runs in Bun when either changes, and what it
+   * declares plays a moment later; the sound plays on meanwhile. Its own `sound` hears what it
+   * connects to `ownSound` as `input`, and is its `audio` output.
+   */
+  behaviour?: (owner: Owner<S>) => Declaration;
   /**
    * What the control loop and the card of an instance keep, and nothing saves: positions of
    * a simulation, the last thing played. Made new for each instance, and when the code loads.
@@ -536,21 +635,116 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * plays the sound with `set` and `fire`, as a performer would, and keeps what it needs in
    * `memory`. It does not change the record: that is the composer's.
    */
-  tick?: (tool: Tick<StateOf<S>, C, M>) => void;
+  tick?: (tool: Tick<ValuesOf<S>, C, M>) => void;
   /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
-  card?: (card: Card<StateOf<S>, C, M>) => Node;
+  card?: (card: Card<ValuesOf<S>, C, M>) => Node;
   /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
-  page?: (page: Page<StateOf<S>, C, M>) => Node;
+  page?: (page: Page<ValuesOf<S>, C, M>) => Node;
+  /**
+   * Its page shows the transport (play, stop, position, tempo, time signature, click), and its
+   * card and page draw again as `transport` moves. Recording is the arrangement's.
+   */
+  transport?: boolean;
   /**
    * A key of the computer keyboard goes down or up, while its page shows or after a click on
    * its card. Plain keys are then the tool's: space and `r` do not play or record.
    */
-  onKey?: (tool: Handler<StateOf<S>, C, M>, key: Key) => void;
+  onKey?: (tool: Handler<ValuesOf<S>, C, M>, key: Key) => void;
   /**
    * The MIDI keyboard plays, while the tool is on the track it plays or at the top of the
    * project. An instrument plays the notes by itself as well.
    */
-  onMidi?: (tool: Handler<StateOf<S>, C, M>, message: Midi) => void;
+  onMidi?: (tool: Handler<ValuesOf<S>, C, M>, message: Midi) => void;
+}
+
+/** What a behaviour gets. */
+export interface Owner<S extends Fields> {
+  state: ValuesOf<S>;
+  /** The records next to its own, in name order. */
+  children: OwnedChild[];
+}
+
+/** A child of an owner: its record. */
+export interface OwnedChild {
+  /** Its file name without `.json`. */
+  name: string;
+  /** Its `tool`, such as `"instrument.synth"`. */
+  tool: string;
+  /** Its `state` as the file holds it. */
+  state: unknown;
+}
+
+/**
+ * A port of a child: `audio` when left out, `notes` when a player connects to it. A synth has a
+ * `notes` input and an `audio` output, an effect an `audio` input and output.
+ */
+export interface ChildPort {
+  child: string;
+  port?: string;
+}
+
+/** The notes a player of the owner plays, by its name in `players`. */
+export interface PlayerPort {
+  player: string;
+}
+
+/** The owner's own `sound` as the end of a connection: what reaches it is its `input`. */
+export const ownSound = "sound" as const;
+
+/** Joins an output to an input: of two children, of a player and a child, or into `ownSound`. */
+export interface Connection {
+  from: ChildPort | PlayerPort;
+  to: ChildPort | typeof ownSound;
+}
+
+/** Notes that loop for as long as they play. */
+export interface Pattern {
+  /** In ticks: 3840 is a bar of 4/4. */
+  length: number;
+  /** Each starts inside the pattern, from 0. */
+  notes: Note[];
+}
+
+/**
+ * Plays one of its patterns at a time, in time with the bars: which one is a performance, `launch`,
+ * which nothing saves.
+ */
+export interface Player {
+  patterns: Pattern[];
+  /**
+   * The index of the pattern it plays before a launch, so a render plays it: it starts when the
+   * player is first declared, and again as a launch at the next bar when this changes. None when
+   * left out.
+   */
+  plays?: number;
+}
+
+/** What a behaviour declares. A JSON value: no functions, no classes. */
+export interface Declaration {
+  connections: Connection[];
+  /** Note players of the owner, by name. Each shows what it plays in `watches`, see `playerOf`. */
+  players?: Record<string, Player>;
+}
+
+/** What a player plays, as the owner's card and page see it. */
+export interface Playing {
+  /** The index of the pattern that plays, or null. */
+  playing: number | null;
+  /** The pattern of a launch that has not landed yet, `"stop"` for a stop, or null. */
+  queued: number | "stop" | null;
+  /** How far the pattern that plays is into its round, 0 to 1. */
+  phase: number;
+}
+
+/** What the player `player` plays, from the `watches` of its owner. */
+export function playerOf(watches: Record<string, number>, player: string): Playing {
+  const index = (value: number | undefined) => (value === undefined || value < 0 ? null : value);
+  const queued = watches[`${player}.queued`];
+  return {
+    playing: index(watches[`${player}.playing`]),
+    queued: queued === -2 ? "stop" : index(queued),
+    phase: watches[`${player}.phase`] ?? 0,
+  };
 }
 
 /** A key of the computer keyboard: its name, such as `"a"`, `"1"`, `"space"` or `"left"`. */
@@ -602,6 +796,12 @@ export interface Performer<C extends Controls> {
   ): void;
   /** Lets go of a note `play` holds. */
   release(pitch: number, options?: { at?: number }): void;
+  /**
+   * Plays the pattern of index `pattern` of the owner's player `player`, or stops it with
+   * `null`, from the next bar line (`quantize` when given) while the piece plays, else at once.
+   * What played goes on until then.
+   */
+  launch(player: string, pattern: number | null, options?: { quantize?: "bar" | "beat" | "now" }): void;
 }
 
 /** What the control loop, the cards and the handlers of an instance get. */
@@ -622,9 +822,9 @@ export interface Tick<State, C extends Controls, M> extends Instance<State, C, M
   time: number;
 }
 
-/** What `onKey` and `onMidi` get: what a card gets, and the `time` of a tick. */
+/** What `onKey` and `onMidi` get: what a card gets but `transport`, and the `time` of a tick. */
 export interface Handler<State, C extends Controls, M>
-  extends Card<State, C, M>,
+  extends Omit<Card<State, C, M>, "transport">,
     Pick<Tick<State, C, M>, "time"> {}
 
 // ---------------------------------------------------------------------------------------------
@@ -657,8 +857,22 @@ export interface Style {
   borderWidth?: number;
 }
 
+/** Where the project plays, as the window shows it. */
+export interface Transport {
+  playing: boolean;
+  /** The position in ticks, 960 to a quarter note. */
+  tick: number;
+  /** The bar and the beat of `tick`, from 1. */
+  bar: number;
+  beat: number;
+  /** The tempo at `tick`, in beats per minute. */
+  bpm: number;
+}
+
 /** What a card or a page gets each time it draws. */
 export interface Card<State, C extends Controls = Controls, M = unknown> extends Instance<State, C, M> {
+  /** As of this draw. It draws again as it moves only when the tool sets `transport: true`. */
+  transport: Transport;
   /**
    * Changes the record as one undo step called `label`. `change` gets a copy to edit. A record
    * the tool does not accept is refused, and the window says why.
@@ -789,7 +1003,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
       } else if (field.kind === "sample") {
         rows.push(SampleChooser({ path: name, label }));
       } else if (field.kind === "toggle") {
-        const on = (state[name] as boolean | undefined) ?? field.default;
+        const on = state[name] as boolean;
         buttons.push(
           h("div", {
             style: on ? CHOSEN : BUTTON,
@@ -798,8 +1012,8 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
             }),
           }, label),
         );
-      } else {
-        const chosen = (state[name] as string | number | undefined) ?? field.default;
+      } else if (field.kind === "choice") {
+        const chosen = state[name];
         rows.push(
           h("div", { style: { direction: "row", gap: 4, align: "center" } },
             h("div", { style: { color: "#9ca3af" } }, label),

@@ -11,18 +11,20 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
-use sound_notes::{Pitch, Velocity};
+use sound_notes::{Launch, NotePlayer, NotePlayerUpdate, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
-use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
+use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
-use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped};
-use crate::card::TypeScriptCard;
-use crate::tools::{Control, Sounds, ToolInfo, ToolKind};
+use crate::behaviours;
+use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped, Transport};
+use crate::card::{Page, TypeScriptCard};
+use crate::tools::{Control, Sounds, ToolInfo, ToolKind, player_processor};
 use crate::tree::Node;
 use crate::{Extensions, FOLDER, Launched, Midi, OWNED};
 
@@ -36,6 +38,8 @@ pub(crate) struct Live {
     folder: PathBuf,
     session: WeakEntity<Session>,
     host: Host,
+    /// The opening of the project every Bun of the window runs for.
+    opening: u64,
     skipped: Skipped,
     /// The tools of the last load, shared with the pickers.
     tools: Rc<RefCell<Vec<ToolInfo>>>,
@@ -64,7 +68,7 @@ pub(crate) struct Live {
 /// The Bun of the window.
 enum Host {
     Running {
-        bun: Bun,
+        bun: Arc<Bun>,
         /// A step of the control loops is out. One at a time, so a slow loop does not pile
         /// steps up.
         ticking: bool,
@@ -81,9 +85,11 @@ enum Host {
 
 impl Host {
     /// Tells Bun something. Nothing while no Bun runs: the next one draws every card again.
-    fn send(&mut self, request: &Request) {
-        if let Self::Running { bun, .. } = self {
-            bun.send(request);
+    /// Whether it went.
+    fn send(&mut self, request: &Request) -> bool {
+        match self {
+            Self::Running { bun, .. } => bun.send(request),
+            _ => false,
         }
     }
 }
@@ -98,8 +104,14 @@ struct Card {
     tree: Option<Result<(u64, Rc<Node>), String>>,
     /// The watches the last tree was drawn with, which native elements read too.
     watches: BTreeMap<String, f32>,
+    /// The last tree has a meter or steps, which show the watches as they are.
+    shows_watches: bool,
+    /// The transport the last tree was asked with.
+    transport: Option<Transport>,
     /// A render was asked for and its tree has not come yet.
     asked: bool,
+    /// Bun has the record as it is, so a render sends none.
+    record_sent: bool,
     /// The record or a watch changed while a render was out, so one more is due when it comes.
     stale: bool,
 }
@@ -128,6 +140,16 @@ pub fn hear_midi(track: Option<&InstanceId>, messages: &[Midi], cx: &mut App) {
         return;
     };
     live.update(cx, |live, cx| live.midi(track, messages, cx));
+}
+
+/// Whether the main view of `id`, the page of a tool of the project, shows the transport.
+pub fn page_shows_transport(project: &Project, id: &InstanceId, cx: &App) -> bool {
+    let Some(live) = cx.try_global::<WindowTools>() else {
+        return false;
+    };
+    let tools = live.0.read(cx).tools.borrow();
+    (project.tool_of(id))
+        .is_some_and(|tool| find(&tools, tool).is_some_and(|info| info.page && info.transport))
 }
 
 /// Starts the live part of `extensions` for the window of `session`: the cards of its tools in
@@ -162,7 +184,7 @@ pub fn start_window(
         move |session, id, window, cx| {
             let (live, session, id) = (live.clone(), session.clone(), id.clone());
             let page = cx.new(|cx| TypeScriptCard::new(live, session, id, None, window, cx));
-            Some(page.into())
+            Some(cx.new(|_| Page(page)).into())
         },
     );
     devices.effects({
@@ -269,6 +291,7 @@ impl Live {
         let Extensions {
             folder,
             bun,
+            opening,
             tools: loaded,
             skipped,
             problems,
@@ -309,6 +332,7 @@ impl Live {
                 folder,
                 session: session.downgrade(),
                 host,
+                opening,
                 skipped,
                 tools: tools.clone(),
                 generation: generation.clone(),
@@ -332,7 +356,7 @@ impl Live {
     }
 
     /// `bun` as the Bun of the window, heard until it ends.
-    fn running(bun: Bun, cx: &mut Context<Self>) -> Host {
+    fn running(bun: Arc<Bun>, cx: &mut Context<Self>) -> Host {
         let events = bun.events();
         let hearing = cx.spawn(async move |live, cx| {
             while let Ok(event) = events.recv().await {
@@ -363,6 +387,21 @@ pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json:
     serde_json::from_str(&project.state_json(id)?).ok()
 }
 
+/// The record of `id` as the code of `tool` gets it: each field at its default where the record
+/// leaves it out, as a behaviour gets it.
+fn played_state(
+    project: &Project,
+    tools: &[ToolInfo],
+    id: &InstanceId,
+    tool: &str,
+) -> Option<serde_json::Value> {
+    let state = state_of(project, id)?;
+    Some(match find(tools, tool) {
+        Some(info) => info.with_defaults(state),
+        None => state,
+    })
+}
+
 /// Changes the record of `id` as one undo step called `label`.
 pub(crate) fn edit_record(
     session: &Entity<Session>,
@@ -384,6 +423,7 @@ pub(crate) fn edit_record(
 /// how many of the `edits` Bun sent the record has.
 fn looped<'a>(
     project: &Project,
+    tools: &[ToolInfo],
     edits: &HashMap<InstanceId, u64>,
     id: &'a InstanceId,
     tool: &'a str,
@@ -391,7 +431,7 @@ fn looped<'a>(
     Looped {
         instance: id,
         tool,
-        state: state_of(project, id).unwrap_or_default(),
+        state: played_state(project, tools, id, tool).unwrap_or_default(),
         watches: (project.watches(id).into_iter())
             .map(|(name, watch)| (name, watch.get()))
             .collect(),
@@ -408,9 +448,26 @@ fn engine_time(session: &Entity<Session>, cx: &mut App) -> f64 {
     })
 }
 
-/// What a picker offers of the tools of `kind`: each one's record at its defaults.
+/// Where the project plays now, as the playhead of the window shows it.
+fn transport_of(session: &Session, cx: &App) -> Transport {
+    let Playhead { playing, tick, .. } = *session.playhead().read(cx);
+    let tempo_map = &session.project().project_file().tempo_map;
+    let position = tempo_map.time_signatures().bar_beat_of(tick);
+    Transport {
+        playing,
+        tick: tick.0,
+        bar: position.bar,
+        beat: position.beat,
+        bpm: tempo_map.change_at(tick).bpm.bpm(),
+    }
+}
+
+/// What a picker offers of the tools of `kind`: each one's record at its defaults. Not an owner,
+/// whose place is the top of the project.
 fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
-    let tools = tools.iter().filter(|info| kind(info.kind));
+    let tools = tools
+        .iter()
+        .filter(|info| kind(info.kind) && !info.behaviour);
     tools
         .map(|info| {
             let tool = info.name.clone();
@@ -477,7 +534,10 @@ impl Live {
             surface,
             tree: None,
             watches: BTreeMap::new(),
+            shows_watches: false,
+            transport: None,
             asked: false,
+            record_sent: false,
             stale: false,
         };
         self.cards.insert(card, entry);
@@ -511,11 +571,19 @@ impl Live {
             Surface::Page(None) => return,
         };
         let project = session.read(cx).project();
-        let (Some(tool), Some(state)) = (project.tool_of(&entry.id), state_of(project, &entry.id))
-        else {
+        let tools = self.tools.borrow();
+        let Some(tool) = project.tool_of(&entry.id) else {
             return;
         };
-        entry.asked = true;
+        let state = if entry.record_sent {
+            None
+        } else {
+            let Some(state) = played_state(project, &tools, &entry.id, tool) else {
+                return;
+            };
+            Some(state)
+        };
+        let transport = transport_of(session.read(cx), cx);
         let request = Request::Render {
             card,
             instance: &entry.id,
@@ -523,8 +591,22 @@ impl Live {
             state,
             watches: &entry.watches,
             page,
+            transport,
         };
-        self.host.send(&request);
+        // A render that did not go is not waited for: the next change asks again.
+        if self.host.send(&request) {
+            entry.asked = true;
+            entry.record_sent = true;
+            entry.transport = Some(transport);
+        }
+    }
+
+    /// The record of the instance of the card changed: it draws again with it.
+    pub(crate) fn record_changed(&mut self, card: u64, cx: &mut Context<Self>) {
+        if let Some(entry) = self.cards.get_mut(&card) {
+            entry.record_sent = false;
+        }
+        self.render(card, cx);
     }
 
     /// The page was laid out at `size`: it draws again when that is new.
@@ -642,6 +724,60 @@ impl Live {
         );
     }
 
+    /// Sends `launch` to the player `player` of the owner `id`, as a performer plays: nothing
+    /// is saved. A player or a pattern it does not have is a failure of its tool.
+    fn launch_pattern(
+        &mut self,
+        id: &InstanceId,
+        player: &str,
+        launch: Launch,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let project = session.read(cx).project();
+        let players = behaviours::players(project.assets(), id);
+        let wrong = match (players.get(player), launch.pattern) {
+            (None, _) => {
+                let names: Vec<&str> = players.keys().map(String::as_str).collect();
+                let names = match names.is_empty() {
+                    true => "it declares none".to_string(),
+                    false => format!("its players are {}", names.join(", ")),
+                };
+                Some(format!(
+                    "a launch names the player {player:?}, which {id} does not declare: {names}"
+                ))
+            }
+            (Some(patterns), Some(pattern)) if pattern >= *patterns => Some(format!(
+                "a launch names pattern {pattern} of the player {player:?} of {id}, which has {patterns}, from 0"
+            )),
+            _ => None,
+        };
+        if let Some(wrong) = wrong {
+            let tools = self.tools.borrow();
+            let info = project.tool_of(id).and_then(|tool| find(&tools, tool));
+            let problem = info.map(|info| info.problem(wrong));
+            drop(tools);
+            if let Some(problem) = problem
+                && !self.problems.contains(&problem)
+            {
+                self.problems.push(problem);
+                self.report(cx);
+            }
+            return;
+        }
+        let update = NotePlayerUpdate::Launch(launch);
+        session.update(cx, |session, cx| {
+            let sent = session.background(cx, |project| {
+                project.send::<NotePlayer>(id, &player_processor(player), update)
+            });
+            if let Err(error) = sent {
+                session.report(error, cx);
+            }
+        });
+    }
+
     /// A key of the computer keyboard went down or up on a card that has the keys.
     pub(crate) fn key(&mut self, card: u64, key: &str, down: bool, cx: &mut Context<Self>) {
         let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
@@ -652,9 +788,10 @@ impl Live {
         let Some(tool) = project.tool_of(&entry.id) else {
             return;
         };
+        let tools = self.tools.borrow();
         let request = Request::Key {
             time,
-            instance: looped(project, &self.edits, &entry.id, tool),
+            instance: looped(project, &tools, &self.edits, &entry.id, tool),
             key,
             down,
         };
@@ -675,7 +812,7 @@ impl Live {
         let project = session.read(cx).project();
         let instances: Vec<Looped> = (project.instances())
             .filter(|(id, tool)| hears(id) && find(&tools, tool).is_some_and(|info| info.midi))
-            .map(|(id, tool)| looped(project, &self.edits, id, tool))
+            .map(|(id, tool)| looped(project, &tools, &self.edits, id, tool))
             .collect();
         if !instances.is_empty() {
             let request = Request::Midi {
@@ -718,7 +855,7 @@ impl Live {
         self.played.retain(|id, _| project.tool_of(id).is_some());
         let instances: Vec<Looped> = (project.instances())
             .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.tick))
-            .map(|(id, tool)| looped(project, &self.edits, id, tool))
+            .map(|(id, tool)| looped(project, &tools, &self.edits, id, tool))
             .collect();
         if !instances.is_empty() {
             let request = Request::Frame {
@@ -726,39 +863,48 @@ impl Live {
                 time,
                 instances,
             };
-            self.host.send(&request);
+            let sent = self.host.send(&request);
             if let Host::Running { ticking, .. } = &mut self.host {
-                *ticking = true;
+                *ticking = sent;
             }
         }
     }
 
-    /// Reads the watches of every card; a card whose watches moved draws again.
+    /// Reads the watches of every card; a card whose watches moved draws again, and so does a
+    /// card of a tool with the transport when it moved.
     fn look_at_watches(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
         let mut moved = Vec::new();
+        let mut shown_watches_moved = false;
         let tools = self.tools.borrow();
+        let transport = transport_of(session.read(cx), cx);
         for (card, entry) in &mut self.cards {
+            let info = find(&tools, &entry.tool);
             let watches = session.read(cx).project().watches(&entry.id);
             let watches: BTreeMap<String, f32> = watches
                 .into_iter()
                 .map(|(name, watch)| (name, watch.get()))
                 .collect();
-            if watches != entry.watches {
-                entry.watches = watches;
-                // The control loop draws the card of its tool after every step anyway.
-                if !find(&tools, &entry.tool).is_some_and(|info| info.tick) {
-                    moved.push(*card);
-                }
+            // The control loop draws the card of its tool after every step anyway, but with
+            // the transport of its last draw.
+            let watches_changed = watches != entry.watches;
+            let watches_moved = watches_changed && !info.is_some_and(|info| info.tick);
+            shown_watches_moved |= watches_changed && entry.shows_watches;
+            entry.watches = watches;
+            let transport_moved =
+                info.is_some_and(|info| info.transport) && entry.transport != Some(transport);
+            if watches_moved || transport_moved {
+                moved.push(*card);
             }
         }
         drop(tools);
         for card in &moved {
             self.render(*card, cx);
         }
-        if !moved.is_empty() {
+        // What else the watches and the transport move comes with a tree.
+        if shown_watches_moved {
             cx.notify();
         }
     }
@@ -785,12 +931,24 @@ impl Live {
                 };
                 entry.asked = false;
                 entry.tree = Some(tree.and_then(|(version, tree)| {
-                    let node = serde_json::from_value(tree).map_err(|error| error.to_string())?;
+                    let node: Node =
+                        serde_json::from_value(tree).map_err(|error| error.to_string())?;
                     Ok((version, Rc::new(node)))
                 }));
+                entry.shows_watches =
+                    matches!(&entry.tree, Some(Ok((_, node))) if node.shows_watches());
                 if std::mem::take(&mut entry.stale) {
                     self.render(card, cx);
                 }
+            }
+            Event::Unchanged { card } => {
+                if let Some(entry) = self.cards.get_mut(&card) {
+                    entry.asked = false;
+                    if std::mem::take(&mut entry.stale) {
+                        self.render(card, cx);
+                    }
+                }
+                return;
             }
             Event::Edit {
                 instance,
@@ -802,7 +960,20 @@ impl Live {
                 };
                 // Heard, applied or not: Bun starts from the record here again.
                 *self.edits.entry(instance.clone()).or_default() += 1;
-                edit_record(&session, &instance, &label, |old| *old = state, cx);
+                let tool = session.read(cx).project().tool_of(&instance);
+                let info = tool.and_then(|tool| find(&self.tools.borrow(), tool).cloned());
+                edit_record(
+                    &session,
+                    &instance,
+                    &label,
+                    |old| {
+                        *old = match info {
+                            Some(info) => info.untouched_defaults_left_out(old, state),
+                            None => state,
+                        }
+                    },
+                    cx,
+                );
             }
             Event::Control {
                 instance,
@@ -838,6 +1009,12 @@ impl Live {
                 },
                 cx,
             ),
+            Event::Launch {
+                instance,
+                player,
+                pattern,
+                quantize,
+            } => self.launch_pattern(&instance, &player, Launch { pattern, quantize }, cx),
         }
         cx.notify();
     }
@@ -861,7 +1038,7 @@ impl Live {
             // Ending a Bun waits for it: not on the thread that draws.
             if let Host::Running { bun, .. } = std::mem::replace(&mut self.host, Host::Stopped) {
                 cx.background_executor()
-                    .spawn(async move { drop(bun) })
+                    .spawn(async move { bun.end() })
                     .detach();
             }
             let message = format!(
@@ -888,15 +1065,17 @@ impl Live {
     }
 
     /// Starts a new Bun on a thread of its own, once `old` ended there.
-    fn launch(&mut self, old: Option<Bun>, cx: &mut Context<Self>) {
-        let (folder, skipped) = (self.folder.clone(), self.skipped.clone());
+    fn launch(&mut self, old: Option<Arc<Bun>>, cx: &mut Context<Self>) {
+        let (folder, opening, skipped) = (self.folder.clone(), self.opening, self.skipped.clone());
         cx.spawn(async move |live, cx| {
             // Ending a Bun waits for it, and a load up to a timeout of each step: not on the
             // thread that draws.
             let launched = (cx.background_executor())
                 .spawn(async move {
-                    drop(old);
-                    crate::launch(&folder, skipped)
+                    if let Some(old) = old {
+                        old.end();
+                    }
+                    crate::launch((&folder, opening), skipped)
                 })
                 .await;
             live.update(cx, |live, cx| live.launched(launched, cx)).ok();
@@ -977,9 +1156,10 @@ impl Live {
         self.generation.set(self.generation.get() + 1);
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
-            // A tree asked of the Bun before never comes.
+            // A tree asked of the Bun before never comes, and this one has no record yet.
             if let Some(entry) = self.cards.get_mut(&card) {
                 entry.asked = false;
+                entry.record_sent = false;
             }
             self.render(card, cx);
         }

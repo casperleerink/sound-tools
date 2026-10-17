@@ -512,9 +512,11 @@ impl Project {
         for id in &live {
             self.storage.forget(id);
         }
-        let mut paths: Vec<PathBuf> = (live.iter())
-            .map(|id| self.storage.record_path(id, Form::File))
-            .collect();
+        let record_path = |project: &Self, id: &InstanceId| {
+            let form = project.instances.get(id).map_or(Form::File, Form::of);
+            project.storage.record_path(id, form)
+        };
+        let mut paths: Vec<PathBuf> = (live.iter()).map(|id| record_path(self, id)).collect();
         // Records of these tools that did not load: one waited for its tool, or the old check
         // or behaviour refused it. Not the whole folder: an outside edit the watcher has not
         // delivered yet would apply here with no undo step and no derive, and then look like
@@ -527,7 +529,7 @@ impl Project {
         paths.extend(not_loaded);
         self.apply_paths(&paths, Source::Load, std::time::Instant::now())?;
         for id in live {
-            let path = self.storage.record_path(&id, Form::File);
+            let path = record_path(self, &id);
             let path = self.storage.display_path(&path);
             // The file did not load, such as because the new check refuses it: it plays on
             // as it was, under its problem.

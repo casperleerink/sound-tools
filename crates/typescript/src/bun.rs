@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
@@ -16,10 +17,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use sound_core::InstanceId;
+use sound_notes::Quantize;
 use sound_signals::Graph;
 
-use crate::Midi;
 use crate::tools::ToolInfo;
+use crate::{Midi, behaviours};
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
 /// hung. A file's step is its import, the sound of every combination of its choices and the
@@ -49,11 +51,13 @@ pub(crate) enum Request<'a> {
         card: u64,
         instance: &'a InstanceId,
         tool: &'a str,
-        state: Value,
+        /// `None` when it is the record of the last render of the card.
+        state: Option<Value>,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
         /// The size of the page, the whole window; `None` for a card.
         page: Option<PageSize>,
+        transport: Transport,
     },
     /// A click, or a press or a drag on a canvas `at` across and down, 0 to 1.
     Event {
@@ -87,6 +91,14 @@ pub(crate) enum Request<'a> {
     Drop {
         card: u64,
     },
+    /// What the behaviour of an owner declares for its record, as it plays, and its children.
+    Behaviour {
+        question: u64,
+        tool: &'a str,
+        state: &'a Value,
+        /// Each as `{ name, tool, state }`.
+        children: &'a Value,
+    },
 }
 
 /// The room a page has, in whole points.
@@ -94,6 +106,17 @@ pub(crate) enum Request<'a> {
 pub(crate) struct PageSize {
     pub width: u32,
     pub height: u32,
+}
+
+/// Where the project plays, as the window's playhead shows it.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
+pub(crate) struct Transport {
+    pub playing: bool,
+    pub tick: u64,
+    pub bar: u64,
+    pub beat: u32,
+    /// The tempo at `tick`.
+    pub bpm: f64,
 }
 
 /// An instance whose tool has a control loop, as it is now.
@@ -122,6 +145,8 @@ pub(crate) enum Event {
         card: u64,
         tree: Result<(u64, Value), String>,
     },
+    /// A card drew the tree it drew last.
+    Unchanged { card: u64 },
     /// A card, a key or the MIDI keyboard changed the record of an instance.
     Edit {
         instance: InstanceId,
@@ -151,6 +176,14 @@ pub(crate) enum Event {
         instance: InstanceId,
         pitch: u8,
         at: Option<f64>,
+    },
+    /// Launches the pattern of index `pattern` on the player `player` of an owner, or stops it
+    /// with none, from the next point of `quantize`.
+    Launch {
+        instance: InstanceId,
+        player: String,
+        pattern: Option<usize>,
+        quantize: Quantize,
     },
     /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
     /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as
@@ -236,6 +269,11 @@ enum Line {
     Runs(Runs),
     /// It did the oldest thing it was told and had not done.
     Done,
+    /// The behaviour of an owner answered a question: its declaration, or why there is none.
+    Declared {
+        question: u64,
+        declaration: Result<Value, String>,
+    },
     #[serde(untagged)]
     Event(Event),
 }
@@ -258,22 +296,40 @@ struct Busy {
 }
 
 pub(crate) struct Bun {
+    /// Which Bun of the process this is, counted from its start.
+    number: u64,
+    /// Which opening of a project it runs for, see [`new_opening`].
+    opening: u64,
     /// Lines on their way to Bun, which a thread of their own writes: a Bun that stops reading
     /// does not block the window.
     lines: mpsc::SyncSender<String>,
     busy: Arc<Mutex<Busy>>,
     events: smol::channel::Receiver<Event>,
-    /// Ended when the runtime lets go of it.
-    child: Child,
+    /// Ended by [`Bun::end`], or when the runtime lets go of it. `None` once ended. The tools
+    /// it loaded hold it too, so their records keep asking it outside the window.
+    child: Mutex<Option<Child>>,
+}
+
+/// The number of the next Bun of the process.
+static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
+
+static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
+
+/// A number for one opening of a project, which every Bun of it runs for: the first, and those
+/// the window starts again after a change of the code. A project opened again in the same
+/// process, as by a test, is another opening.
+pub(crate) fn new_opening() -> u64 {
+    NEXT_OPENING.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Bun {
-    /// Starts Bun on `host_script` in `folder`, to load `files` of it, and waits for its load.
-    /// Blocks for as long as the load takes: never call it on the thread that draws.
+    /// Starts Bun on `host_script` in `folder`, to load `files` of it for the project's
+    /// `opening`, and waits for its load. Blocks for as long as the load takes: never call it
+    /// on the thread that draws.
     pub(crate) fn start(
         program: &Path,
         host_script: &Path,
-        folder: &Path,
+        (folder, opening): (&Path, u64),
         files: &[&str],
     ) -> Result<(Self, Loaded), LoadFailure> {
         let failure = |why: String| LoadFailure { file: None, why };
@@ -299,11 +355,14 @@ impl Bun {
             runs: None,
         }));
         // From here a failure drops it, which ends the process.
+        let number = NEXT_BUN.fetch_add(1, Ordering::Relaxed);
         let bun = Self {
+            number,
+            opening,
             lines,
             busy: busy.clone(),
             events: received,
-            child,
+            child: Mutex::new(Some(child)),
         };
         std::thread::Builder::new()
             .name("bun".into())
@@ -332,12 +391,12 @@ impl Bun {
                 Ok(Line::Loaded(loaded)) => {
                     std::thread::Builder::new()
                         .name("bun-events".into())
-                        .spawn(move || hear(&heard, &busy, &events))
+                        .spawn(move || hear(number, &heard, &busy, &events))
                         .map_err(|error| failure(error.to_string()))?;
                     return Ok((bun, loaded));
                 }
                 // Bun runs no tool and does nothing it is told before its load.
-                Ok(Line::Runs(_) | Line::Done | Line::Event(_)) => {}
+                Ok(Line::Runs(_) | Line::Done | Line::Declared { .. } | Line::Event(_)) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     break format!("did not finish loading within {LOAD_TIMEOUT:?}");
                 }
@@ -352,12 +411,23 @@ impl Bun {
         self.events.clone()
     }
 
-    /// Tells Bun something and does not wait. Nothing when Bun stopped reading, which the
-    /// thread that hears it finds hung, or stopped.
-    pub(crate) fn send(&self, request: &Request) {
+    pub(crate) fn number(&self) -> u64 {
+        self.number
+    }
+
+    pub(crate) fn opening(&self) -> u64 {
+        self.opening
+    }
+
+    /// Tells Bun something and does not wait. Whether it went: not when Bun stopped reading,
+    /// which the thread that hears it finds hung, or stopped.
+    pub(crate) fn send(&self, request: &Request) -> bool {
         let line = match serde_json::to_string(request) {
             Ok(json) => json + "\n",
-            Err(error) => return eprintln!("error: {error}"),
+            Err(error) => {
+                eprintln!("error: {error}");
+                return false;
+            }
         };
         let lock = || self.busy.lock().unwrap_or_else(PoisonError::into_inner);
         // Counted before it goes, so its done never comes before it is counted.
@@ -368,10 +438,12 @@ impl Bun {
             }
             busy.pending += 1;
         }
-        if self.lines.try_send(line).is_err() {
+        let sent = self.lines.try_send(line).is_ok();
+        if !sent {
             let mut busy = lock();
             busy.pending = busy.pending.saturating_sub(1);
         }
+        sent
     }
 }
 
@@ -396,11 +468,17 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     }
 }
 
-/// Hears what Bun says after its load and passes its events on to `events`, until it hangs or
-/// stops, which [`Event::Ended`] says.
-fn hear(heard: &mpsc::Receiver<Line>, busy: &Mutex<Busy>, events: &smol::channel::Sender<Event>) {
+/// Hears what Bun `number` says after its load and passes its events on to `events`, and the
+/// answers of behaviours to them, until it hangs or stops, which [`Event::Ended`] says.
+fn hear(
+    number: u64,
+    heard: &mpsc::Receiver<Line>,
+    busy: &Mutex<Busy>,
+    events: &smol::channel::Sender<Event>,
+) {
     let lock = || busy.lock().unwrap_or_else(PoisonError::into_inner);
     let ended = |why: String| {
+        behaviours::ended(number, &why);
         let blame = lock().runs.take();
         // Outside the window nobody hears it.
         events.try_send(Event::Ended { blame, why }).ok();
@@ -426,6 +504,22 @@ fn hear(heard: &mpsc::Receiver<Line>, busy: &Mutex<Busy>, events: &smol::channel
             Ok(Line::Event(event)) => {
                 events.try_send(event).ok();
             }
+            Ok(Line::Declared {
+                question,
+                declaration,
+            }) => {
+                let answer = declaration.map_err(|error| format!("its behaviour failed: {error}"));
+                let answer = answer.and_then(|declaration| {
+                    serde_path_to_error::deserialize(declaration).map_err(|error| {
+                        format!(
+                            "its behaviour returned what is no declaration: {}: {}",
+                            error.path(),
+                            error.inner()
+                        )
+                    })
+                });
+                behaviours::answered(question, answer);
+            }
             // Bun loads once.
             Ok(Line::Loading { .. } | Line::Loaded(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return ended("stopped Bun".to_string()),
@@ -439,11 +533,41 @@ fn hear(heard: &mpsc::Receiver<Line>, busy: &Mutex<Busy>, events: &smol::channel
     }
 }
 
+impl Bun {
+    /// Ends the process, also while tools it loaded still hold it: they find it gone. Waits for
+    /// it to end: not on the thread that draws.
+    pub(crate) fn end(&self) {
+        let child = self
+            .child
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(mut child) = child {
+            // Already ended, or never to be waited for: nothing to report on the way out.
+            child.kill().ok();
+            child.wait().ok();
+        }
+    }
+}
+
 impl Drop for Bun {
     fn drop(&mut self) {
-        // Already ended, or never to be waited for: nothing to report on the way out.
-        self.child.kill().ok();
-        self.child.wait().ok();
+        let child = self
+            .child
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some(mut child) = child else {
+            return;
+        };
+        child.kill().ok();
+        // The last tool that held it may go on the thread that draws, which does not wait.
+        let waited = std::thread::Builder::new()
+            .name("bun-end".into())
+            .spawn(move || child.wait().ok());
+        if let Err(error) = waited {
+            eprintln!("error: {error}");
+        }
     }
 }
 
@@ -457,8 +581,8 @@ mod tests {
             serde_json::json!({
                 "info": {
                     "name": name, "file": format!("{name}.ts"), "title": name, "when": "w",
-                    "doc": "d", "kind": "effect", "tick": false, "page": false, "keys": false,
-                    "midi": false, "controls": {},
+                    "doc": "d", "kind": "effect", "tick": false, "page": false, "transport": false, "keys": false,
+                    "midi": false, "behaviour": false, "controls": {},
                     "fields": { "rate": { "kind": "knob", "min": 0, "max": 1, "default": 0, "unit": unit } }
                 },
                 "sounds": [], "card": { "Err": "no card" }, "page": null

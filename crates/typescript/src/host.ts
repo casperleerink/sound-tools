@@ -5,7 +5,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Fields, Graph, Handler as Heard, Midi, Node, Performer, StateOf, ToolSpec } from "./sdk";
+import type { Child, Controls, Field, Fields, Graph, Handler as Heard, Midi, Node, Owner, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -17,7 +17,7 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 }
 
 type Spec = ToolSpec<Fields, Controls, unknown>;
-type State = StateOf<Fields>;
+type State = ValuesOf<Fields>;
 type Choices = Record<string, string | number>;
 type Watches = Record<string, number>;
 type Size = { width: number; height: number };
@@ -26,7 +26,9 @@ const CHECKED_PAGE: Size = { width: 1422, height: 824 };
 /** An instance as it is now, for its control loop or what it hears: `edits` counts the edits from here its `state` has. */
 type Looped = { instance: string; tool: string; state: State; watches: Watches; edits: number };
 
-type Render = { type: "render"; card: number; instance: string; tool: string; state: State; watches: Watches; page: Size | null };
+/** A render with no record draws with the record of the last render of the card. */
+type Render = { type: "render"; card: number; instance: string; tool: string; state: State | null; watches: Watches; page: Size | null; transport: Transport };
+type Drawn = Render & { state: State };
 type Request =
   | Render
   /** A click, or a press or a drag on a canvas `at` across and down. */
@@ -34,7 +36,8 @@ type Request =
   | { type: "frame"; dt: number; time: number; instances: Looped[] }
   | { type: "key"; time: number; instance: Looped; key: string; down: boolean }
   | { type: "midi"; time: number; instances: Looped[]; messages: Midi[] }
-  | { type: "drop"; card: number };
+  | { type: "drop"; card: number }
+  | ({ type: "behaviour"; question: number; tool: string } & Owner<Fields>);
 
 type Canvas = Extract<Node, { type: "canvas" }>;
 /** What the runtime gets of a node: a handler is its index. */
@@ -66,8 +69,10 @@ const handlers = new Map<number, Map<number, Handler[]>>();
 let treeVersion = Date.now() * 1000;
 /** The trees of a card whose clicks still count: the window may still show an older one. */
 const KEPT_TREES = 8;
+/** The last tree sent of each card, so the same tree again is not sent. */
+const lastTrees = new Map<number, { text: string; version: number }>();
 /** What each card was last drawn from, so it draws again after a tick or a click. */
-const drawn = new Map<number, Render>();
+const drawn = new Map<number, Drawn>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
 /** The tools whose tick or a click on whose card failed. */
@@ -110,6 +115,9 @@ function problemsOf(spec: Spec): string[] {
     const sounds = choiceFields(spec).reduce((count, [, field]) => count * field.options.length, 1);
     if (sounds > MAX_SOUNDS) {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
+    }
+    if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
+      problems.push("kind: an owner's sound hears its children through `input`, so leave `kind` out");
     }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
@@ -163,8 +171,10 @@ function described(spec: Spec, file: string) {
       controls: spec.controls ?? {},
       tick: spec.tick !== undefined,
       page: spec.page !== undefined,
+      transport: spec.transport === true,
       keys: spec.onKey !== undefined,
       midi: spec.onMidi !== undefined,
+      behaviour: spec.behaviour !== undefined,
     },
     sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
     card: made(() => draw(spec, false)),
@@ -217,7 +227,22 @@ function sound(spec: Spec, choices: Choices): Graph {
   for (const name of Object.keys(spec.controls ?? {})) {
     fields[name] = new sdk.Param(name);
   }
-  return sdk.graphToJson(() => spec.sound(fields as never));
+  const build = spec.sound ?? (() => sdk.input);
+  return sdk.graphToJson(() => build(fields as never));
+}
+
+/** Answers what the behaviour of an owner declares, or why it does not. */
+function declare({ question, tool, state, children }: Extract<Request, { type: "behaviour" }>) {
+  const declaration = made(() => {
+    const spec = specOf(tool);
+    if (!spec.behaviour) {
+      throw new Error(`${tool} has no behaviour`);
+    }
+    runs(tool, "behaviour");
+    // Here, so a value JSON cannot hold, such as a cycle, is the owner's problem and does not throw in `send`.
+    return JSON.parse(JSON.stringify(spec.behaviour({ state, children })));
+  });
+  send({ type: "declared", question, declaration });
 }
 
 function flatten(child: Child, handlers: Handler[], into: Sent[]) {
@@ -306,8 +331,19 @@ function players(instance: string): Performer<Controls> {
       checkAt(at);
       send({ type: "release", instance, pitch: keyOf(pitch), at });
     },
+    launch(player, pattern, { quantize = "bar" } = {}) {
+      if (pattern !== null && !(Number.isInteger(pattern) && pattern >= 0)) {
+        throw new RangeError(`launch takes the index of a pattern, from 0, or null to stop, not ${pattern}`);
+      }
+      if (!QUANTIZE.includes(quantize)) {
+        throw new RangeError(`quantize is "bar", "beat" or "now", not ${JSON.stringify(quantize)}`);
+      }
+      send({ type: "launch", instance, player, pattern, quantize });
+    },
   };
 }
+
+const QUANTIZE: readonly unknown[] = ["bar", "beat", "now"];
 
 /** The MIDI key of a pitch. */
 function keyOf(pitch: number): number {
@@ -339,9 +375,16 @@ function latest({ instance, state, edits }: Looped): State {
 }
 
 /** Draws a card and sends its tree, or why there is none: the window waits for one or the other. */
-function render(request: Render) {
-  const { card, instance, tool, state, watches, page } = request;
+function render(asked: Render) {
+  const state = asked.state ?? drawn.get(asked.card)?.state;
+  if (state === undefined) {
+    send({ type: "tree", card: asked.card, tree: { Err: "drawn without a record" } });
+    return;
+  }
+  const request = { ...asked, state };
+  const { card, instance, tool, watches, page, transport } = request;
   drawn.set(card, request);
+  let same = false;
   const tree = made(() => {
     // Such as a tool whose file this Bun runs without.
     const spec = specOf(tool);
@@ -351,13 +394,23 @@ function render(request: Render) {
       state,
       watches,
       ...(page && { size: page }),
+      transport,
       memory: memoryOf(instance, spec),
       update: updater(instance, state),
       ...players(instance),
     });
     const drawnTree = serialize(node, kept);
-    treeVersion += 1;
+    const text = JSON.stringify(drawnTree);
     const trees = handlers.get(card) ?? new Map<number, Handler[]>();
+    const last = lastTrees.get(card);
+    // The same tree keeps its version, with the handlers of this draw.
+    if (last?.text === text) {
+      trees.set(last.version, kept);
+      same = true;
+      return null;
+    }
+    treeVersion += 1;
+    lastTrees.set(card, { text, version: treeVersion });
     trees.set(treeVersion, kept);
     if (trees.size > KEPT_TREES) {
       const [oldest] = trees.keys();
@@ -366,22 +419,60 @@ function render(request: Render) {
     handlers.set(card, trees);
     return [treeVersion, drawnTree];
   });
-  send({ type: "tree", card, tree });
+  if ("Err" in tree) {
+    lastTrees.delete(card);
+  }
+  send(same ? { type: "unchanged", card } : { type: "tree", card, tree });
+}
+
+/** `value` of `field` as the window gives it: at its default when left out, and so each item. */
+function filled(field: Field, value: unknown): unknown {
+  const given = value ?? defaultOf(field);
+  if (field.kind !== "list" || !Array.isArray(given)) {
+    return given;
+  }
+  const item = field.item;
+  return given.map((each) => (item.kind === "object" ? filledObject(item.fields, each) : filled(item, each)));
+}
+
+function filledObject(fields: Fields, value: unknown): State {
+  const object = (value ?? {}) as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, filled(field, object[name])])) as State;
+}
+
+function defaultOf(field: Field): unknown {
+  switch (field.kind) {
+    case "pattern":
+      return Array(field.length).fill(field.default);
+    case "sample":
+      return "";
+    case "notes":
+    case "list":
+      return field.default ?? [];
+    case "text":
+      return field.default ?? "";
+    case "number":
+      return field.default ?? field.min;
+    default:
+      return field.default;
+  }
 }
 
 /** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec, page: boolean): Sent {
   const memory = spec.memory ? spec.memory() : {};
-  const quiet = { set() {}, fire() {}, play() {}, release() {} };
+  const state = filledObject(spec.state, {});
+  const quiet = { set() {}, fire() {}, play() {}, release() {}, launch() {} };
   try {
-    spec.tick?.({ state: {}, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
+    spec.tick?.({ state, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
   const node = drawerOf(spec, page)({
-    state: {},
+    state,
     watches: {},
     ...(page && { size: CHECKED_PAGE }),
+    transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 },
     memory,
     update() {},
     ...quiet,
@@ -466,7 +557,11 @@ function handle(request: Request) {
       break;
     case "drop":
       handlers.delete(request.card);
+      lastTrees.delete(request.card);
       drawn.delete(request.card);
+      break;
+    case "behaviour":
+      declare(request);
       break;
   }
 }

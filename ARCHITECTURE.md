@@ -20,38 +20,38 @@ The technical decisions, why we made them, and what we rejected. How something w
 ## Shape of the system
 
 - One process, the runtime (`crates/runtime`), opens one project folder: as a window, headless, or read-only to inspect, render or analyze.
-- The agent works in the project folder: Claude Code in the sidebar, or any coding agent in a terminal. It edits files and the runtime applies them live. There is no separate edit API for agents.
+- The agent works in the project folder: Claude Code in the sidebar, or any coding agent in a terminal. It edits files and the runtime applies them live; there is no edit API for agents.
 - Every extension is compiled into the one binary. `project.json` enables extensions by name.
 - Rust for the core and extensions, GPUI for the window: a one-line extension edit reaches a new running window in about two seconds, and an agent wrote working GPUI views from our docs on the first try. Audio and saved data never depend on GPUI.
 - The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
 - macOS is the main platform. Linux and Windows build and pass the tests; platform code sits behind `cfg`. Plugin windows are not offered on Linux, where plugins need an X11 parent and a host run loop.
 - System programs come from the system, never the `PATH` (`sound_core::process`).
-- Sound Tools is a standalone app. Running it as a plugin inside another DAW is out of scope.
+- Running Sound Tools as a plugin inside another DAW is out of scope.
 
 ## The core knows no music
 
 This is the main rule of the codebase.
 
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no bundled crate. `tooling/workspace-rules` checks this.
-- Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. So a main view other than the arrangement gets no transport.
+- Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. A tool's page may ask for the transport, but only the arrangement records.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (notes, clips, the realtime note events, port names, voice handling) and `sound-media` (audio files and measuring a sound).
-- Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`; an effect an audio input and output named `audio`, and maybe a `sidechain` input. So any tool with those ports fits a track slot, and the arrangement depends on no instrument, effect or plugin.
-- The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and agent request talks in bars and beats, so one clock in the core beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
-- `extensions/tone`, a small non-musical tool, proves the core rules hold for a tool shaped unlike the arrangement.
+- Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`; an effect an audio input and output `audio`, maybe a `sidechain` input. So any tool with those ports fits a slot, and the arrangement depends on no instrument, effect or plugin.
+- The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
+- `extensions/tone`, a non-musical tool, proves the core rules hold for a tool unlike the arrangement.
 
 ## Tools, instances and behaviours
 
 `crates/core/src/project`.
 
 - A tool is its saved state type. There is no separate tool handle to mix up. Its records load only when its extension is enabled.
-- A behaviour is declarative: it runs for every valid state from every source (file, window, undo, load) and declares everything each time. The core sends only the difference. So a behaviour cannot leak processors, and a processor declared again keeps its phase and voices.
-- A parent's behaviour reads the typed state of its children and runs again when anything below it changes.
-- One edit group is one engine batch: if a behaviour or the graph refuses, nothing of the group applies. On open, an instance whose behaviour fails is left out and reported instead, as is a connection that closes a cycle at any time, so one bad file does not block a project.
+- A behaviour is declarative: it runs for every valid state from every source (file, window, undo, load) and declares everything each time. The core sends only the difference, so a behaviour cannot leak processors, and a processor declared again keeps its phase and voices.
+- A parent's behaviour reads the state of its children and runs again when anything below it changes.
+- One edit group is one engine batch: if a behaviour or the graph refuses, nothing of the group applies. On open, an instance whose behaviour fails is left out and reported instead, so one bad file does not block a project.
 - Refusing is for invalid state. State that is valid but cannot be live now (a missing plugin or file) is a problem: that slot is silent and the rest plays.
 - Ownership is the folder tree. References are saved ids that keep nothing alive. A reference may arrive before its target; data of a missing extension stays intact.
 - A service outside the project that can now do more (a plugin scan, a background render, a file arriving under `assets/`) makes the core run a behaviour again with the record it has: no write, no undo step. `runtime::tick` is the one place that asks these services, so the window, headless, a render and the tests behave alike.
 - A tool may say where its instances live (`Place`). A record in the wrong place is a problem that says where it belongs, so an agent's mistake is a message, not silence.
-- A derive turns one changed record into more changes in the same group: one engine batch, one undo step. It never runs on load, undo, redo or cancel, because the files already hold its output. It cannot fail: what it cannot compute is a problem. Rejected: running derives on load (cost on every inspect, and it could silently disagree with the files).
+- A derive turns one changed record into more changes in the same group: one engine batch, one undo step. It never runs on load, undo, redo or cancel, because the files already hold its output. It cannot fail: what it cannot compute is a problem. Rejected: running derives on load (a cost on every inspect, and it could disagree with the files).
 - A tool may register a summary and an end, so the core can print "what plays where" and the transport length without knowing tracks.
 
 ## Project storage
@@ -88,11 +88,11 @@ my-piece/
 `crates/core/src/project` (`apply.rs`, `editing.rs`, `history.rs`, `outside.rs`, `watcher.rs`).
 
 - There is one state application. Window edits, file changes, loading, undo, redo and cancel all apply a group of changes, whole or not at all. Loading is applying from empty.
-- The watcher only says which paths changed; the runtime reads them again and applies the difference. So edits, new files, deletes and moves take one road. The runtime groups raw events itself, because a debouncer can split a burst.
+- The watcher only says which paths changed; the runtime reads them again and applies the difference, so edits, new files, deletes and moves take one road. The runtime groups raw events itself, because a debouncer can split a burst.
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. No field merge and no conflict rejection. Do not reopen this as a sync problem.
 - An edit is `begin`, `publish` (live, writes nothing), then `finish` (writes, one undo step) or `cancel`. No undo step ever holds the middle of a gesture, even when a file edit lands during a drag.
 - An agent request is one undo step named after the request, however far apart its writes are. A window edit, undo or redo during a request ends that step; later writes make a new step. Rejected: adding them to the older step, which lies under the composer's edit, so undo would no longer go back in order.
-- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing else between, are one undo step. Without this, one request became several undo steps.
+- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing else between, are one undo step; else one request became several.
 - Undo history lives only in the session. The folder is the truth; versions come from git.
 - `problems.txt` exists only while a runtime holds the project, so an agent can tell "all is well" from "nobody is watching".
 
@@ -100,21 +100,21 @@ my-piece/
 
 `crates/core/src/project/generated.rs`.
 
-- The runtime writes `AGENTS.md` (a map, with one line per doc on when to open it), `CLAUDE.md` (imports the map), and one file per doc in `agent-docs/`. A map plus docs, because one big doc stopped scaling with the extensions; agents read only the docs their task needs.
+- The runtime writes `AGENTS.md` (a map), `CLAUDE.md`, and one file per doc in `agent-docs/`. A map plus docs, because one big doc stopped scaling; agents read only the docs their task needs.
 - Extensions register their docs; the sources are product content (`extensions/*/agent-doc.md`, `crates/core/src/project/*.md`). A doc never outlives its tools, and the generated docs contain nothing of the machine.
 - A runtime test loads every JSON example in every doc, so the docs cannot drift from the formats.
-- The composer's instructions are plain text: `instructions.md` in the project travels with the piece; one file in the support folder is for every project. Both are edited in the sidebar, so a composer never needs a text editor.
+- The composer's instructions are plain text: `instructions.md` in the project travels with the piece; one file in the support folder is for every project. Both are edited in the sidebar, so a composer needs no text editor.
 - The sidebar runs Claude Code with no settings source and no MCP servers, so a settings file the agent writes in the project gives it no more access. The project's `CLAUDE.md` is loaded back in on purpose.
 
 ## Audio engine, transport and time
 
 The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). `crates/core/src` (`engine.rs`, `processor.rs`, `clock.rs`, `transport.rs`).
 
-- The audio thread plays at real-time priority; on Linux through PipeWire, because cpal raises no thread behind ALSA's PipeWire plugin. Without it a slow laptop played the same piece at 2.5 times the cost and dropped out.
+- The audio thread plays at real-time priority; on Linux through PipeWire, because cpal raises no thread behind ALSA's PipeWire plugin. Without it a slow laptop played a piece at 2.5 times the cost and dropped out.
 - Every audio port is stereo: no channel negotiation, a cable cannot be half connected, and a plugin's stereo output fits one port.
 - Time is integers: frames for the engine, ticks (960 per quarter) for music. Saved positions are ticks or bars, never floats or seconds.
 - Time signatures are runs of whole bars and sections start at a bar number, so neither falls inside a bar. Rejected: ticks.
-- Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would need a derive that moves every clip, and it would go wrong for clips placed off the bar lines.
+- Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would need a derive that moves every clip, which goes wrong for clips off the bar lines.
 - Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
 - The core holds no scheduled events: timeline processors make theirs from the transport, so a seek has nothing to invalidate.
 - The loop goes back by a seek on the frame of its end, so processors need no loop code. With latency that leaves a gap as long as the latency. Rejected: wrapping each processor ahead of the device, far more transport code.
@@ -144,7 +144,6 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Each automated device gets its own small player on the track, so it sees that device's latency lead and its events need no device id.
 - A player sends every lane every block, also while stopped, and a number that hears nothing goes back to its record. Rejected: sending only what moved, as the expression lanes do, because a removed player cannot say it is gone.
 - Where a lane bends inside a block, the engine plays the device's block in pieces, so no device needs code for it.
-- How fast a number moves is decided once, in `Lane`, for built-in devices and tools of the project alike.
 - Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
 - A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.
 - An audio clip plays at its file's speed, so a tempo change moves only its start. Every audio clip edge and jump gets a short ramp, so nothing clicks.
@@ -157,8 +156,8 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Audio files a clip names are held in memory, shared, and dropped when nothing names them. Not streamed: the audio thread never waits for a disk, seeks are instant, renders repeat to the byte.
 - Our own WAV and AIFF reader, because these formats are a few chunks around plain samples. FLAC is decoded whole on load.
 - The Sampler reads the part of SFZ real libraries need and ignores the rest: a third-party file that plays a little plainer beats one that is refused.
-- Library samples are memory-mapped and read ahead off the audio thread, so the system pages them from disk. Only files nothing writes in place are mapped, because a mapped file cut short ends the process. Rejected: our own disk streaming with ring buffers per voice, far more code for the same result on an SSD.
-- The library is a catalog in code of free instruments at pinned commits, so an id always plays the same. Downloads are shared machine data. Nothing downloads by itself, not for an agent either: an agent's guess must not spend hundreds of megabytes.
+- Library samples are memory-mapped and read ahead off the audio thread. Only files nothing writes in place are mapped, because a mapped file cut short ends the process. Rejected: our own disk streaming with ring buffers per voice, far more code for the same result on an SSD.
+- The library is a catalog in code of free instruments at pinned commits, so an id always plays the same. Downloads are shared machine data. Nothing downloads by itself, not for an agent either: its guess must not spend hundreds of megabytes.
 - In the window an instrument loads in the background and the old one plays until it is ready. A render, an inspect and the tests load at once, so they play what the records say from the first block.
 - Other sample rates go through a stateless resampler, so any block can render on its own from any place. Rejected: resamplers that keep filter state.
 - The drawing thread never reads a file; waveform overviews are made in the background and never saved.
@@ -166,7 +165,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 ## Recording and fit tempo
 
 - MIDI input and the computer keys have no tool and no record. Both write into one lock-free ring the audio thread reads each block, so nothing the interface does can delay sound. Rejected: a tool of the project that plays from the keys, which plays only its own sound.
-- A recorded note is saved at the tick the engine sounded it, so playback matches what was heard. The raw performance is also saved as an asset, written before the clip, so it survives whatever happens to the clip. Its times are microseconds, because a tick means nothing without a tempo map and a fit changes the map.
+- A recorded note is saved at the tick the engine sounded it, so playback matches what was heard. The raw performance is also saved as an asset, written before the clip, so it survives the clip. Its times are microseconds, because a tick means nothing without a tempo map and a fit changes the map.
 - Audio recording does not pass through the engine. A take is placed by mapping its capture time to the engine frame sounding then, which works with any latency compensation.
 - Live input and the sound of other apps are `project.json` connections. Input and output keep their own clocks: the engine drops old frames or plays silence instead of resampling, so the delay stays bounded. The window opens an input only while something needs it, so a project without one never asks for the microphone. Rejected for app sound: a virtual device of our own, which needs a driver install.
 - The audio devices are chosen per machine, never in a project. Picking one restarts the app, because the engine runs at the rate of its output device.
@@ -179,7 +178,6 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 - The record is the processor's update, in units an agent can reason about (Hz, dB, seconds, 0 to 1). Every number is one `Parameter`: validation, knobs, reset, automation and doc tests all read it.
 - Every change glides (about 20 ms), including choices, so no edit clicks.
-- Shared DSP lives in the SDK (`sound_core`), not in copies: devices kept copying filters, envelopes and helpers.
 - Each effect has an exact response function, and tests hold the measured sound to it.
 - A time that follows the tempo saves the note, not the seconds, and follows a tempo change while playing.
 - A latency is a choice, not a knob: one moving with a drag would make every track jump. The Filter always reports its 4x latency, so drive automated across 0 stays in phase with the dry mix. Instruments report none; a bent voice is 1.3 ms late.
@@ -193,12 +191,12 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - One `plugin` tool for every slot and both formats. Where the track names it decides instrument or effect; what the plugin says only decides which picker offers it, because plugins mislabel themselves.
 - Nothing a plugin sends out is read, so a plugin cannot make our audio thread allocate.
 - A pin is a parameter the record holds; the rest stays in the state asset. The record wins over the state. Automation of a pin is never an undo step.
-- Scanning runs plugin code, so it runs in child processes, one per bundle with a deadline. A bundle that crashed or hung is remembered and not tried again until the composer asks. The window never waits for a scan.
+- Scanning runs plugin code, so it runs in child processes, one per bundle with a deadline. A bundle that crashed or hung is not tried again until the composer asks. The window never waits for a scan.
 - Plugin state is not project state: never an undo step, and unchanged bytes are not written again, so a session that changed nothing leaves no diff.
 - A slot with no plugin passes its input through: a missing effect lets the sound through, a missing instrument is silent, with no special case in the arrangement.
-- Inspect loads no plugin. Printing a project must not run third-party code that can crash.
+- Inspect loads no plugin. Printing a project must not run third-party code.
 - A parameter value stays in the format's own units, so what is read from a plugin can be sent back unchanged.
-- VST 3 goes through our own safe layer in `src/vst3/`. Bundles are never unloaded, because unloading runs static destructors while views and threads may still exist.
+- VST 3 goes through our own safe layer in `src/vst3/`. Bundles are never unloaded: unloading runs static destructors while views and threads may still exist.
 - The host owns every plugin window; the floating option is not supported by real plugins.
 - Write "VST 3" in plain text, with Steinberg's attribution line where a VST plugin is offered.
 
@@ -206,12 +204,11 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `crates/ui` and `crates/runtime/src/window`.
 
-- `Session` is the one GPUI entity that owns the `Project`.
 - Views read state when they render and keep no copy of saved state, so an outside edit shows at once, also mid-drag.
 - Views and device offers are registered per tool, so the track panel knows no instrument or plugin.
 - The playhead is its own entity, because GPUI redraws a notified view and everything above it.
 - `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to an extension.
-- Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows correctly for free.
+- Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
 - The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
 - Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
 - No error tracking in the cloud. The window's stdout and stderr go to `log.txt` in the support folder, which the composer can send.
@@ -220,26 +217,29 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `crates/agent`.
 
-- The sidebar runs Claude Code as a child process in the project folder. It edits files like a terminal agent. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is the way to add more agents later.
+- The sidebar runs Claude Code as a child process in the project folder, editing files like a terminal agent. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is the way to add more agents later.
 - The window has a generic left panel slot and names no agent type.
 - Each message is one request, so all its writes are one undo step named after the message.
 - The thread state is built from provider-neutral events and holds no process, so tests feed it events.
 - Threads, settings and whether the panel is open are kept per machine, never in the project: an agent writes in the project folder, and must not change the interface or raise its own access by editing a file.
 - The provider keeps the conversation; the app keeps only its session id and a log to show it.
-- The app runs the composer's own `claude` when there is one. Otherwise **Set up** downloads a pinned, checked version. Rejected: bundling `claude`, which adds 215 MB to every download and needs an app release to move its version.
+- The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling `claude`, which adds 215 MB to every download and needs an app release to move its version.
 - Sign-in is Claude Code's own. The app never reads or keeps a credential.
 - New problems after a turn are shown to the composer. Nothing goes back to the agent; its docs tell it to read `problems.txt`.
 
 ## Tools of the project
 
-A composer asks the agent for a tool no extension has, and it plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
+A tool an agent writes plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
 
-- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun. A file change, a crash or a hang starts a fresh Bun; code that hangs is blamed and left out until the folder changes. The window never waits on Bun. Rejected: reloading code inside Bun, which cannot read a changed import again and has no answer to a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
-- **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads, and an agent hears what is wrong with it, without Bun.
-- **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between, which nobody wrote by hand and needed a parser. Rejected: that language in a template, which an eval found no better for agents.
-- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without asking Bun: Bun sends a graph for every combination of choices up front.
-- **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps every render bit for bit the same; `tooling/perf` measures them. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
-- **Cards and pages** are trees of elements Bun draws; the window draws them with `crates/ui`. A `tick` plays like a performer and never changes the record.
-- **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, which would know nothing of where the notes went.
-- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills, which did no better in an eval and need project settings the agent runs without. `tooling/agent-eval` checks agent results.
+- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one, and code that hangs is left out until the folder changes. The window never waits on it. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
+- **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
+- **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays; then the behaviour runs again with the record it has. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
+- **The sound is a graph of signals** built with typed SDK functions, sent as JSON and played by `crates/signals`. Rejected: a text language in between, also in a template: nobody wrote it, it needed a parser, and an eval found it no better.
+- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
+- **One signals processor**, made fast by working out once what does not change over a span. Every speed-up keeps renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
+- **Cards and pages** are trees of elements Bun draws and the window shows with `crates/ui`. A `tick` plays like a performer and never changes the record.
+- **Patterns in time are note players an owner declares.** `NotePlayer`, also the arrangement's, loops Bun's patterns and quantizes launches on the audio thread. A launch is performance: never saved or undone. A declared start pattern makes a render sound. Rejected: `tick` with `at`, a block late and window-only.
+- **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved player sends no off there. Rejected: a reset in the core, for every instrument to declare.
+- **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, blind to where the notes went.
+- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills: no better in an eval, and they need project settings the agent runs without.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

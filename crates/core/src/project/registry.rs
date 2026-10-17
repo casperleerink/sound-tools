@@ -31,7 +31,7 @@ pub enum RegistryError {
 /// A tool whose saved state is JSON checked by a function instead of a Rust type: a tool the
 /// project defines for itself, such as one written in TypeScript. Its records load in every
 /// project, with no extension to enable, and it may be defined again while the project is
-/// open, see [`Project::define_json_tools`]. Its records live anywhere and own no children.
+/// open, see [`Project::define_json_tools`]. Its records live anywhere.
 pub struct JsonTool {
     /// The `tool` of its records, and the name of its doc.
     pub name: String,
@@ -46,6 +46,8 @@ pub struct JsonTool {
     /// Folders under `assets/` whose changes run its behaviour again where it had a problem,
     /// as [`ToolRegistration::rebinds_on_assets`] does for a typed tool.
     pub asset_folders: Vec<&'static str>,
+    /// What [`State::OWNS_CHILDREN`] is for a typed tool.
+    pub owns_children: bool,
 }
 
 /// See [`AgentDoc`], whose name is the tool's.
@@ -266,6 +268,7 @@ impl Registry {
             behaviour,
             doc,
             asset_folders,
+            owns_children,
         } = tool;
         let name = match self.tools.get_key_value(name.as_str()) {
             Some((existing, definition)) if definition.extension.is_some() => {
@@ -299,7 +302,11 @@ impl Registry {
         let decode = move |value: serde_json::Value| {
             decode_check(&value)?;
             let check = decode_check.clone();
-            Ok(Record::json(name, JsonState { value, check }))
+            Ok(Record::json(
+                name,
+                JsonState { value, check },
+                owns_children,
+            ))
         };
         let behaviour = move |state: &dyn Any, context: &mut BehaviourContext<'_>| {
             match state.downcast_ref::<JsonState>() {
@@ -317,7 +324,7 @@ impl Registry {
                 derive: None,
                 summary: None,
                 end: None,
-                owns_children: false,
+                owns_children,
                 asset_folders,
             },
         );

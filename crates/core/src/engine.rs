@@ -206,6 +206,17 @@ impl Engine {
         self.preroll_frames
     }
 
+    /// Applies the edits in the command ring now, as the start of the next block would, up to
+    /// as many as the return ring has room for. For an offline render, which runs both halves
+    /// on one thread: with [`EngineControl::poll`](crate::EngineControl::poll) in between until
+    /// no edit waits, its next block starts with every edit sent before it, also more than the
+    /// rings hold.
+    pub fn apply_edits(&mut self) {
+        if self.apply_batches() {
+            self.find_leads();
+        }
+    }
+
     /// Renders the next frames into `output`, interleaved by channel. The device callback,
     /// offline rendering and tests all call this. Samples past the last whole frame are zeroed.
     #[nonblocking]

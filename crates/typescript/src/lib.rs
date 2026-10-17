@@ -6,11 +6,14 @@
 //! fields of a record, a doc for agents, and the sound of every combination of its choices, a
 //! graph of signals that the SDK sends as JSON. The runtime registers each as a [`JsonTool`]
 //! before the records load, so a record of one loads like any other, and plays with no Bun.
+//! Only an owner asks Bun while it plays: how its children connect and what its note players
+//! loop (`behaviours`).
 //!
 //! In the window, any change in `extensions/`, a crash or a hang of Bun starts a new Bun, which
 //! loads every file again and defines the tools again: one path. Nothing of it runs on the
 //! audio thread, and the window never waits for Bun.
 
+mod behaviours;
 mod bun;
 mod card;
 mod samples;
@@ -20,11 +23,13 @@ mod window;
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 
-pub use window::{hear_midi, start_window};
+pub use behaviours::{take_declared, wait_for_behaviours};
+pub use window::{hear_midi, page_shows_transport, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo};
@@ -80,7 +85,9 @@ pub struct Extensions {
     folder: PathBuf,
     /// Bun after its first load, for the window. `None` when the folder has no tool file, or
     /// Bun did not start.
-    bun: Option<Bun>,
+    bun: Option<Arc<Bun>>,
+    /// The opening of the project every Bun of it runs for.
+    opening: u64,
     /// The tools of the first load that the registry took.
     tools: Vec<ToolInfo>,
     skipped: Skipped,
@@ -91,6 +98,7 @@ pub struct Extensions {
 /// The first load of the tools of a project, before a registry takes them.
 pub struct FirstLoad {
     folder: PathBuf,
+    opening: u64,
     launched: Result<Option<Launched>, String>,
 }
 
@@ -105,10 +113,15 @@ impl Extensions {
         if !folder.is_dir() {
             return None;
         }
+        let opening = bun::new_opening();
         let launched = write_sdk(&folder)
             .map_err(|error| error.to_string())
-            .and_then(|()| launch(&folder, Skipped::new()));
-        Some(FirstLoad { folder, launched })
+            .and_then(|()| launch((&folder, opening), Skipped::new()));
+        Some(FirstLoad {
+            folder,
+            opening,
+            launched,
+        })
     }
 
     /// Lists what is wrong with `extensions/` among the problems of the project.
@@ -121,7 +134,11 @@ impl FirstLoad {
     /// Registers the tools in `registry`. Call it before the project opens, so their records
     /// load with it.
     pub fn register(self, registry: &mut Registry) -> Extensions {
-        let Self { folder, launched } = self;
+        let Self {
+            folder,
+            opening,
+            launched,
+        } = self;
         let none = |problems| (None, Vec::new(), Skipped::new(), problems);
         let (bun, tools, skipped, problems) = match launched {
             Ok(Some(Launched {
@@ -147,6 +164,7 @@ impl FirstLoad {
         Extensions {
             folder,
             bun,
+            opening,
             tools,
             skipped,
             problems,
@@ -154,10 +172,10 @@ impl FirstLoad {
     }
 }
 
-/// The tools of `loaded` with their sounds compiled, and what is wrong: the errors of the
-/// files, the files Bun runs without, and every tool whose fields, sounds, card or page fail.
-/// Takes as long as compiling every sound: not on the thread that draws.
-fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<Problem>) {
+/// The tools of `loaded` by `bun` with their sounds compiled, and what is wrong: the errors of
+/// the files, the files Bun runs without, and every tool whose fields, sounds, card or page
+/// fail. Takes as long as compiling every sound: not on the thread that draws.
+fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, Vec<Problem>) {
     let file_problem = |file: &str, message: &str| Problem {
         path: format!("{FOLDER}/{file}"),
         message: message.to_string(),
@@ -175,11 +193,16 @@ fn checked(loaded: Loaded, skipped: &Skipped) -> (Vec<Sounds>, Vec<Problem>) {
             page,
         } = tool;
         // Before anything is made from the fields, such as a pattern at its defaults.
-        if let Err(error) = info.declarations().check() {
+        let checked = (info
+            .declarations()
+            .check()
+            .map_err(|error| error.to_string()))
+        .and_then(|()| info.fields.check_defaults("state."));
+        if let Err(error) = checked {
             problems.push(info.problem(error));
             continue;
         }
-        let sounds = Sounds::new(&info, sounds);
+        let sounds = Sounds::new(&info, sounds, bun);
         // One problem a file: a list keeps one.
         let mut sounds_failed: Vec<&String> = sounds.failures().collect();
         sounds_failed.sort();
@@ -253,7 +276,7 @@ fn tool_files(extensions: &Path) -> Vec<String> {
 
 /// A Bun that loaded.
 struct Launched {
-    bun: Bun,
+    bun: Arc<Bun>,
     /// The tools it loaded, see [`checked`].
     sounds: Vec<Sounds>,
     /// The files it runs without: those given, and each whose code hung or stopped Bun while it
@@ -262,10 +285,14 @@ struct Launched {
     problems: Vec<Problem>,
 }
 
-/// Starts Bun on the tools of `extensions` without the `skipped` files, and waits for its load.
-/// A file whose code hangs or stops Bun while it loads is skipped too, and Bun starts again
-/// without it. `None` when the folder has no tool file. Blocks for as long as the load takes.
-fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, String> {
+/// Starts Bun on the tools of `extensions` for the project's `opening` without the `skipped`
+/// files, and waits for its load. A file whose code hangs or stops Bun while it loads is
+/// skipped too, and Bun starts again without it. `None` when the folder has no tool file.
+/// Blocks for as long as the load takes.
+fn launch(
+    (extensions, opening): (&Path, u64),
+    mut skipped: Skipped,
+) -> Result<Option<Launched>, String> {
     let files = tool_files(extensions);
     if files.is_empty() {
         return Ok(None);
@@ -281,9 +308,12 @@ fn launch(extensions: &Path, mut skipped: Skipped) -> Result<Option<Launched>, S
             .filter(|file| !skipped.contains_key(*file))
             .map(String::as_str)
             .collect();
-        match Bun::start(&program, &host, extensions, &loading) {
+        match Bun::start(&program, &host, (extensions, opening), &loading) {
             Ok((bun, loaded)) => {
-                let (sounds, problems) = checked(loaded, &skipped);
+                // The tools that own children ask it what they declare while their records
+                // play, also outside the window.
+                let bun = Arc::new(bun);
+                let (sounds, problems) = checked(loaded, &skipped, &bun);
                 return Ok(Some(Launched {
                     bun,
                     sounds,
@@ -336,8 +366,7 @@ fn write_sdk(extensions: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Whether this machine has a Bun to run the tools with. Tests that need one pass without it,
-/// as in CI.
+/// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
 pub fn has_bun() -> bool {
     bun_program().is_some()
 }
@@ -383,5 +412,27 @@ mod tests {
         assert!(project.path().join(FOLDER).join("sdk.ts").is_file());
         // The runtime's own files are no tool.
         assert!(tool_files(&project.path().join(FOLDER)).is_empty());
+    }
+
+    #[test]
+    fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
+        let Some(bun) = bun_program() else {
+            eprintln!("skipped: Bun is not installed");
+            return;
+        };
+        let project = tempfile::tempdir().unwrap();
+        let extensions = project.path().join(FOLDER);
+        std::fs::create_dir(&extensions).unwrap();
+        write_sdk(&extensions).unwrap();
+        let types = include_str!("../tests/sdk-types.ts");
+        std::fs::write(extensions.join("types.ts"), types).unwrap();
+        // As the doc for agents says to check a tool.
+        let checked = sound_core::process::background_command(bun)
+            .args(["x", "tsc", "-p", FOLDER])
+            .current_dir(project.path())
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&checked.stdout);
+        assert!(checked.status.success(), "{said}");
     }
 }

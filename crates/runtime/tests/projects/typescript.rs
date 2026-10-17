@@ -1,7 +1,7 @@
 //! Tools a project writes in TypeScript in its `extensions/` folder, run by Bun: the first
 //! example of their agent doc loads as it is written and plays, and a bank of combs whose shape
 //! is a choice plays with every choice. Bun is not part of the build, so where it is not
-//! installed, as in CI, these tests say so and pass.
+//! installed, these tests say so and pass.
 
 use std::path::Path;
 

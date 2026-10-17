@@ -152,7 +152,7 @@ fn a_clip_trimmed_before_its_lift_does_not_sustain_for_ever() {
 fn the_snapshot_keeps_one_pedal_move_per_tick() {
     let many: Vec<(u64, u8)> = (0..5_000).map(|index| (0, (index % 128) as u8)).collect();
     let clip = clip_with_pedal(0, 3840, Vec::new(), &many);
-    let snapshot = arrangement::TrackSnapshot::new([&clip]);
+    let snapshot = sound_notes::NoteTimeline::new([&clip]);
     // One move at tick 0, the highest value of that tick, and the lift at the end of the clip.
     let moves: Vec<(u64, u8)> = snapshot
         .pedal()
