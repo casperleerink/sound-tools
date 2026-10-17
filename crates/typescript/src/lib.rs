@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 
-pub use window::{hear_midi, start_window};
+pub use window::{hear_midi, page_shows_transport, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo};

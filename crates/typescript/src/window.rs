@@ -18,9 +18,9 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
 use sound_notes::{Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
-use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Session, Views};
+use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
-use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped};
+use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped, Transport};
 use crate::card::TypeScriptCard;
 use crate::tools::{Control, Sounds, ToolInfo, ToolKind};
 use crate::tree::Node;
@@ -98,6 +98,8 @@ struct Card {
     tree: Option<Result<(u64, Rc<Node>), String>>,
     /// The watches the last tree was drawn with, which native elements read too.
     watches: BTreeMap<String, f32>,
+    /// The transport the last tree was asked with.
+    transport: Option<Transport>,
     /// A render was asked for and its tree has not come yet.
     asked: bool,
     /// The record or a watch changed while a render was out, so one more is due when it comes.
@@ -128,6 +130,16 @@ pub fn hear_midi(track: Option<&InstanceId>, messages: &[Midi], cx: &mut App) {
         return;
     };
     live.update(cx, |live, cx| live.midi(track, messages, cx));
+}
+
+/// Whether the main view of `id`, the page of a tool of the project, shows the transport.
+pub fn page_shows_transport(project: &Project, id: &InstanceId, cx: &App) -> bool {
+    let Some(live) = cx.try_global::<WindowTools>() else {
+        return false;
+    };
+    let tools = live.0.read(cx).tools.borrow();
+    (project.tool_of(id))
+        .is_some_and(|tool| find(&tools, tool).is_some_and(|info| info.page && info.transport))
 }
 
 /// Starts the live part of `extensions` for the window of `session`: the cards of its tools in
@@ -408,6 +420,20 @@ fn engine_time(session: &Entity<Session>, cx: &mut App) -> f64 {
     })
 }
 
+/// Where the project plays now, as the playhead of the window shows it.
+fn transport_of(session: &Session, cx: &App) -> Transport {
+    let Playhead { playing, tick, .. } = *session.playhead().read(cx);
+    let tempo_map = &session.project().project_file().tempo_map;
+    let position = tempo_map.time_signatures().bar_beat_of(tick);
+    Transport {
+        playing,
+        tick: tick.0,
+        bar: position.bar,
+        beat: position.beat,
+        bpm: tempo_map.change_at(tick).bpm.bpm(),
+    }
+}
+
 /// What a picker offers of the tools of `kind`: each one's record at its defaults.
 fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
     let tools = tools.iter().filter(|info| kind(info.kind));
@@ -477,6 +503,7 @@ impl Live {
             surface,
             tree: None,
             watches: BTreeMap::new(),
+            transport: None,
             asked: false,
             stale: false,
         };
@@ -516,6 +543,8 @@ impl Live {
             return;
         };
         entry.asked = true;
+        let transport = transport_of(session.read(cx), cx);
+        entry.transport = Some(transport);
         let request = Request::Render {
             card,
             instance: &entry.id,
@@ -523,6 +552,7 @@ impl Live {
             state,
             watches: &entry.watches,
             page,
+            transport,
         };
         self.host.send(&request);
     }
@@ -733,25 +763,30 @@ impl Live {
         }
     }
 
-    /// Reads the watches of every card; a card whose watches moved draws again.
+    /// Reads the watches of every card; a card whose watches moved draws again, and so does a
+    /// card of a tool with the transport when it moved.
     fn look_at_watches(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
         let mut moved = Vec::new();
         let tools = self.tools.borrow();
+        let transport = transport_of(session.read(cx), cx);
         for (card, entry) in &mut self.cards {
+            let info = find(&tools, &entry.tool);
             let watches = session.read(cx).project().watches(&entry.id);
             let watches: BTreeMap<String, f32> = watches
                 .into_iter()
                 .map(|(name, watch)| (name, watch.get()))
                 .collect();
-            if watches != entry.watches {
-                entry.watches = watches;
-                // The control loop draws the card of its tool after every step anyway.
-                if !find(&tools, &entry.tool).is_some_and(|info| info.tick) {
-                    moved.push(*card);
-                }
+            // The control loop draws the card of its tool after every step anyway, but with
+            // the transport of its last draw.
+            let watches_moved = watches != entry.watches && !info.is_some_and(|info| info.tick);
+            entry.watches = watches;
+            let transport_moved =
+                info.is_some_and(|info| info.transport) && entry.transport != Some(transport);
+            if watches_moved || transport_moved {
+                moved.push(*card);
             }
         }
         drop(tools);
