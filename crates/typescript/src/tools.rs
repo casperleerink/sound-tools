@@ -392,9 +392,10 @@ impl Field {
 /// A note as a message shows it.
 const NOTE_EXAMPLE: &str = r#"{"start": 0, "length": 480, "pitch": 60, "velocity": 100}"#;
 
-/// A number as a record writes it: `4`, not `4.0`, when it is whole.
+/// A number as a record writes it: `4`, not `4.0`, for a whole number field. A default that is
+/// no whole number stays as it is, so its check refuses it.
 fn number_value(number: f64, integer: bool) -> Value {
-    match integer {
+    match integer && number.fract() == 0.0 {
         true => Value::from(number as i64),
         false => Value::from(number),
     }
@@ -1462,6 +1463,16 @@ mod tests {
         let bad = fields(json!([{ "bars": 0 }]));
         let error = "state.scenes.default[0].bars: 0 is outside [1, 16]";
         assert_eq!(bad.check_defaults("state."), Err(error.to_string()));
+    }
+
+    #[test]
+    fn a_default_of_a_whole_number_field_that_is_no_whole_number_is_refused() {
+        let fields: Named<Field> = serde_json::from_value(json!({
+            "bars": { "kind": "number", "min": 1, "max": 16, "integer": true, "default": 1.5 }
+        }))
+        .unwrap();
+        let error = "state.bars.default: 1.5 is no whole number";
+        assert_eq!(fields.check_defaults("state."), Err(error.to_string()));
     }
 
     #[test]
