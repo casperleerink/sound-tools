@@ -10,7 +10,9 @@ use sound_core::{
     PrepareConfig, ProcessContext, Processor, Watch,
 };
 use sound_notes::{NoteEvent, Performed, Pitch, Velocity};
-use sound_signals::{Code, Kind, Machine, Signals, SignalsUpdate, Values};
+use sound_signals::{
+    Bang, Cable, Code, Control, Kind, Machine, Number, Signals, SignalsUpdate, Values,
+};
 
 mod score;
 mod sound;
@@ -738,4 +740,146 @@ fn a_score_of_every_timing_renders_as_it_did() {
         (13040295354306799557, 14695981039346656037),
     ];
     assert_eq!(found, expected);
+}
+
+/// Counts the frames from 0, as a sound reads it: `n` in frame `n`.
+fn frame_count() -> Signal {
+    let count = feedback();
+    count.set(count.read() + 1.0);
+    count.read()
+}
+
+/// 1 in the frames from `start` up to `end`.
+fn between(count: Signal, start: f32, end: f32) -> Signal {
+    count.lt(end) - count.lt(start)
+}
+
+/// An engine that plays `receiver` as `kind` to the device, joined by `join` to the source
+/// `sender`, which plays nothing itself.
+fn patched(
+    sender: Code,
+    (kind, receiver): (Kind, Code),
+    join: impl FnOnce(&mut sound_core::Edit<'_>, Node<Signals>, Node<Signals>),
+) -> Played {
+    let signals = |kind, code: Code| {
+        let watches: Vec<Watch> = code.watches.iter().map(|_| Watch::new()).collect();
+        let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
+        Signals::new(kind, machine, Values::default(), watches)
+    };
+    let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let mut edit = control.edit();
+    let sender = edit
+        .add_processor("sender", signals(Kind::Source, sender))
+        .unwrap();
+    let receiver = edit
+        .add_processor("receiver", signals(kind, receiver))
+        .unwrap();
+    edit.connect(Connection::to_device(receiver.id(), Signals::OUTPUT, 0))
+        .unwrap();
+    join(&mut edit, sender, receiver);
+    edit.commit().unwrap();
+    Played {
+        control,
+        engine,
+        signals: receiver,
+        watches: Vec::new(),
+    }
+}
+
+/// A [`Cable`] from `output` of `sender` into the controls of `receiver`, at `place`.
+fn cable<From: sound_core::Event>(
+    edit: &mut sound_core::Edit<'_>,
+    (sender, output): (Node<Signals>, EventOutput<From>),
+    (receiver, place): (Node<Signals>, u16),
+) where
+    Control: sound_signals::Placed<From>,
+{
+    let cable = edit
+        .add_processor("cable", Cable::<From, Control>::default())
+        .unwrap();
+    edit.update(cable, place).unwrap();
+    let input = Cable::<From, Control>::INPUT;
+    edit.connect(Connection::new(sender.id(), output, cable.id(), input))
+        .unwrap();
+    let to = Signals::CONTROLS;
+    let output = Cable::<From, Control>::OUTPUT;
+    edit.connect(Connection::new(cable.id(), output, receiver.id(), to))
+        .unwrap();
+}
+
+#[test]
+fn a_bang_of_one_sound_fires_a_trigger_of_another_on_its_frame() {
+    // Up from frame 100 to 103 and from 1000 on: a bang at each start, none while it stays up.
+    let sender = compile(|| {
+        let count = frame_count();
+        output_bang(
+            "hit",
+            between(count, 100.0, 103.0) + 1.0 - count.lt(1_000.0),
+        );
+        0.0
+    });
+    let receiver = compile(|| {
+        let _first = trigger("first");
+        trigger("second")
+    });
+    let mut played = patched(
+        sender,
+        (Kind::Source, receiver),
+        |edit, sender, receiver| {
+            cable::<Bang>(edit, (sender, Signals::bang(0)), (receiver, 1));
+        },
+    );
+    let output = played.render(2_048);
+    let fired: Vec<usize> = (0..output.len()).filter(|&at| output[at] == 1.0).collect();
+    assert_eq!(fired, [100, 1_000]);
+}
+
+#[test]
+fn a_number_of_one_sound_moves_a_live_control_of_another() {
+    let sender = compile(|| {
+        output_number("level", 0.5);
+        0.0
+    });
+    let receiver = compile(|| live("level", 0.0, [0.0, 1.0]));
+    let mut played = patched(
+        sender,
+        (Kind::Source, receiver),
+        |edit, sender, receiver| {
+            cable::<Number>(edit, (sender, Signals::number(0)), (receiver, 0));
+        },
+    );
+    assert_eq!(played.render(2_048)[2_047], 0.5);
+}
+
+#[test]
+fn notes_a_sound_makes_from_a_signal_play_an_instrument_on_their_frames() {
+    // A gate from frame 100 to 500, at A4 and an octave up from frame 300.
+    let sender = compile(|| {
+        let count = frame_count();
+        let up = 1.0 - count.lt(300.0);
+        output_notes(
+            "notes",
+            between(count, 100.0, 500.0),
+            69.0 + up * 12.0,
+            0.8.into(),
+        );
+        0.0
+    });
+    let receiver = compile(|| gate() * pitch() / 100.0);
+    let kind = Kind::Instrument { voices: 2 };
+    let mut played = patched(sender, (kind, receiver), |edit, sender, receiver| {
+        let connection = Connection::new(
+            sender.id(),
+            Signals::notes(0),
+            receiver.id(),
+            Signals::NOTES,
+        );
+        edit.connect(connection).unwrap();
+    });
+    let output = played.render(1_024);
+    let at = |frame: usize| (output[frame] * 100.0).round();
+    assert_eq!(
+        [at(99), at(100), at(299), at(300), at(499), at(500)],
+        [0.0, 69.0, 69.0, 81.0, 81.0, 0.0]
+    );
 }

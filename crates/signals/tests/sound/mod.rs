@@ -15,6 +15,9 @@ struct Building {
     feedbacks: Vec<Option<usize>>,
     buffers: Vec<f32>,
     watches: Vec<Value>,
+    numbers: Vec<Value>,
+    bangs: Vec<Value>,
+    notes: Vec<Value>,
     declarations: Declarations,
 }
 
@@ -282,6 +285,26 @@ pub(crate) fn watch(name: &str, value: impl Into<Signal>) {
     BUILDING.with_borrow_mut(|building| building.watches.push(watch));
 }
 
+/// Sends `value` out as the number `name`.
+pub(crate) fn output_number(name: &str, value: impl Into<Signal>) {
+    let value = value.into();
+    let number = json!({ "name": name, "node": value.0 });
+    BUILDING.with_borrow_mut(|building| building.numbers.push(number));
+}
+
+/// Sends a bang `name` where `when` goes above 0.
+pub(crate) fn output_bang(name: &str, when: impl Into<Signal>) {
+    let when = when.into();
+    let bang = json!({ "name": name, "node": when.0 });
+    BUILDING.with_borrow_mut(|building| building.bangs.push(bang));
+}
+
+/// Sends notes `name`: one sounds while `gate` is above 0.
+pub(crate) fn output_notes(name: &str, gate: Signal, pitch: Signal, velocity: Signal) {
+    let notes = json!({ "name": name, "gate": gate.0, "pitch": pitch.0, "velocity": velocity.0 });
+    BUILDING.with_borrow_mut(|building| building.notes.push(notes));
+}
+
 /// What leaves a sound: one signal, or a pair for a sound in stereo.
 pub(crate) struct Output(Value);
 
@@ -316,7 +339,9 @@ pub(crate) fn compile<O: Into<Output>>(build: impl FnOnce() -> O) -> Code {
         "feedbacks": feedbacks,
         "buffers": building.buffers,
         "watches": building.watches,
-        "numbers": [],
+        "numbers": building.numbers,
+        "bangs": building.bangs,
+        "notes": building.notes,
         "output": output.0,
     });
     let graph: Graph = serde_json::from_value(graph).unwrap();
