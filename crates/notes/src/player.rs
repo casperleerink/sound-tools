@@ -30,6 +30,9 @@ pub const HELD_CAPACITY: usize = 128;
 /// What [`PlayerWatches`] show for no pattern.
 pub const NO_PATTERN: f32 = -1.0;
 
+/// What [`PlayerWatches::queued`] shows for a stop that has not landed yet.
+pub const QUEUED_STOP: f32 = -2.0;
+
 /// What the control side sends to a [`NotePlayer`].
 pub enum NotePlayerUpdate {
     /// The notes on the timeline, from the behaviour on every change.
@@ -50,7 +53,7 @@ pub enum NotePlayerUpdate {
 pub struct PlayerWatches {
     /// The launched pattern.
     pub playing: Watch,
-    /// The pattern of a launch that has not landed yet. A stop that has not shows as none.
+    /// The pattern of a launch that has not landed yet, or [`QUEUED_STOP`].
     pub queued: Watch,
     /// How far the launched pattern is into its round, from 0 up to 1. 0 when none plays.
     pub phase: Watch,
@@ -337,9 +340,10 @@ impl Processor for NotePlayer {
             watches
                 .playing
                 .set(shown(launched.map(|launched| launched.pattern)));
-            watches
-                .queued
-                .set(shown(queued.and_then(|launch| launch.pattern)));
+            watches.queued.set(match queued {
+                Some(Launch { pattern: None, .. }) => QUEUED_STOP,
+                launch => shown(launch.and_then(|launch| launch.pattern)),
+            });
             let phase = playing(*launched).map(|(pattern, launched)| {
                 let phase = pattern.phase(launched.anchor, range.end);
                 (phase.0 as f64 / pattern.length().ticks().0 as f64) as f32
