@@ -209,7 +209,7 @@ fn a_number_a_child_does_not_send_or_take_is_a_problem_that_names_what_it_has() 
     assert_eq!(
         messages(&harness),
         [
-            "its behaviour declares connections[2] between a number and a sound or notes: a number goes from { child, number } to { child, number }"
+            "its behaviour declares connections[2] from a number to a sound: a sound goes to { child, port? } or ownSound, notes to { child, notes }, a number to { child, number } or { child, live }, a bang to { child, trigger }"
         ]
     );
 }

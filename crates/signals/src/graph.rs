@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::code::{
     ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_PARAMETERS, MAX_WATCHES, Operation,
+    MAX_DELAYS, MAX_LIVES, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_WATCHES, Operation,
     Output, ParameterSpec, Register, Slots, Table, Unary,
 };
 
@@ -27,6 +27,8 @@ pub struct Graph {
     buffers: Vec<f32>,
     watches: Vec<NamedNode>,
     numbers: Vec<NamedNode>,
+    bangs: Vec<NamedNode>,
+    notes: Vec<NotesNode>,
     output: OutputNode,
 }
 
@@ -35,6 +37,16 @@ pub struct Graph {
 struct NamedNode {
     name: String,
     node: usize,
+}
+
+/// Notes a sound sends out: one sounds while `gate` is above 0, at the MIDI `pitch`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotesNode {
+    name: String,
+    gate: usize,
+    pitch: usize,
+    velocity: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,11 +275,37 @@ impl Graph {
             .collect::<Result<_, _>>()?;
         let (watches, watch_registers) =
             lowering.named(&self.watches, MAX_WATCHES, ("watch", "watches"))?;
-        if self.numbers.iter().any(|number| number.name == "audio") {
-            return error("output `audio` is the sound itself: give the number another name");
-        }
         let (numbers, number_registers) =
-            lowering.named(&self.numbers, MAX_NUMBERS, ("output", "outputs"))?;
+            lowering.named(&self.numbers, MAX_OUTPUTS, ("number", "numbers"))?;
+        let (bangs, mut event_registers) =
+            lowering.named(&self.bangs, MAX_OUTPUTS, ("bang", "bangs"))?;
+        if self.notes.len() > MAX_OUTPUTS {
+            return error(format!("a sound has at most {MAX_OUTPUTS} notes"));
+        }
+        let mut notes = Vec::new();
+        for NotesNode {
+            name,
+            gate,
+            pitch,
+            velocity,
+        } in &self.notes
+        {
+            notes.push(name.clone());
+            for node in [gate, pitch, velocity] {
+                event_registers.push(lowering.read(*node)?);
+            }
+        }
+        // They are the outputs of one tool, next to its sound.
+        let mut outputs: Vec<&str> = (numbers.iter().chain(&bangs).chain(&notes))
+            .map(String::as_str)
+            .collect();
+        if outputs.contains(&"audio") {
+            return error("output `audio` is the sound itself: give it another name");
+        }
+        outputs.sort();
+        if let Some(twice) = outputs.windows(2).find(|pair| pair[0] == pair[1]) {
+            return error(format!("output `{}` is given twice", twice[0]));
+        }
         let output = match self.output {
             OutputNode::Mono { mono } => Output::Mono(lowering.read(mono)?),
             OutputNode::Stereo { left, right } => {
@@ -283,12 +321,15 @@ impl Graph {
             triggers: lowering.triggers,
             watches,
             numbers,
+            bangs,
+            notes,
             hash: hasher.finish(),
             operations: lowering.operations,
             output,
             feedbacks,
             watch_registers,
             number_registers,
+            event_registers,
             slots: lowering.slots,
         })
     }

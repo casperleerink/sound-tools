@@ -84,6 +84,15 @@ impl Block {
             playing: false,
         }
     }
+
+    /// Fires the trigger of `index` in `frame`.
+    pub(crate) fn fire(&mut self, index: usize, frame: usize) {
+        if let Some(triggers) = self.triggers.get_mut(frame)
+            && index < MAX_LIVES
+        {
+            *triggers |= 1 << index;
+        }
+    }
 }
 
 /// What one voice reads over a span of frames.
@@ -116,6 +125,9 @@ pub struct Machine {
     watched: Vec<f32>,
     /// The last value of each number it sends out, of the left channel.
     sent: Vec<f32>,
+    /// What each of [`Code::event_registers`] gave in each frame of the block, of the left
+    /// channel.
+    events: Vec<[f32; MAX_BLOCK]>,
 }
 
 /// The memory of one channel.
@@ -292,6 +304,7 @@ impl Machine {
             position: 0,
             watched: vec![0.0; code.watches.len()],
             sent: vec![0.0; code.numbers.len()],
+            events: vec![[0.0; MAX_BLOCK]; code.event_registers.len()],
             code,
         }
     }
@@ -333,6 +346,12 @@ impl Machine {
         &self.sent
     }
 
+    /// What each register that sends events gave in each frame it rendered of this block, in
+    /// the order of [`Code::event_registers`].
+    pub(crate) fn events(&self) -> &[[f32; MAX_BLOCK]] {
+        &self.events
+    }
+
     /// The `frames` of a block, both channels, into the same frames of `output`.
     pub(crate) fn render(
         &mut self,
@@ -357,6 +376,11 @@ impl Machine {
                 let numbers = self.sent.iter_mut().zip(&self.code.number_registers);
                 for (value, register) in watches.chain(numbers) {
                     *value = value_at(registers, *register, last);
+                }
+                let events = self.events.iter_mut().zip(&self.code.event_registers);
+                for (events, register) in events {
+                    let values = row(registers, usize::from(*register), &frames);
+                    copy(events.get_mut(frames.clone()).unwrap_or_default(), values);
                 }
             }
             match self.code.output {

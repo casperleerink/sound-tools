@@ -1002,9 +1002,9 @@ fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestApp
     assert_eq!(window.problems(), []);
 }
 
-/// A note a bar long that loops on its child `synth` once a click on the page launches it; a
-/// click while it plays stops it. Nothing plays before.
-const LAUNCHER: &str = r#"import { h, playerOf, tool } from "./sdk";
+/// A note a bar long that its sequencer `bass` loops on its child `synth` once a click on the
+/// page launches it; a click while the page sees it play stops it. Nothing plays before.
+const LAUNCHER: &str = r#"import { h, tool } from "./sdk";
 
 tool({
   name: "launcher",
@@ -1013,17 +1013,16 @@ tool({
   doc: "A click launches a long note, another stops it.",
   state: {},
   behaviour: () => ({
-    players: { bass: { patterns: [{ length: 3840, notes: [{ start: 0, length: 3840, pitch: 45, velocity: 100 }] }] } },
     connections: [
-      { from: { player: "bass" }, to: { child: "synth" } },
+      { from: { child: "bass", notes: "notes" }, to: { child: "synth", notes: "notes" } },
       { from: { child: "synth" }, to: "sound" },
     ],
   }),
   transport: true,
-  page: ({ size, watches, launch }) =>
+  page: ({ size, watches, set }) =>
     h("div", {
       style: { width: size.width, height: size.height },
-      onClick: () => launch("bass", playerOf(watches, "bass").playing === null ? 0 : null),
+      onClick: () => set({ child: "bass", live: "launch" }, watches["bass.playing"] === 0 ? -1 : 0),
     }, "Launch"),
 });
 "#;
@@ -1049,6 +1048,10 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
             "state/launcher/synth.json",
             r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#,
         ),
+        (
+            "state/launcher/bass.json",
+            r#"{"tool": "sequencer", "state": {"patterns": [{"length": 3840, "notes": [{"start": 0, "length": 3840, "pitch": 45, "velocity": 100}]}]}}"#,
+        ),
         ("extensions/launcher.ts", LAUNCHER),
     ];
     let Some(mut window) = open(cx, &files) else {
@@ -1060,11 +1063,12 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
     let middle = point(middle.width, middle.height);
     let queued = |window: &mut Window| {
         let session = window.session.clone();
-        let watches = (window.cx).read(|cx| session.read(cx).project().watches(&id("launcher")));
-        let queued = watches.iter().find(|(name, _)| name == "bass.queued");
+        let bass = id("launcher/bass");
+        let watches = (window.cx).read(|cx| session.read(cx).project().watches(&bass));
+        let queued = watches.iter().find(|(name, _)| name == "queued");
         queued.map(|(_, watch)| watch.get())
     };
-    window.until("the declared player", |window| queued(window).is_some());
+    window.until("the sequencer", |window| queued(window).is_some());
     window.cx.simulate_click(middle, Modifiers::default());
     window.until("the launch", |window| queued(window) == Some(0.0));
     assert!(window.playing());

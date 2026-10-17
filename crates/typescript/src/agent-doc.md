@@ -71,7 +71,7 @@ Inside `sound` only:
 - `feedback()`: a value that feeds back. Read it as a signal; it gives what it was `.set(...)` to one sample before. Set it once.
 - `buffer(seconds)`: memory to `.write(index, value)` every sample and read with `.at` or `lookup`, for loops and grains.
 - `watch(name, signal)`: shows the signal's value to the card, as `watches[name]`: a meter, a step light. Up to 16.
-- `output(name, signal)`: sends the signal out as a number, which a parent connects to a knob of another child (see "Children"). Up to 8; an instrument sends its newest note's.
+- `output(name, ...)`: sends out what a parent connects to another child (see "Children"): a signal as a number, once per 64 samples; `{ bang: when }`, a bang on the sample `when` goes above 0, such as an onset; `{ gate, pitch, velocity? }`, notes: one starts where `gate` goes above 0, at the MIDI `pitch` and the `velocity` (0 to 1) of that sample, and ends where the gate falls or the pitch moves. Up to 8 of each; an instrument sends only numbers, its newest note's.
 
 A sound is held to 4, about 12 dB over full scale, and a value that is not a number is 0, so a feedback that runs away is loud, not dangerous. Keep feedback gains under 1. An instrument's voice ends when its gate is 0 and it has been silent for 50 ms with nothing left in its `delay`s, so multiply it by an `adsr` of `note.gate`.
 
@@ -178,7 +178,7 @@ For more than knobs, such as a simulation that plays notes as balls bounce, a to
 
 - `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance. The card and the loop get it, and a click may change it.
 - `tick: ({ state, watches, memory, dt, time, set, fire, play }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. It plays as a performer would and moves what is in `memory`; it does not change the record. Offline, in `--render`, it does not run.
-- What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a player (see "Children"). For a rhythm the loop makes up, play ahead on the clock of the sound: `time` is where it is, in seconds, and `fire(control, { at })` and `play(pitch, { at })` happen on the sample of `at`:
+- What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a sequencer (see "Children"). For a rhythm the loop makes up, play ahead on the clock of the sound: `time` is where it is, in seconds, and `fire(control, { at })` and `play(pitch, { at })` happen on the sample of `at`:
 
   ```ts
   tick: ({ memory, time, play }) => {
@@ -285,58 +285,48 @@ tool({
 ```
 
 - It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`: each from an output of a child to an input of another child, or to `ownSound`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through.
-- A port is `audio` when left out; an instrument also has the input `notes`.
+- A port is `audio` when left out.
 - `ownSound` is the parent's own `sound`, which hears what reaches it as `input`. Its output is the parent's `audio` output. Put the parent at the top of a project that is one tool, or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound, not its notes, and plays into the track's mixer.
 - The behaviour runs in Bun when the record or a child changes, and its answer plays a moment later; until then the last one plays. `--render` and `--analyze` wait for it.
-- `{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } }` makes the number `lfo` sends with `output` turn a knob of `filter`: a knob of a tool of this project, or any number of a built-in device a lane can automate. Send it in that number's units, Hz here. It follows within 64 samples, gliding, and nothing is saved; without the connection the knob glides back to its record.
+- Events connect by the key of their kind at both ends, to the sample:
+  - `{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } }`: the number `lfo` sends with `output` turns a knob of `filter`, of a tool of this project or any number of a built-in device a lane can automate, in that number's units, Hz here. It glides, nothing is saved, and without the connection the knob glides back to its record. To `{ child, live }` it moves a live control instead.
+  - `{ from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } }` fires a trigger.
+  - `{ from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } }` plays an instrument; `notes` is the input of each.
 - A parent plays its children: `play(45, { child: "synth" })` and `release` reach a child's `notes`, a built-in instrument's too; `set({ child: "lfo", live: "rate" }, 2)` and `fire({ child: "drop", trigger: "hit" })` a live control and a trigger of a tool of this project. A knob of a child is its record: a cable moves it.
+- A `sequencer` child loops note patterns in time with the bars, also in a render, out of its output `notes` (`agent-docs/sequencer.md`). `set({ child: "bass", live: "launch" }, 1)` launches its second pattern at the next bar. A parent's card and page see the watches of each child as `<child>.<watch>`: a sequencer's `playing` and `queued` are a pattern's index, -1 for none, -2 for a stop that waits.
 - A child or a port it names that is not there, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
-### Players: patterns in time with the bars
-
-A parent may also declare note players. A player loops one of its patterns at a time, to the sample, and plays it into a child's `notes`; a performer picks which with `launch`. A clip launcher, with an instrument `synth` and an effect `fx` as its children:
+A clip launcher, with a sequencer `bass`, an instrument `synth` and an effect `fx` as its children:
 
 ```ts
-import { h, list, notes, number, ownSound, playerOf, tool, type Declaration } from "./sdk";
-
-const BAR = 3840; // ticks in a bar of 4/4
+import { h, ownSound, tool, type Declaration } from "./sdk";
 
 tool({
   name: "loops",
   title: "Loops",
   when: "You want bass patterns to launch in time with the bars",
-  doc: "Loops the patterns of `bass` on the child `synth`, through the child `fx`. `scene` is the one that plays before a launch.",
-  state: {
-    bass: list({ bars: number({ min: 1, max: 8, integer: true, default: 1 }), notes: notes() }, {
-      default: [{ notes: [{ start: 0, length: 480, pitch: 36, velocity: 100 }, { start: 1920, length: 480, pitch: 43, velocity: 100 }] }],
-    }),
-    scene: number({ min: 0, max: 7, integer: true }),
-  },
-  behaviour: ({ state }): Declaration => ({
-    players: { bass: { patterns: state.bass.map(({ bars, notes }) => ({ length: bars * BAR, notes })), plays: state.scene } },
+  doc: "Plays the patterns of the sequencer `bass` on `synth` through `fx`; the page launches them.",
+  state: {},
+  behaviour: (): Declaration => ({
     connections: [
-      { from: { player: "bass" }, to: { child: "synth" } },
+      { from: { child: "bass", notes: "notes" }, to: { child: "synth", notes: "notes" } },
       { from: { child: "synth" }, to: { child: "fx" } },
       { from: { child: "fx" }, to: ownSound },
     ],
   }),
   transport: true,
-  page: ({ state, watches, launch }) => {
-    const bass = playerOf(watches, "bass");
-    const button = (lit: boolean) => ({ padding: 8, radius: 6, background: lit ? "#7c3aed" : "#2a2f3a" }) as const;
-    return h("div", { style: { direction: "row", gap: 8, padding: 16 } },
-      state.bass.map((_, index) => h("div", { style: button(bass.playing === index), onClick: () => launch("bass", index) }, `Bass ${index + 1}`)),
-      h("div", { style: button(bass.queued === "stop"), onClick: () => launch("bass", null) }, "Stop"),
-    );
-  },
+  page: ({ watches, set }) =>
+    h("div", { style: { direction: "row", gap: 8, padding: 16 } },
+      [0, 1, -1].map((pattern) => {
+        const plays = watches["bass.playing"] === pattern, waits = watches["bass.queued"] === pattern;
+        return h("div", {
+          style: { padding: 8, radius: 6, background: plays ? "#7c3aed" : waits ? "#4c1d95" : "#2a2f3a" },
+          onClick: () => set({ child: "bass", live: "launch" }, pattern),
+        }, pattern < 0 ? "Stop" : `Bass ${pattern + 1}`);
+      }),
+    ),
 });
 ```
-
-- `players` holds each player by name: `{ patterns, plays? }`. A pattern is `{ length, notes }`, its length in ticks and each note starting inside it. `{ from: { player: "bass" }, to: { child: "synth" } }` plays it into the child's `notes`.
-- `plays` is the index of the pattern it plays before any launch, so `--render` plays it. It starts when the player is first declared; a change of it launches the new one at the next bar.
-- `launch(player, pattern, { quantize? })` plays the pattern of that index from the next bar line (`quantize: "beat"` or `"now"`), or stops with `null`; while the piece is stopped, at once. Like `play`, it is a performance: a render does not hear it.
-- `playerOf(watches, "bass")` says what plays: `{ playing, queued, phase }`.
-- A pattern with a note outside it is silent and a problem of the parent's record; a player or a pattern a launch names that is not there is a problem of the tool.
 
 ## Check your work
 

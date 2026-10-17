@@ -14,7 +14,7 @@ mod machine;
 mod processor;
 mod program;
 
-pub use cable::{Cable, Number};
+pub use cable::{Bang, Cable, Control, Number, Placed};
 pub use code::{ArraySpec, Code, ParameterSpec};
 pub use graph::{ControlSpec, Declarations, Graph, GraphError};
 pub use machine::{Machine, Values};

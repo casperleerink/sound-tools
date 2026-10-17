@@ -7,7 +7,7 @@ use std::path::Path;
 use sound_core::InstanceId;
 
 use crate::plugin_hosts::open_read_only;
-use crate::support::{BAR, Harness, write};
+use crate::support::{Harness, write};
 
 /// A sine at `hz` that runs all the time.
 const DRONE: &str = r#"import { knob, sine, tool } from "./sdk";
@@ -210,7 +210,7 @@ fn a_missing_child_is_a_problem_that_names_it_and_the_rest_plays() {
 }
 
 /// The folder of the project, which is closed.
-fn closed(harness: Harness) -> tempfile::TempDir {
+pub(crate) fn closed(harness: Harness) -> tempfile::TempDir {
     let Harness {
         project,
         engine,
@@ -226,7 +226,7 @@ fn rendered(folder: &Path) -> Vec<f32> {
     rendered_frames(folder, 48_000)
 }
 
-fn rendered_frames(folder: &Path, frames: usize) -> Vec<f32> {
+pub(crate) fn rendered_frames(folder: &Path, frames: usize) -> Vec<f32> {
     let (mut project, mut engine, plugins) = open_read_only(folder);
     project.engine().play();
     runtime::render(&mut project, &mut engine, &plugins, frames).unwrap()
@@ -338,153 +338,4 @@ fn an_owner_in_the_effects_of_a_track_plays_its_children_into_the_track() {
         "{}",
         rises(&played)
     );
-}
-
-/// The launcher of the doc for agents that write tools, as it is written there.
-fn doc_launcher() -> String {
-    let doc = sound_typescript::AGENT_DOC.markdown;
-    let mut blocks = doc.split("```ts\n");
-    let block = blocks.find(|block| block.contains("players:")).unwrap();
-    block.split("```").next().unwrap().to_string()
-}
-
-/// A project of the doc's launcher `loops` at the top, connected to the device, with a synth
-/// that lets go at once and a utility as its children.
-fn loops(state: &str) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
-    let folder = tempfile::tempdir().unwrap();
-    let root = folder.path();
-    let project = r#"{"format": 1, "extensions": ["instrument", "utility"],
-  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-  "connections": [{"from": {"instance": "loops", "port": "audio"}, "to": {"device_output": 0}}]}"#;
-    write(root, "project.json", project);
-    write(root, "extensions/loops.ts", &doc_launcher());
-    let record = format!(r#"{{"tool": "loops", "state": {state}}}"#);
-    write(root, "state/loops/instance.json", &record);
-    let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
-    write(root, "state/loops/synth.json", synth);
-    write(
-        root,
-        "state/loops/fx.json",
-        r#"{"tool": "utility", "state": {}}"#,
-    );
-    Some(Harness::open(folder))
-}
-
-/// The first frame from `from` on whose left channel sounds.
-fn first_sound(samples: &[f32], from: usize) -> Option<usize> {
-    let left = samples.iter().step_by(2).enumerate().skip(from);
-    let mut sounding = left.filter(|(_, sample)| sample.abs() > 1e-4);
-    sounding.next().map(|(frame, _)| frame)
-}
-
-#[test]
-fn a_render_of_the_launcher_of_the_doc_at_its_defaults_plays_its_pattern_on_the_bars() {
-    let Some(harness) = loops("{}") else {
-        return;
-    };
-    assert_eq!(harness.project.problems(), []);
-    let folder = closed(harness);
-    let played = rendered_frames(folder.path(), 2 * BAR);
-    // Its notes start on beats 1 and 3 and loop after a bar. A note sounds within a
-    // millisecond of its frame.
-    let mut from = 0;
-    for start in [0, 48_000, 96_000, 144_000] {
-        let sound = first_sound(&played, from).unwrap();
-        assert!((start..start + 48).contains(&sound), "{sound} for {start}");
-        // Each note is an eighth long, 12 000 frames: silent again before the next one.
-        from = start + 24_000;
-    }
-}
-
-#[test]
-fn an_edit_of_a_pattern_plays_once_bun_answers_and_a_note_outside_it_is_a_problem() {
-    let record = |start: u64| {
-        let note = format!(r#"{{"start": {start}, "length": 240, "pitch": 48, "velocity": 100}}"#);
-        format!(r#"{{"tool": "loops", "state": {{"bass": [{{"notes": [{note}]}}]}}}}"#)
-    };
-    let Some(mut harness) = loops("{}") else {
-        return;
-    };
-    harness.write_and_apply("state/loops/instance.json", &record(960));
-    let played = harness.play_from_the_start(BAR);
-    // 960 ticks are 24 000 frames.
-    assert_eq!(first_sound(&played, 0).map(|frame| frame / 48), Some(500));
-
-    harness.write_and_apply("state/loops/instance.json", &record(2880));
-    let played = harness.play_from_the_start(BAR);
-    assert_eq!(first_sound(&played, 0).map(|frame| frame / 48), Some(1500));
-    assert_eq!(harness.project.problems(), []);
-
-    // A bar is 3840 ticks: this note starts after the pattern.
-    harness.write_and_apply("state/loops/instance.json", &record(4000));
-    let played = harness.play_from_the_start(BAR);
-    assert_eq!(first_sound(&played, 0), None);
-    let problems = harness.project.problems();
-    let [problem] = problems.as_slice() else {
-        panic!("{problems:?}");
-    };
-    assert_eq!(problem.path, "state/loops/instance.json");
-    let message = "players.bass.patterns[0].notes[0].start must be less than the pattern length 3840, not 4000";
-    assert!(problem.message.contains(message), "{problem:?}");
-}
-
-/// Holds one note for most of a bar on the child `to` names, or on none.
-const KEYS: &str = r#"import { text, tool } from "./sdk";
-
-tool({
-  name: "keys",
-  title: "Keys",
-  when: "You want a note held on a child",
-  doc: "Holds one note on the child `to` names.",
-  state: { to: text({ default: "synth" }) },
-  behaviour: ({ state: { to } }) => ({
-    players: to === "none" ? {} : {
-      held: { patterns: [{ length: 3840, notes: [{ start: 0, length: 3800, pitch: 60, velocity: 100 }] }], plays: 0 },
-    },
-    connections: [
-      ...(to === "none" ? [] : [{ from: { player: "held" }, to: { child: to } }]),
-      { from: { child: "synth" }, to: "sound" },
-      { from: { child: "other" }, to: "sound" },
-    ],
-  }),
-});
-"#;
-
-#[test]
-fn a_note_a_player_holds_ends_when_the_player_goes_away_or_plays_into_another_child() {
-    for to in ["none", "other"] {
-        if !sound_typescript::has_bun() {
-            eprintln!("skipped: Bun is not installed");
-            return;
-        }
-        let folder = tempfile::tempdir().unwrap();
-        let root = folder.path();
-        let project = r#"{"format": 1, "extensions": ["instrument"],
-  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-  "connections": [{"from": {"instance": "keys", "port": "audio"}, "to": {"device_output": 0}}]}"#;
-        write(root, "project.json", project);
-        write(root, "extensions/keys.ts", KEYS);
-        write(
-            root,
-            "state/keys/instance.json",
-            r#"{"tool": "keys", "state": {}}"#,
-        );
-        let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
-        write(root, "state/keys/synth.json", synth);
-        write(root, "state/keys/other.json", synth);
-        let mut harness = Harness::open(folder);
-        assert_eq!(harness.project.problems(), []);
-        let held = harness.play(12_000);
-        assert!(first_sound(&held, 0).is_some_and(|frame| frame < 48));
-
-        let record = format!(r#"{{"tool": "keys", "state": {{"to": "{to}"}}}}"#);
-        harness.write_and_apply("state/keys/instance.json", &record);
-        let after = harness.render(24_000);
-        // `other` gets the note of the player at the next bar, not before.
-        assert_eq!(first_sound(&after, 1_200), None, "{to}");
-    }
 }

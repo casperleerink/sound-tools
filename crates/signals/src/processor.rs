@@ -12,15 +12,15 @@
 use std::ops::Range;
 
 use sound_core::{
-    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, EventOutput, Lane, MAX_BLOCK, Ports,
-    PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
+    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, EventOutput, EventOutputs, Lane,
+    MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
 };
 use sound_notes::{
-    NoteEvent, Performed, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
+    NoteEvent, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
 };
 
-use crate::cable::Number;
-use crate::code::{Code, MAX_LIVES, MAX_NUMBERS, MAX_PARAMETERS};
+use crate::cable::{Bang, Control, Number};
+use crate::code::{Code, MAX_LIVES, MAX_OUTPUTS, MAX_PARAMETERS};
 use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values};
 
 /// How long the old code fades out while the new one fades in.
@@ -127,6 +127,7 @@ pub struct Signals {
     /// What the interface plays at a frame of engine time.
     scheduled: Schedule<Played>,
     watches: Vec<Watch>,
+    sending: Sending,
     /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
     bend: f32,
@@ -171,6 +172,13 @@ struct SignalsVoice {
     loudness: f32,
 }
 
+/// What the bangs and the notes a sound sends out were in the last frame: whether the signal of
+/// each bang was above 0, and the note each notes holds.
+struct Sending {
+    bangs: [bool; MAX_OUTPUTS],
+    notes: [Option<Pitch>; MAX_OUTPUTS],
+}
+
 /// The keys a source follows: the newest held one plays, and the note ends when none is held.
 struct Keys {
     /// For each key while it is down, the count of the note that pressed it; 0 while up.
@@ -183,10 +191,22 @@ impl Signals {
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
     pub const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     pub const AUTOMATION: EventInput<Automation> = EventInput::new(1);
+    /// The live controls and the triggers, as cables reach them.
+    pub const CONTROLS: EventInput<Control> = EventInput::new(2);
 
     /// The port of the number at `index` of [`Code::numbers`].
     pub const fn number(index: usize) -> EventOutput<Number> {
         EventOutput::new(index)
+    }
+
+    /// The port of the bang at `index` of [`Code::bangs`].
+    pub const fn bang(index: usize) -> EventOutput<Bang> {
+        EventOutput::new(MAX_OUTPUTS + index)
+    }
+
+    /// The port of the notes at `index` of [`Code::notes`].
+    pub const fn notes(index: usize) -> EventOutput<NoteEvent> {
+        EventOutput::new(2 * MAX_OUTPUTS + index)
     }
 
     /// `machine` is the first voice; an instrument plays copies of it.
@@ -240,6 +260,10 @@ impl Signals {
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
             watches,
+            sending: Sending {
+                bangs: [false; MAX_OUTPUTS],
+                notes: [None; MAX_OUTPUTS],
+            },
             beat: 0.0,
             bend: 0.0,
             sample_rate: 48_000.0,
@@ -276,6 +300,7 @@ impl Signals {
                         std::mem::swap(live, &mut was[index]);
                     }
                 }
+                self.sending.follow(old, code);
             }
             self.parameters = values.parameters.map(Smoothed::new);
             self.aimed = values.parameters;
@@ -650,10 +675,14 @@ impl Processor for Signals {
             .audio_input(Self::INPUT)
             .audio_output(Self::OUTPUT)
             .event_input(Self::NOTES)
-            .event_input(Self::AUTOMATION);
-        (0..MAX_NUMBERS).fold(ports, |ports, index| {
+            .event_input(Self::AUTOMATION)
+            .event_input(Self::CONTROLS);
+        let ports = (0..MAX_OUTPUTS).fold(ports, |ports, index| {
             ports.event_output(Self::number(index))
-        })
+        });
+        let ports =
+            (0..MAX_OUTPUTS).fold(ports, |ports, index| ports.event_output(Self::bang(index)));
+        (0..MAX_OUTPUTS).fold(ports, |ports, index| ports.event_output(Self::notes(index)))
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -708,6 +737,18 @@ impl Processor for Signals {
         // Also in a block that plays silence: a stop reads where it ended.
         self.move_beat(frames, beats_per_frame, playing);
         self.scheduled.playing(context.start_frame, context.frames);
+        let ramp = RAMP_SECONDS * self.sample_rate;
+        let specs = self.players.code().map_or(&[][..], |code| &code.lives[..]);
+        for timed in context.event_inputs.get(Self::CONTROLS) {
+            if let Control::Live { index, value } = timed.event
+                && let (Some(live), Some(spec)) = (
+                    self.lives.get_mut(usize::from(index)),
+                    specs.get(usize::from(index)),
+                )
+            {
+                live.set_target(value.max(spec.min).min(spec.max), ramp);
+            }
+        }
         let (parameters, lives) = self.counts;
         let block = &mut *self.block;
         block.steady_parameters = advance_rows(
@@ -734,6 +775,12 @@ impl Processor for Signals {
         }
         let input = context.audio_inputs.get(Self::INPUT);
         self.fill(input, frames, bpm, playing);
+        // After `fill`, which clears the triggers, where the live controls had to come before.
+        for timed in context.event_inputs.get(Self::CONTROLS) {
+            if let Control::Trigger { index } = timed.event {
+                self.block.fire(usize::from(index), timed.offset);
+            }
+        }
         for channel in &mut self.mix {
             channel.fill(0.0);
         }
@@ -749,11 +796,7 @@ impl Processor for Signals {
             while let Some((_, what)) = self.scheduled.take(now) {
                 match what {
                     Played::Note(event) => self.follow(event),
-                    Played::Trigger(index) => {
-                        if let Some(triggers) = self.block.triggers.get_mut(start) {
-                            *triggers |= 1 << index;
-                        }
-                    }
+                    Played::Trigger(index) => self.block.fire(index, start),
                 }
             }
             let next_event = events.peek().map_or(frames, |timed| timed.offset);
@@ -783,6 +826,96 @@ impl Processor for Signals {
             // note sends none, and lets go.
             for (index, value) in voice.machine.sent().iter().enumerate() {
                 (context.event_outputs).push(Self::number(index), 0, Number(*value));
+            }
+        }
+        // An instrument sends none: a voice that ends or loses its place would hold a note.
+        if let Players::One(single) = &self.players {
+            let machine = &single.voice.machine;
+            let counts = (machine.code().bangs.len(), machine.code().notes.len());
+            let events = machine.events();
+            (self.sending).send(events, counts, frames, &mut context.event_outputs);
+        }
+    }
+}
+
+impl Sending {
+    /// Follows the outputs from `old` code to `new` by name: the port of an output may move. An
+    /// output that is gone forgets its note: the feed it played into lets go when it changes.
+    fn follow(&mut self, old: &Code, new: &Code) {
+        let mut sending = Self {
+            bangs: [false; MAX_OUTPUTS],
+            notes: [None; MAX_OUTPUTS],
+        };
+        for (index, name) in new.bangs.iter().enumerate() {
+            if let (Some(old), Some(bang)) = (
+                old.bangs.iter().position(|old| old == name),
+                sending.bangs.get_mut(index),
+            ) {
+                *bang = self.bangs.get(old).copied().unwrap_or(false);
+            }
+        }
+        for (index, name) in new.notes.iter().enumerate() {
+            if let (Some(old), Some(note)) = (
+                old.notes.iter().position(|old| old == name),
+                sending.notes.get_mut(index),
+            ) {
+                *note = self.notes.get(old).copied().flatten();
+            }
+        }
+        *self = sending;
+    }
+
+    /// Sends what `events` of the bangs and the notes of the code give in the first `frames`:
+    /// a bang where its signal goes above 0, and a note while its gate is above 0, at the
+    /// pitch and velocity it starts with, ended where the gate falls or the pitch moves.
+    fn send(
+        &mut self,
+        events: &[[f32; MAX_BLOCK]],
+        (bangs, notes): (usize, usize),
+        frames: usize,
+        outputs: &mut EventOutputs<'_>,
+    ) {
+        let (bang_rows, note_rows) = events.split_at(bangs.min(events.len()));
+        for (index, (row, was_above)) in bang_rows.iter().zip(&mut self.bangs).enumerate() {
+            for (frame, value) in row.iter().take(frames).enumerate() {
+                let above = *value > 0.0;
+                if above && !*was_above {
+                    outputs.push(Signals::bang(index), frame, Bang);
+                }
+                *was_above = above;
+            }
+        }
+        let mut rows = note_rows.chunks_exact(3).take(notes);
+        for (index, held) in self.notes.iter_mut().enumerate() {
+            let port = Signals::notes(index);
+            let Some([gate, pitch, velocity]) = rows.next() else {
+                continue;
+            };
+            let frames = gate
+                .iter()
+                .zip(pitch)
+                .zip(velocity)
+                .take(frames)
+                .enumerate();
+            for (frame, ((gate, pitch), velocity)) in frames {
+                let wanted = (*gate > 0.0).then(|| Pitch::nearest(pitch.round() as i64));
+                if wanted == *held {
+                    continue;
+                }
+                if let Some(pitch) = *held {
+                    // A dropped off would hold the note for ever: what follows waits for it.
+                    if !outputs.push(port, frame, NoteEvent::Off { pitch }) {
+                        break;
+                    }
+                    *held = None;
+                }
+                if let Some(pitch) = wanted {
+                    let velocity = Velocity::nearest((velocity * 127.0).round() as i64);
+                    // A note that does not fit is not held, so no off goes after it.
+                    if outputs.push(port, frame, NoteEvent::On { pitch, velocity }) {
+                        *held = Some(pitch);
+                    }
+                }
             }
         }
     }
