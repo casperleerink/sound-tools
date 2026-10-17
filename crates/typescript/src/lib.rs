@@ -397,4 +397,26 @@ mod tests {
         // The runtime's own files are no tool.
         assert!(tool_files(&project.path().join(FOLDER)).is_empty());
     }
+
+    #[test]
+    fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
+        let Some(bun) = bun_program() else {
+            eprintln!("skipped: Bun is not installed");
+            return;
+        };
+        let project = tempfile::tempdir().unwrap();
+        let extensions = project.path().join(FOLDER);
+        std::fs::create_dir(&extensions).unwrap();
+        write_sdk(&extensions).unwrap();
+        let types = include_str!("../tests/sdk-types.ts");
+        std::fs::write(extensions.join("types.ts"), types).unwrap();
+        // As the doc for agents says to check a tool.
+        let checked = sound_core::process::background_command(bun)
+            .args(["x", "tsc", "-p", FOLDER])
+            .current_dir(project.path())
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&checked.stdout);
+        assert!(checked.status.success(), "{said}");
+    }
 }

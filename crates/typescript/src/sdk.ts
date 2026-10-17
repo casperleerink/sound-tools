@@ -134,8 +134,11 @@ export const notes = (field: Omit<NotesField, "kind"> = {}): NotesField => ({ ki
 export const text = (field: Omit<TextField, "kind"> = {}): TextField => ({ kind: "text", ...field });
 export const number = (field: Omit<NumberField, "kind">): NumberField => ({ kind: "number", ...field });
 
-/** The item of a list: a field as it is, an object of fields as an `ObjectItem`. */
-type ItemOf<I extends Field | Fields> = I extends Field ? I : ObjectItem<I & Fields>;
+/**
+ * The item of a list: a field as it is, an object of fields as an `ObjectItem`. Not `I & Fields`,
+ * whose index signature would let a misspelled field of an item through.
+ */
+type ItemOf<I extends Field | Fields> = I extends Field ? I : I extends Fields ? ObjectItem<I> : never;
 
 /**
  * A list whose items are `item`: a field, such as `notes()`, or an object of fields. A field an
