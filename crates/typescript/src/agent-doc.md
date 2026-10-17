@@ -212,7 +212,7 @@ To make the project one tool:
 
 1. Delete `state/arrangement/`.
 2. Put one record of the tool at the top: `state/<name>.json`, or `state/<name>/instance.json` for a parent.
-3. Make the tool a `source`, or an `instrument` when its loop plays notes with `play`.
+3. Make the tool a `source`, or an `instrument` when it plays notes with `play`; a parent leaves `kind` out.
 4. Connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`.
 
 The window shows its page, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and the page and cards get `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`) and draw again as it moves. An `effect` at the top with `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well hears the microphone live as `input`; tell the composer to use headphones, as speakers feed back into it. `{"from": {"app": "Music"}, ...}` in place of `device_input` hears another app instead, such as a song playing in Music, and `{"app": "all"}` every app.
