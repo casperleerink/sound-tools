@@ -333,6 +333,7 @@ impl Project {
 
     /// Applies one side of the next step of undo (before) or redo (after) and writes it.
     fn bring_back(&mut self, side: Side) -> Result<Option<String>, ProjectError> {
+        self.finish_all_runs()?;
         let Some(step) = self.history.take(side) else {
             return Ok(None);
         };

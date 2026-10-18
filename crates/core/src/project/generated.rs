@@ -136,6 +136,9 @@ impl Drop for Project {
         if self.read_only {
             return;
         }
+        if let Err(error) = self.finish_all_runs() {
+            eprintln!("error: {error}");
+        }
         // There is nobody left to report a failure to. A file that stays is what a crash
         // leaves too, and the agent doc says that such a file can be stale.
         match self.storage.write_generated(PROBLEMS_FILE, None) {
