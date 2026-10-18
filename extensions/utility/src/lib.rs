@@ -162,7 +162,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the utility tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<UtilityState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<UtilityState>(EXTENSION)?
+        .behaviour(apply)
+        .in_code(Utility::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

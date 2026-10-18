@@ -265,13 +265,16 @@ type SignalNode<R> =
   | { op: "rise" | "change"; x: R }
   | { op: "at"; table: TableRef; index: R }
   | { op: "lookup"; table: TableRef; phase: R }
-  | { op: "length"; table: TableRef };
+  | { op: "length"; table: TableRef }
+  /** What a device plays: of the channel the sound runs on, or of `channel`. */
+  | { op: "played"; device: [R] extends [number] ? number : DeviceCall; channel?: 0 | 1 };
 
 /** A node the runtime gets: each signal it reads is the index of a node before it. */
 export type GraphNode =
   | SignalNode<number>
   | { op: "constant"; value: number }
-  | { op: "write"; buffer: number; index: number; value: number };
+  | { op: "write"; buffer: number; index: number; value: number }
+  | { op: "device"; tool: string; input: [number, number]; numbers: Record<string, number>; state: Record<string, unknown> };
 
 /** A sound as the runtime gets it. */
 export interface Graph {
@@ -508,6 +511,62 @@ export const triangle = (hz: Operand): Signal =>
 export const mtof = (pitch: Operand): Signal =>
   pow(2, new Signal({ op: "subtract", a: pitch, b: 69 }).over(12)).times(440);
 
+/** A device a sound plays through: what it hears, and its record. */
+export interface DeviceCall {
+  tool: string;
+  input: [Operand, Operand];
+  numbers: Record<string, Operand>;
+  state: Record<string, unknown>;
+}
+
+/**
+ * What a device plays: as a signal, of the channel the sound runs on, and of each channel with
+ * `left` and `right`. A sound that returns `{ left, right }` reads those.
+ */
+export class DeviceSound extends Signal {
+  readonly left: Signal;
+  readonly right: Signal;
+  constructor(call: DeviceCall) {
+    super({ op: "played", device: call });
+    this.left = new Signal({ op: "played", device: call, channel: 0 });
+    this.right = new Signal({ op: "played", device: call, channel: 1 });
+  }
+}
+
+/** The settings of a device: a signal or a number for each of its numbers `F`, the rest `R` as written. */
+export type DeviceSettings<F extends Fields, R> = { [Name in keyof F]?: Operand } & { [Name in keyof R]?: R[Name] };
+
+/** A built-in device to play inside `sound`, such as `devices.reverb`. */
+export interface Device<F extends Fields, R> {
+  /** `x` through the device, at its record's defaults where `settings` says nothing. */
+  (x: Operand | Stereo, settings?: DeviceSettings<F, R>): DeviceSound;
+  /** Its numbers as knobs, for the `state` of a tool: `{ ...devices.reverb.fields }`. */
+  readonly fields: F;
+}
+
+/** For the devices below. */
+function device<const F extends Fields, R extends object>(tool: string, fields: F, rest: R): Device<F, R> {
+  const play = (x: Operand | Stereo, settings: Record<string, unknown> = {}) => {
+    const numbers: Record<string, Operand> = {};
+    const state: Record<string, unknown> = {};
+    for (const [name, value] of Object.entries(settings)) {
+      if (name in fields && isOperand(value)) numbers[name] = value;
+      else if (name in rest) state[name] = value;
+    }
+    const input: [Operand, Operand] = isOperand(x) ? [x, x] : [x.left, x.right];
+    return new DeviceSound({ tool, input, numbers, state });
+  };
+  return Object.assign(play, { fields }) as Device<F, R>;
+}
+
+/** `fields` with `prefix` before each name, so a tool can have the numbers of two devices. */
+export function prefixed<const P extends string, const F extends Fields>(
+  prefix: P,
+  fields: F,
+): { [Name in keyof F as `${P}${Name & string}`]: F[Name] } {
+  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [prefix + name, field])) as never;
+}
+
 /** A value that feeds back, see `Feedback`. Inside `sound` only. */
 export function feedback(): Feedback {
   const made = new Feedback(building().feedbacks.length);
@@ -564,10 +623,26 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
     const output = build();
     const nodes: GraphNode[] = [];
     const made = new Map<Signal, number>();
+    const calls = new Map<DeviceCall, number>();
     const add = (node: GraphNode) => nodes.push(node) - 1;
+    /** The node of a device, made once, after what it hears and the signals of its numbers. */
+    const device = (call: DeviceCall): number => {
+      const known = calls.get(call);
+      if (known !== undefined) return known;
+      const input = call.input.map(use) as [number, number];
+      const numbers = Object.fromEntries(Object.entries(call.numbers).map(([name, value]) => [name, use(value)]));
+      const index = add({ op: "device", tool: call.tool, input, numbers, state: call.state });
+      calls.set(call, index);
+      return index;
+    };
     /** Adds the nodes of `operand` that are made once, the signals it reads first. */
     const prepare = (operand: Operand) => {
       if (typeof operand === "number" || operand instanceof Named || made.has(operand)) return;
+      if (operand.node.op === "played") {
+        const { device: call, channel } = operand.node;
+        made.set(operand, add({ op: "played", device: device(call), ...(channel === undefined ? {} : { channel }) }));
+        return;
+      }
       const operands = Object.entries(operand.node).filter((entry): entry is [string, Operand] =>
         isOperand(entry[1]),
       );

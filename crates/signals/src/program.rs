@@ -297,6 +297,7 @@ fn operands(operation: Operation) -> Vec<Register> {
         | Operation::Gate
         | Operation::Velocity
         | Operation::Onset
+        | Operation::Import { .. }
         | Operation::Parameter(_)
         | Operation::Live(_)
         | Operation::Trigger(_)
@@ -307,11 +308,18 @@ fn operands(operation: Operation) -> Vec<Register> {
 }
 
 /// Whether `operation` gives each channel of mono code its own result whatever it reads: the
-/// input or the index of its channel, or a noise, whose seed is of its channel.
+/// input, or a signal from before, of its channel, the index of its channel, or a noise, whose
+/// seed is of its channel.
 fn varies_by_channel(operation: Operation) -> bool {
     match operation {
-        Operation::Input | Operation::Channel | Operation::Noise { .. } => true,
+        Operation::Input
+        | Operation::Channel
+        | Operation::Noise { .. }
+        | Operation::Import { channel: None, .. } => true,
         Operation::Constant(_)
+        | Operation::Import {
+            channel: Some(_), ..
+        }
         | Operation::InputLeft
         | Operation::InputRight
         | Operation::SampleRate

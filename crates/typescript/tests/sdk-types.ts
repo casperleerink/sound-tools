@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { h, input, list, notes, number, output, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
+import { devices, h, input, knob, list, notes, number, output, prefixed, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -218,4 +218,23 @@ tool({
   when: "Never",
   doc: "A take.",
   state: { notes: notes() },
+});
+
+tool({
+  name: "room",
+  title: "Room",
+  when: "Never",
+  doc: "Two reverbs, one with its numbers as knobs.",
+  state: { ...devices.reverb.fields, ...prefixed("far_", devices.reverb.fields), drive: knob({ min: 0, max: 1, default: 0 }) },
+  sound: (fields) => {
+    const near = devices.reverb(input, fields);
+    const far = devices.reverb({ left: near.left, right: near.right }, { mix: fields.far_mix, freeze: true });
+    // @ts-expect-error: the reverb has no number `size_m`.
+    devices.reverb(input, { size_m: 1 });
+    // @ts-expect-error: a toggle of the record is written as it is, not played as a signal.
+    devices.reverb(input, { freeze: fields.drive });
+    // @ts-expect-error: the fields of the second reverb are named with their prefix.
+    fields.far_freeze;
+    return far;
+  },
 });

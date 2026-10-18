@@ -24,6 +24,11 @@ pub(crate) const MAX_BUFFER_SECONDS: f32 = 30.0;
 /// The longest a pattern can be.
 pub(crate) const MAX_ARRAY_LENGTH: usize = 1024;
 pub(crate) const MAX_OPERATIONS: usize = 4096;
+/// The most signals a stage of a sound takes from the stages and devices before it, and the
+/// most it hands on: each is a sound port of its processor.
+pub(crate) const MAX_STAGE_PORTS: usize = 8;
+/// The most numbers of devices a stage moves.
+pub(crate) const MAX_DEVICE_NUMBERS: usize = 32;
 
 /// The index of an operation, and of the register it writes.
 pub(crate) type Register = u16;
@@ -66,6 +71,8 @@ pub struct Code {
     pub numbers: Vec<String>,
     pub bangs: Vec<String>,
     pub notes: Vec<String>,
+    /// How many signals it takes from the stages and devices before it.
+    pub imports: usize,
     /// Of the graph and what it reads, so a behaviour tells new code from new values.
     pub hash: u64,
     pub(crate) operations: Vec<Operation>,
@@ -79,6 +86,10 @@ pub struct Code {
     /// The registers that send events, frame by frame: each bang's, then the gate, the pitch
     /// and the velocity of each notes.
     pub(crate) event_registers: Vec<Register>,
+    /// The left and the right of each signal it hands on to a stage or a device after it.
+    pub(crate) exports: Vec<[Register; 2]>,
+    /// The register of each number of a device it moves.
+    pub(crate) device_number_registers: Vec<Register>,
     pub(crate) slots: Slots,
 }
 
@@ -94,6 +105,8 @@ impl Code {
             && self.watch_registers.is_empty()
             && self.number_registers.is_empty()
             && self.event_registers.is_empty()
+            && self.exports.is_empty()
+            && self.device_number_registers.is_empty()
     }
 }
 
@@ -146,6 +159,11 @@ pub(crate) enum Operation {
     Gate,
     Velocity,
     Onset,
+    /// A signal from a stage or a device before: of the channel it runs on, or of one.
+    Import {
+        port: u16,
+        channel: Option<u8>,
+    },
     Parameter(u16),
     Live(u16),
     Trigger(u16),

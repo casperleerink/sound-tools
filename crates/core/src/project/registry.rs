@@ -10,7 +10,9 @@ use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
 use super::editing::Derived;
 use super::instance::{Instance, InstanceId, JsonState, Record, State, is_valid_name};
+use crate::automation::AutomationInput;
 use crate::clock::Ticks;
+use crate::parameter::ParameterInfo;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RegistryError {
@@ -48,6 +50,17 @@ pub struct JsonTool {
     pub asset_folders: Vec<&'static str>,
     /// What [`State::OWNS_CHILDREN`] is for a typed tool.
     pub owns_children: bool,
+}
+
+/// A tool that the code of a tool of the project plays as a device, inside its sound. See
+/// [`ToolRegistration::in_code`].
+#[derive(Clone, Debug)]
+pub struct CodeDevice {
+    pub tool: &'static str,
+    /// The numbers a signal moves, each with its default, by their names in the record.
+    pub numbers: Vec<(ParameterInfo, f32)>,
+    /// Its record at the defaults, which shows the form of every field.
+    pub defaults: serde_json::Value,
 }
 
 /// See [`AgentDoc`], whose name is the tool's.
@@ -157,6 +170,7 @@ pub(crate) struct ToolDefinition {
     /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
     /// again. See [`ToolRegistration::rebinds_on_assets`].
     pub asset_folders: Vec<&'static str>,
+    pub device: Option<CodeDevice>,
 }
 
 impl ToolDefinition {
@@ -211,6 +225,7 @@ impl Registry {
             end: None,
             owns_children: S::OWNS_CHILDREN,
             asset_folders: Vec::new(),
+            device: None,
         });
         Ok(ToolRegistration {
             definition,
@@ -326,9 +341,17 @@ impl Registry {
                 end: None,
                 owns_children,
                 asset_folders,
+                device: None,
             },
         );
         Ok(())
+    }
+
+    /// The tools that the code of a tool of the project plays as devices, by name.
+    pub fn code_devices(&self) -> Vec<CodeDevice> {
+        (self.tools.values())
+            .filter_map(|definition| definition.device.clone())
+            .collect()
     }
 
     /// The docs of a project that enables `enabled`, in registration order.
@@ -386,6 +409,29 @@ impl<S: State> ToolRegistration<'_, S> {
                 None => Ok(()),
             }
         }));
+        self
+    }
+
+    /// Lets the code of a tool of the project play this tool inside its sound, as a device
+    /// with no record of its own: its behaviour runs with the record the code gives, see
+    /// [`BehaviourContext::part`]. A signal moves the numbers of `input` that are fields of the
+    /// record itself, through the automation input, so the tool takes `audio` in and out and
+    /// declares its automation. A number inside a list stays as the code writes it.
+    pub fn in_code<const N: usize>(self, input: AutomationInput<S, N>) -> Self
+    where
+        S: Default,
+    {
+        let numbers = (input.parameters().iter())
+            .filter(|parameter| is_valid_name(parameter.field))
+            .map(|parameter| (parameter.info(), parameter.default))
+            .collect();
+        // A plain record of numbers, choices and lists always serializes.
+        let defaults = serde_json::to_value(S::default()).unwrap_or(serde_json::Value::Null);
+        self.definition.device = Some(CodeDevice {
+            tool: S::TOOL,
+            numbers,
+            defaults,
+        });
         self
     }
 

@@ -36,7 +36,7 @@ This is the main rule of the codebase.
 - Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. A tool's page may ask for the transport, but only the arrangement records.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate, such as `sound-notes` and `sound-media`.
 - Tools find each other by port names, not by type: an instrument has an input `notes` and an output `audio`, an effect an input and an output `audio`. So the arrangement depends on no instrument, effect or plugin.
-- The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
+- The core does own the musical clock. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
 - `extensions/tone`, a non-musical tool, proves the core rules hold for a tool unlike the arrangement.
 
 ## Tools, instances and behaviours
@@ -112,7 +112,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 - The audio thread plays at real-time priority; on Linux through PipeWire, because cpal raises no thread behind ALSA's PipeWire plugin. Without it a slow laptop played a piece at 2.5 times the cost and dropped out.
 - Every audio port is stereo: no channel negotiation, a cable cannot be half connected, and a plugin's stereo output fits one port.
-- Time is integers: frames for the engine, ticks (960 per quarter) for music. Saved positions are ticks or bars, never floats or seconds.
+- Time is integers: frames for the engine, ticks for music. Saved positions are ticks or bars, never floats or seconds.
 - Time signatures are runs of whole bars and sections start at a bar number, so neither falls inside a bar. Rejected: ticks.
 - Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would need a derive that moves every clip, which goes wrong for clips off the bar lines.
 - Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
@@ -124,8 +124,8 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Latency compensation leads instead of delaying: each processor sees the transport ahead by the latency after it. Delaying would also delay a keyboard played into a track; with leading it waits only for that track's chain.
 - A side input (such as a sidechain) is skipped by the lead, so its source is not led by another track's chain. The detector hears it a little early or late instead.
 - An output feeding paths of different latency (a send) is delayed on faster ones: at most a second at 48 kHz. Rejected: no maximum, which would allocate on the audio thread.
-- Levels leave the audio thread through `Peaks` (atomics), sound through a `Scope` (a ring of atomics). Views measure on their own thread. Rejected: measuring on the audio thread, an FFT per card in every block.
-- Every render is deterministic: the same project gives the same bytes. Nothing random; anything that looks random takes a seed. The click is attached only by the window.
+- Levels leave the audio thread through `Peaks`, sound through a `Scope`. Views measure on their own thread. Rejected: measuring on the audio thread, an FFT per card in every block.
+- Every render is deterministic: the same project gives the same bytes. Anything that looks random takes a seed. The click is attached only by the window.
 
 ## The arrangement
 
@@ -155,7 +155,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 `crates/media`, `extensions/sampler`.
 
 - Audio files a clip names are held in memory, shared, and dropped when nothing names them. Not streamed: the audio thread never waits for a disk, seeks are instant, renders repeat to the byte.
-- Our own WAV and AIFF reader, because these formats are a few chunks around plain samples. FLAC is decoded whole on load.
+- Our own WAV and AIFF reader, because these formats are a few chunks around plain samples.
 - The Sampler reads the part of SFZ real libraries need and ignores the rest: a third-party file that plays a little plainer beats one that is refused.
 - Library samples are memory-mapped and read ahead off the audio thread. Only files nothing writes in place are mapped, because a mapped file cut short ends the process. Rejected: our own disk streaming with ring buffers per voice, far more code for the same result on an SSD.
 - The library is a catalog in code of free instruments at pinned commits, so an id always plays the same. Downloads are shared machine data. Nothing downloads by itself, not for an agent either: its guess must not spend hundreds of megabytes.
@@ -236,10 +236,11 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
+- **A sound plays built-in devices** as engine processors between stages of its code: the engine compensates their latency. So none in instruments or feedbacks. Rejected: devices as signals code.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
-- **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
+- **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
 - **Cards and pages** are trees Bun draws and `crates/ui` shows. `set` moves no knob: knobs are the composition.
-- **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back. Bun hears each record once per change.
+- **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back.
 - **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end names its kind, so a wrong pair is a type error. A parent's sound is the last stage of its audio output, so a chain is one connection. Rejected: `ownSound`, an end on both sides. A number drives a knob as a lane does, so built-in devices need nothing new. An instrument sends no notes or bangs: voices come and go.
 - **Patterns in time are a `sequencer` child**, which quantizes launches on the audio thread. Its record names what plays first, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
 - **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved sender sends no off there. Rejected: a reset in the core, for every instrument to declare.

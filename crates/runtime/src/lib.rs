@@ -21,8 +21,8 @@ use plugin_host::{
 };
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
-    AgentDoc, Engine, EngineConfig, EngineControl, InstanceId, Project, ProjectError, Registry,
-    SavedDestination, SavedSource, Ticks,
+    AgentDoc, CodeDevice, Engine, EngineConfig, EngineControl, InstanceId, Project, ProjectError,
+    Registry, SavedDestination, SavedSource, Ticks,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
@@ -141,31 +141,46 @@ fn with_cache(loading: Loading, cache: ScanCache) -> Result<Plugins> {
 /// Every bundled extension registers here.
 pub fn registry(plugins: Plugins) -> Result<Registry> {
     let mut registry = Registry::new();
-    analyzer::register(&mut registry)?;
-    arrangement::register(&mut registry)?;
-    compressor::register(&mut registry)?;
-    delay::register(&mut registry)?;
-    drum_pad::register(&mut registry)?;
-    eq::register(&mut registry)?;
-    filter::register(&mut registry)?;
-    fit_tempo::register(&mut registry)?;
-    gate::register(&mut registry)?;
-    instrument::register(&mut registry)?;
-    limiter::register(&mut registry)?;
-    modulation::register(&mut registry)?;
-    plugin_host::register(&mut registry, plugins)?;
-    reverb::register(&mut registry)?;
-    sampler::register(&mut registry)?;
-    saturator::register(&mut registry)?;
-    tone::register(&mut registry)?;
-    utility::register(&mut registry)?;
-    wavetable::register(&mut registry)?;
+    register_extensions(&mut registry, Some(plugins))?;
     registry.runtime_agent_doc(INSPECT_DOC)?;
     registry.runtime_agent_doc(sound_typescript::AGENT_DOC)?;
     // MIDI input registers no tool, so it has no extension to enable in `project.json`. Every
     // project can be recorded into, so its doc is one every project gets.
     registry.runtime_agent_doc(midi::AGENT_DOC)?;
     Ok(registry)
+}
+
+/// Registers every bundled extension, and the plugin host when given the plugins it hosts.
+fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Result<()> {
+    analyzer::register(registry)?;
+    arrangement::register(registry)?;
+    compressor::register(registry)?;
+    delay::register(registry)?;
+    drum_pad::register(registry)?;
+    eq::register(registry)?;
+    filter::register(registry)?;
+    fit_tempo::register(registry)?;
+    gate::register(registry)?;
+    instrument::register(registry)?;
+    limiter::register(registry)?;
+    modulation::register(registry)?;
+    if let Some(plugins) = plugins {
+        plugin_host::register(registry, plugins)?;
+    }
+    reverb::register(registry)?;
+    sampler::register(registry)?;
+    saturator::register(registry)?;
+    tone::register(registry)?;
+    utility::register(registry)?;
+    wavetable::register(registry)?;
+    Ok(())
+}
+
+/// The built-in devices the tools of a project play inside their sound, for their SDK.
+pub fn code_devices() -> Result<Vec<CodeDevice>> {
+    let mut registry = Registry::new();
+    register_extensions(&mut registry, None)?;
+    Ok(registry.code_devices())
 }
 
 /// Every bundled extension with a view registers it here, and what a rack calls its devices
@@ -366,7 +381,8 @@ pub fn open_with_extensions(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
-    open_with_loaded(folder, control, plugins, Extensions::load(folder))
+    let extensions = Extensions::load(folder, &code_devices()?);
+    open_with_loaded(folder, control, plugins, extensions)
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see
@@ -414,7 +430,8 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
-    let (registry, extensions) = registry_of(plugins, Extensions::load(folder))?;
+    let extensions = Extensions::load(folder, &code_devices()?);
+    let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open_read_only(folder, registry, control)?;
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);

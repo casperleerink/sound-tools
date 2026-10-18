@@ -36,7 +36,7 @@ fn frame(machine: &mut Machine, block: &Block, arrays: &[Vec<f32>], note: Note) 
         arrays,
         note,
     };
-    machine.render(&inputs, 0..1, &mut output);
+    machine.render(&inputs, 0..1, &mut output, &mut []);
     output.map(|channel| channel[0])
 }
 
@@ -86,7 +86,12 @@ fn render_in_spans(
             note: Note::default(),
         };
         for start in (0..MAX_BLOCK).step_by(span) {
-            machine.render(&inputs, start..(start + span).min(MAX_BLOCK), &mut output);
+            machine.render(
+                &inputs,
+                start..(start + span).min(MAX_BLOCK),
+                &mut output,
+                &mut [],
+            );
         }
         for (rendered, output) in rendered.iter_mut().zip(&output) {
             rendered.extend_from_slice(output);

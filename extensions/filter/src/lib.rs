@@ -171,7 +171,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the filter tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<FilterState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<FilterState>(EXTENSION)?
+        .behaviour(apply)
+        .in_code(Filter::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

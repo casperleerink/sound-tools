@@ -16,7 +16,8 @@ use sound_core::{
 };
 
 use crate::code::{
-    Binary, Code, FilterKind, MAX_LIVES, MAX_PARAMETERS, Operation, Output, Register, Table, Unary,
+    Binary, Code, FilterKind, MAX_LIVES, MAX_PARAMETERS, MAX_STAGE_PORTS, Operation, Output,
+    Register, Table, Unary,
 };
 use crate::program::{self, Run, Step};
 
@@ -57,6 +58,8 @@ pub(crate) type Frames = [[f32; MAX_BLOCK]; CHANNELS];
 /// What every voice reads in one block, frame by frame, from the processor.
 pub(crate) struct Block {
     pub(crate) input: Frames,
+    /// What the stages and devices before give, by the port of each.
+    pub(crate) imports: [Frames; MAX_STAGE_PORTS],
     pub(crate) parameters: [[f32; MAX_BLOCK]; MAX_PARAMETERS],
     pub(crate) lives: [[f32; MAX_BLOCK]; MAX_LIVES],
     /// One bit per param, and per live control, whose row is one value in every frame of the
@@ -74,6 +77,7 @@ impl Block {
     pub(crate) fn new() -> Self {
         Self {
             input: [[0.0; MAX_BLOCK]; CHANNELS],
+            imports: [[[0.0; MAX_BLOCK]; CHANNELS]; MAX_STAGE_PORTS],
             parameters: [[0.0; MAX_BLOCK]; MAX_PARAMETERS],
             lives: [[0.0; MAX_BLOCK]; MAX_LIVES],
             steady_parameters: 0,
@@ -125,6 +129,8 @@ pub struct Machine {
     watched: Vec<f32>,
     /// The last value of each number it sends out, of the left channel.
     sent: Vec<f32>,
+    /// The last value of each number of a device it moves, of the left channel.
+    device_numbers: Vec<f32>,
     /// What each of [`Code::event_registers`] gave in each frame of the block, of the left
     /// channel.
     events: Vec<[f32; MAX_BLOCK]>,
@@ -304,6 +310,7 @@ impl Machine {
             position: 0,
             watched: vec![0.0; code.watches.len()],
             sent: vec![0.0; code.numbers.len()],
+            device_numbers: vec![0.0; code.device_number_registers.len()],
             events: vec![[0.0; MAX_BLOCK]; code.event_registers.len()],
             code,
         }
@@ -346,18 +353,25 @@ impl Machine {
         &self.sent
     }
 
+    /// The last value of each number of a device it moves.
+    pub(crate) fn device_numbers(&self) -> &[f32] {
+        &self.device_numbers
+    }
+
     /// What each register that sends events gave in each frame it rendered of this block, in
     /// the order of [`Code::event_registers`].
     pub(crate) fn events(&self) -> &[[f32; MAX_BLOCK]] {
         &self.events
     }
 
-    /// The `frames` of a block, both channels, into the same frames of `output`.
+    /// The `frames` of a block, both channels, into the same frames of `output`, and what it
+    /// hands on into `exports`.
     pub(crate) fn render(
         &mut self,
         inputs: &Inputs<'_>,
         frames: Range<usize>,
         output: &mut Frames,
+        exports: &mut [Frames],
     ) {
         let Some(last) = frames.clone().last() else {
             return;
@@ -374,7 +388,9 @@ impl Machine {
                 // The watches show the left channel, and the numbers send it.
                 let watches = self.watched.iter_mut().zip(&self.code.watch_registers);
                 let numbers = self.sent.iter_mut().zip(&self.code.number_registers);
-                for (value, register) in watches.chain(numbers) {
+                let device_numbers =
+                    (self.device_numbers.iter_mut()).zip(&self.code.device_number_registers);
+                for (value, register) in watches.chain(numbers).chain(device_numbers) {
                     *value = value_at(registers, *register, last);
                 }
                 let events = self.events.iter_mut().zip(&self.code.event_registers);
@@ -392,6 +408,19 @@ impl Machine {
                 Output::Stereo(left, right) => {
                     for (output, register) in output.iter_mut().zip([left, right]) {
                         held_into(output, registers, register, &frames);
+                    }
+                }
+            }
+            // Mono code gives each channel in its own run. Not held as a sound is: a stage
+            // hands on numbers too, such as a cutoff in Hz.
+            for (export, pair) in exports.iter_mut().zip(&self.code.exports) {
+                let channels = (export.iter_mut().zip(pair).enumerate())
+                    .filter(|(at, _)| runs == 1 || *at == channel);
+                for (_, (export, register)) in channels {
+                    let values = row(registers, usize::from(*register), &frames);
+                    let export = export.get_mut(frames.clone()).unwrap_or_default();
+                    for (export, value) in export.iter_mut().zip(values) {
+                        *export = finite(*value);
                     }
                 }
             }
@@ -535,6 +564,14 @@ impl Span<'_> {
             Operation::Input => copy(out, row(&block.input, self.channel, &frames)),
             Operation::InputLeft => copy(out, row(&block.input, 0, &frames)),
             Operation::InputRight => copy(out, row(&block.input, 1, &frames)),
+            Operation::Import { port, channel } => {
+                let channel = channel.map_or(self.channel, usize::from);
+                let import = block.imports.get(usize::from(port));
+                copy(
+                    out,
+                    import.map_or(&[][..], |import| row(import, channel, &frames)),
+                );
+            }
             Operation::Channel => out.fill(self.channel as f32),
             Operation::SampleRate => out.fill(sample_rate),
             Operation::Beat => copy(out, part(&block.beat, &frames)),
@@ -786,6 +823,7 @@ impl Span<'_> {
             }
             // What moves within a span, or keeps a memory.
             Operation::Input
+            | Operation::Import { .. }
             | Operation::InputLeft
             | Operation::InputRight
             | Operation::Beat
@@ -950,6 +988,7 @@ impl Span<'_> {
             // where a span runs it, which made code without loops slower.
             Operation::Constant(_)
             | Operation::Input
+            | Operation::Import { .. }
             | Operation::InputLeft
             | Operation::InputRight
             | Operation::Channel

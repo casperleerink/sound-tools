@@ -151,7 +151,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the gate tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<GateState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<GateState>(EXTENSION)?
+        .behaviour(apply)
+        .in_code(Gate::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
