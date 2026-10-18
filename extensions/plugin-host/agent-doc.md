@@ -1,8 +1,8 @@
-# Third-party plugins on a track
+# Third-party plugins
 
 A track owns one child named `instrument`, and after it the effects its record lists. Either can
-be a third-party plugin. This doc is about the plugin. `agent-docs/arrangement.md` says how a
-track names its effects and in what order they play.
+be a third-party plugin, and so can a child of a tool of the project, which plays its `notes`.
+`agent-docs/arrangement.md` says how a track names its effects and in what order they play.
 
 CLAP and VST 3 work, as instruments and as effects. AU does not.
 
