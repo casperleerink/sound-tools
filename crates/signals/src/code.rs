@@ -26,9 +26,9 @@ pub(crate) const MAX_ARRAY_LENGTH: usize = 1024;
 pub(crate) const MAX_OPERATIONS: usize = 4096;
 /// The most signals a stage of a sound takes from the stages and devices before it, and the
 /// most it hands on: each is a sound port of its processor.
-pub(crate) const MAX_CROSSINGS: usize = 8;
+pub(crate) const MAX_STAGE_PORTS: usize = 8;
 /// The most numbers of devices a stage moves.
-pub(crate) const MAX_SENDS: usize = 32;
+pub(crate) const MAX_DEVICE_NUMBERS: usize = 32;
 
 /// The index of an operation, and of the register it writes.
 pub(crate) type Register = u16;
@@ -89,7 +89,7 @@ pub struct Code {
     /// The left and the right of each signal it hands on to a stage or a device after it.
     pub(crate) exports: Vec<[Register; 2]>,
     /// The register of each number of a device it moves.
-    pub(crate) send_registers: Vec<Register>,
+    pub(crate) device_number_registers: Vec<Register>,
     pub(crate) slots: Slots,
 }
 
@@ -106,7 +106,7 @@ impl Code {
             && self.number_registers.is_empty()
             && self.event_registers.is_empty()
             && self.exports.is_empty()
-            && self.send_registers.is_empty()
+            && self.device_number_registers.is_empty()
     }
 }
 

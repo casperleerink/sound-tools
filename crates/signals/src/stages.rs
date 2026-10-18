@@ -95,19 +95,7 @@ impl Graph {
                 sound: Sound::Stage(0),
             });
         }
-        let (graphs, devices, links, sound) = Split::new(self)?.run()?;
-        let stages = (graphs.iter().enumerate())
-            .map(|(stage, graph)| match stage {
-                0 => graph.compile(declarations),
-                _ => graph.compile(&Declarations::default()),
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(Program {
-            stages,
-            devices,
-            links,
-            sound,
-        })
+        Split::new(self)?.run(declarations)
     }
 }
 
@@ -124,8 +112,8 @@ fn free(node: &Node) -> bool {
     )
 }
 
-/// The nodes `node` reads, but the feedback it reads.
-fn reads(node: &Node) -> Vec<usize> {
+/// The nodes `node` reads, but the feedback it reads, as places to change.
+fn operands(node: &mut Node) -> Vec<&mut usize> {
     match node {
         Node::Negate(one)
         | Node::Sin(one)
@@ -141,7 +129,7 @@ fn reads(node: &Node) -> Vec<usize> {
         | Node::Db(one)
         | Node::Saturate(one)
         | Node::Rise(one)
-        | Node::Change(one) => vec![one.x],
+        | Node::Change(one) => vec![&mut one.x],
         Node::Add(two)
         | Node::Subtract(two)
         | Node::Multiply(two)
@@ -155,35 +143,60 @@ fn reads(node: &Node) -> Vec<usize> {
         | Node::NotEqual(two)
         | Node::Min(two)
         | Node::Max(two)
-        | Node::Pow(two) => vec![two.a, two.b],
-        Node::Clamp(clamp) => vec![clamp.x, clamp.low, clamp.high],
-        Node::Mix(mix) => vec![mix.a, mix.b, mix.amount],
-        Node::Phasor(phasor) => vec![phasor.hz],
-        Node::Delay(delay) => [delay.x, delay.ms]
+        | Node::Pow(two) => vec![&mut two.a, &mut two.b],
+        Node::Clamp(clamp) => vec![&mut clamp.x, &mut clamp.low, &mut clamp.high],
+        Node::Mix(mix) => vec![&mut mix.a, &mut mix.b, &mut mix.amount],
+        Node::Phasor(phasor) => vec![&mut phasor.hz],
+        Node::Delay(delay) => [&mut delay.x, &mut delay.ms]
             .into_iter()
-            .chain(delay.longest)
+            .chain(delay.longest.as_mut())
             .collect(),
         Node::Lowpass(filter) | Node::Highpass(filter) | Node::Bandpass(filter) => {
-            vec![filter.x, filter.hz, filter.q]
+            vec![&mut filter.x, &mut filter.hz, &mut filter.q]
         }
-        Node::Smooth(smooth) => vec![smooth.x, smooth.ms],
+        Node::Smooth(smooth) => vec![&mut smooth.x, &mut smooth.ms],
         Node::Adsr(adsr) => vec![
-            adsr.gate,
-            adsr.attack,
-            adsr.decay,
-            adsr.sustain,
-            adsr.release,
+            &mut adsr.gate,
+            &mut adsr.attack,
+            &mut adsr.decay,
+            &mut adsr.sustain,
+            &mut adsr.release,
         ],
-        Node::Hold(hold) => vec![hold.x, hold.when],
-        Node::At(at) => vec![at.index],
-        Node::Lookup(lookup) => vec![lookup.phase],
-        Node::Write(write) => vec![write.index, write.value],
-        Node::Device(device) => (device.input.iter().copied())
-            .chain(device.numbers.values().copied())
+        Node::Hold(hold) => vec![&mut hold.x, &mut hold.when],
+        Node::At(at) => vec![&mut at.index],
+        Node::Lookup(lookup) => vec![&mut lookup.phase],
+        Node::Write(write) => vec![&mut write.index, &mut write.value],
+        Node::Device(device) => (device.input.iter_mut())
+            .chain(device.numbers.values_mut())
             .collect(),
-        Node::Played(played) => vec![played.device],
-        _ => Vec::new(),
+        Node::Played(played) => vec![&mut played.device],
+        Node::Constant(_)
+        | Node::Input
+        | Node::InputLeft
+        | Node::InputRight
+        | Node::Channel
+        | Node::SampleRate
+        | Node::Beat
+        | Node::Bpm
+        | Node::Playing
+        | Node::Frequency
+        | Node::Pitch
+        | Node::Gate
+        | Node::Velocity
+        | Node::Onset
+        | Node::Param(_)
+        | Node::Feedback(_)
+        | Node::Noise
+        | Node::Length(_)
+        | Node::Import(_) => Vec::new(),
     }
+}
+
+fn reads(node: &Node) -> Vec<usize> {
+    operands(&mut node.clone())
+        .into_iter()
+        .map(|read| *read)
+        .collect()
 }
 
 /// The table `node` reads or writes.
@@ -304,7 +317,7 @@ impl<'a> Split<'a> {
             notes: Vec::new(),
             output: OutputNode::Mono { mono: 0 },
             exports: Vec::new(),
-            sends: Vec::new(),
+            device_numbers: Vec::new(),
         };
         let mut graphs: Vec<Graph> = (0..count).map(|_| empty()).collect();
         let mut feedback_slots = Vec::new();
@@ -317,7 +330,6 @@ impl<'a> Split<'a> {
                 ));
             };
             feedback_slots.push(graph.feedbacks.len());
-            // Set once its stage is made.
             graph.feedbacks.push(0);
         }
         let mut buffer_places = Vec::new();
@@ -473,92 +485,8 @@ impl<'a> Split<'a> {
     /// `node` of the graph as a node of `stage`, reading the nodes of that stage.
     fn remake(&mut self, stage: usize, node: &Node) -> Result<Node, GraphError> {
         let mut node = node.clone();
-        let mut take = |index: &mut usize| -> Result<(), GraphError> {
-            *index = self.take(stage, *index)?;
-            Ok(())
-        };
-        match &mut node {
-            Node::Negate(one)
-            | Node::Sin(one)
-            | Node::Cos(one)
-            | Node::Tan(one)
-            | Node::Tanh(one)
-            | Node::Abs(one)
-            | Node::Sqrt(one)
-            | Node::Exp(one)
-            | Node::Log(one)
-            | Node::Floor(one)
-            | Node::Wrap(one)
-            | Node::Db(one)
-            | Node::Saturate(one)
-            | Node::Rise(one)
-            | Node::Change(one) => take(&mut one.x)?,
-            Node::Add(two)
-            | Node::Subtract(two)
-            | Node::Multiply(two)
-            | Node::Divide(two)
-            | Node::Remainder(two)
-            | Node::Less(two)
-            | Node::Greater(two)
-            | Node::LessOrEqual(two)
-            | Node::GreaterOrEqual(two)
-            | Node::Equal(two)
-            | Node::NotEqual(two)
-            | Node::Min(two)
-            | Node::Max(two)
-            | Node::Pow(two) => {
-                take(&mut two.a)?;
-                take(&mut two.b)?;
-            }
-            Node::Clamp(clamp) => {
-                take(&mut clamp.x)?;
-                take(&mut clamp.low)?;
-                take(&mut clamp.high)?;
-            }
-            Node::Mix(mix) => {
-                take(&mut mix.a)?;
-                take(&mut mix.b)?;
-                take(&mut mix.amount)?;
-            }
-            Node::Phasor(phasor) => take(&mut phasor.hz)?,
-            Node::Delay(delay) => {
-                take(&mut delay.x)?;
-                take(&mut delay.ms)?;
-                if let Some(longest) = &mut delay.longest {
-                    take(longest)?;
-                }
-            }
-            Node::Lowpass(filter) | Node::Highpass(filter) | Node::Bandpass(filter) => {
-                take(&mut filter.x)?;
-                take(&mut filter.hz)?;
-                take(&mut filter.q)?;
-            }
-            Node::Smooth(smooth) => {
-                take(&mut smooth.x)?;
-                take(&mut smooth.ms)?;
-            }
-            Node::Adsr(adsr) => {
-                for index in [
-                    &mut adsr.gate,
-                    &mut adsr.attack,
-                    &mut adsr.decay,
-                    &mut adsr.sustain,
-                    &mut adsr.release,
-                ] {
-                    take(index)?;
-                }
-            }
-            Node::Hold(hold) => {
-                take(&mut hold.x)?;
-                take(&mut hold.when)?;
-            }
-            Node::At(at) => take(&mut at.index)?,
-            Node::Lookup(lookup) => take(&mut lookup.phase)?,
-            Node::Write(write) => {
-                take(&mut write.index)?;
-                take(&mut write.value)?;
-            }
-            _ => {}
+        for read in operands(&mut node) {
+            *read = self.take(stage, *read)?;
         }
         match &mut node {
             Node::Feedback(feedback) => {
@@ -595,7 +523,7 @@ impl<'a> Split<'a> {
         Ok(())
     }
 
-    fn run(mut self) -> Result<(Vec<Graph>, Vec<DeviceUse>, Vec<Link>, Sound), GraphError> {
+    fn run(mut self, declarations: &Declarations) -> Result<Program, GraphError> {
         let graph = self.graph;
         for (index, node) in graph.nodes.iter().enumerate() {
             if free(node) || matches!(node, Node::Device(_) | Node::Played(_)) {
@@ -670,11 +598,11 @@ impl<'a> Split<'a> {
                 let Some(graph) = self.graphs.get_mut(stage) else {
                     continue;
                 };
-                graph.sends.push(made);
+                graph.device_numbers.push(made);
                 numbers.push(DeviceNumber {
                     field: field.clone(),
                     stage,
-                    index: graph.sends.len() - 1,
+                    index: graph.device_numbers.len() - 1,
                 });
             }
             devices.push(DeviceUse {
@@ -725,7 +653,7 @@ impl<'a> Split<'a> {
             })
             .collect();
         let place = |stage: usize| kept.iter().take(stage).filter(|kept| **kept).count();
-        let graphs = (self.graphs.into_iter().zip(&kept))
+        let graphs: Vec<Graph> = (self.graphs.into_iter().zip(&kept))
             .filter_map(|(graph, kept)| kept.then_some(graph))
             .collect();
         let links = (self.links.into_iter())
@@ -755,7 +683,18 @@ impl<'a> Split<'a> {
             Sound::Stage(stage) => Sound::Stage(place(stage)),
             device => device,
         };
-        Ok((graphs, devices, links, sound))
+        let stages = (graphs.iter().enumerate())
+            .map(|(stage, graph)| match stage {
+                0 => graph.compile(declarations),
+                _ => graph.compile(&Declarations::default()),
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Program {
+            stages,
+            devices,
+            links,
+            sound,
+        })
     }
 }
 

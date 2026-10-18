@@ -36,7 +36,7 @@ This is the main rule of the codebase.
 - Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. A tool's page may ask for the transport, but only the arrangement records.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate, such as `sound-notes` and `sound-media`.
 - Tools find each other by port names, not by type: an instrument has an input `notes` and an output `audio`, an effect an input and an output `audio`. So the arrangement depends on no instrument, effect or plugin.
-- The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
+- The core does own the musical clock. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
 - `extensions/tone`, a non-musical tool, proves the core rules hold for a tool unlike the arrangement.
 
 ## Tools, instances and behaviours
@@ -92,7 +92,7 @@ my-piece/
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. No field merge and no conflict rejection. Do not reopen this as a sync problem.
 - An edit is `begin`, `publish` (live, writes nothing), then `finish` (writes, one undo step) or `cancel`. No undo step ever holds the middle of a gesture, even when a file edit lands during a drag.
 - An agent request is one undo step, named after it, however far apart its writes are. A window edit, undo or redo during a request ends that step; later writes make another. Rejected: adding them to the older step, under the composer's edit: undo would go out of order.
-- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing between, are one undo step; else one request became several. A tool's edits of one label under 1 s apart are one too.
+- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing between, are one undo step; else one request became several. A tool's edits of one label under 1 s apart are one too, written when they stop or after 5 s; undo and other edits end them first, never mid-drag.
 - Undo history lives only in the session. The folder is the truth; versions come from git.
 - `problems.txt` exists only while a runtime holds the project, so an agent can tell "all is well" from "nobody is watching".
 
@@ -112,7 +112,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 - The audio thread plays at real-time priority; on Linux through PipeWire, because cpal raises no thread behind ALSA's PipeWire plugin. Without it a slow laptop played a piece at 2.5 times the cost and dropped out.
 - Every audio port is stereo: no channel negotiation, a cable cannot be half connected, and a plugin's stereo output fits one port.
-- Time is integers: frames for the engine, ticks (960 per quarter) for music. Saved positions are ticks or bars, never floats or seconds.
+- Time is integers: frames for the engine, ticks for music. Saved positions are ticks or bars, never floats or seconds.
 - Time signatures are runs of whole bars and sections start at a bar number, so neither falls inside a bar. Rejected: ticks.
 - Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would need a derive that moves every clip, which goes wrong for clips off the bar lines.
 - Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
@@ -236,7 +236,7 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
-- **A sound plays built-in devices** as engine processors, the code cut into stages around them: the engine compensates their latency. Rejected: devices inside the signals code, where no plugin runs; so none in instruments or feedbacks.
+- **A sound plays built-in devices** as engine processors between stages of its code: the engine compensates their latency. So none in instruments or feedbacks. Rejected: devices as signals code.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
 - **Cards and pages** are trees Bun draws and `crates/ui` shows. `set` moves no knob: knobs are the composition.

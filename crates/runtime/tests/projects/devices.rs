@@ -3,9 +3,10 @@
 use crate::support::{Harness, write};
 
 /// `dark` plays noise through the built-in filter, its cutoff a knob of its own. `aligned`
-/// takes the filter, which reports a latency, at its dry mix away from what goes into it.
+/// takes the filter, which reports a latency, at its dry mix away from what goes into it, with
+/// both sides made loud by a knob far past what a sound may play.
 /// `rig` plays its child `hiss` through its child `room`.
-const TOOLS: &str = r#"import { devices, noise, tool, type Declaration } from "./sdk";
+const TOOLS: &str = r#"import { devices, knob, noise, tool, type Declaration } from "./sdk";
 
 tool({
   name: "dark",
@@ -23,10 +24,10 @@ tool({
   when: "Never",
   doc: "Noise less itself through a filter that lets it through.",
   kind: "source",
-  state: {},
-  sound: () => {
+  state: { gain: knob({ min: 1, max: 1000, default: 1000 }) },
+  sound: ({ gain }) => {
     const hiss = noise().times(0.25);
-    return hiss.minus(devices.filter(hiss, { mix: 0 }));
+    return hiss.times(gain).minus(devices.filter(hiss, { mix: 0 }).times(gain)).over(gain);
   },
 });
 
@@ -117,7 +118,7 @@ fn a_knob_of_a_tool_turns_the_cutoff_of_the_filter_its_sound_plays_through() {
 }
 
 #[test]
-fn what_goes_round_a_device_with_a_latency_waits_for_it() {
+fn what_goes_round_a_device_keeps_its_value_and_waits_for_its_latency() {
     let aligned = record("aligned", "{}");
     let Some(mut harness) = project("aligned", &[("state/aligned.json", &aligned)]) else {
         return;

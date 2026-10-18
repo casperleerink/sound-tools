@@ -545,7 +545,7 @@ export interface Device<F extends Fields, R> {
 }
 
 /** For the devices below. */
-export function device<const F extends Fields, R extends object>(tool: string, fields: F, rest: R): Device<F, R> {
+function device<const F extends Fields, R extends object>(tool: string, fields: F, rest: R): Device<F, R> {
   const play = (x: Operand | Stereo, settings: Record<string, unknown> = {}) => {
     const numbers: Record<string, Operand> = {};
     const state: Record<string, unknown> = {};

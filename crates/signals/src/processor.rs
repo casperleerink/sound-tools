@@ -21,7 +21,9 @@ use sound_notes::{
 };
 
 use crate::cable::{Bang, Control, Number};
-use crate::code::{Code, MAX_CROSSINGS, MAX_LIVES, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SENDS};
+use crate::code::{
+    Code, MAX_DEVICE_NUMBERS, MAX_LIVES, MAX_OUTPUTS, MAX_PARAMETERS, MAX_STAGE_PORTS,
+};
 use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values, held};
 
 /// How long the old code fades out while the new one fades in.
@@ -127,9 +129,9 @@ pub struct Signals {
     /// What one voice plays in a span, and what its old code plays while it fades out.
     voice_frames: [Frames; 2],
     /// Whether it has the ports of a stage: what it takes from before and hands on.
-    crossing: bool,
-    /// What it hands on in this block.
-    exports: Box<[Frames; MAX_CROSSINGS]>,
+    stage_ports: bool,
+    /// What it hands on in this block, and what its old code hands on while it fades out.
+    exports: Box<[[Frames; MAX_STAGE_PORTS]; 2]>,
     /// How many params and live controls the code has, so a block moves only those.
     counts: (usize, usize),
     arrays: Vec<Vec<f32>>,
@@ -224,7 +226,7 @@ impl Signals {
     }
 
     /// The port of the number of a device at `index` of what a stage moves.
-    pub const fn send(index: usize) -> EventOutput<Number> {
+    pub const fn device_number(index: usize) -> EventOutput<Number> {
         EventOutput::new(3 * MAX_OUTPUTS + index)
     }
 
@@ -241,8 +243,8 @@ impl Signals {
     /// As a stage of a sound that plays through devices, with the ports of one. A processor
     /// has its ports for good, and the others need none.
     #[must_use]
-    pub fn crossing(mut self) -> Self {
-        self.crossing = true;
+    pub fn with_stage_ports(mut self) -> Self {
+        self.stage_ports = true;
         self
     }
 
@@ -293,8 +295,8 @@ impl Signals {
             block: Box::new(Block::new()),
             mix: [[0.0; MAX_BLOCK]; CHANNELS],
             voice_frames: [[[0.0; MAX_BLOCK]; CHANNELS]; 2],
-            crossing: false,
-            exports: Box::new([[[0.0; MAX_BLOCK]; CHANNELS]; MAX_CROSSINGS]),
+            stage_ports: false,
+            exports: Box::new([[[[0.0; MAX_BLOCK]; CHANNELS]; MAX_STAGE_PORTS]; 2]),
             counts,
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
@@ -580,8 +582,12 @@ impl SignalsVoice {
         shared: &Shared<'_>,
         frames: Range<usize>,
         voice_frames: &mut [Frames; 2],
-        (mix, exports): (&mut Frames, &mut [Frames]),
+        (mix, exports): (&mut Frames, Option<&mut [[Frames; MAX_STAGE_PORTS]; 2]>),
     ) {
+        let [exports, old_exports] = match exports {
+            Some([exports, old_exports]) => [&mut exports[..], &mut old_exports[..]],
+            None => [&mut [][..], &mut [][..]],
+        };
         let [sound, old] = voice_frames;
         let mut start = frames.start;
         while start < frames.end && !self.is_idle() {
@@ -613,10 +619,16 @@ impl SignalsVoice {
             if self.fade_left > 0
                 && let Some(fading) = &mut self.fading
             {
-                fading.render(&inputs, part.clone(), old, &mut []);
+                // Old code may hand on fewer signals: the rest fade in from silence.
+                for channel in old_exports.iter_mut().flatten() {
+                    channel.get_mut(part.clone()).unwrap_or_default().fill(0.0);
+                }
+                fading.render(&inputs, part.clone(), old, &mut *old_exports);
                 for frame in part.clone() {
                     let new = 1.0 - self.fade_left as f32 / shared.fade_frames as f32;
-                    for (sound, old) in sound.iter_mut().zip(old.iter()) {
+                    let faded = std::iter::once((&mut *sound, &*old))
+                        .chain(exports.iter_mut().zip(old_exports.iter()));
+                    for (sound, old) in faded.flat_map(|(sound, old)| sound.iter_mut().zip(old)) {
                         if let (Some(sample), Some(old)) = (sound.get_mut(frame), old.get(frame)) {
                             *sample = old + (*sample - old) * new;
                         }
@@ -705,7 +717,7 @@ impl Signals {
         let (voice_frames, mix) = (&mut self.voice_frames, &mut self.mix);
         match &mut self.players {
             Players::One(single) => {
-                let exports = &mut self.exports[..];
+                let exports = Some(&mut *self.exports);
                 single
                     .voice
                     .render(&shared, frames, voice_frames, (mix, exports));
@@ -713,7 +725,7 @@ impl Signals {
             // An instrument plays through no device, so it hands nothing on.
             Players::Many(voices) => {
                 for voice in voices.iter_mut().filter(|voice| !voice.is_idle()) {
-                    voice.render(&shared, frames.clone(), voice_frames, (mix, &mut []));
+                    voice.render(&shared, frames.clone(), voice_frames, (mix, None));
                 }
             }
         }
@@ -737,13 +749,15 @@ impl Processor for Signals {
             (0..MAX_OUTPUTS).fold(ports, |ports, index| ports.event_output(Self::bang(index)));
         let ports =
             (0..MAX_OUTPUTS).fold(ports, |ports, index| ports.event_output(Self::notes(index)));
-        if !self.crossing {
+        if !self.stage_ports {
             return ports;
         }
-        let ports = (0..MAX_CROSSINGS).fold(ports, |ports, index| {
+        let ports = (0..MAX_STAGE_PORTS).fold(ports, |ports, index| {
             (ports.audio_input(Self::import(index))).audio_output(Self::export(index))
         });
-        (0..MAX_SENDS).fold(ports, |ports, index| ports.event_output(Self::send(index)))
+        (0..MAX_DEVICE_NUMBERS).fold(ports, |ports, index| {
+            ports.event_output(Self::device_number(index))
+        })
     }
 
     fn prepare(&mut self, config: &PrepareConfig) {
@@ -867,11 +881,11 @@ impl Processor for Signals {
             }
         }
         let exported = self.players.code().map_or(0, |code| code.exports.len());
-        for (index, exports) in self.exports.iter().enumerate().take(exported) {
+        for (index, exports) in self.exports[0].iter().enumerate().take(exported) {
             let outputs = context.audio_outputs.get(Self::export(index));
             for (out, channel) in outputs.into_iter().zip(exports) {
                 for (sample, exported) in out.iter_mut().zip(channel) {
-                    *sample = exported.clamp(-LIMIT, LIMIT);
+                    *sample = *exported;
                 }
             }
         }
@@ -886,13 +900,11 @@ impl Processor for Signals {
             }
             // Every block, so a device it drives hears it is still there. An instrument with no
             // note sends none, and lets go.
-            let numbers = voice.machine.code().numbers.len();
             for (index, value) in voice.machine.sent().iter().enumerate() {
-                let port = match index.checked_sub(numbers) {
-                    Some(send) => Self::send(send),
-                    None => Self::number(index),
-                };
-                (context.event_outputs).push(port, 0, Number(*value));
+                (context.event_outputs).push(Self::number(index), 0, Number(*value));
+            }
+            for (index, value) in voice.machine.device_numbers().iter().enumerate() {
+                (context.event_outputs).push(Self::device_number(index), 0, Number(*value));
             }
         }
         // An instrument sends none: a voice that ends or loses its place would hold a note.

@@ -1001,7 +1001,7 @@ impl Sounds {
             };
             let signals = Signals::new(kind, first.unwrap_or_else(made), values, watches.clone());
             match self.info.staged {
-                true => signals.crossing(),
+                true => signals.with_stage_ports(),
                 false => signals,
             }
         })?;
@@ -1092,7 +1092,7 @@ impl Sounds {
         let signals = context.processor(&name, || {
             created = true;
             let watches = watches.clone();
-            Signals::new(Kind::Effect, made(), Values::default(), watches).crossing()
+            Signals::new(Kind::Effect, made(), Values::default(), watches).with_stage_ports()
         })?;
         if new_code && !created {
             let update = SignalsUpdate::Set {
@@ -1183,23 +1183,24 @@ fn devices(
         let Some(part) = part else {
             continue;
         };
-        for send in &device.numbers {
+        for number in &device.numbers {
             let place = part.automation.as_ref().and_then(|(input, numbers)| {
-                let place = numbers.iter().position(|info| *info.field == *send.field)?;
-                // At most `MAX_AUTOMATED` numbers, far under `u16::MAX`.
+                let place = numbers
+                    .iter()
+                    .position(|info| *info.field == *number.field)?;
                 Some((*input, u16::try_from(place).unwrap_or(u16::MAX)))
             });
             let Some(into) = place else {
                 context.problem(format!(
                     "the {} of its sound has no number {:?} that a signal moves",
-                    device.tool, send.field
+                    device.tool, number.field
                 ));
                 continue;
             };
-            let name = format!("device{index}:{}", send.field);
+            let name = format!("device{index}:{}", number.field);
             let cable = cable::<Number, Automation>(name, into, &mut made, context)?;
-            if let (Some(cable), Some(stage)) = (cable, stages.get(send.stage)) {
-                let sent = OutputEndpoint::new(*stage, Signals::send(send.index));
+            if let (Some(cable), Some(stage)) = (cable, stages.get(number.stage)) {
+                let sent = OutputEndpoint::new(*stage, Signals::device_number(number.index));
                 context.connect(sent.to(cable))?;
             }
         }

@@ -11,9 +11,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use serde::Deserialize;
 
 use crate::code::{
-    ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_CROSSINGS,
-    MAX_DELAY_MS, MAX_DELAYS, MAX_LIVES, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SENDS,
-    MAX_WATCHES, Operation, Output, ParameterSpec, Register, Slots, Table, Unary,
+    ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
+    MAX_DELAYS, MAX_DEVICE_NUMBERS, MAX_LIVES, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS,
+    MAX_STAGE_PORTS, MAX_WATCHES, Operation, Output, ParameterSpec, Register, Slots, Table, Unary,
 };
 
 /// A sound as the SDK sends it.
@@ -35,7 +35,7 @@ pub struct Graph {
     pub(crate) exports: Vec<[usize; 2]>,
     /// The node of each number of a device a stage moves.
     #[serde(skip)]
-    pub(crate) sends: Vec<usize>,
+    pub(crate) device_numbers: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -340,17 +340,17 @@ impl Graph {
         let exports = (self.exports.iter())
             .map(|[left, right]| Ok([lowering.read(*left)?, lowering.read(*right)?]))
             .collect::<Result<Vec<_>, GraphError>>()?;
-        let send_registers = (self.sends.iter())
+        let device_number_registers = (self.device_numbers.iter())
             .map(|node| lowering.read(*node))
             .collect::<Result<Vec<_>, _>>()?;
-        if exports.len() > MAX_CROSSINGS || lowering.imports > MAX_CROSSINGS {
+        if exports.len() > MAX_STAGE_PORTS || lowering.imports > MAX_STAGE_PORTS {
             return error(format!(
-                "at most {MAX_CROSSINGS} signals go from one side of a device to the other: use fewer signals after it"
+                "at most {MAX_STAGE_PORTS} signals go from one side of a device to the other: use fewer signals after it"
             ));
         }
-        if send_registers.len() > MAX_SENDS {
+        if device_number_registers.len() > MAX_DEVICE_NUMBERS {
             return error(format!(
-                "signals move at most {MAX_SENDS} numbers of devices"
+                "signals move at most {MAX_DEVICE_NUMBERS} numbers of devices"
             ));
         }
         let mut hasher = DefaultHasher::new();
@@ -373,7 +373,7 @@ impl Graph {
             number_registers,
             event_registers,
             exports,
-            send_registers,
+            device_number_registers,
             slots: lowering.slots,
         })
     }
@@ -545,7 +545,7 @@ impl<'a> Lowering<'a> {
                 }
             }
             Node::Device(_) | Node::Played(_) => {
-                return error("a device plays only in an effect or a source");
+                return error("a device is cut out by `Graph::program` before the code compiles");
             }
             Node::Param(Param { name }) => {
                 return match self.names.get(name.as_str()) {
