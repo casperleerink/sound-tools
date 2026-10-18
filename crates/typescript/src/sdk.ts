@@ -791,8 +791,8 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
 
 /**
  * What plays an instance as a performer would: nothing saves it and no undo takes it back.
- * `at` is a `time` of the control loop: what has one happens on that sample, or at once when
- * it has passed. A parent plays a child the same way, by its name: `ChildLive`,
+ * `at` is a `time` of the control loop, at most 10 s ahead: what has one happens on that
+ * sample, or at once when it has passed. A parent plays a child the same way, by its name: `ChildLive`,
  * `ChildTrigger`, or `child` among the options of `play` and `send`.
  */
 export interface Performer<C extends Controls> {

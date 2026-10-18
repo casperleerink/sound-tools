@@ -191,7 +191,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
   ```
 
   `at` is for the loop: a card has no `time`.
-- `send(event, { at, child })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait for their `at`: send a recording as the loop above plays. `play(pitch, { hold: true })` sends only the `noteOn`.
+- `send(event, { at, child })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`.
 - `onKey: (tool, { key, down }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; an instrument plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. An effect or a parent hears the keyboard, at the top or on its track. Both get what `tick` gets, and `update`, which changes the record as a card does:
 
   ```ts
