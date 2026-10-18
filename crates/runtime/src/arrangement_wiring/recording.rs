@@ -44,15 +44,13 @@ pub fn target_track(
     tracks.find(plays_notes)
 }
 
-/// The `notes` port of the instrument of that track. `None` while the track has none, or while
-/// its instrument is a tool without the ports of the note contract.
+/// The `notes` input of that track, which plays each of its devices that takes notes.
 pub fn notes_input(project: &Project, track: &Instance<TrackState>) -> Option<InputEndpoint> {
-    let instrument = track.id().child(arrangement::INSTRUMENT).ok()?;
-    project.input_port(&instrument, NOTES_INPUT)
+    project.input_port(track.id(), NOTES_INPUT)
 }
 
-/// Where the live input goes now. Read it after every change: the port moves when the
-/// instrument is built again.
+/// Where the live input goes now. Read it after every change: the port moves when an instance
+/// is built again.
 ///
 /// A project with no track that plays notes, such as one experiment at its top, gives the
 /// keyboard to the first instance at the top that takes notes.

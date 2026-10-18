@@ -108,7 +108,7 @@ A new track is a folder under `state/arrangement/` with `instance.json` first, t
 
 ## The effects of a track
 
-The sound of a track goes through its instrument, then through each effect in `effects` in that order, then through `gain_db`, `pan`, `mute` and `solo`, into the master. One effect is two things: its record in the track folder, and its file name in `effects`. To add one, write the record first, then put its name in the list where you want it; to remove one, take the name out and delete the file. Either half alone is reported in `problems.txt`.
+The sound of a track goes through its instrument, then through each effect in `effects` in that order, then through `gain_db`, `pan`, `mute` and `solo`, into the master. An effect that takes notes, such as a vocoder, hears the track's notes too. One effect is two things: its record in the track folder, and its file name in `effects`. To add one, write the record, then put its name in the list; to remove one, take the name out and delete the file. Either half alone is reported in `problems.txt`.
 
 ```json state/arrangement/piano/warmth.json
 {

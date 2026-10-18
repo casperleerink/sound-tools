@@ -2,9 +2,10 @@
 //! order does to the samples, what a missing one costs, and what a plugin's own state does.
 //!
 //! The effect is the repository's own test plugin, which is an instrument and an effect in one
-//! (see `tooling/test-plugin-support`). In an effect slot it gets no notes, so what comes out
-//! of it is `input * 0.5 + offset`, and the offset is its saved state. Chaining two of them
-//! with different offsets is therefore an order a test reads straight out of the samples.
+//! (see `tooling/test-plugin-support`). In an effect slot it hears the notes of its track too,
+//! as the instrument does, so what comes out of it is `input * 0.5 + offset` plus those notes,
+//! and the offset is its saved state. Chaining two of them with different offsets is therefore
+//! an order a test reads straight out of the samples.
 
 use plugin_host::PluginFormat;
 
@@ -58,14 +59,15 @@ fn write_track(harness: &mut Harness, format: PluginFormat, velocity: u8, effect
     harness.apply(&[path]);
 }
 
-/// What every frame of `plain` becomes after an effect chain of these offsets, in hundredths.
+/// What every frame of `plain`, the instrument alone, becomes after an effect chain of these
+/// offsets, in hundredths. Each effect plays the notes again, as the instrument does.
 fn through(plain: &[f32], offsets: &[i32]) -> Vec<f32> {
     plain
         .iter()
-        .map(|sample| {
-            let mut sample = *sample;
+        .map(|notes| {
+            let mut sample = *notes;
             for offset in offsets {
-                sample = sample * 0.5 + *offset as f32 / 100.0;
+                sample = sample * 0.5 + *offset as f32 / 100.0 + notes;
             }
             sample
         })
@@ -105,6 +107,8 @@ fn two_effects_in_one_order_and_in_the_other_differ_by_what_each_adds() {
     for format in [PluginFormat::Clap, PluginFormat::Vst3] {
         let plain = without_effects(format, 40);
         let (mut harness, _plugins) = Harness::with_test_plugin(tempfile::tempdir().unwrap());
+        // The notes each effect plays again sum over full scale, and the test reads that sum.
+        harness.bypass_limiter();
         write_track(&mut harness, format, 40, &[("a", 10), ("b", 40)]);
         assert_eq!(harness.project.problems(), [], "{format:?}");
         let a_then_b = harness.play_from_the_start(16_000);
