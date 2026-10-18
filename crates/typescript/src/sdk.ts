@@ -760,7 +760,7 @@ export type ChildTrigger = PortOf<"trigger">;
  * parent plays out of its `audio` output, through its own `sound`.
  */
 export type OwnAudio = OwnOf<"port", "audio">;
-/** What reaches the parent's own `notes`: the keyboard at the top, its track's notes in a track. */
+/** What reaches the parent's own `notes`: the MIDI keyboard at the top, its track's notes in a track. */
 export type OwnNotes = OwnOf<"notes", "notes">;
 
 /**
@@ -789,8 +789,8 @@ export interface Key {
 /**
  * What a `notes` cable carries, `send` plays and `onNotes` hears. `pitch` is MIDI, 69 is A4; a
  * velocity or a value is 0 to 1; the bend is -1 to 1. `cc` is a MIDI controller, 0 to 119: the
- * sustain pedal is 64, down from 0.5, and the mod wheel 1. `allOff` ends every note and puts the
- * pedal and the wheels at rest, as a stop does.
+ * sustain pedal is 64, down from 0.5, and the mod wheel 1. `allOff` ends every note, puts the
+ * pedal and the wheels at rest, as a stop does, and drops the notes sent before it to play after it.
  */
 export type NoteEvent =
   | { type: "noteOn"; pitch: number; velocity: number }

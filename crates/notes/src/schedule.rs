@@ -72,7 +72,8 @@ impl<T: Scheduled> Schedule<T> {
     /// leaves nothing sounding, and gives back any other event to play now: a dropped off or
     /// pedal up would hold notes for ever. What waits that would undo it goes: an off takes the
     /// note and end of its key along, as the end would end a newer note; a controller its older
-    /// moves; `AllOff` everything older.
+    /// moves; `AllOff` everything older. `AllOff` also drops the notes sent before it to play
+    /// after it.
     #[must_use]
     pub fn perform(&mut self, performed: Performed) -> Option<NoteEvent> {
         match performed {
@@ -94,6 +95,12 @@ impl<T: Scheduled> Schedule<T> {
                 None
             }
             Performed::Send { event, at } => {
+                if let NoteEvent::AllOff = event {
+                    // A stop: what was sent to play after it would play on.
+                    let at = at.max(self.next_frame);
+                    (self.waiting)
+                        .retain(|(waiting_at, what)| *waiting_at <= at || what.note().is_none());
+                }
                 if self.add(Some(at), event.into()) {
                     return None;
                 }

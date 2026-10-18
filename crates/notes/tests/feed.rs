@@ -283,3 +283,18 @@ fn a_performed_end_on_the_frame_another_sender_starts_the_key_comes_first() {
     // The end of the performed note at frame 1010, then the other's start: it holds.
     assert_eq!(harness.render(100).last(), Some(&60.0));
 }
+
+#[test]
+fn an_all_off_drops_what_was_sent_to_play_after_it_and_keeps_what_comes_before_and_later() {
+    let mut harness = Harness::new();
+    harness.send(note(60, 100, Some(1_000)));
+    harness.send(note(62, 2_000, Some(500)));
+    harness.send(send(NoteEvent::AllOff, 500));
+    // Sent after the stop: a new phrase that plays.
+    harness.send(note(64, 3_000, Some(100)));
+    let changes = level_changes(&harness.render(4_000));
+    assert_eq!(
+        changes,
+        [(100, 60.0), (500, 0.0), (3_000, 64.0), (3_100, 0.0)]
+    );
+}
