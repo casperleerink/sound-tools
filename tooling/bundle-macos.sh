@@ -4,8 +4,12 @@
 #   tooling/bundle-macos.sh [--zip] [output-folder]
 #
 # The app goes to dist/ by default. --zip also writes Sound-Tools-<version>-macos-<arch>.zip
-# next to it, for a release. The app is signed ad hoc, which is enough to run it on this Mac.
-# It asks for nothing, so CI can run it.
+# next to it, for a release. It asks for nothing, so CI can run it.
+#
+# The app is signed ad hoc, which is enough to run it on this Mac. With APPLE_SIGNING_IDENTITY
+# set, it is signed with that Developer ID instead, and --zip also notarizes it when
+# APPLE_NOTARY_KEY_FILE, APPLE_NOTARY_KEY_ID and APPLE_NOTARY_ISSUER name an App Store Connect
+# API key: then macOS opens a downloaded app with no warning.
 set -euo pipefail
 
 zip=false
@@ -90,10 +94,15 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
-# Ad hoc: no certificate, no hardened runtime. The entitlements let it record and load the
-# CLAP and VST 3 plugins of other makers. --deep signs bun the same way, in place of the
-# signature of its makers, so the app verifies as one.
-codesign --force --deep --sign - --entitlements tooling/macos/entitlements.plist "$app"
+# The hardened runtime even ad hoc, so a local build runs under the rules of a release. Bun is
+# signed again, in place of the signature of its makers, so the app verifies as one.
+identity="${APPLE_SIGNING_IDENTITY:--}"
+sign=(codesign --force --options runtime --entitlements tooling/macos/entitlements.plist --sign "$identity")
+if [[ "$identity" != - ]]; then
+  sign+=(--timestamp)
+fi
+"${sign[@]}" "$app/Contents/MacOS/bun"
+"${sign[@]}" "$app"
 codesign --verify --deep --strict "$app"
 "$app/Contents/MacOS/sound-tools" --version
 "$app/Contents/MacOS/bun" --version
@@ -103,6 +112,14 @@ if [[ "$zip" == true ]]; then
   # arm64 on Apple silicon. A release has no Intel build.
   archive="$output/Sound-Tools-$version-macos-$(uname -m).zip"
   rm -f "$archive"
+  if [[ -n "${APPLE_NOTARY_KEY_FILE:-}" ]]; then
+    ditto -c -k --keepParent "$app" "$archive"
+    xcrun notarytool submit "$archive" --wait \
+      --key "$APPLE_NOTARY_KEY_FILE" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER"
+    # The ticket goes into the app, so it opens offline too. The zip is made again with it.
+    xcrun stapler staple "$app"
+    rm "$archive"
+  fi
   ditto -c -k --keepParent "$app" "$archive"
   echo "built $archive"
 fi

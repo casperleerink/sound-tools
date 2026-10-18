@@ -75,7 +75,7 @@ The app and `cargo run -p runtime` are the same program. Opening a folder on the
 
 Each [release](https://github.com/casperleerink/sound-tools/releases) has the app for macOS (Apple silicon), Linux (x86_64 and aarch64) and Windows (x86_64). The page of a release says how to install it:
 
-- macOS: unzip and drag `Sound Tools.app` to Applications. It is not signed by a known developer, so macOS blocks the first open. Run `xattr -dr com.apple.quarantine "/Applications/Sound Tools.app"` once, or click **Open Anyway** in System Settings, Privacy & Security.
+- macOS: unzip and drag `Sound Tools.app` to Applications. A release is signed with a Developer ID and notarized, so it opens with no warning.
 - Linux: extract the tarball and run `./install.sh`.
 - Windows: run `Sound-Tools-Setup-<version>.exe`. It installs into `%LOCALAPPDATA%\Programs\Sound Tools` with a Start menu entry and no administrator. Settings, Apps removes it and keeps your data in `%LOCALAPPDATA%\Sound Tools`. The setup is not signed, so SmartScreen may warn: **More info**, then **Run anyway**. `tooling/bundle-windows.sh` makes it, with Inno Setup 6.
 
