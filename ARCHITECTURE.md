@@ -231,7 +231,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 A tool an agent writes plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
 
-- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one, and code that hangs is left out until the folder changes. The window never waits on it. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
+- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one, and code that hangs is left out until the folder changes. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
@@ -241,6 +241,6 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end names its kind, so a wrong pair is a type error. A number drives a knob as a lane does, through `AutomationInput`, so built-in devices need nothing new. An instrument sends no notes or bangs: its voices come and go.
 - **Patterns in time are a `sequencer` child**, a `NotePlayer` that quantizes launches on the audio thread. Its record names what plays first, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
 - **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved sender sends no off there. Rejected: a reset in the core, for every instrument to declare.
-- **Keys and MIDI reach the code like a tick.** Rejected: a second tap on the MIDI device thread, blind to where the notes went.
+- **A tool hears its `notes` to the sample**, through a ring written only for a tool with `onNotes`. Rejected: tapping the MIDI device thread, blind to where notes went.
 - **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills: no better in an eval, and they need project settings the agent runs without.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.
