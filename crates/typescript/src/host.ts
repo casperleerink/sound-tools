@@ -254,19 +254,25 @@ function declare({ question, tool, state, children }: Extract<Request, { type: "
       throw new Error(`${tool} has no behaviour`);
     }
     runs(tool, "behaviour");
+    const answer = spec.behaviour({ state, children });
+    // JSON leaves out a `child` that is undefined, which would make the end a port of the parent.
+    const connections: unknown[] = Array.isArray(answer?.connections) ? answer.connections : [];
+    connections.forEach((connection, index) => {
+      for (const side of ["from", "to"] as const) {
+        const end = (connection as Record<string, unknown> | null)?.[side];
+        if (end !== null && typeof end === "object" && "child" in end && typeof end.child !== "string") {
+          throw new Error(
+            `connections[${index}].${side}.child is ${String(end.child)}: name a child, or leave child out for a port of the parent itself`,
+          );
+        }
+      }
+    });
     // Here, so a value JSON cannot hold, such as a cycle, is the parent's problem and does not throw in `say`.
-    const declared = JSON.parse(JSON.stringify(spec.behaviour({ state, children })));
+    const declared = JSON.parse(JSON.stringify(answer));
     if (declared !== null && typeof declared === "object" && "players" in declared) {
       throw new Error(
         "`players` are gone: a child of tool `sequencer` loops the patterns now (agent-docs/sequencer.md), " +
           'connected by { from: { child, notes: "notes" }, to: { child, notes: "notes" } }, and set({ child, live: "launch" }, index) launches',
-      );
-    }
-    const connections: unknown[] = Array.isArray(declared?.connections) ? declared.connections : [];
-    if (connections.some((connection) => (connection as { to?: unknown } | null)?.to === "sound")) {
-      throw new Error(
-        "`ownSound` is gone: a parent's own ports are ends of its connections, as a child's are. " +
-          'Connect to { port: "audio" }, its own audio output, which plays through its own `sound`',
       );
     }
     return declared;

@@ -100,16 +100,6 @@ tool({
 });
 
 tool({
-  name: "old-parent",
-  title: "Old parent",
-  when: "Never",
-  doc: "Plays into its sound the old way.",
-  state: {},
-  // @ts-expect-error: `ownSound` is gone: its own audio output is `{ port: "audio" }`.
-  behaviour: (): Declaration => ({ connections: [{ from: { child: "keys" }, to: "sound" }] }),
-});
-
-tool({
   name: "conductor",
   title: "Conductor",
   when: "Never",

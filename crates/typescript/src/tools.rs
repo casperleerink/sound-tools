@@ -55,8 +55,7 @@ pub(crate) struct ToolInfo {
     pub transport: bool,
     /// It hears the computer keyboard, `onKey`.
     pub keys: bool,
-    /// It hears note events, `onNotes`: what reaches its `notes`, or the keyboard when it has
-    /// none.
+    /// It hears note events, `onNotes`: what reaches its `notes`.
     pub notes: bool,
     /// It owns children and has a behaviour, which declares how they connect.
     pub behaviour: bool,
@@ -1063,15 +1062,7 @@ impl Sounds {
             context.runtime_automation(input, numbers)?;
         }
         if let Some(parent) = &self.parent {
-            let mut sent = vec![AUDIO_OUTPUT];
-            sent.extend(
-                code.numbers
-                    .iter()
-                    .chain(&code.bangs)
-                    .chain(&code.notes)
-                    .map(String::as_str),
-            );
-            let own = own_ports(signals, sent, context)?;
+            let own = own_ports(signals, context)?;
             self.declare(parent, state, own, context)?;
         }
         Ok(())
@@ -1084,7 +1075,7 @@ impl Sounds {
         &self,
         (bun, tools): &(Arc<Bun>, Arc<Tools>),
         state: &Value,
-        own: Own<'_>,
+        own: Own,
         context: &mut BehaviourContext<'_>,
     ) -> Result<(), BehaviourError> {
         let mut child_tools = BTreeMap::new();
@@ -1133,17 +1124,6 @@ enum Carries {
     Bang,
 }
 
-impl fmt::Display for Carries {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Sound => "a sound",
-            Self::Notes => "notes",
-            Self::Number => "a number",
-            Self::Bang => "a bang",
-        })
-    }
-}
-
 impl Key {
     fn carries(self) -> Carries {
         match self {
@@ -1153,39 +1133,44 @@ impl Key {
             Key::Bang | Key::Trigger => Carries::Bang,
         }
     }
+
+    /// Whether it may name an output, as a child's `from` and the owner's own `to` do, or an
+    /// input otherwise. A live control and a trigger are inputs; a bang is an output.
+    fn fits(self, output: bool) -> bool {
+        match self {
+            Key::Live | Key::Trigger => !output,
+            Key::Bang => output,
+            Key::Port | Key::Notes | Key::Number => true,
+        }
+    }
 }
 
 /// The ports of an owner itself, as ends of its connections: what reaches its `audio` input and
-/// its `notes` as sources, and as a target its own sound, which is its `audio` output. Its other
-/// outputs are made as its connections name them, each but a port its sound `sent`.
-pub(crate) struct Own<'a> {
+/// its `notes`, and its own sound, which is its `audio` output. Its other outputs are made as
+/// its connections name them.
+pub(crate) struct Own {
     audio: OutputEndpoint,
     notes: OutputEndpoint,
     sound: InputEndpoint,
-    sent: Vec<&'a str>,
 }
 
 /// Declares the inputs of an owner whose own sound is `signals`. Its `notes` reach its sound
 /// too, as every tool hears its `notes`.
-fn own_ports<'a>(
+fn own_ports(
     signals: Node<Signals>,
-    sent: Vec<&'a str>,
     context: &mut BehaviourContext<'_>,
-) -> Result<Own<'a>, BehaviourError> {
+) -> Result<Own, BehaviourError> {
     let audio = context.processor("in:audio", AudioThru::default)?;
     context.input(AUDIO_INPUT, InputEndpoint::new(audio, AudioThru::INPUT));
     let notes = context.processor("in:notes", EventThru::<NoteEvent>::default)?;
-    context.input(
-        NOTES_INPUT,
-        InputEndpoint::new(notes, EventThru::<NoteEvent>::INPUT),
-    );
+    let input = InputEndpoint::new(notes, EventThru::<NoteEvent>::INPUT);
+    context.input(NOTES_INPUT, input);
     let notes = OutputEndpoint::new(notes, EventThru::<NoteEvent>::OUTPUT);
     context.connect(notes.to(InputEndpoint::new(signals, Signals::NOTES)))?;
     Ok(Own {
         audio: OutputEndpoint::new(audio, AudioThru::OUTPUT),
         notes,
         sound: InputEndpoint::new(signals, Signals::INPUT),
-        sent,
     })
 }
 
@@ -1202,13 +1187,13 @@ const ENDS: &str = "a sound goes from { child, port? } or { port: \"audio\" } to
 /// sends no off there.
 fn wire(
     declaration: &Declaration,
-    own: Own<'_>,
+    own: Own,
     child_tools: &BTreeMap<String, &ToolInfo>,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
     let feeds = feeds(context)?;
     let mut cables = BTreeSet::new();
-    let mut outputs: BTreeMap<String, (Carries, InputEndpoint)> = BTreeMap::new();
+    let mut outputs = BTreeMap::new();
     // By its processor too, so a sender made again is another sender; not by its port, which
     // new code of the same sender may move.
     let mut fed: BTreeMap<&str, BTreeSet<(&End, NodeId)>> = BTreeMap::new();
@@ -1218,18 +1203,15 @@ fn wire(
             (connection.from.port(), connection.to.port())
         else {
             context.problem(format!(
-                "its behaviour declares {at} with an end that names no port or two: {ENDS}"
+                "its behaviour declares {at} with an end that names no port, or more than one: {ENDS}"
             ));
             continue;
         };
-        let (from, to) = (from_key.carries(), to_key.carries());
         let from_child = connection.from.child.as_deref();
         let to_child = connection.to.child.as_deref();
-        // A live control and a trigger are inputs; a bang of a child is an output.
-        let backwards = matches!(from_key, Key::Live | Key::Trigger)
-            || (to_child.is_some() && to_key == Key::Bang)
-            || (to_child.is_none() && matches!(to_key, Key::Live | Key::Trigger));
-        if from != to || backwards {
+        let fits = from_key.fits(from_child.is_some()) && to_key.fits(to_child.is_none());
+        if from_key.carries() != to_key.carries() || !fits {
+            let (from, to) = (&connection.from, &connection.to);
             context.problem(format!(
                 "its behaviour declares {at} from {from} to {to}, which do not connect: {ENDS}"
             ));
@@ -1262,12 +1244,13 @@ fn wire(
             (None, Key::Port) if to_name == AUDIO_OUTPUT => Some((own.sound, None)),
             (None, Key::Port) => {
                 context.problem(format!(
-                    "its behaviour declares {at}, its own {to_name:?}: its own sound output is {{ port: \"audio\" }}"
+                    "its behaviour declares {at}, its own sound output {to_name:?}, which it does not have: its own sound output is {{ port: \"audio\" }}"
                 ));
                 None
             }
-            (None, _) => (own_output(to_name, to, &own.sent, &mut outputs, &at, context)?)
-                .map(|input| (input, None)),
+            (None, Key::Notes) => own_output::<NoteEvent>(to_name, &mut outputs, &at, context)?,
+            (None, Key::Number) => own_output::<Number>(to_name, &mut outputs, &at, context)?,
+            (None, Key::Bang) => own_output::<Bang>(to_name, &mut outputs, &at, context)?,
             (Some(child), Key::Port | Key::Notes) => {
                 input_of(&feeds, (child, to_name), &at, context)
             }
@@ -1281,11 +1264,13 @@ fn wire(
                 (control::<Number>(name, live, child_tools, &mut cables, &at, context)?)
                     .map(|input| (input, None))
             }
-            (Some(child), Key::Trigger | Key::Bang) => {
+            (Some(child), Key::Trigger) => {
                 let trigger = (child, to_name, false);
                 (control::<Bang>(name, trigger, child_tools, &mut cables, &at, context)?)
                     .map(|input| (input, None))
             }
+            // Refused by `fits`.
+            (None, Key::Live | Key::Trigger) | (Some(_), Key::Bang) => None,
         };
         let Some((input, feed)) = into else {
             continue;
@@ -1313,49 +1298,29 @@ fn wire(
     Ok(())
 }
 
-/// Where a connection `at` of what `carries` goes out of the owner as its own output `name`:
-/// one the connections into it meet at, made by the first. `None` when its sound `sent` a port
-/// of that name, or the output carries another kind, a problem.
-fn own_output(
+/// Where a connection `at` of events `E` goes out of the owner as its own output `name`, which
+/// the first connection to it makes and every one meets at. `None` when its sound has an output
+/// of that name, a problem.
+fn own_output<'a, E: Event>(
     name: &str,
-    carries: Carries,
-    sent: &[&str],
-    outputs: &mut BTreeMap<String, (Carries, InputEndpoint)>,
+    outputs: &mut BTreeMap<String, InputEndpoint>,
     at: &str,
     context: &mut BehaviourContext<'_>,
-) -> Result<Option<InputEndpoint>, BehaviourError> {
-    if let Some((made, input)) = outputs.get(name) {
-        if *made == carries {
-            return Ok(Some(*input));
-        }
+) -> Result<Option<(InputEndpoint, Option<&'a str>)>, BehaviourError> {
+    if let Some(input) = outputs.get(name) {
+        return Ok(Some((*input, None)));
+    }
+    if context.has_output(name) {
         context.problem(format!(
-            "its behaviour declares {at}, its own output {name:?} for {carries}, which carries {made} already"
+            "its behaviour declares {at}, its own output {name:?}, which its sound has: give it another name"
         ));
         return Ok(None);
     }
-    if sent.contains(&name) {
-        context.problem(format!(
-            "its behaviour declares {at}, its own output {name:?}, which its sound has already: name it another way"
-        ));
-        return Ok(None);
-    }
-    fn thru<E: Event>(
-        name: &str,
-        context: &mut BehaviourContext<'_>,
-    ) -> Result<InputEndpoint, BehaviourError> {
-        let thru = context.processor(&format!("out:{name}"), EventThru::<E>::default)?;
-        context.output(name, OutputEndpoint::new(thru, EventThru::<E>::OUTPUT));
-        Ok(InputEndpoint::new(thru, EventThru::<E>::INPUT))
-    }
-    let input = match carries {
-        Carries::Notes => thru::<NoteEvent>(name, context)?,
-        Carries::Number => thru::<Number>(name, context)?,
-        Carries::Bang => thru::<Bang>(name, context)?,
-        // The own sound output is not made: it is the owner's sound.
-        Carries::Sound => return Ok(None),
-    };
-    outputs.insert(name.to_string(), (carries, input));
-    Ok(Some(input))
+    let thru = context.processor(&format!("out:{name}"), EventThru::<E>::default)?;
+    context.output(name, OutputEndpoint::new(thru, EventThru::<E>::OUTPUT));
+    let input = InputEndpoint::new(thru, EventThru::<E>::INPUT);
+    outputs.insert(name.to_string(), input);
+    Ok(Some((input, None)))
 }
 
 /// Where a connection `at` into the port `port` of `child` goes: its feed for its `notes`, with

@@ -9,6 +9,7 @@
 //! say from its first block.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use serde::Deserialize;
@@ -38,7 +39,7 @@ pub(crate) struct Connection {
 
 /// An end of a connection: a port of the child `child`, or of the owner itself without one,
 /// under the key of the kind of what it carries. `{ child }` alone is the child's `audio`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct End {
     pub child: Option<String>,
@@ -62,24 +63,53 @@ pub(crate) enum Key {
 }
 
 impl End {
-    /// The key it names its port under and the name, or `None` when it names no port or more
-    /// than one.
-    pub(crate) fn port(&self) -> Option<(Key, &str)> {
-        let keys = [
+    fn keys(&self) -> [(Key, &Option<String>); 6] {
+        [
             (Key::Port, &self.port),
             (Key::Notes, &self.notes),
             (Key::Number, &self.number),
             (Key::Bang, &self.bang),
             (Key::Live, &self.live),
             (Key::Trigger, &self.trigger),
-        ];
-        let mut named = keys
-            .into_iter()
-            .filter_map(|(key, name)| Some((key, name.as_deref()?)));
+        ]
+    }
+
+    /// The key it names its port under and the name, or `None` when it names no port or more
+    /// than one.
+    pub(crate) fn port(&self) -> Option<(Key, &str)> {
+        let mut named =
+            (self.keys().into_iter()).filter_map(|(key, name)| Some((key, name.as_deref()?)));
         match (named.next(), named.next(), &self.child) {
             (Some(port), None, _) => Some(port),
+            // `audio`, the name of a sound input and output alike.
             (None, None, Some(_)) => Some((Key::Port, sound_notes::AUDIO_OUTPUT)),
             _ => None,
+        }
+    }
+}
+
+/// As the behaviour wrote it, such as `{ child: "lfo", number: "rate" }`.
+impl fmt::Display for End {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let child = self.child.as_ref().map(|child| ("child", child));
+        let keys =
+            (self.keys().into_iter()).filter_map(|(key, name)| Some((key.word(), name.as_ref()?)));
+        let fields: Vec<String> = (child.into_iter().chain(keys))
+            .map(|(key, name)| format!("{key}: {name:?}"))
+            .collect();
+        write!(formatter, "{{ {} }}", fields.join(", "))
+    }
+}
+
+impl Key {
+    fn word(self) -> &'static str {
+        match self {
+            Key::Port => "port",
+            Key::Notes => "notes",
+            Key::Number => "number",
+            Key::Bang => "bang",
+            Key::Live => "live",
+            Key::Trigger => "trigger",
         }
     }
 }
