@@ -241,3 +241,52 @@ tool({
     return far;
   },
 });
+
+const parts = { bass: "sequencer", fx: "filter", drop: "rain" } as const;
+
+tool({
+  name: "loops",
+  title: "Loops",
+  when: "Never",
+  doc: "Names its children, so their ports and records are typed.",
+  state: {},
+  children: parts,
+  behaviour: ({ children }): Declaration<typeof parts> => {
+    const bass = children.find((child) => child.name === "bass");
+    const length: number | undefined = bass?.state.patterns?.[0]?.length;
+    if (length === 0) return { connections: [] };
+    return {
+      connections: [
+        { from: { child: "drop", number: "level" }, to: { child: "fx", number: "cutoff_hz" } },
+        { from: { child: "drop", number: "level" }, to: { child: "bass", live: "launch" } },
+        { from: { child: "bass", notes: "notes" }, to: { child: "drop", notes: "notes" } },
+        { from: { child: "fx" }, to: { port: "audio" } },
+        // @ts-expect-error: the filter has no number `cutoff`.
+        { from: { child: "drop", number: "level" }, to: { child: "fx", number: "cutoff" } },
+        // @ts-expect-error: and no live control.
+        { from: { child: "drop", number: "level" }, to: { child: "fx", live: "launch" } },
+        // @ts-expect-error: a child it does not name.
+        { from: { child: "synth" }, to: { port: "audio" } },
+      ],
+    };
+  },
+  tick: ({ set, play, update }) => {
+    set({ child: "bass", live: "launch" }, 1);
+    // @ts-expect-error: the sequencer's live control is `launch`.
+    set({ child: "bass", live: "lunch" }, 1);
+    // @ts-expect-error: a child it does not name.
+    play(60, { child: "synth" });
+    update("Edit", ({ children }) => {
+      for (const child of children) {
+        if (child.name === "fx") child.state.type = "high_pass";
+        // @ts-expect-error: a choice of a child is one of its options.
+        if (child.name === "fx") child.state.type = "notches";
+        // @ts-expect-error: a field the record of a sequencer does not have.
+        if (child.name === "bass") child.state.pattern = [];
+      }
+      children.push({ name: "fx", tool: "filter", state: { cutoff_hz: 500 } });
+      // @ts-expect-error: the child `fx` is a filter.
+      children.push({ name: "fx", tool: "delay", state: {} });
+    });
+  },
+});

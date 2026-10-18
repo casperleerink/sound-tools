@@ -99,7 +99,8 @@ const MAX_SOUNDS = 256;
 /** Every key of a tool, so a misspelled or an old one is a problem instead of left out. */
 const KEYS = {
   name: true, title: true, when: true, doc: true, kind: true, state: true, controls: true, sound: true,
-  behaviour: true, memory: true, tick: true, card: true, page: true, transport: true, onKey: true, onNotes: true,
+  behaviour: true, children: true, memory: true, tick: true, card: true, page: true, transport: true, onKey: true,
+  onNotes: true,
 } satisfies Record<keyof Spec, true>;
 
 /**
@@ -139,6 +140,9 @@ function problemsOf(spec: Spec): string[] {
     }
     if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
       problems.push('kind: a parent\'s sound hears what it connects to its own { port: "audio" } as `input`, so leave `kind` out');
+    }
+    if (spec.children && !spec.behaviour) {
+      problems.push("children: only a parent has children: give it a behaviour that connects them");
     }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
@@ -196,6 +200,7 @@ function described(spec: Spec, file: string) {
       keys: spec.onKey !== undefined,
       notes: spec.onNotes !== undefined,
       behaviour: spec.behaviour !== undefined,
+      children: spec.children ?? {},
     },
     sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
     card: made(() => draw(spec, false)),

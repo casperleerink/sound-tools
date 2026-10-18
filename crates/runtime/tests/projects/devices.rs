@@ -5,7 +5,7 @@ use crate::support::{Harness, write};
 /// `dark` plays noise through the built-in filter, its cutoff a knob of its own. `aligned`
 /// takes the filter, which reports a latency, at its dry mix away from what goes into it, with
 /// both sides made loud by a knob far past what a sound may play.
-/// `rig` plays its child `hiss` through its child `room`.
+/// `rig` plays its child `hiss` through its child `room`, which it names.
 const TOOLS: &str = r#"import { devices, knob, noise, tool, type Declaration } from "./sdk";
 
 tool({
@@ -41,13 +41,16 @@ tool({
   sound: () => noise().times(0.25),
 });
 
+const children = { hiss: "hiss", room: "swept-room" } as const;
+
 tool({
   name: "rig",
   title: "Rig",
   when: "Never",
   doc: "Plays hiss through room.",
   state: {},
-  behaviour: (): Declaration => ({
+  children,
+  behaviour: (): Declaration<typeof children> => ({
     connections: [
       { from: { child: "hiss" }, to: { child: "room" } },
       { from: { child: "room" }, to: { port: "audio" } },
@@ -177,6 +180,33 @@ tool({
     assert!(
         (problem.message).contains("devices.filter: type: unknown variant `hi_pass`"),
         "{problem:?}"
+    );
+}
+
+#[test]
+fn a_child_of_another_tool_than_its_parent_names_is_a_problem_of_the_parent() {
+    let records = [
+        ("state/rig/instance.json", record("rig", "{}")),
+        ("state/rig/hiss.json", record("hiss", "{}")),
+        ("state/rig/room.json", record("hiss", "{}")),
+        ("state/rig/more.json", record("hiss", "{}")),
+    ];
+    let records: Vec<(&str, &str)> = (records.iter())
+        .map(|(path, record)| (*path, record.as_str()))
+        .collect();
+    let Some(harness) = project("rig", &records) else {
+        return;
+    };
+    let problems: Vec<String> = (harness.project.problems().into_iter())
+        .map(|problem| format!("{}: {}", problem.path, problem.message))
+        .collect();
+    // Then what the hiss in place of the room cannot take.
+    assert_eq!(
+        problems[..2],
+        [
+            "state/rig/instance.json: its child more is none of its `children`: hiss, room",
+            "state/rig/instance.json: its child room is a hiss, and its `children` say swept-room",
+        ]
     );
 }
 

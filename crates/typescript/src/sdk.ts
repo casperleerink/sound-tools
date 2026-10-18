@@ -709,7 +709,7 @@ function quantize(value: number): number {
 // ---------------------------------------------------------------------------------------------
 // Tools
 
-export interface ToolSpec<S extends Fields, C extends Controls, M> {
+export interface ToolSpec<S extends Fields, C extends Controls, M, K extends ChildTools = ChildTools> {
   /** The `tool` of its records and the name of its doc: lowercase letters, digits, `-`, `_`. */
   name: string;
   /** What the card and the picker call it. */
@@ -741,7 +741,14 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * moment later; the sound plays on meanwhile. Its own `sound` hears what it connects to its
    * own `{ port: "audio" }` as `input`, and is its `audio` output.
    */
-  behaviour?: (parent: Parent<S>) => Declaration;
+  behaviour?: (parent: Parent<S, K>) => Declaration<K>;
+  /**
+   * The children it has, by name, and the tool of each: `{ bass: "sequencer", synth:
+   * "instrument.synth" }`. TypeScript then checks every connection, `set`, `fire`, `play`,
+   * `send` and edit of them against their tools, and a child of another tool, a missing one or
+   * one it does not name is a problem. Leave it out for children whose names a record decides.
+   */
+  children?: K;
   /**
    * What the control loop and the card of an instance keep, and nothing saves: positions of
    * a simulation, the last thing played. Made new for each instance, and when the code loads.
@@ -752,11 +759,11 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * plays the sound with `set` and `fire`, as a performer would, and keeps what it needs in
    * `memory`.
    */
-  tick?: (tool: Tick<ValuesOf<S>, C, M>) => void;
+  tick?: (tool: Tick<ValuesOf<S>, C, M, K>) => void;
   /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
-  card?: (card: Context<ValuesOf<S>, C, M>) => Node;
+  card?: (card: Context<ValuesOf<S>, C, M, K>) => Node;
   /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
-  page?: (page: Page<ValuesOf<S>, C, M>) => Node;
+  page?: (page: Page<ValuesOf<S>, C, M, K>) => Node;
   /**
    * Its page shows the transport (play, stop, position, tempo, time signature, click), and its
    * card and page draw again as `transport` moves. Recording is the arrangement's.
@@ -766,65 +773,80 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * A key of the computer keyboard goes down or up, while its page shows or after a click on
    * its card. Plain keys are then the tool's: space and `r` do not play or record.
    */
-  onKey?: (tool: Context<ValuesOf<S>, C, M>, key: Key) => void;
+  onKey?: (tool: Context<ValuesOf<S>, C, M, K>, key: Key) => void;
   /**
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
    * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
    */
-  onNotes?: (tool: Context<ValuesOf<S>, C, M>, event: HeardEvent) => void;
+  onNotes?: (tool: Context<ValuesOf<S>, C, M, K>, event: HeardEvent) => void;
 }
 
 /** A record and the records of its children: what a behaviour gets, and what `update` changes. */
-export interface Part<State> {
+export interface Part<State, K extends ChildTools = ChildTools> {
   state: State;
   /** The records next to its own, in name order. */
-  children: OwnedChild[];
+  children: OwnedChild<K>[];
 }
 
 /** What a behaviour gets. */
-export type Parent<S extends Fields> = Frozen<Part<ValuesOf<S>>>;
+export type Parent<S extends Fields, K extends ChildTools = ChildTools> = Frozen<Part<ValuesOf<S>, K>>;
 
-/** A child of a parent: its record. */
-export interface OwnedChild {
-  /**
-   * Its file name without `.json`: lowercase letters, digits, `-` and `_`. It is the id of the
-   * record, which never changes: keep a title in a field.
-   */
-  readonly name: string;
-  /** Its `tool`, such as `"instrument.synth"`. */
-  tool: string;
-  /** Its `state` as the file holds it, such as a `SequencerState`. */
-  state: unknown;
-}
+/** The name of a tool: a built-in one, which `Tools` describes, or one of this project. */
+export type ToolName = keyof Tools | (string & {});
+
+/** The tools of the children of a parent by their names, as its `children` names them. */
+export type ChildTools = Record<string, ToolName>;
 
 /** The `state` of a record of `T` as the file holds it; any value for a tool of this project. */
 export type StateOfTool<T> = T extends keyof Tools ? Tools[T]["state"] : unknown;
+
+/** The names of its children. */
+type ChildName<K extends ChildTools> = keyof K & string;
+
+/** A child of a parent: its record. */
+export type OwnedChild<K extends ChildTools = ChildTools> = {
+  [Name in ChildName<K>]: {
+    /**
+     * Its file name without `.json`: lowercase letters, digits, `-` and `_`. It is the id of the
+     * record, which never changes: keep a title in a field.
+     */
+    readonly name: Name;
+    /** Its `tool`, such as `"instrument.synth"`. */
+    tool: K[Name];
+    /** Its `state` as the file holds it, such as a `SequencerState`. */
+    state: StateOfTool<K[Name]>;
+  };
+}[ChildName<K>];
 
 /** The keys that name a port, one for each kind of what it carries. */
 type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger";
 
 /** A port named under the key `K` and no other, so a connection joins two of one kind. */
 type Keyed<K extends PortKey, Name extends string = string> = Record<K, Name> & { [Other in Exclude<PortKey, K>]?: never };
-/** A port of a child under the key `K`. */
-type PortOf<K extends PortKey> = { child: string } & Keyed<K>;
+/** The names a child of tool `T` has under the key `P`, as `Tools` says; any for a tool of this project. */
+type PortName<T, P extends PortKey> = T extends keyof Tools ? (P extends keyof Tools[T] ? Tools[T][P] : string) : string;
+/** A port of a child under the key `P`, of a name its tool has. */
+type PortOf<P extends PortKey, K extends ChildTools> = {
+  [Name in ChildName<K>]: { child: Name } & Keyed<P, PortName<K[Name], P> & string>;
+}[ChildName<K>];
 /** A port of the parent itself under the key `K`: no `child`. */
 type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } & Keyed<K, Name>;
 
 /** A sound port of a child: `audio` when left out. An effect has an `audio` input and output. */
-export type ChildPort = Partial<PortOf<"port">> & { child: string };
+export type ChildPort<K extends ChildTools = ChildTools> = Partial<Keyed<"port">> & { child: ChildName<K> };
 /** Notes of a child: its input `notes`, such as an instrument's, or notes it sends out. */
-export type ChildNotes = PortOf<"notes">;
+export type ChildNotes<K extends ChildTools = ChildTools> = PortOf<"notes", K>;
 /**
  * A number of a child: one it sends out with `output`, or a knob it takes, such as the knob
  * `cutoff_hz` of a `filter` or a knob of a tool of the project.
  */
-export type ChildNumber = PortOf<"number">;
+export type ChildNumber<K extends ChildTools = ChildTools> = PortOf<"number", K>;
 /** A bang a child sends out with `output`. */
-export type ChildBang = PortOf<"bang">;
+export type ChildBang<K extends ChildTools = ChildTools> = PortOf<"bang", K>;
 /** A live control of a child, or another number it plays from, such as `launch` of a `sequencer`. */
-export type ChildLive = PortOf<"live">;
+export type ChildLive<K extends ChildTools = ChildTools> = PortOf<"live", K>;
 /** A trigger of a child. */
-export type ChildTrigger = PortOf<"trigger">;
+export type ChildTrigger<K extends ChildTools = ChildTools> = PortOf<"trigger", K>;
 
 /**
  * The parent's own sound port. From it, what reaches the parent's `audio` input; to it, what the
@@ -839,15 +861,15 @@ export type OwnNotes = OwnOf<"notes", "notes">;
  * an output of the parent, of one kind. In `to`, a `notes`, `number` or `bang` without `child`
  * is an output of the parent of that name, which passes what reaches it on to its parent.
  */
-export type Connection =
-  | { from: ChildPort | OwnAudio; to: ChildPort | OwnAudio }
-  | { from: ChildNotes | OwnNotes; to: ChildNotes | OwnOf<"notes"> }
-  | { from: ChildNumber; to: ChildNumber | ChildLive | OwnOf<"number"> }
-  | { from: ChildBang; to: ChildTrigger | OwnOf<"bang"> };
+export type Connection<K extends ChildTools = ChildTools> =
+  | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio }
+  | { from: ChildNotes<K> | OwnNotes; to: ChildNotes<K> | OwnOf<"notes"> }
+  | { from: ChildNumber<K>; to: ChildNumber<K> | ChildLive<K> | OwnOf<"number"> }
+  | { from: ChildBang<K>; to: ChildTrigger<K> | OwnOf<"bang"> };
 
 /** What a behaviour declares. A JSON value: no functions, no classes. */
-export interface Declaration {
-  connections: Connection[];
+export interface Declaration<K extends ChildTools = ChildTools> {
+  connections: Connection<K>[];
 }
 
 /** A key of the computer keyboard: its name, such as `"a"`, `"1"`, `"space"` or `"left"`. */
@@ -875,8 +897,8 @@ export type NoteEvent =
 export type HeardEvent = NoteEvent & { at: number };
 
 /** Makes a tool of the project. */
-export function tool<const S extends Fields, const C extends Controls = {}, M = {}>(
-  spec: ToolSpec<S, C, M>,
+export function tool<const S extends Fields, const C extends Controls = {}, M = {}, const K extends ChildTools = ChildTools>(
+  spec: ToolSpec<S, C, M, K>,
 ): void {
   if (host.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
@@ -890,47 +912,50 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
  * sample, or at once when it has passed. A parent plays a child the same way, by its name: `ChildLive`,
  * `ChildTrigger`, or `child` among the options of `play` and `send`.
  */
-export interface Performer<C extends Controls> {
+export interface Performer<C extends Controls, K extends ChildTools = ChildTools> {
   /** Moves a live control. */
-  set(control: ControlNames<C, "live"> | ChildLive, value: number): void;
+  set(control: ControlNames<C, "live"> | ChildLive<K>, value: number): void;
   /** Fires a trigger. */
-  fire(control: ControlNames<C, "trigger"> | ChildTrigger, options?: { at?: number }): void;
+  fire(control: ControlNames<C, "trigger"> | ChildTrigger<K>, options?: { at?: number }): void;
   /**
    * Sends a note event to the tool's own voices, or into the `notes` of `child`. An instrument
    * plays each note on a voice of its own; a source follows the newest. At most 256 wait for
    * their `at`: past that a `noteOn` is dropped, and anything else plays at once.
    */
-  send(event: NoteEvent, options?: { at?: number; child?: string }): void;
+  send(event: NoteEvent, options?: { at?: number; child?: ChildName<K> }): void;
   /**
    * Sends a `noteOn` and its `noteOff` `seconds` later (0.25 when left out), or with `hold`
    * only the `noteOn`. `velocity` is 0.8 when left out.
    */
   play(
     pitch: number,
-    options?: { seconds?: number; hold?: boolean; velocity?: number; at?: number; child?: string },
+    options?: { seconds?: number; hold?: boolean; velocity?: number; at?: number; child?: ChildName<K> },
   ): void;
 }
 
 /** A value code reads and does not change in place: `update` changes a record. */
-export type Frozen<T> = T extends readonly (infer Item)[]
-  ? readonly Frozen<Item>[]
-  : T extends object
-    ? { readonly [Key in keyof T]: Frozen<T[Key]> }
-    : T;
+export type Frozen<T> = T extends string | number | boolean | null | undefined
+  ? T
+  : T extends readonly (infer Item)[]
+    ? readonly Frozen<Item>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: Frozen<T[Key]> }
+      : T;
 
 /** What all code of an instance gets: its card, its page, `tick`, `onKey` and `onNotes`. */
-export interface Context<State, C extends Controls = Controls, M = unknown> extends Performer<C> {
+export interface Context<State, C extends Controls = Controls, M = unknown, K extends ChildTools = ChildTools>
+  extends Performer<C, K> {
   /** The record as it is now, every field at its default where the record leaves it out. */
   state: Frozen<State>;
   /** The records of its children, as its behaviour gets them. */
-  children: Frozen<OwnedChild[]>;
+  children: Frozen<OwnedChild<K>[]>;
   /**
    * Changes the record and those of its children: `change` gets a copy of the latest to edit,
    * also after an `await`, and may change a child's `state`, push a new child or leave one
    * out. What the records do not accept is refused whole, and listed in `problems.txt`. Updates
    * of one `label` in a row are one undo step.
    */
-  update(label: string, change: (part: Part<State>) => void): void;
+  update(label: string, change: (part: Part<State, K>) => void): void;
   /** What its code keeps and nothing saves. A card draws again after a click. */
   memory: M;
   /** The last value of each `watch` of the sound, by name. A card draws again as they move. */
@@ -942,7 +967,8 @@ export interface Context<State, C extends Controls = Controls, M = unknown> exte
 }
 
 /** What the control loop of an instance gets each time it runs. */
-export interface Tick<State, C extends Controls = Controls, M = unknown> extends Context<State, C, M> {
+export interface Tick<State, C extends Controls = Controls, M = unknown, K extends ChildTools = ChildTools>
+  extends Context<State, C, M, K> {
   /** Seconds since the last tick. */
   dt: number;
 }
@@ -991,7 +1017,8 @@ export interface Transport {
 }
 
 /** What a page gets: what all code gets, and the room it has. */
-export interface Page<State, C extends Controls = Controls, M = unknown> extends Context<State, C, M> {
+export interface Page<State, C extends Controls = Controls, M = unknown, K extends ChildTools = ChildTools>
+  extends Context<State, C, M, K> {
   /** Its width and height in points. It draws again when the window changes. */
   size: { width: number; height: number };
 }
