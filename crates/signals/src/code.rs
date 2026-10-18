@@ -82,6 +82,21 @@ pub struct Code {
     pub(crate) slots: Slots,
 }
 
+impl Code {
+    /// Whether what leaves it is what comes in, on each channel, and nothing else leaves: the
+    /// code of a tool with no sound.
+    pub(crate) fn passes_input(&self) -> bool {
+        let Output::Mono(register) = self.output else {
+            return false;
+        };
+        let input = self.operations.get(usize::from(register));
+        matches!(input, Some(Operation::Input))
+            && self.watch_registers.is_empty()
+            && self.number_registers.is_empty()
+            && self.event_registers.is_empty()
+    }
+}
+
 /// What leaves the code.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Output {

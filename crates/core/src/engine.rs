@@ -15,8 +15,8 @@ use crate::graph::Schedule;
 use crate::input::{InputId, LiveInput};
 use crate::peaks::{Peaks, loudest};
 use crate::processor::{
-    AudioInputs, AudioOutputs, CHANNELS, EventInputs, EventOutputs, MAX_BLOCK, ProcessContext,
-    Processor, next_bend,
+    AudioInputs, AudioOutputs, CHANNELS, EventInputs, EventOutputs, EventPort, MAX_BLOCK,
+    ProcessContext, Processor,
 };
 use crate::transport::{TransportCommand, TransportState};
 
@@ -512,7 +512,7 @@ impl Engine {
             for (input, sources) in step_event_inputs.iter_mut().zip(&step.event_sources) {
                 input.clear();
                 for source in sources.iter().filter_map(|index| event_outputs.get(*index)) {
-                    input.merge_from(source.as_ref());
+                    input.merge_from(source);
                 }
                 self.status.event_overflows += input.take_overflow();
             }
@@ -546,7 +546,7 @@ impl Engine {
                     let rest = frames - start;
                     let bend = (step.automation_inputs.iter())
                         .filter_map(|index| step_event_inputs.get(*index))
-                        .filter_map(|buffer| next_bend(buffer.as_ref()))
+                        .filter_map(EventPort::next_bend)
                         .min();
                     let length = bend.map_or(rest, |bend| bend.min(rest));
                     let transport = match (lead, *moved, *resume_from) {

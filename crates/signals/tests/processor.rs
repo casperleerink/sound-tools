@@ -6,8 +6,8 @@
 use std::f32::consts::TAU;
 
 use sound_core::{
-    Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput, EventTap, Node,
-    Ports, PrepareConfig, ProcessContext, Processor, Watch,
+    AudioOutput, Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput,
+    EventTap, Node, Ports, PrepareConfig, ProcessContext, Processor, Watch,
 };
 use sound_notes::{NoteEvent, Performed, Pitch, Velocity};
 use sound_signals::{
@@ -1010,4 +1010,93 @@ fn a_held_note_follows_its_output_to_another_port_when_the_code_changes() {
     edit.connect(from(0)).unwrap();
     edit.commit().unwrap();
     assert_eq!(played.render(128)[127], 0.0);
+}
+
+/// Plays a sound with the values a copy could get wrong: numbers too loud, and no numbers.
+struct Odd {
+    frame: usize,
+}
+
+const ODD_OUT: AudioOutput = AudioOutput::new(0);
+
+impl Processor for Odd {
+    type Update = ();
+
+    fn ports(&self) -> Ports {
+        Ports::new().audio_output(ODD_OUT)
+    }
+
+    fn prepare(&mut self, _: &PrepareConfig) {}
+
+    fn update(&mut self, (): &mut ()) {}
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let odd = [0.25, 5.0, -7.0, f32::NAN, f32::INFINITY, -0.5];
+        for channel in context.audio_outputs.get(ODD_OUT) {
+            for (offset, sample) in channel.iter_mut().enumerate() {
+                *sample = odd[(self.frame + offset) % odd.len()];
+            }
+        }
+        self.frame += context.frames;
+    }
+}
+
+/// An effect of `code` that hears [`Odd`] and the notes of `notes`.
+fn hearing_odd(code: Code, notes: Vec<(usize, NoteEvent)>) -> Played {
+    let watches: Vec<Watch> = code.watches.iter().map(|_| Watch::new()).collect();
+    let machine = Box::new(Machine::new(code, SAMPLE_RATE as f32));
+    let signals = Signals::new(Kind::Effect, machine, Values::default(), watches.clone());
+    let (mut control, engine) = Engine::new(EngineConfig::new(SAMPLE_RATE, 2));
+    let mut edit = control.edit();
+    let signals = edit.add_processor("signals", signals).unwrap();
+    let odd = edit.add_processor("odd", Odd { frame: 0 }).unwrap();
+    let score = (edit.add_processor("score", Score { notes, frame: 0 })).unwrap();
+    let odd = Connection::new(odd.id(), ODD_OUT, signals.id(), Signals::INPUT);
+    let notes = Connection::new(score.id(), SCORE_OUT, signals.id(), Signals::NOTES);
+    let out = Connection::to_device(signals.id(), Signals::OUTPUT, 0);
+    for connection in [odd, notes, out] {
+        edit.connect(connection).unwrap();
+    }
+    edit.commit().unwrap();
+    Played {
+        control,
+        engine,
+        signals,
+        watches,
+    }
+}
+
+#[test]
+fn code_that_passes_its_input_plays_the_bytes_the_code_plays_and_leaves_the_same_after_it() {
+    let notes = vec![(100, on(60)), (2_000, on(64)), (5_000, off(64))];
+    let copied = hearing_odd(compile(input), notes.clone());
+    // A watch makes it run as code.
+    let run = hearing_odd(
+        compile(|| {
+            watch("x", input());
+            input()
+        }),
+        notes,
+    );
+    let mut both = [copied, run];
+    let render = |both: &mut [Played; 2], frames: usize| {
+        let bits = |samples: Vec<f32>| samples.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
+        let [copied, run] = both.each_mut().map(|played| bits(played.render(frames)));
+        assert!(copied == run);
+    };
+    for played in &mut both {
+        played.control.play();
+    }
+    render(&mut both, 9_600);
+    for played in &mut both {
+        played.control.stop();
+    }
+    render(&mut both, 4_800);
+    // New code hears where the beat stopped, the key that is still down and no new note.
+    for played in &mut both {
+        let code = compile(|| beat() + hold(beat(), onset()) + pitch() * gate() / 1_000.0);
+        let update = new_code(Kind::Effect, code);
+        played.control.update(played.signals, update).unwrap();
+    }
+    render(&mut both, 1_920);
 }

@@ -10,7 +10,7 @@ use crate::automation::Automation;
 use crate::compensation::Compensation;
 use crate::input::InputId;
 use crate::processor::{
-    AudioBuffer, CHANNELS, ErasedEventBuffer, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
+    AudioBuffer, CHANNELS, EventPort, EventType, InputPort, MAX_BLOCK, OutputPort, Ports,
 };
 
 /// A buffer of one audio port with nothing in it.
@@ -449,13 +449,13 @@ impl Graph {
             for event_type in &node.ports.event_outputs {
                 schedule
                     .event_outputs
-                    .push((event_type.new_buffer)(event_capacity));
+                    .push(EventPort::new((event_type.new_buffer)(event_capacity)));
             }
             let event_inputs_start = schedule.event_inputs.len();
             for event_type in &node.ports.event_inputs {
                 schedule
                     .event_inputs
-                    .push((event_type.new_buffer)(event_capacity));
+                    .push(EventPort::new((event_type.new_buffer)(event_capacity)));
             }
             step_of.insert(id, schedule.steps.len());
             schedule.steps.push(Step {
@@ -642,8 +642,8 @@ pub(crate) struct Schedule {
     pub audio_outputs: Vec<AudioBuffer>,
     /// Summed audio inputs of the step being run. Sized for the widest processor.
     pub audio_scratch: Vec<AudioBuffer>,
-    pub event_outputs: Vec<Box<dyn ErasedEventBuffer>>,
-    pub event_inputs: Vec<Box<dyn ErasedEventBuffer>>,
+    pub event_outputs: Vec<EventPort>,
+    pub event_inputs: Vec<EventPort>,
     /// Per device channel: the output buffers summed into it.
     pub device_sources: Vec<Vec<usize>>,
     /// Each channel of a live input that is heard, with the buffer the engine fills with its
