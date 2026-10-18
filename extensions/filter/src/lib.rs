@@ -23,8 +23,8 @@
 //! ```
 //!
 //! The filter is the first built-in effect and the pattern the others follow: `Parameter`
-//! constants next to the state, a card in [`view`], and an agent doc whose ranges a test holds
-//! to those constants.
+//! constants next to the state, a card in [`view`], and an agent doc whose table of fields the
+//! runtime writes from the schema of the state.
 //!
 //! [`view`] is the card of the filter, and the only module here that uses GPUI.
 
@@ -35,7 +35,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -55,6 +55,7 @@ pub use sound_core::{FilterCharacter, FilterSlope as Slope, FilterType};
 /// A field that a record leaves out takes its default, so `"state": {}` is the default filter.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct FilterState {
     #[serde(rename = "type")]
     pub kind: FilterType,
@@ -62,12 +63,13 @@ pub struct FilterState {
     pub cutoff_hz: f32,
     /// 0 is no peak. 1 is a strong ringing peak at the cutoff, and a narrow band or gap.
     pub resonance: f32,
-    /// How steeply it cuts past the cutoff, in dB per octave.
+    /// How steeply it cuts past the cutoff, in dB per octave. 24 is steeper and more
+    /// synth-like.
     pub slope: Slope,
-    /// Gain into a soft saturation before the filter. 0 is clean.
+    /// Gain into a soft saturation before the filter. 0 is clean. It makes quiet sounds louder
+    /// by the same dB, and bends loud ones.
     pub drive_db: f32,
-    /// Warm saturates inside the filter: a loud sound bends at the cutoff and above, a quiet
-    /// one passes clean, and full resonance rings on its own.
+    /// How the filter reacts to level.
     pub character: FilterCharacter,
     /// 0 is the sound as it came in, 1 is the filtered sound only.
     pub mix: f32,
@@ -194,18 +196,9 @@ fn apply(state: &FilterState, context: &mut BehaviourContext<'_>) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
-    /// definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

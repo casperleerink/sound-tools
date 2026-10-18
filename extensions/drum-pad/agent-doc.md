@@ -96,17 +96,9 @@ Write only the pads you change, by note. A pad you leave out is the pad of the k
 }
 ```
 
-| Field | Meaning | Values |
-| --- | --- | --- |
-| `sound` | A sound of the kit: `"kick"`, `"snare"`, `"clap"`, `"rim"`, `"hat"`, `"open_hat"`, `"tom"`, `"crash"`, `"ride"`. | Write `sound` or `sample`, not both |
-| `sample` | An audio file in `assets/audio/`, by its file name. Copy the file in first, see `agent-docs/audio.md`. | WAV or AIFF |
-| `volume_db` | The level of the pad. | -48 to 12 |
-| `pitch_semitones` | Up or down. A sound of the kit is tuned and keeps its length; a sample plays faster and higher, or slower and lower, as on a sampler. | -24 to 24 |
-| `decay_ms` | How long the pad sounds, from the hit to silence. A sound of the kit is made for this length; a sample fades out over it. | 10 to 10000 |
-| `pan` | -1 is left, 1 is right. | -1 to 1 |
-| `choke` | In the choke group: a hit of it cuts every other pad of the group. | `true` or `false` |
+{{fields drum-pad pads}}
 
-Set a sample pad's `decay_ms` a little longer than its file, else its end is faded out; the window sets it to one and a half times the file. The last 2 ms of a sample always fade to silence, and a sample plays at most 10 s. A pad whose file is not there is silent and listed in `problems.txt`, and the other pads play; it plays once the file is in `assets/audio/`.
+Copy the file of a sample pad in first, see `agent-docs/audio.md`. Set a sample pad's `decay_ms` a little longer than its file, else its end is faded out; the window sets it to one and a half times the file. The last 2 ms of a sample always fade to silence, and a sample plays at most 10 s. A pad whose file is not there is silent and listed in `problems.txt`, and the other pads play; it plays once the file is in `assets/audio/`.
 
 The volume and the pan of a pad can move over time with an automation lane of the track, named by the note of the pad: `pads.42.volume_db` or `pads.42.pan`. See `agent-docs/arrangement.md`.
 

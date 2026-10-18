@@ -32,7 +32,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State, lanes,
+    RegistryError, Scale, State, lanes, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -51,17 +51,22 @@ pub const BANDS: usize = 4;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Shape {
-    /// Takes away what is below the frequency, 12 dB per octave. Q is the peak at the corner.
+    /// Takes away what is below the frequency, 12 dB per octave. Q is the peak at the corner:
+    /// at 0.71 it is 3 dB down at the frequency.
     LowCut,
-    /// Raises or lowers everything below the frequency by the gain.
+    /// Raises or lowers everything below the frequency by the gain, half of it at the
+    /// frequency.
     LowShelf,
-    /// Raises or lowers a band around the frequency by the gain. Q is how narrow.
+    /// Raises or lowers a band around the frequency by the gain, exactly that much at the
+    /// frequency. Q is how narrow.
     Bell,
-    /// Takes one narrow band out. Q is how narrow.
+    /// Takes one narrow band out, completely at the frequency. Q is how narrow.
     Notch,
-    /// Raises or lowers everything above the frequency by the gain.
+    /// Raises or lowers everything above the frequency by the gain, half of it at the
+    /// frequency.
     HighShelf,
-    /// Takes away what is above the frequency, 12 dB per octave. Q is the peak at the corner.
+    /// Takes away what is above the frequency, 12 dB per octave. Q is the peak at the corner:
+    /// at 0.71 it is 3 dB down at the frequency.
     HighCut,
 }
 
@@ -225,8 +230,10 @@ pub const OUTPUT_GAIN: Parameter = Parameter {
 /// A field that a record leaves out takes its default, so `"state": {}` is the default EQ.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&[&OUTPUT_GAIN]))]
 pub struct EqState {
-    /// Band 1 first. A list with fewer bands gives the rest their defaults.
+    /// Band 1 first, as the card numbers them. A list with fewer bands gives the rest their
+    /// defaults.
     #[serde(deserialize_with = "bands_from_list")]
     #[schemars(with = "Vec<BandInRecord>", length(max = BANDS))]
     pub bands: [Band; BANDS],
@@ -246,16 +253,20 @@ impl Default for EqState {
 /// A band as a record writes it: a field left out takes the default of that band.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(rename = "Band")]
+#[schemars(rename = "Band", transform = ranges(&band_parameters(0)))]
 struct BandInRecord {
     /// Off, the band leaves the sound as it is and keeps its settings.
     on: Option<bool>,
     shape: Option<Shape>,
     /// The middle of a bell or a notch, or the corner of a cut or a shelf.
     frequency_hz: Option<f32>,
-    /// Only for a shelf or a bell.
+    /// How much a shelf or a bell raises (above 0) or lowers (below 0). A cut and a notch have
+    /// no gain.
     gain_db: Option<f32>,
-    /// How narrow a bell or a notch is, or the peak at the corner of a cut.
+    /// How narrow a bell or a notch is: 0.5 is wide, 4 is narrow, 18 very narrow. For a cut,
+    /// above 0.71 adds a peak at the frequency, as high as the Q: 4 is +12 dB. A shelf uses at
+    /// most 1.5 of it, for a small bump at the frequency and a dip on the other side; a higher
+    /// Q is kept in the file and sounds as 1.5.
     q: Option<f32>,
 }
 
@@ -327,34 +338,9 @@ fn apply(state: &EqState, context: &mut BehaviourContext<'_>) -> Result<(), Beha
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
-    /// definition, so they cannot drift from it. The frequency has a default per band, and its row
-    /// lists them in the order of the bands.
-    #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &[&FREQUENCIES[0], &GAIN, &Q]), Ok(()));
-        assert_eq!(check_doc_ranges(doc, &[&OUTPUT_GAIN]), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &[&GAIN, &Q]), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &[&OUTPUT_GAIN]), Ok(()));
-        let frequencies = FREQUENCIES
-            .each_ref()
-            .map(|parameter| parameter.default.to_string());
-        let shapes = SHAPES.map(|shape| format!("`\"{}\"`", snake_case(shape)));
-        let defaults = [
-            (FREQUENCIES[0].field, frequencies.join(", ")),
-            ("shape", shapes.join(", ")),
-        ];
-        for (field, default) in defaults {
-            let row = format!("| `{field}` |");
-            let row = doc.lines().find(|line| line.starts_with(&row)).unwrap();
-            assert!(row.contains(&format!("| {default} |")), "{row}");
-        }
-    }
 
     fn snake_case(shape: Shape) -> String {
         let debug = format!("{shape:?}");

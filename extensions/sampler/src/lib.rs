@@ -41,7 +41,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_media::{Audio, AudioAsset, MediaError};
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
@@ -63,8 +63,10 @@ pub const POSITION: &str = "position";
 /// sample, which is silent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct SamplerState {
-    /// The file it plays, under `assets/audio/`. None is an empty sampler, unless it has `sfz`.
+    /// The file it plays, under `assets/audio/`, by its file name, such as `"kalimba.wav"`.
+    /// Without it the sampler is silent, unless it has `sfz` or `library`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sample: Option<AudioAsset>,
     /// The SFZ instrument it plays instead of `sample`, under `assets/instruments/`. Its zones
@@ -76,14 +78,17 @@ pub struct SamplerState {
     /// plays like an SFZ instrument.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub library: Option<LibraryId>,
-    /// The key that plays the sample at its own pitch.
+    /// The key that plays the sample at its own pitch, as a note number: 60 is C4, 69 is A4.
+    /// Set it to the pitch of the sound in the file.
     pub root: Pitch,
-    /// Semitones every note plays above the pitch of its key from `root`. 0.01 is a cent.
+    /// Semitones every note plays above the pitch of its key from `root`. 0.01 is a cent, -0.5
+    /// a quarter tone down.
     pub tune: f32,
-    /// Where in the file a note starts, in seconds of the file.
+    /// Where in the file a note starts, in seconds of the file, from 0 up to its length. It
+    /// skips silence or a click at the start of a file.
     pub start_seconds: f64,
-    /// Where in the file a note ends at the latest, in seconds of the file. None is the end of
-    /// the file.
+    /// Where in the file a note ends at the latest, in seconds of the file, after
+    /// `start_seconds`. Left out, the end of the file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_seconds: Option<f64>,
     /// Plays the file backwards, from the end back to the start.
@@ -91,22 +96,23 @@ pub struct SamplerState {
     /// Repeats the part from `loop_start_seconds` to the end while a note sounds.
     #[serde(rename = "loop")]
     pub looping: bool,
-    /// Where the loop starts, in seconds of the file, from the start to the end. None is the
-    /// start.
+    /// Where the loop starts, in seconds of the file, from `start_seconds` to before
+    /// `end_seconds`. Left out, `start_seconds`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loop_start_seconds: Option<f64>,
     /// From note on to full level.
     pub attack_seconds: f32,
     /// From full level to within 0.1 % of the sustain level.
     pub decay_seconds: f32,
-    /// The level a held note settles at, as a part of full level.
+    /// The level a held note settles at, as a part of full level. 1 plays the file as it is
+    /// while the key is held. 0 makes every note a pluck that ends after its decay.
     pub sustain: f32,
     /// From note off to silence, for a note at full level.
     pub release_seconds: f32,
     /// How much the velocity of a note changes its volume: 0 plays every note at full volume,
-    /// 1 plays velocity 64 a quarter as loud as 127.
+    /// 1 plays velocity 64 a quarter as loud as 127, 0.5 plays it at 63 %.
     pub velocity_to_volume: f32,
-    /// The level of what it plays.
+    /// The level of what it plays. Set the level of a track with its `gain_db`.
     pub gain_db: f32,
 }
 
@@ -417,17 +423,9 @@ fn apply(state: &SamplerState, context: &mut BehaviourContext<'_>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges to agents, and the defaults in an example that another test
-    /// loads. They are checked against the one definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-    }
 
     /// The library doc lists every instrument of the catalog with the disk it takes,
     /// so it cannot drift from the catalog.

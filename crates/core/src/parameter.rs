@@ -6,8 +6,8 @@ use crate::State;
 
 /// One number of the saved state `S`: its field, its range, its default and its scale. A tool
 /// writes one constant per number and nothing else says them again: `validate`, `Default`, the
-/// knobs of its view, what a double click resets to, an automation lane and a test of its docs
-/// all read the constant.
+/// knobs of its view, what a double click resets to, an automation lane and, through
+/// [`crate::ranges`], the docs made from the schema all read the constant.
 ///
 /// It holds only what the built-in instruments and effects need. Units and labels are the
 /// view's business.
@@ -284,37 +284,6 @@ pub fn check_parameter_ranges<R: State, S>(
         }
     }
     Ok(())
-}
-
-/// For a tool's tests: whether the table of an agent doc gives the range of every parameter,
-/// `| min to max |`, in the row that starts with its field.
-pub fn check_doc_ranges<S>(doc: &str, parameters: &[&Parameter<S>]) -> Result<(), String> {
-    for parameter in parameters {
-        let row = doc_row(doc, parameter.field)?;
-        let range = format!("| {} to {} |", parameter.min, parameter.max);
-        if !row.contains(&range) {
-            return Err(format!("this row does not say {range}: {row}"));
-        }
-    }
-    Ok(())
-}
-
-/// [`check_doc_ranges`] for the defaults: the row of every parameter ends with `| default |`.
-pub fn check_doc_defaults<S>(doc: &str, parameters: &[&Parameter<S>]) -> Result<(), String> {
-    for parameter in parameters {
-        let row = doc_row(doc, parameter.field)?;
-        let default = format!("| {} |", parameter.default);
-        if !row.ends_with(&default) {
-            return Err(format!("this row does not end with {default}: {row}"));
-        }
-    }
-    Ok(())
-}
-
-fn doc_row<'doc>(doc: &'doc str, field: &str) -> Result<&'doc str, String> {
-    let start = format!("| `{field}` |");
-    let row = doc.lines().find(|line| line.starts_with(&start));
-    row.ok_or_else(|| format!("the doc has no row for {field}"))
 }
 
 #[cfg(test)]

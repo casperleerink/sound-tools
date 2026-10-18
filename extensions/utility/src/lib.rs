@@ -35,7 +35,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -69,14 +69,18 @@ impl Channels {
 /// which changes nothing.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct UtilityState {
     /// Turns the sound up or down.
     pub gain_db: f32,
-    /// -1 is left, 1 is right, with the pan law of a track.
+    /// -1 is left, 1 is right, with the pan law of a track: a sound keeps its loudness wherever
+    /// it is. Hard left, the left channel is 3 dB up and the right one is silent.
     pub pan: f32,
-    /// 0 is mono, 1 is the sound as it came, 2 is twice as wide.
+    /// 0 is mono, 1 is the sound as it came, 2 is twice as wide. It scales the difference of the
+    /// two channels and keeps their sum.
     pub width: f32,
-    /// The sound below [`Self::bass_mono_hz`] in mono.
+    /// The sound below [`Self::bass_mono_hz`] in mono, and the rest as wide as it was. The two
+    /// bands add up flat.
     pub bass_mono: bool,
     /// Where the mono bass ends.
     pub bass_mono_hz: f32,
@@ -85,7 +89,7 @@ pub struct UtilityState {
     pub invert_left: bool,
     /// Turns the right channel upside down.
     pub invert_right: bool,
-    /// Silence out.
+    /// Silence out. To mute the whole track, use `mute` of the track.
     pub mute: bool,
 }
 
@@ -188,18 +192,9 @@ fn apply(state: &UtilityState, context: &mut BehaviourContext<'_>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
-    /// definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

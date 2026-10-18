@@ -436,9 +436,9 @@ impl<S: State> ToolRegistration<'_, S> {
         self
     }
 
-    /// Describes the record to the code of the tools of a project: its type and docs come
-    /// from the schema of `S`, and `numbers` are those a cable or a signal moves, whose ranges
-    /// and defaults its docs give.
+    /// Describes the record to the code of the tools of a project and to the agent docs: its
+    /// type and docs come from the schema of `S`, and `numbers` are those a cable or a signal
+    /// moves. A [`crate::ranges`] transform on `S` gives the docs the range of each number.
     pub fn schema(self, numbers: &[&Parameter<S>]) -> Self
     where
         S: JsonSchema,

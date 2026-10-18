@@ -1332,40 +1332,17 @@ mod tests {
         assert_eq!(reordered(&[5, 10, 10, 40], 3, 1), Some(vec![0, 2, 3, 1]));
     }
 
-    /// The ranges are written once, in the states. The agent docs give the same numbers, so they
-    /// cannot drift from them. The doc of the master sends an agent to the doc of the Limiter
-    /// effect for the fields they share, so that doc must give the ranges of the master too.
+    /// The ranges are written once, in the states. The arrangement doc writes those of the
+    /// mixer and the master by hand, so it must give the same numbers.
     #[test]
-    fn the_docs_give_the_ranges_of_the_mixer_and_the_limiter() {
-        let arrangement = include_str!("../agent-doc.md");
-        let limiter = include_str!("../../limiter/agent-doc.md");
-        let docs = [
-            (
-                "agent-doc.md",
-                arrangement,
-                &[TrackState::PAN, LimiterState::LOOKAHEAD_MS][..],
-            ),
-            (
-                "the Limiter doc",
-                limiter,
-                &[
-                    LimiterState::GAIN_DB,
-                    LimiterState::CEILING_DB,
-                    LimiterState::RELEASE_MS,
-                ][..],
-            ),
-        ];
-        for (name, doc, ranges) in docs {
-            for (min, max) in ranges {
-                let range = format!("{min} to {max}");
-                assert!(doc.contains(&range), "{name} does not say {range}");
-            }
+    fn the_doc_gives_the_ranges_of_the_mixer() {
+        let doc = include_str!("../agent-doc.md");
+        for (min, max) in [TrackState::PAN, LimiterState::LOOKAHEAD_MS] {
+            let range = format!("{min} to {max}");
+            assert!(doc.contains(&range), "agent-doc.md does not say {range}");
         }
         let most = format!("up to {}", TrackState::MAX_GAIN_DB);
-        assert!(
-            arrangement.contains(&most),
-            "agent-doc.md does not say {most}"
-        );
+        assert!(doc.contains(&most), "agent-doc.md does not say {most}");
     }
 
     #[test]

@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 
+use super::fields::RecordSchema;
 use super::registry::{AgentDoc, AgentDocText};
 use super::storage::layout;
 use super::{Project, ProjectError};
@@ -79,8 +80,38 @@ impl Project {
         format!("{GENERATED_NOTE}{}", self.fill(doc.markdown.trim_end()))
     }
 
-    /// Fills `{{extensions}}` in a generated text.
+    /// Fills `{{extensions}}` and `{{fields <tool> <path>}}` in a generated text.
     fn fill(&self, text: &str) -> String {
+        self.fill_fields(&self.fill_extensions(text))
+    }
+
+    /// `{{fields reverb}}` is the table of the fields of a `reverb` record, `{{fields eq bands}}`
+    /// that of a band, from the schema of the tool. A placeholder that names no such tool or
+    /// path stays, and the test of the docs fails on it.
+    fn fill_fields(&self, text: &str) -> String {
+        const START: &str = "{{fields ";
+        let mut filled = String::new();
+        let mut rest = text;
+        while let Some(start) = rest.find(START) {
+            let after = &rest[start + START.len()..];
+            let Some(end) = after.find("}}") else {
+                break;
+            };
+            let (tool, path) = after[..end].split_once(' ').unwrap_or((&after[..end], ""));
+            let schema = (self.registry.definition(tool)).and_then(|tool| tool.schema.as_ref());
+            let table = schema.and_then(|schema| RecordSchema::new(&schema.schema).table(path));
+            filled.push_str(&rest[..start]);
+            match table {
+                Some(table) => filled.push_str(&table),
+                None => filled.push_str(&rest[start..start + START.len() + end + 2]),
+            }
+            rest = &after[end + 2..];
+        }
+        filled.push_str(rest);
+        filled
+    }
+
+    fn fill_extensions(&self, text: &str) -> String {
         // Every extension of this runtime, as a new project lists them: in a project that
         // lists fewer, the example of `project.json` is the edit that enables the rest. Laid
         // out as the runtime writes the file, which puts a long list on several lines.

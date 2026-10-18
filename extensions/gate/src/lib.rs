@@ -16,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, SIDECHAIN_INPUT};
 
@@ -30,6 +30,7 @@ pub const EXTENSION: &str = "gate";
 /// A field that a record leaves out takes its default, so `"state": {}` is the default gate.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct GateState {
     /// The peak level in dBFS under which the gate closes.
     pub threshold_db: f32,
@@ -39,11 +40,11 @@ pub struct GateState {
     pub hold_ms: f32,
     /// How fast it closes after the hold: the time to 63 % of the way.
     pub release_ms: f32,
-    /// How far it turns the sound down when closed. 0 does not gate.
+    /// How far it turns the sound down when closed. 0 does not gate, so only the shaper works.
     pub range_db: f32,
-    /// Gain on the start of each hit. Below 0 softens it.
+    /// Gain on the start of each hit. Above 0 is punchier, below 0 softer.
     pub transient_db: f32,
-    /// Gain on the tail of each hit. Below 0 makes it shorter.
+    /// Gain on the tail of each hit. Above 0 is longer and roomier, below 0 shorter and drier.
     pub sustain_db: f32,
 }
 
@@ -174,20 +175,4 @@ fn apply(state: &GateState, context: &mut BehaviourContext<'_>) -> Result<(), Be
     context.automation(gate, Gate::AUTOMATION);
     context.output(AUDIO_OUTPUT, OutputEndpoint::new(gate, Gate::OUTPUT));
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges};
-
-    use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the
-    /// one definition, so they cannot drift from it.
-    #[test]
-    fn the_doc_gives_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 }
