@@ -8,5 +8,11 @@
 	<!-- CLAP and VST 3 plugins of other makers are signed by them, not by us, and must load. -->
 	<key>com.apple.security.cs.disable-library-validation</key>
 	<true/>
+	<!-- Code written at run time. Without them the hardened runtime makes Bun fall back to its
+	     interpreter, about seven times slower, and plugins that compile their DSP fail. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
 </dict>
 </plist>
