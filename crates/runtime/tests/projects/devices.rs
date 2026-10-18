@@ -278,6 +278,26 @@ fn every_field_of_a_built_in_record_has_a_doc() {
     assert!(undocumented.is_empty(), "{undocumented:#?}");
 }
 
+/// So the docs of a built-in record give the range of every number a lane or a signal moves:
+/// the type that holds it has a `ranges` transform with the right parameters.
+#[test]
+fn every_number_a_lane_moves_has_its_range_in_the_docs() {
+    let mut missing = Vec::new();
+    for tool in runtime::tool_schemas().unwrap() {
+        let record = sound_core::RecordSchema::new(&tool.schema);
+        for (number, _) in &tool.numbers {
+            let field = record.property(&number.field);
+            let range = field.and_then(|field| record.field(&number.field, field).range);
+            let ends = range.map(|range| (range.min, range.max));
+            let expected = (number.range.min.to_string(), number.range.max.to_string());
+            if ends != Some(expected) {
+                missing.push(format!("{}: {}", tool.tool, number.field));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "{missing:#?}");
+}
+
 /// Types an agent's tool must get right, checked with `bun check` next to the SDK of the
 /// built-in tools, as the doc for agents says to check a tool.
 #[test]

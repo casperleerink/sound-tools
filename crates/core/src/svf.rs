@@ -125,7 +125,8 @@ pub enum FilterCharacter {
     #[default]
     Clean,
     /// A loud sound bends inside the filter: its peak compresses, it darkens and gains odd
-    /// harmonics. A quiet one passes as through clean. Full resonance rings on its own.
+    /// harmonics. A quiet one passes as through clean. Full resonance rings on its own, a
+    /// steady tone at the cutoff.
     Warm,
 }
 

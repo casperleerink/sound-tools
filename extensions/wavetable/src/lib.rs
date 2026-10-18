@@ -86,63 +86,13 @@ fn apply(state: &WavetableState, context: &mut BehaviourContext<'_>) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use serde::Serialize;
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
-    use sound_core::{FilterType, LfoShape, Parameter};
+    use sound_core::Parameter;
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-    use crate::state::{
-        Adsr, Effect, Filter, LfoSettings, Oscillator, Routing, Sub, Unison, VoiceMode, Voicing,
-    };
+    use crate::state::{Adsr, Filter, LfoSettings, Oscillator, Sub, Unison, Voicing};
 
     const DOC: &str = include_str!("../agent-doc.md");
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the
-    /// one definition, so they cannot drift from it.
-    #[test]
-    fn the_doc_gives_the_range_and_the_default_of_every_parameter() {
-        fn check<S>(heading: &str, parameters: &[&Parameter<S>]) {
-            let start = DOC.find(&format!("{heading}\n")).expect(heading);
-            let section = &DOC[start + heading.len()..];
-            let section = &section[..section.find("\n## ").unwrap_or(section.len())];
-            assert_eq!(check_doc_ranges(section, parameters), Ok(()), "{heading}");
-            assert_eq!(check_doc_defaults(section, parameters), Ok(()), "{heading}");
-        }
-        check("## Oscillators", &Oscillator::PARAMETERS);
-        check("## Sub", &Sub::PARAMETERS);
-        check("## Unison", &Unison::PARAMETERS);
-        check("## Filters", &Filter::PARAMETERS);
-        check("## Envelopes", &Adsr::PARAMETERS);
-        check("## LFOs", &LfoSettings::PARAMETERS);
-        check("## Voicing", &Voicing::PARAMETERS);
-        check("## Matrix", &Route::PARAMETERS);
-        check("## Output", &WavetableState::PARAMETERS);
-    }
-
-    /// Every name a record can hold is in the doc, as it is saved.
-    #[test]
-    fn the_doc_names_every_choice() {
-        fn names<T: Serialize>(all: &[T]) -> Vec<String> {
-            let name = |value| serde_json::to_string(value).unwrap().replace('"', "");
-            all.iter().map(name).collect()
-        }
-        let all = [
-            names(&Table::ALL),
-            names(&Effect::ALL),
-            names(&Source::ALL),
-            names(&Destination::ALL),
-            names(&LfoShape::ALL),
-            names(&Routing::ALL),
-            names(&VoiceMode::ALL),
-            names(&FilterType::ALL),
-        ];
-        for name in all.iter().flatten() {
-            let quoted = format!("`\"{name}\"`");
-            let bare = format!("`{name}`");
-            assert!(DOC.contains(&quoted) || DOC.contains(&bare), "{name}");
-        }
-        assert!(DOC.contains("`amp_level`"));
-    }
 
     /// The doc says the pad of its example keeps the routes of the default patch first.
     #[test]

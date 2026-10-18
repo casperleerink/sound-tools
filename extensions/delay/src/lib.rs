@@ -39,7 +39,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -60,22 +60,27 @@ pub const LONGEST_SECONDS: f32 = 4.0;
 /// A field that a record leaves out takes its default, so `"state": {}` is the default delay.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct DelayState {
-    /// Whether the time is a note division that follows the tempo, or `time_ms`.
+    /// On, the time is `division` and `feel` at the tempo of the project, and follows it. Off,
+    /// the time is `time_ms`.
     pub sync: bool,
-    /// The note of a synced time.
+    /// The note of a synced time. `"1/4"` is one beat of the tempo.
     pub division: Division,
-    /// Straight, dotted or triplet, for a synced time.
+    /// A synced time is the note, one and a half of it (`"dotted"`), or two thirds of it
+    /// (`"triplet"`).
     pub feel: Feel,
-    /// The time when it does not follow the tempo.
+    /// The time from the sound to its first repeat, when `sync` is off.
     pub time_ms: f32,
-    /// How much of each repeat comes back as the next. 0 is one repeat.
+    /// How much of each repeat comes back as the next. 0 is one repeat, 0.5 halves each, 0.95
+    /// goes on for a long time and always dies away.
     pub feedback: f32,
-    /// The repeats go from left to right and back, from both sides of the sound as one.
+    /// The repeats go left, right, left, from both sides of the sound as one. Off, each side
+    /// repeats on its own side.
     pub ping_pong: bool,
-    /// Each repeat is cut below this once more.
+    /// Each repeat is cut below this once more, so later repeats are thinner.
     pub low_cut_hz: f32,
-    /// Each repeat is cut above this once more.
+    /// Each repeat is cut above this once more, so later repeats are darker.
     pub high_cut_hz: f32,
     /// 0 is the sound as it came in, 1 is the repeats only.
     pub mix: f32,
@@ -203,18 +208,9 @@ fn apply(state: &DelayState, context: &mut BehaviourContext<'_>) -> Result<(), B
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
-    /// definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

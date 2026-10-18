@@ -25,7 +25,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT};
 
@@ -43,9 +43,10 @@ pub enum Curve {
     Soft,
     /// Rounds off earlier and more gently than soft, and never flattens: the softest.
     Tape,
-    /// Leans to one side, so it adds even harmonics too, as a tube stage does.
+    /// Leans to one side, so it adds even harmonics too, as a tube stage does: the warmest.
     Tube,
-    /// Clean up to a ceiling, then a short round corner: a clipper.
+    /// Clean up to a ceiling, then a short round corner: a clipper. It levels off at most half
+    /// again above the ceiling, and the drive lowers the ceiling.
     Clip,
 }
 
@@ -60,16 +61,19 @@ impl Curve {
 /// saturator.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
+#[schemars(transform = ranges(&PARAMETERS))]
 pub struct SaturatorState {
     pub curve: Curve,
-    /// Gain into the curve. The output is turned down by what it adds to a sine at -12 dBFS.
+    /// Gain into the curve. The output is turned down by what it adds to a sine at -12 dBFS,
+    /// so the level stays.
     pub drive_db: f32,
-    /// A tilt after the curve: above 0 the highs go up and the lows down by half of it each,
-    /// around 1 kHz. Below 0 the other way.
+    /// A tilt after the curve, around 1 kHz: above 0 the highs go up and the lows down by half
+    /// of it each, which is brighter. Below 0 is darker.
     pub tone_db: f32,
     /// Gain on the saturated sound.
     pub output_db: f32,
-    /// 0 is the sound as it came in, 1 is the saturated sound only.
+    /// 0 is the sound as it came in, 1 is the saturated sound only. Between is parallel
+    /// saturation.
     pub mix: f32,
 }
 
@@ -171,18 +175,9 @@ fn apply(state: &SaturatorState, context: &mut BehaviourContext<'_>) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_defaults, check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
-
-    /// The agent doc gives the ranges and the defaults to agents. They are checked against the one
-    /// definition, so they cannot drift from it.
-    #[test]
-    fn the_docs_give_the_range_and_the_default_of_every_parameter() {
-        let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS), Ok(()));
-        assert_eq!(check_doc_defaults(doc, &PARAMETERS), Ok(()));
-    }
 
     #[test]
     fn the_default_of_every_parameter_is_valid_and_the_ends_of_its_range_are_too() {

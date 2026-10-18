@@ -25,7 +25,7 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
-    RegistryError, Scale, State,
+    RegistryError, Scale, State, ranges,
 };
 use sound_media::AudioAsset;
 use sound_notes::{AUDIO_OUTPUT, NOTES_INPUT, Pitch};
@@ -425,12 +425,12 @@ impl Default for DrumPadState {
 /// A pad as a record writes it: any field may be left out, and it plays a sound or a sample.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(rename = "Pad")]
+#[schemars(rename = "Pad", transform = ranges(&PARAMETERS[0].each_ref()))]
 struct PadRecord {
-    /// A sound of the default kit.
+    /// A sound of the kit. A pad plays `sound` or `sample`, not both.
     #[serde(skip_serializing_if = "Option::is_none")]
     sound: Option<Sound>,
-    /// A file under `assets/audio/`, instead of `sound`.
+    /// A WAV or AIFF file under `assets/audio/`, by its file name, instead of `sound`.
     #[serde(skip_serializing_if = "Option::is_none")]
     sample: Option<AudioAsset>,
     /// The level of the pad, in dB.
@@ -593,7 +593,7 @@ fn apply(state: &DrumPadState, context: &mut BehaviourContext<'_>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use sound_core::testing::{check_doc_ranges, check_parameter_ranges};
+    use sound_core::testing::check_parameter_ranges;
 
     use super::*;
 
@@ -729,12 +729,11 @@ mod tests {
         assert_eq!(pad.decay_ms, 10.0);
     }
 
-    /// The agent doc gives the kit and the ranges to agents. They are checked against the one
-    /// definition, so they cannot drift from it.
+    /// The agent doc gives the kit to agents. It is checked against the one definition, so it
+    /// cannot drift from it.
     #[test]
-    fn the_docs_give_the_kit_and_the_range_of_every_field() {
+    fn the_doc_gives_the_kit() {
         let doc = include_str!("../agent-doc.md");
-        assert_eq!(check_doc_ranges(doc, &PARAMETERS[0].each_ref()), Ok(()));
         for (pad, kit) in KIT.iter().enumerate() {
             let choke = if kit.choke { "yes" } else { "no" };
             let row = format!(

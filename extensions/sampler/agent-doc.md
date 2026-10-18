@@ -18,41 +18,13 @@ A new track that plays a sample: copy the file in, write the track, then its ins
 ```json state/arrangement/kalimba/instrument.json
 {
   "tool": "sampler",
-  "state": {
-    "sample": "kalimba.wav",
-    "root": 60,
-    "tune": 0.0,
-    "start_seconds": 0.0,
-    "reverse": false,
-    "loop": false,
-    "attack_seconds": 0.002,
-    "decay_seconds": 0.4,
-    "sustain": 1.0,
-    "release_seconds": 0.3,
-    "velocity_to_volume": 0.5,
-    "gain_db": 0.0
-  }
+  "state": {"sample": "kalimba.wav", "root": 72}
 }
 ```
 
-These are the defaults, with a sample. A field you leave out takes its default, so `{"sample": "kalimba.wav"}` is enough. Without `sample` the Sampler is silent.
+The kalimba in this file sounds a C5, so `root` is 72. `{"sample": "kalimba.wav"}` alone plays it with every other field at its default. Without `sample` the Sampler is silent.
 
-| Field | Meaning | Values |
-| --- | --- | --- |
-| `sample` | The file under `assets/audio/` it plays. | a file name, such as `"kalimba.wav"` |
-| `root` | The key that plays the file at its own pitch, as a note number: 60 is C4, 69 is A4. Set it to the pitch of the sound in the file. | 0 to 127 |
-| `tune` | Semitones every note plays higher, on top of `root`. Fractions tune finer: 0.01 is one cent, -0.5 a quarter tone down. | -24 to 24 |
-| `start_seconds` | Where in the file every note starts. Skip silence or a click at the start of a file with it. | 0 up to the length of the file |
-| `end_seconds` | Where in the file a note stops at the latest. Leave it out to play to the end of the file. | after `start_seconds` |
-| `reverse` | Plays the file backwards. | `true` or `false` |
-| `loop` | Repeats the part from `loop_start_seconds` to the end while the note sounds. | `true` or `false` |
-| `loop_start_seconds` | Where the loop starts. Leave it out to loop from `start_seconds`. | from `start_seconds` to before `end_seconds` |
-| `attack_seconds` | From note on to full level. | 0.001 to 10 |
-| `decay_seconds` | From full level down to the sustain level. | 0.001 to 10 |
-| `sustain` | The level a held note settles at. 1 plays the file as it is while the key is held. 0 makes every note a pluck that ends after its decay. | 0 to 1 |
-| `release_seconds` | From note off to silence. | 0.001 to 10 |
-| `velocity_to_volume` | How much velocity changes the volume. 0 plays every note at full volume. 1 plays velocity 64 a quarter as loud as 127, 0.5 plays it at 63 %. | 0 to 1 |
-| `gain_db` | Output gain in dB. Set the level of a track with its `gain_db`. | -48 to 24 |
+{{fields sampler}}
 
 A note plays from `start_seconds` to `end_seconds`, or until its release ends, whichever is first. With `reverse` it plays from `end_seconds` (or the end of the file) back to `start_seconds`. A key far above the root plays the file fast and short.
 
@@ -84,17 +56,7 @@ An SFZ instrument is a folder of samples and a text file, `.sfz`, that says whic
 ```json state/arrangement/cello/instrument.json
 {
   "tool": "sampler",
-  "state": {
-    "sfz": "cello/cello-sustain.sfz",
-    "root": 60,
-    "start_seconds": 0.0,
-    "attack_seconds": 0.002,
-    "decay_seconds": 0.4,
-    "sustain": 1.0,
-    "release_seconds": 0.3,
-    "velocity_to_volume": 0.5,
-    "gain_db": -3.0
-  }
+  "state": {"sfz": "cello/cello-sustain.sfz", "gain_db": -3.0}
 }
 ```
 
