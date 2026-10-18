@@ -115,7 +115,6 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Time is integers: frames for the engine, ticks for music. Saved positions are ticks or bars, never floats or seconds.
 - Time signatures are runs of whole bars and sections start at a bar number, so neither falls inside a bar. Rejected: ticks.
 - Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would need a derive that moves every clip, which goes wrong for clips off the bar lines.
-- Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
 - The core holds no scheduled events: timeline processors make theirs from the transport, so a seek has nothing to invalidate.
 - The loop goes back by a seek on the frame of its end, so processors need no loop code. With latency that leaves a gap as long as the latency. Rejected: wrapping each processor ahead of the device, far more transport code.
 - The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.
@@ -145,7 +144,6 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Each automated device gets its own small player on the track, so it sees that device's latency lead and its events need no device id.
 - A player sends every lane every block, also while stopped, and a number that hears nothing goes back to its record. Rejected: sending only what moved, as the expression lanes do, because a removed player cannot say it is gone.
 - Where a lane bends inside a block, the engine plays the device's block in pieces, so no device needs code for it.
-- Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
 - A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.
 - An audio clip plays at its file's speed, so a tempo change moves only its start. Every audio clip edge and jump gets a short ramp, so nothing clicks.
 - Selection, snap, zoom, scroll and the clipboard are interface state: not saved, no undo step, invisible to agents. A file is already how an agent shares a clip.
@@ -212,7 +210,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
 - The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
 - Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
-- No error tracking in the cloud. The window's stdout and stderr go to `log.txt` in the support folder, which the composer can send.
+- No error tracking in the cloud; the composer can send the window's `log.txt`.
 
 ## The agent sidebar
 
@@ -221,7 +219,6 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - The sidebar runs Claude Code as a child process in the project folder, editing files like a terminal agent. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is the way to add more agents later.
 - The window has a generic left panel slot and names no agent type.
 - Each message is one request: one undo step.
-- The thread state is built from provider-neutral events and holds no process, so tests feed it events.
 - Threads, settings and whether the panel is open are kept per machine, never in the project, so an agent cannot change the interface or raise its own access by editing a file.
 - The provider keeps the conversation; the app keeps only its session id and a log to show it.
 - The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling `claude`: 215 MB more per download, and an app release per version.
@@ -236,6 +233,7 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
+- **Every record the SDK reaches is described once, by its Rust type** (`schemars`): `sdk.ts` types it, with doc comments and `Parameter` ranges as TSDoc, and the tool's own check runs on a device's settings as the code loads. A parent may name its children's tools for TypeScript to check. Rejected: hand-written schemas, which drift.
 - **A sound plays built-in devices** as engine processors between stages of its code: the engine compensates their latency. So none in instruments or feedbacks. Rejected: devices as signals code.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
