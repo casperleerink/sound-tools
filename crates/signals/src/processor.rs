@@ -884,8 +884,9 @@ impl Processor for Signals {
         for (index, exports) in self.exports[0].iter().enumerate().take(exported) {
             let outputs = context.audio_outputs.get(Self::export(index));
             for (out, channel) in outputs.into_iter().zip(exports) {
+                // A fade between two values near the ends of `f32` overflows.
                 for (sample, exported) in out.iter_mut().zip(channel) {
-                    *sample = *exported;
+                    *sample = if exported.is_finite() { *exported } else { 0.0 };
                 }
             }
         }
