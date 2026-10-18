@@ -9,7 +9,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 | Extension | A Rust crate that registers tools, views, device offers and agent docs through the public SDK. Bundled extensions use the same SDK a user extension would. |
 | Plugin | A third-party audio plugin (CLAP, VST 3). Never our own extensions. |
 | Tool | A composer-facing capability an extension defines. In code, a tool is its saved state type. |
-| Tool of the project | A tool a project defines itself in TypeScript, under `extensions/` in its folder, with no build. |
+| Tool of the project | A tool a project defines in TypeScript under `extensions/`, with no build. |
 | Instance | One use of a tool in a project, with its own record. |
 | Record | The saved JSON state of one instance, one file in `state/`. |
 | Behaviour | A function from the state of an instance to what it needs in the engine: processors, updates, connections, ports. |
@@ -144,7 +144,6 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - A lane is a straight line on the knob's travel, so a sweep sounds even and the knob and the lane agree.
 - Each automated device gets its own small player on the track, so it sees that device's latency lead and its events need no device id.
 - A player sends every lane every block, also while stopped, and a number that hears nothing goes back to its record. Rejected: sending only what moved, as the expression lanes do, because a removed player cannot say it is gone.
-- Where a lane bends inside a block, the engine plays the device's block in pieces, so no device needs code for it.
 - Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
 - A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.
 - An audio clip plays at its file's speed, so a tempo change moves only its start. Every audio clip edge and jump gets a short ramp, so nothing clicks.
@@ -236,7 +235,7 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
-- **Every record the SDK reaches is described once, by its Rust type** (`schemars`), for `sdk.ts`, the agent docs' field tables and checking a device's settings on load. A parent may name its children's tools for TypeScript to check. Rejected: hand-written ones, which drift.
+- **Every record the SDK reaches is described once, by its Rust type** (`schemars`), for `sdk.ts`, the agent docs and device checks. A parent may name its children's tools for TypeScript to check, a tool of the project by what `tool` returns. Rejected: hand-written types, which drift; generating a project tool's, a second load.
 - **A sound plays built-in devices** as engine processors between stages of its code: the engine compensates their latency. So none in instruments or feedbacks. Rejected: devices as signals code.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
