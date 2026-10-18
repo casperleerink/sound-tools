@@ -200,7 +200,7 @@ function described(spec: Spec, file: string) {
       keys: spec.onKey !== undefined,
       notes: spec.onNotes !== undefined,
       behaviour: spec.behaviour !== undefined,
-      children: spec.children ?? {},
+      children: spec.children,
     },
     sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
     card: made(() => draw(spec, false)),

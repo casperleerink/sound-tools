@@ -142,7 +142,16 @@ impl Iterator for Rounds<'_> {
 /// When a launch takes effect while the transport plays. While it does not, a launch takes
 /// effect at once.
 #[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Quantize {

@@ -477,7 +477,7 @@ pub fn has_bun() -> bool {
 
 /// The Bun the app ships, else Bun on the `PATH`, else where its installer puts it. An app
 /// opened from the Finder has a short `PATH`.
-fn bun_program() -> Option<PathBuf> {
+pub fn bun_program() -> Option<PathBuf> {
     let bun = format!("bun{}", std::env::consts::EXE_SUFFIX);
     let on_path = std::env::var_os("PATH")
         .into_iter()
@@ -561,82 +561,5 @@ mod tests {
         assert!(project.path().join(FOLDER).join("sdk.ts").is_file());
         // The runtime's own files are no tool.
         assert!(tool_files(&project.path().join(FOLDER)).is_empty());
-    }
-
-    /// A device as the reverb is one, with a number a signal moves and a toggle.
-    #[derive(Default, Deserialize, schemars::JsonSchema)]
-    #[serde(deny_unknown_fields, default)]
-    struct Reverb {
-        mix: f32,
-        freeze: bool,
-    }
-
-    /// One as the filter is, with a choice.
-    #[derive(Default, Deserialize, schemars::JsonSchema)]
-    #[serde(deny_unknown_fields, default)]
-    struct Filter {
-        #[serde(rename = "type")]
-        kind: FilterType,
-        cutoff_hz: f32,
-    }
-
-    #[derive(Default, Deserialize, schemars::JsonSchema)]
-    #[serde(rename_all = "snake_case")]
-    enum FilterType {
-        #[default]
-        LowPass,
-        HighPass,
-    }
-
-    /// The device `tool` of the record `S`, whose numbers that end in `_hz` or are `mix` a
-    /// signal moves.
-    fn device<S: serde::de::DeserializeOwned + schemars::JsonSchema>(
-        tool: &'static str,
-    ) -> ToolSchema {
-        let schema = schemars::schema_for!(S).to_value();
-        let fields = (schema["properties"].as_object().unwrap().keys())
-            .filter(|field| field.ends_with("_hz") || *field == "mix");
-        let numbers = fields.map(|field| {
-            let range = sound_core::ValueRange::linear(0.0, 1.0);
-            let field = field.as_str().into();
-            (sound_core::ParameterInfo { field, range }, 0.3)
-        });
-        ToolSchema {
-            tool,
-            numbers: numbers.collect(),
-            schema,
-            in_code: true,
-            check: |state| {
-                serde_json::from_value::<S>(state)
-                    .map(drop)
-                    .map_err(|error| error.to_string())
-            },
-        }
-    }
-
-    #[test]
-    fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
-        let Some(bun) = bun_program() else {
-            eprintln!("skipped: Bun is not installed");
-            return;
-        };
-        let project = tempfile::tempdir().unwrap();
-        let extensions = project.path().join(FOLDER);
-        std::fs::create_dir(&extensions).unwrap();
-        write_sdk(
-            &extensions,
-            &[device::<Reverb>("reverb"), device::<Filter>("filter")],
-        )
-        .unwrap();
-        let types = include_str!("../tests/sdk-types.ts");
-        std::fs::write(extensions.join("types.ts"), types).unwrap();
-        // As the doc for agents says to check a tool.
-        let checked = sound_core::process::background_command(bun)
-            .args(["check", "-p", FOLDER])
-            .current_dir(project.path())
-            .output()
-            .unwrap();
-        let said = String::from_utf8_lossy(&checked.stdout);
-        assert!(checked.status.success(), "{said}");
     }
 }

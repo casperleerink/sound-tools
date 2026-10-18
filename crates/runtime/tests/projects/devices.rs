@@ -1,11 +1,14 @@
 //! Built-in devices that a tool of the project plays inside its sound.
 
+use serde_json::Value;
+
 use crate::support::{Harness, write};
 
 /// `dark` plays noise through the built-in filter, its cutoff a knob of its own. `aligned`
 /// takes the filter, which reports a latency, at its dry mix away from what goes into it, with
 /// both sides made loud by a knob far past what a sound may play.
-/// `rig` plays its child `hiss` through its child `room`, which it names.
+/// `rig` plays its child `hiss` through its child `room`, which it names. `alone` names no
+/// child.
 const TOOLS: &str = r#"import { devices, knob, noise, tool, type Declaration } from "./sdk";
 
 tool({
@@ -56,6 +59,16 @@ tool({
       { from: { child: "room" }, to: { port: "audio" } },
     ],
   }),
+});
+
+tool({
+  name: "alone",
+  title: "Alone",
+  when: "Never",
+  doc: "Has no children.",
+  state: {},
+  children: {},
+  behaviour: () => ({ connections: [] }),
 });
 "#;
 
@@ -210,28 +223,80 @@ fn a_child_of_another_tool_than_its_parent_names_is_a_problem_of_the_parent() {
     );
 }
 
-/// So an agent reads in `sdk.ts` what each field of a built-in record does: from its doc
-/// comment, its `Parameter` or its default.
 #[test]
-fn every_field_of_a_built_in_record_has_its_doc_in_the_sdk() {
+fn a_child_of_a_parent_that_names_none_is_a_problem_of_the_parent() {
+    let records = [
+        ("state/alone/instance.json", record("alone", "{}")),
+        ("state/alone/stray.json", record("hiss", "{}")),
+    ];
+    let records: Vec<(&str, &str)> = (records.iter())
+        .map(|(path, record)| (*path, record.as_str()))
+        .collect();
+    let Some(harness) = project("alone", &records) else {
+        return;
+    };
+    let problems: Vec<String> = (harness.project.problems().into_iter())
+        .map(|problem| format!("{}: {}", problem.path, problem.message))
+        .collect();
+    assert_eq!(
+        problems,
+        ["state/alone/instance.json: its child stray is none of its `children`, which name none"]
+    );
+}
+
+/// So an agent reads in `sdk.ts` what each field of a built-in record does: every field has a
+/// doc comment, its own or its type's.
+#[test]
+fn every_field_of_a_built_in_record_has_a_doc() {
+    let mut undocumented = Vec::new();
+    for tool in runtime::tool_schemas().unwrap() {
+        let defs = &tool.schema["$defs"];
+        let def = |schema: &Value| {
+            let name = schema["$ref"].as_str()?.strip_prefix("#/$defs/")?;
+            Some(&defs[name])
+        };
+        // Every object of the record: its own, and each of its types.
+        let objects = [&tool.schema]
+            .into_iter()
+            .chain(defs.as_object().into_iter().flat_map(|defs| defs.values()));
+        for object in objects {
+            for (name, property) in object["properties"].as_object().into_iter().flatten() {
+                // `Option<T>` is `T` or `null`.
+                let types = [property]
+                    .into_iter()
+                    .chain(property["anyOf"].as_array().into_iter().flatten());
+                let documented = types
+                    .flat_map(|schema| [Some(schema), def(schema)])
+                    .flatten()
+                    .any(|schema| schema["description"].is_string());
+                if !documented {
+                    undocumented.push(format!("{}: {name}", tool.tool));
+                }
+            }
+        }
+    }
+    assert!(undocumented.is_empty(), "{undocumented:#?}");
+}
+
+/// Types an agent's tool must get right, checked with `bun check` next to the SDK of the
+/// built-in tools, as the doc for agents says to check a tool.
+#[test]
+fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
+    let Some(bun) = sound_typescript::bun_program() else {
+        eprintln!("skipped: Bun is not installed");
+        return;
+    };
     let project = tempfile::tempdir().unwrap();
-    std::fs::create_dir(project.path().join("extensions")).unwrap();
+    let extensions = project.path().join("extensions");
+    std::fs::create_dir(&extensions).unwrap();
     let schemas = runtime::tool_schemas().unwrap();
     assert!(sound_typescript::Extensions::load(project.path(), &schemas).is_some());
-    let sdk = std::fs::read_to_string(project.path().join("extensions/sdk.ts")).unwrap();
-    let records = sdk.split("// Built-in tools").nth(1).unwrap();
-    let records = records.split("export interface Tools").next().unwrap();
-    let lines: Vec<&str> = records.lines().collect();
-    let field = |line: &str| {
-        let line = line.trim_start();
-        let name = line.split(['?', ':']).next().unwrap_or_default();
-        line.starts_with(|c: char| c.is_ascii_lowercase())
-            && line.contains(':')
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    };
-    let undocumented: Vec<&str> = (lines.windows(2))
-        .filter(|pair| field(pair[1]) && !pair[0].trim_end().ends_with("*/"))
-        .map(|pair| pair[1].trim())
-        .collect();
-    assert!(undocumented.is_empty(), "{undocumented:#?}");
+    write(&extensions, "types.ts", include_str!("sdk-types.ts"));
+    let checked = sound_core::process::background_command(bun)
+        .args(["check", "-p", "extensions"])
+        .current_dir(project.path())
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&checked.stdout);
+    assert!(checked.status.success(), "{said}");
 }

@@ -106,6 +106,7 @@ pub struct SamplerState {
     /// How much the velocity of a note changes its volume: 0 plays every note at full volume,
     /// 1 plays velocity 64 a quarter as loud as 127.
     pub velocity_to_volume: f32,
+    /// The level of what it plays.
     pub gain_db: f32,
 }
 

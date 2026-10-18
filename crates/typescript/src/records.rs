@@ -1,7 +1,8 @@
 //! The part of `sdk.ts` the runtime writes: the record of each built-in tool as a TypeScript
 //! type, made from the JSON Schema of its Rust type, the `Tools` that names them, and the
-//! `devices` a sound plays through. A doc comment of a field is its TSDoc, with its range and
-//! default from its `Parameter`, so the SDK never says other than the Rust check.
+//! `devices` a sound plays through. Each object type is written once, as a named type. A doc
+//! comment of a field is its TSDoc, with its range and default from its `Parameter`, so the
+//! SDK never says other than the Rust check.
 
 use std::collections::BTreeMap;
 
@@ -10,8 +11,6 @@ use sound_core::{ParameterInfo, Scale, ToolSchema};
 
 use crate::sequencer;
 
-/// The deepest a type nests, so a schema that names itself still ends.
-const DEEPEST: usize = 12;
 /// A default longer than this, such as a list of bands, is left out of a doc.
 const LONGEST_DEFAULT: usize = 48;
 
@@ -27,19 +26,7 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
 ",
     );
     for schema in &tools {
-        let numbers: BTreeMap<String, &(ParameterInfo, f32)> = (schema.numbers.iter())
-            .map(|number| (normalized(&number.0.field), number))
-            .collect();
-        let writer = Writer {
-            defs: schema.schema.get("$defs").and_then(Value::as_object),
-            numbers,
-        };
-        let body = writer.object_or_type(&schema.schema, "", 0);
-        text.push_str(&format!(
-            "\n/** The `state` of a record of the built-in `{}`. */\nexport type {} = {body};\n",
-            schema.tool,
-            type_name(schema.tool),
-        ));
+        text.push_str(&Writer::new(schema).types());
     }
     text.push_str(
         "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * and the live controls (`live`) and triggers (`trigger`) a parent plays.\n */\nexport interface Tools {\n",
@@ -50,20 +37,15 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
             false => names.join(" | "),
         };
         let number = names(
-            schema
-                .numbers
-                .iter()
+            (schema.numbers.iter())
                 .map(|(info, _)| quoted(&info.field))
                 .collect(),
         );
-        let live = names(match schema.tool == sequencer::NAME {
-            true => vec![quoted(sequencer::LAUNCH)],
-            false => Vec::new(),
-        });
+        let live = names(schema.live.iter().map(|live| quoted(live)).collect());
         text.push_str(&format!(
             "  {}: {{ state: {}; number: {number}; live: {live}; trigger: never }};\n",
             property_name(schema.tool),
-            type_name(schema.tool),
+            type_name(schema.tool, "State"),
         ));
     }
     text.push_str("}\n");
@@ -71,7 +53,8 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
     text
 }
 
-/// `devices` as the SDK offers them: a knob for each number a signal moves, in its units.
+/// `devices` as the SDK offers them: a knob for each number a signal moves, in its units. The
+/// docs of their settings are those of the record.
 fn sdk_devices(tools: &[&ToolSchema]) -> String {
     let mut text = String::from(
         "
@@ -90,7 +73,6 @@ export const devices = {
             property_name(tool),
             quoted(tool)
         ));
-        let properties = schema.schema.get("properties").and_then(Value::as_object);
         for (number, default) in &schema.numbers {
             let field = &*number.field;
             // A number inside a list is written as the rest of the record is.
@@ -100,18 +82,12 @@ export const devices = {
             {
                 continue;
             }
-            let description = (properties.and_then(|properties| properties.get(field)))
-                .and_then(|property| property.get("description"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let doc = [plain(description), range_doc(number, Some(*default))].join(" ");
             let unit = unit_of(field)
                 .filter(|(unit, _)| ["hz", "ms", "db"].contains(unit))
                 .map_or(String::new(), |(unit, _)| format!(", unit: \"{unit}\""));
             let (min, max) = (number.range.min, number.range.max);
             text.push_str(&format!(
-                "{}    {field}: knob({{ min: {min}, max: {max}, default: {default}{unit} }}),\n",
-                tsdoc(doc.trim(), "    "),
+                "    {field}: knob({{ min: {min}, max: {max}, default: {default}{unit} }}),\n",
             ));
         }
         text.push_str("  }),\n");
@@ -120,16 +96,91 @@ export const devices = {
     text
 }
 
-/// Writes the TypeScript of a schema.
+/// Writes the TypeScript of the record of one tool.
 struct Writer<'a> {
+    schema: &'a ToolSchema,
     defs: Option<&'a Map<String, Value>>,
     /// The numbers of the record by their path, with `[]` for any item of a list.
     numbers: BTreeMap<String, &'a (ParameterInfo, f32)>,
+    /// Each object type of the record, which is a named type, with the first path it is at.
+    objects: Vec<(&'a str, String)>,
 }
 
-impl Writer<'_> {
+impl<'a> Writer<'a> {
+    fn new(schema: &'a ToolSchema) -> Self {
+        let mut writer = Self {
+            schema,
+            defs: schema.schema.get("$defs").and_then(Value::as_object),
+            numbers: (schema.numbers.iter())
+                .map(|number| (normalized(&number.0.field), number))
+                .collect(),
+            objects: Vec::new(),
+        };
+        writer.find_objects(&schema.schema, "");
+        writer
+    }
+
+    /// The type of the record, and a named type for each object type in it.
+    fn types(&self) -> String {
+        let tool = self.schema.tool;
+        let mut text = format!(
+            "\n/** The `state` of a record of the built-in `{tool}`. */\nexport type {} = {};\n",
+            type_name(tool, "State"),
+            self.object_or_type(&self.schema.schema, "", 0),
+        );
+        for (name, path) in &self.objects {
+            let Some(def) = self.defs.and_then(|defs| defs.get(*name)) else {
+                continue;
+            };
+            text.push_str(&format!(
+                "\n{}export type {} = {};\n",
+                tsdoc(&type_doc(def).unwrap_or_default(), ""),
+                type_name(tool, name),
+                self.object(def, path, 0),
+            ));
+        }
+        text
+    }
+
+    /// Notes each object type under `schema` at `path`, the first time.
+    fn find_objects(&mut self, schema: &'a Value, path: &str) {
+        if let Some(name) = self.object_name(schema) {
+            if self.objects.iter().any(|(object, _)| *object == name) {
+                return;
+            }
+            self.objects.push((name, path.to_string()));
+        }
+        let schema = self.resolved(schema);
+        for key in ["oneOf", "anyOf", "allOf", "prefixItems"] {
+            for variant in schema
+                .get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let path = match key {
+                    "prefixItems" => format!("{path}[]"),
+                    _ => path.to_string(),
+                };
+                self.find_objects(variant, &path);
+            }
+        }
+        if let Some(items) = schema.get("items").filter(|items| items.is_object()) {
+            self.find_objects(items, &format!("{path}[]"));
+        }
+        if let Some(values) =
+            (schema.get("additionalProperties")).filter(|values| values.is_object())
+        {
+            self.find_objects(values, &format!("{path}{{}}"));
+        }
+        let properties = schema.get("properties").and_then(Value::as_object);
+        for (name, property) in properties.into_iter().flatten() {
+            self.find_objects(property, &field_path(path, name));
+        }
+    }
+
     /// The schema behind a `$ref`, or the schema itself.
-    fn resolved<'a>(&'a self, schema: &'a Value) -> &'a Value {
+    fn resolved(&self, schema: &'a Value) -> &'a Value {
         let reference = schema.get("$ref").and_then(Value::as_str);
         let named = reference.and_then(|reference| reference.strip_prefix("#/$defs/"));
         match named.and_then(|name| self.defs?.get(name)) {
@@ -138,10 +189,18 @@ impl Writer<'_> {
         }
     }
 
+    /// The name of the object type `schema` refers to, which is written once as a named type.
+    fn object_name(&self, schema: &'a Value) -> Option<&'a str> {
+        let name = (schema.get("$ref").and_then(Value::as_str))?.strip_prefix("#/$defs/")?;
+        let def = self.defs?.get(name)?;
+        let properties = def.get("properties").and_then(Value::as_object)?;
+        (!properties.is_empty()).then_some(name)
+    }
+
     /// The type of `schema` at `path` in the record, indented for `depth`.
-    fn object_or_type(&self, schema: &Value, path: &str, depth: usize) -> String {
-        if depth > DEEPEST {
-            return "unknown".to_string();
+    fn object_or_type(&self, schema: &'a Value, path: &str, depth: usize) -> String {
+        if let Some(name) = self.object_name(schema) {
+            return type_name(self.schema.tool, name);
         }
         let schema = self.resolved(schema);
         let one_of = |key| schema.get(key).and_then(Value::as_array);
@@ -183,7 +242,7 @@ impl Writer<'_> {
         types.join(" | ")
     }
 
-    fn array(&self, schema: &Value, path: &str, depth: usize) -> String {
+    fn array(&self, schema: &'a Value, path: &str, depth: usize) -> String {
         let item_path = format!("{path}[]");
         if let Some(items) = schema.get("prefixItems").and_then(Value::as_array) {
             let items: Vec<String> = (items.iter())
@@ -203,7 +262,7 @@ impl Writer<'_> {
         }
     }
 
-    fn object(&self, schema: &Value, path: &str, depth: usize) -> String {
+    fn object(&self, schema: &'a Value, path: &str, depth: usize) -> String {
         let properties = schema.get("properties").and_then(Value::as_object);
         let Some(properties) = properties.filter(|properties| !properties.is_empty()) else {
             return match schema.get("additionalProperties") {
@@ -220,10 +279,7 @@ impl Writer<'_> {
         let indent = "  ".repeat(depth + 1);
         let mut text = String::from("{\n");
         for (name, property) in properties {
-            let field = match path.is_empty() {
-                true => name.clone(),
-                false => format!("{path}.{name}"),
-            };
+            let field = field_path(path, name);
             let kind = self.object_or_type(property, &field, depth + 1);
             let doc = self.doc(property, &field);
             let optional = if required.contains(&name.as_str()) {
@@ -242,15 +298,31 @@ impl Writer<'_> {
         text
     }
 
-    /// What the TSDoc of a field says: its doc comment, its options, its range and default.
-    fn doc(&self, property: &Value, path: &str) -> String {
+    /// What the TSDoc of a field says: its doc comment, its range and default, then its
+    /// options. A field of an object type says only where its defaults are not the type's.
+    fn doc(&self, property: &'a Value, path: &str) -> String {
         let resolved = self.resolved(property);
-        // The doc of a type is for its Rust readers past its first paragraph.
-        let type_doc = description(resolved)
-            .map(|doc| doc.split("\n\n").next().unwrap_or_default().to_string());
-        let mut lines: Vec<String> = (description(property).or(type_doc).into_iter())
-            .map(|doc| plain(&doc))
-            .collect();
+        let object = self.object_name(property).is_some();
+        let own = description(property).map(|doc| plain(&doc));
+        let mut said: Vec<String> = match object {
+            true => own.into_iter().collect(),
+            false => own.or_else(|| type_doc(resolved)).into_iter().collect(),
+        };
+        if let Some(most) = property.get("maxItems") {
+            said.push(format!("At most {most}."));
+        }
+        // Each item of a list has its own default.
+        let in_list = path.contains("[]") || path.contains("{}");
+        if let Some((number, default)) = self.numbers.get(path) {
+            said.push(range_doc(number, (!in_list).then_some(*default)));
+        } else if object {
+            said.extend(changed_defaults(property, resolved));
+        } else if let Some(default) = property.get("default").map(short_value)
+            && default.len() <= LONGEST_DEFAULT
+        {
+            said.push(format!("Default `{default}`."));
+        }
+        let mut lines = vec![said.join(" ")];
         let options = (resolved.get("oneOf").and_then(Value::as_array))
             .into_iter()
             .flatten();
@@ -259,16 +331,35 @@ impl Writer<'_> {
                 lines.push(format!("- `{value}`: {}", plain(&said)));
             }
         }
-        // Each item of a list has its own default.
-        let in_list = path.contains("[]") || path.contains("{}");
-        if let Some((number, default)) = self.numbers.get(path) {
-            lines.push(range_doc(number, (!in_list).then_some(*default)));
-        } else if let Some(default) = property.get("default").map(short_value)
-            && default.len() <= LONGEST_DEFAULT
-        {
-            lines.push(format!("Default `{default}`."));
-        }
+        lines.retain(|line| !line.is_empty());
         lines.join("\n")
+    }
+}
+
+/// Where the default of a field of an object type differs from the type's own: `osc_2` of
+/// the wavetable is detuned.
+fn changed_defaults(property: &Value, object: &Value) -> Option<String> {
+    let defaults = property.get("default").and_then(Value::as_object)?;
+    let changed: Vec<String> = (defaults.iter())
+        .filter(|(name, value)| {
+            let own = object.pointer(&format!("/properties/{name}/default"));
+            own.is_some_and(|own| own != *value)
+        })
+        .map(|(name, value)| format!("`{name}` is `{}`", short_value(value)))
+        .collect();
+    (!changed.is_empty()).then(|| format!("Here {} by default.", changed.join(" and ")))
+}
+
+/// The first paragraph of the doc of a type: the rest is for its Rust readers.
+fn type_doc(schema: &Value) -> Option<String> {
+    let doc = description(schema)?;
+    Some(plain(doc.split("\n\n").next().unwrap_or_default()))
+}
+
+fn field_path(path: &str, name: &str) -> String {
+    match path.is_empty() {
+        true => name.to_string(),
+        false => format!("{path}.{name}"),
     }
 }
 
@@ -364,8 +455,8 @@ fn normalized(path: &str) -> String {
     normal
 }
 
-/// The type of the `state` of `tool`: `instrument.synth` is `InstrumentSynthState`.
-fn type_name(tool: &str) -> String {
+/// A type of the record of `tool`: `instrument.synth` and `State` is `InstrumentSynthState`.
+fn type_name(tool: &str, suffix: &str) -> String {
     let words = tool.split(|c: char| !c.is_ascii_alphanumeric());
     let mut name: String = words
         .map(|word| {
@@ -375,7 +466,7 @@ fn type_name(tool: &str) -> String {
             })
         })
         .collect();
-    name.push_str("State");
+    name.push_str(suffix);
     name
 }
 

@@ -150,8 +150,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<SaturatorState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Saturator::AUTOMATION.parameters())
-        .in_code();
+        .in_code(Saturator::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

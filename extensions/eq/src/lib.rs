@@ -94,14 +94,12 @@ impl Shape {
     }
 }
 
-/// One band. In the record a field left out takes the default of that band.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, JsonSchema)]
+/// One band, see [`BandInRecord`].
+#[derive(Copy, Clone, Debug, PartialEq, Serialize)]
 pub struct Band {
-    /// Off, the band leaves the sound as it is and keeps its settings.
     pub on: bool,
     pub shape: Shape,
     pub frequency_hz: f32,
-    /// Only for a shelf or a bell.
     pub gain_db: f32,
     pub q: f32,
 }
@@ -230,6 +228,7 @@ pub const OUTPUT_GAIN: Parameter = Parameter {
 pub struct EqState {
     /// Band 1 first. A list with fewer bands gives the rest their defaults.
     #[serde(deserialize_with = "bands_from_list")]
+    #[schemars(with = "Vec<BandInRecord>", length(max = BANDS))]
     pub bands: [Band; BANDS],
     /// A gain after every band.
     pub output_gain_db: f32,
@@ -244,14 +243,19 @@ impl Default for EqState {
     }
 }
 
-/// A band as a record may write it: any field may be left out.
-#[derive(Deserialize)]
+/// A band as a record writes it: a field left out takes the default of that band.
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "Band")]
 struct BandInRecord {
+    /// Off, the band leaves the sound as it is and keeps its settings.
     on: Option<bool>,
     shape: Option<Shape>,
+    /// The middle of a bell or a notch, or the corner of a cut or a shelf.
     frequency_hz: Option<f32>,
+    /// Only for a shelf or a bell.
     gain_db: Option<f32>,
+    /// How narrow a bell or a notch is, or the peak at the corner of a cut.
     q: Option<f32>,
 }
 
@@ -305,8 +309,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<EqState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Eq::AUTOMATION.parameters())
-        .in_code();
+        .in_code(Eq::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

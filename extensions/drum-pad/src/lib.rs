@@ -425,6 +425,7 @@ impl Default for DrumPadState {
 /// A pad as a record writes it: any field may be left out, and it plays a sound or a sample.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "Pad")]
 struct PadRecord {
     /// A sound of the default kit.
     #[serde(skip_serializing_if = "Option::is_none")]

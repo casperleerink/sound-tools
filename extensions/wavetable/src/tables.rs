@@ -184,7 +184,7 @@ pub enum Category {
 }
 
 /// A built-in table. Each is made in code, so nothing is loaded and every machine plays the
-/// same. Saved in snake case, `"basic_shapes"`.
+/// same.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Table {

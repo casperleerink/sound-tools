@@ -70,6 +70,7 @@ impl Channels {
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct UtilityState {
+    /// Turns the sound up or down.
     pub gain_db: f32,
     /// -1 is left, 1 is right, with the pan law of a track.
     pub pan: f32,
@@ -77,11 +78,14 @@ pub struct UtilityState {
     pub width: f32,
     /// The sound below [`Self::bass_mono_hz`] in mono.
     pub bass_mono: bool,
+    /// Where the mono bass ends.
     pub bass_mono_hz: f32,
     pub channels: Channels,
     /// Turns the left channel upside down: its polarity, which a phase button flips.
     pub invert_left: bool,
+    /// Turns the right channel upside down.
     pub invert_right: bool,
+    /// Silence out.
     pub mute: bool,
 }
 
@@ -166,8 +170,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<UtilityState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Utility::AUTOMATION.parameters())
-        .in_code();
+        .in_code(Utility::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

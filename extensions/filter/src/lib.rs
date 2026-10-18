@@ -62,6 +62,7 @@ pub struct FilterState {
     pub cutoff_hz: f32,
     /// 0 is no peak. 1 is a strong ringing peak at the cutoff, and a narrow band or gap.
     pub resonance: f32,
+    /// How steeply it cuts past the cutoff, in dB per octave.
     pub slope: Slope,
     /// Gain into a soft saturation before the filter. 0 is clean.
     pub drive_db: f32,
@@ -175,8 +176,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<FilterState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Filter::AUTOMATION.parameters())
-        .in_code();
+        .in_code(Filter::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

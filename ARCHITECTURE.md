@@ -85,7 +85,7 @@ my-piece/
 
 ## The live folder and editing
 
-`crates/core/src/project` (`apply.rs`, `editing.rs`, `history.rs`, `outside.rs`, `watcher.rs`).
+`crates/core/src/project`.
 
 - There is one state application. Window edits, file changes, loading, undo, redo and cancel all apply a group of changes, whole or not at all. Loading is applying from empty.
 - The watcher only says which paths changed; the runtime reads them again and applies the difference, so edits, new files, deletes and moves take one road. The runtime groups raw events itself, because a debouncer can split a burst.
@@ -115,6 +115,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Time is integers: frames for the engine, ticks for music. Saved positions are ticks or bars, never floats or seconds.
 - Time signatures are runs of whole bars and sections start at a bar number, so neither falls inside a bar. Rejected: ticks.
 - Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would need a derive that moves every clip, which goes wrong for clips off the bar lines.
+- Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
 - The core holds no scheduled events: timeline processors make theirs from the transport, so a seek has nothing to invalidate.
 - The loop goes back by a seek on the frame of its end, so processors need no loop code. With latency that leaves a gap as long as the latency. Rejected: wrapping each processor ahead of the device, far more transport code.
 - The engine runs every processor every block, playing or not, so live keys and effect tails keep sounding while stopped.
@@ -135,15 +136,16 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Every device of a track that takes notes hears its notes at once, not delayed by latency before it.
 - Bypass and sidechain are saved on the track's effect slot, not in the effect's record, so plugins and built-in effects share them. The arrangement wires sidechains and names a loop of keys by its tracks, because the core's cycle message names processors an agent cannot act on.
 - A return is a track of kind `return`. Sends are a map on the sending track. No return sends to another yet.
-- Solo mutes the other tracks in their mixers, never a return, so a soloed track keeps its reverb. Mixers, sends and sidechains are wired in the arrangement, the one owner that sees every track.
+- Solo mutes the other tracks in their mixers, never a return, so a soloed track keeps its reverb.
 - The master limiter is fixed code of the arrangement, not a tool, so old projects get it without a file changing. It is bit-transparent under its ceiling. The core itself limits nothing.
 - A note starts inside its clip, else the record does not load: a note written with a project position is an error, not silence. An edit, move, delete or tempo change ends every note it started.
 - Expression lanes of a clip are sent only when they move, so outside every clip a lane is at rest and a seek or stop needs no case of its own.
-- Automation lanes are on the track, in project ticks and the number's own units. A lane names a device by its file name and a number by its path in the record; a device declares what it takes in one `AutomationInput`. So the arrangement knows no device. Whole numbers are not automatable, because a lane is a straight line. A lane that does not fit is a problem; the rest plays.
+- Automation lanes are on the track, in project ticks and the number's own units. A device declares what it takes in one `AutomationInput`, so the arrangement knows no device. Whole numbers are not automatable, because a lane is a straight line. A lane that does not fit is a problem; the rest plays.
 - A lane is a straight line on the knob's travel, so a sweep sounds even and the knob and the lane agree.
 - Each automated device gets its own small player on the track, so it sees that device's latency lead and its events need no device id.
 - A player sends every lane every block, also while stopped, and a number that hears nothing goes back to its record. Rejected: sending only what moved, as the expression lanes do, because a removed player cannot say it is gone.
 - Where a lane bends inside a block, the engine plays the device's block in pieces, so no device needs code for it.
+- Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
 - A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.
 - An audio clip plays at its file's speed, so a tempo change moves only its start. Every audio clip edge and jump gets a short ramp, so nothing clicks.
 - Selection, snap, zoom, scroll and the clipboard are interface state: not saved, no undo step, invisible to agents. A file is already how an agent shares a clip.
@@ -163,7 +165,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 ## Recording and fit tempo
 
-- MIDI input and the computer keys have no tool and no record. Both write into one lock-free ring the audio thread reads each block, so nothing the interface does can delay sound. Rejected: a tool of the project that plays from the keys.
+- MIDI input and the computer keys have no tool and no record. Both reach the audio thread through one lock-free ring, so nothing the interface does can delay sound. Rejected: a tool of the project that plays from the keys.
 - A recorded note is saved at the tick the engine sounded it, so playback matches what was heard. The raw performance is also saved as an asset, written before the clip, so it survives the clip. Its times are microseconds, because a tick means nothing without a tempo map and a fit changes the map.
 - Audio recording does not pass through the engine. A take is placed by mapping its capture time to the engine frame sounding then, which works with any latency compensation.
 - Live input and the sound of other apps are `project.json` connections. Input and output keep their own clocks: the engine drops old frames or plays silence instead of resampling, so the delay stays bounded. The window opens an input only while something needs it, so a project without one never asks for the microphone. Rejected for app sound: a virtual device of our own, which needs a driver install.
@@ -210,7 +212,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
 - The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
 - Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
-- No error tracking in the cloud; the composer can send the window's `log.txt`.
+- No error tracking in the cloud. The window's stdout and stderr go to `log.txt` in the support folder, which the composer can send.
 
 ## The agent sidebar
 
@@ -219,6 +221,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - The sidebar runs Claude Code as a child process in the project folder, editing files like a terminal agent. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is the way to add more agents later.
 - The window has a generic left panel slot and names no agent type.
 - Each message is one request: one undo step.
+- The thread state is built from provider-neutral events and holds no process, so tests feed it events.
 - Threads, settings and whether the panel is open are kept per machine, never in the project, so an agent cannot change the interface or raise its own access by editing a file.
 - The provider keeps the conversation; the app keeps only its session id and a log to show it.
 - The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling `claude`: 215 MB more per download, and an app release per version.
@@ -233,7 +236,7 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
-- **Every record the SDK reaches is described once, by its Rust type** (`schemars`): `sdk.ts` types it, with doc comments and `Parameter` ranges as TSDoc, and the tool's own check runs on a device's settings as the code loads. A parent may name its children's tools for TypeScript to check. Rejected: hand-written schemas, which drift.
+- **Every record the SDK reaches is described once, by its Rust type** (`schemars`), for `sdk.ts` and for checking a device's settings as the code loads. A parent may name its children's tools for TypeScript to check. Rejected: hand-written schemas, which drift.
 - **A sound plays built-in devices** as engine processors between stages of its code: the engine compensates their latency. So none in instruments or feedbacks. Rejected: devices as signals code.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.

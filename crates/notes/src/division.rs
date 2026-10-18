@@ -4,7 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// The note a synced time lasts, before its feel. Saved as the fraction, `"1/8"`.
+/// The note a synced time lasts, before its feel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Division {
     #[serde(rename = "1/32")]

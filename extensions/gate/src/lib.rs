@@ -155,8 +155,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<GateState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Gate::AUTOMATION.parameters())
-        .in_code();
+        .in_code(Gate::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

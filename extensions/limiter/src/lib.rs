@@ -48,10 +48,8 @@ pub use processor::{Limiter, Meters};
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "limiter";
 
-/// How far ahead the limiter looks, in milliseconds. It delays the sound by as much, and reports
-/// that as its latency, so the track stays in time. Saved as the number, `0`, `1` or `5`, and
-/// nothing else loads: a lookahead is a latency, and a latency that moves with a knob would make
-/// every track before it jump on each step.
+/// See [`LimiterState::lookahead`]. Only `0`, `1` or `5` load: a lookahead is a latency, and a
+/// latency that moves with a knob would make every track before it jump on each step.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "u8", into = "u8")]
 pub enum Lookahead {
@@ -125,6 +123,8 @@ pub struct LimiterState {
     pub ceiling_db: f32,
     /// How long the gain takes to come back after a peak: the time to 63 % of the way.
     pub release_ms: f32,
+    /// How far ahead it looks. It delays the sound by as much, and reports that as its
+    /// latency, so the track stays in time.
     #[serde(rename = "lookahead_ms")]
     pub lookahead: Lookahead,
 }
@@ -199,8 +199,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<LimiterState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Limiter::AUTOMATION.parameters())
-        .in_code();
+        .in_code(Limiter::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

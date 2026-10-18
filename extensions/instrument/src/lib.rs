@@ -52,6 +52,7 @@ pub enum Waveform {
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct SynthState {
+    /// The wave of the oscillator.
     pub waveform: Waveform,
     /// Where the low-pass filter starts to cut.
     pub cutoff_hz: f32,

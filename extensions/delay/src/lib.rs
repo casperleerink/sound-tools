@@ -185,8 +185,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<DelayState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Delay::AUTOMATION.parameters())
-        .in_code();
+        .in_code(Delay::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::Transport;
 
-/// The wave of an LFO, from -1 to 1. The caller's, like the rate: it may change at any time.
-/// Saved in snake case, `"saw_up"`, for a record that lets a composer pick it.
+/// The wave of an LFO, from -1 to 1.
+///
+/// The caller's, like the rate: it may change at any time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LfoShape {

@@ -45,10 +45,8 @@ pub use processor::{Compressor, Meters, reduction_db, static_gain_db};
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "compressor";
 
-/// How far ahead the compressor listens, in milliseconds. It delays the sound by as much, and
-/// reports that as its latency, so the track stays in time. Saved as the number, `0`, `1` or
-/// `10`, and nothing else loads: a lookahead is a latency, and a latency that moves with a knob
-/// would make every track before it jump on each step.
+/// See [`CompressorState::lookahead`]. Only `0`, `1` or `10` load: a lookahead is a latency,
+/// and a latency that moves with a knob would make every track before it jump on each step.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "u8", into = "u8")]
 pub enum Lookahead {
@@ -129,6 +127,8 @@ pub struct CompressorState {
     pub makeup_db: f32,
     /// 0 is the sound as it came in, 1 is the compressed sound only.
     pub mix: f32,
+    /// How far ahead it listens. It delays the sound by as much, and reports that as its
+    /// latency, so the track stays in time.
     #[serde(rename = "lookahead_ms")]
     pub lookahead: Lookahead,
 }
@@ -241,8 +241,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<CompressorState>(EXTENSION)?
         .behaviour(apply)
-        .schema(Compressor::AUTOMATION.parameters())
-        .in_code();
+        .in_code(Compressor::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

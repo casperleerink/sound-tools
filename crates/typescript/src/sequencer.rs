@@ -6,11 +6,11 @@
 use std::sync::Arc;
 
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
     BehaviourContext, BehaviourError, EventInput, EventOutput, InputEndpoint, JsonTool,
-    JsonToolDoc, OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Ticks,
+    JsonToolDoc, OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, State, Ticks,
     ToolSchema,
 };
 use sound_notes::{
@@ -27,7 +27,7 @@ const NOTES: &str = "notes";
 /// The name of its processor in its instance.
 pub(crate) const PROCESSOR: &str = "sequencer";
 
-#[derive(Debug, Hash, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Record {
     /// The patterns it loops, one at a time.
@@ -42,9 +42,14 @@ struct Record {
     quantize: Quantize,
 }
 
+impl State for Record {
+    const TOOL: &'static str = NAME;
+}
+
 /// Notes that loop.
-#[derive(Debug, Hash, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "Pattern")]
 struct PatternRecord {
     /// In ticks: 3840 is a bar of 4/4.
     length: u64,
@@ -71,11 +76,8 @@ pub(crate) fn json_tool() -> JsonTool {
 /// The record of the sequencer, for the SDK.
 pub(crate) fn schema() -> ToolSchema {
     ToolSchema {
-        tool: NAME,
-        schema: schemars::schema_for!(Record).to_value(),
-        numbers: Vec::new(),
-        in_code: false,
-        check: |state| record(&state).map(drop),
+        live: &[LAUNCH],
+        ..ToolSchema::of::<Record>(&[])
     }
 }
 

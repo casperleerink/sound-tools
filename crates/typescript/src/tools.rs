@@ -59,9 +59,9 @@ pub(crate) struct ToolInfo {
     pub notes: bool,
     /// It owns children and has a behaviour, which declares how they connect.
     pub behaviour: bool,
-    /// The tools of its children by name, when it names them.
+    /// The tools of its children by name, when it names them. An empty map allows none.
     #[serde(default)]
-    pub children: Named<String>,
+    pub children: Option<Named<String>>,
     /// A sound of it plays through a device, so its processors are the stages of a
     /// [`Program`].
     #[serde(skip)]
@@ -77,7 +77,7 @@ pub(crate) enum ToolKind {
 }
 
 /// Named things in the order the code gives them.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Named<T>(pub Vec<(String, T)>);
 
 impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Named<T> {
@@ -692,10 +692,13 @@ impl ToolInfo {
 
     /// The children it names, as its doc says them, or nothing.
     fn children_doc(&self) -> String {
-        if self.children.0.is_empty() {
+        let Some(children) = &self.children else {
             return String::new();
+        };
+        if children.0.is_empty() {
+            return ". It has no children".to_string();
         }
-        let children: Vec<String> = (self.children.0.iter())
+        let children: Vec<String> = (children.0.iter())
             .map(|(name, tool)| format!("`{name}.json`, a `{tool}`"))
             .collect();
         format!(". Its children are {}, and no others", children.join("; "))
@@ -1170,13 +1173,11 @@ impl Sounds {
     /// A problem for each child that is not of the tool its `children` name, and each they
     /// name that it does not have.
     fn check_children(&self, children: &[KeptChild], context: &mut BehaviourContext<'_>) {
-        let named = &self.info.children.0;
-        if named.is_empty() {
+        let Some(named) = &self.info.children else {
             return;
-        }
+        };
         let tool_of = |name: &str| {
-            named
-                .iter()
+            (named.0.iter())
                 .find(|(named, _)| named == name)
                 .map(|(_, tool)| tool)
         };
@@ -1188,13 +1189,16 @@ impl Sounds {
                     "its child {name} is a {}, and its `children` say {tool}",
                     child.tool
                 )),
+                None if named.0.is_empty() => context.problem(format!(
+                    "its child {name} is none of its `children`, which name none"
+                )),
                 None => context.problem(format!(
                     "its child {name} is none of its `children`: {}",
-                    self.info.children.names()
+                    named.names()
                 )),
             }
         }
-        for (name, tool) in named {
+        for (name, tool) in &named.0 {
             if !children.iter().any(|child| child.id.name() == name) {
                 context.problem(format!(
                     "it has no child {name}, a {tool}, as its `children` say"
@@ -1213,7 +1217,9 @@ fn check_device(device: &DeviceUse, schemas: &[ToolSchema]) -> Result<(), String
         return Err(format!("it plays a {tool:?}, which is no device"));
     };
     (schema.check)(Value::Object(device.state.clone())).map_err(|error| {
-        let error = error.strip_prefix("state.").unwrap_or(&error);
+        let error = (error.strip_prefix("state."))
+            .or_else(|| error.strip_prefix("state: "))
+            .unwrap_or(&error);
         format!("devices.{tool}: {error}")
     })
 }

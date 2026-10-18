@@ -533,8 +533,8 @@ export class DeviceSound extends Signal {
   }
 }
 
-/** The settings of a device: a signal or a number for each of its numbers `F`, the rest of its record `R` as written. */
-export type DeviceSettings<F extends Fields, R> = { [Name in keyof F]?: Operand } & Omit<R, keyof F>;
+/** The settings of a device: its record `R`, with a signal or a number for each of its numbers `F`. */
+export type DeviceSettings<F extends Fields, R> = { [Name in keyof R]?: Name extends keyof F ? Operand : R[Name] };
 
 /** A built-in device to play inside `sound`, such as `devices.reverb`. */
 export interface Device<F extends Fields, R> {
@@ -748,7 +748,7 @@ export interface ToolSpec<S extends Fields, C extends Controls, M, K extends Chi
    * `send` and edit of them against their tools, and a child of another tool, a missing one or
    * one it does not name is a problem. Leave it out for children whose names a record decides.
    */
-  children?: K;
+  children?: K & LiteralTools<K>;
   /**
    * What the control loop and the card of an instance keep, and nothing saves: positions of
    * a simulation, the last thing played. Made new for each instance, and when the code loads.
@@ -799,6 +799,11 @@ export type ChildTools = Record<string, ToolName>;
 
 /** The `state` of a record of `T` as the file holds it; any value for a tool of this project. */
 export type StateOfTool<T> = T extends keyof Tools ? Tools[T]["state"] : unknown;
+
+/** `children` as written. A tool name widened to `string` would check nothing, so it is refused. */
+type LiteralTools<K extends ChildTools> = {
+  [Name in keyof K]: string extends K[Name] ? "write `as const` after the children object, so each tool name is kept" : K[Name];
+};
 
 /** The names of its children. */
 type ChildName<K extends ChildTools> = keyof K & string;

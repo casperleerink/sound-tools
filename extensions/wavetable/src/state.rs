@@ -56,8 +56,11 @@ pub struct Oscillator {
     pub effect: Effect,
     /// How far the effect bends the sound. 0 is the table as it is.
     pub effect_amount: f32,
+    /// Octaves up or down.
     pub octave: i8,
+    /// Semitones up or down, on top of the octave.
     pub semitone: i8,
+    /// A fine tune up or down.
     pub detune_cents: f32,
     /// A factor on its level into the filters.
     pub gain: f32,
@@ -209,6 +212,7 @@ impl From<SubOctave> for i8 {
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Sub {
+    /// One or two octaves under the note.
     pub octave: SubOctave,
     /// 0 is off, and costs nothing.
     pub gain: f32,
@@ -242,6 +246,7 @@ impl Default for Sub {
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Unison {
+    /// How many copies. 1 is no unison.
     pub voices: u8,
     /// How far the copies spread: at 1, 50 cents up and down and from left to right.
     pub amount: f32,
@@ -288,6 +293,7 @@ pub struct Filter {
     pub on: bool,
     #[serde(rename = "type")]
     pub kind: FilterType,
+    /// How steeply it cuts past the cutoff, in dB per octave.
     pub slope: FilterSlope,
     /// Where it starts to cut, or the middle of its band or its gap.
     pub cutoff_hz: f32,
@@ -377,10 +383,12 @@ pub struct Adsr {
     pub sustain: f32,
     /// From note off to 0, from the top.
     pub release_seconds: f32,
-    /// How each stage bends: 0 is a straight line, 1 a strong curve, fast at first and slow
+    /// How the attack bends: 0 is a straight line, 1 a strong curve, fast at first and slow
     /// near its end.
     pub attack_curve: f32,
+    /// How the decay bends, as the attack does.
     pub decay_curve: f32,
+    /// How the release bends, as the attack does.
     pub release_curve: f32,
 }
 
@@ -553,6 +561,7 @@ impl VoiceMode {
 #[serde(deny_unknown_fields, default)]
 pub struct Voicing {
     pub mode: VoiceMode,
+    /// How many notes play at once.
     pub polyphony: u8,
     /// How long a new note slides from the pitch of the last one. 0 is no glide.
     pub glide_seconds: f32,
@@ -614,8 +623,8 @@ pub struct WavetableState {
     pub lfo_1: LfoSettings,
     pub lfo_2: LfoSettings,
     pub voicing: Voicing,
-    /// Up to [`MAX_ROUTES`] routes, each from a source to a destination. Routes to the same
-    /// destination add up.
+    /// Routes, each from a source to a destination. Routes to the same destination add up.
+    #[schemars(length(max = MAX_ROUTES))]
     pub matrix: Vec<Route>,
     /// Linear output gain. With the default patch one note at velocity 127 peaks at about this
     /// value. Tracks sum to the device with no mixer yet, so the default is low.

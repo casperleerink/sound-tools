@@ -1,5 +1,5 @@
-// Types an agent's tool must get right. A test of the crate checks this file with `bun check`
-// next to the SDK: every `@ts-expect-error` line must be an error, and nothing else.
+// Types an agent's tool must get right. A test checks this file with `bun check` next to the
+// SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
 import { devices, h, input, knob, list, notes, number, output, prefixed, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
@@ -238,6 +238,8 @@ tool({
     devices.filter(far, { type: "high_pass", cutoff_hz: fields.drive });
     // @ts-expect-error: a choice of a device is one of its options.
     devices.filter(far, { type: "hi_pass" });
+    // A band takes the defaults of its place for what it leaves out.
+    devices.eq(far, { bands: [{ gain_db: 3 }] });
     return far;
   },
 });
@@ -289,4 +291,17 @@ tool({
       children.push({ name: "fx", tool: "delay", state: {} });
     });
   },
+});
+
+const loose = { bass: "sequencer" };
+
+tool({
+  name: "loose",
+  title: "Loose",
+  when: "Never",
+  doc: "Names its children without `as const`.",
+  state: {},
+  // @ts-expect-error: TypeScript widens each tool name to `string`, which checks nothing.
+  children: loose,
+  behaviour: (): Declaration => ({ connections: [] }),
 });
