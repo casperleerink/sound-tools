@@ -11,7 +11,7 @@ To play a track from the computer keyboard, write nothing: with the computer key
 
 ## Where it goes
 
-One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card or page. Make the folder if it is not there, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
+One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card or page. Make the folder, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
 
 The runtime runs them with Bun, which the app ships and puts on your `PATH`. While the app has the project open, a save of code or JSON in `extensions/` starts the tools again in a moment: every file and helper loads again, every `memory` starts over, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 
@@ -39,7 +39,7 @@ tool({
 - `name`: the `tool` of its records and the name of its doc. Lowercase letters, digits, `-` and `_`, and not the name of a built-in tool.
 - `title`: what the card and the pickers say.
 - `when` and `doc`: what the next agent reads in the map and in `agent-docs/<name>.md`. Say what the tool does to the sound and what each field does musically, also between its ends: is the middle of a knob half as much, or less? The runtime adds where the record goes and a table of the fields, so do not repeat those.
-- `kind`: `"effect"` (the default) goes in a track's `effects` and hears the track through `input`. `"instrument"` is what a track plays, its `instrument.json`: the sound runs once per note, up to 8 at a time. `"source"` is what a track plays too, but one voice that runs all the time, notes or not: a drone, a texture, a generative part; it follows the newest held note.
+- `kind`: `"effect"` (the default) goes in a track's `effects` and hears the track: its sound through `input`, its notes as a `source` does. `"instrument"` is what a track plays, its `instrument.json`: the sound runs once per note, up to 8 at a time. `"source"` is what a track plays too, but one voice that runs all the time, notes or not: a drone, a texture, a generative part; it follows the newest held note.
 - `state`: the fields of its record. A field name is lowercase letters, digits and `_`.
 - `controls`: what its card plays and nothing saves, see below.
 - `sound`: the sound, as a `Signal`. Left out, it passes `input` through.
@@ -132,7 +132,7 @@ What the card plays as a performer plays, which nothing saves and no undo takes 
 
 ## Its card
 
-Without `card`, the card has a knob per knob and live control, a row of steps per pattern, and a button per option, toggle and trigger. For your own, give `card` in a `.tsx` file. It draws from the record and the watches and plays what it needs; it keeps no state of its own.
+Without `card`, the card has a knob per knob and live control, a row of steps per pattern, and a button per option, toggle and trigger. For your own, give `card` in a `.tsx` file. It draws from the record and the watches; it keeps no state of its own.
 
 A card, in the row under the tracks, is at most 144 points tall: more is cut off. It is as wide as it needs, at least 200, and the row scrolls sideways. So put things side by side rather than stacked: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
 
@@ -192,7 +192,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
 
   `at` is for the loop: a card has no `time`.
 - `send(event, { at, child })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`.
-- `onKey: (tool, { key, down }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; an instrument plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. At the top the keyboard plays `notes`; in a track, its clips and the keyboard. Both get what `tick` gets, and `update`, which changes the record as a card does:
+- `onKey: (tool, { key, down }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; its sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The keyboard plays `notes`, and in a track its clips too. Both get what `tick` gets, and `update`, which changes the record as a card does:
 
   ```ts
   onKey: ({ send }, { key, down }) => {
@@ -283,15 +283,15 @@ tool({
 });
 ```
 
-- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`, each from one port to another. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through.
-- A port of a child is `audio` when left out. Leave out `child` for a port of the parent itself: from `{ port: "audio" }` comes what reaches its audio input, from `{ notes: "notes" }` what reaches its `notes`; to `{ port: "audio" }` goes what it plays, through its own `sound` as `input`; to `{ number }`, `{ bang }` or `{ notes }` an output of that name, for its own parent.
+- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through.
+- A port of a child is `audio` when left out. Leave out `child` for a port of the parent itself: from `{ port: "audio" }` comes what reaches its audio input, from `{ notes: "notes" }` what reaches its `notes`; to `{ port: "audio" }` goes what it plays, through its own `sound` as `input`; to `{ number }`, `{ bang }` or `{ notes }` an output of that name, which its own parent connects as any port of a child.
 - Put the parent at the top of a project that is one tool, or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound and notes and plays into its mixer.
 - The behaviour runs in Bun when the record or a child changes; its answer plays a moment later, the last one until then. `--render` and `--analyze` wait for it.
 - Events connect by the key of their kind at both ends, to the sample:
   - `{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } }`: the number `lfo` sends with `output` turns the knob `cutoff_hz` of `filter` in its units, Hz: a knob of a tool of this project, or any number a lane can automate. It glides, nothing is saved, and without the connection the knob glides back. To `{ child, live }` it moves a live control instead.
   - `{ from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } }` fires a trigger.
   - `{ from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } }` plays an instrument; `notes` is the input of each. `{ from: { notes: "notes" }, to: { child: "piano", notes: "notes" } }` plays it from the keyboard.
-- A parent plays its children by name: `play` and `send` with `{ child: "synth" }` reach its `notes`; `set({ child: "lfo", live: "rate" }, 2)` and `fire({ child: "drop", trigger: "hit" })` a live control and a trigger of a tool of this project. A knob of a child is its record: a cable moves it.
+- A parent plays its children by name: `play` and `send` with `{ child: "synth" }` reach its `notes`, without `child` its own sound; `set({ child: "lfo", live: "rate" }, 2)` and `fire({ child: "drop", trigger: "hit" })` a live control and a trigger of a tool of this project. A knob of a child is its record: a cable moves it.
 - A `sequencer` child loops note patterns in time with the bars, also in a render, out of its output `notes` (`agent-docs/sequencer.md`). `set({ child: "bass", live: "launch" }, 1)` launches its second pattern at the next bar. A parent's card and page see the watches of each child as `<child>.<watch>`: a sequencer's `playing` and `queued` are a pattern's index, -1 for none, -2 for a stop that waits.
 - A missing child or port, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 

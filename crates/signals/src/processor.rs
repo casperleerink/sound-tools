@@ -155,7 +155,7 @@ impl Players {
     }
 }
 
-/// The one voice of an effect or a source, and the keys a source follows.
+/// The one voice of an effect or a source, and the keys it follows.
 struct Single {
     voice: SignalsVoice,
     keys: Keys,
@@ -184,7 +184,8 @@ struct Sending {
     notes: [Option<Pitch>; MAX_OUTPUTS],
 }
 
-/// The keys a source follows: the newest held one plays, and the note ends when none is held.
+/// The keys an effect or a source follows: the newest held one plays, and the note ends when
+/// none is held.
 struct Keys {
     /// For each key while it is down, the count of the note that pressed it; 0 while up.
     pressed: [u64; 128],

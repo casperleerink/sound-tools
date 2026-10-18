@@ -752,8 +752,8 @@ export type OwnNotes = OwnOf<"notes", "notes">;
 
 /**
  * Joins an output of a child, or what reaches an input of the parent, to an input of a child or
- * an output of the parent, of one kind. A `notes`, `number` or `bang` without `child` is an
- * output of the parent of that name, which passes what reaches it on to its parent.
+ * an output of the parent, of one kind. In `to`, a `notes`, `number` or `bang` without `child`
+ * is an output of the parent of that name, which passes what reaches it on to its parent.
  */
 export type Connection =
   | { from: ChildPort | OwnAudio; to: ChildPort | OwnAudio }

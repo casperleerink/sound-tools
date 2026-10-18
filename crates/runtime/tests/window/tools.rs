@@ -643,12 +643,7 @@ fn a_tool_on_the_track_hears_the_computer_keys(cx: &mut TestAppContext) {
 fn a_tool_on_the_track_the_keyboard_leaves_hears_the_end_of_the_note_it_held(
     cx: &mut TestAppContext,
 ) {
-    // With no instrument on either track the keyboard plays into nothing before and after, so
-    // it has nothing to let go of itself.
-    let files: Vec<_> = (TWO_TRACKS.into_iter())
-        .filter(|(path, _)| !path.ends_with("instrument.json"))
-        .collect();
-    let Some(mut window) = open(cx, &files) else {
+    let Some(mut window) = open(cx, &TWO_TRACKS) else {
         return;
     };
     window.play_midi(60);
