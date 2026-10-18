@@ -118,7 +118,10 @@ impl ProbeProcessor {
                 self.sustained = [0; 128];
                 self.pedal = Pedal::UP;
             }
-            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
+            NoteEvent::Bend(_)
+            | NoteEvent::ModWheel(_)
+            | NoteEvent::Pressure(_)
+            | NoteEvent::Control { .. } => {}
         }
     }
 }

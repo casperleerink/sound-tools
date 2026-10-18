@@ -5,7 +5,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Field, Fields, Graph, Handler as Heard, Midi, Node, Parent, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Controls, Field, Fields, Graph, Handler as Heard, HeardNote, Node, NoteEvent, Parent, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -35,7 +35,7 @@ type Request =
   | { type: "event"; card: number; version: number; handler: number; at: [number, number] | null }
   | { type: "frame"; dt: number; time: number; instances: Looped[] }
   | { type: "key"; time: number; instance: Looped; key: string; down: boolean }
-  | { type: "midi"; time: number; instances: Looped[]; messages: Midi[] }
+  | { type: "notes"; time: number; instance: Looped; events: HeardNote[] }
   | { type: "drop"; card: number }
   | ({ type: "behaviour"; question: number; tool: string } & Parent<Fields>);
 
@@ -51,13 +51,13 @@ type Sent =
 type Handler = (x: number, y: number) => void;
 
 /** Says something to the runtime, at once: before code that may hang runs, and in order. */
-function send(message: object) {
+function say(message: object) {
   writeSync(1, JSON.stringify(message) + "\n");
 }
 
 /** Tells the runtime whose code runs now, so it knows what to blame when it hangs. */
 function runs(tool: string, what: string) {
-  send({ type: "runs", tool, what });
+  say({ type: "runs", tool, what });
 }
 
 /** The handlers of the last trees of each card, by the version of the tree. */
@@ -83,7 +83,7 @@ function fail(tool: string, message: string) {
   if (!failed.has(tool)) {
     failed.add(tool);
     console.error(`${tool}: ${message}`);
-    send({ type: "failed", tool, message });
+    say({ type: "failed", tool, message });
   }
 }
 
@@ -124,6 +124,9 @@ function problemsOf(spec: Spec): string[] {
     if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
       problems.push("kind: a parent hears its children through `input`, so leave `kind` out");
     }
+    if ("onMidi" in spec) {
+      problems.push("onMidi is onNotes now: it hears every note event that reaches the tool, each with its `at`");
+    }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
     problems.push(String(error));
@@ -136,7 +139,7 @@ async function load() {
   const tools: object[] = [];
   const errors: Array<{ file: string; message: string }> = [];
   for (const file of files) {
-    send({ type: "loading", file });
+    say({ type: "loading", file });
     const before = new Set(sdk.host.tools.keys());
     try {
       await import(join(folder, file));
@@ -155,7 +158,7 @@ async function load() {
       }
     }
   }
-  send({ type: "loaded", tools, errors });
+  say({ type: "loaded", tools, errors });
 }
 
 /**
@@ -178,7 +181,7 @@ function described(spec: Spec, file: string) {
       page: spec.page !== undefined,
       transport: spec.transport === true,
       keys: spec.onKey !== undefined,
-      midi: spec.onMidi !== undefined,
+      notes: spec.onNotes !== undefined,
       behaviour: spec.behaviour !== undefined,
     },
     sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
@@ -244,7 +247,7 @@ function declare({ question, tool, state, children }: Extract<Request, { type: "
       throw new Error(`${tool} has no behaviour`);
     }
     runs(tool, "behaviour");
-    // Here, so a value JSON cannot hold, such as a cycle, is the parent's problem and does not throw in `send`.
+    // Here, so a value JSON cannot hold, such as a cycle, is the parent's problem and does not throw in `say`.
     const declared = JSON.parse(JSON.stringify(spec.behaviour({ state, children })));
     if (declared !== null && typeof declared === "object" && "players" in declared) {
       throw new Error(
@@ -254,7 +257,7 @@ function declare({ question, tool, state, children }: Extract<Request, { type: "
     }
     return declared;
   });
-  send({ type: "declared", question, declaration });
+  say({ type: "declared", question, declaration });
 }
 
 function flatten(child: Child, handlers: Handler[], into: Sent[]) {
@@ -326,24 +329,28 @@ function checkAt(at: number | undefined) {
 
 /** What a card, a page and the control loop use to play an instance. */
 function performer(instance: string): Performer<Controls> {
+  const send: Performer<Controls>["send"] = (event, { at, child } = {}) => {
+    checkAt(at);
+    say({ type: "send", instance, child, event: wired(event), at });
+  };
   return {
     set(control, value) {
       const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.live];
-      send({ type: "control", instance, child, name, value });
+      say({ type: "control", instance, child, name, value });
     },
     fire(control, { at } = {}) {
       checkAt(at);
       const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.trigger];
-      send({ type: "control", instance, child, name, at });
+      say({ type: "control", instance, child, name, at });
     },
+    send,
     play(pitch, { seconds = 0.25, hold = false, velocity = 0.8, at, child } = {}) {
       checkAt(at);
-      // A held note has no length: it ends at its release.
-      send({ type: "note", instance, child, pitch: keyOf(pitch), velocity, seconds: hold ? undefined : seconds, at });
-    },
-    release(pitch, { at, child } = {}) {
-      checkAt(at);
-      send({ type: "release", instance, child, pitch: keyOf(pitch), at });
+      if (hold) {
+        send({ type: "noteOn", pitch, velocity }, { at, child });
+      } else {
+        say({ type: "note", instance, child, pitch: keyOf(pitch), velocity: finite(velocity, "velocity"), seconds: finite(seconds, "seconds"), at });
+      }
     },
   };
 }
@@ -351,6 +358,38 @@ function performer(instance: string): Performer<Controls> {
 /** The MIDI key of a pitch. */
 function keyOf(pitch: number): number {
   return Math.max(0, Math.min(127, Math.round(pitch)));
+}
+
+/** `value` when it is a number JSON can hold, which `NaN` is not. */
+function finite(value: number, name: string): number {
+  if (!Number.isFinite(value)) {
+    throw new RangeError(`${name} is ${value}: give a number`);
+  }
+  return value;
+}
+
+/** A note event as the runtime reads it: only its own keys, and a whole key and controller. */
+function wired(event: NoteEvent): NoteEvent {
+  switch (event.type) {
+    case "noteOn":
+      return { type: event.type, pitch: keyOf(finite(event.pitch, "pitch")), velocity: finite(event.velocity, "velocity") };
+    case "noteOff":
+      return { type: event.type, pitch: keyOf(finite(event.pitch, "pitch")) };
+    case "cc": {
+      const { controller } = event;
+      if (!Number.isInteger(controller) || controller < 0 || controller > 119) {
+        throw new RangeError(`controller is ${controller}: a MIDI controller is a whole number from 0 to 119`);
+      }
+      return { type: event.type, controller, value: finite(event.value, "value") };
+    }
+    case "bend":
+    case "pressure":
+      return { type: event.type, value: finite(event.value, "value") };
+    case "allOff":
+      return { type: event.type };
+    default:
+      throw new TypeError(`${JSON.stringify(event)} is no note event: its type is noteOn, noteOff, cc, bend, pressure or allOff`);
+  }
 }
 
 /**
@@ -367,7 +406,7 @@ function updater(instance: string, state: State) {
     change(next);
     current = next;
     sent.set(instance, { edits: (sent.get(instance)?.edits ?? 0) + 1, state: next });
-    send({ type: "edit", instance, label, state: next });
+    say({ type: "edit", instance, label, state: next });
   };
 }
 
@@ -381,7 +420,7 @@ function latest({ instance, state, edits }: Looped): State {
 function render(asked: Render) {
   const state = asked.state ?? drawn.get(asked.card)?.state;
   if (state === undefined) {
-    send({ type: "tree", card: asked.card, tree: { Err: "drawn without a record" } });
+    say({ type: "tree", card: asked.card, tree: { Err: "drawn without a record" } });
     return;
   }
   const request = { ...asked, state };
@@ -425,7 +464,7 @@ function render(asked: Render) {
   if ("Err" in tree) {
     lastTrees.delete(card);
   }
-  send(same ? { type: "unchanged", card } : { type: "tree", card, tree });
+  say(same ? { type: "unchanged", card } : { type: "tree", card, tree });
 }
 
 /** `value` of `field` as the window gives it: at its default when left out, and so each item. */
@@ -465,7 +504,7 @@ function defaultOf(field: Field): unknown {
 function draw(spec: Spec, page: boolean): Sent {
   const memory = spec.memory ? spec.memory() : {};
   const state = filledObject(spec.state, {});
-  const quiet = { set() {}, fire() {}, play() {}, release() {} };
+  const quiet = { set() {}, fire() {}, play() {}, send() {} };
   try {
     spec.tick?.({ state, watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
   } catch (error) {
@@ -544,17 +583,17 @@ function handle(request: Request) {
       run(request.time, request.instances, "tick", (spec, { update: _, ...tool }) =>
         spec.tick?.({ ...tool, dt: request.dt }),
       );
-      send({ type: "framed" });
+      say({ type: "framed" });
       break;
     case "key": {
       const key = { key: request.key, down: request.down };
       run(request.time, [request.instance], "onKey", (spec, tool) => spec.onKey?.(tool, key));
       break;
     }
-    case "midi":
-      run(request.time, request.instances, "onMidi", (spec, tool) => {
-        for (const message of request.messages) {
-          spec.onMidi?.(tool, message);
+    case "notes":
+      run(request.time, [request.instance], "onNotes", (spec, tool) => {
+        for (const event of request.events) {
+          spec.onNotes?.(tool, event);
         }
       });
       break;
@@ -580,7 +619,7 @@ for await (const line of console) {
     handle(JSON.parse(line) as Request);
   } finally {
     // Bun does one thing at a time, so the runtime knows what hangs: the oldest not done.
-    send({ type: "done" });
+    say({ type: "done" });
   }
 }
 // The runtime closed stdin: it quit.

@@ -34,7 +34,7 @@ tool({
   kind: "instrument",
   state: { last: knob({ min: 0, max: 127, default: 0 }), count: knob({ min: 0, max: 100, default: 0 }) },
   sound: () => sine(note.freq).times(adsr(note.gate, 1, 1, 1, 1)).times(0.2),
-  onKey: ({ play, release, update }, { key, down }) => {
+  onKey: ({ play, send, update }, { key, down }) => {
     if (down) {
       update("Count the key", (state) => {
         state.count = (state.count ?? 0) + 1;
@@ -42,12 +42,12 @@ tool({
     }
     if (key !== "a") return;
     if (down) play(69, { hold: true });
-    else release(69);
+    else send({ type: "noteOff", pitch: 69 });
   },
-  onMidi: ({ update }, message) => {
-    if (message.type !== "noteOn") return;
+  onNotes: ({ update }, event) => {
+    if (event.type !== "noteOn") return;
     update("Keep the note", (state) => {
-      state.last = message.pitch;
+      state.last = event.pitch;
     });
   },
   page: () => h("div", {}, "Play a"),
@@ -153,13 +153,13 @@ tool({
   doc: "Passes the sound and keeps the last note and how many are held.",
   state: { last: knob({ min: 0, max: 127, default: 0 }), held: knob({ min: 0, max: 128, default: 0 }) },
   sound: () => input,
-  onMidi: ({ update }, message) => {
-    if (message.type === "noteOn") {
+  onNotes: ({ update }, event) => {
+    if (event.type === "noteOn") {
       update("Keep the note", (state) => {
-        state.last = message.pitch;
+        state.last = event.pitch;
         state.held = (state.held ?? 0) + 1;
       });
-    } else if (message.type === "noteOff") {
+    } else if (event.type === "noteOff") {
       update("Let go of the note", (state) => {
         state.held = (state.held ?? 0) - 1;
       });
@@ -230,6 +230,24 @@ fn write(folder: &Path, path: &str, contents: &str) {
 
 /// [`open`] on a project folder that is written already.
 fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
+    let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
+    open_with(cx, folder, plugins)
+}
+
+/// [`open_folder`] with a plugin host that finds the repository's test plugins.
+fn open_with_test_plugins<'a>(
+    cx: &'a mut TestAppContext,
+    files: &[(&str, &str)],
+) -> Option<Window<'a>> {
+    let folder = tempfile::tempdir().unwrap();
+    for (path, contents) in files {
+        write(folder.path(), path, contents);
+    }
+    let plugins = crate::plugin_hosts::test_plugin_host(folder.path());
+    open_with(cx, folder, plugins)
+}
+
+fn open_with(cx: &mut TestAppContext, folder: TempDir, plugins: Plugins) -> Option<Window<'_>> {
     if !sound_typescript::has_bun() {
         eprintln!("skipped: Bun is not installed");
         return None;
@@ -237,7 +255,6 @@ fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
     // Bun's answers wake the window's tasks from a thread of their own.
     cx.executor().allow_parking();
     let (control, engine) = Engine::new(OFFLINE);
-    let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
     let (project, extensions) =
         runtime::open_with_extensions(folder.path(), control, plugins.clone()).unwrap();
     assert_eq!(project.problems(), []);
@@ -474,6 +491,9 @@ fn a_key_that_went_down_elsewhere_repeats_into_nothing_on_the_page(cx: &mut Test
     };
     let page = window.focused();
     window.cx.simulate_keystrokes("secondary-k");
+    // The keys play where the window wired them, and the tool hears what reaches it.
+    window.poll();
+    window.poll();
     window.focus_the_window();
     window.cx.simulate_keystrokes("a");
     window.until("the note of the computer keys", |window| {
@@ -736,10 +756,10 @@ tool({{
   state: {{ last: knob({{ min: 0, max: 127, default: 0 }}), mode: choice({{ options: ["full", "half"], default: "full" }}) }},
   sound: ({{ mode }}) => (mode === "half" ? input.times(0.5) : input),
   {tick}
-  onMidi: ({{ update }}, message) => {{
-    if (message.type !== "noteOn") return;
+  onNotes: ({{ update }}, event) => {{
+    if (event.type !== "noteOn") return;
     update("Keep the note", (state) => {{
-      state.last = message.pitch;
+      state.last = event.pitch;
     }});
   }},
 }});
@@ -1219,4 +1239,172 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
     let child =
         problem("\"drum\", which conductor does not own: its children are drop, keys, synth");
     assert_eq!(window.problems(), [child]);
+}
+
+/// An instrument that keeps every note event it hears in its record, with its time.
+const HEARER: &str = r#"import { list, note, number, sine, text, tool } from "./sdk";
+
+tool({
+  name: "hearer",
+  title: "Hearer",
+  when: "You want to know what reaches an instrument",
+  doc: "Keeps every note event it hears, with its time.",
+  kind: "instrument",
+  state: { heard: list({ type: text(), at: number({ min: 0, max: 100000 }) }) },
+  sound: () => sine(note.freq).times(note.gate).times(0.1),
+  onNotes: ({ update }, event) => {
+    update("Hear", (state) => {
+      state.heard.push({ type: event.type, at: event.at });
+    });
+  },
+});
+"#;
+
+impl Window<'_> {
+    /// The engine frame of the next block, the clock `time` and `at` count on.
+    fn engine_frame(&mut self) -> u64 {
+        let session = self.session.clone();
+        (self.cx).update(|_, cx| {
+            session.update(cx, |session, _| session.engine().poll().unwrap().frames)
+        })
+    }
+
+    /// The right channel of the next `frames`, in blocks of 64 as the device asks.
+    fn right(&mut self, frames: usize) -> Vec<f32> {
+        let mut output = vec![0.0_f32; frames * OFFLINE.channels];
+        for buffer in output.chunks_mut(64 * OFFLINE.channels) {
+            self.engine.process_block(buffer);
+        }
+        let right = output.iter().skip(1).step_by(OFFLINE.channels);
+        right.copied().collect()
+    }
+}
+
+/// The frame of a time in seconds on the clock of the sound, at the rate of the tests.
+fn frame_of(seconds: f64) -> u64 {
+    (seconds * f64::from(OFFLINE.sample_rate)).round() as u64
+}
+
+#[gpui::test]
+fn an_instrument_hears_the_clip_of_its_track_at_the_samples_it_sounds(cx: &mut TestAppContext) {
+    let clip = r#"{"tool": "arrangement.clip", "state": {"start": 0, "length": 3840,
+  "notes": [{"start": 1000, "length": 500, "pitch": 60, "velocity": 100}, {"start": 2000, "length": 100, "pitch": 62, "velocity": 100}],
+  "pedal": [{"start": 1500, "value": 127}]}}"#;
+    let files = [
+        TWO_TRACKS[0],
+        TWO_TRACKS[1],
+        (
+            "state/arrangement/one/instance.json",
+            r#"{"tool": "arrangement.track", "state": {"name": "One", "order": 0}}"#,
+        ),
+        (
+            "state/arrangement/one/instrument.json",
+            r#"{"tool": "hearer", "state": {}}"#,
+        ),
+        ("state/arrangement/one/take.json", clip),
+        ("extensions/hearer.ts", HEARER),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.wait_for_bun();
+    let start = window.engine_frame();
+    let session = window.session.clone();
+    (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
+    // Past the last note: 2100 ticks, 25 frames each at 120 bpm.
+    window.loudest(54_000);
+    let heard = |window: &mut Window| window.record("arrangement/one/instrument")["heard"].clone();
+    window.until("every event of the clip", |window| {
+        heard(window)
+            .as_array()
+            .is_some_and(|heard| heard.len() >= 5)
+    });
+    let heard: Vec<(String, u64)> = (heard(&mut window).as_array().unwrap().iter())
+        .map(|event| {
+            let at = frame_of(event["at"].as_f64().unwrap());
+            (event["type"].as_str().unwrap().to_string(), at - start)
+        })
+        .collect();
+    let expected = [
+        ("noteOn", 25_000),
+        ("cc", 37_500),
+        ("noteOff", 37_500),
+        ("noteOn", 50_000),
+        ("noteOff", 52_500),
+    ];
+    let expected: Vec<(String, u64)> = (expected.iter())
+        .map(|(kind, frame)| (kind.to_string(), *frame))
+        .collect();
+    assert_eq!(heard, expected);
+}
+
+/// A parent that sends the pedal and controller 74 into its plugin child half a second after a
+/// key on its page, and keeps that time in its record.
+const CONDUCTOR_OF_A_PLUGIN: &str = r#"import { h, number, tool } from "./sdk";
+
+tool({
+  name: "conductor",
+  title: "Conductor",
+  when: "You want to move the controllers of a plugin",
+  doc: "A key on its page moves the pedal and controller 74 of its plugin.",
+  state: { at: number({ min: 0, max: 100000 }) },
+  behaviour: () => ({ connections: [{ from: { child: "piano" }, to: "sound" }] }),
+  onKey: ({ send, update, time }, { key, down }) => {
+    if (key !== "a" || !down) return;
+    const at = time + 0.5;
+    send({ type: "cc", controller: 64, value: 1 }, { child: "piano", at });
+    send({ type: "cc", controller: 74, value: 1 }, { child: "piano", at });
+    update("Keep the time", (state) => {
+      state.at = at;
+    });
+  },
+  page: ({ size }) => h("div", { style: { width: size.width, height: size.height } }, "Conduct"),
+});
+"#;
+
+/// Sends the pedal and controller 74 into the CLAP test plugin from the code of its parent.
+/// Gives the frame the plugin's right channel shows it from, and the frame it was sent at.
+fn sent_to_a_plugin_child(cx: &mut TestAppContext) -> Option<(u64, u64)> {
+    let plugin = crate::support::test_plugin_record(plugin_host::PluginFormat::Clap, "piano");
+    let files = [
+        (
+            "project.json",
+            r#"{"format": 1, "extensions": ["plugin-host"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": [{"from": {"instance": "conductor", "port": "audio"}, "to": {"device_output": 0}}]}"#,
+        ),
+        (
+            "state/conductor/instance.json",
+            r#"{"tool": "conductor", "state": {}}"#,
+        ),
+        ("state/conductor/piano.json", plugin.as_str()),
+        ("extensions/conductor.ts", CONDUCTOR_OF_A_PLUGIN),
+    ];
+    let mut window = open_with_test_plugins(cx, &files)?;
+    window.until("the plugin", |window| window.problems().is_empty());
+    window.cx.simulate_keystrokes("a");
+    window.until("the time it was sent at", |window| {
+        (window.record("conductor")["at"].as_f64()).is_some_and(|at| at > 0.0)
+    });
+    let sent = frame_of(window.record("conductor")["at"].as_f64().unwrap());
+    let now = window.engine_frame();
+    let right = window.right(usize::try_from(sent - now).unwrap() + 1_000);
+    let shown = right.iter().position(|sample| *sample > 0.25).unwrap() as u64;
+    Some((now + shown, sent))
+}
+
+#[gpui::test]
+fn the_pedal_a_parent_sends_reaches_its_plugin_child_on_its_sample(cx: &mut TestAppContext) {
+    if let Some((shown, sent)) = sent_to_a_plugin_child(cx) {
+        assert_eq!(shown, sent);
+    }
+}
+
+#[gpui::test]
+fn a_controller_a_parent_sends_reaches_its_plugin_child_on_its_sample(cx: &mut TestAppContext) {
+    // SAFETY: nextest runs one test per process and no other thread reads the environment yet.
+    unsafe { std::env::set_var(test_plugin_support::SHOW_VARIABLE, "controller") };
+    if let Some((shown, sent)) = sent_to_a_plugin_child(cx) {
+        assert_eq!(shown, sent);
+    }
 }

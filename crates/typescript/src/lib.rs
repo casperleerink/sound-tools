@@ -26,11 +26,12 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
+use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{take_declared, wait_for_behaviours};
-pub use window::{hear_midi, page_shows_transport, start_window};
+pub use window::{hear_keyboard, page_shows_transport, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo, Tools};
@@ -42,15 +43,81 @@ pub const FOLDER: &str = "extensions";
 /// focus. The plain keys of the window, such as space, leave it alone.
 pub const KEY_CONTEXT: &str = "ToolKeys";
 
-/// A message of the MIDI keyboard as a tool hears it, see `Midi` in `sdk.ts`: a velocity or a
-/// value from 0 to 1, the bend from -1 to 1.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum Midi {
+/// A note event as the code of a tool sends and hears it, see `NoteEvent` in `sdk.ts`: a
+/// velocity or a value from 0 to 1, the bend from -1 to 1. The pedal is controller 64 and the
+/// mod wheel controller 1, as in MIDI.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+enum NoteMessage {
     NoteOn { pitch: u8, velocity: f32 },
     NoteOff { pitch: u8 },
     Cc { controller: u8, value: f32 },
     Bend { value: f32 },
+    Pressure { value: f32 },
+    AllOff,
+}
+
+impl From<NoteEvent> for NoteMessage {
+    fn from(event: NoteEvent) -> Self {
+        let fraction = |value: u8| f32::from(value) / 127.0;
+        match event {
+            NoteEvent::On { pitch, velocity } => Self::NoteOn {
+                pitch: pitch.number(),
+                velocity: fraction(velocity.value()),
+            },
+            NoteEvent::Off { pitch } => Self::NoteOff {
+                pitch: pitch.number(),
+            },
+            NoteEvent::Pedal(pedal) => Self::Cc {
+                controller: Controller::SUSTAIN_PEDAL,
+                value: fraction(pedal.value()),
+            },
+            NoteEvent::ModWheel(amount) => Self::Cc {
+                controller: Controller::MOD_WHEEL,
+                value: amount.fraction(),
+            },
+            NoteEvent::Control { controller, value } => Self::Cc {
+                controller: controller.number(),
+                value: value.fraction(),
+            },
+            NoteEvent::Bend(bend) => Self::Bend {
+                value: bend.fraction(),
+            },
+            NoteEvent::Pressure(amount) => Self::Pressure {
+                value: amount.fraction(),
+            },
+            NoteEvent::AllOff => Self::AllOff,
+        }
+    }
+}
+
+impl NoteMessage {
+    /// The event of the note contract, at the nearest step of each value. `None` for a
+    /// controller MIDI has no control for: 120 and on.
+    fn event(self) -> Option<NoteEvent> {
+        // `as` saturates, and a NaN is 0.
+        let steps = |value: f32| (value * 127.0).round() as i64;
+        let amount = |value| Amount::nearest(steps(value));
+        let pitch = |pitch| Pitch::nearest(i64::from(pitch));
+        Some(match self {
+            Self::NoteOn {
+                pitch: key,
+                velocity,
+            } => NoteEvent::On {
+                pitch: pitch(key),
+                velocity: Velocity::nearest(steps(velocity)),
+            },
+            Self::NoteOff { pitch: key } => NoteEvent::Off { pitch: pitch(key) },
+            Self::Cc { controller, value } => NoteEvent::controller(controller, amount(value))?,
+            Self::Bend { value } => {
+                let value = value.clamp(-1.0, 1.0);
+                let most = if value < 0.0 { 8192.0 } else { 8191.0 };
+                NoteEvent::Bend(Bend::nearest((value * most).round() as i64))
+            }
+            Self::Pressure { value } => NoteEvent::Pressure(amount(value)),
+            Self::AllOff => NoteEvent::AllOff,
+        })
+    }
 }
 
 const SDK: &str = include_str!("sdk.ts");
@@ -411,6 +478,40 @@ pub fn bundled_bun() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// So a recording made from `onNotes` and sent again plays what was heard, the pedal and
+    /// the mod wheel included, which a tool sends as their MIDI controllers.
+    #[test]
+    fn every_event_a_tool_hears_is_the_same_event_when_it_sends_it_again() {
+        let pitch = Pitch::new(60).unwrap();
+        let controller = |number| Controller::new(number).unwrap();
+        let events = (1..=127).flat_map(|value| {
+            let amount = Amount::new(value).unwrap();
+            [
+                NoteEvent::On {
+                    pitch,
+                    velocity: Velocity::new(value).unwrap(),
+                },
+                NoteEvent::Pedal(sound_notes::Pedal::new(value).unwrap()),
+                NoteEvent::ModWheel(amount),
+                NoteEvent::Pressure(amount),
+                NoteEvent::Control {
+                    controller: controller(value % 60 + 2),
+                    value: amount,
+                },
+            ]
+        });
+        let bends = (-8192..=8191).map(|bend| NoteEvent::Bend(Bend::new(bend).unwrap()));
+        let others = [NoteEvent::Off { pitch }, NoteEvent::AllOff];
+        for event in events.chain(bends).chain(others) {
+            assert_eq!(NoteMessage::from(event).event(), Some(event));
+        }
+        let channel_mode = NoteMessage::Cc {
+            controller: 120,
+            value: 0.0,
+        };
+        assert_eq!(channel_mode.event(), None);
+    }
 
     #[test]
     fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {

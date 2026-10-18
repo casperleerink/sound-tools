@@ -3,20 +3,20 @@
 
 use crate::{NoteEvent, Pitch, Velocity};
 
-/// What a performer does with a key.
+/// What a performer plays. Give `at` as now or later: a processor made since the last block
+/// does not know where engine time is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Performed {
     /// Holds a key for `frames` from the frame `at` of engine time, or from the next frame once
-    /// that has passed; with no `frames`, until its release. Give `at` as now or later: a
-    /// processor made since the last block does not know where engine time is.
+    /// that has passed.
     Play {
         pitch: Pitch,
         velocity: Velocity,
         at: u64,
-        frames: Option<u64>,
+        frames: u64,
     },
-    /// Lets go of a key at the frame `at`, or in the next frame once that has passed.
-    Release { pitch: Pitch, at: u64 },
+    /// Sends one event at the frame `at`, or in the next frame once that has passed.
+    Send { event: NoteEvent, at: u64 },
 }
 
 /// What a [`Schedule`] holds: a note, or more, such as a trigger.
@@ -65,10 +65,10 @@ impl<T: Scheduled> Schedule<T> {
         true
     }
 
-    /// Keeps what a performer does for its frame. A release that finds the schedule full gives
-    /// its off back to play now, as a dropped release would hold the note for ever. A note of
-    /// the key still waiting would too, and a waiting end of one would end a newer note, so
-    /// both go.
+    /// Keeps what a performer plays for its frame. A full schedule drops a note on, which
+    /// leaves nothing sounding, and gives back any other event to play now: a dropped off or
+    /// pedal up would hold notes for ever. An off that plays now takes the waiting note and end
+    /// of its key along, as the end would end a newer note.
     #[must_use]
     pub fn perform(&mut self, performed: Performed) -> Option<NoteEvent> {
         match performed {
@@ -81,26 +81,30 @@ impl<T: Scheduled> Schedule<T> {
                 // Both or neither, so no key stays down.
                 if self.waiting.len() + 2 <= self.room {
                     let start = at.max(self.next_frame);
+                    let end = start.saturating_add(frames.max(1));
                     self.add(Some(start), NoteEvent::On { pitch, velocity }.into());
-                    if let Some(frames) = frames {
-                        let end = start.saturating_add(frames.max(1));
-                        self.add(Some(end), NoteEvent::Off { pitch }.into());
-                    }
+                    self.add(Some(end), NoteEvent::Off { pitch }.into());
                 }
                 None
             }
-            Performed::Release { pitch, at } => {
-                let off = NoteEvent::Off { pitch };
-                if self.add(Some(at), off.into()) {
+            Performed::Send { event, at } => {
+                if self.add(Some(at), event.into()) {
                     return None;
                 }
-                self.waiting.retain(|(_, what)| match what.note() {
-                    Some(
-                        NoteEvent::On { pitch: waiting, .. } | NoteEvent::Off { pitch: waiting },
-                    ) => waiting != pitch,
-                    _ => true,
-                });
-                Some(off)
+                match event {
+                    NoteEvent::On { .. } => None,
+                    NoteEvent::Off { pitch } => {
+                        self.waiting.retain(|(_, what)| match what.note() {
+                            Some(
+                                NoteEvent::On { pitch: waiting, .. }
+                                | NoteEvent::Off { pitch: waiting },
+                            ) => waiting != pitch,
+                            _ => true,
+                        });
+                        Some(event)
+                    }
+                    _ => Some(event),
+                }
             }
         }
     }

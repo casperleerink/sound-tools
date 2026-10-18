@@ -20,7 +20,7 @@ use sound_core::InstanceId;
 use sound_signals::Graph;
 
 use crate::tools::ToolInfo;
-use crate::{Midi, behaviours};
+use crate::{NoteMessage, behaviours};
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
 /// hung. A file's step is its import, the sound of every combination of its choices and the
@@ -81,11 +81,11 @@ pub(crate) enum Request<'a> {
         key: &'a str,
         down: bool,
     },
-    /// What the MIDI keyboard played, for the instances that hear it.
-    Midi {
+    /// What an instance whose tool hears notes heard since it last did.
+    Notes {
         time: f64,
-        instances: Vec<Looped<'a>>,
-        messages: &'a [Midi],
+        instance: Looped<'a>,
+        events: &'a [Heard],
     },
     Drop {
         card: u64,
@@ -118,6 +118,15 @@ pub(crate) struct Transport {
     pub bpm: f64,
 }
 
+/// A note event a tool heard, at `at`: engine time in seconds, the clock of `time` and of the
+/// `at` of what it plays.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub(crate) struct Heard {
+    #[serde(flatten)]
+    pub event: NoteMessage,
+    pub at: f64,
+}
+
 /// An instance whose tool has a control loop, as it is now.
 #[derive(Serialize)]
 pub(crate) struct Looped<'a> {
@@ -146,7 +155,7 @@ pub(crate) enum Event {
     },
     /// A card drew the tree it drew last.
     Unchanged { card: u64 },
-    /// A card, a key or the MIDI keyboard changed the record of an instance.
+    /// A card, a key or a note it heard changed the record of an instance.
     Edit {
         instance: InstanceId,
         label: String,
@@ -163,20 +172,21 @@ pub(crate) enum Event {
     },
     /// A card or a control loop played a note of an instance, or of its child `child`: a key
     /// held for `seconds` from `at`, engine time in seconds, or from now; `velocity` from 0 to
-    /// 1. With no `seconds` it is held until its release.
+    /// 1.
     Note {
         instance: InstanceId,
         child: Option<String>,
         pitch: u8,
         velocity: f32,
-        seconds: Option<f32>,
+        seconds: f32,
         at: Option<f64>,
     },
-    /// Lets go of a held note of an instance, or of its child `child`, at `at` or now.
-    Release {
+    /// A card or a control loop sent a note event to an instance, or to its child `child`, at
+    /// `at` or now.
+    Send {
         instance: InstanceId,
         child: Option<String>,
-        pitch: u8,
+        event: NoteMessage,
         at: Option<f64>,
     },
     /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
@@ -576,7 +586,7 @@ mod tests {
                 "info": {
                     "name": name, "file": format!("{name}.ts"), "title": name, "when": "w",
                     "doc": "d", "kind": "effect", "tick": false, "page": false, "transport": false, "keys": false,
-                    "midi": false, "behaviour": false, "controls": {},
+                    "notes": false, "behaviour": false, "controls": {},
                     "fields": { "rate": { "kind": "knob", "min": 0, "max": 1, "default": 0, "unit": unit } }
                 },
                 "sounds": [], "card": { "Err": "no card" }, "page": null

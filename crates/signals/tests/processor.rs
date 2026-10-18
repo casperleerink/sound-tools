@@ -6,8 +6,8 @@
 use std::f32::consts::TAU;
 
 use sound_core::{
-    Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput, Node, Ports,
-    PrepareConfig, ProcessContext, Processor, Watch,
+    Automation, Connection, Engine, EngineConfig, EngineControl, EventOutput, EventTap, Node,
+    Ports, PrepareConfig, ProcessContext, Processor, Watch,
 };
 use sound_notes::{NoteEvent, Performed, Pitch, Velocity};
 use sound_signals::{
@@ -334,6 +334,29 @@ fn a_trigger_fires_in_one_frame_and_a_watch_shows_what_it_counted() {
 }
 
 #[test]
+fn the_notes_that_come_in_reach_its_tap_at_their_frames_and_its_own_notes_do_not() {
+    let notes = vec![(100, on(60)), (1_000, off(60))];
+    let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), notes);
+    let tap = EventTap::new();
+    let tapped = SignalsUpdate::Tap(Some(tap.clone()));
+    played.control.update(played.signals, tapped).unwrap();
+    let own = Performed::Play {
+        pitch: Pitch::new(69).unwrap(),
+        velocity: Velocity::new(100).unwrap(),
+        at: 0,
+        frames: 10,
+    };
+    played
+        .control
+        .update(played.signals, SignalsUpdate::Note(own))
+        .unwrap();
+    played.render(2_000);
+    let mut heard = Vec::new();
+    tap.read(0, &mut heard);
+    assert_eq!(heard, [(100, on(60)), (1_000, off(60))]);
+}
+
+#[test]
 fn a_note_from_the_interface_plays_a_voice_for_its_length() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     assert_eq!(loudest(&played.render(4_800)), 0.0);
@@ -341,7 +364,7 @@ fn a_note_from_the_interface_plays_a_voice_for_its_length() {
         pitch: Pitch::new(69).unwrap(),
         velocity: Velocity::new(100).unwrap(),
         at: 0,
-        frames: Some(24_000),
+        frames: 24_000,
     });
     played.control.update(played.signals, note).unwrap();
     let output = played.render(48_000);
@@ -351,18 +374,20 @@ fn a_note_from_the_interface_plays_a_voice_for_its_length() {
 }
 
 #[test]
-fn a_note_with_no_length_plays_until_it_is_released() {
+fn a_note_on_plays_until_its_note_off() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = SignalsUpdate::Note(Performed::Play {
-        pitch,
-        velocity: Velocity::new(100).unwrap(),
+    let velocity = Velocity::new(100).unwrap();
+    let note = SignalsUpdate::Note(Performed::Send {
+        event: NoteEvent::On { pitch, velocity },
         at: 0,
-        frames: None,
     });
     played.control.update(played.signals, note).unwrap();
     assert!(loudest(&played.render(96_000)[48_000..]) > 0.1);
-    let release = SignalsUpdate::Note(Performed::Release { pitch, at: 0 });
+    let release = SignalsUpdate::Note(Performed::Send {
+        event: NoteEvent::Off { pitch },
+        at: 0,
+    });
     played.control.update(played.signals, release).unwrap();
     assert_eq!(loudest(&played.render(9_600)[4_800..]), 0.0);
 }
@@ -371,22 +396,21 @@ fn a_note_with_no_length_plays_until_it_is_released() {
 fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_key_at_once() {
     let mut played = play(Kind::Instrument { voices: 8 }, sine_note(), Vec::new());
     let pitch = Pitch::new(69).unwrap();
-    let note = |at, frames| {
-        SignalsUpdate::Note(Performed::Play {
-            pitch,
-            velocity: Velocity::new(100).unwrap(),
-            at,
-            frames,
-        })
+    let velocity = Velocity::new(100).unwrap();
+    let held = || {
+        let event = NoteEvent::On { pitch, velocity };
+        SignalsUpdate::Note(Performed::Send { event, at: 0 })
     };
-    played
-        .control
-        .update(played.signals, note(0, None))
-        .unwrap();
+    played.control.update(played.signals, held()).unwrap();
     played.render(64);
     // The same key again, from frame 48000 to 96000, waits in the list, which holds 256, with
     // triggers far ahead.
-    let waiting = note(48_000, Some(48_000));
+    let waiting = SignalsUpdate::Note(Performed::Play {
+        pitch,
+        velocity,
+        at: 48_000,
+        frames: 48_000,
+    });
     played.control.update(played.signals, waiting).unwrap();
     for _ in 0..254 {
         let hit = SignalsUpdate::Trigger {
@@ -397,15 +421,15 @@ fn a_release_when_the_list_of_what_waits_for_its_frame_is_full_lets_go_of_its_ke
         played.render(64);
     }
     assert!(loudest(&played.render(4_800)) > 0.1);
-    let release = SignalsUpdate::Note(Performed::Release { pitch, at: 0 });
+    let release = SignalsUpdate::Note(Performed::Send {
+        event: NoteEvent::Off { pitch },
+        at: 0,
+    });
     played.control.update(played.signals, release).unwrap();
     // Past frame 48000, where the waiting note would start.
     assert_eq!(loudest(&played.render(48_000)[4_800..]), 0.0);
     // A newer note of the key plays on past frame 96000, where the waiting one would end.
-    played
-        .control
-        .update(played.signals, note(0, None))
-        .unwrap();
+    played.control.update(played.signals, held()).unwrap();
     assert!(loudest(&played.render(48_000)[38_400..]) > 0.1);
 }
 

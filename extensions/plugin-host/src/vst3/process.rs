@@ -11,10 +11,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use vst3::Steinberg::Vst::{
-    AudioBusBuffers, AudioBusBuffers__type0, Event, Event_::EventTypes_, Event__type0,
-    IAudioProcessor, IAudioProcessorTrait, IEventList, IEventListTrait, IParamValueQueue,
-    IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait, NoteOffEvent, NoteOnEvent,
-    ParamID, ParamValue, ProcessData, ProcessModes_, SymbolicSampleSizes_,
+    AudioBusBuffers, AudioBusBuffers__type0, ControllerNumbers_, Event, Event_::EventTypes_,
+    Event__type0, IAudioProcessor, IAudioProcessorTrait, IEventList, IEventListTrait,
+    IParamValueQueue, IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait,
+    NoteOffEvent, NoteOnEvent, ParamID, ParamValue, ProcessData, ProcessModes_,
+    SymbolicSampleSizes_,
 };
 use vst3::Steinberg::{int32, kInvalidArgument, kNotImplemented, kResultFalse, kResultOk, tresult};
 use vst3::{Class, ComPtr, ComWrapper};
@@ -26,13 +27,17 @@ use crate::processor::{
 };
 
 /// How many parameters one block may carry, in each direction. Going in, they are the pins of
-/// the record, the pedal, the wheels, the key pressure and the composer's edits in the plugin's
-/// own window, and all of them fit at once: the edits take no more than [`WINDOW_EDITS`], and
-/// the rest wait for the next block.
+/// the record, the pedal, the wheels, the key pressure, a few other controllers and the
+/// composer's edits in the plugin's own window, and all of them fit at once: the edits take no
+/// more than [`WINDOW_EDITS`], and the rest wait for the next block.
 /// A lane moves a pin, so it shares the queue of its pin.
 /// Coming out, a plugin that reports more than this while it plays loses the rest until the
 /// next block.
-const PARAMETER_CAPACITY: usize = sound_core::MAX_AUTOMATED + Control::REST.len() + WINDOW_EDITS;
+const PARAMETER_CAPACITY: usize =
+    sound_core::MAX_AUTOMATED + Control::REST.len() + OTHER_CONTROLS + WINDOW_EDITS;
+
+/// How many other MIDI controllers one block carries, each its own parameter.
+const OTHER_CONTROLS: usize = 16;
 
 /// How many parameters of the plugin's own window one block carries next to everything else.
 /// A hand moves one knob at a time, so this is for a plugin that moves many with one.
@@ -51,31 +56,52 @@ pub(super) const REPORT_CAPACITY: usize = 512;
 /// the composer did not leave it on. See [`crate::vst3::context::Handler`].
 pub(super) const EDIT_CAPACITY: usize = 512;
 
-/// The parameters the pedal, the wheels and the key pressure go to, one per [`Control`], shared
-/// by the two sides of a plugin. The control side looks them up again when the plugin moves
-/// them (`kMidiCCAssignmentChanged`), and the audio side reads one for every move. Atomics, so
+/// The parameters the controls go to, one per VST 3 controller number, shared by the two sides
+/// of a plugin. The control side looks them up again when the plugin moves them
+/// (`kMidiCCAssignmentChanged`), and the audio side reads one for every move. Atomics, so
 /// neither side ever waits for the other.
-pub(super) struct ControlTargets([AtomicU64; 4]);
+pub(super) struct ControlTargets([AtomicU64; CONTROLLER_NUMBERS]);
+
+/// VST 3 numbers the MIDI controllers, then the key pressure and the bend.
+pub(super) const CONTROLLER_NUMBERS: usize = ControllerNumbers_::kPitchBend as usize + 1;
 
 /// What a target holds while the plugin maps its control to nothing. A parameter id is 32 bits,
 /// so no id is this.
 const NOWHERE: u64 = u64::MAX;
 
+/// The VST 3 controller number of a control.
+pub(super) fn controller_number(control: Control) -> usize {
+    let number = match control {
+        Control::Pedal(_) => ControllerNumbers_::kCtrlSustainOnOff,
+        Control::Bend(_) => ControllerNumbers_::kPitchBend,
+        Control::ModWheel(_) => ControllerNumbers_::kCtrlModWheel,
+        Control::Pressure(_) => ControllerNumbers_::kAfterTouch,
+        Control::Other { controller, .. } => return usize::from(controller.number()),
+    };
+    number as usize
+}
+
 impl ControlTargets {
-    /// `parameter` says where the plugin maps each control now.
-    pub(super) fn new(parameter: impl Fn(Control) -> Option<ParamID>) -> Self {
-        Self(
-            Control::REST
-                .map(|control| AtomicU64::new(parameter(control).map_or(NOWHERE, u64::from))),
-        )
+    /// `parameter` says where the plugin maps each controller number now.
+    pub(super) fn new(parameter: impl Fn(usize) -> Option<ParamID>) -> Self {
+        Self(std::array::from_fn(|number| {
+            AtomicU64::new(parameter(number).map_or(NOWHERE, u64::from))
+        }))
     }
 
     pub(super) fn get(&self, control: Control) -> Option<ParamID> {
-        ParamID::try_from(self.0[control.index()].load(Ordering::Acquire)).ok()
+        self.of_number(controller_number(control))
     }
 
-    pub(super) fn set(&self, control: Control, id: Option<ParamID>) {
-        self.0[control.index()].store(id.map_or(NOWHERE, u64::from), Ordering::Release);
+    pub(super) fn of_number(&self, number: usize) -> Option<ParamID> {
+        let target = self.0.get(number)?;
+        ParamID::try_from(target.load(Ordering::Acquire)).ok()
+    }
+
+    pub(super) fn set(&self, number: usize, id: Option<ParamID>) {
+        if let Some(target) = self.0.get(number) {
+            target.store(id.map_or(NOWHERE, u64::from), Ordering::Release);
+        }
     }
 }
 
@@ -84,7 +110,9 @@ impl ControlTargets {
 fn normalized(control: Control) -> ParamValue {
     let most = match control {
         Control::Bend(_) => 16383.0,
-        Control::Pedal(_) | Control::ModWheel(_) | Control::Pressure(_) => 127.0,
+        Control::Pedal(_) | Control::ModWheel(_) | Control::Pressure(_) | Control::Other { .. } => {
+            127.0
+        }
     };
     f64::from(control.midi_value()) / most
 }

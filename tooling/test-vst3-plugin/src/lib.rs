@@ -105,7 +105,8 @@ const PRESSURE: ParamID = 9;
 /// A list of named steps, one per name in `test_plugin_support::WAVES`.
 pub const WAVE: ParamID = 10;
 
-/// A parameter a host may set and must not show, which a list of parameters leaves out.
+/// A parameter a host may set and must not show, which a list of parameters leaves out. The
+/// plugin hears `test_plugin_support::CONTROLLER` on it.
 const HIDDEN: ParamID = 11;
 
 /// Where the plugin hears the sustain pedal: on [`SUSTAIN`], on [`MOVED_SUSTAIN`], or nowhere.
@@ -738,6 +739,7 @@ impl IAudioProcessorTrait for TestTone {
                         BEND => Some(Heard::Wheel(support::Wheel::Bend, value)),
                         MOD_WHEEL => Some(Heard::Wheel(support::Wheel::ModWheel, value)),
                         PRESSURE => Some(Heard::Wheel(support::Wheel::Pressure, value)),
+                        HIDDEN => Some(Heard::Wheel(support::Wheel::Controller, value)),
                         id if Some(id) == pedal_id => {
                             Some(Heard::Pedal((value * 127.0).round() as u8))
                         }
@@ -1420,7 +1422,8 @@ impl IPlugViewTrait for TestView {
 }
 
 /// How a VST 3 plugin says where a MIDI controller goes: to a parameter. The sustain pedal, the
-/// bend wheel, the mod wheel and the channel pressure are the ones this plugin takes.
+/// bend wheel, the mod wheel, the channel pressure and `support::CONTROLLER` are the ones this
+/// plugin takes.
 impl IMidiMappingTrait for TestTone {
     unsafe fn getMidiControllerAssignment(
         &self,
@@ -1433,6 +1436,7 @@ impl IMidiMappingTrait for TestTone {
         const BEND_WHEEL: i16 = ControllerNumbers_::kPitchBend as i16;
         const MOD_WHEEL_CONTROLLER: i16 = ControllerNumbers_::kCtrlModWheel as i16;
         const CHANNEL_PRESSURE: i16 = ControllerNumbers_::kAfterTouch as i16;
+        const OTHER_CONTROLLER: i16 = support::CONTROLLER as i16;
         let wheels = !support::told_to(support::NO_WHEELS_VARIABLE);
         // Told to take no pedal, this plugin maps no parameter to controller 64, which is what
         // a VST 3 plugin that cannot be sent the pedal looks like. So is one that moved its
@@ -1448,6 +1452,7 @@ impl IMidiMappingTrait for TestTone {
             BEND_WHEEL if wheels => Some(BEND),
             MOD_WHEEL_CONTROLLER if wheels => Some(MOD_WHEEL),
             CHANNEL_PRESSURE if wheels => Some(PRESSURE),
+            OTHER_CONTROLLER if wheels => Some(HIDDEN),
             _ => None,
         };
         let Some(mapped) = mapped else {

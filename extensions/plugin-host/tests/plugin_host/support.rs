@@ -10,7 +10,7 @@ use sound_core::{
     EventOutput, InstanceId, OutputEndpoint, PlayedLanes, Ports, PrepareConfig, ProcessContext,
     Processor, Project, Registry, State, Ticks,
 };
-use sound_notes::{Amount, Bend, NOTES_INPUT, NoteEvent, Pedal, Pitch, Velocity};
+use sound_notes::{Amount, Bend, Controller, NOTES_INPUT, NoteEvent, Pedal, Pitch, Velocity};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 
@@ -79,13 +79,39 @@ pub(crate) fn allocations_during<T>(work: impl FnOnce() -> T) -> (T, u64) {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "lowercase")]
 pub(crate) enum Played {
-    On { frame: u64, pitch: u8, velocity: u8 },
-    Off { frame: u64, pitch: u8 },
-    Pedal { frame: u64, value: u8 },
-    Bend { frame: u64, value: i16 },
-    ModWheel { frame: u64, value: u8 },
-    Pressure { frame: u64, value: u8 },
-    AllOff { frame: u64 },
+    On {
+        frame: u64,
+        pitch: u8,
+        velocity: u8,
+    },
+    Off {
+        frame: u64,
+        pitch: u8,
+    },
+    Pedal {
+        frame: u64,
+        value: u8,
+    },
+    Bend {
+        frame: u64,
+        value: i16,
+    },
+    ModWheel {
+        frame: u64,
+        value: u8,
+    },
+    Pressure {
+        frame: u64,
+        value: u8,
+    },
+    Control {
+        frame: u64,
+        controller: u8,
+        value: u8,
+    },
+    AllOff {
+        frame: u64,
+    },
 }
 
 impl Played {
@@ -97,6 +123,7 @@ impl Played {
             | Self::Bend { frame, .. }
             | Self::ModWheel { frame, .. }
             | Self::Pressure { frame, .. }
+            | Self::Control { frame, .. }
             | Self::AllOff { frame } => frame,
         }
     }
@@ -120,6 +147,12 @@ impl Played {
             Self::Pressure { value, .. } => {
                 NoteEvent::Pressure(Amount::new(value).expect("an amount"))
             }
+            Self::Control {
+                controller, value, ..
+            } => NoteEvent::Control {
+                controller: Controller::new(controller).expect("a controller"),
+                value: Amount::new(value).expect("an amount"),
+            },
             Self::AllOff { .. } => NoteEvent::AllOff,
         }
     }

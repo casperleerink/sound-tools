@@ -3,11 +3,13 @@
 //! [`NoteEvent::AllOff`] from the feed instead. A performer plays the instrument through it
 //! too, to the frame.
 
-use sound_core::{EventInput, EventOutput, Ports, PrepareConfig, ProcessContext, Processor};
+use sound_core::{
+    EventInput, EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor,
+};
 
-use crate::{NoteEvent, Performed, Pitch, Schedule};
+use crate::{Amount, Bend, Controller, NoteEvent, Pedal, Performed, Pitch, Schedule};
 
-/// The most performed notes that wait for their frame: a control loop plays a little ahead.
+/// The most performed events that wait for their frame: a control loop plays a little ahead.
 const WAITING: usize = 256;
 
 /// Connected to one instrument for as long as that instrument is there, with the senders of
@@ -15,9 +17,7 @@ const WAITING: usize = 256;
 pub struct NoteFeed {
     release: bool,
     performed: Schedule<NoteEvent>,
-    /// The pitches whose release found the schedule full, which let go in the next block, or
-    /// the one after when the output is full.
-    let_go: u128,
+    late: Late,
 }
 
 impl Default for NoteFeed {
@@ -25,7 +25,7 @@ impl Default for NoteFeed {
         Self {
             release: false,
             performed: Schedule::new(WAITING),
-            let_go: 0,
+            late: Late::default(),
         }
     }
 }
@@ -35,6 +35,98 @@ pub enum NoteFeedUpdate {
     /// holds before it passes anything on.
     Senders,
     Note(Performed),
+}
+
+/// What a performer sent that found the schedule full, to play at the start of the next block.
+/// On one frame only where each controller ends up counts, so it keeps that and the offs: a
+/// fixed size, whatever comes.
+struct Late {
+    all_off: bool,
+    pedal: Option<Pedal>,
+    bend: Option<Bend>,
+    mod_wheel: Option<Amount>,
+    pressure: Option<Amount>,
+    controls: [Option<Amount>; 120],
+    offs: u128,
+}
+
+impl Default for Late {
+    fn default() -> Self {
+        Self {
+            all_off: false,
+            pedal: None,
+            bend: None,
+            mod_wheel: None,
+            pressure: None,
+            controls: [None; 120],
+            offs: 0,
+        }
+    }
+}
+
+impl Late {
+    fn keep(&mut self, event: NoteEvent) {
+        match event {
+            NoteEvent::AllOff => {
+                *self = Self {
+                    all_off: true,
+                    ..Self::default()
+                }
+            }
+            NoteEvent::Pedal(pedal) => self.pedal = Some(pedal),
+            NoteEvent::Bend(bend) => self.bend = Some(bend),
+            NoteEvent::ModWheel(amount) => self.mod_wheel = Some(amount),
+            NoteEvent::Pressure(amount) => self.pressure = Some(amount),
+            NoteEvent::Control { controller, value } => {
+                if let Some(control) = self.controls.get_mut(usize::from(controller.number())) {
+                    *control = Some(value);
+                }
+            }
+            NoteEvent::Off { pitch } => self.offs |= 1 << pitch.number(),
+            NoteEvent::On { .. } => {}
+        }
+    }
+
+    /// Sends what it keeps at the start of the block, in the order of the note contract. What
+    /// does not fit stays for the next block.
+    fn send(&mut self, outputs: &mut EventOutputs<'_>) {
+        let mut push = |event| outputs.push(NoteFeed::OUTPUT, 0, event);
+        if self.all_off {
+            if !push(NoteEvent::AllOff) {
+                return;
+            }
+            self.all_off = false;
+        }
+        let standing = [
+            self.pedal.take().map(NoteEvent::Pedal),
+            self.bend.take().map(NoteEvent::Bend),
+            self.mod_wheel.take().map(NoteEvent::ModWheel),
+            self.pressure.take().map(NoteEvent::Pressure),
+        ];
+        let controls = std::mem::replace(&mut self.controls, [None; 120]);
+        let controls = controls
+            .into_iter()
+            .enumerate()
+            .filter_map(|(number, value)| {
+                let controller = Controller::new(u8::try_from(number).ok()?).ok()?;
+                let value = value?;
+                Some(NoteEvent::Control { controller, value })
+            });
+        for event in standing.into_iter().flatten().chain(controls) {
+            if !push(event) {
+                self.keep(event);
+            }
+        }
+        let mut offs = std::mem::take(&mut self.offs);
+        while offs != 0 {
+            let bit = offs & offs.wrapping_neg();
+            let pitch = Pitch::nearest(i64::from(bit.trailing_zeros()));
+            if !push(NoteEvent::Off { pitch }) {
+                self.offs |= bit;
+            }
+            offs &= !bit;
+        }
+    }
 }
 
 impl NoteFeed {
@@ -57,8 +149,8 @@ impl Processor for NoteFeed {
         match update {
             NoteFeedUpdate::Senders => self.release = true,
             NoteFeedUpdate::Note(performed) => {
-                if let Some(NoteEvent::Off { pitch }) = self.performed.perform(*performed) {
-                    self.let_go |= 1 << pitch.number();
+                if let Some(event) = self.performed.perform(*performed) {
+                    self.late.keep(event);
                 }
             }
         }
@@ -70,15 +162,7 @@ impl Processor for NoteFeed {
         if std::mem::take(&mut self.release) {
             outputs.push(Self::OUTPUT, 0, NoteEvent::AllOff);
         }
-        let mut let_go = std::mem::take(&mut self.let_go);
-        while let_go != 0 {
-            let bit = let_go & let_go.wrapping_neg();
-            let pitch = Pitch::nearest(i64::from(bit.trailing_zeros()));
-            if !outputs.push(Self::OUTPUT, 0, NoteEvent::Off { pitch }) {
-                self.let_go |= bit;
-            }
-            let_go &= !bit;
-        }
+        self.late.send(outputs);
         // On one frame, the offs before the ons, as the note contract says, whoever sends them.
         let inputs = context.event_inputs.get(Self::INPUT);
         let is_on = |event: &NoteEvent| matches!(event, NoteEvent::On { .. });

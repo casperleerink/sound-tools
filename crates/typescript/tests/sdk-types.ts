@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { input, list, number, output, ownSound, rise, text, tool, trigger, type Declaration } from "./sdk";
+import { input, list, number, output, ownSound, rise, text, tool, trigger, type Declaration, type HeardNote } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -77,12 +77,20 @@ tool({
   state: {},
   controls: { hit: trigger() },
   behaviour: (): Declaration => ({ connections: [] }),
-  tick: ({ set, fire, play, release }) => {
+  tick: ({ set, fire, play, send }) => {
     fire("hit");
     set({ child: "lfo", live: "rate" }, 2);
     fire({ child: "drums", trigger: "kick" }, { at: 1 });
     play(60, { child: "synth", hold: true });
-    release(60, { child: "synth" });
+    send({ type: "noteOff", pitch: 60 }, { child: "synth" });
+    send({ type: "cc", controller: 64, value: 1 }, { child: "synth", at: 1 });
+    send({ type: "bend", value: -0.5 });
+    // @ts-expect-error: a misspelled event.
+    send({ type: "noteoff", pitch: 60 });
+    // @ts-expect-error: a note on needs its velocity.
+    send({ type: "noteOn", pitch: 60 });
+    // @ts-expect-error: a key is let go of with a `noteOff`.
+    send({ type: "noteOff", pitch: 60, velocity: 0 });
     // @ts-expect-error: a trigger of a child is fired, not set.
     set({ child: "drums", trigger: "kick" }, 1);
     // @ts-expect-error: and a live control of a child set, not fired.
@@ -90,6 +98,32 @@ tool({
     // @ts-expect-error: a knob of a child is the composition: a cable moves it.
     set({ child: "filter", number: "cutoff_hz" }, 800);
   },
+});
+
+tool({
+  name: "recorder",
+  title: "Recorder",
+  when: "Never",
+  doc: "Keeps what it hears and plays it back.",
+  kind: "instrument",
+  state: {},
+  memory: () => ({ heard: [] as HeardNote[] }),
+  onNotes: ({ memory, send }, event) => {
+    memory.heard.push(event);
+    send(event, { at: event.at + 1 });
+  },
+  // @ts-expect-error: `release` is gone: a `noteOff` lets go.
+  tick: ({ release }) => release(60),
+});
+
+tool({
+  name: "old",
+  title: "Old",
+  when: "Never",
+  doc: "Hears the keyboard the old way.",
+  state: {},
+  // @ts-expect-error: `onMidi` is `onNotes`.
+  onMidi: () => {},
 });
 
 tool({

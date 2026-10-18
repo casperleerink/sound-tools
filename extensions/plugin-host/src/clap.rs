@@ -1061,6 +1061,7 @@ fn midi(control: Control) -> [u8; 3] {
         Control::ModWheel(amount) => [0xB0, 1, amount.value()],
         // Channel pressure has one data byte.
         Control::Pressure(amount) => [0xD0, amount.value(), 0],
+        Control::Other { controller, value } => [0xB0, controller.number(), value.value()],
     }
 }
 

@@ -18,7 +18,7 @@ use sound_core::{
     EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks,
     monotonic_nanos,
 };
-use sound_notes::{Amount, Bend, Expression, NoteEvent, Pedal, Pitch, Velocity};
+use sound_notes::{Amount, Bend, Controller, Expression, NoteEvent, Pedal, Pitch, Velocity};
 
 /// Messages the input ring holds. A keyboard sends a few hundred a second at most, and the
 /// audio thread empties the ring every block, so this is far more than a burst needs.
@@ -48,16 +48,13 @@ pub enum Played {
     ModWheel(Amount),
     /// Channel pressure, also called aftertouch.
     Pressure(Amount),
-    /// Any other controller, such as a knob of a MIDI controller. No instrument plays it and
-    /// no take keeps it; a tool of the project hears it.
+    /// Any other controller, such as a knob of a MIDI controller. A plugin plays it; no take
+    /// keeps it.
     Control {
-        controller: u8,
-        value: u8,
+        controller: Controller,
+        value: Amount,
     },
 }
-
-/// Controllers from here on are channel mode messages, such as all notes off, not controls.
-const CHANNEL_MODE: u8 = 120;
 
 impl Played {
     /// Reads one MIDI message. `None` for anything this application does not use, and for
@@ -93,39 +90,36 @@ impl Played {
             MidiMessage::ChannelPressure(_, pressure) => {
                 Some(Self::Pressure(Amount::new(u8::from(pressure)).ok()?))
             }
-            MidiMessage::ControlChange(_, controller, value)
-                if u8::from(controller) < CHANNEL_MODE =>
-            {
-                Some(Self::Control {
-                    controller: u8::from(controller),
-                    value: u8::from(value),
-                })
-            }
+            MidiMessage::ControlChange(_, controller, value) => Some(Self::Control {
+                controller: Controller::new(u8::from(controller)).ok()?,
+                value: Amount::new(u8::from(value)).ok()?,
+            }),
             _ => None,
         }
     }
 
-    /// What goes to the instrument. `None` for a controller the note contract has no room for.
-    pub fn event(self) -> Option<NoteEvent> {
-        Some(match self {
+    /// What goes to the instrument.
+    pub fn event(self) -> NoteEvent {
+        match self {
             Self::On { pitch, velocity } => NoteEvent::On { pitch, velocity },
             Self::Off { pitch, .. } => NoteEvent::Off { pitch },
             Self::Pedal(value) => NoteEvent::Pedal(value),
             Self::Bend(bend) => NoteEvent::Bend(bend),
             Self::ModWheel(amount) => NoteEvent::ModWheel(amount),
             Self::Pressure(amount) => NoteEvent::Pressure(amount),
-            Self::Control { .. } => return None,
-        })
+            Self::Control { controller, value } => NoteEvent::Control { controller, value },
+        }
     }
 
-    /// The message of a wheel or the pedal the note contract sends. `None` for a key.
+    /// The message of a controller the note contract sends. `None` for a key.
     pub(crate) fn of_event(event: NoteEvent) -> Option<Self> {
         match event {
             NoteEvent::Pedal(value) => Some(Self::Pedal(value)),
             NoteEvent::Bend(bend) => Some(Self::Bend(bend)),
             NoteEvent::ModWheel(amount) => Some(Self::ModWheel(amount)),
             NoteEvent::Pressure(amount) => Some(Self::Pressure(amount)),
-            _ => None,
+            NoteEvent::Control { controller, value } => Some(Self::Control { controller, value }),
+            NoteEvent::On { .. } | NoteEvent::Off { .. } | NoteEvent::AllOff => None,
         }
     }
 }
@@ -155,8 +149,11 @@ pub(crate) struct Sounded {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Report {
     Sounded(Sounded),
-    /// A release is out: the live input holds no note, no pedal and no wheel away from rest.
-    Released,
+    /// A release is out at the start of the block of `frame`: the live input holds no note, no
+    /// pedal and no wheel away from rest.
+    Released {
+        frame: u64,
+    },
 }
 
 struct Shared {
@@ -362,11 +359,7 @@ impl Keys {
             Played::Bend(_)
             | Played::ModWheel(_)
             | Played::Pressure(_)
-            | Played::Control { .. } => {
-                if let Some(event) = played.event() {
-                    self.expression.follow(event);
-                }
-            }
+            | Played::Control { .. } => self.expression.follow(played.event()),
         }
     }
 
@@ -378,8 +371,9 @@ impl Keys {
         {
             // The event buffer is full: the message waits in the ring for the next block, so
             // nothing a keyboard sent is ever lost on the way to the instrument.
-            if let Some(event) = arrived.played.event()
-                && !context.event_outputs.push(Self::NOTES, 0, event)
+            if !context
+                .event_outputs
+                .push(Self::NOTES, 0, arrived.played.event())
             {
                 break;
             }
@@ -441,7 +435,9 @@ impl Processor for Keys {
             if !self.releasing {
                 // Out. The control side lets go of its copy of what is held, and whoever waits
                 // for it may now take the connection away.
-                self.report(Report::Released);
+                self.report(Report::Released {
+                    frame: context.start_frame,
+                });
                 self.release.released.store(self.taken, Ordering::Relaxed);
             }
         }

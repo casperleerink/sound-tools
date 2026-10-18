@@ -1,5 +1,6 @@
 //! A hosted plugin plays: the notes land on the frames they were sent on, and the sustain
-//! pedal, the wheels and the key pressure reach the plugin with their values.
+//! pedal, the wheels, the key pressure and any other controller reach the plugin with their
+//! values.
 
 use plugin_host::PluginFormat;
 use sound_core::MAX_BLOCK;
@@ -125,6 +126,7 @@ fn name(wheel: Wheel) -> &'static str {
         Wheel::Bend => "bend",
         Wheel::ModWheel => "mod_wheel",
         Wheel::Pressure => "pressure",
+        Wheel::Controller => "controller",
     }
 }
 
@@ -132,7 +134,7 @@ fn name(wheel: Wheel) -> &'static str {
 fn moves(wheel: Wheel) -> [i16; 2] {
     match wheel {
         Wheel::Bend => [8191, -8192],
-        Wheel::ModWheel | Wheel::Pressure => [127, 40],
+        Wheel::ModWheel | Wheel::Pressure | Wheel::Controller => [127, 40],
     }
 }
 
@@ -148,6 +150,11 @@ fn played(wheel: Wheel, frame: u64, value: i16) -> Played {
             frame,
             value: amount,
         },
+        Wheel::Controller => Played::Control {
+            frame,
+            controller: test_plugin_support::CONTROLLER,
+            value: amount,
+        },
     }
 }
 
@@ -156,7 +163,7 @@ fn played(wheel: Wheel, frame: u64, value: i16) -> Played {
 fn heard(wheel: Wheel, value: i16) -> f32 {
     let heard = match wheel {
         Wheel::Bend => f64::from(value + 8192) / 16383.0,
-        Wheel::ModWheel | Wheel::Pressure => f64::from(value) / 127.0,
+        Wheel::ModWheel | Wheel::Pressure | Wheel::Controller => f64::from(value) / 127.0,
     };
     heard as f32
 }
@@ -211,6 +218,20 @@ fn all_off_puts_the_wheel_back(format: PluginFormat, wheel: Wheel) {
     assert_eq!(right[255], heard(wheel, value), "{format:?} {wheel:?}");
     assert_eq!(right[256], rest, "{format:?} {wheel:?}");
     assert_eq!(right[511], rest, "{format:?} {wheel:?}");
+}
+
+/// Another MIDI controller reaches the plugin on its frame, a VST 3 plugin as the parameter it
+/// maps the controller to, a CLAP one as MIDI. `AllOff` leaves it where it is: it has no rest.
+#[test]
+fn another_controller_reaches_the_plugin_on_its_frame_and_all_off_leaves_it() {
+    let wheel = Wheel::Controller;
+    for format in FORMATS {
+        wheel_on_its_frames(format, wheel);
+        let mut harness = Harness::new();
+        let played = vec![played(wheel, 0, 127), Played::AllOff { frame: 256 }];
+        harness.add_track(record(format, "piano"), played);
+        assert_eq!(harness.play(512).right()[511], 1.0, "{format:?}");
+    }
 }
 
 /// A VST 3 plugin that maps no parameter to a wheel is not sent that wheel, and nothing is
