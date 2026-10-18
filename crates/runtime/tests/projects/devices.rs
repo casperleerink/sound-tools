@@ -172,6 +172,9 @@ fn the_device_example_of_the_doc_plays_as_the_child_of_a_parent() {
 #[test]
 fn a_setting_a_device_refuses_is_a_problem_of_the_tool_as_soon_as_it_loads() {
     let wrong = r#"import { devices, noise, tool } from "./sdk";
+import "./uses";
+
+export const level = 1;
 
 tool({
   name: "wrong",
@@ -184,11 +187,19 @@ tool({
 });
 "#;
     let dark = record("dark", "{}");
-    // A file that imports it, and loads first in name order, does not take its problem.
+    // A file that loads first in name order and imports it through a helper, in a cycle, does
+    // not take its problem.
     let records = [
         ("state/dark.json", dark.as_str()),
         ("extensions/wrong.ts", wrong),
-        ("extensions/uses.ts", "import \"./wrong\";\n"),
+        (
+            "extensions/uses.ts",
+            "import { level } from \"./helpers/again\";\nexport const louder = level * 2;\n",
+        ),
+        (
+            "extensions/helpers/again.ts",
+            "export * from \"../wrong\";\n",
+        ),
     ];
     let Some(harness) = project("dark", &records) else {
         return;

@@ -938,6 +938,7 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
   host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls, unknown>);
+  host.stacks.set(spec.name, new Error().stack ?? "");
   return spec.name as never;
 }
 
@@ -1225,4 +1226,6 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
 /** What the host reads. Not for tools. */
 export const host = {
   tools: new Map<string, ToolSpec<Fields, Controls, unknown>>(),
+  /** The call stack of each tool's `tool`, which tells the file that made it. */
+  stacks: new Map<string, string>(),
 };

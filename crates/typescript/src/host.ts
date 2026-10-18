@@ -3,12 +3,14 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { readFileSync, writeSync } from "node:fs";
-import { join, relative } from "node:path";
+import { realpathSync, writeSync } from "node:fs";
+import { join } from "node:path";
 import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
-/** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
+/** `folder` as a call stack names it. */
+const realFolder = realpathSync(folder);
+/** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
 const files = process.argv.slice(2);
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
 
@@ -151,38 +153,22 @@ function problemsOf(spec: Spec): string[] {
   return problems;
 }
 
-/**
- * `files`, each after those it imports: a tool counts as the file that defines it, not one
- * that imports it and so runs it first.
- */
-function importsFirst(): string[] {
-  const transpiler = new Bun.Transpiler({ loader: "tsx" });
-  const imports = (file: string): string[] => {
-    try {
-      const paths = transpiler.scanImports(readFileSync(join(folder, file), "utf8"));
-      return paths.map(({ path }: { path: string }) => relative(folder, Bun.resolveSync(path, folder)));
-    } catch {
-      // The file fails as it loads.
-      return [];
+/** The file of `files` whose code called `tool` for `name`, else `loading`, the file that ran it. */
+function definedIn(name: string, loading: string): string {
+  for (const frame of (sdk.host.stacks.get(name) ?? "").split("\n")) {
+    const file = files.find((file) => frame.includes(`${join(realFolder, file)}:`));
+    if (file !== undefined) {
+      return file;
     }
-  };
-  const order: string[] = [];
-  const seen = new Set<string>();
-  const visit = (file: string) => {
-    if (seen.has(file)) return;
-    seen.add(file);
-    imports(file).filter((imported) => files.includes(imported)).forEach(visit);
-    order.push(file);
-  };
-  files.forEach(visit);
-  return order;
+  }
+  return loading;
 }
 
 /** Loads the files, each after it says which, so a file that hangs is known. */
 async function load() {
   const tools: object[] = [];
   const errors: Array<{ file: string; message: string }> = [];
-  for (const file of importsFirst()) {
+  for (const file of files) {
     say({ type: "loading", file });
     const before = new Set(sdk.host.tools.keys());
     try {
@@ -195,10 +181,11 @@ async function load() {
       if (before.has(name)) {
         continue;
       }
+      const defined = definedIn(name, file);
       const problems = problemsOf(spec);
-      errors.push(...problems.map((problem) => ({ file, message: `tool ${name}: ${problem}` })));
+      errors.push(...problems.map((problem) => ({ file: defined, message: `tool ${name}: ${problem}` })));
       if (problems.length === 0) {
-        tools.push(described(spec, file));
+        tools.push(described(spec, defined));
       }
     }
   }
