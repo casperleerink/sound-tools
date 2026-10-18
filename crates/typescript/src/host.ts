@@ -437,8 +437,8 @@ type Change =
   | { type: "delete"; id: string };
 
 const told = new Map<string, Entry>();
-/** The names of the children of each instance told. */
-const kids = new Map<string, Set<string>>();
+/** The names of the children of each instance told, and their list as told, made when first read. */
+const kids = new Map<string, { names: Set<string>; told?: OwnedChild[] }>();
 /** The edits sent that the runtime has not said it heard, oldest first, by their number. */
 let unheard: Array<{ number: number; changes: Change[] }> = [];
 let edits = 0;
@@ -463,14 +463,16 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
     told.set(id, { tool, state });
     const [parent, name] = parentOf(id) ?? [];
     if (parent !== undefined && name !== undefined) {
-      kids.set(parent, (kids.get(parent) ?? new Set()).add(name));
+      kids.set(parent, { names: (kids.get(parent)?.names ?? new Set()).add(name) });
     }
   }
   for (const id of gone) {
     told.delete(id);
     const [parent, name] = parentOf(id) ?? [];
-    if (parent !== undefined && name !== undefined) {
-      kids.get(parent)?.delete(name);
+    const known = parent === undefined ? undefined : kids.get(parent);
+    if (parent !== undefined && name !== undefined && known) {
+      known.names.delete(name);
+      kids.set(parent, { names: known.names });
     }
   }
   unheard = unheard.filter(({ number }) => number > heard);
@@ -498,7 +500,16 @@ function recordOf(id: string, latest = true): Entry | undefined {
 
 /** The children of `id` in name order, as a behaviour gets them. */
 function childrenOf(id: string, latest = true): OwnedChild[] {
-  const names = new Set(kids.get(id));
+  const known = kids.get(id);
+  // As told: kept until a child changes, so a parent of a thousand takes asks for none of them again.
+  if (known && (!latest || unheard.length === 0)) {
+    return (known.told ??= listed(id, known.names, false));
+  }
+  return listed(id, known?.names ?? new Set(), latest);
+}
+
+function listed(id: string, told: Set<string>, latest: boolean): OwnedChild[] {
+  const names = new Set(told);
   for (const { changes } of latest ? unheard : []) {
     for (const change of changes) {
       const [parent, name] = parentOf(change.id) ?? [];
@@ -580,19 +591,29 @@ function fieldsChanged(before: unknown, after: unknown, what: string) {
   return Object.keys(set).length > 0 || removed.length > 0 ? { set: structuredClone(set), removed } : null;
 }
 
-/** What a change made of `part`, against the record of `instance` and its `children` before. */
-function changesOf(instance: string, before: State, children: OwnedChild[], part: Part<State>): Change[] {
+/**
+ * What a change made of the record of `instance`, `before` and now `state`, and of its children,
+ * `edited` as they were `before` when it read them.
+ */
+function changesOf(
+  instance: string,
+  [before, state]: [State, unknown],
+  [children, edited]: [OwnedChild[], unknown] | [],
+): Change[] {
   const changes: Change[] = [];
-  const own = fieldsChanged(before, part.state, "state");
+  const own = fieldsChanged(before, state, "state");
   if (own) {
     changes.push({ type: "fields", id: instance, ...own });
   }
-  if (!Array.isArray(part.children)) {
+  if (children === undefined) {
+    return changes;
+  }
+  if (!Array.isArray(edited)) {
     throw new TypeError("children is a list of { name, tool, state }");
   }
   const old = new Map(children.map((child) => [child.name, child]));
   const kept = new Set<string>();
-  for (const child of part.children as unknown[]) {
+  for (const child of edited as unknown[]) {
     if (!isObject(child) || typeof child.name !== "string" || typeof child.tool !== "string") {
       throw new TypeError(`a child is { name, tool, state }, not ${JSON.stringify(child)}`);
     }
@@ -635,10 +656,25 @@ function updater(instance: string) {
       return;
     }
     const state = filledState(spec, own);
-    const children = childrenOf(instance);
-    const part = { state: structuredClone(state), children: children.map(draft) };
+    // The children only when the change reads them: an update of a parent of a thousand takes
+    // that edits its own fields costs nothing for them.
+    let children: [OwnedChild[], unknown] | [] = [];
+    const part = { state: structuredClone(state) } as Part<State>;
+    Object.defineProperty(part, "children", {
+      enumerable: true,
+      get() {
+        if (children.length === 0) {
+          const before = childrenOf(instance);
+          children = [before, before.map(draft)];
+        }
+        return children[1];
+      },
+      set(value) {
+        children = [children[0] ?? childrenOf(instance), value];
+      },
+    });
     change(part);
-    const changes = changesOf(instance, state, children, part);
+    const changes = changesOf(instance, [state, part.state], children);
     if (changes.length === 0) {
       return;
     }
@@ -652,16 +688,28 @@ function updater(instance: string) {
 }
 
 /** What all code of an instance gets: a card, a page, `tick`, `onKey` and `onNotes`. */
-function contextOf(instance: string, spec: Spec, record: Entry, watches: Watches, { time, transport }: Clock) {
-  return {
+function contextOf<Extra extends object>(
+  instance: string,
+  spec: Spec,
+  record: Entry,
+  watches: Watches,
+  { time, transport }: Clock,
+  extra: Extra,
+) {
+  const context = {
+    ...extra,
     state: filledState(spec, record),
-    children: childrenOf(instance),
     watches,
     memory: memoryOf(instance, spec),
     time,
     transport,
     update: updater(instance),
     ...performer(instance),
+  };
+  // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
+  let children: OwnedChild[] | undefined;
+  return Object.defineProperty(context, "children", { enumerable: true, get: () => (children ??= childrenOf(instance)) }) as typeof context & {
+    children: OwnedChild[];
   };
 }
 
@@ -682,10 +730,7 @@ function render(request: Render) {
     const spec = specOf(tool);
     const kept: Handler[] = [];
     runs(tool, page ? "page" : "card");
-    const node = drawerOf(spec, page !== null)({
-      ...contextOf(instance, spec, record, watches, request),
-      ...(page && { size: page }),
-    });
+    const node = drawerOf(spec, page !== null)(contextOf(instance, spec, record, watches, request, page ? { size: page } : {}));
     const drawnTree = serialize(node, kept);
     const text = JSON.stringify(drawnTree);
     const trees = handlers.get(card) ?? new Map<number, Handler[]>();
@@ -773,7 +818,13 @@ function draw(spec: Spec, page: boolean): Sent {
  * Runs the code of each instance that `call` picks, with what all its code gets, then its cards
  * draw again. `what` names that code in a problem.
  */
-function run(clock: Clock, instances: Played[], what: string, call: (spec: Spec, tool: Context<State, Controls, unknown>) => unknown) {
+function run<Extra extends object>(
+  clock: Clock,
+  instances: Played[],
+  what: string,
+  extra: Extra,
+  call: (spec: Spec, tool: Context<State, Controls, unknown> & Extra) => unknown,
+) {
   now = clock.time;
   for (const { instance, watches } of instances) {
     const record = recordOf(instance);
@@ -784,7 +835,7 @@ function run(clock: Clock, instances: Played[], what: string, call: (spec: Spec,
     const failed = (error: unknown) => fail(spec.name, `its ${what} failed: ${error}`);
     try {
       runs(spec.name, what);
-      caught(call(spec, contextOf(instance, spec, record, watches, clock)), failed);
+      caught(call(spec, contextOf(instance, spec, record, watches, clock, extra)), failed);
     } catch (error) {
       failed(error);
       continue;
@@ -831,16 +882,16 @@ function handle(request: Request) {
       break;
     }
     case "frame":
-      run(request, request.instances, "tick", (spec, tool) => spec.tick?.({ ...tool, dt: request.dt }));
+      run(request, request.instances, "tick", { dt: request.dt }, (spec, tool) => spec.tick?.(tool));
       say({ type: "framed" });
       break;
     case "key": {
       const key = { key: request.key, down: request.down };
-      run(request, [request.instance], "onKey", (spec, tool) => spec.onKey?.(tool, key));
+      run(request, [request.instance], "onKey", {}, (spec, tool) => spec.onKey?.(tool, key));
       break;
     }
     case "notes":
-      run(request, [request.instance], "onNotes", (spec, tool) =>
+      run(request, [request.instance], "onNotes", {}, (spec, tool) =>
         Promise.all(request.events.map((event) => spec.onNotes?.(tool, event))),
       );
       break;

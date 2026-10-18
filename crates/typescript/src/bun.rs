@@ -373,8 +373,14 @@ struct Told {
     unconfirmed: BTreeSet<InstanceId>,
 }
 
-/// A record to tell Bun: its id, and its tool and `state` as JSON, or `None` when it is gone.
-pub(crate) type Telling<'a> = (&'a InstanceId, Option<(&'a str, String)>);
+/// A record to tell Bun: its id, and its tool, its key (see [`record_key`]) and `state` as
+/// JSON, or `None` when it is gone.
+pub(crate) type Telling<'a> = (&'a InstanceId, Option<(&'a str, u64, &'a str)>);
+
+/// What tells one record apart from another: its tool and its state as JSON.
+pub(crate) fn record_key(tool: &str, state: &str) -> u64 {
+    crate::tools::key(&(tool, state))
+}
 
 /// The number of the next Bun of the process.
 static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
@@ -536,13 +542,15 @@ impl Bun {
     /// since the window last told it: the records those changed may be others, still to tell.
     pub(crate) fn tell_owner<'a>(
         &self,
-        owner: (&'a InstanceId, &'a str, String),
-        children: impl IntoIterator<Item = (&'a InstanceId, &'a str, String)>,
+        owner: (&'a InstanceId, &'a str, &'a str),
+        children: impl IntoIterator<Item = (&'a InstanceId, &'a str, u64, &'a str)>,
     ) -> bool {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         let (id, tool, state) = owner;
-        let mut records = vec![(id, Some((tool, state)))];
-        records.extend((children.into_iter()).map(|(id, tool, state)| (id, Some((tool, state)))));
+        let mut records = vec![(id, Some((tool, record_key(tool, state), state)))];
+        records.extend(
+            (children.into_iter()).map(|(id, tool, key, state)| (id, Some((tool, key, state)))),
+        );
         let given: BTreeSet<&InstanceId> = records.iter().map(|(id, _)| *id).collect();
         let held: Vec<InstanceId> = (told.records.keys())
             .filter(|child| child.parent().as_ref() == Some(id) && !given.contains(child))
@@ -568,17 +576,16 @@ impl Bun {
         let mut keys = Vec::new();
         let mut gone = Vec::new();
         for (id, record) in records {
-            let Some((tool, state)) = record else {
+            let Some((tool, key, state)) = record else {
                 if told.records.contains_key(id) {
                     gone.push(id);
                 }
                 continue;
             };
-            let key = crate::tools::key(&(tool, &state));
             if told.records.get(id) == Some(&key) {
                 continue;
             }
-            match serde_json::from_str(&state) {
+            match serde_json::from_str(state) {
                 Ok(state) => {
                     keys.push((id.clone(), key));
                     new.push(ToldRecord { id, tool, state });

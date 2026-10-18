@@ -1,6 +1,6 @@
 # Writing a tool for this project
 
-When no tool does what the composer asks, write one in TypeScript. It plays as soon as you save the file, with no build, and the runtime writes a doc for it so the next agent can use it. A tool takes one of two shapes:
+When no tool does what the composer asks, write one in TypeScript. It plays as soon as you save the file, with no build, and the runtime writes a doc for the next agent. A tool takes one of two shapes:
 
 - **A device in a track**: an effect, an instrument or a sound source, used in the arrangement as a built-in one is. Its records go in tracks, it shows a card in the row under the tracks.
 - **The project is the tool**: an experiment, a game, a thing to play live. There is no arrangement: one record at the top, and a page that fills the window. See "A project that is one tool".
@@ -9,7 +9,7 @@ To play a track from the computer keyboard, write nothing: with the computer key
 
 ## Where it goes
 
-One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card or page. Make the folder, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
+One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card or page. Make the folder, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, `bun.d.ts`, the Bun calls tools make most, and `tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
 
 The runtime runs them with Bun, which the app ships and puts on your `PATH`. While the app has the project open, a save of code or JSON in `extensions/` starts the tools again in a moment: every file and helper loads again, every `memory` starts over, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 

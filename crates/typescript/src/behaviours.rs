@@ -161,6 +161,8 @@ struct Owner {
     last: Declaration,
     /// The key it asked for and has no answer for yet.
     asking: Option<u64>,
+    /// The key of its record and children as they are now.
+    wanted: u64,
 }
 
 struct Asked {
@@ -198,6 +200,7 @@ pub(crate) fn declared(
         known: VecDeque::new(),
         last: Declaration::default(),
         asking: None,
+        wanted: key,
     };
     let owner = owners.entry(owner_key.clone()).or_insert_with(new);
     if owner.opening != bun.opening() {
@@ -211,6 +214,7 @@ pub(crate) fn declared(
         declaration: owner.last.clone(),
         problem: Some(problem),
     };
+    owner.wanted = key;
     match owner.known.iter().find(|(known, _)| *known == key) {
         Some((_, Ok(declaration))) => {
             owner.last = declaration.clone();
@@ -263,6 +267,9 @@ fn answer_in(store: &mut Store, question: u64, answer: Answer) {
     if let Some(kept) = store.owners.get_mut(&owner)
         && kept.bun == bun
     {
+        // It plays this already: no need to run its behaviour again.
+        let playing =
+            kept.wanted == key && matches!(&answer, Ok(declared) if *declared == kept.last);
         kept.known.retain(|(known, _)| *known != key);
         kept.known.push_back((key, answer));
         if kept.known.len() > KEPT {
@@ -270,6 +277,9 @@ fn answer_in(store: &mut Store, question: u64, answer: Answer) {
         }
         if kept.asking == Some(key) {
             kept.asking = None;
+        }
+        if playing {
+            return;
         }
     }
     store.ready.insert(owner);

@@ -24,7 +24,7 @@ use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session,
 
 use crate::bun::{
     Bun, Clock, Event, Heard, PageSize, Played, RecordEdit, Request, Runs, Skipped, Telling,
-    Transport,
+    Transport, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
@@ -607,14 +607,21 @@ impl Live {
         ids.extend(bun.take_unconfirmed());
         let project = session.read(cx).project();
         let tools = self.tools.borrow();
-        let records = ids.iter().map(|id| -> Telling {
-            let tool = (project.tool_of(id)).filter(|_| told_to_bun(project, &tools, id));
-            (
-                id,
-                tool.and_then(|tool| Some((tool, project.state_json(id)?))),
-            )
+        let records: Vec<(&InstanceId, Option<(&str, String)>)> = (ids.iter())
+            .map(|id| {
+                let tool = (project.tool_of(id)).filter(|_| told_to_bun(project, &tools, id));
+                (
+                    id,
+                    tool.and_then(|tool| Some((tool, project.state_json(id)?))),
+                )
+            })
+            .collect();
+        let telling = records.iter().map(|(id, record)| -> Telling {
+            let record = (record.as_ref())
+                .map(|(tool, state)| (*tool, record_key(tool, state), state.as_str()));
+            (id, record)
         });
-        if !bun.tell(records) {
+        if !bun.tell(telling) {
             drop(tools);
             self.changed_records = ids;
         }
@@ -854,6 +861,9 @@ impl Live {
             return self.tool_problem(id, problem, cx);
         }
         session.update(cx, |session, cx| {
+            if crate::tools::feed_child(session.project().assets(), &played) {
+                session.rebind(std::slice::from_ref(id), cx);
+            }
             let update = NoteFeedUpdate::Note(performed);
             let feed = feed_processor(child);
             let sent =
@@ -908,12 +918,15 @@ impl Live {
             return;
         };
         let project = session.read(cx).project();
+        let tools = self.tools.borrow();
         let taps: Vec<(InstanceId, String, EventTap<NoteEvent>)> = (project.instances())
+            .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.notes))
             .filter_map(|(id, tool)| {
                 let tap = project.tap::<NoteEvent>(id, NOTES_TAP)?;
                 Some((id.clone(), tool.to_string(), tap))
             })
             .collect();
+        drop(tools);
         let mut read = std::mem::take(&mut self.taps);
         let mut heard = Vec::new();
         for (id, tool, tap) in taps {
