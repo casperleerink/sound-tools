@@ -7,9 +7,10 @@ use crate::support::{Harness, write};
 /// `dark` plays noise through the built-in filter, its cutoff a knob of its own. `aligned`
 /// takes the filter, which reports a latency, at its dry mix away from what goes into it, with
 /// both sides made loud by a knob far past what a sound may play.
-/// `rig` plays its child `hiss` through its child `room`, which it names. `alone` names no
-/// child.
+/// `rig` plays its child `hiss`, which it imports from `HISS`, through its child `room`, which
+/// it names. `alone` names no child.
 const TOOLS: &str = r#"import { devices, knob, noise, tool, type Declaration } from "./sdk";
+import { hiss } from "./wind";
 
 tool({
   name: "dark",
@@ -34,17 +35,7 @@ tool({
   },
 });
 
-tool({
-  name: "hiss",
-  title: "Hiss",
-  when: "Never",
-  doc: "Noise.",
-  kind: "source",
-  state: {},
-  sound: () => noise().times(0.25),
-});
-
-const children = { hiss: "hiss", room: "swept-room" } as const;
+const children = { hiss, room: "swept-room" } as const;
 
 tool({
   name: "rig",
@@ -72,6 +63,20 @@ tool({
 });
 "#;
 
+/// In a file after `TOOLS` in name order, so `rig` loads it first.
+const HISS: &str = r#"import { noise, tool } from "./sdk";
+
+export const hiss = tool({
+  name: "hiss",
+  title: "Hiss",
+  when: "Never",
+  doc: "Noise.",
+  kind: "source",
+  state: {},
+  sound: () => noise().times(0.25),
+});
+"#;
+
 /// The example of the doc for agents that plays built-in devices: the effect `swept-room`.
 fn doc_example() -> String {
     let doc = sound_typescript::AGENT_DOC.markdown;
@@ -94,6 +99,7 @@ fn project(top: &str, records: &[(&str, &str)]) -> Option<Harness> {
     );
     write(root, "project.json", &project);
     write(root, "extensions/tools.ts", TOOLS);
+    write(root, "extensions/wind.ts", HISS);
     write(root, "extensions/swept-room.ts", &doc_example());
     for (path, record) in records {
         write(root, path, record);
@@ -178,9 +184,11 @@ tool({
 });
 "#;
     let dark = record("dark", "{}");
+    // A file that imports it, and loads first in name order, does not take its problem.
     let records = [
         ("state/dark.json", dark.as_str()),
         ("extensions/wrong.ts", wrong),
+        ("extensions/uses.ts", "import \"./wrong\";\n"),
     ];
     let Some(harness) = project("dark", &records) else {
         return;

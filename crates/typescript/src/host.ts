@@ -3,8 +3,8 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { writeSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeSync } from "node:fs";
+import { join, relative } from "node:path";
 import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
@@ -151,11 +151,38 @@ function problemsOf(spec: Spec): string[] {
   return problems;
 }
 
+/**
+ * `files`, each after those it imports: a tool counts as the file that defines it, not one
+ * that imports it and so runs it first.
+ */
+function importsFirst(): string[] {
+  const transpiler = new Bun.Transpiler({ loader: "tsx" });
+  const imports = (file: string): string[] => {
+    try {
+      const paths = transpiler.scanImports(readFileSync(join(folder, file), "utf8"));
+      return paths.map(({ path }: { path: string }) => relative(folder, Bun.resolveSync(path, folder)));
+    } catch {
+      // The file fails as it loads.
+      return [];
+    }
+  };
+  const order: string[] = [];
+  const seen = new Set<string>();
+  const visit = (file: string) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    imports(file).filter((imported) => files.includes(imported)).forEach(visit);
+    order.push(file);
+  };
+  files.forEach(visit);
+  return order;
+}
+
 /** Loads the files, each after it says which, so a file that hangs is known. */
 async function load() {
   const tools: object[] = [];
   const errors: Array<{ file: string; message: string }> = [];
-  for (const file of files) {
+  for (const file of importsFirst()) {
     say({ type: "loading", file });
     const before = new Set(sdk.host.tools.keys());
     try {
