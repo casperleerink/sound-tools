@@ -22,6 +22,8 @@ use tempfile::TempDir;
 use crate::plugin_hosts::scanner;
 use crate::support::{id, peak};
 
+mod edits;
+
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
 const KEYS: &str = r#"import { adsr, h, knob, note, sine, tool } from "./sdk";
@@ -36,7 +38,7 @@ tool({
   sound: () => sine(note.freq).times(adsr(note.gate, 1, 1, 1, 1)).times(0.2),
   onKey: ({ play, send, update }, { key, down }) => {
     if (down) {
-      update("Count the key", (state) => {
+      update("Count the key", ({ state }) => {
         state.count = (state.count ?? 0) + 1;
       });
     }
@@ -46,7 +48,7 @@ tool({
   },
   onNotes: ({ update }, event) => {
     if (event.type !== "noteOn") return;
-    update("Keep the note", (state) => {
+    update("Keep the note", ({ state }) => {
       state.last = event.pitch;
     });
   },
@@ -90,7 +92,7 @@ tool({
       "div",
       {
         style: { width: size.width, height: size.height },
-        onClick: () => update("Keep the tick", (state) => { state.tick = transport.tick; }),
+        onClick: () => update("Keep the tick", ({ state }) => { state.tick = transport.tick; }),
       },
       `${transport.bar}.${transport.beat}`,
     ),
@@ -122,7 +124,7 @@ tool({
       "div",
       {
         style: { width: size.width, height: size.height },
-        onClick: () => update("Count", (next) => { next.count = state.count + 1; }),
+        onClick: () => update("Count", ({ state: next }) => { next.count = state.count + 1; }),
       },
       "Count",
     ),
@@ -155,12 +157,12 @@ tool({
   sound: () => input,
   onNotes: ({ update }, event) => {
     if (event.type === "noteOn") {
-      update("Keep the note", (state) => {
+      update("Keep the note", ({ state }) => {
         state.last = event.pitch;
         state.held = (state.held ?? 0) + 1;
       });
     } else if (event.type === "noteOff") {
-      update("Let go of the note", (state) => {
+      update("Let go of the note", ({ state }) => {
         state.held = (state.held ?? 0) - 1;
       });
     }
@@ -753,7 +755,7 @@ tool({{
   {tick}
   onNotes: ({{ update }}, event) => {{
     if (event.type !== "noteOn") return;
-    update("Keep the note", (state) => {{
+    update("Keep the note", ({{ state }}) => {{
       state.last = event.pitch;
     }});
   }},
@@ -1259,7 +1261,7 @@ tool({
   state: { heard: list({ type: text(), at: number({ min: 0, max: 100000 }) }) },
   sound: () => sine(note.freq).times(note.gate).times(0.1),
   onNotes: ({ update }, event) => {
-    update("Hear", (state) => {
+    update("Hear", ({ state }) => {
       state.heard.push({ type: event.type, at: event.at });
     });
   },
@@ -1359,7 +1361,7 @@ tool({
     if (key !== "a" || !down) return;
     const at = time + 0.5;
     send({ type: "cc", controller: 74, value: 1 }, { child: "piano", at });
-    update("Keep the time", (state) => {
+    update("Keep the time", ({ state }) => {
       state.at = at;
     });
   },

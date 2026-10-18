@@ -8,7 +8,7 @@
 //! Nothing here waits for Bun: what it says comes as events.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,12 +16,15 @@ use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
-use sound_core::{EventTap, GROUPING_WINDOW, InstanceId, Problem, Project};
+use serde_json::Value;
+use sound_core::{Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent};
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
-use crate::bun::{Bun, Event, Heard, Looped, PageSize, Request, Runs, Skipped, Transport};
+use crate::bun::{
+    Bun, Event, Heard, PageSize, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport,
+};
 use crate::card::{Page, TypeScriptCard};
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
 use crate::tools::{Control, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
@@ -50,9 +53,8 @@ pub(crate) struct Live {
     /// Where each live control was put last, by instance: the processor keeps it on the audio
     /// side, and a control on the card shows it.
     played: HashMap<InstanceId, BTreeMap<String, f32>>,
-    /// How many edits of each record this Bun sent and the window heard, so Bun knows when a
-    /// record it gets misses its last edit. Never counted down: Bun counts on.
-    edits: HashMap<InstanceId, u64>,
+    /// The records that changed since Bun was last told, see [`Live::tell`].
+    changed_records: BTreeSet<InstanceId>,
     /// The tap of what reaches the notes of each instance whose tool hears them, and how far
     /// it was read.
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
@@ -113,8 +115,6 @@ struct Card {
     transport: Option<Transport>,
     /// A render was asked for and its tree has not come yet.
     asked: bool,
-    /// Bun has the record as it is, so a render sends none.
-    record_sent: bool,
     /// The record or a watch changed while a render was out, so one more is due when it comes.
     stale: bool,
 }
@@ -319,6 +319,15 @@ impl Live {
                 Some(bun) => Live::running(bun, cx),
                 None => Host::Stopped,
             };
+            cx.subscribe(session, |live, _, event, _| match event {
+                ProjectEvent::Created(id)
+                | ProjectEvent::Changed(id)
+                | ProjectEvent::Deleted(id) => {
+                    live.changed_records.insert(id.clone());
+                }
+                ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => {}
+            })
+            .detach();
             let live = Live {
                 folder,
                 session: session.downgrade(),
@@ -330,7 +339,7 @@ impl Live {
                 cards: HashMap::new(),
                 next_card: 0,
                 played: HashMap::new(),
-                edits: HashMap::new(),
+                changed_records: every_instance(session.read(cx).project()),
                 taps: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
@@ -379,21 +388,6 @@ pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json:
     serde_json::from_str(&project.state_json(id)?).ok()
 }
 
-/// The record of `id` as the code of `tool` gets it: each field at its default where the record
-/// leaves it out, as a behaviour gets it.
-fn played_state(
-    project: &Project,
-    tools: &[ToolInfo],
-    id: &InstanceId,
-    tool: &str,
-) -> Option<serde_json::Value> {
-    let state = state_of(project, id)?;
-    Some(match find(tools, tool) {
-        Some(info) => info.with_defaults(state),
-        None => state,
-    })
-}
-
 /// Changes the record of `id` as one undo step called `label`.
 pub(crate) fn edit_record(
     session: &Entity<Session>,
@@ -411,22 +405,26 @@ pub(crate) fn edit_record(
     });
 }
 
-/// An instance of `tool` as its code gets it: its record and its watches as they are now, and
-/// how many of the `edits` Bun sent the record has.
-fn looped<'a>(
-    project: &Project,
-    tools: &[ToolInfo],
-    edits: &HashMap<InstanceId, u64>,
-    id: &'a InstanceId,
-    tool: &'a str,
-) -> Looped<'a> {
-    Looped {
+/// An instance of `tool` as its code gets it, with its watches as they are now.
+fn played<'a>(project: &Project, id: &'a InstanceId, tool: &'a str) -> Played<'a> {
+    Played {
         instance: id,
         tool,
-        state: played_state(project, tools, id, tool).unwrap_or_default(),
         watches: watches_of(project, id),
-        edits: edits.get(id).copied().unwrap_or(0),
     }
+}
+
+/// Every instance of `project`, as changed records when a Bun starts: it holds none.
+fn every_instance(project: &Project) -> BTreeSet<InstanceId> {
+    project.instances().map(|(id, _)| id.clone()).collect()
+}
+
+/// Whether Bun holds the record of `id`: one of a tool of the project, or of a child of one,
+/// which the code of its parent reads.
+fn told_to_bun(project: &Project, tools: &[ToolInfo], id: &InstanceId) -> bool {
+    let ours =
+        |id: &InstanceId| (project.tool_of(id)).is_some_and(|tool| find(tools, tool).is_some());
+    ours(id) || id.parent().is_some_and(|parent| ours(&parent))
 }
 
 /// The watches of `id` as its code reads them: its own, and those of each child as
@@ -539,7 +537,6 @@ impl Live {
             shows_watches: false,
             transport: None,
             asked: false,
-            record_sent: false,
             stale: false,
         };
         self.cards.insert(card, entry);
@@ -572,25 +569,18 @@ impl Live {
             // It draws once it is laid out and has a size.
             Surface::Page(None) => return,
         };
-        let project = session.read(cx).project();
-        let tools = self.tools.borrow();
-        let Some(tool) = project.tool_of(&entry.id) else {
+        self.tell(cx);
+        let Some(entry) = self.cards.get_mut(&card) else {
             return;
         };
-        let state = if entry.record_sent {
-            None
-        } else {
-            let Some(state) = played_state(project, &tools, &entry.id, tool) else {
-                return;
-            };
-            Some(state)
+        let Some(tool) = session.read(cx).project().tool_of(&entry.id) else {
+            return;
         };
         let transport = transport_of(session.read(cx), cx);
         let request = Request::Render {
             card,
             instance: &entry.id,
             tool,
-            state,
             watches: &entry.watches,
             page,
             transport,
@@ -598,17 +588,32 @@ impl Live {
         // A render that did not go is not waited for: the next change asks again.
         if self.host.send(&request) {
             entry.asked = true;
-            entry.record_sent = true;
             entry.transport = Some(transport);
         }
     }
 
-    /// The record of the instance of the card changed: it draws again with it.
-    pub(crate) fn record_changed(&mut self, card: u64, cx: &mut Context<Self>) {
-        if let Some(entry) = self.cards.get_mut(&card) {
-            entry.record_sent = false;
+    /// Tells Bun the records that changed since it was last told, before it runs code that
+    /// reads them.
+    fn tell(&mut self, cx: &App) {
+        let (Some(session), Host::Running { bun, .. }) = (self.session.upgrade(), &self.host)
+        else {
+            return;
+        };
+        let mut ids = std::mem::take(&mut self.changed_records);
+        ids.extend(bun.take_unconfirmed());
+        let project = session.read(cx).project();
+        let tools = self.tools.borrow();
+        let records = ids.iter().map(|id| -> Telling {
+            let tool = (project.tool_of(id)).filter(|_| told_to_bun(project, &tools, id));
+            (
+                id,
+                tool.and_then(|tool| Some((tool, project.state_json(id)?))),
+            )
+        });
+        if !bun.tell(records) {
+            drop(tools);
+            self.changed_records = ids;
         }
-        self.render(card, cx);
     }
 
     /// The page was laid out at `size`: it draws again when that is new.
@@ -631,8 +636,10 @@ impl Live {
         version: u64,
         handler: usize,
         at: Option<(f32, f32)>,
+        cx: &App,
     ) {
         if self.cards.contains_key(&card) {
+            self.tell(cx);
             let request = Request::Event {
                 card,
                 version,
@@ -873,15 +880,16 @@ impl Live {
         let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
             return;
         };
+        let id = entry.id.clone();
         let time = engine_time(&session, cx);
+        self.tell(cx);
         let project = session.read(cx).project();
-        let Some(tool) = project.tool_of(&entry.id) else {
+        let Some(tool) = project.tool_of(&id) else {
             return;
         };
-        let tools = self.tools.borrow();
         let request = Request::Key {
             time,
-            instance: looped(project, &tools, &self.edits, &entry.id, tool),
+            instance: played(project, &id, tool),
             key,
             down,
         };
@@ -932,11 +940,12 @@ impl Live {
         session: &Entity<Session>,
         cx: &mut Context<Self>,
     ) {
-        let tools = self.tools.borrow();
-        if heard.is_empty() || !find(&tools, tool).is_some_and(|info| info.notes) {
+        let hears = find(&self.tools.borrow(), tool).is_some_and(|info| info.notes);
+        if heard.is_empty() || !hears {
             return;
         }
         let time = engine_time(session, cx);
+        self.tell(cx);
         let session = session.read(cx);
         let rate = f64::from(session.project().clock().sample_rate());
         let events: Vec<Heard> = (heard.iter())
@@ -945,7 +954,7 @@ impl Live {
                 at: *frame as f64 / rate,
             })
             .collect();
-        let instance = looped(session.project(), &tools, &self.edits, id, tool);
+        let instance = played(session.project(), id, tool);
         let events = &events;
         self.host.send(&Request::Notes {
             time,
@@ -980,13 +989,14 @@ impl Live {
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
         let time = engine_time(&session, cx);
+        self.tell(cx);
         let tools = self.tools.borrow();
         let project = session.read(cx).project();
         // An instance that is gone, which an undo may bring back at its defaults.
         self.played.retain(|id, _| project.tool_of(id).is_some());
-        let instances: Vec<Looped> = (project.instances())
+        let instances: Vec<Played> = (project.instances())
             .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.tick))
-            .map(|(id, tool)| looped(project, &tools, &self.edits, id, tool))
+            .map(|(id, tool)| played(project, id, tool))
             .collect();
         if !instances.is_empty() {
             let request = Request::Frame {
@@ -1080,28 +1090,8 @@ impl Live {
             Event::Edit {
                 instance,
                 label,
-                state,
-            } => {
-                let Some(session) = self.session.upgrade() else {
-                    return;
-                };
-                // Heard, applied or not: Bun starts from the record here again.
-                *self.edits.entry(instance.clone()).or_default() += 1;
-                let tool = session.read(cx).project().tool_of(&instance);
-                let info = tool.and_then(|tool| find(&self.tools.borrow(), tool).cloned());
-                edit_record(
-                    &session,
-                    &instance,
-                    &label,
-                    |old| {
-                        *old = match info {
-                            Some(info) => info.untouched_defaults_left_out(old, state),
-                            None => state,
-                        }
-                    },
-                    cx,
-                );
-            }
+                changes,
+            } => self.edit(&instance, &label, changes, cx),
             Event::Control {
                 instance,
                 child,
@@ -1157,6 +1147,52 @@ impl Live {
             }
         }
         cx.notify();
+    }
+
+    /// What the code of `instance` changed, as one edit called `label`, on the records as they
+    /// are now, in the run of `instance` (see [`Project::publish_run`]). What the records refuse
+    /// is a problem of its tool, and nothing of the edit applies. Nothing for an instance that is
+    /// gone, which code may edit after an `await`.
+    fn edit(
+        &mut self,
+        instance: &InstanceId,
+        label: &str,
+        edits: Vec<RecordEdit>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let project = session.read(cx).project();
+        let tools = self.tools.borrow();
+        let info = (project.tool_of(instance)).and_then(|tool| find(&tools, tool));
+        let changes = info.map(|info| changes_of(project, info, instance, edits));
+        drop(tools);
+        let refused = match changes {
+            None => None,
+            Some(Err(refused)) => Some(refused),
+            Some(Ok((changes, touched))) => {
+                self.changed_records.extend(touched);
+                let mut refused = None;
+                session.update(cx, |session, cx| {
+                    session.edit(cx, |project| {
+                        let published = project.publish_run(instance, label, changes);
+                        published.inspect_err(|error| refused = Some(error.to_string()))
+                    })
+                });
+                refused
+            }
+        };
+        if let Some(refused) = refused {
+            let problem =
+                format!("its update {label:?} was refused, and none of it applied: {refused}");
+            self.tool_problem(instance, problem, cx);
+        }
+        // After the edit: Bun's view of the records it touched follows what is told from here.
+        self.changed_records.insert(instance.clone());
+        if let Host::Running { bun, .. } = &self.host {
+            bun.heard_edit();
+        }
     }
 
     /// Something changed in `extensions/`: maybe a fix, so every file runs again.
@@ -1230,8 +1266,10 @@ impl Live {
             let bun = launched.ok().flatten().map(|launched| launched.bun);
             return self.launch(bun, cx);
         }
-        // The new Bun counts the edits it sends from none, and its first frame from now.
-        self.edits.clear();
+        // The new Bun holds no record, and its first frame is from now.
+        if let Some(session) = self.session.upgrade() {
+            self.changed_records = every_instance(session.read(cx).project());
+        }
         self.last_frame = Instant::now();
         match launched {
             Ok(Some(Launched {
@@ -1296,10 +1334,9 @@ impl Live {
         self.generation.set(self.generation.get() + 1);
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
-            // A tree asked of the Bun before never comes, and this one has no record yet.
+            // A tree asked of the Bun before never comes.
             if let Some(entry) = self.cards.get_mut(&card) {
                 entry.asked = false;
-                entry.record_sent = false;
             }
             self.render(card, cx);
         }
@@ -1318,6 +1355,68 @@ impl Live {
             });
         });
     }
+}
+
+/// The changes of `edits` that the code of `instance` of the tool `info` made, on the records as
+/// they are now, with each record they touch. Or what is wrong with one of them.
+fn changes_of(
+    project: &Project,
+    info: &ToolInfo,
+    instance: &InstanceId,
+    edits: Vec<RecordEdit>,
+) -> Result<(Changes, Vec<InstanceId>), String> {
+    let child = |name: &str| instance.child(name).map_err(|error| error.to_string());
+    let mut changes = Changes::new();
+    let mut touched = Vec::new();
+    for edit in edits {
+        let id = match edit {
+            RecordEdit::Fields {
+                child: name,
+                set,
+                removed,
+            } => {
+                let id = name
+                    .as_deref()
+                    .map_or_else(|| Ok(instance.clone()), child)?;
+                let (Some(tool), Some(Value::Object(mut fields))) =
+                    (project.tool_of(&id), state_of(project, &id))
+                else {
+                    return Err(format!("{id} is gone"));
+                };
+                for name in removed {
+                    fields.remove(&name);
+                }
+                fields.extend(set);
+                project
+                    .set_json(&mut changes, id.clone(), tool, Value::Object(fields))
+                    .map_err(|error| error.to_string())?;
+                id
+            }
+            RecordEdit::Record {
+                child: name,
+                tool,
+                state,
+            } => {
+                if !info.behaviour {
+                    return Err(format!(
+                        "it adds the child {name:?}, but only a tool with a behaviour has children"
+                    ));
+                }
+                let id = child(&name)?;
+                project
+                    .set_json(&mut changes, id.clone(), &tool, state)
+                    .map_err(|error| error.to_string())?;
+                id
+            }
+            RecordEdit::Delete { child: name } => {
+                let id = child(&name)?;
+                changes.delete(&id);
+                id
+            }
+        };
+        touched.push(id);
+    }
+    Ok((changes, touched))
 }
 
 /// The frame of what a performer plays at `at`, engine time in seconds, or now: never before

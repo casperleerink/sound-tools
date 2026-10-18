@@ -675,7 +675,7 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   /**
    * The control loop: about 30 times a second while the window is open, for each instance. It
    * plays the sound with `set` and `fire`, as a performer would, and keeps what it needs in
-   * `memory`. It does not change the record: that is the composer's.
+   * `memory`.
    */
   tick?: (tool: Tick<ValuesOf<S>, C, M>) => void;
   /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
@@ -699,21 +699,31 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   onNotes?: (tool: Handler<ValuesOf<S>, C, M>, event: HeardEvent) => void;
 }
 
-/** What a behaviour gets. */
-export interface Parent<S extends Fields> {
-  state: ValuesOf<S>;
+/** A record and the records of its children: what a behaviour gets, and what `update` changes. */
+export interface Part<State> {
+  state: State;
   /** The records next to its own, in name order. */
   children: OwnedChild[];
 }
 
+/** What a behaviour gets. */
+export type Parent<S extends Fields> = Part<ValuesOf<S>>;
+
 /** A child of a parent: its record. */
 export interface OwnedChild {
-  /** Its file name without `.json`. */
+  /** Its file name without `.json`: lowercase letters, digits, `-` and `_`. */
   name: string;
   /** Its `tool`, such as `"instrument.synth"`. */
   tool: string;
-  /** Its `state` as the file holds it. */
+  /** Its `state` as the file holds it, such as a `SequencerState`. */
   state: unknown;
+}
+
+/** The `state` of a `sequencer` child: `agent-docs/sequencer.md`. */
+export interface SequencerState {
+  patterns?: Array<{ length: number; notes: Note[] }>;
+  plays?: number;
+  quantize?: "bar" | "beat" | "now";
 }
 
 /** The keys that name a port, one for each kind of what it carries. */
@@ -829,8 +839,17 @@ export interface Performer<C extends Controls> {
 
 /** What the control loop, the cards and the handlers of an instance get. */
 interface Instance<State, C extends Controls, M> extends Performer<C> {
-  /** The record as it is now. */
+  /** The record as it is now. Read only: `update` changes it. */
   state: State;
+  /** The records of its children, as its behaviour gets them. */
+  children: OwnedChild[];
+  /**
+   * Changes the record and those of its children as one undo step called `label`: `change`
+   * gets a copy of the latest to edit, also after an `await`, and may change a child's
+   * `state`, push a new child or take one out. What the records do not accept is refused
+   * whole, and listed in `problems.txt`. Changes of one label in a row are one undo step.
+   */
+  update(label: string, change: (part: Part<State>) => void): void;
   /** What the control loop and the cards keep. A click may change it too; the card draws again after. */
   memory: M;
   /** The last value of each `watch` of the sound, by name. A card draws again as they move. */
@@ -896,11 +915,6 @@ export interface Transport {
 export interface Card<State, C extends Controls = Controls, M = unknown> extends Instance<State, C, M> {
   /** As of this draw. It draws again as it moves only when the tool sets `transport: true`. */
   transport: Transport;
-  /**
-   * Changes the record as one undo step called `label`. `change` gets a copy to edit. A record
-   * the tool does not accept is refused, and the window says why.
-   */
-  update(label: string, change: (state: State) => void): void;
 }
 
 /** What a page gets: what a card gets, and the room it has. */
@@ -1030,7 +1044,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
         buttons.push(
           h("div", {
             style: on ? CHOSEN : BUTTON,
-            onClick: () => update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, (next) => {
+            onClick: () => update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
               next[name] = !on;
             }),
           }, label),
@@ -1043,7 +1057,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
             field.options.map((option) =>
               h("div", {
                 style: option === chosen ? CHOSEN : BUTTON,
-                onClick: () => update(`Set ${label.toLowerCase()} to ${option}`, (next) => {
+                onClick: () => update(`Set ${label.toLowerCase()} to ${option}`, ({ state: next }) => {
                   next[name] = option;
                 }),
               }, String(option)),

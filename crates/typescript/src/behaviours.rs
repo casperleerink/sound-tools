@@ -13,7 +13,6 @@ use std::fmt;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use serde::Deserialize;
-use serde_json::Value;
 use sound_core::{Assets, InstanceId};
 
 use crate::bun::{Bun, Request};
@@ -174,15 +173,14 @@ fn store() -> MutexGuard<'static, Store> {
     STORE.0.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// What the behaviour of `instance` of `tool` declares for its `state` and `children`, which
-/// hash to `key`: the answer of `bun` when it has one, else the last declaration while `bun`
-/// works it out. Never waits.
+/// What the behaviour of `instance` of `tool` declares for its record and its children as
+/// `bun` was told them, which hash to `key`: the answer of `bun` when it has one, else the last
+/// declaration while `bun` works it out. Never waits.
 pub(crate) fn declared(
     bun: &Bun,
     (assets, instance): (&Assets, &InstanceId),
     tool: &str,
     key: u64,
-    (state, children): (&Value, &Value),
 ) -> Declared {
     let mut store = store();
     let Store {
@@ -233,8 +231,7 @@ pub(crate) fn declared(
         let request = Request::Behaviour {
             question,
             tool,
-            state,
-            children,
+            instance,
         };
         if !bun.send(&request) {
             return last("its behaviour did not run: the TypeScript host does not read".into());

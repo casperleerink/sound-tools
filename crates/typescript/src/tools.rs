@@ -466,22 +466,6 @@ impl Named<Field> {
     }
 }
 
-/// Whether two values are the same, a number also when one writes it `4` and the other `4.0`.
-fn same(one: &Value, two: &Value) -> bool {
-    match (one, two) {
-        (Value::Number(one), Value::Number(two)) => one.as_f64() == two.as_f64(),
-        (Value::Array(one), Value::Array(two)) => {
-            one.len() == two.len() && one.iter().zip(two).all(|(one, two)| same(one, two))
-        }
-        (Value::Object(one), Value::Object(two)) => {
-            one.len() == two.len()
-                && (one.iter())
-                    .all(|(name, value)| two.get(name).is_some_and(|two| same(value, two)))
-        }
-        _ => one == two,
-    }
-}
-
 impl ToolInfo {
     /// What the `Signals` processor of this tool is.
     pub(crate) fn kind(&self) -> Kind {
@@ -604,18 +588,6 @@ impl ToolInfo {
     /// order of the fields, and inside lists too, as a behaviour reads it.
     pub(crate) fn with_defaults(&self, state: Value) -> Value {
         self.fields.with_defaults(state)
-    }
-
-    /// `edited` without each field `before` leaves out and `edited` holds at its default, so
-    /// the record follows a later change of that default in the code.
-    pub(crate) fn untouched_defaults_left_out(&self, before: &Value, mut edited: Value) -> Value {
-        if let (Value::Object(before), Value::Object(edited)) = (before, &mut edited) {
-            edited.retain(|name, value| {
-                let default = self.fields.get(name).map(Field::default_value);
-                before.contains_key(name) || !default.is_some_and(|default| same(value, &default))
-            });
-        }
-        edited
     }
 
     fn has_choices(&self) -> bool {
@@ -1079,26 +1051,23 @@ impl Sounds {
         context: &mut BehaviourContext<'_>,
     ) -> Result<(), BehaviourError> {
         let mut child_tools = BTreeMap::new();
+        let id = context.id().clone();
         let children = (context.child_records())
             .map(|(name, tool, state)| {
                 if let Some(info) = tools.get(tool) {
                     child_tools.insert(name.to_string(), info);
                 }
-                let state: Value = serde_json::from_str(&state?)?;
-                Ok(serde_json::json!({ "name": name, "tool": tool, "state": state }))
+                Ok((id.child(name)?, tool, state?))
             })
-            .collect::<Result<Vec<Value>, serde_json::Error>>();
-        let children =
-            Value::Array(children.map_err(|error| BehaviourError::Other(error.to_string()))?);
-        let state = self.info.with_defaults(state.clone());
-        let instance = (context.assets(), context.id());
-        let declared = behaviours::declared(
-            bun,
-            instance,
-            &self.info.name,
-            key(&(&self.info.name, state.to_string(), children.to_string())),
-            (&state, &children),
-        );
+            .collect::<Result<Vec<(InstanceId, &str, String)>, Box<dyn std::error::Error>>>()
+            .map_err(|error| BehaviourError::Other(error.to_string()))?;
+        let state = state.to_string();
+        let key = key(&(&self.info.name, &state, &children));
+        let told = children
+            .iter()
+            .map(|(id, tool, state)| (id, *tool, state.clone()));
+        bun.tell_owner((&id, &self.info.name, state), told);
+        let declared = behaviours::declared(bun, (context.assets(), &id), &self.info.name, key);
         if let Some(problem) = declared.problem {
             context.problem(format!("{problem}. It plays what it declared last"));
         }
