@@ -743,10 +743,11 @@ export interface ToolSpec<S extends Fields, C extends Controls, M, K extends Chi
    */
   behaviour?: (parent: Parent<S, K>) => Declaration<K>;
   /**
-   * The children it has, by name, and the tool of each: `{ bass: "sequencer", synth:
-   * "instrument.synth" }`. TypeScript then checks every connection, `set`, `fire`, `play`,
-   * `send` and edit of them against their tools, and a child of another tool, a missing one or
-   * one it does not name is a problem. Leave it out for children whose names a record decides.
+   * The children it has, by name, and the tool of each: `{ bass: "sequencer", lead: drone }`,
+   * where `drone` is what `tool` returned for a tool of this project. TypeScript then checks
+   * every connection, `set`, `fire`, `play`, `send` and edit of them against their tools, and a
+   * child of another tool, a missing one or one it does not name is a problem. Leave it out for
+   * children whose names a record decides.
    */
   children?: K & LiteralTools<K>;
   /**
@@ -794,11 +795,23 @@ export type Parent<S extends Fields, K extends ChildTools = ChildTools> = Frozen
 /** The name of a tool: a built-in one, which `Tools` describes, or one of this project. */
 export type ToolName = keyof Tools | (string & {});
 
+declare const entry: unique symbol;
+
+/**
+ * A tool of this project as `tool` returns it: its name, which is what the records hold, typed
+ * with an entry as `Tools` has one. Named in a parent's `children`, its `state` and inputs are
+ * checked; a name typed as a string checks nothing.
+ */
+export type ProjectTool<Entry = unknown> = string & { readonly [entry]: Entry };
+
+/** The entry of `T`: in `Tools`, or of a `ProjectTool`. */
+type EntryOf<T> = T extends keyof Tools ? Tools[T] : T extends ProjectTool<infer Entry> ? Entry : {};
+
 /** The tools of the children of a parent by their names, as its `children` names them. */
 export type ChildTools = Record<string, ToolName>;
 
-/** The `state` of a record of `T` as the file holds it; any value for a tool of this project. */
-export type StateOfTool<T> = T extends keyof Tools ? Tools[T]["state"] : unknown;
+/** The `state` of a record of `T` as the file holds it; any value for a tool named by a string. */
+export type StateOfTool<T> = EntryOf<T> extends { state: infer State } ? State : unknown;
 
 /** `children` as written. A tool name widened to `string` would check nothing, so it is refused. */
 type LiteralTools<K extends ChildTools> = {
@@ -828,11 +841,18 @@ type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger";
 
 /** A port named under the key `K` and no other, so a connection joins two of one kind. */
 type Keyed<K extends PortKey, Name extends string = string> = Record<K, Name> & { [Other in Exclude<PortKey, K>]?: never };
-/** The names a child of tool `T` has under the key `P`, as `Tools` says; any for a tool of this project. */
-type PortName<T, P extends PortKey> = T extends keyof Tools ? (P extends keyof Tools[T] ? Tools[T][P] : string) : string;
-/** A port of a child under the key `P`, of a name its tool has. */
-type PortOf<P extends PortKey, K extends ChildTools> = {
-  [Name in ChildName<K>]: { child: Name } & Keyed<P, PortName<K[Name], P> & string>;
+/**
+ * The names a child of tool `T` has under the key `P`, as its entry says: any where it says
+ * none. Any output (`Out`) of a tool of this project too, as its `sound` declares them.
+ */
+type PortName<T, P extends PortKey, Out extends boolean> = [Out, T] extends [true, ProjectTool]
+  ? string
+  : P extends keyof EntryOf<T>
+    ? EntryOf<T>[P]
+    : string;
+/** A port of a child under the key `P`, of a name its tool has as an input, or as an output with `Out`. */
+type PortOf<P extends PortKey, K extends ChildTools, Out extends boolean = false> = {
+  [Name in ChildName<K>]: { child: Name } & Keyed<P, PortName<K[Name], P, Out> & string>;
 }[ChildName<K>];
 /** A port of the parent itself under the key `K`: no `child`. */
 type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } & Keyed<K, Name>;
@@ -840,14 +860,14 @@ type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } 
 /** A sound port of a child: `audio` when left out. An effect has an `audio` input and output. */
 export type ChildPort<K extends ChildTools = ChildTools> = Partial<Keyed<"port">> & { child: ChildName<K> };
 /** Notes of a child: its input `notes`, such as an instrument's, or notes it sends out. */
-export type ChildNotes<K extends ChildTools = ChildTools> = PortOf<"notes", K>;
+export type ChildNotes<K extends ChildTools = ChildTools> = PortOf<"notes", K> | PortOf<"notes", K, true>;
 /**
  * A number of a child: one it sends out with `output`, or a knob it takes, such as the knob
  * `cutoff_hz` of a `filter` or a knob of a tool of the project.
  */
-export type ChildNumber<K extends ChildTools = ChildTools> = PortOf<"number", K>;
+export type ChildNumber<K extends ChildTools = ChildTools> = PortOf<"number", K> | PortOf<"number", K, true>;
 /** A bang a child sends out with `output`. */
-export type ChildBang<K extends ChildTools = ChildTools> = PortOf<"bang", K>;
+export type ChildBang<K extends ChildTools = ChildTools> = PortOf<"bang", K, true>;
 /** A live control of a child, or another number it plays from, such as `launch` of a `sequencer`. */
 export type ChildLive<K extends ChildTools = ChildTools> = PortOf<"live", K>;
 /** A trigger of a child. */
@@ -868,8 +888,8 @@ export type OwnNotes = OwnOf<"notes", "notes">;
  */
 export type Connection<K extends ChildTools = ChildTools> =
   | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio }
-  | { from: ChildNotes<K> | OwnNotes; to: ChildNotes<K> | OwnOf<"notes"> }
-  | { from: ChildNumber<K>; to: ChildNumber<K> | ChildLive<K> | OwnOf<"number"> }
+  | { from: PortOf<"notes", K, true> | OwnNotes; to: PortOf<"notes", K> | OwnOf<"notes"> }
+  | { from: PortOf<"number", K, true>; to: PortOf<"number", K> | ChildLive<K> | OwnOf<"number"> }
   | { from: ChildBang<K>; to: ChildTrigger<K> | OwnOf<"bang"> };
 
 /** What a behaviour declares. A JSON value: no functions, no classes. */
@@ -901,14 +921,24 @@ export type NoteEvent =
 /** A note event as `onNotes` hears it: `at` is the `time` it sounded at, to the sample. */
 export type HeardEvent = NoteEvent & { at: number };
 
-/** Makes a tool of the project. */
+/** The names of the knobs in `S`, the numbers a cable turns. */
+type KnobNames<S extends Fields> = { [Name in keyof S]: S[Name] extends KnobField ? Name : never }[keyof S] & string;
+
+/** Makes a tool of the project. Export what it returns for a parent to name in its `children`. */
 export function tool<const S extends Fields, const C extends Controls = {}, M = {}, const K extends ChildTools = ChildTools>(
   spec: ToolSpec<S, C, M, K>,
-): void {
+): ProjectTool<{
+  state: StateOf<S>;
+  number: KnobNames<S>;
+  live: ControlNames<C, "live">;
+  trigger: ControlNames<C, "trigger">;
+  notes: "notes";
+}> {
   if (host.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
   host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls, unknown>);
+  return spec.name as never;
 }
 
 /**

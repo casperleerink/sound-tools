@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { devices, h, input, knob, list, notes, number, output, prefixed, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
+import { devices, h, input, knob, list, live, notes, number, output, prefixed, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -315,4 +315,55 @@ tool({
   // @ts-expect-error: a plain `Declaration` widens the tool names too.
   children: { bass: "sequencer" },
   behaviour: (): Declaration => ({ connections: [] }),
+});
+
+const drone = tool({
+  name: "drone",
+  title: "Drone",
+  when: "Never",
+  doc: "A tool of the project that a parent names by what `tool` returns.",
+  kind: "source",
+  state: { pitch: knob({ min: 0, max: 127, default: 60 }), name: text() },
+  controls: { swell: live({ min: 0, max: 1, default: 0 }), hit: trigger() },
+});
+const band = { lead: drone, fx: "filter" } as const;
+
+tool({
+  name: "band",
+  title: "Band",
+  when: "Never",
+  doc: "Names a tool of the project among its children, so its ports and record are typed.",
+  state: {},
+  children: band,
+  behaviour: ({ children }): Declaration<typeof band> => {
+    const pitch: number | undefined = children.find((child) => child.name === "lead")?.state.pitch;
+    return {
+      connections: [
+        { from: { child: "lead", number: "anything" }, to: { child: "lead", number: "pitch" } },
+        { from: { child: "lead", notes: "melody" }, to: { child: "lead", notes: "notes" } },
+        { from: { child: "lead", bang: "onset" }, to: { child: "lead", trigger: "hit" } },
+        { from: { child: "lead", number: String(pitch) }, to: { child: "lead", live: "swell" } },
+        { from: { child: "lead" }, to: { child: "fx" } },
+        // @ts-expect-error: the drone has no knob `pitc`.
+        { from: { child: "lead", number: "level" }, to: { child: "lead", number: "pitc" } },
+        // @ts-expect-error: its input of notes is `notes`.
+        { from: { child: "lead", notes: "melody" }, to: { child: "lead", notes: "keys" } },
+      ],
+    };
+  },
+  tick: ({ set, fire, update }) => {
+    set({ child: "lead", live: "swell" }, 1);
+    fire({ child: "lead", trigger: "hit" });
+    // @ts-expect-error: the drone has no live control `swel`.
+    set({ child: "lead", live: "swel" }, 1);
+    // @ts-expect-error: and no trigger `hits`.
+    fire({ child: "lead", trigger: "hits" });
+    update("Edit", ({ children }) => {
+      for (const child of children) {
+        if (child.name === "lead") child.state.pitch = 62;
+        // @ts-expect-error: a field the drone does not have.
+        if (child.name === "lead") child.state.pitches = 62;
+      }
+    });
+  },
 });
