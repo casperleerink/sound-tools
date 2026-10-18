@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
-pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
+pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, RecordStamp};
 pub use editing::{Changes, Derived, Edit};
 pub use file::{
     FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
