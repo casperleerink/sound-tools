@@ -183,7 +183,7 @@ impl<'a> RecordSchema<'a> {
 
     /// The fields of the object at `path`, the record itself for an empty one, as a markdown
     /// table: each with its meaning, the values it takes and its default. A choice whose values
-    /// have docs lists them under the table.
+    /// have docs lists them under the table. Fields or values that say the same share a line.
     pub fn table(&self, path: &str) -> Option<String> {
         let property = match path.is_empty() {
             true => self.schema,
@@ -202,6 +202,7 @@ impl<'a> RecordSchema<'a> {
 
         let mut rows = Vec::new();
         let mut options = String::new();
+        let mut all_have_defaults = true;
         for (name, property) in properties {
             let field = self.field(name, property);
             let default = match item_defaults {
@@ -224,33 +225,35 @@ impl<'a> RecordSchema<'a> {
             };
             if !field.options.is_empty() {
                 options.push_str(&format!("\n`{name}` is one of:\n\n"));
-                for (value, said) in &field.options {
-                    options.push_str(&format!("- `{value}`: {said}\n"));
+                let named = (field.options.into_iter()).map(|(value, said)| (code(&value), said));
+                for (values, said) in merged(named) {
+                    options.push_str(&format!("- {}: {said}\n", values.join(", ")));
                 }
             }
-            rows.push((name, field.meaning, values, default, has_default));
+            all_have_defaults &= has_default;
+            rows.push((code(name), (field.meaning, values, default)));
         }
 
-        let defaults = rows.iter().any(|(.., default, _)| default.is_some());
+        let rows = merged(rows);
+        let defaults = rows.iter().any(|(_, (.., default))| default.is_some());
         let mut text = match defaults {
             true => "| Field | Meaning | Values | Default |\n| --- | --- | --- | --- |\n",
             false => "| Field | Meaning | Values |\n| --- | --- | --- |\n",
         }
         .to_string();
-        for (name, meaning, values, default, _) in &rows {
-            let mut cells = vec![code(name), cell(meaning), cell(values)];
+        for (names, (meaning, values, default)) in &rows {
+            let mut cells = vec![names.join(", "), cell(meaning), cell(values)];
             if defaults {
                 cells.push(cell(default.as_deref().unwrap_or_default()));
             }
             text.push_str(&format!("| {} |\n", cells.join(" | ")));
         }
         text.push_str(&options);
-        if rows.iter().all(|(.., has_default)| *has_default) {
-            text.push_str("\nA field you leave out takes its default");
-            if path.is_empty() {
-                text.push_str(", so `\"state\": {}` is the record at its defaults");
-            }
-            text.push_str(".\n");
+        if path.is_empty() && all_have_defaults {
+            text.push_str(
+                "\nA field you leave out takes its default, so `\"state\": {}` is the record at \
+                 its defaults.\n",
+            );
         }
         Some(text.trim_end().to_string())
     }
@@ -293,6 +296,18 @@ impl<'a> RecordSchema<'a> {
             .collect();
         words.join(" or ")
     }
+}
+
+/// Items that say the same thing as one, named together in the order they first come.
+fn merged<T: PartialEq>(items: impl IntoIterator<Item = (String, T)>) -> Vec<(Vec<String>, T)> {
+    let mut merged: Vec<(Vec<String>, T)> = Vec::new();
+    for (name, said) in items {
+        match merged.iter_mut().find(|(_, other)| *other == said) {
+            Some((names, _)) => names.push(name),
+            None => merged.push((vec![name], said)),
+        }
+    }
+    merged
 }
 
 /// Where the default of a field of an object type differs from the type's own: `osc_2` of
