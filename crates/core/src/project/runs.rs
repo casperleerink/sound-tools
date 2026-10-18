@@ -16,7 +16,7 @@ pub const RUN_QUIET: Duration = Duration::from_secs(1);
 /// never further behind than this.
 pub const RUN_LONGEST: Duration = Duration::from_secs(5);
 
-/// The open run of one editor.
+/// The open run of one editor and label.
 pub(super) struct Run {
     by: InstanceId,
     label: String,
@@ -26,11 +26,11 @@ pub(super) struct Run {
 }
 
 impl Project {
-    /// Publishes `changes` as an edit of `by` named `label`, into its open run when that has the
-    /// same label, is quiet for less than [`RUN_QUIET`] and began less than [`RUN_LONGEST`]
-    /// ago; else the open run finishes and a new one begins. A run is one undo step, written
-    /// once when it finishes: on its own, see [`Self::finish_quiet_runs_at`], or before an
-    /// undo or a redo, so undo takes back what the composer just saw happen.
+    /// Publishes `changes` as an edit of `by` named `label`, into its open run of that label: a
+    /// run is one undo step, written once when it finishes. The poll finishes a run once it is
+    /// quiet for [`RUN_QUIET`] or older than [`RUN_LONGEST`] (see
+    /// [`Self::finish_quiet_runs_at`]); so do an undo and a redo, so undo takes back what the
+    /// composer just saw happen, and the first publish of another edit.
     pub fn publish_run(
         &mut self,
         by: &InstanceId,
@@ -48,41 +48,35 @@ impl Project {
         changes: Changes,
         at: Instant,
     ) -> Result<(), ProjectError> {
-        let open = self.runs.iter().position(|run| run.by == *by);
-        let goes_on = |run: &Run| {
-            run.label == label
-                && at.saturating_duration_since(run.last) < RUN_QUIET
-                && at.saturating_duration_since(run.began) < RUN_LONGEST
-        };
-        let mut finished = Ok(());
-        let mut run = match open.map(|index| self.runs.swap_remove(index)) {
-            Some(run) if goes_on(&run) => run,
-            ended => {
-                if let Some(ended) = ended {
-                    finished = self.finish(ended.edit);
-                }
-                Run {
-                    by: by.clone(),
-                    label: label.to_string(),
-                    edit: self.begin(label),
-                    began: at,
-                    last: at,
-                }
-            }
+        let open = (self.runs.iter()).position(|run| run.by == *by && run.label == label);
+        let mut run = match open {
+            Some(index) => self.runs.swap_remove(index),
+            None => Run {
+                by: by.clone(),
+                label: label.to_string(),
+                edit: self.begin(label),
+                began: at,
+                last: at,
+            },
         };
         run.last = at;
-        let published = self.publish(&mut run.edit, changes);
+        let published = self.publish_into(&mut run.edit, changes);
         self.runs.push(run);
-        published.and(finished)
+        published
     }
 
-    /// Finishes every run that has been quiet for [`RUN_QUIET`] at `at`. The poll calls it.
+    /// Finishes every run that is quiet for [`RUN_QUIET`] at `at`, or older than
+    /// [`RUN_LONGEST`]. The poll calls it.
     pub fn finish_quiet_runs_at(&mut self, at: Instant) -> Result<(), ProjectError> {
-        let (quiet, open) = std::mem::take(&mut self.runs)
-            .into_iter()
-            .partition(|run| at.saturating_duration_since(run.last) >= RUN_QUIET);
-        self.runs = open;
-        self.finish_runs(quiet)
+        self.finish_runs_where(|run| {
+            at.saturating_duration_since(run.last) >= RUN_QUIET
+                || at.saturating_duration_since(run.began) >= RUN_LONGEST
+        })
+    }
+
+    /// Finishes every run that no other open edit holds a record of.
+    pub(super) fn finish_free_runs(&mut self) -> Result<(), ProjectError> {
+        self.finish_runs_where(|_| true)
     }
 
     /// Finishes every open run, in the order they began.
@@ -91,12 +85,38 @@ impl Project {
         self.finish_runs(runs)
     }
 
+    /// Finishes each run `done` picks that no other open edit, such as a drag, holds a record
+    /// of: its step would hold the middle of that edit.
+    fn finish_runs_where(&mut self, done: impl Fn(&Run) -> bool) -> Result<(), ProjectError> {
+        let runs = std::mem::take(&mut self.runs);
+        let held_by_others = |run: &Run| {
+            run.edit.records().any(|id| {
+                let by_runs = runs
+                    .iter()
+                    .filter(|run| run.edit.records().any(|held| held == id));
+                self.history.holders(id) > by_runs.count()
+            })
+        };
+        let ends: Vec<bool> = (runs.iter())
+            .map(|run| done(run) && !held_by_others(run))
+            .collect();
+        let (finished, open): (Vec<_>, Vec<_>) =
+            runs.into_iter().zip(ends).partition(|(_, end)| *end);
+        self.runs = open.into_iter().map(|(run, _)| run).collect();
+        self.finish_runs(finished.into_iter().map(|(run, _)| run).collect())
+    }
+
     fn finish_runs(&mut self, mut runs: Vec<Run>) -> Result<(), ProjectError> {
         runs.sort_by_key(|run| run.began);
         // Every one, also after one fails to write.
         let mut result = Ok(());
         for run in runs {
-            result = result.and(self.finish(run.edit));
+            match run.edit.is_empty() {
+                // A run whose first publish was refused: no step, which would end the grouping
+                // of outside changes.
+                true => self.abandon(run.edit),
+                false => result = result.and(self.finish(run.edit)),
+            }
         }
         result
     }

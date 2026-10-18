@@ -51,7 +51,7 @@ impl Step {
         self.project_file.take_if(|(before, after)| before == after);
     }
 
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.records.is_empty() && self.project_file.is_none()
     }
 
@@ -117,6 +117,8 @@ pub(super) struct History {
     /// The live state of such a record is the middle of a gesture, which no undo step may
     /// hold: nobody ever saw it as a result.
     committed: BTreeMap<InstanceId, Option<Record>>,
+    /// How many open edits have published over each record of `committed`.
+    holders: BTreeMap<InstanceId, usize>,
     /// The same for `project.json`, which a tempo drag changes per mouse move.
     committed_project_file: Option<ProjectFile>,
 }
@@ -167,12 +169,40 @@ impl History {
         }
     }
 
+    /// The open edit of `step` publishes `applied`: it holds each record it publishes over
+    /// until it closes.
+    pub(super) fn hold(&mut self, step: &Step, applied: &Applied) {
+        for change in &applied.records {
+            if !step.records.contains_key(&change.id) {
+                *self.holders.entry(change.id.clone()).or_default() += 1;
+            }
+        }
+    }
+
+    /// How many open edits hold the record `id`.
+    pub(super) fn holders(&self, id: &InstanceId) -> usize {
+        self.holders.get(id).copied().unwrap_or(0)
+    }
+
     /// The edit of `step` ends. Its before side becomes what was committed under it, so that
-    /// the step starts where the step before it ended.
-    pub(super) fn close(&mut self, step: &mut Step) {
+    /// the step starts where the step before it ended. For another open edit on the same
+    /// record, the record as it is `now` is committed from here.
+    pub(super) fn close(&mut self, step: &mut Step, now: impl Fn(&InstanceId) -> Option<Record>) {
         for (id, (before, _)) in &mut step.records {
-            if let Some(committed) = self.committed.remove(id) {
-                *before = committed;
+            let others = self
+                .holders
+                .get(id)
+                .map_or(0, |holders| holders.saturating_sub(1));
+            if others == 0 {
+                self.holders.remove(id);
+                if let Some(committed) = self.committed.remove(id) {
+                    *before = committed;
+                }
+            } else {
+                self.holders.insert(id.clone(), others);
+                if let Some(committed) = self.committed.get_mut(id) {
+                    *before = std::mem::replace(committed, now(id));
+                }
             }
         }
         if let Some((before, _)) = &mut step.project_file

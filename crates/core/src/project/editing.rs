@@ -125,6 +125,18 @@ pub struct Edit {
     step: Step,
 }
 
+impl Edit {
+    /// It published nothing yet.
+    pub(super) fn is_empty(&self) -> bool {
+        self.step.is_empty()
+    }
+
+    /// The records it published over.
+    pub(super) fn records(&self) -> impl Iterator<Item = &InstanceId> {
+        self.step.records.keys()
+    }
+}
+
 /// Every record of `changes` is one its tool accepts.
 pub(super) fn validate(changes: &[Change]) -> Result<(), ProjectError> {
     for change in changes {
@@ -176,7 +188,23 @@ impl Project {
 
     /// Applies changes now, as one group. Sound and views follow, no file is written. Call it
     /// as often as the gesture moves. On an error nothing of the group is applied.
+    ///
+    /// The first publish of an edit first finishes the runs it may finish (see
+    /// [`Self::publish_run`]), so a run's step holds none of this edit.
     pub fn publish(&mut self, edit: &mut Edit, changes: Changes) -> Result<(), ProjectError> {
+        let finished = match edit.is_empty() {
+            true => self.finish_free_runs(),
+            false => Ok(()),
+        };
+        self.publish_into(edit, changes).and(finished)
+    }
+
+    /// [`Self::publish`], with the runs left open.
+    pub(super) fn publish_into(
+        &mut self,
+        edit: &mut Edit,
+        changes: Changes,
+    ) -> Result<(), ProjectError> {
         validate(&changes.changes)?;
         // A derive may rewrite the tempo map, so a change to a record that has one touches
         // `project.json` as surely as a tempo edit does.
@@ -188,6 +216,7 @@ impl Project {
             self.sync_project_file();
         }
         let applied = self.apply(changes.changes, Source::Interface)?;
+        self.history.hold(&edit.step, &applied);
         edit.step.absorb(applied);
         Ok(())
     }
@@ -281,7 +310,9 @@ impl Project {
     /// On a write error the edit stays applied and undoable, and the problem is reported.
     pub fn finish(&mut self, edit: Edit) -> Result<(), ProjectError> {
         let mut step = edit.step;
-        self.history.close(&mut step);
+        let instances = &self.instances;
+        self.history
+            .close(&mut step, |id| instances.get(id).cloned());
         for (id, (_, after)) in &mut step.records {
             *after = self.instances.get(id).cloned();
         }
@@ -299,7 +330,9 @@ impl Project {
     /// the edit goes back to that state: it is what was committed, and what its file holds.
     pub fn cancel(&mut self, edit: Edit) -> Result<(), ProjectError> {
         let mut step = edit.step;
-        self.history.close(&mut step);
+        let instances = &self.instances;
+        self.history
+            .close(&mut step, |id| instances.get(id).cloned());
         self.sync_project_file();
         let applied = self.apply(step.changes(Side::Before), Source::History)?;
         self.write_step(&step, &applied)
@@ -311,7 +344,9 @@ impl Project {
     /// would be a second step for the same change, and cancelling would undo the newer write.
     pub fn abandon(&mut self, edit: Edit) {
         let mut step = edit.step;
-        self.history.close(&mut step);
+        let instances = &self.instances;
+        self.history
+            .close(&mut step, |id| instances.get(id).cloned());
     }
 
     /// One finished edit: begin, publish, finish.
