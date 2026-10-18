@@ -201,7 +201,8 @@ tool({
     });
     // @ts-expect-error: the record changes through `update`.
     state.count = 1;
-    await new Promise((done) => setTimeout(done, 10));
+    const code: number = await Bun.spawn(["sleep", "0"]).exited;
+    await Bun.sleep(code);
     update("Name the take", (part) => {
       part.children = part.children.filter((child) => child.name !== "take-0");
     });
