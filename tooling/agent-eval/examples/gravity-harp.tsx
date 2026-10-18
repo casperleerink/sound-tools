@@ -185,7 +185,7 @@ tool({
         {values.map((value) => (
           <div
             style={value === current ? picked : button}
-            onClick={() => update(`${label} ${value}`, (s) => void ((s as Record<string, unknown>)[field] = value))}
+            onClick={() => update(`${label} ${value}`, ({ state: s }) => void ((s as Record<string, unknown>)[field] = value))}
           >
             {value}
           </div>

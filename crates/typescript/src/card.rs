@@ -98,13 +98,15 @@ impl TypeScriptCard {
         cx.on_focus_out(&focus, window, |view, _, _, cx| view.let_go_of_keys(cx))
             .detach();
         cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Changed(id) if *id == view.id => {
-                view.live
-                    .update(cx, |live, cx| live.record_changed(view.card, cx));
+            ProjectEvent::Deleted(id) if *id == view.id => view.edit.finish(&view.session, cx),
+            // Its code reads the records of its children too.
+            ProjectEvent::Created(id) | ProjectEvent::Changed(id) | ProjectEvent::Deleted(id)
+                if *id == view.id || id.parent().as_ref() == Some(&view.id) =>
+            {
+                view.live.update(cx, |live, cx| live.render(view.card, cx));
                 // Its knobs and steps show the record, also when the tree stays the same.
                 cx.notify();
             }
-            ProjectEvent::Deleted(id) if *id == view.id => view.edit.finish(&view.session, cx),
             _ => {}
         })
         .detach();
@@ -175,7 +177,7 @@ impl TypeScriptCard {
     /// A handler of the tree of `version`, with where the pointer is on a canvas.
     fn event(&mut self, version: u64, handler: usize, at: Option<(f32, f32)>, cx: &mut App) {
         let card = self.card;
-        (self.live).update(cx, |live, _| live.event(card, version, handler, at));
+        (self.live).update(cx, |live, cx| live.event(card, version, handler, at, cx));
     }
 }
 

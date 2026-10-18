@@ -1,17 +1,15 @@
 # Writing a tool for this project
 
-When no tool does what the composer asks, write one in TypeScript. It plays as soon as you save the file, with no build, and the runtime writes a doc for it so the next agent can use it. A tool takes one of two shapes:
+When no tool does what the composer asks, write one in TypeScript. It plays as soon as you save the file, with no build, and the runtime writes a doc for the next agent. A tool takes one of two shapes:
 
 - **A device in a track**: an effect, an instrument or a sound source, used in the arrangement as a built-in one is. Its records go in tracks, it shows a card in the row under the tracks.
 - **The project is the tool**: an experiment, a game, a thing to play live. There is no arrangement: one record at the top, and a page that fills the window. See "A project that is one tool".
-
-Both are the same `tool(...)`: the sound, the fields, the control loop and children work in both.
 
 To play a track from the computer keyboard, write nothing: with the computer keys on (cmd-K, or the keyboard button in the transport), the letter rows play the selected track as a MIDI keyboard does.
 
 ## Where it goes
 
-One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card or page. Make the folder, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, and `extensions/tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
+One tool per file: `extensions/<name>.ts`, or `.tsx` when it draws its own card or page. Make the folder, then run `sound-tools . --inspect` once: the runtime writes `extensions/sdk.ts`, the SDK with every type and function, `bun.d.ts`, the Bun calls tools make most, and `tsconfig.json`. Do not edit them; read `sdk.ts` when you need the exact types. A tool needs no entry in `project.json`.
 
 The runtime runs them with Bun, which the app ships and puts on your `PATH`. While the app has the project open, a save of code or JSON in `extensions/` starts the tools again in a moment: every file and helper loads again, every `memory` starts over, and the runtime writes the tool's doc, `agent-docs/<name>.md`, and lists it in `AGENTS.md`. `--inspect`, `--analyze` and `--render` load the tools too, but write no docs.
 
@@ -96,17 +94,6 @@ tool({
 });
 ```
 
-TypeScript builds what a hand would repeat: a bank of combs is a `map`.
-
-```ts
-const combs: Signal[] = [29.7, 37.1, 41.1, 43.7].map((ms) => {
-  const comb = feedback();
-  comb.set(lowpass(delay(input.plus(comb.times(size)), ms), 5000));
-  return comb;
-});
-const wet = combs.reduce((sum, comb) => sum.plus(comb)).over(combs.length);
-```
-
 ## Fields
 
 | Field | Record holds | In `sound` | A change |
@@ -170,14 +157,14 @@ tool({
 | `<Meter watch label?>` | A bar that shows a watch from 0 to 1. |
 | `<Pad x y size?>` | A square for the pointer: across moves the live control `x`, up moves `y`. |
 
-The card gets `state`, the record with every field it leaves out at its default; `watches`, the last value of each watch, and draws again as they move; `update(label, change)`, which changes the record as one undo step; and `set`, `fire`, `play` and `send`, which play its live controls, triggers and voices as a performer would (`Performer` in `sdk.ts`).
+All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `watches`, the last value of each watch, and a card draws again as they move; `time` and `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`); `memory`; `update`, see "Changing records"; and `set`, `fire`, `play` and `send`, which play its live controls, triggers and voices as a performer would.
 
 ## A control loop, a canvas, the keys
 
 For more than knobs, a tool keeps a `memory` and runs a control loop:
 
-- `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance. The card and the loop get it, and a click may change it.
-- `tick: ({ state, watches, memory, dt, time, set, fire, play, send }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. It plays as a performer would and moves what is in `memory`; it does not change the record. Offline, in `--render`, it does not run.
+- `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance. All its code gets it and may change it.
+- `tick: ({ state, memory, dt, time, play, update }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. Offline, in `--render`, it does not run.
 - What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a sequencer (see "Children"). For a rhythm the loop makes up, play ahead: `time` is the clock of the sound, in seconds, and `fire`, `play` and `send` with `{ at }` happen on the sample of `at`:
 
   ```ts
@@ -190,18 +177,20 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
   },
   ```
 
-  `at` is for the loop: a card has no `time`.
 - `send(event, { at, child })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`.
-- `onKey: (tool, { key, down }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; its sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The keyboard plays `notes`, and in a track its clips too. Both get what `tick` gets, and `update`, which changes the record as a card does:
-
-  ```ts
-  onKey: ({ send }, { key, down }) => {
-    const step = "awsedftgyhuj".indexOf(key); // a row of the keyboard as piano keys
-    if (step < 0) return;
-    send(down ? { type: "noteOn", pitch: 60 + step, velocity: 0.8 } : { type: "noteOff", pitch: 60 + step });
-  },
-  ```
+- `onKey: (tool, { key, down }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; its sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The keyboard plays `notes`, and in a track its clips too.
 - `<Canvas width height shapes background? onPress? onDrag?>` draws `shapes` (`{ kind: "circle", x, y, radius, color }`, `{ kind: "rect", x, y, width, height, color, radius? }`, `{ kind: "line", from: [x, y], to: [x, y], color, width? }`, in points from its top left) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. A card or page draws again after every tick.
+
+## Changing records
+
+`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest. Edit a field or a child's `state` (say its tool, such as `as SequencerState`), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
+
+```ts
+update("Add a bass line", ({ children }) => {
+  const bass = children.find((child) => child.name === "bass")!.state as SequencerState;
+  bass.patterns = [...(bass.patterns ?? []), { length: 3840, notes: [{ start: 0, length: 480, pitch: 36, velocity: 100 }] }];
+});
+```
 
 ## A project that is one tool
 
@@ -214,7 +203,7 @@ To make the project one tool:
 3. Make the tool a `source`, or an `instrument` when it plays notes with `play`; a parent leaves `kind` out.
 4. Connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`.
 
-The window shows its page, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and the page and cards get `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`) and draw again as it moves. `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well plays the microphone live into its audio input: an `effect` hears it as `input`, a parent from `{ port: "audio" }`. Tell the composer to use headphones. `{"app": "Music"}` in place of `{"device_input": 0}` plays another app, and `{"app": "all"}` every app.
+The window shows its page, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and cards and pages draw again as `transport` moves. `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well plays the microphone live into its audio input: an `effect` hears it as `input`, a parent from `{ port: "audio" }`. Tell the composer to use headphones. `{"app": "Music"}` in place of `{"device_input": 0}` plays another app, and `{"app": "all"}` every app.
 
 ```tsx
 import { Canvas, feedback, h, live, lowpass, max, noise, tool, trigger, type Shape } from "./sdk";
@@ -231,7 +220,6 @@ tool({
   controls: { drop: trigger(), bright: live({ min: 200, max: 8000, default: 2000 }) },
   memory: () => ({ balls: [] as Ball[] }),
   sound: ({ drop, bright }) => {
-    // A trigger is 1 for one sample: a level that jumps to it and falls away is its envelope.
     const level = feedback();
     level.set(max(drop, level.times(0.995)));
     return lowpass(noise(), bright).times(level);

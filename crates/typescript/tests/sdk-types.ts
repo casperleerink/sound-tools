@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { input, list, number, output, rise, text, tool, trigger, type Declaration, type HeardEvent } from "./sdk";
+import { h, input, list, notes, number, output, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -172,4 +172,50 @@ tool({
     output("both", { bang: input, gate: input, pitch: 60 });
     return input;
   },
+});
+
+tool({
+  name: "takes",
+  title: "Takes",
+  when: "Never",
+  doc: "Saves each take as a child, and edits its sequencer.",
+  state: { count: number({ min: 0, max: 100 }) },
+  behaviour: (): Declaration => ({ connections: [] }),
+  card: ({ time, transport, children }) => h("div", {}, `${children.length} at ${time} s, ${transport.bpm} bpm`),
+  onNotes: async ({ update, children, state, transport }, event) => {
+    const beats: number = (event.at * transport.bpm) / 60;
+    const taken: number = children.length;
+    update("Save a take", ({ state, children }) => {
+      state.count = taken + 1;
+      children.push({ name: `take-${taken}`, tool: "take", state: { notes: [] } });
+      const bass = children.find((child) => child.name === "bass")!.state as SequencerState;
+      bass.patterns?.push({ length: 3840, notes: [{ start: 0, length: 480, pitch: event.type === "noteOn" ? event.pitch : 60, velocity: 100 }] });
+      // @ts-expect-error: a child's state is any tool's: say which it is.
+      children[0]!.state.patterns;
+      // @ts-expect-error: a child names its tool.
+      children.push({ name: "take", state: {} });
+      // @ts-expect-error: a field it does not have.
+      state.counts = 1;
+      // @ts-expect-error: a child keeps its name, the id of its record.
+      children[0]!.name = "renamed";
+    });
+    // @ts-expect-error: the record changes through `update`.
+    state.count = 1;
+    const code: number = await Bun.spawn(["sleep", "0"]).exited;
+    await Bun.sleep(code);
+    update("Name the take", (part) => {
+      part.children = part.children.filter((child) => child.name !== "take-0");
+    });
+    // @ts-expect-error: `change` gets the record and its children, not the state alone.
+    update("Old", (state) => { state.count = 1; });
+  },
+  tick: ({ update }) => update("Keep", ({ state }) => { state.count = 0; }),
+});
+
+tool({
+  name: "take",
+  title: "Take",
+  when: "Never",
+  doc: "A take.",
+  state: { notes: notes() },
 });

@@ -31,6 +31,7 @@ use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{take_declared, wait_for_behaviours};
+pub use bun::sent_bytes;
 pub use window::{page_shows_transport, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
@@ -122,8 +123,9 @@ impl NoteMessage {
 
 const SDK: &str = include_str!("sdk.ts");
 const HOST: &str = include_str!("host.ts");
+const BUN_TYPES: &str = include_str!("bun.d.ts");
 /// What the runtime writes in `extensions/` and owns there.
-const OWNED: [&str; 2] = ["sdk.ts", "tsconfig.json"];
+const OWNED: [&str; 3] = ["sdk.ts", "tsconfig.json", "bun.d.ts"];
 /// The sounds of a tool that do not build that its problem names; it counts the others.
 const SHOWN_FAILURES: usize = 3;
 /// JSX makes the nodes of `sdk.ts`. Also what `tsc -p extensions` checks with.
@@ -436,8 +438,16 @@ fn folder_problem(message: String) -> Problem {
 
 /// Writes what the runtime owns in `extensions/`, only where the text changed.
 fn write_sdk(extensions: &Path) -> std::io::Result<()> {
-    for (name, text) in OWNED.into_iter().zip([SDK, TSCONFIG]) {
+    // Bun's own types, once installed, declare `Bun` as well.
+    let bun_types = extensions.join("node_modules/bun-types").is_dir();
+    for (name, text) in OWNED.into_iter().zip([SDK, TSCONFIG, BUN_TYPES]) {
         let path = extensions.join(name);
+        if name == "bun.d.ts" && bun_types {
+            match std::fs::remove_file(&path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+                _ => continue,
+            }
+        }
         if std::fs::read_to_string(&path).ok().as_deref() != Some(text) {
             std::fs::write(&path, text)?;
         }
@@ -511,6 +521,17 @@ mod tests {
             value: 0.0,
         };
         assert_eq!(channel_mode.event(), None);
+    }
+
+    /// Bun's own types declare `Bun` too, and two declarations fail `tsc`.
+    #[test]
+    fn the_types_of_bun_are_left_out_once_bun_types_are_installed() {
+        let extensions = tempfile::tempdir().unwrap();
+        write_sdk(extensions.path()).unwrap();
+        assert!(extensions.path().join("bun.d.ts").is_file());
+        std::fs::create_dir_all(extensions.path().join("node_modules/bun-types")).unwrap();
+        write_sdk(extensions.path()).unwrap();
+        assert!(!extensions.path().join("bun.d.ts").exists());
     }
 
     #[test]

@@ -10,14 +10,14 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sound_core::{
     Assets, AudioThru, Automation, BehaviourContext, BehaviourError, Event, EventThru, GraphError,
     InputEndpoint, InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo,
-    Problem, ValueRange, Watch,
+    Problem, RecordStamp, ValueRange, Watch,
 };
 use sound_notes::{
     AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note, NoteEvent, NoteFeed, NoteFeedUpdate,
@@ -466,22 +466,6 @@ impl Named<Field> {
     }
 }
 
-/// Whether two values are the same, a number also when one writes it `4` and the other `4.0`.
-fn same(one: &Value, two: &Value) -> bool {
-    match (one, two) {
-        (Value::Number(one), Value::Number(two)) => one.as_f64() == two.as_f64(),
-        (Value::Array(one), Value::Array(two)) => {
-            one.len() == two.len() && one.iter().zip(two).all(|(one, two)| same(one, two))
-        }
-        (Value::Object(one), Value::Object(two)) => {
-            one.len() == two.len()
-                && (one.iter())
-                    .all(|(name, value)| two.get(name).is_some_and(|two| same(value, two)))
-        }
-        _ => one == two,
-    }
-}
-
 impl ToolInfo {
     /// What the `Signals` processor of this tool is.
     pub(crate) fn kind(&self) -> Kind {
@@ -604,18 +588,6 @@ impl ToolInfo {
     /// order of the fields, and inside lists too, as a behaviour reads it.
     pub(crate) fn with_defaults(&self, state: Value) -> Value {
         self.fields.with_defaults(state)
-    }
-
-    /// `edited` without each field `before` leaves out and `edited` holds at its default, so
-    /// the record follows a later change of that default in the code.
-    pub(crate) fn untouched_defaults_left_out(&self, before: &Value, mut edited: Value) -> Value {
-        if let (Value::Object(before), Value::Object(edited)) = (before, &mut edited) {
-            edited.retain(|name, value| {
-                let default = self.fields.get(name).map(Field::default_value);
-                before.contains_key(name) || !default.is_some_and(|default| same(value, &default))
-            });
-        }
-        edited
     }
 
     fn has_choices(&self) -> bool {
@@ -1078,32 +1050,114 @@ impl Sounds {
         own: Own,
         context: &mut BehaviourContext<'_>,
     ) -> Result<(), BehaviourError> {
-        let mut child_tools = BTreeMap::new();
-        let children = (context.child_records())
-            .map(|(name, tool, state)| {
-                if let Some(info) = tools.get(tool) {
-                    child_tools.insert(name.to_string(), info);
-                }
-                let state: Value = serde_json::from_str(&state?)?;
-                Ok(serde_json::json!({ "name": name, "tool": tool, "state": state }))
-            })
-            .collect::<Result<Vec<Value>, serde_json::Error>>();
-        let children =
-            Value::Array(children.map_err(|error| BehaviourError::Other(error.to_string()))?);
-        let state = self.info.with_defaults(state.clone());
-        let instance = (context.assets(), context.id());
-        let declared = behaviours::declared(
-            bun,
-            instance,
-            &self.info.name,
-            key(&(&self.info.name, state.to_string(), children.to_string())),
-            (&state, &children),
-        );
+        let id = context.id().clone();
+        let children = kept_children((context.assets(), &id), context.child_stamps())
+            .map_err(|error| BehaviourError::Other(error.to_string()))?;
+        let state = state.to_string();
+        let key = key(&(&self.info.name, &state, children.key));
+        let tell = || {
+            let told = (children.children.iter())
+                .map(|child| (&child.id, child.tool, child.key, &*child.json));
+            bun.tell_owner((&id, &self.info.name, &state), told)
+        };
+        let instance = (context.assets(), &id);
+        let declared = behaviours::declared(bun, instance, &self.info.name, key, tell);
         if let Some(problem) = declared.problem {
             context.problem(format!("{problem}. It plays what it declared last"));
         }
+        // Only the children a connection plays as a live control or a trigger.
+        let controlled = (declared.declaration.connections.iter())
+            .filter(|connection| {
+                matches!(connection.to.port(), Some((Key::Live | Key::Trigger, _)))
+            })
+            .filter_map(|connection| connection.to.child.as_deref());
+        let child_tools: BTreeMap<String, &ToolInfo> = controlled
+            .filter_map(|name| {
+                let child = (children.children.iter()).find(|child| child.id.name() == name)?;
+                Some((name.to_string(), tools.get(child.tool)?))
+            })
+            .collect();
         wire(&declared.declaration, own, &child_tools, context)
     }
+}
+
+/// The children of an owner as its behaviour last read them, in name order, and a key of all
+/// of them.
+#[derive(Default)]
+struct Kept {
+    children: Vec<KeptChild>,
+    key: u64,
+}
+
+struct KeptChild {
+    id: InstanceId,
+    tool: &'static str,
+    stamp: RecordStamp,
+    json: Arc<str>,
+    /// Of its tool and its state.
+    key: u64,
+}
+
+/// What each owner of every project made of the state of each child, so its behaviour reads a
+/// child again only when it changed: a parent of a thousand takes edits its own record about
+/// as fast as one of none.
+static KEPT: Mutex<BTreeMap<(Assets, InstanceId), Arc<Kept>>> = Mutex::new(BTreeMap::new());
+
+/// The children of `owner` from their `stamps`, each read again only when its state changed
+/// since the last time.
+fn kept_children<'a>(
+    (assets, owner): (&Assets, &InstanceId),
+    stamps: impl Iterator<Item = (&'a str, &'static str, RecordStamp)>,
+) -> Result<Arc<Kept>, Box<dyn std::error::Error>> {
+    let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+    let entry = (assets.clone(), owner.clone());
+    let last = kept.get(&entry).cloned().unwrap_or_default();
+    let stamps: Vec<(&str, &'static str, RecordStamp)> = stamps.collect();
+    let is_known = |(name, tool, stamp): &(&str, &str, RecordStamp), child: &KeptChild| {
+        child.id.name() == *name && child.tool == *tool && child.stamp == *stamp
+    };
+    let unchanged = stamps.len() == last.children.len()
+        && (stamps.iter().zip(&last.children)).all(|(stamp, child)| is_known(stamp, child));
+    if unchanged {
+        return Ok(last);
+    }
+    let mut children = Vec::with_capacity(stamps.len());
+    let mut known = last.children.iter().peekable();
+    for (name, tool, stamp) in stamps {
+        // Both in name order.
+        while known.next_if(|child| child.id.name() < name).is_some() {}
+        let child = match known.next_if(|child| is_known(&(name, tool, stamp.clone()), child)) {
+            Some(child) => KeptChild {
+                id: child.id.clone(),
+                tool,
+                stamp,
+                json: child.json.clone(),
+                key: child.key,
+            },
+            None => {
+                let json: Arc<str> = stamp.state_json()?.into();
+                let key = crate::bun::record_key(tool, &json);
+                let id = owner.child(name)?;
+                KeptChild {
+                    id,
+                    tool,
+                    stamp,
+                    json,
+                    key,
+                }
+            }
+        };
+        children.push(child);
+    }
+    let keys: Vec<(&str, u64)> = (children.iter())
+        .map(|child| (child.id.name(), child.key))
+        .collect();
+    let fresh = Arc::new(Kept {
+        key: key(&keys),
+        children,
+    });
+    kept.insert(entry, fresh.clone());
+    Ok(fresh)
 }
 
 /// The name of the tap of what reaches the `notes` of a tool that hears them.
@@ -1191,7 +1245,12 @@ fn wire(
     child_tools: &BTreeMap<String, &ToolInfo>,
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
-    let feeds = feeds(context)?;
+    let fed = (declaration.connections.iter()).filter_map(|connection| {
+        let to = &connection.to;
+        let notes = matches!(to.port(), Some((Key::Port | Key::Notes, NOTES_INPUT)));
+        to.child.as_deref().filter(|_| notes)
+    });
+    let feeds = feeds(fed, context)?;
     let mut cables = BTreeSet::new();
     let mut outputs = BTreeMap::new();
     // By its processor too, so a sender made again is another sender; not by its port, which
@@ -1436,13 +1495,39 @@ fn cable<From: Event, To: Placed<From>>(
     Ok(Some(InputEndpoint::new(cable, Cable::<From, To>::INPUT)))
 }
 
-/// The [`NoteFeed`] of every child that has `notes`, by the child's name. Declared whatever
-/// plays into it, so it is there to release what a sender that went away left sounding, and
-/// for a performer to play the child.
-fn feeds(
+/// The children of every project that have had a [`NoteFeed`]: their feed stays, to release
+/// what a sender that went away left sounding.
+static FED: Mutex<BTreeSet<(Assets, InstanceId)>> = Mutex::new(BTreeSet::new());
+
+/// Asks for a feed for `child`, for a performer to play it. Whether it had none: then its owner
+/// must run its behaviour again to make it.
+pub(crate) fn feed_child(assets: &Assets, child: &InstanceId) -> bool {
+    let mut fed = FED.lock().unwrap_or_else(PoisonError::into_inner);
+    fed.insert((assets.clone(), child.clone()))
+}
+
+/// The [`NoteFeed`] of each child that has `notes` and is `fed` now or was before, by the
+/// child's name. Only those, so a parent of a thousand takes declares no thousand feeds.
+fn feeds<'a>(
+    fed: impl Iterator<Item = &'a str>,
     context: &mut BehaviourContext<'_>,
 ) -> Result<BTreeMap<String, Node<NoteFeed>>, BehaviourError> {
-    let children: Vec<String> = context.child_names().map(str::to_string).collect();
+    let owner = context.id().clone();
+    let assets = context.assets().clone();
+    let children: BTreeSet<String> = {
+        let mut known = FED.lock().unwrap_or_else(PoisonError::into_inner);
+        for child in fed {
+            if let Ok(id) = owner.child(child) {
+                known.insert((assets.clone(), id));
+            }
+        }
+        let start = (assets.clone(), owner.clone());
+        (known.range(start..))
+            .take_while(|(project, _)| *project == assets)
+            .filter(|(_, id)| id.parent().as_ref() == Some(&owner))
+            .map(|(_, id)| id.name().to_string())
+            .collect()
+    };
     let mut feeds = BTreeMap::new();
     for child in children {
         let Some(notes) = context.child_input(&child, NOTES_INPUT) else {

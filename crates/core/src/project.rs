@@ -16,6 +16,7 @@ mod instance;
 mod live;
 mod outside;
 mod registry;
+mod runs;
 mod storage;
 mod watcher;
 
@@ -23,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
-pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint};
+pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, RecordStamp};
 pub use editing::{Changes, Derived, Edit};
 pub use file::{
     FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
@@ -36,6 +37,7 @@ pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
     AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration, Was,
 };
+pub use runs::{RUN_LONGEST, RUN_QUIET};
 pub use storage::StorageError;
 pub use watcher::GROUPING_WINDOW;
 
@@ -184,6 +186,8 @@ pub struct Project {
     generated_are_stale: bool,
     watcher: Option<Watcher>,
     live_sources: LiveSources,
+    /// The open run of each editor that has one, see [`Self::publish_run`].
+    runs: Vec<runs::Run>,
 }
 
 impl Project {
@@ -242,6 +246,7 @@ impl Project {
             generated_are_stale: true,
             watcher: None,
             live_sources: LiveSources::default(),
+            runs: Vec::new(),
         };
         let mut changes = Vec::new();
         match project.storage.read_project_file()? {

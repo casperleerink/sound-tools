@@ -5,7 +5,7 @@
 //! Bun does one thing at a time and says which tool's code it runs before it runs it, so a
 //! thread here that hears it knows what hangs, without the window: the window may be busy.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
@@ -46,17 +46,24 @@ pub(crate) type Skipped = BTreeMap<String, String>;
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Request<'a> {
+    /// The records Bun did not have as they are, and those that are gone. The other requests
+    /// read the records from what it was told.
+    Records {
+        records: Vec<ToldRecord<'a>>,
+        gone: Vec<&'a InstanceId>,
+        /// How many edits of this Bun the runtime heard: Bun's own view of a record told here
+        /// has the edits it sent after those.
+        edits: u64,
+    },
     Render {
         card: u64,
         instance: &'a InstanceId,
-        tool: &'a str,
-        /// `None` when it is the record of the last render of the card.
-        state: Option<Value>,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
         /// The size of the page, the whole window; `None` for a card.
         page: Option<PageSize>,
-        transport: Transport,
+        #[serde(flatten)]
+        clock: Clock,
     },
     /// A click, or a press or a drag on a canvas `at` across and down, 0 to 1.
     Event {
@@ -65,39 +72,57 @@ pub(crate) enum Request<'a> {
         version: u64,
         handler: usize,
         at: Option<(f32, f32)>,
+        time: f64,
     },
     /// One step of the control loop of every instance whose tool has one.
     Frame {
         /// Seconds since the last frame.
         dt: f32,
-        /// Engine time in seconds: the clock `at` of an event counts on.
-        time: f64,
-        instances: Vec<Looped<'a>>,
+        instances: Vec<Played<'a>>,
+        #[serde(flatten)]
+        clock: Clock,
     },
     /// A key of the computer keyboard went down or up on a card or a page that has the keys.
     Key {
-        time: f64,
-        instance: Looped<'a>,
+        instance: Played<'a>,
         key: &'a str,
         down: bool,
+        #[serde(flatten)]
+        clock: Clock,
     },
     /// What an instance whose tool hears notes heard since it last did.
     Notes {
-        time: f64,
-        instance: Looped<'a>,
+        instance: Played<'a>,
         events: &'a [Heard],
+        #[serde(flatten)]
+        clock: Clock,
     },
     Drop {
         card: u64,
     },
-    /// What the behaviour of an owner declares for its record, as it plays, and its children.
+    /// What the behaviour of an owner declares for its record and its children, as Bun was
+    /// told them.
     Behaviour {
         question: u64,
         tool: &'a str,
-        state: &'a Value,
-        /// Each as `{ name, tool, state }`.
-        children: &'a Value,
+        instance: &'a InstanceId,
     },
+}
+
+/// Where the sound and the piece are, which all code of a tool gets.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub(crate) struct Clock {
+    /// Engine time in seconds: the clock `at` of an event counts on.
+    pub time: f64,
+    pub transport: Transport,
+}
+
+/// A record as Bun is told it: its `state` as the file holds it.
+#[derive(Serialize)]
+pub(crate) struct ToldRecord<'a> {
+    pub id: &'a InstanceId,
+    pub tool: &'a str,
+    pub state: Value,
 }
 
 /// The room a page has, in whole points.
@@ -127,16 +152,34 @@ pub(crate) struct Heard {
     pub at: f64,
 }
 
-/// An instance whose tool has a control loop, as it is now.
+/// An instance whose code runs, with its watches as they are now. Its record is what Bun was
+/// told.
 #[derive(Serialize)]
-pub(crate) struct Looped<'a> {
+pub(crate) struct Played<'a> {
     pub instance: &'a InstanceId,
-    pub tool: &'a str,
-    pub state: Value,
     pub watches: BTreeMap<String, f32>,
-    /// How many edits of its record from Bun `state` has: fewer than Bun sent, and Bun starts
-    /// from the last record it sent instead.
-    pub edits: u64,
+}
+
+/// One record an `update` of a tool changed: its own, or one of a child, by name.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum RecordEdit {
+    /// These fields of the record of the instance, or of its child `child`, are set and those
+    /// of `removed` left out, on the record as it is when the edit lands.
+    Fields {
+        child: Option<String>,
+        set: Map<String, Value>,
+        removed: Vec<String>,
+    },
+    /// The child `child` is a new record, or one of another tool.
+    Record {
+        child: String,
+        tool: String,
+        state: Value,
+    },
+    Delete {
+        child: String,
+    },
 }
 
 /// What the window hears of Bun after its load.
@@ -155,11 +198,12 @@ pub(crate) enum Event {
     },
     /// A card drew the tree it drew last.
     Unchanged { card: u64 },
-    /// A card, a key or a note it heard changed the record of an instance.
+    /// The code of an instance changed its record or those of its children, as one edit
+    /// called `label`.
     Edit {
         instance: InstanceId,
         label: String,
-        state: Value,
+        changes: Vec<RecordEdit>,
     },
     /// A card or a control loop moved a live control of an instance, or of its child `child`,
     /// or fired a trigger when there is no value: at `at`, engine time in seconds, or at once.
@@ -312,12 +356,43 @@ pub(crate) struct Bun {
     /// Ended by [`Bun::end`], or when the runtime lets go of it. `None` once ended. The tools
     /// it loaded hold it too, so their records keep asking it outside the window.
     child: Mutex<Option<Child>>,
+    told: Mutex<Told>,
+}
+
+/// What Bun was told of the records, so it is told only what changed: a control loop of a
+/// parent of hundreds of children costs no more than one of none.
+#[derive(Default)]
+struct Told {
+    /// The key of each record as it was told.
+    records: BTreeMap<InstanceId, u64>,
+    /// How many edits of Bun the runtime heard, and how many of them Bun was told of.
+    edits: u64,
+    edits_told: u64,
+    /// The records a behaviour told it since the window last looked: one of a group that did
+    /// not apply is not what the project holds.
+    unconfirmed: BTreeSet<InstanceId>,
+}
+
+/// A record to tell Bun: its id, and its tool, its key (see [`record_key`]) and `state` as
+/// JSON, or `None` when it is gone.
+pub(crate) type Telling<'a> = (&'a InstanceId, Option<(&'a str, u64, &'a str)>);
+
+/// What tells one record apart from another: its tool and its state as JSON.
+pub(crate) fn record_key(tool: &str, state: &str) -> u64 {
+    crate::tools::key(&(tool, state))
 }
 
 /// The number of the next Bun of the process.
 static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
 
 static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
+
+static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// How many bytes this process told every Bun, for a test of what a frame costs.
+pub fn sent_bytes() -> u64 {
+    SENT_BYTES.load(Ordering::Relaxed)
+}
 
 /// A number for one opening of a project, which every Bun of it runs for: the first, and those
 /// the window starts again after a change of the code. A project opened again in the same
@@ -367,6 +442,7 @@ impl Bun {
             busy: busy.clone(),
             events: received,
             child: Mutex::new(Some(child)),
+            told: Mutex::default(),
         };
         std::thread::Builder::new()
             .name("bun".into())
@@ -442,12 +518,112 @@ impl Bun {
             }
             busy.pending += 1;
         }
+        let length = line.len() as u64;
         let sent = self.lines.try_send(line).is_ok();
-        if !sent {
+        if sent {
+            SENT_BYTES.fetch_add(length, Ordering::Relaxed);
+        } else {
             let mut busy = lock();
             busy.pending = busy.pending.saturating_sub(1);
         }
         sent
+    }
+
+    /// Tells Bun each of `records` it does not hold as it is, and the edits the runtime heard.
+    /// Whether it went.
+    pub(crate) fn tell<'a>(&self, records: impl IntoIterator<Item = Telling<'a>>) -> bool {
+        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+        let edits = told.edits;
+        self.tell_in(&mut told, records, edits).is_some()
+    }
+
+    /// Tells Bun the record of `owner` and of each of its `children` as its behaviour gets
+    /// them, and that each other child it holds is gone. Whether it went. Not the edits heard
+    /// since the window last told it: the records those changed may be others, still to tell.
+    pub(crate) fn tell_owner<'a>(
+        &self,
+        owner: (&'a InstanceId, &'a str, &'a str),
+        children: impl IntoIterator<Item = (&'a InstanceId, &'a str, u64, &'a str)>,
+    ) -> bool {
+        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+        let (id, tool, state) = owner;
+        let mut records = vec![(id, Some((tool, record_key(tool, state), state)))];
+        records.extend(
+            (children.into_iter()).map(|(id, tool, key, state)| (id, Some((tool, key, state)))),
+        );
+        let given: BTreeSet<&InstanceId> = records.iter().map(|(id, _)| *id).collect();
+        let held: Vec<InstanceId> = (told.records.keys())
+            .filter(|child| child.parent().as_ref() == Some(id) && !given.contains(child))
+            .cloned()
+            .collect();
+        records.extend(held.iter().map(|child| (child, None)));
+        let edits = told.edits_told;
+        let Some(sent) = self.tell_in(&mut told, records, edits) else {
+            return false;
+        };
+        told.unconfirmed.extend(sent);
+        true
+    }
+
+    /// The ids it told, or `None` when it did not go: what did not go is told again next time.
+    fn tell_in<'a>(
+        &self,
+        told: &mut Told,
+        records: impl IntoIterator<Item = Telling<'a>>,
+        edits: u64,
+    ) -> Option<Vec<InstanceId>> {
+        let mut new = Vec::new();
+        let mut keys = Vec::new();
+        let mut gone = Vec::new();
+        for (id, record) in records {
+            let Some((tool, key, state)) = record else {
+                if told.records.contains_key(id) {
+                    gone.push(id);
+                }
+                continue;
+            };
+            if told.records.get(id) == Some(&key) {
+                continue;
+            }
+            match serde_json::from_str(state) {
+                Ok(state) => {
+                    keys.push((id.clone(), key));
+                    new.push(ToldRecord { id, tool, state });
+                }
+                Err(error) => eprintln!("error: {id}: {error}"),
+            }
+        }
+        if new.is_empty() && gone.is_empty() && edits == told.edits_told {
+            return Some(Vec::new());
+        }
+        let request = Request::Records {
+            records: new,
+            gone: gone.clone(),
+            edits,
+        };
+        if !self.send(&request) {
+            return None;
+        }
+        told.edits_told = edits;
+        for id in &gone {
+            told.records.remove(*id);
+        }
+        let mut sent: Vec<InstanceId> = gone.into_iter().cloned().collect();
+        sent.extend(keys.iter().map(|(id, _)| id.clone()));
+        told.records.extend(keys);
+        Some(sent)
+    }
+
+    /// The runtime heard an edit Bun sent, applied or not.
+    pub(crate) fn heard_edit(&self) {
+        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+        told.edits += 1;
+    }
+
+    /// The records a behaviour told Bun since the last call, to tell it again as they are.
+    pub(crate) fn take_unconfirmed(&self) -> BTreeSet<InstanceId> {
+        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+        std::mem::take(&mut told.unconfirmed)
     }
 }
 

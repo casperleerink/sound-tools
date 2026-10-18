@@ -177,6 +177,25 @@ impl EngineEdit for Edit<'_> {
 /// Declare every processor, connection and port the instance needs, each time. What is not
 /// declared again is removed. What was declared before is kept, so processors keep their
 /// runtime state.
+/// The state a record holds: every change of the record holds a new one, so two stamps are
+/// equal while the record is unchanged. It keeps the state alive, so a stamp kept to compare
+/// with later never meets another state at the same address.
+#[derive(Clone)]
+pub struct RecordStamp(Arc<dyn super::instance::ErasedState>);
+
+impl PartialEq for RecordStamp {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl RecordStamp {
+    /// The state as compact JSON.
+    pub fn state_json(&self) -> Result<String, serde_json::Error> {
+        self.0.to_json()
+    }
+}
+
 pub struct BehaviourContext<'a> {
     id: &'a InstanceId,
     edit: &'a mut (dyn EngineEdit + 'a),
@@ -474,6 +493,13 @@ impl BehaviourContext<'_> {
     ) -> impl Iterator<Item = (&str, &'static str, Result<String, serde_json::Error>)> {
         let children = self.id.children_in(self.instances);
         children.map(|(id, record)| (id.name(), record.tool, record.state.to_json()))
+    }
+
+    /// Every owned child as (name, tool, the state it holds), in name order: for an owner that
+    /// keeps what it made of each child state and reads again only the changed ones.
+    pub fn child_stamps(&self) -> impl Iterator<Item = (&str, &'static str, RecordStamp)> {
+        let children = self.id.children_in(self.instances);
+        children.map(|(id, record)| (id.name(), record.tool, RecordStamp(record.state.clone())))
     }
 
     /// The names of the outputs and the inputs the owned child `name` exposed, for a message

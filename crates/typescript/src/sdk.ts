@@ -675,11 +675,11 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   /**
    * The control loop: about 30 times a second while the window is open, for each instance. It
    * plays the sound with `set` and `fire`, as a performer would, and keeps what it needs in
-   * `memory`. It does not change the record: that is the composer's.
+   * `memory`.
    */
   tick?: (tool: Tick<ValuesOf<S>, C, M>) => void;
   /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
-  card?: (card: Card<ValuesOf<S>, C, M>) => Node;
+  card?: (card: Context<ValuesOf<S>, C, M>) => Node;
   /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
   page?: (page: Page<ValuesOf<S>, C, M>) => Node;
   /**
@@ -691,29 +691,42 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    * A key of the computer keyboard goes down or up, while its page shows or after a click on
    * its card. Plain keys are then the tool's: space and `r` do not play or record.
    */
-  onKey?: (tool: Handler<ValuesOf<S>, C, M>, key: Key) => void;
+  onKey?: (tool: Context<ValuesOf<S>, C, M>, key: Key) => void;
   /**
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
    * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
    */
-  onNotes?: (tool: Handler<ValuesOf<S>, C, M>, event: HeardEvent) => void;
+  onNotes?: (tool: Context<ValuesOf<S>, C, M>, event: HeardEvent) => void;
 }
 
-/** What a behaviour gets. */
-export interface Parent<S extends Fields> {
-  state: ValuesOf<S>;
+/** A record and the records of its children: what a behaviour gets, and what `update` changes. */
+export interface Part<State> {
+  state: State;
   /** The records next to its own, in name order. */
   children: OwnedChild[];
 }
 
+/** What a behaviour gets. */
+export type Parent<S extends Fields> = Frozen<Part<ValuesOf<S>>>;
+
 /** A child of a parent: its record. */
 export interface OwnedChild {
-  /** Its file name without `.json`. */
-  name: string;
+  /**
+   * Its file name without `.json`: lowercase letters, digits, `-` and `_`. It is the id of the
+   * record, which never changes: keep a title in a field.
+   */
+  readonly name: string;
   /** Its `tool`, such as `"instrument.synth"`. */
   tool: string;
-  /** Its `state` as the file holds it. */
+  /** Its `state` as the file holds it, such as a `SequencerState`. */
   state: unknown;
+}
+
+/** The `state` of a `sequencer` child: `agent-docs/sequencer.md`. */
+export interface SequencerState {
+  patterns?: Array<{ length: number; notes: Note[] }>;
+  plays?: number;
+  quantize?: "bar" | "beat" | "now";
 }
 
 /** The keys that name a port, one for each kind of what it carries. */
@@ -827,28 +840,42 @@ export interface Performer<C extends Controls> {
   ): void;
 }
 
-/** What the control loop, the cards and the handlers of an instance get. */
-interface Instance<State, C extends Controls, M> extends Performer<C> {
-  /** The record as it is now. */
-  state: State;
-  /** What the control loop and the cards keep. A click may change it too; the card draws again after. */
+/** A value code reads and does not change in place: `update` changes a record. */
+export type Frozen<T> = T extends readonly (infer Item)[]
+  ? readonly Frozen<Item>[]
+  : T extends object
+    ? { readonly [Key in keyof T]: Frozen<T[Key]> }
+    : T;
+
+/** What all code of an instance gets: its card, its page, `tick`, `onKey` and `onNotes`. */
+export interface Context<State, C extends Controls = Controls, M = unknown> extends Performer<C> {
+  /** The record as it is now, every field at its default where the record leaves it out. */
+  state: Frozen<State>;
+  /** The records of its children, as its behaviour gets them. */
+  children: Frozen<OwnedChild[]>;
+  /**
+   * Changes the record and those of its children: `change` gets a copy of the latest to edit,
+   * also after an `await`, and may change a child's `state`, push a new child or leave one
+   * out. What the records do not accept is refused whole, and listed in `problems.txt`. Updates
+   * of one `label` in a row are one undo step.
+   */
+  update(label: string, change: (part: Part<State>) => void): void;
+  /** What its code keeps and nothing saves. A card draws again after a click. */
   memory: M;
   /** The last value of each `watch` of the sound, by name. A card draws again as they move. */
   watches: Record<string, number>;
+  /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
+  time: number;
+  /** Where the piece plays. A card draws again as it moves only when the tool sets `transport: true`. */
+  transport: Transport;
 }
 
 /** What the control loop of an instance gets each time it runs. */
-export interface Tick<State, C extends Controls, M> extends Instance<State, C, M> {
+export interface Tick<State, C extends Controls = Controls, M = unknown> extends Context<State, C, M> {
   /** Seconds since the last tick. */
   dt: number;
-  /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
-  time: number;
 }
 
-/** What `onKey` and `onNotes` get: what a card gets but `transport`, and the `time` of a tick. */
-export interface Handler<State, C extends Controls, M>
-  extends Omit<Card<State, C, M>, "transport">,
-    Pick<Tick<State, C, M>, "time"> {}
 
 // ---------------------------------------------------------------------------------------------
 // Cards
@@ -892,19 +919,8 @@ export interface Transport {
   bpm: number;
 }
 
-/** What a card or a page gets each time it draws. */
-export interface Card<State, C extends Controls = Controls, M = unknown> extends Instance<State, C, M> {
-  /** As of this draw. It draws again as it moves only when the tool sets `transport: true`. */
-  transport: Transport;
-  /**
-   * Changes the record as one undo step called `label`. `change` gets a copy to edit. A record
-   * the tool does not accept is refused, and the window says why.
-   */
-  update(label: string, change: (state: State) => void): void;
-}
-
-/** What a page gets: what a card gets, and the room it has. */
-export interface Page<State, C extends Controls = Controls, M = unknown> extends Card<State, C, M> {
+/** What a page gets: what all code gets, and the room it has. */
+export interface Page<State, C extends Controls = Controls, M = unknown> extends Context<State, C, M> {
   /** Its width and height in points. It draws again when the window changes. */
   size: { width: number; height: number };
 }
@@ -1010,7 +1026,7 @@ const CHOSEN: Style = { ...BUTTON, background: "#7c3aed", color: "#ffffff" };
  * pattern, a button per option, toggle and trigger.
  */
 export function defaultCard(fields: Fields, controls: Controls = {}) {
-  return ({ state, update, fire }: Card<Record<string, unknown>, Controls, unknown>): Node => {
+  return ({ state, update, fire }: Context<Record<string, unknown>>): Node => {
     const knobs: Node[] = [];
     const rows: Node[] = [];
     // Toggles and triggers share one row, so a card fits its 144 points.
@@ -1030,7 +1046,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
         buttons.push(
           h("div", {
             style: on ? CHOSEN : BUTTON,
-            onClick: () => update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, (next) => {
+            onClick: () => update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
               next[name] = !on;
             }),
           }, label),
@@ -1043,7 +1059,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
             field.options.map((option) =>
               h("div", {
                 style: option === chosen ? CHOSEN : BUTTON,
-                onClick: () => update(`Set ${label.toLowerCase()} to ${option}`, (next) => {
+                onClick: () => update(`Set ${label.toLowerCase()} to ${option}`, ({ state: next }) => {
                   next[name] = option;
                 }),
               }, String(option)),

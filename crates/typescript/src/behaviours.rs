@@ -13,7 +13,6 @@ use std::fmt;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use serde::Deserialize;
-use serde_json::Value;
 use sound_core::{Assets, InstanceId};
 
 use crate::bun::{Bun, Request};
@@ -162,6 +161,8 @@ struct Owner {
     last: Declaration,
     /// The key it asked for and has no answer for yet.
     asking: Option<u64>,
+    /// The key of its record and children as they are now.
+    wanted: u64,
 }
 
 struct Asked {
@@ -174,15 +175,15 @@ fn store() -> MutexGuard<'static, Store> {
     STORE.0.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// What the behaviour of `instance` of `tool` declares for its `state` and `children`, which
+/// What the behaviour of `instance` of `tool` declares for its record and its children, which
 /// hash to `key`: the answer of `bun` when it has one, else the last declaration while `bun`
-/// works it out. Never waits.
+/// works it out. Before it asks, `tell` tells `bun` those records. Never waits.
 pub(crate) fn declared(
     bun: &Bun,
     (assets, instance): (&Assets, &InstanceId),
     tool: &str,
     key: u64,
-    (state, children): (&Value, &Value),
+    tell: impl FnOnce() -> bool,
 ) -> Declared {
     let mut store = store();
     let Store {
@@ -199,6 +200,7 @@ pub(crate) fn declared(
         known: VecDeque::new(),
         last: Declaration::default(),
         asking: None,
+        wanted: key,
     };
     let owner = owners.entry(owner_key.clone()).or_insert_with(new);
     if owner.opening != bun.opening() {
@@ -212,6 +214,7 @@ pub(crate) fn declared(
         declaration: owner.last.clone(),
         problem: Some(problem),
     };
+    owner.wanted = key;
     match owner.known.iter().find(|(known, _)| *known == key) {
         Some((_, Ok(declaration))) => {
             owner.last = declaration.clone();
@@ -233,10 +236,9 @@ pub(crate) fn declared(
         let request = Request::Behaviour {
             question,
             tool,
-            state,
-            children,
+            instance,
         };
-        if !bun.send(&request) {
+        if !tell() || !bun.send(&request) {
             return last("its behaviour did not run: the TypeScript host does not read".into());
         }
         *next_question += 1;
@@ -265,6 +267,9 @@ fn answer_in(store: &mut Store, question: u64, answer: Answer) {
     if let Some(kept) = store.owners.get_mut(&owner)
         && kept.bun == bun
     {
+        // It plays this already: no need to run its behaviour again.
+        let playing =
+            kept.wanted == key && matches!(&answer, Ok(declared) if *declared == kept.last);
         kept.known.retain(|(known, _)| *known != key);
         kept.known.push_back((key, answer));
         if kept.known.len() > KEPT {
@@ -272,6 +277,9 @@ fn answer_in(store: &mut Store, question: u64, answer: Answer) {
         }
         if kept.asking == Some(key) {
             kept.asking = None;
+        }
+        if playing {
+            return;
         }
     }
     store.ready.insert(owner);

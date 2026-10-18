@@ -127,12 +127,14 @@ impl Project {
     /// [`Project::apply_outside_changes_at`], at the time its last path was heard. Returns how
     /// many records and project files changed.
     ///
-    /// It also brings the generated files up to date, `problems.txt` first of all, so an agent
-    /// with only file access sees what the runtime made of its edit.
+    /// It also finishes the runs that went quiet (see [`Project::publish_run`]) and brings the
+    /// generated files up to date, `problems.txt` first of all, so an agent with only file
+    /// access sees what the runtime made of its edit.
     pub fn poll(&mut self) -> Result<usize, ProjectError> {
         let changed = self.poll_watcher();
+        let finished = self.finish_quiet_runs_at(std::time::Instant::now());
         let written = self.write_generated_files();
-        changed.and_then(|changed| written.map(|()| changed))
+        changed.and_then(|changed| finished.and(written).map(|()| changed))
     }
 
     fn poll_watcher(&mut self) -> Result<usize, ProjectError> {

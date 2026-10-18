@@ -83,8 +83,8 @@ pub use project::{
     FORMAT, GROUPING_WINDOW, INSTRUCTIONS_FILE, InputEndpoint, Instance, InstanceId,
     InvalidAssetName, InvalidInstanceId, JsonTool, JsonToolDoc, NO_PROBLEMS, OUTSIDE_UNDO_WINDOW,
     OutputEndpoint, PROBLEMS_FILE, Place, PortReference, Problem, Project, ProjectError,
-    ProjectEvent, ProjectFile, Registry, RegistryError, SavedConnection, SavedDestination,
-    SavedSource, State, StorageError, ToolRegistration, Was,
+    ProjectEvent, ProjectFile, RUN_LONGEST, RUN_QUIET, RecordStamp, Registry, RegistryError,
+    SavedConnection, SavedDestination, SavedSource, State, StorageError, ToolRegistration, Was,
 };
 pub use saturation::soft_clip;
 pub use scope::Scope;
