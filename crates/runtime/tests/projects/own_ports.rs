@@ -18,13 +18,18 @@ fn has_bun() -> bool {
     bun
 }
 
-/// A `project.json` with these extensions that plays the instance `top` on the device.
-fn project_json(extensions: &str, top: &str) -> String {
+/// A `project.json` with these extensions and connections.
+fn project_json(extensions: &str, connections: &str) -> String {
     format!(
         r#"{{"format": 1, "extensions": [{extensions}],
   "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}},
-  "connections": [{{"from": {{"instance": "{top}", "port": "audio"}}, "to": {{"device_output": 0}}}}]}}"#
+  "connections": [{connections}]}}"#
     )
+}
+
+/// The connection that plays the instance `top` on the device.
+fn to_device(top: &str) -> String {
+    format!(r#"{{"from": {{"instance": "{top}", "port": "audio"}}, "to": {{"device_output": 0}}}}"#)
 }
 
 /// Plays its plugin child `keys` from its own notes, and plays what the child plays.
@@ -81,7 +86,7 @@ fn the_keyboard_plays_a_plugin_child_through_the_parents_notes_as_it_plays_one_a
         write(
             root,
             "project.json",
-            &project_json(r#""plugin-host""#, "pianist"),
+            &project_json(r#""plugin-host""#, &to_device("pianist")),
         );
         write(root, "extensions/pianist.ts", PIANIST);
         write(
@@ -99,7 +104,7 @@ fn the_keyboard_plays_a_plugin_child_through_the_parents_notes_as_it_plays_one_a
         write(
             root,
             "project.json",
-            &project_json(r#""plugin-host""#, "keys"),
+            &project_json(r#""plugin-host""#, &to_device("keys")),
         );
         write(root, "state/keys.json", &plugin);
         let (harness, _plugins) = Harness::with_test_plugin(folder);
@@ -149,10 +154,8 @@ fn the_microphone_into_a_parent_reaches_the_child_it_connects_it_to() {
     }
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
-    let project = project_json("", "router").replace(
-        r#""connections": ["#,
-        r#""connections": [{"from": {"device_input": 0}, "to": {"input": {"instance": "router", "port": "audio"}}}, "#,
-    );
+    let microphone = r#"{"from": {"device_input": 0}, "to": {"input": {"instance": "router", "port": "audio"}}}"#;
+    let project = project_json("", &format!("{microphone}, {}", to_device("router")));
     write(root, "project.json", &project);
     write(root, "extensions/router.ts", ROUTER);
     write(root, "extensions/half.ts", HALF);
@@ -227,7 +230,7 @@ fn a_number_of_a_child_passes_out_of_a_parent_to_the_parent_of_that() {
     }
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
-    write(root, "project.json", &project_json("", "rack"));
+    write(root, "project.json", &project_json("", &to_device("rack")));
     write(root, "extensions/lfo.ts", LFO);
     write(root, "extensions/inner.ts", INNER);
     write(root, "extensions/rack.ts", RACK);
@@ -273,10 +276,7 @@ fn an_effect_hears_the_notes_of_its_track() {
     }
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
-    let project = project_json(r#""arrangement""#, "arrangement").replace(
-        r#"{"from": {"instance": "arrangement", "port": "audio"}, "to": {"device_output": 0}}"#,
-        "",
-    );
+    let project = project_json(r#""arrangement""#, "");
     write(root, "project.json", &project);
     write(root, "extensions/ears.ts", EARS);
     write(
@@ -299,6 +299,63 @@ fn an_effect_hears_the_notes_of_its_track() {
     );
     let mut harness = Harness::open(folder);
     assert_eq!(harness.project.problems(), []);
-    let played = harness.play(24_000);
+    let played = harness.play(18_000);
     assert_eq!(first_sound(&played, 0), Some(12_000));
+
+    // Bypassed while the note sounds, and on again once it ended: it heard the end too.
+    let slot = |slot: &str| track.replace(r#"["ears"]"#, &format!("[{slot}]"));
+    let path = "state/arrangement/ears/instance.json";
+    harness.write_and_apply(path, &slot(r#"{"name": "ears", "bypass": true}"#));
+    harness.render(12_000);
+    harness.write_and_apply(path, &slot(r#""ears""#));
+    assert_eq!(first_sound(&harness.render(4_800), 0), None);
+}
+
+/// A parent whose behaviour names a child it finds by name, which is not there.
+const LOST: &str = r#"import { tool, type Declaration } from "./sdk";
+
+tool({
+  name: "lost",
+  title: "Lost",
+  when: "Never",
+  doc: "Names a child that is not there.",
+  state: {},
+  behaviour: ({ children }): Declaration => ({
+    connections: [{ from: { child: "lfo", number: "level" }, to: { child: children.find((child) => child.name === "amp")?.name, number: "gain" } }],
+  }),
+});
+"#;
+
+/// JSON leaves an undefined `child` out, which would make the end the parent's own output.
+#[test]
+fn a_child_that_is_undefined_is_a_problem_and_no_port_of_the_parent() {
+    if !has_bun() {
+        return;
+    }
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    write(root, "project.json", &project_json("", ""));
+    write(root, "extensions/lfo.ts", LFO);
+    write(root, "extensions/lost.ts", LOST);
+    write(
+        root,
+        "state/lost/instance.json",
+        r#"{"tool": "lost", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/lost/lfo.json",
+        r#"{"tool": "lfo", "state": {}}"#,
+    );
+    let harness = Harness::open(folder);
+    let problems = harness.project.problems();
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert!(
+        problem.message.contains(
+            "connections[0].to.child is undefined: name a child, or leave child out for a port of the parent itself"
+        ),
+        "{problem:?}"
+    );
 }
