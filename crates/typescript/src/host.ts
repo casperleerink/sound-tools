@@ -8,10 +8,12 @@ import { join } from "node:path";
 import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
-/** `folder` as a call stack names it. */
-const realFolder = realpathSync(folder);
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
 const files = process.argv.slice(2);
+/** Each file as a call stack names it, with links resolved. */
+const stackPaths = files.map((file) => [file, `${realpathSync(join(folder, file))}:`] as const);
+// So the stack `tool` keeps reaches its file through any number of helpers.
+Error.stackTraceLimit = Infinity;
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
@@ -156,9 +158,9 @@ function problemsOf(spec: Spec): string[] {
 /** The file of `files` whose code called `tool` for `name`, else `loading`, the file that ran it. */
 function definedIn(name: string, loading: string): string {
   for (const frame of (sdk.host.stacks.get(name) ?? "").split("\n")) {
-    const file = files.find((file) => frame.includes(`${join(realFolder, file)}:`));
-    if (file !== undefined) {
-      return file;
+    const found = stackPaths.find(([, path]) => frame.includes(path));
+    if (found !== undefined) {
+      return found[0];
     }
   }
   return loading;
