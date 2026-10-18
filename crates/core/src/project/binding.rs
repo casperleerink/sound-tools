@@ -16,7 +16,7 @@ use crate::automation::{AutomationInput, MAX_AUTOMATED, PlayedLanes};
 use crate::clock::TempoMap;
 use crate::control::{Edit, EngineControl, Node};
 use crate::engine::ErasedProcessor;
-use crate::event_tap::{AnyTap, EventTap, Tappable};
+use crate::event_tap::{EventTap, Tappable};
 use crate::graph::{Connection, Destination, GraphError, NodeId, Source};
 use crate::input::InputId;
 use crate::parameter::{AutomatedNumber, ParameterInfo};
@@ -106,7 +106,7 @@ struct Binding {
     /// The sounds its processors show, by the name the behaviour chose.
     scopes: BTreeMap<String, Scope>,
     /// The events its processors heard, by the name the behaviour chose.
-    taps: BTreeMap<String, AnyTap>,
+    taps: BTreeMap<String, Box<dyn Any + Send + Sync>>,
     /// The keys of [`BehaviourContext::changed`], by the name the behaviour chose.
     keys: BTreeMap<String, u64>,
     /// What the behaviour said is not live about its instance, see [`BehaviourContext::problem`].
@@ -300,8 +300,11 @@ impl BehaviourContext<'_> {
     /// declared with the same event type, read with [`Project::tap`](super::Project::tap).
     pub fn tap<T: Tappable + 'static>(&mut self, name: &str) -> EventTap<T> {
         let previous = self.previous.and_then(|previous| previous.taps.get(name));
-        let tap = previous.and_then(AnyTap::typed).unwrap_or_default();
-        self.next.taps.insert(name.to_string(), AnyTap::of(&tap));
+        let previous = previous.and_then(|tap| tap.downcast_ref::<EventTap<T>>());
+        let tap = previous.cloned().unwrap_or_default();
+        self.next
+            .taps
+            .insert(name.to_string(), Box::new(tap.clone()));
         tap
     }
 
@@ -663,7 +666,8 @@ impl Bindings {
         instance: &InstanceId,
         name: &str,
     ) -> Option<EventTap<T>> {
-        self.by_instance.get(instance)?.taps.get(name)?.typed()
+        let tap = self.by_instance.get(instance)?.taps.get(name)?;
+        tap.downcast_ref().cloned()
     }
 
     /// Every watch that the behaviour of `instance` keeps.

@@ -241,15 +241,21 @@ fn a_pedal_and_a_controller_that_find_the_feed_full_play_at_once_and_a_note_on_d
     harness.send(send(NoteEvent::Pedal(Pedal::new(127).unwrap()), 0));
     harness.send(send(control(10), 0));
     assert_eq!(harness.render(100).last(), Some(&1_010.0));
-    for pitch in 0..128 {
+    // Room for 256 waiting: 127 notes far ahead, an on and an off each, and two moves.
+    for pitch in 0..127 {
         harness.send(note(pitch, 1_000_000, Some(1)));
     }
-    // Where each controller ends up counts: the 20 never sounds, the 30 does.
-    for event in [NoteEvent::Pedal(Pedal::UP), control(20), control(30)] {
-        harness.send(send(event, 500_000));
-    }
+    harness.send(send(control(50), 400_000));
+    harness.send(send(control(60), 600_000));
     harness.send(note(70, 0, None));
-    assert_eq!(harness.render(4_800).last(), Some(&30.0));
+    harness.send(send(NoteEvent::Pedal(Pedal::UP), 500_000));
+    harness.send(send(control(20), 500_000));
+    assert_eq!(harness.render(4_800).last(), Some(&20.0));
+    // The older move that waits would undo the 20, so it went; the newer one plays.
+    assert_eq!(harness.render(445_200).last(), Some(&20.0));
+    assert_eq!(harness.render(200_000).last(), Some(&60.0));
+    // The note on that did not fit is counted.
+    assert_eq!(harness.control.poll().unwrap().event_overflows, 1);
 }
 
 #[test]

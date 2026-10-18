@@ -27,6 +27,7 @@ mod peaks;
 pub mod process;
 mod processor;
 mod project;
+mod ring;
 mod saturation;
 mod scope;
 mod sections;

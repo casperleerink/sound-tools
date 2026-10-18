@@ -91,7 +91,7 @@ pub enum NoteError {
     #[error("amount must be from 0 to 127, not {0}")]
     Amount(i64),
     #[error(
-        "controller must be from 0 to 119 and not 1 or 64, the mod wheel and the pedal, not {0}"
+        "controller must be from 0 to 119 other than 1 and 64, the mod wheel and the pedal: {0}"
     )]
     Controller(i64),
 }
@@ -642,6 +642,17 @@ impl NoteEvent {
                 controller: Controller::new(number).ok()?,
                 value,
             },
+        })
+    }
+
+    /// The MIDI controller number and the value of the pedal, the mod wheel or another
+    /// controller: the other way of [`Self::controller`].
+    pub fn as_controller(self) -> Option<(u8, Amount)> {
+        Some(match self {
+            Self::Pedal(pedal) => (Controller::SUSTAIN_PEDAL, Amount(pedal.0)),
+            Self::ModWheel(amount) => (Controller::MOD_WHEEL, amount),
+            Self::Control { controller, value } => (controller.0, value),
+            _ => return None,
         })
     }
 }

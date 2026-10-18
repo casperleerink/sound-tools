@@ -5,7 +5,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Field, Fields, Graph, Handler as Heard, HeardNote, Node, NoteEvent, Parent, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Controls, Field, Fields, Graph, Handler as Heard, HeardEvent, Node, NoteEvent, Parent, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -35,7 +35,7 @@ type Request =
   | { type: "event"; card: number; version: number; handler: number; at: [number, number] | null }
   | { type: "frame"; dt: number; time: number; instances: Looped[] }
   | { type: "key"; time: number; instance: Looped; key: string; down: boolean }
-  | { type: "notes"; time: number; instance: Looped; events: HeardNote[] }
+  | { type: "notes"; time: number; instance: Looped; events: HeardEvent[] }
   | { type: "drop"; card: number }
   | ({ type: "behaviour"; question: number; tool: string } & Parent<Fields>);
 
@@ -123,9 +123,6 @@ function problemsOf(spec: Spec): string[] {
     }
     if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
       problems.push("kind: a parent hears its children through `input`, so leave `kind` out");
-    }
-    if ("onMidi" in spec) {
-      problems.push("onMidi is onNotes now: it hears every note event that reaches the tool, each with its `at`");
     }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
@@ -349,7 +346,7 @@ function performer(instance: string): Performer<Controls> {
       if (hold) {
         send({ type: "noteOn", pitch, velocity }, { at, child });
       } else {
-        say({ type: "note", instance, child, pitch: keyOf(pitch), velocity: finite(velocity, "velocity"), seconds: finite(seconds, "seconds"), at });
+        say({ type: "note", instance, child, pitch: keyOf(finite(pitch, "pitch")), velocity: finite(velocity, "velocity"), seconds: finite(seconds, "seconds"), at });
       }
     },
   };

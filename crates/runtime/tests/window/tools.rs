@@ -1338,21 +1338,20 @@ fn an_instrument_hears_the_clip_of_its_track_at_the_samples_it_sounds(cx: &mut T
     assert_eq!(heard, expected);
 }
 
-/// A parent that sends the pedal and controller 74 into its plugin child half a second after a
-/// key on its page, and keeps that time in its record.
+/// A parent that sends controller 74 into its plugin child half a second after a key on its
+/// page, and keeps that time in its record.
 const CONDUCTOR_OF_A_PLUGIN: &str = r#"import { h, number, tool } from "./sdk";
 
 tool({
   name: "conductor",
   title: "Conductor",
   when: "You want to move the controllers of a plugin",
-  doc: "A key on its page moves the pedal and controller 74 of its plugin.",
+  doc: "A key on its page moves controller 74 of its plugin.",
   state: { at: number({ min: 0, max: 100000 }) },
   behaviour: () => ({ connections: [{ from: { child: "piano" }, to: "sound" }] }),
   onKey: ({ send, update, time }, { key, down }) => {
     if (key !== "a" || !down) return;
     const at = time + 0.5;
-    send({ type: "cc", controller: 64, value: 1 }, { child: "piano", at });
     send({ type: "cc", controller: 74, value: 1 }, { child: "piano", at });
     update("Keep the time", (state) => {
       state.at = at;
@@ -1362,9 +1361,10 @@ tool({
 });
 "#;
 
-/// Sends the pedal and controller 74 into the CLAP test plugin from the code of its parent.
-/// Gives the frame the plugin's right channel shows it from, and the frame it was sent at.
-fn sent_to_a_plugin_child(cx: &mut TestAppContext) -> Option<(u64, u64)> {
+#[gpui::test]
+fn a_controller_a_parent_sends_reaches_its_plugin_child_on_its_sample(cx: &mut TestAppContext) {
+    // SAFETY: nextest runs one test per process and no other thread reads the environment yet.
+    unsafe { std::env::set_var(test_plugin_support::SHOW_VARIABLE, "controller") };
     let plugin = crate::support::test_plugin_record(plugin_host::PluginFormat::Clap, "piano");
     let files = [
         (
@@ -1380,7 +1380,9 @@ fn sent_to_a_plugin_child(cx: &mut TestAppContext) -> Option<(u64, u64)> {
         ("state/conductor/piano.json", plugin.as_str()),
         ("extensions/conductor.ts", CONDUCTOR_OF_A_PLUGIN),
     ];
-    let mut window = open_with_test_plugins(cx, &files)?;
+    let Some(mut window) = open_with_test_plugins(cx, &files) else {
+        return;
+    };
     window.until("the plugin", |window| window.problems().is_empty());
     window.cx.simulate_keystrokes("a");
     window.until("the time it was sent at", |window| {
@@ -1388,23 +1390,8 @@ fn sent_to_a_plugin_child(cx: &mut TestAppContext) -> Option<(u64, u64)> {
     });
     let sent = frame_of(window.record("conductor")["at"].as_f64().unwrap());
     let now = window.engine_frame();
+    // The plugin shows the controller on its right channel.
     let right = window.right(usize::try_from(sent - now).unwrap() + 1_000);
     let shown = right.iter().position(|sample| *sample > 0.25).unwrap() as u64;
-    Some((now + shown, sent))
-}
-
-#[gpui::test]
-fn the_pedal_a_parent_sends_reaches_its_plugin_child_on_its_sample(cx: &mut TestAppContext) {
-    if let Some((shown, sent)) = sent_to_a_plugin_child(cx) {
-        assert_eq!(shown, sent);
-    }
-}
-
-#[gpui::test]
-fn a_controller_a_parent_sends_reaches_its_plugin_child_on_its_sample(cx: &mut TestAppContext) {
-    // SAFETY: nextest runs one test per process and no other thread reads the environment yet.
-    unsafe { std::env::set_var(test_plugin_support::SHOW_VARIABLE, "controller") };
-    if let Some((shown, sent)) = sent_to_a_plugin_child(cx) {
-        assert_eq!(shown, sent);
-    }
+    assert_eq!(now + shown, sent);
 }

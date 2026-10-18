@@ -301,12 +301,17 @@ impl Started for Vst3Processor {
             PluginEvent::Off { key } => self.events.push(note_off(offset, key)),
             // A VST 3 plugin has no MIDI controller event. A control goes as the parameter the
             // plugin's own MIDI mapping names, with its value as a number from 0 to 1.
-            PluginEvent::Control(control) => match self.targets.get(control) {
-                Some(id) => self
-                    .input_changes
-                    .add(id, offset as int32, normalized(control)),
-                None => true,
-            },
+            PluginEvent::Control(control) => {
+                let Some(id) = self.targets.get(control) else {
+                    return true;
+                };
+                // Many other controllers in one block leave room for the pedal and the wheels.
+                let room = match control.index() {
+                    Some(_) => 0,
+                    None => Control::REST.len(),
+                };
+                (self.input_changes).add_leaving(id, offset as int32, normalized(control), room)
+            }
         }
     }
 
@@ -570,6 +575,17 @@ impl HostParameterChanges {
     /// Adds one point for `id`, making a queue for it if this block has none. `false` says
     /// there was no room.
     fn add(&self, id: ParamID, offset: int32, value: ParamValue) -> bool {
+        self.add_leaving(id, offset, value, 0)
+    }
+
+    /// [`Self::add`], refused when `id` has no queue yet and taking one would leave fewer than
+    /// `room` free.
+    fn add_leaving(&self, id: ParamID, offset: int32, value: ParamValue, room: usize) -> bool {
+        let used = self.used.get();
+        let has_queue = self.queues[..used].iter().any(|queue| queue.is(id));
+        if !has_queue && used + room >= self.queues.len() {
+            return false;
+        }
         let Some(at) = self.queue_for(id) else {
             return false;
         };

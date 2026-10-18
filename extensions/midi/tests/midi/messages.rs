@@ -55,14 +55,10 @@ fn the_bend_the_mod_wheel_and_the_pressure_are_read() {
 }
 
 #[test]
-fn another_controller_reaches_the_instrument_as_a_control() {
+fn another_controller_is_read() {
     let knob = Played::from_bytes(&[0xB3, 74, 100]);
     let (controller, value) = (Controller::new(74).unwrap(), Amount::new(100).unwrap());
     assert_eq!(knob, Some(Played::Control { controller, value }));
-    assert_eq!(
-        knob.map(Played::event),
-        Some(NoteEvent::Control { controller, value })
-    );
 }
 
 #[test]

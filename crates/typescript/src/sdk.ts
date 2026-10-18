@@ -694,11 +694,11 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   onKey?: (tool: Handler<ValuesOf<S>, C, M>, key: Key) => void;
   /**
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
-   * parent's `play` and `send`. An instrument plays them by itself as well. A tool with no
-   * `notes`, an effect or a parent, hears the keyboard instead, at the top of the project or on
-   * the track it plays.
+   * parent's `play` and `send`; not its own. An instrument plays them by itself as well. An
+   * effect or a parent hears the keyboard instead, at the top of the project or on the track it
+   * plays.
    */
-  onNotes?: (tool: Handler<ValuesOf<S>, C, M>, event: HeardNote) => void;
+  onNotes?: (tool: Handler<ValuesOf<S>, C, M>, event: HeardEvent) => void;
 }
 
 /** What a behaviour gets. */
@@ -777,7 +777,7 @@ export type NoteEvent =
   | { type: "allOff" };
 
 /** A note event as `onNotes` hears it: `at` is the `time` it sounded at, to the sample. */
-export type HeardNote = NoteEvent & { at: number };
+export type HeardEvent = NoteEvent & { at: number };
 
 /** Makes a tool of the project. */
 export function tool<const S extends Fields, const C extends Controls = {}, M = {}>(
@@ -802,7 +802,8 @@ export interface Performer<C extends Controls> {
   fire(control: ControlNames<C, "trigger"> | ChildTrigger, options?: { at?: number }): void;
   /**
    * Sends a note event to the tool's own voices, or into the `notes` of `child`. An instrument
-   * plays each note on a voice of its own; a source follows the newest.
+   * plays each note on a voice of its own; a source follows the newest. At most 256 wait for
+   * their `at`: past that a `noteOn` is dropped, and anything else plays at once.
    */
   send(event: NoteEvent, options?: { at?: number; child?: string }): void;
   /**

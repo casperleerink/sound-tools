@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { input, list, number, output, ownSound, rise, text, tool, trigger, type Declaration, type HeardNote } from "./sdk";
+import { input, list, number, output, ownSound, rise, text, tool, trigger, type Declaration, type HeardEvent } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -107,7 +107,7 @@ tool({
   doc: "Keeps what it hears and plays it back.",
   kind: "instrument",
   state: {},
-  memory: () => ({ heard: [] as HeardNote[] }),
+  memory: () => ({ heard: [] as HeardEvent[] }),
   onNotes: ({ memory, send }, event) => {
     memory.heard.push(event);
     send(event, { at: event.at + 1 });

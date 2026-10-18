@@ -119,8 +119,8 @@ pub struct TransportPill {
     /// The MIDI input in the engine. `None` only when the engine refused it, which is reported.
     keyboard: Option<Keyboard>,
     /// The track whose tools of the project with no `notes` hear the MIDI input: the one it
-    /// played into when what they hear sounded. It moves with the keyboard, only after what was held is let go,
-    /// so a tool hears the end of each note it heard begin.
+    /// played into when what they hear sounded. It moves with the keyboard, only after what was
+    /// held is let go, so a tool hears the end of each note it heard begin.
     hearing: Option<InstanceId>,
     /// The keys the tools of `hearing` heard go down and not up yet, one bit each.
     hearing_held: u128,

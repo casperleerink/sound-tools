@@ -725,9 +725,11 @@ impl Processor for Signals {
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
         if let Some(tap) = &self.tap {
-            for timed in context.event_inputs.get(Self::NOTES) {
-                tap.write(context.start_frame + timed.offset as u64, timed.event);
-            }
+            let notes = context.event_inputs.get(Self::NOTES).iter();
+            tap.write(notes.map(|timed| (context.start_frame + timed.offset as u64, timed.event)));
+        }
+        for _ in 0..self.scheduled.take_dropped() {
+            context.event_outputs.count_dropped();
         }
         self.aim(context);
         // The engine's promise: it splits a device buffer into sub-blocks of at most this.

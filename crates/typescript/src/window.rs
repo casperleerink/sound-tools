@@ -915,74 +915,83 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let time = engine_time(&session, cx);
         let project = session.read(cx).project();
-        let hears = |id: &InstanceId| {
-            let placed = id.parent().is_none()
-                || track.is_some_and(|track| id == track || id.is_inside(track));
-            placed && project.input_port(id, NOTES_INPUT).is_none()
+        let placed = |id: &InstanceId| {
+            id.parent().is_none() || track.is_some_and(|track| id == track || id.is_inside(track))
         };
-        let events = heard_at(heard, session.read(cx));
-        let tools = self.tools.borrow();
-        for (id, tool) in project.instances() {
-            if hears(id) && find(&tools, tool).is_some_and(|info| info.notes) {
-                let instance = looped(project, &tools, &self.edits, id, tool);
-                let events = &events;
-                self.host.send(&Request::Notes {
-                    time,
-                    instance,
-                    events,
-                });
-            }
+        let hearing: Vec<(InstanceId, String)> = (project.instances())
+            .filter(|(id, _)| placed(id) && project.input_port(id, NOTES_INPUT).is_none())
+            .map(|(id, tool)| (id.clone(), tool.to_string()))
+            .collect();
+        for (id, tool) in hearing {
+            self.hear(&id, &tool, heard, &session, cx);
         }
     }
 
     /// What reached the notes of every instance whose tool hears them since the last frame. A
-    /// tap that was written over before it was read is a problem of its tool.
+    /// tap that was written over before it was read is a problem of its tool. While no Bun runs
+    /// it waits, so what plays during a reload is heard once the new Bun is there.
     fn hear_taps(&mut self, cx: &mut Context<Self>) {
-        let Some(session) = self.session.upgrade() else {
+        let (Some(session), Host::Running { .. }) = (self.session.upgrade(), &self.host) else {
             return;
         };
-        let time = engine_time(&session, cx);
-        let tools = self.tools.borrow();
         let project = session.read(cx).project();
-        let taps = (project.instances())
-            .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.notes))
-            .filter_map(|(id, _)| Some((id.clone(), project.tap::<NoteEvent>(id, NOTES_TAP)?)));
-        let taps: HashMap<InstanceId, EventTap<NoteEvent>> = taps.collect();
-        // A new tap, of a new instance or a tool that hears notes again, is read from its start.
+        let taps: Vec<(InstanceId, String, EventTap<NoteEvent>)> = (project.instances())
+            .filter_map(|(id, tool)| {
+                let tap = project.tap::<NoteEvent>(id, NOTES_TAP)?;
+                Some((id.clone(), tool.to_string(), tap))
+            })
+            .collect();
         let mut read = std::mem::take(&mut self.taps);
-        read.retain(|id, (kept, _)| taps.get(id).is_some_and(|tap| tap.is(kept)));
-        let mut missed = Vec::new();
         let mut heard = Vec::new();
-        for (id, tap) in taps {
-            let (_, from) = read.remove(&id).unwrap_or((tap.clone(), 0));
+        for (id, tool, tap) in taps {
+            // A new tap, of a new instance or of a tool that hears notes again, from its start.
+            let from = (read.remove(&id))
+                .filter(|(kept, _)| kept.is(&tap))
+                .map_or(0, |(_, from)| from);
             heard.clear();
             let tapped = tap.read(from, &mut heard);
             if tapped.missed > 0 {
-                missed.push((id.clone(), tapped.missed));
+                let missed = tapped.missed;
+                let problem = format!(
+                    "onNotes missed {missed} note events: the window was too busy to hear them in time"
+                );
+                self.tool_problem(&id, problem, cx);
             }
-            if !heard.is_empty()
-                && let Some(tool) = project.tool_of(&id)
-            {
-                let instance = looped(project, &tools, &self.edits, &id, tool);
-                let events = heard_at(&heard, session.read(cx));
-                let events = &events;
-                self.host.send(&Request::Notes {
-                    time,
-                    instance,
-                    events,
-                });
-            }
+            self.hear(&id, &tool, &heard, &session, cx);
             self.taps.insert(id, (tap, tapped.next));
         }
-        drop(tools);
-        for (id, count) in missed {
-            let problem = format!(
-                "onNotes missed {count} note events: the window was too busy to hear them in time"
-            );
-            self.tool_problem(&id, problem, cx);
+    }
+
+    /// Gives `heard` to the `onNotes` of the instance `id` of `tool`, when it has one.
+    fn hear(
+        &mut self,
+        id: &InstanceId,
+        tool: &str,
+        heard: &[(u64, NoteEvent)],
+        session: &Entity<Session>,
+        cx: &mut Context<Self>,
+    ) {
+        let tools = self.tools.borrow();
+        if heard.is_empty() || !find(&tools, tool).is_some_and(|info| info.notes) {
+            return;
         }
+        let time = engine_time(session, cx);
+        let session = session.read(cx);
+        let rate = f64::from(session.project().clock().sample_rate());
+        let events: Vec<Heard> = (heard.iter())
+            .map(|(frame, event)| Heard {
+                event: NoteMessage::from(*event),
+                at: *frame as f64 / rate,
+            })
+            .collect();
+        let instance = looped(session.project(), &tools, &self.edits, id, tool);
+        let events = &events;
+        self.host.send(&Request::Notes {
+            time,
+            instance,
+            events,
+        });
     }
 
     /// One frame of the window: the control loops run, a card whose watches moved draws again,
@@ -1174,11 +1183,9 @@ impl Live {
                 let Some(session) = self.session.upgrade() else {
                     return;
                 };
+                // The SDK sends no controller from 120 on, MIDI's channel mode messages.
                 let Some(event) = event.event() else {
-                    let problem = format!(
-                        "a performer sends {event:?}, a controller MIDI has no control for: send one from 0 to 119"
-                    );
-                    return self.tool_problem(&instance, problem, cx);
+                    return eprintln!("error: {instance} sends {event:?}, which is no note event");
                 };
                 let at = performed_frame(at, &session, cx);
                 self.perform_note(
@@ -1351,16 +1358,6 @@ impl Live {
             });
         });
     }
-}
-
-/// Events at frames of engine time as the code of a tool hears them, at engine time in seconds.
-fn heard_at(heard: &[(u64, NoteEvent)], session: &Session) -> Vec<Heard> {
-    let rate = f64::from(session.project().clock().sample_rate());
-    let heard = heard.iter().map(|(frame, event)| Heard {
-        event: NoteMessage::from(*event),
-        at: *frame as f64 / rate,
-    });
-    heard.collect()
 }
 
 /// The frame of what a performer plays at `at`, engine time in seconds, or now: never before

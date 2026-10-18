@@ -659,8 +659,8 @@ fn translate(
                         false => dropped += 1,
                     }
                 }
-                for rest in Control::REST {
-                    if rest.index().and_then(|index| controls.get(index)) != Some(&rest)
+                for (index, rest) in Control::REST.into_iter().enumerate() {
+                    if controls.get(index) != Some(&rest)
                         && !send_control(plugin, time, rest, controls)
                     {
                         dropped += 1;
