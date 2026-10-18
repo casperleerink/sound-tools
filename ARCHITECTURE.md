@@ -24,7 +24,7 @@ The technical decisions, why we made them, and what we rejected. How something w
 - Every extension is compiled into the one binary. `project.json` enables extensions by name.
 - Rust for the core and extensions, GPUI for the window: a one-line extension edit reaches a new running window in about two seconds, and an agent wrote working GPUI views from our docs on the first try. Audio and saved data never depend on GPUI.
 - The project, the views and every plugin handle share the main thread, which plugins require. Rejected: a separate control thread; it would split the project from its plugins, and every view would need a synced copy.
-- macOS is the main platform. Linux and Windows build and pass the tests; platform code sits behind `cfg`. Plugin windows are not offered on Linux, where plugins need an X11 parent and a host run loop.
+- macOS is the main platform. Linux and Windows build and pass the tests. Plugin windows are not offered on Linux, where plugins need an X11 parent and a host run loop.
 - System programs come from the system, never the `PATH` (`sound_core::process`).
 - Running Sound Tools as a plugin inside another DAW is out of scope.
 
@@ -35,7 +35,7 @@ This is the main rule of the codebase.
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no bundled crate. `tooling/workspace-rules` checks this.
 - Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. A tool's page may ask for the transport, but only the arrangement records.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate, such as `sound-notes` and `sound-media`.
-- Tools find each other by port names, not by type: an instrument has an input `notes` and an output `audio`, an effect an input and an output `audio`. So any tool with those ports fits a slot: the arrangement depends on no instrument, effect or plugin.
+- Tools find each other by port names, not by type: an instrument has an input `notes` and an output `audio`, an effect an input and an output `audio`. So the arrangement depends on no instrument, effect or plugin.
 - The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
 - `extensions/tone`, a non-musical tool, proves the core rules hold for a tool unlike the arrangement.
 
@@ -91,8 +91,8 @@ my-piece/
 - The watcher only says which paths changed; the runtime reads them again and applies the difference, so edits, new files, deletes and moves take one road. The runtime groups raw events itself, because a debouncer can split a burst.
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. No field merge and no conflict rejection. Do not reopen this as a sync problem.
 - An edit is `begin`, `publish` (live, writes nothing), then `finish` (writes, one undo step) or `cancel`. No undo step ever holds the middle of a gesture, even when a file edit lands during a drag.
-- An agent request is one undo step named after the request, however far apart its writes are. A window edit, undo or redo during a request ends that step; later writes make a new step. Rejected: adding them to the older step, which lies under the composer's edit, so undo would no longer go back in order.
-- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing else between, are one undo step; else one request became several.
+- An agent request is one undo step, named after it, however far apart its writes are. A window edit, undo or redo during a request ends that step; later writes make another. Rejected: adding them to the older step, under the composer's edit: undo would go out of order.
+- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing else between, are one undo step; else one request became several. A tool's edits of one label under 1 s apart are one too, written when they stop or after 5 s; undo ends them first.
 - Undo history lives only in the session. The folder is the truth; versions come from git.
 - `problems.txt` exists only while a runtime holds the project, so an agent can tell "all is well" from "nobody is watching".
 
@@ -220,9 +220,9 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 - The sidebar runs Claude Code as a child process in the project folder, editing files like a terminal agent. Rejected: a sidecar with the TypeScript Agent SDK, which adds a runtime and our own protocol. Rejected for now: ACP, which adds layers and removes none; it is the way to add more agents later.
 - The window has a generic left panel slot and names no agent type.
-- Each message is one request, so all its writes are one undo step named after the message.
+- Each message is one request: one undo step.
 - The thread state is built from provider-neutral events and holds no process, so tests feed it events.
-- Threads, settings and whether the panel is open are kept per machine, never in the project: an agent writes in the project folder, and must not change the interface or raise its own access by editing a file.
+- Threads, settings and whether the panel is open are kept per machine, never in the project, so an agent cannot change the interface or raise its own access by editing a file.
 - The provider keeps the conversation; the app keeps only its session id and a log to show it.
 - The app runs the composer's own `claude`, else **Set up** downloads a pinned, checked version. Rejected: bundling `claude`: 215 MB more per download, and an app release per version.
 - Sign-in is Claude Code's own. The app never reads or keeps a credential.
@@ -232,14 +232,15 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 A tool an agent writes plays at once, in the installed app, with no build. `crates/typescript`, `crates/signals`.
 
-- **Written in TypeScript, run by Bun as a separate process.** A project with no tool runs no Bun; a code change, a crash or a hang starts a fresh one, and code that hangs is left out until the folder changes. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang. Rejected: an engine inside the app (QuickJS), where one endless loop freezes the window and there is no npm.
+- **Written in TypeScript, run by Bun as a separate process.** No tool, no Bun; a code change, crash or hang starts a fresh one, without code that hung until the folder changes. Rejected: reloading code inside Bun, which cannot read a changed import again nor answer a hang; an engine in the app (QuickJS), where an endless loop freezes the window and there is no npm.
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
-- **Cards and pages** are trees Bun draws and `crates/ui` shows. A `tick` plays like a performer and never changes the record. `set` moves no knob: knobs are the composition.
-- **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end, a child's or the parent's own, names its kind, so a wrong pair is a type error. A parent's sound is the last stage of its audio output, so a chain is one connection. Rejected: `ownSound`, an end on both sides. A number drives a knob as a lane does, so built-in devices need nothing new. An instrument sends no notes or bangs: voices come and go.
+- **Cards and pages** are trees Bun draws and `crates/ui` shows. `set` moves no knob: knobs are the composition.
+- **A tool's code edits its record and its children's** by the fields it changed, on the records as they are then: a late edit takes nothing back. Bun hears a record when it changes, not per tick.
+- **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end names its kind, so a wrong pair is a type error. A parent's sound is the last stage of its audio output, so a chain is one connection. Rejected: `ownSound`, an end on both sides. A number drives a knob as a lane does, so built-in devices need nothing new. An instrument sends no notes or bangs: voices come and go.
 - **Patterns in time are a `sequencer` child**, which quantizes launches on the audio thread. Its record names what plays first, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
 - **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved sender sends no off there. Rejected: a reset in the core, for every instrument to declare.
 - **A tool sends and hears the note events a cable carries**, its `notes` to the sample, whatever plays them. Rejected: tapping the MIDI device thread, deaf to clips and cables.
