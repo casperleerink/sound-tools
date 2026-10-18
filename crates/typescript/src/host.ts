@@ -3,13 +3,17 @@
 // message per line: the runtime tells on stdin, this says on stdout. What a tool logs goes to
 // stderr, so it cannot break a message.
 
-import { writeSync } from "node:fs";
+import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
-/** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
+/** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
 const files = process.argv.slice(2);
+/** Each file as a call stack names it, with links resolved. */
+const stackPaths = files.map((file) => [file, `${realpathSync(join(folder, file))}:`] as const);
+// So the stack `tool` keeps reaches its file through any number of helpers.
+Error.stackTraceLimit = Infinity;
 const sdk: typeof import("./sdk") = await import(join(folder, "sdk.ts"));
 
 for (const name of ["log", "info", "debug", "warn"] as const) {
@@ -151,6 +155,17 @@ function problemsOf(spec: Spec): string[] {
   return problems;
 }
 
+/** The file of `files` whose code called `tool` for `name`, else `loading`, the file that ran it. */
+function definedIn(name: string, loading: string): string {
+  for (const frame of (sdk.host.stacks.get(name) ?? "").split("\n")) {
+    const found = stackPaths.find(([, path]) => frame.includes(path));
+    if (found !== undefined) {
+      return found[0];
+    }
+  }
+  return loading;
+}
+
 /** Loads the files, each after it says which, so a file that hangs is known. */
 async function load() {
   const tools: object[] = [];
@@ -168,10 +183,11 @@ async function load() {
       if (before.has(name)) {
         continue;
       }
+      const defined = definedIn(name, file);
       const problems = problemsOf(spec);
-      errors.push(...problems.map((problem) => ({ file, message: `tool ${name}: ${problem}` })));
+      errors.push(...problems.map((problem) => ({ file: defined, message: `tool ${name}: ${problem}` })));
       if (problems.length === 0) {
-        tools.push(described(spec, file));
+        tools.push(described(spec, defined));
       }
     }
   }
