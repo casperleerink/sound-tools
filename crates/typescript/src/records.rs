@@ -133,13 +133,13 @@ impl<'a> Writer<'a> {
 
     /// Notes each object type under `schema`, the first time.
     fn find_objects(&mut self, schema: &'a Value) {
-        if let Some(name) = self.object_name(schema) {
+        if let Some(name) = self.record.object_name(schema) {
             if self.objects.contains(&name) {
                 return;
             }
             self.objects.push(name);
         }
-        let schema = self.resolved(schema);
+        let schema = self.record.resolved(schema);
         for key in ["oneOf", "anyOf", "allOf", "prefixItems"] {
             for variant in schema
                 .get(key)
@@ -165,20 +165,12 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn resolved(&self, schema: &'a Value) -> &'a Value {
-        self.record.resolved(schema)
-    }
-
-    fn object_name(&self, schema: &'a Value) -> Option<&'a str> {
-        self.record.object_name(schema)
-    }
-
     /// The type of `schema`, indented for `depth`.
     fn object_or_type(&self, schema: &'a Value, depth: usize) -> String {
-        if let Some(name) = self.object_name(schema) {
+        if let Some(name) = self.record.object_name(schema) {
             return type_name(self.schema.tool, name);
         }
-        let schema = self.resolved(schema);
+        let schema = self.record.resolved(schema);
         let one_of = |key| schema.get(key).and_then(Value::as_array);
         if let Some(variants) = one_of("oneOf").or_else(|| one_of("anyOf")) {
             let variants: Vec<String> = (variants.iter())
