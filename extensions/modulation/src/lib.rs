@@ -18,6 +18,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -31,7 +32,7 @@ pub use processor::{Modulation, response, sweep};
 pub const EXTENSION: &str = "modulation";
 
 /// What the LFO moves.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     /// The delay of a copy of the sound, around 12 ms: its pitch wobbles against the dry sound.
@@ -53,7 +54,7 @@ impl Mode {
 /// sound in the delay line and the phase of the LFO are runtime state and are not saved.
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default chorus.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct ModulationState {
     pub mode: Mode,
@@ -157,7 +158,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ModulationState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Modulation::AUTOMATION);
+        .schema(Modulation::AUTOMATION.parameters())
+        .in_code();
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

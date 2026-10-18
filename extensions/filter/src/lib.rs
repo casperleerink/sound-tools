@@ -31,6 +31,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -52,7 +53,7 @@ pub use sound_core::{FilterCharacter, FilterSlope as Slope, FilterType};
 /// filter's memory and the phase of its LFO are runtime state and are not saved.
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default filter.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct FilterState {
     #[serde(rename = "type")]
@@ -174,7 +175,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<FilterState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Filter::AUTOMATION);
+        .schema(Filter::AUTOMATION.parameters())
+        .in_code();
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

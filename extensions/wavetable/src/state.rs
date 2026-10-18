@@ -11,6 +11,7 @@
 //! An automation lane names a number by its path in the saved record: `filter_1.cutoff_hz`. The
 //! lists of those are at the end, and [`AUTOMATED`] holds them all.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{FilterCharacter, FilterSlope, FilterType, LfoShape, Scale, lanes};
 use sound_notes::{Division, Feel};
@@ -22,7 +23,7 @@ type Parameter<S> = sound_core::Parameter<S>;
 
 /// How an oscillator bends its table as it reads it. Each has one amount, from 0 (the table as
 /// it is) to 1.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Effect {
     None,
@@ -43,7 +44,7 @@ impl Effect {
 }
 
 /// A wavetable oscillator.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Oscillator {
     /// Off costs nothing.
@@ -176,6 +177,16 @@ impl SubOctave {
     }
 }
 
+impl JsonSchema for SubOctave {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SubOctave".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "enum": Self::ALL.map(Self::octaves) })
+    }
+}
+
 impl TryFrom<i8> for SubOctave {
     type Error = String;
 
@@ -195,7 +206,7 @@ impl From<SubOctave> for i8 {
 }
 
 /// A sine one or two octaves under the note, in the middle, into the filters.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Sub {
     pub octave: SubOctave,
@@ -228,7 +239,7 @@ impl Default for Sub {
 
 /// Copies of both wavetable oscillators per note, spread in pitch and across the stereo field.
 /// More copies are about as loud as one.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Unison {
     pub voices: u8,
@@ -270,7 +281,7 @@ impl Default for Unison {
 
 /// A filter of each voice: the state variable filter of the SDK, the one the Filter effect
 /// plays, with a drive in front of it.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Filter {
     /// Off lets the sound through as it is.
@@ -338,7 +349,7 @@ impl Default for Filter {
 }
 
 /// Where the oscillators go through the filters.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Routing {
     /// Everything through filter 1, then filter 2.
@@ -355,7 +366,7 @@ impl Routing {
 
 /// An envelope: attack, decay to the sustain level, and release, each on a curve. The amp
 /// envelope shapes the level of a voice. The other two are modulation sources from 0 to 1.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Adsr {
     /// From note on to the top.
@@ -482,7 +493,7 @@ impl Default for Adsr {
 }
 
 /// An LFO of each voice, a modulation source from -1 to 1.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct LfoSettings {
     pub shape: LfoShape,
@@ -526,7 +537,7 @@ impl Default for LfoSettings {
 
 /// Poly plays up to `polyphony` notes at once. Mono plays one, and a key pressed while another
 /// is held moves the note without starting it again (legato).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VoiceMode {
     Poly,
@@ -537,7 +548,8 @@ impl VoiceMode {
     pub const ALL: [Self; 2] = [Self::Poly, Self::Mono];
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// How notes share the voices.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Voicing {
     pub mode: VoiceMode,
@@ -585,7 +597,7 @@ impl Default for Voicing {
 /// A field that a record leaves out takes its default, so `"state": {}` is the default patch.
 /// Inside an object, a field left out takes the default of that object's type: the default
 /// patch differs from those only in `osc_2.detune_cents`, 7, and `filter_2.on`, false.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct WavetableState {
     pub osc_1: Oscillator,

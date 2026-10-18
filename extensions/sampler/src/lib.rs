@@ -37,6 +37,7 @@ pub mod view;
 
 use std::sync::Arc;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -60,7 +61,7 @@ pub const POSITION: &str = "position";
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is a sampler with no
 /// sample, which is silent.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct SamplerState {
     /// The file it plays, under `assets/audio/`. None is an empty sampler, unless it has `sfz`.
@@ -309,7 +310,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
         .tool::<SamplerState>(EXTENSION)?
         .behaviour(apply)
         .rebinds_on_assets(sound_media::AUDIO_FOLDER)
-        .rebinds_on_assets(INSTRUMENTS_FOLDER);
+        .rebinds_on_assets(INSTRUMENTS_FOLDER)
+        .schema(Sampler::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     registry.agent_doc(EXTENSION, SFZ_AGENT_DOC)?;
     registry.agent_doc(EXTENSION, LIBRARY_AGENT_DOC)?;

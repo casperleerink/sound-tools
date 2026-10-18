@@ -115,7 +115,7 @@ tool({
 });
 ```
 
-- A number of a device takes a number, a knob or any signal, such as an LFO, which moves it once per 64 samples. The rest of its record is written as it is: `devices.filter(x, { type: "high_pass" })`.
+- A number of a device takes a number, a knob or any signal, such as an LFO, which moves it once per 64 samples. The rest of its record is written as it is: `devices.filter(x, { type: "high_pass" })`. `sdk.ts` types each with its range, unit and options, and a value the device refuses is a problem of the tool as it loads.
 - `devices.reverb.fields` are its numbers as knobs, with their ranges and defaults. Spread them into `state` and hand the fields on, as above: the card, automation and the record treat them as any knob. `prefixed("far_", devices.reverb.fields)` names those of a second one.
 - What a device plays is of the channel the sound runs on. A sound that returns `{ left, right }` reads `.left` and `.right`, and gives a device `{ left, right }`.
 - The engine waits for the latency of a device, so what goes round it stays in time with it.
@@ -210,7 +210,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
 
 ## Changing records
 
-`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest. Edit a field or a child's `state` (say its tool, such as `as SequencerState`), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
+`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest. Edit a field or a child's `state` (say its tool, such as `as SequencerState`: `sdk.ts` has the record type of every built-in tool), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
 
 ```ts
 update("Add a bass line", ({ children }) => {

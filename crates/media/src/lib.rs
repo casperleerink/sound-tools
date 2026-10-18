@@ -41,6 +41,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, LazyLock, Mutex, PoisonError, Weak};
 use std::time::SystemTime;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 
@@ -61,7 +62,9 @@ pub const AUDIO_FOLDER: &str = "audio";
 /// It can only hold a name that stays inside that folder: lowercase letters, digits, `-` and
 /// `_`, a dot and an extension of the same letters. So a record can never point anywhere
 /// else, and a project folder copied to another place plays the same.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(try_from = "String", into = "String")]
 pub struct AudioAsset(AssetName);
 

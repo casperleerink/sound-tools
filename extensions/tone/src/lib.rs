@@ -9,6 +9,7 @@
 //! }
 //! ```
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, AudioOutput, BehaviourContext, BehaviourError, OutputEndpoint, Ports, PrepareConfig,
@@ -24,9 +25,10 @@ pub const AUDIO_OUTPUT: &str = "audio";
 
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets.
 /// Oscillator phase is runtime state and is not saved.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToneState {
+    /// The pitch of the sine.
     pub frequency_hz: f32,
     /// Linear gain. 1.0 is full scale.
     pub gain: f32,
@@ -67,7 +69,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the Tone tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<ToneState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<ToneState>(EXTENSION)?
+        .behaviour(apply)
+        .schema(&[]);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

@@ -5,11 +5,13 @@
 
 use std::sync::Arc;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use sound_core::{
     BehaviourContext, BehaviourError, EventInput, EventOutput, InputEndpoint, JsonTool,
     JsonToolDoc, OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, Ticks,
+    ToolSchema,
 };
 use sound_notes::{
     Launch, Length, Note, NoteEvent, NotePlayer, NotePlayerUpdate, Pattern, PlayerWatches, Quantize,
@@ -25,23 +27,28 @@ const NOTES: &str = "notes";
 /// The name of its processor in its instance.
 pub(crate) const PROCESSOR: &str = "sequencer";
 
-#[derive(Debug, Hash, Deserialize)]
+#[derive(Debug, Hash, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Record {
+    /// The patterns it loops, one at a time.
     #[serde(default)]
     patterns: Vec<PatternRecord>,
-    /// The pattern it plays before any launch, by index.
+    /// The pattern it plays before any launch, by its index from 0, so a render plays it; a
+    /// change launches it.
     #[serde(default)]
     plays: Option<usize>,
+    /// Where a launch lands while the piece plays. While it is stopped, at once.
     #[serde(default)]
     quantize: Quantize,
 }
 
-/// Notes that loop: `length` in ticks, and note starts counted from the start of the pattern.
-#[derive(Debug, Hash, Deserialize)]
+/// Notes that loop.
+#[derive(Debug, Hash, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PatternRecord {
+    /// In ticks: 3840 is a bar of 4/4.
     length: u64,
+    /// Notes that start inside it, in ticks from its start.
     notes: Vec<Note>,
 }
 
@@ -58,6 +65,17 @@ pub(crate) fn json_tool() -> JsonTool {
         behaviour: Box::new(apply),
         asset_folders: Vec::new(),
         owns_children: false,
+    }
+}
+
+/// The record of the sequencer, for the SDK.
+pub(crate) fn schema() -> ToolSchema {
+    ToolSchema {
+        tool: NAME,
+        schema: schemars::schema_for!(Record).to_value(),
+        numbers: Vec::new(),
+        in_code: false,
+        check: |state| record(&state).map(drop),
     }
 }
 

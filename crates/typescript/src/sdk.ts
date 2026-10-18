@@ -533,8 +533,8 @@ export class DeviceSound extends Signal {
   }
 }
 
-/** The settings of a device: a signal or a number for each of its numbers `F`, the rest `R` as written. */
-export type DeviceSettings<F extends Fields, R> = { [Name in keyof F]?: Operand } & { [Name in keyof R]?: R[Name] };
+/** The settings of a device: a signal or a number for each of its numbers `F`, the rest of its record `R` as written. */
+export type DeviceSettings<F extends Fields, R> = { [Name in keyof F]?: Operand } & Omit<R, keyof F>;
 
 /** A built-in device to play inside `sound`, such as `devices.reverb`. */
 export interface Device<F extends Fields, R> {
@@ -545,18 +545,18 @@ export interface Device<F extends Fields, R> {
 }
 
 /** For the devices below. */
-function device<const F extends Fields, R extends object>(tool: string, fields: F, rest: R): Device<F, R> {
+function device<const T extends keyof Tools, const F extends Fields>(tool: T, fields: F): Device<F, StateOfTool<T>> {
   const play = (x: Operand | Stereo, settings: Record<string, unknown> = {}) => {
     const numbers: Record<string, Operand> = {};
     const state: Record<string, unknown> = {};
     for (const [name, value] of Object.entries(settings)) {
       if (name in fields && isOperand(value)) numbers[name] = value;
-      else if (name in rest) state[name] = value;
+      else state[name] = value;
     }
     const input: [Operand, Operand] = isOperand(x) ? [x, x] : [x.left, x.right];
     return new DeviceSound({ tool, input, numbers, state });
   };
-  return Object.assign(play, { fields }) as Device<F, R>;
+  return Object.assign(play, { fields }) as Device<F, StateOfTool<T>>;
 }
 
 /** `fields` with `prefix` before each name, so a tool can have the numbers of two devices. */
@@ -797,12 +797,8 @@ export interface OwnedChild {
   state: unknown;
 }
 
-/** The `state` of a `sequencer` child: `agent-docs/sequencer.md`. */
-export interface SequencerState {
-  patterns?: Array<{ length: number; notes: Note[] }>;
-  plays?: number;
-  quantize?: "bar" | "beat" | "now";
-}
+/** The `state` of a record of `T` as the file holds it; any value for a tool of this project. */
+export type StateOfTool<T> = T extends keyof Tools ? Tools[T]["state"] : unknown;
 
 /** The keys that name a port, one for each kind of what it carries. */
 type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger";

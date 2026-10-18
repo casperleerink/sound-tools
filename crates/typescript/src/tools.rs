@@ -17,14 +17,14 @@ use serde_json::{Map, Value};
 use sound_core::{
     Assets, AudioThru, Automation, BehaviourContext, BehaviourError, Event, EventThru, GraphError,
     InputEndpoint, InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo,
-    Problem, RecordStamp, ValueRange, Watch,
+    Problem, RecordStamp, ToolSchema, ValueRange, Watch,
 };
 use sound_notes::{
     AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note, NoteEvent, NoteFeed, NoteFeedUpdate,
 };
 use sound_signals::{
-    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, LinkFrom, LinkTo,
-    Machine, Number, ParameterSpec, Placed, Program, Signals, SignalsUpdate, Sound, Values,
+    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, DeviceUse, Graph, Kind, LinkFrom,
+    LinkTo, Machine, Number, ParameterSpec, Placed, Program, Signals, SignalsUpdate, Sound, Values,
 };
 
 use crate::behaviours::{self, Declaration, End, Key};
@@ -778,6 +778,7 @@ impl Sounds {
         info: &ToolInfo,
         graphs: Vec<(Map<String, Value>, Result<Graph, String>)>,
         (bun, tools): (&Arc<Bun>, &Arc<Tools>),
+        schemas: &[ToolSchema],
     ) -> Self {
         let declarations = info.declarations();
         let sounds: HashMap<String, Result<Arc<Program>, String>> = (graphs.into_iter())
@@ -794,6 +795,9 @@ impl Sounds {
                     }
                     if !program.devices.is_empty() && instrument {
                         return Err("an instrument plays through no device, as each of its voices would play one: filter a voice with lowpass, highpass or bandpass, or put the device after the instrument, in the track's effects or in a parent".to_string());
+                    }
+                    for device in &program.devices {
+                        check_device(device, schemas)?;
                     }
                     Ok(Arc::new(program))
                 });
@@ -1144,6 +1148,20 @@ impl Sounds {
             .collect();
         wire(&declared.declaration, own, &child_tools, context)
     }
+}
+
+/// Whether the record of `device` without the numbers a signal moves is one its tool of
+/// `schemas` takes: what it plays with is known as the tool loads.
+fn check_device(device: &DeviceUse, schemas: &[ToolSchema]) -> Result<(), String> {
+    let tool = &device.tool;
+    let schema = (schemas.iter()).find(|schema| schema.tool == tool && schema.in_code);
+    let Some(schema) = schema else {
+        return Err(format!("it plays a {tool:?}, which is no device"));
+    };
+    (schema.check)(Value::Object(device.state.clone())).map_err(|error| {
+        let error = error.strip_prefix("state.").unwrap_or(&error);
+        format!("devices.{tool}: {error}")
+    })
 }
 
 /// Plays the devices of `program` between its `stages`, with a cable for each number a signal

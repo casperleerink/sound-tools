@@ -37,8 +37,8 @@ pub use generated::{
 pub use history::OUTSIDE_UNDO_WINDOW;
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
-    AgentDoc, AgentDocText, CodeDevice, JsonTool, JsonToolDoc, Registry, RegistryError,
-    ToolRegistration, Was,
+    AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration,
+    ToolSchema, Was,
 };
 pub use runs::{RUN_LONGEST, RUN_QUIET};
 pub use storage::StorageError;

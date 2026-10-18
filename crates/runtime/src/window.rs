@@ -909,7 +909,7 @@ impl Opened {
         // An experiment: every project the window opens can have tools of its own, written
         // while it runs, so the folder for them is always there.
         std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
-        Ok(Extensions::load(folder, &crate::code_devices()?))
+        Ok(Extensions::load(folder, &crate::tool_schemas()?))
     }
 
     fn open(folder: &Path, tools: Option<FirstLoad>) -> Result<Self> {

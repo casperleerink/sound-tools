@@ -146,3 +146,62 @@ fn the_device_example_of_the_doc_plays_as_the_child_of_a_parent() {
     let played = harness.play(24_000);
     assert!(rms(&played[2 * 4_800..]) > 0.01, "{}", rms(&played));
 }
+
+#[test]
+fn a_setting_a_device_refuses_is_a_problem_of_the_tool_as_soon_as_it_loads() {
+    let wrong = r#"import { devices, noise, tool } from "./sdk";
+
+tool({
+  name: "wrong",
+  title: "Wrong",
+  when: "Never",
+  doc: "A filter of a type it does not have.",
+  kind: "source",
+  state: {},
+  sound: () => devices.filter(noise(), { type: "hi_pass" }),
+});
+"#;
+    let dark = record("dark", "{}");
+    let records = [
+        ("state/dark.json", dark.as_str()),
+        ("extensions/wrong.ts", wrong),
+    ];
+    let Some(harness) = project("dark", &records) else {
+        return;
+    };
+    let problems = harness.project.problems();
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert_eq!(problem.path, "extensions/wrong.ts");
+    assert!(
+        (problem.message).contains("devices.filter: type: unknown variant `hi_pass`"),
+        "{problem:?}"
+    );
+}
+
+/// So an agent reads in `sdk.ts` what each field of a built-in record does: from its doc
+/// comment, its `Parameter` or its default.
+#[test]
+fn every_field_of_a_built_in_record_has_its_doc_in_the_sdk() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join("extensions")).unwrap();
+    let schemas = runtime::tool_schemas().unwrap();
+    assert!(sound_typescript::Extensions::load(project.path(), &schemas).is_some());
+    let sdk = std::fs::read_to_string(project.path().join("extensions/sdk.ts")).unwrap();
+    let records = sdk.split("// Built-in tools").nth(1).unwrap();
+    let records = records.split("export interface Tools").next().unwrap();
+    let lines: Vec<&str> = records.lines().collect();
+    let field = |line: &str| {
+        let line = line.trim_start();
+        let name = line.split(['?', ':']).next().unwrap_or_default();
+        line.starts_with(|c: char| c.is_ascii_lowercase())
+            && line.contains(':')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let undocumented: Vec<&str> = (lines.windows(2))
+        .filter(|pair| field(pair[1]) && !pair[0].trim_end().ends_with("*/"))
+        .map(|pair| pair[1].trim())
+        .collect();
+    assert!(undocumented.is_empty(), "{undocumented:#?}");
+}

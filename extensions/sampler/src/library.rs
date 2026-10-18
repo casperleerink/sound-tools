@@ -27,6 +27,7 @@ use std::process::Command;
 use std::sync::{Condvar, LazyLock, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{Assets, InstanceId};
 
@@ -124,7 +125,7 @@ pub fn entry(id: &str) -> Option<&'static Entry> {
 }
 
 /// A library instrument as a record names it: an id of [`CATALOG`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "String", into = "String")]
 pub struct LibraryId(&'static Entry);
 

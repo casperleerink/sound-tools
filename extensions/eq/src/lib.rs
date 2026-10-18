@@ -27,6 +27,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use sound_core::{
@@ -47,7 +48,7 @@ pub const EXTENSION: &str = "eq";
 pub const BANDS: usize = 4;
 
 /// What a band does around its frequency.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Shape {
     /// Takes away what is below the frequency, 12 dB per octave. Q is the peak at the corner.
@@ -94,7 +95,7 @@ impl Shape {
 }
 
 /// One band. In the record a field left out takes the default of that band.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Band {
     /// Off, the band leaves the sound as it is and keeps its settings.
     pub on: bool,
@@ -224,7 +225,7 @@ pub const OUTPUT_GAIN: Parameter = Parameter {
 /// has selected.
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default EQ.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct EqState {
     /// Band 1 first. A list with fewer bands gives the rest their defaults.
@@ -304,7 +305,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<EqState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Eq::AUTOMATION);
+        .schema(Eq::AUTOMATION.parameters())
+        .in_code();
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

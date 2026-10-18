@@ -55,7 +55,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the wavetable tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<WavetableState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<WavetableState>(EXTENSION)?
+        .behaviour(apply)
+        .schema(WavetableSynth::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

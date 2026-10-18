@@ -31,6 +31,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -44,7 +45,7 @@ pub use processor::{Utility, matrix};
 pub const EXTENSION: &str = "utility";
 
 /// Which input channels play, before anything else.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Channels {
     /// Left plays left and right plays right.
@@ -66,7 +67,7 @@ impl Channels {
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default utility,
 /// which changes nothing.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct UtilityState {
     pub gain_db: f32,
@@ -165,7 +166,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<UtilityState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Utility::AUTOMATION);
+        .schema(Utility::AUTOMATION.parameters())
+        .in_code();
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

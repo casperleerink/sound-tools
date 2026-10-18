@@ -12,6 +12,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -27,7 +28,7 @@ pub const EXTENSION: &str = "gate";
 /// The saved state. It is small and `Copy`, so it is also the update the processor gets.
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default gate.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct GateState {
     /// The peak level in dBFS under which the gate closes.
@@ -154,7 +155,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<GateState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Gate::AUTOMATION);
+        .schema(Gate::AUTOMATION.parameters())
+        .in_code();
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

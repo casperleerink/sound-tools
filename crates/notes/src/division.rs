@@ -1,10 +1,11 @@
 //! Note lengths that follow the tempo, for a time a composer picks as a note: the repeat of a
 //! delay, the cycle of an LFO.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The note a synced time lasts, before its feel. Saved as the fraction, `"1/8"`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Division {
     #[serde(rename = "1/32")]
     ThirtySecond,
@@ -62,7 +63,7 @@ impl Division {
 }
 
 /// Whether a synced time is the note, one and a half of it, or two thirds of it.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Feel {
     Straight,

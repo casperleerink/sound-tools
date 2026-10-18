@@ -35,6 +35,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -80,6 +81,16 @@ impl Lookahead {
     }
 }
 
+impl JsonSchema for Lookahead {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Lookahead".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "enum": Self::ALL.map(Self::milliseconds) })
+    }
+}
+
 impl TryFrom<u8> for Lookahead {
     type Error = String;
 
@@ -105,7 +116,7 @@ impl From<Lookahead> for u8 {
 /// much the limiter turns down right now is runtime state and is not saved.
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default limiter.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct LimiterState {
     /// How much louder the sound goes into the limiter.
@@ -188,7 +199,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<LimiterState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Limiter::AUTOMATION);
+        .schema(Limiter::AUTOMATION.parameters())
+        .in_code();
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

@@ -13,6 +13,7 @@ use std::sync::{Arc, OnceLock};
 
 use realfft::RealFftPlanner;
 use realfft::num_complex::Complex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::fold;
@@ -184,7 +185,7 @@ pub enum Category {
 
 /// A built-in table. Each is made in code, so nothing is loaded and every machine plays the
 /// same. Saved in snake case, `"basic_shapes"`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Table {
     /// Sine, triangle, saw at the middle, then on to a square.

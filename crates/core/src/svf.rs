@@ -32,12 +32,13 @@
 
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{HIGHEST_PART, REST};
 
 /// Which part of the sound the filter lets through.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterType {
     /// What is below the cutoff.
@@ -94,6 +95,16 @@ impl FilterSlope {
     }
 }
 
+impl JsonSchema for FilterSlope {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FilterSlope".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "enum": Self::ALL.map(Self::db_per_octave) })
+    }
+}
+
 impl TryFrom<u8> for FilterSlope {
     type Error = String;
 
@@ -107,7 +118,7 @@ impl TryFrom<u8> for FilterSlope {
 }
 
 /// How a filter behaves when it is pushed. Saved as `"clean"` or `"warm"`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FilterCharacter {
     /// Linear at every level: the same peak for a quiet and a loud sound.

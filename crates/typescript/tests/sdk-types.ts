@@ -235,6 +235,9 @@ tool({
     devices.reverb(input, { freeze: fields.drive });
     // @ts-expect-error: the fields of the second reverb are named with their prefix.
     fields.far_freeze;
+    devices.filter(far, { type: "high_pass", cutoff_hz: fields.drive });
+    // @ts-expect-error: a choice of a device is one of its options.
+    devices.filter(far, { type: "hi_pass" });
     return far;
   },
 });
