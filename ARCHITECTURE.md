@@ -102,7 +102,7 @@ my-piece/
 
 - The runtime writes `AGENTS.md` (a map), `CLAUDE.md`, and one file per doc in `agent-docs/`. A map plus docs, because one big doc stopped scaling; agents read only the docs their task needs. Rejected: Claude Code skills, no better in an eval and needing settings agents run without.
 - Extensions register their docs; the sources are product content (`extensions/*/agent-doc.md`, `crates/core/src/project/*.md`). A doc never outlives its tools, and the generated docs contain nothing of the machine.
-- A runtime test loads every JSON example in every doc, so the docs cannot drift from the formats.
+- A runtime test loads every JSON example in every doc, so none drifts from the formats.
 - The composer's instructions are plain text: `instructions.md` in the project travels with the piece; one file in the support folder is for every project. Both are edited in the sidebar, so a composer needs no text editor.
 - The sidebar runs Claude Code with no settings source and no MCP servers, so a settings file the agent writes in the project gives it no more access. The project's `CLAUDE.md` is loaded back in on purpose.
 
@@ -236,7 +236,7 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
-- **Every record the SDK reaches is described once, by its Rust type** (`schemars`), for `sdk.ts` and for checking a device's settings as the code loads. A parent may name its children's tools for TypeScript to check. Rejected: hand-written schemas, which drift.
+- **Every record the SDK reaches is described once, by its Rust type** (`schemars`), for `sdk.ts`, the agent docs' field tables and checking a device's settings on load. A parent may name its children's tools for TypeScript to check. Rejected: hand-written ones, which drift.
 - **A sound plays built-in devices** as engine processors between stages of its code: the engine compensates their latency. So none in instruments or feedbacks. Rejected: devices as signals code.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.

@@ -9,6 +9,7 @@ mod apply;
 mod assets;
 mod binding;
 mod editing;
+mod fields;
 mod file;
 mod generated;
 mod history;
@@ -28,6 +29,7 @@ pub use binding::{
     BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, PartPorts, RecordStamp,
 };
 pub use editing::{Changes, Derived, Edit};
+pub use fields::{FieldDoc, FieldRange, RecordSchema, ranges, type_doc, unit_of};
 pub use file::{
     FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
 };

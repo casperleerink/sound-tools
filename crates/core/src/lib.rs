@@ -80,12 +80,12 @@ pub use processor::{
 pub use project::{
     AGENT_DOC_FILE, AGENT_DOCS_FOLDER, ASSETS_FOLDER, AgentDoc, AgentDocText, AssetError,
     AssetName, Assets, BehaviourContext, BehaviourError, Changes, Derived, Edit as ProjectEdit,
-    FORMAT, GROUPING_WINDOW, INSTRUCTIONS_FILE, InputEndpoint, Instance, InstanceId,
-    InvalidAssetName, InvalidInstanceId, JsonTool, JsonToolDoc, NO_PROBLEMS, OUTSIDE_UNDO_WINDOW,
-    OutputEndpoint, PROBLEMS_FILE, PartPorts, Place, PortReference, Problem, Project, ProjectError,
-    ProjectEvent, ProjectFile, RUN_LONGEST, RUN_QUIET, RecordStamp, Registry, RegistryError,
-    SavedConnection, SavedDestination, SavedSource, State, StorageError, ToolRegistration,
-    ToolSchema, Was,
+    FORMAT, FieldDoc, FieldRange, GROUPING_WINDOW, INSTRUCTIONS_FILE, InputEndpoint, Instance,
+    InstanceId, InvalidAssetName, InvalidInstanceId, JsonTool, JsonToolDoc, NO_PROBLEMS,
+    OUTSIDE_UNDO_WINDOW, OutputEndpoint, PROBLEMS_FILE, PartPorts, Place, PortReference, Problem,
+    Project, ProjectError, ProjectEvent, ProjectFile, RUN_LONGEST, RUN_QUIET, RecordSchema,
+    RecordStamp, Registry, RegistryError, SavedConnection, SavedDestination, SavedSource, State,
+    StorageError, ToolRegistration, ToolSchema, Was, ranges, type_doc, unit_of,
 };
 pub use saturation::soft_clip;
 pub use scope::Scope;

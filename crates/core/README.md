@@ -83,8 +83,14 @@ by an agent during a drag applies at once, and the next move of the drag writes 
 
 An extension registers an agent doc (`registry.agent_doc`). The runtime writes it into every
 project as `agent-docs/<name>.md`. A test loads every example record in it, so a doc whose
-example does not load fails the build. The doc is the one place that explains the record
-format. Keep each doc about one task, and name the task in its `when` line.
+example does not load fails the build. Keep each doc about one task, and name the task in its
+`when` line.
+
+`{{fields <tool>}}` in a doc becomes the table of the fields of its record, and
+`{{fields <tool> <path>}}` that of an object in it, such as `{{fields eq bands}}`. The runtime
+writes it from the schema of the tool (`.schema(..)`): a field's doc comment is its meaning,
+`#[schemars(transform = ranges(&PARAMETERS))]` gives its range, and its `Default` its default.
+The doc itself says only what no field says: what the tool is for, starting points, behaviour.
 
 ## Copy an example
 
