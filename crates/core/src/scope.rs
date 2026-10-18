@@ -7,32 +7,17 @@
 //! [`Peaks`]: crate::Peaks
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 
 use crate::processor::CHANNELS;
+use crate::ring::Ring;
 
 /// The last [`Scope::FRAMES`] frames a processor wrote. Clones share them. One writer.
 #[derive(Clone, Debug)]
-pub struct Scope(Arc<Ring>);
-
-#[derive(Debug)]
-struct Ring {
-    frames: Box<[[AtomicU32; CHANNELS]]>,
-    /// Frames written so far, counted when they are in the ring.
-    written: AtomicU64,
-    /// Frames written so far, counted before they go in: a reader that finds this past what it
-    /// read knows those frames may have been written over.
-    writing: AtomicU64,
-}
+pub struct Scope(Arc<Ring<1>>);
 
 impl Default for Scope {
     fn default() -> Self {
-        let frames = (0..Self::FRAMES).map(|_| [0, 0].map(AtomicU32::new));
-        Self(Arc::new(Ring {
-            frames: frames.collect(),
-            written: AtomicU64::new(0),
-            writing: AtomicU64::new(0),
-        }))
+        Self(Arc::new(Ring::new(Self::FRAMES)))
     }
 }
 
@@ -46,49 +31,21 @@ impl Scope {
 
     /// Adds the frames of one block. Realtime safe.
     pub fn write(&self, channels: [&[f32]; CHANNELS]) {
-        let ring = &self.0;
         let [left, right] = channels;
-        let frames = left.len().min(right.len()) as u64;
-        let start = ring.written.load(Ordering::Relaxed);
-        ring.writing.store(start + frames, Ordering::Relaxed);
-        fence(Ordering::Release);
-        for (frame, (left, right)) in (start..).zip(left.iter().zip(right)) {
-            if let Some([left_slot, right_slot]) = ring.frames.get(slot(frame)) {
-                left_slot.store(left.to_bits(), Ordering::Relaxed);
-                right_slot.store(right.to_bits(), Ordering::Relaxed);
-            }
-        }
-        ring.written.store(start + frames, Ordering::Release);
+        let frames = left.iter().zip(right);
+        let both = |(left, right): (&f32, &f32)| {
+            u64::from(left.to_bits()) << 32 | u64::from(right.to_bits())
+        };
+        self.0.write(frames.map(|frame| [both(frame)]));
     }
 
     /// Appends to `into` the frames written since `from`, a count [`Self::read`] gave before, 0,
     /// or `u64::MAX` for none, oldest first. Gives the count to read from next time. Frames
     /// written over before they were read are left out.
     pub fn read(&self, from: u64, into: &mut Vec<[f32; CHANNELS]>) -> u64 {
-        let ring = &self.0;
-        let written = ring.written.load(Ordering::Acquire);
-        let oldest = |count: u64| count.saturating_sub(Self::FRAMES as u64);
-        let start = from.clamp(oldest(written), written);
-        let first = into.len();
-        for frame in start..written {
-            if let Some(slot) = ring.frames.get(slot(frame)) {
-                into.push(
-                    slot.each_ref()
-                        .map(|sample| f32::from_bits(sample.load(Ordering::Relaxed))),
-                );
-            }
-        }
-        // A frame the writer reached while it was read may be a newer one.
-        fence(Ordering::Acquire);
-        let overwritten = oldest(ring.writing.load(Ordering::Relaxed)).saturating_sub(start);
-        let overwritten = (overwritten as usize).min(into.len() - first);
-        into.drain(first..first + overwritten);
-        written
+        let channels = |bits: u64| [(bits >> 32) as u32, bits as u32].map(f32::from_bits);
+        self.0.read(from, into, |[bits]| channels(bits))
     }
-}
-
-fn slot(frame: u64) -> usize {
-    (frame % Scope::FRAMES as u64) as usize
 }
 
 #[cfg(test)]

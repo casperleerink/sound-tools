@@ -9,7 +9,7 @@ use sound_core::{
     monotonic_nanos,
 };
 
-use sound_notes::{Expression, Pedal, Pitch};
+use sound_notes::{Expression, NoteEvent, Pedal, Pitch};
 
 use crate::keys::{INPUT_CAPACITY, Input, Keys, Played, Report};
 use crate::take::{Take, TakeEvent};
@@ -121,7 +121,7 @@ pub struct Keyboard {
     seen_lost_reports: u64,
     /// What the live input played since [`Self::take_heard`], for who listens besides the
     /// instrument, such as a tool of the project.
-    heard: Vec<Played>,
+    heard: Vec<(u64, NoteEvent)>,
 }
 
 impl Keyboard {
@@ -251,15 +251,15 @@ impl Keyboard {
         while let Ok(report) = self.reports.pop() {
             let sounded = match report {
                 Report::Sounded(sounded) => sounded,
-                Report::Released => {
-                    self.hear_release();
+                Report::Released { frame } => {
+                    self.hear_release(frame);
                     self.live_notes = 0;
                     self.live_pedal = Pedal::UP;
                     self.live_expression = Expression::REST;
                     continue;
                 }
             };
-            self.hear(sounded.arrived.played);
+            self.hear(sounded.frame, sounded.arrived.played.event());
             if let Some(timing) = timing
                 && let Some(sound_nanos) = timing.sound_time_nanos(sounded.frame)
             {
@@ -274,9 +274,7 @@ impl Keyboard {
                 | Played::ModWheel(_)
                 | Played::Pressure(_)
                 | Played::Control { .. } => {
-                    if let Some(event) = sounded.arrived.played.event() {
-                        self.live_expression.follow(event);
-                    }
+                    self.live_expression.follow(sounded.arrived.played.event());
                 }
             }
             let Some(recording) = &mut self.recording else {
@@ -301,36 +299,36 @@ impl Keyboard {
         }
     }
 
-    /// What the live input played since the last call, in order: each message the engine
-    /// sounded, and the end of each note, the pedal and the wheels a release let go of, so
-    /// whoever heard something begin hears it end. Call it every poll: past what an input ring
-    /// holds, the rest is left out.
-    pub fn take_heard(&mut self) -> Vec<Played> {
+    /// What the live input played since the last call, in order, each with the engine frame it
+    /// sounded on: each message the engine sounded, and the end of each note, the pedal and the
+    /// wheels a release let go of, so whoever heard something begin hears it end. Call it every
+    /// poll: past what an input ring holds, the rest is left out.
+    pub fn take_heard(&mut self) -> Vec<(u64, NoteEvent)> {
         std::mem::take(&mut self.heard)
     }
 
-    fn hear(&mut self, played: Played) {
+    fn hear(&mut self, frame: u64, event: NoteEvent) {
         if self.heard.len() < INPUT_CAPACITY {
-            self.heard.push(played);
+            self.heard.push((frame, event));
         }
     }
 
-    /// What a release lets go of, as the messages a hand would have played.
-    fn hear_release(&mut self) {
+    /// What a release at `frame` lets go of, as a hand would have played it.
+    fn hear_release(&mut self, frame: u64) {
         if self.live_pedal.is_down() {
-            self.hear(Played::Pedal(Pedal::UP));
+            self.hear(frame, NoteEvent::Pedal(Pedal::UP));
         }
         for number in 0..128_u8 {
             if self.live_notes & (1 << number) == 0 {
                 continue;
             }
             if let Ok(pitch) = Pitch::new(number) {
-                self.hear(Played::Off { pitch, velocity: 0 });
+                self.hear(frame, NoteEvent::Off { pitch });
             }
         }
         let wheels = self.live_expression.moves_to(Expression::REST);
-        for played in wheels.filter_map(Played::of_event) {
-            self.hear(played);
+        for event in wheels {
+            self.hear(frame, event);
         }
     }
 

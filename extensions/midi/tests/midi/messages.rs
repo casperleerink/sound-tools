@@ -1,7 +1,7 @@
 //! Reading MIDI bytes: what this application uses and what it leaves alone.
 
 use midi::Played;
-use sound_notes::{Amount, Bend, NoteEvent, Pedal};
+use sound_notes::{Amount, Bend, Controller, NoteEvent, Pedal};
 
 use crate::support::{off, on, pedal, pitch};
 
@@ -55,16 +55,10 @@ fn the_bend_the_mod_wheel_and_the_pressure_are_read() {
 }
 
 #[test]
-fn another_controller_is_read_for_the_tools_but_plays_no_instrument() {
+fn another_controller_is_read() {
     let knob = Played::from_bytes(&[0xB3, 74, 100]);
-    assert_eq!(
-        knob,
-        Some(Played::Control {
-            controller: 74,
-            value: 100
-        })
-    );
-    assert_eq!(knob.and_then(Played::event), None);
+    let (controller, value) = (Controller::new(74).unwrap(), Amount::new(100).unwrap());
+    assert_eq!(knob, Some(Played::Control { controller, value }));
 }
 
 #[test]
@@ -87,14 +81,14 @@ fn other_messages_are_left_alone() {
 fn a_message_becomes_the_event_the_note_contract_has() {
     assert_eq!(
         on(60, 88).event(),
-        Some(NoteEvent::On {
+        NoteEvent::On {
             pitch: pitch(60),
             velocity: sound_notes::Velocity::new(88).unwrap()
-        })
+        }
     );
-    assert_eq!(off(60).event(), Some(NoteEvent::Off { pitch: pitch(60) }));
+    assert_eq!(off(60).event(), NoteEvent::Off { pitch: pitch(60) });
     assert_eq!(
         pedal(127).event(),
-        Some(NoteEvent::Pedal(Pedal::new(127).unwrap()))
+        NoteEvent::Pedal(Pedal::new(127).unwrap())
     );
 }

@@ -23,14 +23,17 @@ impl Expression {
     };
 
     /// Follows one event. A wheel or the pressure moves, `AllOff` puts everything at rest, and
-    /// a note or the pedal changes nothing.
+    /// a note, the pedal or another controller changes nothing.
     pub fn follow(&mut self, event: NoteEvent) {
         match event {
             NoteEvent::Bend(bend) => self.bend = bend,
             NoteEvent::ModWheel(amount) => self.mod_wheel = amount,
             NoteEvent::Pressure(amount) => self.pressure = amount,
             NoteEvent::AllOff => *self = Self::REST,
-            NoteEvent::On { .. } | NoteEvent::Off { .. } | NoteEvent::Pedal(_) => {}
+            NoteEvent::On { .. }
+            | NoteEvent::Off { .. }
+            | NoteEvent::Pedal(_)
+            | NoteEvent::Control { .. } => {}
         }
     }
 

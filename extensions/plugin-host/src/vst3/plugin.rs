@@ -19,11 +19,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use vst3::Steinberg::Vst::{
-    BusDirections_, BusInfo, ControllerNumbers_, IAudioProcessor, IAudioProcessorTrait, IComponent,
-    IComponent_iid, IComponentTrait, IConnectionPoint, IConnectionPointTrait, IEditController,
-    IEditController_iid, IEditControllerTrait, IMidiMapping, IMidiMappingTrait, MediaTypes_,
-    ParamID, ParamValue, ParameterInfo, ParameterInfo_::ParameterFlags_, ProcessSetup, SpeakerArr,
-    SpeakerArrangement, SymbolicSampleSizes_,
+    BusDirections_, BusInfo, IAudioProcessor, IAudioProcessorTrait, IComponent, IComponent_iid,
+    IComponentTrait, IConnectionPoint, IConnectionPointTrait, IEditController, IEditController_iid,
+    IEditControllerTrait, IMidiMapping, IMidiMappingTrait, MediaTypes_, ParamID, ParamValue,
+    ParameterInfo, ParameterInfo_::ParameterFlags_, ProcessSetup, SpeakerArr, SpeakerArrangement,
+    SymbolicSampleSizes_,
 };
 use vst3::Steinberg::{IPluginBaseTrait, TUID, int32, kNotImplemented, kResultFalse, kResultOk};
 use vst3::{ComPtr, ComWrapper};
@@ -31,7 +31,9 @@ use vst3::{ComPtr, ComWrapper};
 use super::context::{Handler, HostContext, as_handler, as_unknown};
 use super::module::Module;
 use super::parameters;
-use super::process::{ControlTargets, Report, Vst3Processor, process_mode};
+use super::process::{
+    CONTROLLER_NUMBERS, ControlTargets, Report, Vst3Processor, controller_number, process_mode,
+};
 use super::stream::{MemoryStream, as_stream};
 use super::view::Vst3Gui;
 use super::{MAX_STATE, class_id_of, refused};
@@ -210,7 +212,7 @@ pub(crate) fn load(
         // After `setActive`, which is when a plugin's latency is settled.
         let latency = not_ours(|| processor.getLatencySamples());
 
-        let targets = ControlTargets::new(|control| mapped_parameter(controller.as_ref(), control));
+        let targets = ControlTargets::new(|number| mapped_parameter(controller.as_ref(), number));
         let targets = Arc::new(targets);
         // What the processor holds now, as far as the host can know: the values the controller
         // shows once the state is read. `kParamValuesChanged` is answered against these.
@@ -449,13 +451,14 @@ impl LoadedPlugin for Vst3Plugin {
         // next block each control goes where the plugin says now.
         let mut pedal_unmapped = false;
         if self.joined.handler.take_midi_mapping_changed() {
-            for control in Control::REST {
+            let pedal = controller_number(Control::Pedal(Pedal::UP));
+            for number in 0..CONTROLLER_NUMBERS {
                 // SAFETY: the controller came from the plugin and is alive.
-                let now = unsafe { mapped_parameter(self.joined.controller.as_ref(), control) };
-                let before = self.targets.get(control);
-                self.targets.set(control, now);
-                if !matches!(control, Control::Pedal(_)) {
-                    // A wheel leaves its old parameter where it put it, as a knob a MIDI learn
+                let now = unsafe { mapped_parameter(self.joined.controller.as_ref(), number) };
+                let before = self.targets.of_number(number);
+                self.targets.set(number, now);
+                if number != pedal {
+                    // A wheel or another controller leaves its old parameter where it put it, as a knob a MIDI learn
                     // moved stays where it was left. Putting it back at rest would move a
                     // parameter the wheel may never have touched.
                     continue;
@@ -887,18 +890,13 @@ fn speakers(channels: usize) -> SpeakerArrangement {
 /// The controller must be alive.
 unsafe fn mapped_parameter(
     controller: Option<&ComPtr<IEditController>>,
-    control: Control,
+    number: usize,
 ) -> Option<ParamID> {
-    let number = match control {
-        Control::Pedal(_) => ControllerNumbers_::kCtrlSustainOnOff,
-        Control::Bend(_) => ControllerNumbers_::kPitchBend,
-        Control::ModWheel(_) => ControllerNumbers_::kCtrlModWheel,
-        Control::Pressure(_) => ControllerNumbers_::kAfterTouch,
-    };
+    let number = i16::try_from(number).ok()?;
     let mapping = controller?.cast::<IMidiMapping>()?;
     let mut id: ParamID = 0;
     // SAFETY: the caller keeps the contract, and `id` is written only when the call works.
-    let result = unsafe { mapping.getMidiControllerAssignment(0, 0, number as i16, &mut id) };
+    let result = unsafe { mapping.getMidiControllerAssignment(0, 0, number, &mut id) };
     (result == kResultOk).then_some(id)
 }
 

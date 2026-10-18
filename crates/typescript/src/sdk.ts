@@ -693,10 +693,12 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
    */
   onKey?: (tool: Handler<ValuesOf<S>, C, M>, key: Key) => void;
   /**
-   * The MIDI keyboard plays, while the tool is on the track it plays or at the top of the
-   * project. An instrument plays the notes by itself as well.
+   * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
+   * parent's `play` and `send`; not its own. An instrument plays them by itself as well. An
+   * effect or a parent hears the keyboard instead, at the top of the project or on the track it
+   * plays.
    */
-  onMidi?: (tool: Handler<ValuesOf<S>, C, M>, message: Midi) => void;
+  onNotes?: (tool: Handler<ValuesOf<S>, C, M>, event: HeardEvent) => void;
 }
 
 /** What a behaviour gets. */
@@ -761,14 +763,21 @@ export interface Key {
 }
 
 /**
- * A message of the MIDI keyboard. `pitch` is MIDI, 69 is A4; a velocity or a value is 0 to 1;
- * the bend is -1 to 1. The sustain pedal is controller 64, the mod wheel 1.
+ * What a `notes` cable carries, `send` plays and `onNotes` hears. `pitch` is MIDI, 69 is A4; a
+ * velocity or a value is 0 to 1; the bend is -1 to 1. `cc` is a MIDI controller, 0 to 119: the
+ * sustain pedal is 64, down from 0.5, and the mod wheel 1. `allOff` ends every note and puts the
+ * pedal and the wheels at rest, as a stop does.
  */
-export type Midi =
+export type NoteEvent =
   | { type: "noteOn"; pitch: number; velocity: number }
   | { type: "noteOff"; pitch: number }
   | { type: "cc"; controller: number; value: number }
-  | { type: "bend"; value: number };
+  | { type: "bend"; value: number }
+  | { type: "pressure"; value: number }
+  | { type: "allOff" };
+
+/** A note event as `onNotes` hears it: `at` is the `time` it sounded at, to the sample. */
+export type HeardEvent = NoteEvent & { at: number };
 
 /** Makes a tool of the project. */
 export function tool<const S extends Fields, const C extends Controls = {}, M = {}>(
@@ -782,9 +791,9 @@ export function tool<const S extends Fields, const C extends Controls = {}, M = 
 
 /**
  * What plays an instance as a performer would: nothing saves it and no undo takes it back.
- * `at` is a `time` of the control loop: what has one happens on that sample, or at once when
- * it has passed. A parent plays a child the same way, by its name: `ChildLive`,
- * `ChildTrigger`, or `child` among the options of `play` and `release`.
+ * `at` is a `time` of the control loop, at most 10 s ahead: what has one happens on that
+ * sample, or at once when it has passed. A parent plays a child the same way, by its name: `ChildLive`,
+ * `ChildTrigger`, or `child` among the options of `play` and `send`.
  */
 export interface Performer<C extends Controls> {
   /** Moves a live control. */
@@ -792,17 +801,19 @@ export interface Performer<C extends Controls> {
   /** Fires a trigger. */
   fire(control: ControlNames<C, "trigger"> | ChildTrigger, options?: { at?: number }): void;
   /**
-   * Plays a note on the tool's own voices, or into the `notes` of `child`, as a key held for
-   * `seconds` (0.25 when left out), or with `hold` until `release`: `pitch` is MIDI, 69 is A4,
-   * and `velocity` is 0 to 1 (0.8 when left out). An instrument plays each note on a voice of
-   * its own; a source follows the newest.
+   * Sends a note event to the tool's own voices, or into the `notes` of `child`. An instrument
+   * plays each note on a voice of its own; a source follows the newest. At most 256 wait for
+   * their `at`: past that a `noteOn` is dropped, and anything else plays at once.
+   */
+  send(event: NoteEvent, options?: { at?: number; child?: string }): void;
+  /**
+   * Sends a `noteOn` and its `noteOff` `seconds` later (0.25 when left out), or with `hold`
+   * only the `noteOn`. `velocity` is 0.8 when left out.
    */
   play(
     pitch: number,
     options?: { seconds?: number; hold?: boolean; velocity?: number; at?: number; child?: string },
   ): void;
-  /** Lets go of a note `play` holds. */
-  release(pitch: number, options?: { at?: number; child?: string }): void;
 }
 
 /** What the control loop, the cards and the handlers of an instance get. */
@@ -823,7 +834,7 @@ export interface Tick<State, C extends Controls, M> extends Instance<State, C, M
   time: number;
 }
 
-/** What `onKey` and `onMidi` get: what a card gets but `transport`, and the `time` of a tick. */
+/** What `onKey` and `onNotes` get: what a card gets but `transport`, and the `time` of a tick. */
 export interface Handler<State, C extends Controls, M>
   extends Omit<Card<State, C, M>, "transport">,
     Pick<Tick<State, C, M>, "time"> {}

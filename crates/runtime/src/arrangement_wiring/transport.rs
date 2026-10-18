@@ -41,7 +41,7 @@ use sound_core::{
     Changes, Clock, InputEndpoint, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo,
     TempoChange, Ticks,
 };
-use sound_typescript::Midi;
+use sound_notes::{NoteEvent, Pitch};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
@@ -118,9 +118,9 @@ pub struct TransportPill {
     click: Option<Click>,
     /// The MIDI input in the engine. `None` only when the engine refused it, which is reported.
     keyboard: Option<Keyboard>,
-    /// The track whose tools of the project hear the MIDI input: the one it played into when
-    /// what they hear sounded. It moves with the keyboard, only after what was held is let go,
-    /// so a tool hears the end of each note it heard begin.
+    /// The track whose tools of the project with no `notes` hear the MIDI input: the one it
+    /// played into when what they hear sounded. It moves with the keyboard, only after what was
+    /// held is let go, so a tool hears the end of each note it heard begin.
     hearing: Option<InstanceId>,
     /// The keys the tools of `hearing` heard go down and not up yet, one bit each.
     hearing_held: u128,
@@ -347,13 +347,12 @@ impl TransportPill {
         });
         // What sounded since the last poll went where the keyboard played until now, and the
         // tools of that track hear it.
-        let heard = keyboard.take_heard().into_iter();
-        let mut heard: Vec<_> = heard.filter_map(recording::tool_message).collect();
-        for message in &heard {
-            match *message {
-                Midi::NoteOn { pitch, .. } => self.hearing_held |= 1 << pitch,
-                Midi::NoteOff { pitch } => self.hearing_held &= !(1 << pitch),
-                Midi::Cc { .. } | Midi::Bend { .. } => {}
+        let mut heard = keyboard.take_heard();
+        for (_, event) in &heard {
+            match *event {
+                NoteEvent::On { pitch, .. } => self.hearing_held |= 1 << pitch.number(),
+                NoteEvent::Off { pitch } => self.hearing_held &= !(1 << pitch.number()),
+                _ => {}
             }
         }
         let hearing = self.hearing.clone();
@@ -364,8 +363,14 @@ impl TransportPill {
         // on two tracks with no instrument: the tools of the old track hear the ends here.
         if self.hearing != hearing {
             let held = std::mem::take(&mut self.hearing_held);
+            let now = session.update(cx, |session, _| {
+                session.engine().poll().map(|status| status.frames)
+            });
             let offs = (0..128_u8).filter(|pitch| held & (1 << pitch) != 0);
-            heard.extend(offs.map(|pitch| Midi::NoteOff { pitch }));
+            let offs = offs.map(|pitch| NoteEvent::Off {
+                pitch: Pitch::nearest(i64::from(pitch)),
+            });
+            heard.extend(offs.map(|off| (now.unwrap_or_default(), off)));
         }
         // A take goes to the track it began on, so the live input stays there too while it
         // runs. Selecting another track during a take would otherwise split the two.
@@ -381,7 +386,7 @@ impl TransportPill {
         if let Err(error) = polled.and(wired) {
             session.update(cx, |session, cx| session.report(error, cx));
         }
-        sound_typescript::hear_midi(hearing.as_ref(), &heard, cx);
+        sound_typescript::hear_keyboard(hearing.as_ref(), &heard, cx);
         self.show_notes(cx);
     }
 

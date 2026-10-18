@@ -1,6 +1,7 @@
 //! Notes a performer plays into a feed, rendered offline into a probe whose level is the sum of
-//! the pitches it holds: each lands on its frame, also inside a block, and lets go on time, also
-//! when its schedule or the output is full.
+//! the pitches it holds, 1000 while the pedal is down and the value of controller 74: each lands
+//! on its frame, also inside a block, and lets go on time, also when its schedule or the output
+//! is full.
 
 #![allow(clippy::unwrap_used)]
 
@@ -8,10 +9,14 @@ use sound_core::{
     AudioOutput, Connection, Engine, EngineConfig, EngineControl, EventInput, EventOutput, Node,
     Ports, PrepareConfig, ProcessContext, Processor,
 };
-use sound_notes::{NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
+use sound_notes::{
+    Amount, Controller, NoteEvent, NoteFeed, NoteFeedUpdate, Pedal, Performed, Pitch, Velocity,
+};
 
 struct Probe {
     held: [bool; 128],
+    pedal: bool,
+    control: f32,
 }
 
 impl Probe {
@@ -41,11 +46,16 @@ impl Processor for Probe {
                     NoteEvent::On { pitch, .. } => self.held[usize::from(pitch.number())] = true,
                     NoteEvent::Off { pitch } => self.held[usize::from(pitch.number())] = false,
                     NoteEvent::AllOff => self.held = [false; 128],
+                    NoteEvent::Pedal(pedal) => self.pedal = pedal.is_down(),
+                    NoteEvent::Control { controller, value } if controller.number() == 74 => {
+                        self.control = f32::from(value.value());
+                    }
                     _ => {}
                 }
             }
             let pitches = self.held.iter().enumerate().filter(|(_, held)| **held);
-            *sample = pitches.map(|(pitch, _)| pitch as f32).sum();
+            let pedal = if self.pedal { 1_000.0 } else { 0.0 };
+            *sample = pitches.map(|(pitch, _)| pitch as f32).sum::<f32>() + pedal + self.control;
         }
         right.copy_from_slice(left);
     }
@@ -116,7 +126,11 @@ impl Harness {
         let sender = edit.add_processor("sender", Sender::default()).unwrap();
         let flooded = Connection::new(sender.id(), Sender::OUTPUT, feed.id(), NoteFeed::INPUT);
         edit.connect(flooded).unwrap();
-        let probe = Probe { held: [false; 128] };
+        let probe = Probe {
+            held: [false; 128],
+            pedal: false,
+            control: 0.0,
+        };
         let probe = edit.add_processor("probe", probe).unwrap();
         let notes = Connection::new(feed.id(), NoteFeed::OUTPUT, probe.id(), Probe::NOTES);
         edit.connect(notes).unwrap();
@@ -147,18 +161,30 @@ impl Harness {
     }
 }
 
+/// A note of `frames`, or held until its off with none.
 fn note(pitch: u8, at: u64, frames: Option<u64>) -> NoteFeedUpdate {
-    NoteFeedUpdate::Note(Performed::Play {
-        pitch: Pitch::new(pitch).unwrap(),
-        velocity: Velocity::new(100).unwrap(),
-        at,
-        frames,
+    let (pitch, velocity) = (Pitch::new(pitch).unwrap(), Velocity::new(100).unwrap());
+    NoteFeedUpdate::Note(match frames {
+        Some(frames) => Performed::Play {
+            pitch,
+            velocity,
+            at,
+            frames,
+        },
+        None => Performed::Send {
+            event: NoteEvent::On { pitch, velocity },
+            at,
+        },
     })
+}
+
+fn send(event: NoteEvent, at: u64) -> NoteFeedUpdate {
+    NoteFeedUpdate::Note(Performed::Send { event, at })
 }
 
 fn release(pitch: u8, at: u64) -> NoteFeedUpdate {
     let pitch = Pitch::new(pitch).unwrap();
-    NoteFeedUpdate::Note(Performed::Release { pitch, at })
+    send(NoteEvent::Off { pitch }, at)
 }
 
 /// The frames where the level changes, with the new level.
@@ -203,6 +229,33 @@ fn a_release_when_the_feed_is_full_lets_go_of_its_key_at_once() {
     harness.send(release(60, 0));
     // The engine takes a few updates a block, so the release lands a few blocks later.
     assert_eq!(harness.render(4_800).last(), Some(&0.0));
+}
+
+#[test]
+fn a_pedal_and_a_controller_that_find_the_feed_full_play_at_once_and_a_note_on_does_not() {
+    let mut harness = Harness::new();
+    let control = |value| NoteEvent::Control {
+        controller: Controller::new(74).unwrap(),
+        value: Amount::new(value).unwrap(),
+    };
+    harness.send(send(NoteEvent::Pedal(Pedal::new(127).unwrap()), 0));
+    harness.send(send(control(10), 0));
+    assert_eq!(harness.render(100).last(), Some(&1_010.0));
+    // Room for 256 waiting: 127 notes far ahead, an on and an off each, and two moves.
+    for pitch in 0..127 {
+        harness.send(note(pitch, 1_000_000, Some(1)));
+    }
+    harness.send(send(control(50), 400_000));
+    harness.send(send(control(60), 600_000));
+    harness.send(note(70, 0, None));
+    harness.send(send(NoteEvent::Pedal(Pedal::UP), 500_000));
+    harness.send(send(control(20), 500_000));
+    assert_eq!(harness.render(4_800).last(), Some(&20.0));
+    // The older move that waits would undo the 20, so it went; the newer one plays.
+    assert_eq!(harness.render(445_200).last(), Some(&20.0));
+    assert_eq!(harness.render(200_000).last(), Some(&60.0));
+    // The note on that did not fit is counted.
+    assert_eq!(harness.control.poll().unwrap().event_overflows, 1);
 }
 
 #[test]

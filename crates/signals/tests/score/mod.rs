@@ -61,7 +61,7 @@ pub(crate) fn render(tool: &Tool, buffer: usize) -> (Vec<f32>, Vec<f32>) {
                 pitch: pitch(72),
                 velocity,
                 at: 5_500,
-                frames: Some(2_000),
+                frames: 2_000,
             }),
         ),
         (7_000, SignalsUpdate::Trigger { index: 0, at: None }),
@@ -95,17 +95,18 @@ pub(crate) fn render(tool: &Tool, buffer: usize) -> (Vec<f32>, Vec<f32>) {
         ),
         (
             11_000,
-            SignalsUpdate::Note(Performed::Play {
-                pitch: pitch(74),
-                velocity,
+            SignalsUpdate::Note(Performed::Send {
+                event: NoteEvent::On {
+                    pitch: pitch(74),
+                    velocity,
+                },
                 at: 0,
-                frames: None,
             }),
         ),
         (
             11_000,
-            SignalsUpdate::Note(Performed::Release {
-                pitch: pitch(74),
+            SignalsUpdate::Note(Performed::Send {
+                event: NoteEvent::Off { pitch: pitch(74) },
                 at: 13_000,
             }),
         ),

@@ -16,17 +16,17 @@ use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
-use sound_core::{GROUPING_WINDOW, InstanceId, Problem, Project};
-use sound_notes::{NOTES_INPUT, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
+use sound_core::{EventTap, GROUPING_WINDOW, InstanceId, Problem, Project};
+use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
-use crate::bun::{Bun, Event, Looped, PageSize, Request, Runs, Skipped, Transport};
+use crate::bun::{Bun, Event, Heard, Looped, PageSize, Request, Runs, Skipped, Transport};
 use crate::card::{Page, TypeScriptCard};
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
-use crate::tools::{Control, Sounds, ToolInfo, ToolKind, feed_processor};
+use crate::tools::{Control, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
 use crate::tree::Node;
-use crate::{Extensions, FOLDER, Launched, Midi, OWNED};
+use crate::{Extensions, FOLDER, Launched, NoteMessage, OWNED};
 
 /// How often the cards look at their watches and the control loops run: often enough for a
 /// step light, a meter or a moving drawing.
@@ -53,6 +53,9 @@ pub(crate) struct Live {
     /// How many edits of each record this Bun sent and the window heard, so Bun knows when a
     /// record it gets misses its last edit. Never counted down: Bun counts on.
     edits: HashMap<InstanceId, u64>,
+    /// The tap of what reaches the notes of each instance whose tool hears them, and how far
+    /// it was read.
+    taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
     /// When the control loops last ran.
     last_frame: Instant,
     /// What is wrong with `extensions/`: the last load, and what failed since.
@@ -125,21 +128,22 @@ pub(crate) enum Surface {
     Page(Option<PageSize>),
 }
 
-/// The tools of the window, for what the window hears: the MIDI keyboard.
+/// The tools of the window, for what the window hears: the keyboard.
 struct WindowTools(Entity<Live>);
 
 impl Global for WindowTools {}
 
-/// Gives what the MIDI keyboard played to the tools that hear it: those on `track`, the track
-/// it played into, and those at the top of the project.
-pub fn hear_midi(track: Option<&InstanceId>, messages: &[Midi], cx: &mut App) {
-    if messages.is_empty() {
+/// Gives what the keyboard played, each at its engine frame, to the tools that hear notes and
+/// have no `notes` of their own: those on `track`, the track it played into, and those at the
+/// top of the project. A tool with `notes` hears what reaches them, the keyboard too.
+pub fn hear_keyboard(track: Option<&InstanceId>, heard: &[(u64, NoteEvent)], cx: &mut App) {
+    if heard.is_empty() {
         return;
     }
     let Some(live) = cx.try_global::<WindowTools>().map(|tools| tools.0.clone()) else {
         return;
     };
-    live.update(cx, |live, cx| live.midi(track, messages, cx));
+    live.update(cx, |live, cx| live.keyboard(track, heard, cx));
 }
 
 /// Whether the main view of `id`, the page of a tool of the project, shows the transport.
@@ -340,6 +344,7 @@ impl Live {
                 next_card: 0,
                 played: HashMap::new(),
                 edits: HashMap::new(),
+                taps: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
                 _watcher: watcher,
@@ -899,35 +904,100 @@ impl Live {
         self.host.send(&request);
     }
 
-    /// What the MIDI keyboard played, for every instance whose tool hears it: on `track` or at
-    /// the top of the project.
-    fn midi(&mut self, track: Option<&InstanceId>, messages: &[Midi], cx: &mut Context<Self>) {
+    /// What the keyboard played, for every instance whose tool hears notes and has no `notes`
+    /// of its own: on `track` or at the top of the project.
+    fn keyboard(
+        &mut self,
+        track: Option<&InstanceId>,
+        heard: &[(u64, NoteEvent)],
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let time = engine_time(&session, cx);
-        let hears = |id: &InstanceId| {
+        let project = session.read(cx).project();
+        let placed = |id: &InstanceId| {
             id.parent().is_none() || track.is_some_and(|track| id == track || id.is_inside(track))
         };
-        let tools = self.tools.borrow();
-        let project = session.read(cx).project();
-        let instances: Vec<Looped> = (project.instances())
-            .filter(|(id, tool)| hears(id) && find(&tools, tool).is_some_and(|info| info.midi))
-            .map(|(id, tool)| looped(project, &tools, &self.edits, id, tool))
+        let hearing: Vec<(InstanceId, String)> = (project.instances())
+            .filter(|(id, _)| placed(id) && project.input_port(id, NOTES_INPUT).is_none())
+            .map(|(id, tool)| (id.clone(), tool.to_string()))
             .collect();
-        if !instances.is_empty() {
-            let request = Request::Midi {
-                time,
-                instances,
-                messages,
-            };
-            self.host.send(&request);
+        for (id, tool) in hearing {
+            self.hear(&id, &tool, heard, &session, cx);
         }
+    }
+
+    /// What reached the notes of every instance whose tool hears them since the last frame. A
+    /// tap that was written over before it was read is a problem of its tool. While no Bun runs
+    /// it waits, so what plays during a reload is heard once the new Bun is there.
+    fn hear_taps(&mut self, cx: &mut Context<Self>) {
+        let (Some(session), Host::Running { .. }) = (self.session.upgrade(), &self.host) else {
+            return;
+        };
+        let project = session.read(cx).project();
+        let taps: Vec<(InstanceId, String, EventTap<NoteEvent>)> = (project.instances())
+            .filter_map(|(id, tool)| {
+                let tap = project.tap::<NoteEvent>(id, NOTES_TAP)?;
+                Some((id.clone(), tool.to_string(), tap))
+            })
+            .collect();
+        let mut read = std::mem::take(&mut self.taps);
+        let mut heard = Vec::new();
+        for (id, tool, tap) in taps {
+            // A new tap, of a new instance or of a tool that hears notes again, from its start.
+            let from = (read.remove(&id))
+                .filter(|(kept, _)| kept.is(&tap))
+                .map_or(0, |(_, from)| from);
+            heard.clear();
+            let tapped = tap.read(from, &mut heard);
+            if tapped.missed > 0 {
+                let missed = tapped.missed;
+                let problem = format!(
+                    "onNotes missed {missed} note events: the window was too busy to hear them in time"
+                );
+                self.tool_problem(&id, problem, cx);
+            }
+            self.hear(&id, &tool, &heard, &session, cx);
+            self.taps.insert(id, (tap, tapped.next));
+        }
+    }
+
+    /// Gives `heard` to the `onNotes` of the instance `id` of `tool`, when it has one.
+    fn hear(
+        &mut self,
+        id: &InstanceId,
+        tool: &str,
+        heard: &[(u64, NoteEvent)],
+        session: &Entity<Session>,
+        cx: &mut Context<Self>,
+    ) {
+        let tools = self.tools.borrow();
+        if heard.is_empty() || !find(&tools, tool).is_some_and(|info| info.notes) {
+            return;
+        }
+        let time = engine_time(session, cx);
+        let session = session.read(cx);
+        let rate = f64::from(session.project().clock().sample_rate());
+        let events: Vec<Heard> = (heard.iter())
+            .map(|(frame, event)| Heard {
+                event: NoteMessage::from(*event),
+                at: *frame as f64 / rate,
+            })
+            .collect();
+        let instance = looped(session.project(), &tools, &self.edits, id, tool);
+        let events = &events;
+        self.host.send(&Request::Notes {
+            time,
+            instance,
+            events,
+        });
     }
 
     /// One frame of the window: the control loops run, a card whose watches moved draws again,
     /// and every instance whose sample was read on its thread runs again, so it plays it.
     fn frame(&mut self, cx: &mut Context<Self>) {
+        self.hear_taps(cx);
         self.run_loops(cx);
         self.look_at_watches(cx);
         let Some(session) = self.session.upgrade() else {
@@ -1099,25 +1169,31 @@ impl Live {
                             (velocity.clamp(0.0, 1.0) * 127.0).round() as i64
                         ),
                         at,
-                        frames: seconds.map(|seconds| frames_of(f64::from(seconds), session)),
+                        frames: frames_of(f64::from(seconds), session),
                     }
                 };
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
-            Event::Release {
+            Event::Send {
                 instance,
                 child,
-                pitch,
+                event,
                 at,
             } => {
                 let Some(session) = self.session.upgrade() else {
                     return;
                 };
-                let performed = Performed::Release {
-                    pitch: Pitch::nearest(i64::from(pitch)),
-                    at: performed_frame(at, &session, cx),
+                // The SDK sends no controller from 120 on, MIDI's channel mode messages.
+                let Some(event) = event.event() else {
+                    return eprintln!("error: {instance} sends {event:?}, which is no note event");
                 };
-                self.perform_note(&instance, child.as_deref(), performed, cx);
+                let at = performed_frame(at, &session, cx);
+                self.perform_note(
+                    &instance,
+                    child.as_deref(),
+                    Performed::Send { event, at },
+                    cx,
+                );
             }
         }
         cx.notify();

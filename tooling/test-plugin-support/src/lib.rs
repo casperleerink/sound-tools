@@ -229,9 +229,13 @@ pub fn takes_no_pedal() -> bool {
 }
 
 /// Makes the right channel show a wheel or the key pressure instead of the pedal: `bend`,
-/// `mod_wheel` or `pressure`. The value is the one the plugin received as a number from 0 to 1,
+/// `mod_wheel`, `pressure` or `controller`, MIDI controller [`CONTROLLER`]. The value is the one the plugin received as a number from 0 to 1,
 /// as VST 3 has it: a MIDI value over the most it can be, so the bend's middle is 8192 / 16383.
 pub const SHOW_VARIABLE: &str = "SOUND_TOOLS_TEST_PLUGIN_SHOW";
+
+/// The other MIDI controller the test plugins hear, besides the pedal and the wheels: 74, which
+/// is often a brightness.
+pub const CONTROLLER: u8 = 74;
 
 /// Makes the VST 3 plugin map no parameter to the wheels or the key pressure, only to the
 /// pedal, so a host has nowhere to send them. VST 3 only: a CLAP plugin that takes MIDI takes
@@ -244,6 +248,8 @@ pub enum Wheel {
     Bend,
     ModWheel,
     Pressure,
+    /// MIDI controller [`CONTROLLER`].
+    Controller,
 }
 
 impl Wheel {
@@ -251,7 +257,7 @@ impl Wheel {
     pub fn rest(self) -> f64 {
         match self {
             Self::Bend => 8192.0 / 16383.0,
-            Self::ModWheel | Self::Pressure => 0.0,
+            Self::ModWheel | Self::Pressure | Self::Controller => 0.0,
         }
     }
 
@@ -261,6 +267,7 @@ impl Wheel {
             "bend" => Some(Self::Bend),
             "mod_wheel" => Some(Self::ModWheel),
             "pressure" => Some(Self::Pressure),
+            "controller" => Some(Self::Controller),
             _ => None,
         }
     }
@@ -561,7 +568,7 @@ pub struct Tone {
     sample_rate: f32,
     pedal: u8,
     /// Where each [`Wheel`] stands, from 0 to 1, in the order of its variants.
-    wheels: [f64; 3],
+    wheels: [f64; 4],
     /// The wheel the right channel shows instead of the pedal, see [`SHOW_VARIABLE`].
     shown: Option<Wheel>,
     semitones: i32,
@@ -581,7 +588,13 @@ impl Tone {
             voices: [None; VOICES],
             sample_rate,
             pedal: 0,
-            wheels: [Wheel::Bend, Wheel::ModWheel, Wheel::Pressure].map(Wheel::rest),
+            wheels: [
+                Wheel::Bend,
+                Wheel::ModWheel,
+                Wheel::Pressure,
+                Wheel::Controller,
+            ]
+            .map(Wheel::rest),
             shown: Wheel::shown(),
             semitones: 0,
             offset: 0,

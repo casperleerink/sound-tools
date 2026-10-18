@@ -226,7 +226,8 @@ impl<V: Voice, const N: usize> Voices<V, N> {
         sounding.for_each(Slot::cut);
     }
 
-    /// Follows one event. The wheels and the pressure are not notes and change nothing here.
+    /// Follows one event. The wheels, the pressure and the other controllers are not notes and
+    /// change nothing here.
     pub fn handle(&mut self, event: NoteEvent, context: &V::Context) {
         match event {
             NoteEvent::On { pitch, velocity } => self.key_down(pitch, velocity, context),
@@ -245,7 +246,10 @@ impl<V: Voice, const N: usize> Voices<V, N> {
                 self.newest = None;
                 self.slots.iter_mut().for_each(Slot::release);
             }
-            NoteEvent::Bend(_) | NoteEvent::ModWheel(_) | NoteEvent::Pressure(_) => {}
+            NoteEvent::Bend(_)
+            | NoteEvent::ModWheel(_)
+            | NoteEvent::Pressure(_)
+            | NoteEvent::Control { .. } => {}
         }
     }
 

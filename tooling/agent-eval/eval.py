@@ -343,7 +343,7 @@ def check_midi(folder: Path) -> dict:
     used = [tool for tool in [instruments(folder).get("lead"), *track_effects(folder, "lead")]
             if tool in tools]
     text = tools.get(used[0], "") if used else ""
-    return {"a project tool on the lead": bool(used), "hears MIDI": "onMidi" in text,
+    return {"a project tool on the lead": bool(used), "hears MIDI": "onNotes" in text,
             "no problems": no_problems(folder)}
 
 

@@ -12,8 +12,8 @@
 use std::ops::Range;
 
 use sound_core::{
-    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, EventOutput, EventOutputs, Lane,
-    MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
+    AudioInput, AudioOutput, Automation, CHANNELS, EventInput, EventOutput, EventOutputs, EventTap,
+    Lane, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
 };
 use sound_notes::{
     NoteEvent, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
@@ -76,8 +76,12 @@ pub enum SignalsUpdate {
     /// From the interface: a trigger fires at the frame `at` of engine time, or in the next
     /// frame when there is none or it has passed. Not saved.
     Trigger { index: usize, at: Option<u64> },
-    /// From the interface: a key, as if it came in on [`Signals::NOTES`]. Not saved.
+    /// From the interface: a key or another note event, as if it came in on
+    /// [`Signals::NOTES`]. Not saved.
     Note(Performed),
+    /// From the behaviour: where to write what comes in on [`Signals::NOTES`], for the
+    /// interface, or nowhere. The one it replaces rides back.
+    Tap(Option<EventTap<NoteEvent>>),
 }
 
 /// What the interface plays at a frame.
@@ -127,6 +131,7 @@ pub struct Signals {
     /// What the interface plays at a frame of engine time.
     scheduled: Schedule<Played>,
     watches: Vec<Watch>,
+    tap: Option<EventTap<NoteEvent>>,
     sending: Sending,
     /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
@@ -260,6 +265,7 @@ impl Signals {
             arrays: values.arrays.unwrap_or_default(),
             scheduled: Schedule::new(MAX_SCHEDULED),
             watches,
+            tap: None,
             sending: Sending {
                 bangs: [false; MAX_OUTPUTS],
                 notes: [None; MAX_OUTPUTS],
@@ -709,14 +715,22 @@ impl Processor for Signals {
                 }
             }
             SignalsUpdate::Note(performed) => {
-                if let Some(off) = self.scheduled.perform(*performed) {
-                    self.follow(off);
+                if let Some(now) = self.scheduled.perform(*performed) {
+                    self.follow(now);
                 }
             }
+            SignalsUpdate::Tap(tap) => std::mem::swap(&mut self.tap, tap),
         }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(tap) = &self.tap {
+            let notes = context.event_inputs.get(Self::NOTES).iter();
+            tap.write(notes.map(|timed| (context.start_frame + timed.offset as u64, timed.event)));
+        }
+        for _ in 0..self.scheduled.take_dropped() {
+            context.event_outputs.count_dropped();
+        }
         self.aim(context);
         // The engine's promise: it splits a device buffer into sub-blocks of at most this.
         debug_assert!(context.frames <= MAX_BLOCK);

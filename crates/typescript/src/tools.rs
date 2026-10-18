@@ -19,7 +19,9 @@ use sound_core::{
     InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo, Problem,
     ValueRange, Watch,
 };
-use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note, NoteFeed, NoteFeedUpdate};
+use sound_notes::{
+    AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note, NoteEvent, NoteFeed, NoteFeedUpdate,
+};
 use sound_signals::{
     ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, Number,
     ParameterSpec, Placed, Signals, SignalsUpdate, Values,
@@ -56,8 +58,9 @@ pub(crate) struct ToolInfo {
     pub transport: bool,
     /// It hears the computer keyboard, `onKey`.
     pub keys: bool,
-    /// It hears the MIDI keyboard, `onMidi`.
-    pub midi: bool,
+    /// It hears note events, `onNotes`: what reaches its `notes`, or the keyboard when it has
+    /// none.
+    pub notes: bool,
     /// It owns children and has a behaviour, which declares how they connect.
     pub behaviour: bool,
 }
@@ -985,6 +988,10 @@ impl Sounds {
             .iter()
             .map(|name| context.watch(name))
             .collect();
+        // Only a tool that hears them writes what reaches its notes.
+        let tap =
+            (self.info.notes && kind != Kind::Effect).then(|| context.tap::<NoteEvent>(NOTES_TAP));
+        let new_tap = context.changed("tap", u64::from(tap.is_some()));
         let sample_rate = context.prepare_config().sample_rate as f32;
         let new_code = context.changed("code", code.hash);
         if new_code || new_lists {
@@ -1007,6 +1014,9 @@ impl Sounds {
             };
             Signals::new(kind, first.unwrap_or_else(made), values, watches.clone())
         })?;
+        if created || new_tap {
+            context.update(signals, SignalsUpdate::Tap(tap))?;
+        }
         // A new processor already plays this code with these values.
         if !created {
             let watches = if new_code { watches } else { Vec::new() };
@@ -1101,6 +1111,9 @@ impl Sounds {
         wire(&declared.declaration, sound, &child_tools, context)
     }
 }
+
+/// The name of the tap of what reaches the `notes` of a tool that hears them.
+pub(crate) const NOTES_TAP: &str = "notes";
 
 /// The name of the [`NoteFeed`] of the child `name` of an owner, which a performer plays it
 /// through.
@@ -1453,7 +1466,7 @@ mod tests {
             "page": false,
             "transport": false,
             "keys": false,
-            "midi": false,
+            "notes": false,
             "behaviour": false
         }))
         .unwrap()
@@ -1566,7 +1579,7 @@ mod tests {
             "page": false,
             "transport": false,
             "keys": false,
-            "midi": false,
+            "notes": false,
             "behaviour": true
         }))
         .unwrap()

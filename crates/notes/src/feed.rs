@@ -3,29 +3,27 @@
 //! [`NoteEvent::AllOff`] from the feed instead. A performer plays the instrument through it
 //! too, to the frame.
 
-use sound_core::{EventInput, EventOutput, Ports, PrepareConfig, ProcessContext, Processor};
+use sound_core::{
+    EventInput, EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor,
+};
 
-use crate::{NoteEvent, Performed, Pitch, Schedule};
+use crate::{Amount, Bend, Controller, NoteEvent, Performed, Pitch, Schedule};
 
-/// The most performed notes that wait for their frame: a control loop plays a little ahead.
+/// The most performed events that wait for their frame: a control loop plays a little ahead.
 const WAITING: usize = 256;
 
 /// Connected to one instrument for as long as that instrument is there, with the senders of
 /// notes connected to it instead of to the instrument.
 pub struct NoteFeed {
-    release: bool,
     performed: Schedule<NoteEvent>,
-    /// The pitches whose release found the schedule full, which let go in the next block, or
-    /// the one after when the output is full.
-    let_go: u128,
+    now: Now,
 }
 
 impl Default for NoteFeed {
     fn default() -> Self {
         Self {
-            release: false,
             performed: Schedule::new(WAITING),
-            let_go: 0,
+            now: Now::default(),
         }
     }
 }
@@ -35,6 +33,89 @@ pub enum NoteFeedUpdate {
     /// holds before it passes anything on.
     Senders,
     Note(Performed),
+}
+
+/// What plays at the start of the next block: the release of a change of senders, and what a
+/// performer sent that found the schedule full. On one frame only where each controller ends up
+/// counts, so it keeps that and the offs: a fixed size, whatever comes.
+struct Now {
+    waits: bool,
+    all_off: bool,
+    bend: Option<Bend>,
+    pressure: Option<Amount>,
+    /// By MIDI controller number, the pedal and the mod wheel too.
+    controls: [Option<Amount>; 128],
+    offs: u128,
+}
+
+impl Default for Now {
+    fn default() -> Self {
+        Self {
+            waits: false,
+            all_off: false,
+            bend: None,
+            pressure: None,
+            controls: [None; 128],
+            offs: 0,
+        }
+    }
+}
+
+impl Now {
+    fn keep(&mut self, event: NoteEvent) {
+        self.waits = true;
+        match event {
+            // It puts the pedal, the wheels and the pressure at rest, and leaves the other
+            // controllers where they are.
+            NoteEvent::AllOff => {
+                self.all_off = true;
+                (self.bend, self.pressure, self.offs) = (None, None, 0);
+                for number in [Controller::SUSTAIN_PEDAL, Controller::MOD_WHEEL] {
+                    self.controls[usize::from(number)] = None;
+                }
+            }
+            NoteEvent::Bend(bend) => self.bend = Some(bend),
+            NoteEvent::Pressure(amount) => self.pressure = Some(amount),
+            NoteEvent::Off { pitch } => self.offs |= 1 << pitch.number(),
+            NoteEvent::On { .. } => {}
+            NoteEvent::Pedal(_) | NoteEvent::ModWheel(_) | NoteEvent::Control { .. } => {
+                if let Some((number, value)) = event.as_controller() {
+                    self.controls[usize::from(number)] = Some(value);
+                }
+            }
+        }
+    }
+
+    /// Sends what it keeps at the start of the block, in the order of the note contract. What
+    /// does not fit stays for the next block.
+    fn send(&mut self, outputs: &mut EventOutputs<'_>) {
+        if !self.waits {
+            return;
+        }
+        let mut push = |event| outputs.push(NoteFeed::OUTPUT, 0, event);
+        if self.all_off && !push(NoteEvent::AllOff) {
+            return;
+        }
+        let Self {
+            bend,
+            pressure,
+            controls,
+            offs,
+            ..
+        } = std::mem::take(self);
+        let controls = (controls.into_iter().zip(0..))
+            .filter_map(|(value, number)| NoteEvent::controller(number, value?));
+        let standing = [bend.map(NoteEvent::Bend), pressure.map(NoteEvent::Pressure)];
+        let pitches = (0..128).filter(|pitch| offs & (1 << pitch) != 0);
+        let offs = pitches.map(|pitch| NoteEvent::Off {
+            pitch: Pitch::nearest(pitch),
+        });
+        for event in controls.chain(standing.into_iter().flatten()).chain(offs) {
+            if !push(event) {
+                self.keep(event);
+            }
+        }
+    }
 }
 
 impl NoteFeed {
@@ -55,30 +136,21 @@ impl Processor for NoteFeed {
 
     fn update(&mut self, update: &mut NoteFeedUpdate) {
         match update {
-            NoteFeedUpdate::Senders => self.release = true,
+            NoteFeedUpdate::Senders => self.now.keep(NoteEvent::AllOff),
             NoteFeedUpdate::Note(performed) => {
-                if let Some(NoteEvent::Off { pitch }) = self.performed.perform(*performed) {
-                    self.let_go |= 1 << pitch.number();
+                if let Some(event) = self.performed.perform(*performed) {
+                    self.now.keep(event);
                 }
             }
         }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        for _ in 0..self.performed.take_dropped() {
+            context.event_outputs.count_dropped();
+        }
         let outputs = &mut context.event_outputs;
-        // The buffer is still empty here, so the event fits.
-        if std::mem::take(&mut self.release) {
-            outputs.push(Self::OUTPUT, 0, NoteEvent::AllOff);
-        }
-        let mut let_go = std::mem::take(&mut self.let_go);
-        while let_go != 0 {
-            let bit = let_go & let_go.wrapping_neg();
-            let pitch = Pitch::nearest(i64::from(bit.trailing_zeros()));
-            if !outputs.push(Self::OUTPUT, 0, NoteEvent::Off { pitch }) {
-                self.let_go |= bit;
-            }
-            let_go &= !bit;
-        }
+        self.now.send(outputs);
         // On one frame, the offs before the ons, as the note contract says, whoever sends them.
         let inputs = context.event_inputs.get(Self::INPUT);
         let is_on = |event: &NoteEvent| matches!(event, NoteEvent::On { .. });

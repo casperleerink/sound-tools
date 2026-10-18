@@ -854,8 +854,8 @@ impl TestToneAudio<'_> {
         self.host.request_callback();
     }
 
-    /// Raw MIDI: the sustain pedal, the bend and mod wheels and the channel pressure. The rest
-    /// means nothing here.
+    /// Raw MIDI: the sustain pedal, the bend and mod wheels, the channel pressure and
+    /// `support::CONTROLLER`. The rest means nothing here.
     fn midi(&mut self, data: [u8; 3]) {
         let seven_bits = |byte: u8| f64::from(byte) / 127.0;
         match (data[0] & 0xF0, data[1]) {
@@ -871,6 +871,9 @@ impl TestToneAudio<'_> {
                 .tone
                 .wheel(support::Wheel::Pressure, seven_bits(data[1])),
             (0xB0, 64) => self.pedal(data[2]),
+            (0xB0, support::CONTROLLER) => self
+                .tone
+                .wheel(support::Wheel::Controller, seven_bits(data[2])),
             _ => {}
         }
     }

@@ -39,7 +39,7 @@ use sound_core::{
     AudioInput, AudioOutput, Automation, CHANNELS, EventInput, MAX_AUTOMATED, Ports, PrepareConfig,
     ProcessContext, Processor, Timed,
 };
-use sound_notes::{Amount, Bend, NoteEvent, Pedal};
+use sound_notes::{Amount, Bend, Controller, NoteEvent, Pedal};
 
 /// How many events one block can carry into the plugin. An `AllOff` alone can be 132 of them.
 /// Anything above this is counted and dropped, never allocated.
@@ -54,8 +54,8 @@ pub(crate) enum PluginEvent {
     Control(Control),
 }
 
-/// A control of the whole instrument and where it stands: the sustain pedal, a wheel or the key
-/// pressure. Each format has one way in for each of them, which a plugin may not offer, see
+/// A control of the whole instrument and where it stands: the sustain pedal, a wheel, the key
+/// pressure or another MIDI controller. Each format has one way in for each of them, which a plugin may not offer, see
 /// [`Started::takes`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Control {
@@ -63,6 +63,11 @@ pub(crate) enum Control {
     Bend(Bend),
     ModWheel(Amount),
     Pressure(Amount),
+    /// `AllOff` leaves it where it is, so nothing keeps where it stands.
+    Other {
+        controller: Controller,
+        value: Amount,
+    },
 }
 
 impl Control {
@@ -76,12 +81,14 @@ impl Control {
     ];
 
     /// Which control this is, as its place in [`Self::REST`], for a table with one entry each.
-    pub(crate) fn index(self) -> usize {
+    /// `None` for another controller, which has no rest.
+    pub(crate) fn index(self) -> Option<usize> {
         match self {
-            Self::Pedal(_) => 0,
-            Self::Bend(_) => 1,
-            Self::ModWheel(_) => 2,
-            Self::Pressure(_) => 3,
+            Self::Pedal(_) => Some(0),
+            Self::Bend(_) => Some(1),
+            Self::ModWheel(_) => Some(2),
+            Self::Pressure(_) => Some(3),
+            Self::Other { .. } => None,
         }
     }
 
@@ -91,7 +98,9 @@ impl Control {
         match self {
             Self::Pedal(pedal) => u16::from(pedal.value()),
             Self::Bend(bend) => (i32::from(bend.value()) + 8192) as u16,
-            Self::ModWheel(amount) | Self::Pressure(amount) => u16::from(amount.value()),
+            Self::ModWheel(amount) | Self::Pressure(amount) | Self::Other { value: amount, .. } => {
+                u16::from(amount.value())
+            }
         }
     }
 }
@@ -613,6 +622,9 @@ fn translate(
             NoteEvent::Bend(bend) => control(Control::Bend(bend)),
             NoteEvent::ModWheel(amount) => control(Control::ModWheel(amount)),
             NoteEvent::Pressure(amount) => control(Control::Pressure(amount)),
+            NoteEvent::Control { controller, value } => {
+                control(Control::Other { controller, value })
+            }
             // A key is noted as down only when its event really reached the plugin. A note on
             // that did not fit must not be ended by a later `AllOff`, and a note off that did
             // not fit leaves its key down so that a later `AllOff` does end it.
@@ -647,8 +659,9 @@ fn translate(
                         false => dropped += 1,
                     }
                 }
-                for rest in Control::REST {
-                    if controls[rest.index()] != rest && !send_control(plugin, time, rest, controls)
+                for (index, rest) in Control::REST.into_iter().enumerate() {
+                    if controls.get(index) != Some(&rest)
+                        && !send_control(plugin, time, rest, controls)
                     {
                         dropped += 1;
                     }
@@ -673,7 +686,9 @@ fn send_control(
     }
     let sent = plugin.push(time, PluginEvent::Control(control));
     if sent {
-        controls[control.index()] = control;
+        if let Some(stands) = control.index().and_then(|index| controls.get_mut(index)) {
+            *stands = control;
+        }
     }
     sent
 }
@@ -1034,7 +1049,7 @@ mod tests {
     #[test]
     fn every_control_at_rest_has_its_own_place() {
         for (index, rest) in Control::REST.into_iter().enumerate() {
-            assert_eq!(rest.index(), index);
+            assert_eq!(rest.index(), Some(index));
         }
     }
 }

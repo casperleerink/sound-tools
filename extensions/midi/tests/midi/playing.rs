@@ -3,7 +3,7 @@
 
 use midi::{INPUT_CAPACITY, Played};
 use sound_core::Ticks;
-use sound_notes::{Amount, Bend, NoteEvent, Pedal, Velocity};
+use sound_notes::{Amount, Bend, Controller, NoteEvent, Pedal, Velocity};
 
 use crate::support::{Harness, bend, off, on, pedal, pitch};
 
@@ -226,26 +226,29 @@ fn a_keyboard_that_goes_away_releases_what_it_held() {
 }
 
 /// Who listens besides the instrument, such as a tool of the project, hears what was played
-/// and a release as the end of each thing it let go of, so it holds nothing for ever either.
+/// and a release as the end of each thing it let go of, so it holds nothing for ever either,
+/// each at the frame it sounded on.
 #[test]
 fn what_was_heard_ends_with_what_a_release_let_go_of() {
     let mut harness = Harness::new();
     let knob = Played::Control {
-        controller: 74,
-        value: 9,
+        controller: Controller::new(74).unwrap(),
+        value: Amount::new(9).unwrap(),
     };
-    for played in [pedal(127), on(60, 88), knob] {
+    let played = [pedal(127), on(60, 88), knob];
+    for played in played {
         harness.input.send(played);
     }
     harness.run(64, 64);
     harness.input.release_held();
     harness.run(64, 64);
-    let released = Played::Off {
-        pitch: pitch(60),
-        velocity: 0,
-    };
+    let released = [
+        (64, NoteEvent::Pedal(Pedal::UP)),
+        (64, NoteEvent::Off { pitch: pitch(60) }),
+    ];
     let heard = harness.keyboard.take_heard();
-    assert_eq!(heard, [pedal(127), on(60, 88), knob, pedal(0), released]);
+    let sounded = played.map(|played| (0, played.event()));
+    assert_eq!(heard, [sounded.as_slice(), &released].concat());
     assert_eq!(harness.keyboard.take_heard(), []);
 }
 

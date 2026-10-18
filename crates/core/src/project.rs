@@ -358,6 +358,16 @@ impl Project {
         self.bindings.scope(instance, name).cloned()
     }
 
+    /// The tap of `T` the behaviour of `instance` keeps under `name`, see
+    /// [`BehaviourContext::tap`].
+    pub fn tap<T: crate::Tappable + 'static>(
+        &self,
+        instance: &InstanceId,
+        name: &str,
+    ) -> Option<crate::EventTap<T>> {
+        self.bindings.tap(instance, name)
+    }
+
     /// Every watch the behaviour of `instance` keeps, by name, see [`BehaviourContext::watch`].
     pub fn watches(&self, instance: &InstanceId) -> Vec<(String, Watch)> {
         self.bindings.watches(instance)

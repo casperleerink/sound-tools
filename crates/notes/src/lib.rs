@@ -90,6 +90,10 @@ pub enum NoteError {
     Bend(i64),
     #[error("amount must be from 0 to 127, not {0}")]
     Amount(i64),
+    #[error(
+        "controller must be from 0 to 119 other than 1 and 64, the mod wheel and the pedal: {0}"
+    )]
+    Controller(i64),
 }
 
 /// A MIDI note number, 0 to 127. 60 is middle C and 69 is A4.
@@ -335,6 +339,29 @@ impl TryFrom<i64> for Amount {
 impl From<Amount> for u8 {
     fn from(amount: Amount) -> u8 {
         amount.0
+    }
+}
+
+/// A MIDI controller other than the mod wheel (1) and the sustain pedal (64), which have events
+/// of their own: 0 to 119. From 120 on MIDI's numbers are channel mode messages, not controls.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Controller(u8);
+
+impl Controller {
+    pub const MOD_WHEEL: u8 = 1;
+    pub const SUSTAIN_PEDAL: u8 = 64;
+
+    pub fn new(number: u8) -> Result<Self, NoteError> {
+        match number {
+            Self::MOD_WHEEL | Self::SUSTAIN_PEDAL | 120.. => {
+                Err(NoteError::Controller(i64::from(number)))
+            }
+            number => Ok(Self(number)),
+        }
+    }
+
+    pub fn number(self) -> u8 {
+        self.0
     }
 }
 
@@ -590,8 +617,86 @@ pub enum NoteEvent {
     /// How hard the held keys are pressed, MIDI channel pressure. One value for the whole
     /// instrument, like the wheels.
     Pressure(Amount),
+    /// Moves any other MIDI controller, such as a knob of a plugin that a MIDI learn mapped. A
+    /// plugin gets it; the bundled instruments use none, and `AllOff` leaves it where it is.
+    Control {
+        controller: Controller,
+        value: Amount,
+    },
     /// Releases every held note, puts the pedal up and the wheels and the pressure at rest
     /// ([`Expression::REST`]), so a sender does not have to track what it started. Send it when
     /// the transport says `stopped_playing` or `jumped`. Release tails still sound.
     AllOff,
+}
+
+const _: () = assert!(std::mem::size_of::<NoteEvent>() <= 4);
+
+impl NoteEvent {
+    /// The event of MIDI controller `number` at `value`: the pedal, the mod wheel or another
+    /// controller. `None` from 120 on, MIDI's channel mode messages.
+    pub fn controller(number: u8, value: Amount) -> Option<Self> {
+        Some(match number {
+            Controller::SUSTAIN_PEDAL => Self::Pedal(Pedal(value.value())),
+            Controller::MOD_WHEEL => Self::ModWheel(value),
+            number => Self::Control {
+                controller: Controller::new(number).ok()?,
+                value,
+            },
+        })
+    }
+
+    /// The MIDI controller number and the value of the pedal, the mod wheel or another
+    /// controller: the other way of [`Self::controller`].
+    pub fn as_controller(self) -> Option<(u8, Amount)> {
+        Some(match self {
+            Self::Pedal(pedal) => (Controller::SUSTAIN_PEDAL, Amount(pedal.0)),
+            Self::ModWheel(amount) => (Controller::MOD_WHEEL, amount),
+            Self::Control { controller, value } => (controller.0, value),
+            _ => return None,
+        })
+    }
+}
+
+/// A tag byte and two bytes of value.
+impl sound_core::Tappable for NoteEvent {
+    fn to_bits(self) -> u64 {
+        let (tag, first, second): (u8, u8, u8) = match self {
+            Self::On { pitch, velocity } => (1, pitch.0, velocity.0),
+            Self::Off { pitch } => (2, pitch.0, 0),
+            Self::Pedal(pedal) => (3, pedal.0, 0),
+            Self::Bend(bend) => {
+                let [high, low] = bend.0.to_be_bytes();
+                (4, high, low)
+            }
+            Self::ModWheel(amount) => (5, amount.0, 0),
+            Self::Pressure(amount) => (6, amount.0, 0),
+            Self::Control { controller, value } => (7, controller.0, value.0),
+            Self::AllOff => (8, 0, 0),
+        };
+        u64::from(tag) << 16 | u64::from(first) << 8 | u64::from(second)
+    }
+
+    fn from_bits(bits: u64) -> Option<Self> {
+        let [.., tag, first, second] = bits.to_be_bytes();
+        let amount = || Amount::new(first).ok();
+        Some(match tag {
+            1 => Self::On {
+                pitch: Pitch::new(first).ok()?,
+                velocity: Velocity::new(second).ok()?,
+            },
+            2 => Self::Off {
+                pitch: Pitch::new(first).ok()?,
+            },
+            3 => Self::Pedal(Pedal::new(first).ok()?),
+            4 => Self::Bend(Bend::new(i16::from_be_bytes([first, second])).ok()?),
+            5 => Self::ModWheel(amount()?),
+            6 => Self::Pressure(amount()?),
+            7 => Self::Control {
+                controller: Controller::new(first).ok()?,
+                value: Amount::new(second).ok()?,
+            },
+            8 => Self::AllOff,
+            _ => return None,
+        })
+    }
 }
