@@ -133,6 +133,43 @@ tool({
     ),
 ];
 
+/// A page that counts in its memory the notes and the keys it hears, and keeps the count on a
+/// click. Nothing else draws it again.
+const EAR: [(&str, &str); 3] = [
+    EXPERIMENT[0],
+    ("state/keys.json", r#"{"tool": "keys", "state": {}}"#),
+    (
+        "extensions/keys.ts",
+        r#"import { h, knob, tool } from "./sdk";
+
+tool({
+  name: "keys",
+  title: "Ear",
+  when: "You want to count what is played",
+  doc: "Counts the notes and the keys it hears; a click on its page keeps the count.",
+  kind: "instrument",
+  state: { heard: knob({ min: 0, max: 100, default: 0 }) },
+  memory: () => ({ heard: 0 }),
+  onNotes: ({ memory }, event) => {
+    if (event.type === "noteOn") memory.heard += 1;
+  },
+  onKey: ({ memory }, { down }) => {
+    if (down) memory.heard += 1;
+  },
+  page: ({ size, memory, update }) =>
+    h(
+      "div",
+      {
+        style: { width: size.width, height: size.height },
+        onClick: () => update("Keep the count", ({ state }) => { state.heard = memory.heard; }),
+      },
+      "Listen",
+    ),
+});
+"#,
+    ),
+];
+
 /// The tool `keys`, and no record of it yet.
 const ONLY_THE_TOOL: [(&str, &str); 2] = [
     (
@@ -459,6 +496,30 @@ fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
     }
     window.wait_for_bun();
     assert_eq!(count(&mut window), Some(2.0));
+}
+
+/// The page draws again after its code hears a note or a key, and a click on it still runs.
+#[gpui::test]
+fn a_page_still_takes_clicks_after_its_code_hears_a_note_and_a_key(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &EAR) else {
+        return;
+    };
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    let middle = point(middle.width, middle.height);
+    let kept = |window: &mut Window, wanted: f64| {
+        window.until("the click keeps the count", |window| {
+            window.cx.simulate_click(middle, Modifiers::default());
+            (0..40).any(|_| {
+                window.poll();
+                std::thread::sleep(Duration::from_millis(5));
+                window.record("keys")["heard"].as_f64() == Some(wanted)
+            })
+        });
+    };
+    window.play_midi(64);
+    kept(&mut window, 1.0);
+    window.cx.simulate_keystrokes("a");
+    kept(&mut window, 2.0);
 }
 
 #[gpui::test]
