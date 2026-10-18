@@ -132,7 +132,7 @@ function problemsOf(spec: Spec): string[] {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
     if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
-      problems.push("kind: a parent hears its children through `input`, so leave `kind` out");
+      problems.push('kind: a parent\'s sound hears what it connects to its own { port: "audio" } as `input`, so leave `kind` out');
     }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
@@ -254,8 +254,21 @@ function declare({ question, tool, state, children }: Extract<Request, { type: "
       throw new Error(`${tool} has no behaviour`);
     }
     runs(tool, "behaviour");
+    const answer = spec.behaviour({ state, children });
+    // JSON leaves out a `child` that is undefined, which would make the end a port of the parent.
+    const connections: unknown[] = Array.isArray(answer?.connections) ? answer.connections : [];
+    connections.forEach((connection, index) => {
+      for (const side of ["from", "to"] as const) {
+        const end = (connection as Record<string, unknown> | null)?.[side];
+        if (end !== null && typeof end === "object" && "child" in end && typeof end.child !== "string") {
+          throw new Error(
+            `connections[${index}].${side}.child is ${String(end.child)}: name a child, or leave child out for a port of the parent itself`,
+          );
+        }
+      }
+    });
     // Here, so a value JSON cannot hold, such as a cycle, is the parent's problem and does not throw in `say`.
-    const declared = JSON.parse(JSON.stringify(spec.behaviour({ state, children })));
+    const declared = JSON.parse(JSON.stringify(answer));
     if (declared !== null && typeof declared === "object" && "players" in declared) {
       throw new Error(
         "`players` are gone: a child of tool `sequencer` loops the patterns now (agent-docs/sequencer.md), " +

@@ -366,6 +366,11 @@ impl BehaviourContext<'_> {
         self.next.outputs.insert(name.to_string(), endpoint);
     }
 
+    /// Whether this run named an output `name` already.
+    pub fn has_output(&self, name: &str) -> bool {
+        self.next.outputs.contains_key(name)
+    }
+
     pub fn input(&mut self, name: &str, endpoint: InputEndpoint) {
         self.next.inputs.insert(name.to_string(), endpoint);
     }

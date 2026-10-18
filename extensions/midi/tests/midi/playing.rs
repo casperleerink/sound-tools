@@ -1,9 +1,9 @@
 //! Playing: a message reaches the instrument at the start of the next audio block, whether the
 //! project plays or not, and nothing is lost on the way.
 
-use midi::{INPUT_CAPACITY, Played};
+use midi::INPUT_CAPACITY;
 use sound_core::Ticks;
-use sound_notes::{Amount, Bend, Controller, NoteEvent, Pedal, Velocity};
+use sound_notes::{Amount, Bend, NoteEvent, Pedal, Velocity};
 
 use crate::support::{Harness, bend, off, on, pedal, pitch};
 
@@ -124,7 +124,7 @@ fn the_keyboard_plays_where_it_is_wired_and_nowhere_else() {
     let mut harness = Harness::new();
     let notes = harness.notes_input();
     harness.wire(Some(notes));
-    assert_eq!(harness.keyboard.destination(), Some(notes));
+    assert_eq!(harness.keyboard.destinations(), [notes]);
 
     harness.wire(None);
     harness.input.send(on(60, 88));
@@ -180,13 +180,13 @@ fn a_key_pressed_while_the_port_switches_is_released_where_it_sounded() {
     let other = harness.add_ears();
     harness
         .keyboard
-        .play_into(&mut harness.control, Some(other))
+        .play_into(&mut harness.control, &[other])
         .unwrap();
     harness.input.send(on(60, 88));
     for _ in 0..4 {
         harness.run(64, 64);
     }
-    assert_eq!(harness.keyboard.destination(), Some(other));
+    assert_eq!(harness.keyboard.destinations(), [other]);
     assert_eq!(
         harness.heard(),
         [
@@ -223,33 +223,6 @@ fn a_keyboard_that_goes_away_releases_what_it_held() {
             (64, NoteEvent::Off { pitch: pitch(60) }),
         ]
     );
-}
-
-/// Who listens besides the instrument, such as a tool of the project, hears what was played
-/// and a release as the end of each thing it let go of, so it holds nothing for ever either,
-/// each at the frame it sounded on.
-#[test]
-fn what_was_heard_ends_with_what_a_release_let_go_of() {
-    let mut harness = Harness::new();
-    let knob = Played::Control {
-        controller: Controller::new(74).unwrap(),
-        value: Amount::new(9).unwrap(),
-    };
-    let played = [pedal(127), on(60, 88), knob];
-    for played in played {
-        harness.input.send(played);
-    }
-    harness.run(64, 64);
-    harness.input.release_held();
-    harness.run(64, 64);
-    let released = [
-        (64, NoteEvent::Pedal(Pedal::UP)),
-        (64, NoteEvent::Off { pitch: pitch(60) }),
-    ];
-    let heard = harness.keyboard.take_heard();
-    let sounded = played.map(|played| (0, played.event()));
-    assert_eq!(heard, [sounded.as_slice(), &released].concat());
-    assert_eq!(harness.keyboard.take_heard(), []);
 }
 
 /// A message that did not fit in the input ring may be a note off, and then its note would

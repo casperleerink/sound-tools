@@ -34,8 +34,8 @@ This is the main rule of the codebase.
 
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no bundled crate. `tooling/workspace-rules` checks this.
 - Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. A tool's page may ask for the transport, but only the arrangement records.
-- Extensions never depend on each other. What two extensions both need lives in a contract crate: `sound-notes` (notes, clips, the realtime note events, port names, voice handling) and `sound-media` (audio files and measuring a sound).
-- Tools find each other by port names, not by type. An instrument has an event input `notes` and an audio output `audio`; an effect an audio input and output `audio`, maybe a `sidechain` input. So any tool with those ports fits a slot, and the arrangement depends on no instrument, effect or plugin.
+- Extensions never depend on each other. What two extensions both need lives in a contract crate, such as `sound-notes` and `sound-media`.
+- Tools find each other by port names, not by type: an instrument has an input `notes` and an output `audio`, an effect an input and an output `audio`. So any tool with those ports fits a slot: the arrangement depends on no instrument, effect or plugin.
 - The core does own the musical clock (tempo map, time signatures, ticks). Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
 - `extensions/tone`, a non-musical tool, proves the core rules hold for a tool unlike the arrangement.
 
@@ -100,7 +100,7 @@ my-piece/
 
 `crates/core/src/project/generated.rs`.
 
-- The runtime writes `AGENTS.md` (a map), `CLAUDE.md`, and one file per doc in `agent-docs/`. A map plus docs, because one big doc stopped scaling; agents read only the docs their task needs.
+- The runtime writes `AGENTS.md` (a map), `CLAUDE.md`, and one file per doc in `agent-docs/`. A map plus docs, because one big doc stopped scaling; agents read only the docs their task needs. Rejected: Claude Code skills, no better in an eval and needing settings agents run without.
 - Extensions register their docs; the sources are product content (`extensions/*/agent-doc.md`, `crates/core/src/project/*.md`). A doc never outlives its tools, and the generated docs contain nothing of the machine.
 - A runtime test loads every JSON example in every doc, so the docs cannot drift from the formats.
 - The composer's instructions are plain text: `instructions.md` in the project travels with the piece; one file in the support folder is for every project. Both are edited in the sidebar, so a composer needs no text editor.
@@ -133,6 +133,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 
 - It owns tracks, clips, the track mixer and the master. Mixer values are fields of the track record.
 - A track's chain is its instrument, then the effects its `effects` list names. One list decides the order, so a reorder is one record and one undo step. Rejected: an order number in each effect record (two files per move, and ties).
+- Every device of a track that takes notes hears its notes at once, not delayed by latency before it.
 - Bypass and sidechain are saved on the track's effect slot, not in the effect's record, so plugins and built-in effects share them. The arrangement wires sidechains and names a loop of keys by its tracks, because the core's cycle message names processors an agent cannot act on.
 - A return is a track of kind `return`. Sends are a map on the sending track. No return sends to another yet.
 - Solo mutes the other tracks in their mixers, never a return, so a soloed track keeps its reverb. Mixers, sends and sidechains are wired in the arrangement, the one owner that sees every track.
@@ -238,9 +239,8 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
 - **Cards and pages** are trees Bun draws and `crates/ui` shows. A `tick` plays like a performer and never changes the record. `set` moves no knob: knobs are the composition.
-- **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end names its kind, so a wrong pair is a type error. A number drives a knob as a lane does, through `AutomationInput`, so built-in devices need nothing new. An instrument sends no notes or bangs: its voices come and go.
-- **Patterns in time are a `sequencer` child**, a `NotePlayer` that quantizes launches on the audio thread. Its record names what plays first, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
+- **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end, a child's or the parent's own, names its kind, so a wrong pair is a type error. A parent's sound is the last stage of its audio output, so a chain is one connection. Rejected: `ownSound`, an end on both sides. A number drives a knob as a lane does, so built-in devices need nothing new. An instrument sends no notes or bangs: voices come and go.
+- **Patterns in time are a `sequencer` child**, which quantizes launches on the audio thread. Its record names what plays first, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
 - **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved sender sends no off there. Rejected: a reset in the core, for every instrument to declare.
 - **A tool sends and hears the note events a cable carries**, its `notes` to the sample, whatever plays them. Rejected: tapping the MIDI device thread, deaf to clips and cables.
-- **Agents find the docs through the map.** Each tool's doc is written from its fields, so it is never wrong. Rejected: Claude Code skills: no better in an eval, and they need project settings the agent runs without.
 - **The app ships Bun** at a pinned version, so a composer installs nothing. The agent gets the same Bun first on its `PATH`.

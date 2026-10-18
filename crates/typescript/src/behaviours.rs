@@ -9,6 +9,7 @@
 //! say from its first block.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use serde::Deserialize;
@@ -32,88 +33,85 @@ pub(crate) struct Declaration {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Connection {
-    pub from: FromPort,
-    pub to: ToPort,
+    pub from: End,
+    pub to: End,
 }
 
-/// Where a connection starts: a sound of a child, or events it sends. The key of an event port
-/// names its kind.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-#[serde(untagged)]
-pub(crate) enum FromPort {
-    Child(ChildPort),
-    Notes(ChildNotes),
-    Number(ChildNumber),
-    Bang(ChildBang),
-}
-
-/// Where a connection goes: a sound of a child or the owner's own, or events a child takes.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(untagged)]
-pub(crate) enum ToPort {
-    Own(Own),
-    Child(ChildPort),
-    Notes(ChildNotes),
-    Number(ChildNumber),
-    Live(ChildLive),
-    Trigger(ChildTrigger),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Own {
-    Sound,
-}
-
-/// A sound port of a child, by the child's name and the port's.
+/// An end of a connection: a port of the child `child`, or of the owner itself without one,
+/// under the key of the kind of what it carries. `{ child }` alone is the child's `audio`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ChildPort {
-    pub child: String,
-    /// `audio` when left out.
+pub(crate) struct End {
+    pub child: Option<String>,
     pub port: Option<String>,
+    pub notes: Option<String>,
+    pub number: Option<String>,
+    pub bang: Option<String>,
+    pub live: Option<String>,
+    pub trigger: Option<String>,
 }
 
-/// Notes a child sends out, or its input of notes, such as `notes` of an instrument.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ChildNotes {
-    pub child: String,
-    pub notes: String,
+/// The key an [`End`] names its port under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Key {
+    Port,
+    Notes,
+    Number,
+    Bang,
+    Live,
+    Trigger,
 }
 
-/// A number of a child, by the child's name and the number's: one it sends out, or one it
-/// takes automation for.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ChildNumber {
-    pub child: String,
-    pub number: String,
+impl End {
+    fn keys(&self) -> [(Key, &Option<String>); 6] {
+        [
+            (Key::Port, &self.port),
+            (Key::Notes, &self.notes),
+            (Key::Number, &self.number),
+            (Key::Bang, &self.bang),
+            (Key::Live, &self.live),
+            (Key::Trigger, &self.trigger),
+        ]
+    }
+
+    /// The key it names its port under and the name, or `None` when it names no port or more
+    /// than one.
+    pub(crate) fn port(&self) -> Option<(Key, &str)> {
+        let mut named =
+            (self.keys().into_iter()).filter_map(|(key, name)| Some((key, name.as_deref()?)));
+        match (named.next(), named.next(), &self.child) {
+            (Some(port), None, _) => Some(port),
+            // `audio`, the name of a sound input and output alike.
+            (None, None, Some(_)) => Some((Key::Port, sound_notes::AUDIO_OUTPUT)),
+            _ => None,
+        }
+    }
 }
 
-/// A bang a child sends out.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ChildBang {
-    pub child: String,
-    pub bang: String,
+/// As the behaviour wrote it, such as `{ child: "lfo", number: "rate" }`.
+impl fmt::Display for End {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let child = self.child.as_ref().map(|child| ("child", child));
+        let keys =
+            (self.keys().into_iter()).filter_map(|(key, name)| Some((key.word(), name.as_ref()?)));
+        let fields: Vec<String> = (child.into_iter().chain(keys))
+            .map(|(key, name)| format!("{key}: {name:?}"))
+            .collect();
+        write!(formatter, "{{ {} }}", fields.join(", "))
+    }
 }
 
-/// A live control of a child, or another number it plays from as a performer moves it, such
-/// as `launch` of a sequencer.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ChildLive {
-    pub child: String,
-    pub live: String,
-}
-
-/// A trigger of a child.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ChildTrigger {
-    pub child: String,
-    pub trigger: String,
+impl Key {
+    fn word(self) -> &'static str {
+        match self {
+            Key::Port => "port",
+            Key::Notes => "notes",
+            Key::Number => "number",
+            Key::Bang => "bang",
+            Key::Live => "live",
+            Key::Trigger => "trigger",
+        }
+    }
 }
 
 /// What Bun answered: the declaration, or why there is none, as a sentence.

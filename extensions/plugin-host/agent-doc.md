@@ -56,8 +56,9 @@ gain, pan and mute of the track are the same whichever instrument the track has.
 
 The same record under any other name in the track folder is an effect, once the track record
 names it in `effects`. Nothing of the record changes: only where the track wires it. A plugin
-that says it is an instrument can be an effect and the other way round; nothing checks, and a
-plugin that takes no audio in replaces the sound that reached it instead of changing it.
+that says it is an instrument can be an effect and the other way round; nothing checks. A
+plugin that takes no audio in, such as a synth, replaces the sound that reached it; as an
+effect it also plays the track's notes, which every effect hears.
 
 The composer can do the same in the app, by picking an instrument on the card of the track
 panel, so the record may change under you. Read it before you write it.

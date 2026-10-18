@@ -131,12 +131,13 @@ impl Harness {
     /// does over its polls: the release of what was held goes out into the port it played
     /// into, a block before the connection changes.
     pub(crate) fn wire(&mut self, destination: Option<InputEndpoint>) {
+        let destinations: Vec<InputEndpoint> = destination.into_iter().collect();
         self.keyboard
-            .play_into(&mut self.control, destination)
+            .play_into(&mut self.control, &destinations)
             .unwrap();
         for _ in 0..4 {
             self.poll();
-            if self.keyboard.destination() == destination {
+            if self.keyboard.destinations() == destinations {
                 return;
             }
             self.run(64, 64);

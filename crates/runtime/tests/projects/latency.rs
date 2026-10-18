@@ -182,14 +182,17 @@ fn a_plugin_with_latency_in_an_effect_slot_plays_in_time_with_one_without() {
         let mut without = project(format, &tracks(0));
         let heard = with_latency.play(24_000);
         assert_eq!(heard, without.play(24_000), "{format:?}");
-        // The effect passes half of what it is played: 100 and half of 100 on frame 0.
-        let both = 1.5 * 100.0 / 127.0;
+        // The effect passes half of what it is played and plays the notes of its track too:
+        // 100, half of 100 and 100 again on frame 0.
+        let both = 2.5 * 100.0 / 127.0;
         assert!((heard[0] - both).abs() < 1e-6, "{format:?}: {}", heard[0]);
     }
 }
 
 /// Latency on both, in the instrument and in the effect of one track, and on the other track:
-/// the longest way to the device sets the wait, and each track is led by its own.
+/// the longest way to the device sets the wait, and each track is led by its own. The notes of
+/// the track reach the effect on the frame they reach the instrument, so what the effect plays
+/// of them itself is early by the latency of the instrument, and only that.
 #[test]
 fn every_track_is_led_by_the_latency_of_its_own_chain() {
     let tracks = |instrument, effect, other| {
@@ -212,7 +215,26 @@ fn every_track_is_led_by_the_latency_of_its_own_chain() {
     let mut without = project(PluginFormat::Clap, &tracks(0, 0, 0));
     let heard = with_latency.play(24_000);
     assert_eq!(with_latency.project.engine().poll().unwrap().latency, 800);
-    assert_eq!(heard, without.play(24_000));
+    let notes = Track {
+        name: "late",
+        instrument_latency: 0,
+        effect_latency: None,
+        notes: &NOTES,
+    };
+    let notes = project(PluginFormat::Clap, &[notes]).play(24_000 + 300);
+    let expected = without.play(24_000);
+    // Interleaved: 300 frames are 600 samples.
+    let early = notes.iter().skip(600).zip(&notes);
+    let expected = expected
+        .iter()
+        .zip(early)
+        .map(|(all, (early, on_time))| all + early - on_time);
+    for (frame, (heard, expected)) in heard.iter().zip(expected).enumerate() {
+        assert!(
+            (heard - expected).abs() < 1e-6,
+            "{frame}: {heard} {expected}"
+        );
+    }
 }
 
 /// A note on the key that asks for a latency, played by the clip on tick 960: the plugin asks
@@ -312,7 +334,7 @@ impl Recording {
         let notes =
             runtime::arrangement_wiring::recording::notes_input(&harness.project, &track).unwrap();
         keyboard
-            .play_into(harness.project.engine(), Some(notes))
+            .play_into(harness.project.engine(), &[notes])
             .unwrap();
         keyboard.poll(harness.project.engine(), None).unwrap();
         Self { harness, keyboard }

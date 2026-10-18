@@ -33,6 +33,7 @@ mod scope;
 mod sections;
 mod svf;
 pub mod testing;
+mod thru;
 mod transport;
 mod watch;
 
@@ -91,5 +92,6 @@ pub use sections::{Section, SectionError, SectionName, Sections};
 pub use svf::{
     FilterCharacter, FilterSlope, FilterType, SVF_MAX_Q, SvfFactors, SvfSection, svf_response,
 };
+pub use thru::{AudioThru, EventThru};
 pub use transport::Transport;
 pub use watch::Watch;

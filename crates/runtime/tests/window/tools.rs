@@ -593,7 +593,7 @@ fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &m
     let Some(mut window) = open(cx, &EXPERIMENT) else {
         return;
     };
-    // The keyboard plays into `keys`, the one instance at the top that takes notes.
+    // The keyboard plays into `keys`, the instance at the top.
     window.play_midi(64);
     window.until("the note in the record", |window| {
         window.record("keys")["last"] == 64
@@ -643,12 +643,7 @@ fn a_tool_on_the_track_hears_the_computer_keys(cx: &mut TestAppContext) {
 fn a_tool_on_the_track_the_keyboard_leaves_hears_the_end_of_the_note_it_held(
     cx: &mut TestAppContext,
 ) {
-    // With no instrument on either track the keyboard plays into nothing before and after, so
-    // it has nothing to let go of itself.
-    let files: Vec<_> = (TWO_TRACKS.into_iter())
-        .filter(|(path, _)| !path.ends_with("instrument.json"))
-        .collect();
-    let Some(mut window) = open(cx, &files) else {
+    let Some(mut window) = open(cx, &TWO_TRACKS) else {
         return;
     };
     window.play_midi(60);
@@ -771,12 +766,23 @@ tool({{
 fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_back(
     cx: &mut TestAppContext,
 ) {
-    let (_, project) = ONLY_THE_TOOL[0];
     let (heard, stuck) = (noted("heard", false), noted("stuck", true));
+    // Both on one track, which plays its notes into each.
     let files = [
-        ("project.json", project),
-        ("state/heard.json", r#"{"tool": "heard", "state": {}}"#),
-        ("state/stuck.json", r#"{"tool": "stuck", "state": {}}"#),
+        TWO_TRACKS[0],
+        TWO_TRACKS[1],
+        (
+            "state/arrangement/one/instance.json",
+            r#"{"tool": "arrangement.track", "state": {"name": "One", "order": 0, "effects": ["heard", "stuck"]}}"#,
+        ),
+        (
+            "state/arrangement/one/heard.json",
+            r#"{"tool": "heard", "state": {}}"#,
+        ),
+        (
+            "state/arrangement/one/stuck.json",
+            r#"{"tool": "stuck", "state": {}}"#,
+        ),
         ("extensions/heard.ts", heard.as_str()),
         ("extensions/stuck.ts", stuck.as_str()),
     ];
@@ -795,7 +801,7 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut edit = project.begin("Half");
-                project.update_json(&mut edit, &id("heard"), mode)?;
+                project.update_json(&mut edit, &id("arrangement/one/heard"), mode)?;
                 project.finish(edit)
             })
         })
@@ -812,14 +818,14 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
     // A new Bun runs the other tools.
     window.play_midi(64);
     window.until("the note in the other tool", |window| {
-        window.record("heard")["last"] == 64
+        window.record("arrangement/one/heard")["last"] == 64
     });
 
     write(&root, "extensions/stuck.ts", &noted("stuck", false));
     window.until("the fix", |window| window.problems().is_empty());
     window.play_midi(65);
     window.until("the note in the fixed tool", |window| {
-        window.record("stuck")["last"] == 65
+        window.record("arrangement/one/stuck")["last"] == 65
     });
 }
 
@@ -954,7 +960,7 @@ tool({
   when: "You want one of two drones",
   doc: "Plays the drone `lead` names.",
   state: { lead: text({ default: "low" }) },
-  behaviour: ({ state }) => ({ connections: [{ from: { child: state.lead }, to: "sound" }] }),
+  behaviour: ({ state }) => ({ connections: [{ from: { child: state.lead }, to: { port: "audio" } }] }),
 });
 "#;
 
@@ -1035,7 +1041,7 @@ tool({
   behaviour: () => ({
     connections: [
       { from: { child: "bass", notes: "notes" }, to: { child: "synth", notes: "notes" } },
-      { from: { child: "synth" }, to: "sound" },
+      { from: { child: "synth" }, to: { port: "audio" } },
     ],
   }),
   transport: true,
@@ -1136,7 +1142,7 @@ tool({
   doc: "Each click plays the next child.",
   state: {},
   memory: () => ({ clicks: 0 }),
-  behaviour: () => ({ connections: ["synth", "keys", "drop"].map((child) => ({ from: { child }, to: "sound" })) }),
+  behaviour: () => ({ connections: ["synth", "keys", "drop"].map((child) => ({ from: { child }, to: { port: "audio" } })) }),
   page: ({ size, memory, play, set, fire }) =>
     h("div", {
       style: { width: size.width, height: size.height },
@@ -1348,7 +1354,7 @@ tool({
   when: "You want to move the controllers of a plugin",
   doc: "A key on its page moves controller 74 of its plugin.",
   state: { at: number({ min: 0, max: 100000 }) },
-  behaviour: () => ({ connections: [{ from: { child: "piano" }, to: "sound" }] }),
+  behaviour: () => ({ connections: [{ from: { child: "piano" }, to: { port: "audio" } }] }),
   onKey: ({ send, update, time }, { key, down }) => {
     if (key !== "a" || !down) return;
     const at = time + 0.5;

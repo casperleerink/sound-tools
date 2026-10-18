@@ -44,7 +44,7 @@ tool({
 "#;
 
 /// Plays `lead` through the child `filter`, and connects `send` of the child `lfo` to the number
-/// `to` of the child `target` while `to` is not empty, `copies` times. `to` of `"sound"` is a
+/// `to` of the child `target` while `to` is not empty, `copies` times. `to` of `"audio"` is a
 /// number into its own sound, which plain JavaScript can write and TypeScript refuses.
 const RIG: &str = r#"import { number, text, tool, type Connection, type Declaration } from "./sdk";
 
@@ -64,9 +64,9 @@ tool({
     const cable: Connection = { from: { child: "lfo", number: send }, to: { child: target, number: to } };
     const connections: Connection[] = [
       { from: { child: lead }, to: { child: "filter" } },
-      { from: { child: "filter" }, to: "sound" },
+      { from: { child: "filter" }, to: { port: "audio" } },
     ];
-    if (to === "sound") connections.push({ ...cable, to: "sound" } as unknown as Connection);
+    if (to === "audio") connections.push({ ...cable, to: { port: "audio" } } as unknown as Connection);
     else if (to) connections.push(...Array(copies).fill(cable));
     return { connections };
   },
@@ -203,13 +203,13 @@ fn a_number_a_child_does_not_send_or_take_is_a_problem_that_names_what_it_has() 
             "its behaviour names the output \"cutof\" of \"lfo\" at connections[2].from, which it does not have: its outputs are audio, broken, cutoff, pitch"
         ]
     );
-    let state = r#"{"send": "cutoff", "to": "sound"}"#;
+    let state = r#"{"send": "cutoff", "to": "audio"}"#;
     harness.write_and_apply("state/rig/instance.json", &record(state));
     harness.render(64);
     assert_eq!(
         messages(&harness),
         [
-            "its behaviour declares connections[2] from a number to a sound: a sound goes to { child, port? } or ownSound, notes to { child, notes }, a number to { child, number } or { child, live }, a bang to { child, trigger }"
+            "its behaviour declares connections[2] from { child: \"lfo\", number: \"cutoff\" } to { port: \"audio\" }, which do not connect: a sound goes from { child, port? } or { port: \"audio\" } to the same, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }"
         ]
     );
 }

@@ -45,7 +45,7 @@ tool({
       from: { child: chain[index] },
       to: { child: effect },
     }));
-    connections.push({ from: { child: chain[chain.length - 1] }, to: "sound" });
+    connections.push({ from: { child: chain[chain.length - 1] }, to: { port: "audio" } });
     return { connections };
   },
 });

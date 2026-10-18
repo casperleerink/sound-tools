@@ -49,12 +49,13 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sound_core::{
-    AgentDoc, BehaviourContext, BehaviourError, Changes, InputEndpoint, Instance, InstanceId, Node,
-    OutputEndpoint, Peaks, Place, Project, ProjectError, Registry, RegistryError, State, Ticks,
+    AgentDoc, BehaviourContext, BehaviourError, Changes, EventThru, GraphError, InputEndpoint,
+    Instance, InstanceId, Node, OutputEndpoint, Peaks, Place, Project, ProjectError, Registry,
+    RegistryError, State, Ticks,
 };
 use sound_notes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, NotePlayer, NotePlayerUpdate, NoteTimeline,
-    Pitch, SIDECHAIN_INPUT, TRACK_TOOL, Velocity,
+    AUDIO_INPUT, AUDIO_OUTPUT, Clip, NOTES_INPUT, NoteEvent, NotePlayer, NotePlayerUpdate,
+    NoteTimeline, Pitch, SIDECHAIN_INPUT, TRACK_TOOL, Velocity,
 };
 
 pub use audio::AudioClip;
@@ -79,6 +80,9 @@ pub const INSTRUMENT: &str = "instrument";
 
 /// The name of the processor of a track that plays its clips: of notes, and of audio.
 const SEQUENCER: &str = "sequencer";
+/// The processor where the notes of an instrument track meet, its clips and its `notes` input,
+/// and go to each of its devices.
+const NOTES: &str = "notes";
 const PLAYER: &str = "player";
 /// The processors of an arrangement: the mixer of each track, by the name of the track after
 /// this, and the master.
@@ -421,7 +425,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 ///
 /// The path of an instrument track is sequencer, instrument, the effects in the order of the
 /// record that are not bypassed, and out through its `audio` output, which its arrangement
-/// mixes. An audio track has its player where the other has sequencer and instrument, and a
+/// mixes. Its notes, of its clips and of its `notes` input, reach every child that takes notes. An audio track has its player where the other has sequencer and instrument, and a
 /// return the sum of the sends into it, which is its input. Every processor keeps what it
 /// holds: a note goes on sounding through an edit of a clip. For its arrangement to wire
 /// sidechains, it also exposes its sound before the effects and the `sidechain` input of each
@@ -491,16 +495,30 @@ fn expose_sidechain(slot: &EffectSlot, context: &mut BehaviourContext<'_>) {
     context.input(&format!("{SIDECHAIN_OF}{name}"), input);
 }
 
-/// The notes of an instrument track: its sequencer into its instrument. Gives where the sound
-/// of the instrument comes out.
+/// The notes of an instrument track: its clips and what plays into its `notes` input, such as
+/// the keyboard, into every child that takes notes. A bypassed or unlisted effect hears them
+/// too, so it holds no note it never hears end. Gives where the sound of the instrument comes
+/// out.
 fn play_notes(
     context: &mut BehaviourContext<'_>,
 ) -> Result<Option<OutputEndpoint>, BehaviourError> {
     let timeline = NoteTimeline::new(context.children::<Clip>().map(|(_, clip)| clip));
     let sequencer = context.processor(SEQUENCER, NotePlayer::default)?;
     context.update(sequencer, NotePlayerUpdate::Timeline(Arc::new(timeline)))?;
-    if let Some(notes) = context.child_input(INSTRUMENT, NOTES_INPUT) {
-        context.connect(OutputEndpoint::new(sequencer, NotePlayer::NOTES).to(notes))?;
+    let notes = context.processor(NOTES, EventThru::<NoteEvent>::default)?;
+    let input = InputEndpoint::new(notes, EventThru::<NoteEvent>::INPUT);
+    context.connect(OutputEndpoint::new(sequencer, NotePlayer::NOTES).to(input))?;
+    context.input(NOTES_INPUT, input);
+    let notes = OutputEndpoint::new(notes, EventThru::<NoteEvent>::OUTPUT);
+    let hearing: Vec<InputEndpoint> = (context.child_names())
+        .filter_map(|child| context.child_input(child, NOTES_INPUT))
+        .collect();
+    for input in hearing {
+        match context.connect(notes.to(input)) {
+            // An input named so that takes something else.
+            Err(BehaviourError::Graph(GraphError::PortTypeMismatch { .. })) => {}
+            connected => connected?,
+        }
     }
     Ok(context.child_output(INSTRUMENT, AUDIO_OUTPUT))
 }

@@ -61,7 +61,7 @@ impl Recorder {
         let notes =
             runtime::arrangement_wiring::recording::notes_input(&harness.project, &track).unwrap();
         keyboard
-            .play_into(harness.project.engine(), Some(notes))
+            .play_into(harness.project.engine(), &[notes])
             .unwrap();
         // The poll after it makes the port the one the live input reaches, as the window does.
         keyboard.poll(harness.project.engine(), None).unwrap();

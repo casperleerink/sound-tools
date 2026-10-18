@@ -128,23 +128,10 @@ pub(crate) enum Surface {
     Page(Option<PageSize>),
 }
 
-/// The tools of the window, for what the window hears: the keyboard.
+/// The tools of the window, for what the window asks of them.
 struct WindowTools(Entity<Live>);
 
 impl Global for WindowTools {}
-
-/// Gives what the keyboard played, each at its engine frame, to the tools that hear notes and
-/// have no `notes` of their own: those on `track`, the track it played into, and those at the
-/// top of the project. A tool with `notes` hears what reaches them, the keyboard too.
-pub fn hear_keyboard(track: Option<&InstanceId>, heard: &[(u64, NoteEvent)], cx: &mut App) {
-    if heard.is_empty() {
-        return;
-    }
-    let Some(live) = cx.try_global::<WindowTools>().map(|tools| tools.0.clone()) else {
-        return;
-    };
-    live.update(cx, |live, cx| live.keyboard(track, heard, cx));
-}
 
 /// Whether the main view of `id`, the page of a tool of the project, shows the transport.
 pub fn page_shows_transport(project: &Project, id: &InstanceId, cx: &App) -> bool {
@@ -835,10 +822,7 @@ impl Live {
         cx: &mut Context<Self>,
     ) {
         let Some(child) = child else {
-            let update = |info: &ToolInfo, _: &Session| match info.kind {
-                ToolKind::Effect => Err("has no notes: it is an effect".to_string()),
-                ToolKind::Instrument | ToolKind::Source => Ok(SignalsUpdate::Note(performed)),
-            };
+            let update = |_: &ToolInfo, _: &Session| Ok(SignalsUpdate::Note(performed));
             if let Err(error) = self.send_update(id, update, cx) {
                 eprintln!("error: {id} {error}");
             }
@@ -902,30 +886,6 @@ impl Live {
             down,
         };
         self.host.send(&request);
-    }
-
-    /// What the keyboard played, for every instance whose tool hears notes and has no `notes`
-    /// of its own: on `track` or at the top of the project.
-    fn keyboard(
-        &mut self,
-        track: Option<&InstanceId>,
-        heard: &[(u64, NoteEvent)],
-        cx: &mut Context<Self>,
-    ) {
-        let Some(session) = self.session.upgrade() else {
-            return;
-        };
-        let project = session.read(cx).project();
-        let placed = |id: &InstanceId| {
-            id.parent().is_none() || track.is_some_and(|track| id == track || id.is_inside(track))
-        };
-        let hearing: Vec<(InstanceId, String)> = (project.instances())
-            .filter(|(id, _)| placed(id) && project.input_port(id, NOTES_INPUT).is_none())
-            .map(|(id, tool)| (id.clone(), tool.to_string()))
-            .collect();
-        for (id, tool) in hearing {
-            self.hear(&id, &tool, heard, &session, cx);
-        }
     }
 
     /// What reached the notes of every instance whose tool hears them since the last frame. A

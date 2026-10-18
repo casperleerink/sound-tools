@@ -9,9 +9,9 @@ use sound_core::{
     monotonic_nanos,
 };
 
-use sound_notes::{Expression, NoteEvent, Pedal, Pitch};
+use sound_notes::{Expression, Pedal};
 
-use crate::keys::{INPUT_CAPACITY, Input, Keys, Played, Report};
+use crate::keys::{Input, Keys, Played, Report};
 use crate::take::{Take, TakeEvent};
 
 /// The name of the processor in the engine graph. Instance processors are named
@@ -102,10 +102,10 @@ pub struct Keyboard {
     input: Input,
     reports: rtrb::Consumer<Report>,
     lost_reports: Arc<AtomicU64>,
-    destination: Option<InputEndpoint>,
+    destinations: Vec<InputEndpoint>,
     /// Where the live input should go next. The change waits for the next [`Self::poll`], so
-    /// the release of what was held is out of the processor before the connection goes.
-    wanted: Option<Option<InputEndpoint>>,
+    /// the release of what was held is out of the processor before the connections go.
+    wanted: Option<Vec<InputEndpoint>>,
     recording: Option<Recording>,
     latency: Latency,
     /// Where the pedal stands, as the reports have it. A recording that begins under a held
@@ -119,9 +119,6 @@ pub struct Keyboard {
     /// Reports that were lost. Then this side does not know what is held, and a release is
     /// sent whether the mirror says so or not.
     seen_lost_reports: u64,
-    /// What the live input played since [`Self::take_heard`], for who listens besides the
-    /// instrument, such as a tool of the project.
-    heard: Vec<(u64, NoteEvent)>,
 }
 
 impl Keyboard {
@@ -136,7 +133,7 @@ impl Keyboard {
             input,
             reports,
             lost_reports,
-            destination: None,
+            destinations: Vec::new(),
             wanted: None,
             recording: None,
             latency: Latency::default(),
@@ -144,7 +141,6 @@ impl Keyboard {
             live_notes: 0,
             live_expression: Expression::REST,
             seen_lost_reports: 0,
-            heard: Vec::new(),
         })
     }
 
@@ -153,26 +149,26 @@ impl Keyboard {
         self.input.clone()
     }
 
-    /// Sends the live input to this port, or to nowhere. It is the `notes` input of the
-    /// instrument of the selected track, which the window looks up and passes in.
+    /// Sends the live input to these ports, each the same, or to none. They are `notes` inputs
+    /// the window looks up and passes in, such as that of the selected track.
     ///
     /// The change itself happens at the next [`Self::poll`]. Everything the live input holds
-    /// is released first, into the instrument it plays into now: a disconnect in this block
-    /// would take the connection away before the offs could go out, and the notes of the old
-    /// instrument would sound for ever.
+    /// is released first, into the ports it plays into now: a disconnect in this block would
+    /// take a connection away before the offs could go out, and the notes there would sound
+    /// for ever.
     ///
-    /// Call it after every change of the project: the endpoint moves when the instrument is
-    /// built again. The same endpoint twice costs nothing.
+    /// Call it after every change of the project: an endpoint moves when its instance is built
+    /// again. The same endpoints twice cost nothing.
     pub fn play_into(
         &mut self,
         _engine: &mut EngineControl,
-        destination: Option<InputEndpoint>,
+        destinations: &[InputEndpoint],
     ) -> Result<(), GraphError> {
-        let settled = self.wanted.unwrap_or(self.destination);
-        if settled == destination {
+        let settled = self.wanted.as_ref().unwrap_or(&self.destinations);
+        if settled == destinations {
             return Ok(());
         }
-        self.wanted = Some(destination);
+        self.wanted = Some(destinations.to_vec());
         // Only when something is held. Else the change happens at the next poll with nothing
         // to wait for, which is what a track selected between two phrases does.
         if self.holds_anything() {
@@ -196,10 +192,10 @@ impl Keyboard {
         self.input.release_held();
     }
 
-    /// The port the live input reaches now. It is still the old one until the next poll after
-    /// a [`Self::play_into`].
-    pub fn destination(&self) -> Option<InputEndpoint> {
-        self.destination
+    /// The ports the live input reaches now. They are still the old ones until the next poll
+    /// after a [`Self::play_into`].
+    pub fn destinations(&self) -> &[InputEndpoint] {
+        &self.destinations
     }
 
     /// Takes every report the engine sent since the last call: a recording grows by what was
@@ -218,31 +214,31 @@ impl Keyboard {
         if self.input.release_is_pending() {
             return Ok(());
         }
-        let Some(destination) = self.wanted else {
+        if self.wanted.is_none() {
             return Ok(());
-        };
+        }
         // A key pressed since `play_into` went to the old instrument. It is released there
         // first, or it would sound there for ever.
         if self.holds_anything() {
             self.release_held();
             return Ok(());
         }
-        self.wanted = None;
+        let destinations = self.wanted.take().unwrap_or_default();
         let notes = OutputEndpoint::new(self.node, Keys::NOTES);
         let mut edit = engine.edit();
-        if let Some(old) = self.destination {
-            // The instrument it played into may be gone with its processor, which takes its
+        for old in &self.destinations {
+            // The instance it played into may be gone with its processor, which takes its
             // connections with it. Then there is nothing left to disconnect.
-            match edit.disconnect(&notes.to(old)) {
+            match edit.disconnect(&notes.to(*old)) {
                 Ok(()) | Err(GraphError::UnknownConnection(_)) => {}
                 Err(error) => return Err(error),
             }
         }
-        if let Some(new) = destination {
-            edit.connect(notes.to(new))?;
+        for new in &destinations {
+            edit.connect(notes.to(*new))?;
         }
         edit.commit()?;
-        self.destination = destination;
+        self.destinations = destinations;
         Ok(())
     }
 
@@ -251,15 +247,13 @@ impl Keyboard {
         while let Ok(report) = self.reports.pop() {
             let sounded = match report {
                 Report::Sounded(sounded) => sounded,
-                Report::Released { frame } => {
-                    self.hear_release(frame);
+                Report::Released => {
                     self.live_notes = 0;
                     self.live_pedal = Pedal::UP;
                     self.live_expression = Expression::REST;
                     continue;
                 }
             };
-            self.hear(sounded.frame, sounded.arrived.played.event());
             if let Some(timing) = timing
                 && let Some(sound_nanos) = timing.sound_time_nanos(sounded.frame)
             {
@@ -296,39 +290,6 @@ impl Keyboard {
                 tick: sounded.tick,
                 played: sounded.arrived.played,
             });
-        }
-    }
-
-    /// What the live input played since the last call, in order, each with the engine frame it
-    /// sounded on: each message the engine sounded, and the end of each note, the pedal and the
-    /// wheels a release let go of, so whoever heard something begin hears it end. Call it every
-    /// poll: past what an input ring holds, the rest is left out.
-    pub fn take_heard(&mut self) -> Vec<(u64, NoteEvent)> {
-        std::mem::take(&mut self.heard)
-    }
-
-    fn hear(&mut self, frame: u64, event: NoteEvent) {
-        if self.heard.len() < INPUT_CAPACITY {
-            self.heard.push((frame, event));
-        }
-    }
-
-    /// What a release at `frame` lets go of, as a hand would have played it.
-    fn hear_release(&mut self, frame: u64) {
-        if self.live_pedal.is_down() {
-            self.hear(frame, NoteEvent::Pedal(Pedal::UP));
-        }
-        for number in 0..128_u8 {
-            if self.live_notes & (1 << number) == 0 {
-                continue;
-            }
-            if let Ok(pitch) = Pitch::new(number) {
-                self.hear(frame, NoteEvent::Off { pitch });
-            }
-        }
-        let wheels = self.live_expression.moves_to(Expression::REST);
-        for event in wheels {
-            self.hear(frame, event);
         }
     }
 

@@ -158,7 +158,7 @@ fn messages(harness: &Harness) -> Vec<String> {
 fn the_hits_of_a_recording_play_a_synth_on_their_samples_through_notes_a_sound_makes() {
     let connections = r#"[
     { from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } },
-    { from: { child: "synth" }, to: "sound" },
+    { from: { child: "synth" }, to: { port: "audio" } },
   ]"#;
     let Some(mut harness) = project(connections) else {
         return;
@@ -178,7 +178,7 @@ fn the_hits_of_a_recording_play_a_synth_on_their_samples_through_notes_a_sound_m
 fn a_bang_fires_a_trigger_on_its_sample_and_a_number_moves_a_live_control() {
     let connections = r#"[
     { from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } },
-    { from: { child: "drop" }, to: "sound" },
+    { from: { child: "drop" }, to: { port: "audio" } },
   ]"#;
     let Some(mut harness) = project(connections) else {
         return;
@@ -194,7 +194,7 @@ fn a_bang_fires_a_trigger_on_its_sample_and_a_number_moves_a_live_control() {
     let connections = r#"[
     { from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } },
     { from: { child: "ears", number: "half" }, to: { child: "drop", live: "gain" } },
-    { from: { child: "drop" }, to: "sound" },
+    { from: { child: "drop" }, to: { port: "audio" } },
   ]"#;
     let Some(mut harness) = project(connections) else {
         return;
@@ -215,7 +215,7 @@ fn a_cable_between_two_kinds_or_to_a_control_a_child_does_not_have_is_a_problem(
     assert_eq!(
         messages(&harness),
         [
-            "its behaviour declares connections[1] from notes to a number: a sound goes to { child, port? } or ownSound, notes to { child, notes }, a number to { child, number } or { child, live }, a bang to { child, trigger }",
+            "its behaviour declares connections[1] from { child: \"ears\", notes: \"hits\" } to { child: \"drop\", number: \"gain\" }, which do not connect: a sound goes from { child, port? } or { port: \"audio\" } to the same, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }",
             "its behaviour names the trigger \"gain\" of \"drop\" at connections[2].to, which it does not have: its triggers are hit",
             "its behaviour names the live control \"level\" of \"drop\" at connections[3].to, which it does not have: its live controls are gain",
         ]
@@ -241,7 +241,7 @@ fn a_behaviour_that_declares_players_says_a_sequencer_plays_patterns_now() {
 fn a_held_note_sounds_on_when_new_code_of_its_sender_moves_its_output() {
     let connections = r#"[
     { from: { child: "pair", notes: "high" }, to: { child: "synth", notes: "notes" } },
-    { from: { child: "synth" }, to: "sound" },
+    { from: { child: "synth" }, to: { port: "audio" } },
   ]"#;
     let Some(mut harness) = project(connections) else {
         return;

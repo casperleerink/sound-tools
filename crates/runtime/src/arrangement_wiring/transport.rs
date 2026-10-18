@@ -38,10 +38,9 @@ use gpui::{
 use metronome::Click;
 use midi::{ComputerKeys, Input, Keyboard, Latency, Lost};
 use sound_core::{
-    Changes, Clock, InputEndpoint, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo,
-    TempoChange, Ticks,
+    Changes, Clock, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange,
+    Ticks,
 };
-use sound_notes::{NoteEvent, Pitch};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
@@ -118,14 +117,6 @@ pub struct TransportPill {
     click: Option<Click>,
     /// The MIDI input in the engine. `None` only when the engine refused it, which is reported.
     keyboard: Option<Keyboard>,
-    /// The track whose tools of the project with no `notes` hear the MIDI input: the one it
-    /// played into when what they hear sounded. It moves with the keyboard, only after what was
-    /// held is let go, so a tool hears the end of each note it heard begin.
-    hearing: Option<InstanceId>,
-    /// The keys the tools of `hearing` heard go down and not up yet, one bit each.
-    hearing_held: u128,
-    /// Where the keyboard was last asked to play, and the track of that.
-    asked: (Option<InputEndpoint>, Option<InstanceId>),
     /// The computer keys while they play as a MIDI keyboard. Not project state, like the click.
     computer_keys: Option<ComputerKeys>,
     /// When the sound of an engine frame reaches the device, for the latency. `None` without a
@@ -294,9 +285,6 @@ impl TransportPill {
             scrubbing: false,
             click,
             keyboard,
-            hearing: None,
-            hearing_held: 0,
-            asked: (None, None),
             computer_keys: None,
             timing,
             tempo_drag: None,
@@ -315,7 +303,7 @@ impl TransportPill {
     }
 
     /// Takes what the engine reported about the MIDI input and wires the live input to the
-    /// instrument of the selected track. The timer calls it; tests call it to skip the wait.
+    /// selected track. The timer calls it; tests call it to skip the wait.
     ///
     /// Nothing here is on the way from a key to its sound: that path is the input ring and the
     /// audio thread, and it runs whether this is called or not.
@@ -323,16 +311,14 @@ impl TransportPill {
         let session = self.session.clone();
         let selected = session.read(cx).selected().cloned();
         let project = session.read(cx).project();
-        let destination = recording::live_notes_input(project, selected.as_ref());
-        let track = recording::target_track(project, selected.as_ref());
-        let track = track.map(|track| track.id().clone());
+        let destinations = recording::live_notes_inputs(project, selected.as_ref());
         let timing = self.timing.clone();
         let recording_track = self.take.as_ref().map(|take| take.midi_track.clone());
         // A tool of the project may ask for the transport in a new load of its code, which is
         // no project event.
         let shown = shown(&session, cx);
-        if self.takes_notes != destination.is_some() || self.shown != shown {
-            self.takes_notes = destination.is_some();
+        if self.takes_notes != !destinations.is_empty() || self.shown != shown {
+            self.takes_notes = !destinations.is_empty();
             self.shown = shown;
             cx.notify();
         }
@@ -345,48 +331,17 @@ impl TransportPill {
         let polled = session.update(cx, |session, _| {
             keyboard.poll(session.engine(), timing.as_deref())
         });
-        // What sounded since the last poll went where the keyboard played until now, and the
-        // tools of that track hear it.
-        let mut heard = keyboard.take_heard();
-        for (_, event) in &heard {
-            match *event {
-                NoteEvent::On { pitch, .. } => self.hearing_held |= 1 << pitch.number(),
-                NoteEvent::Off { pitch } => self.hearing_held &= !(1 << pitch.number()),
-                _ => {}
-            }
-        }
-        let hearing = self.hearing.clone();
-        if keyboard.destination() == self.asked.0 {
-            self.hearing = self.asked.1.clone();
-        }
-        // The keyboard lets go of nothing when it plays into the same port, such as nowhere
-        // on two tracks with no instrument: the tools of the old track hear the ends here.
-        if self.hearing != hearing {
-            let held = std::mem::take(&mut self.hearing_held);
-            let now = session.update(cx, |session, _| {
-                session.engine().poll().map(|status| status.frames)
-            });
-            let offs = (0..128_u8).filter(|pitch| held & (1 << pitch) != 0);
-            let offs = offs.map(|pitch| NoteEvent::Off {
-                pitch: Pitch::nearest(i64::from(pitch)),
-            });
-            heard.extend(offs.map(|off| (now.unwrap_or_default(), off)));
-        }
         // A take goes to the track it began on, so the live input stays there too while it
         // runs. Selecting another track during a take would otherwise split the two.
         let wired = match recording_track.is_some() {
             true => Ok(()),
-            false => {
-                self.asked = (destination, track);
-                session.update(cx, |session, _| {
-                    keyboard.play_into(session.engine(), destination)
-                })
-            }
+            false => session.update(cx, |session, _| {
+                keyboard.play_into(session.engine(), &destinations)
+            }),
         };
         if let Err(error) = polled.and(wired) {
             session.update(cx, |session, cx| session.report(error, cx));
         }
-        sound_typescript::hear_keyboard(hearing.as_ref(), &heard, cx);
         self.show_notes(cx);
     }
 

@@ -169,8 +169,8 @@ tool({
   behaviour: ({ state: { to } }) => ({
     connections: [
       ...(to === "none" ? [] : [{ from: { child: "held", notes: "notes" }, to: { child: to, notes: "notes" } }]),
-      { from: { child: "synth" }, to: "sound" },
-      { from: { child: "other" }, to: "sound" },
+      { from: { child: "synth" }, to: { port: "audio" } },
+      { from: { child: "other" }, to: { port: "audio" } },
     ],
   }),
 });

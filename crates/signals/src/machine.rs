@@ -40,7 +40,7 @@ pub(crate) const LIMIT: f32 = 4.0;
 /// Quieter than this is silence: of a voice that ends, and of what a delay holds.
 pub(crate) const QUIET: f32 = 1e-4;
 
-/// The note a voice plays. A source follows the newest held note; an effect has none.
+/// The note a voice plays. A source and an effect follow the newest held note.
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct Note {
     pub(crate) pitch: f32,
