@@ -443,7 +443,7 @@ fn a_recording_goes_on_in_a_project_with_latency(cx: &mut gpui::TestAppContext) 
 }
 
 /// A project with no arrangement, such as one experiment at its top: the keyboard plays the
-/// first instance at the top that takes notes.
+/// instances at the top that take notes.
 #[gpui::test]
 fn with_no_arrangement_the_keyboard_plays_what_is_at_the_top(cx: &mut gpui::TestAppContext) {
     let mut opened = open_with(cx, |_| {});

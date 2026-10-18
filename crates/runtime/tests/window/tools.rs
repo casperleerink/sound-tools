@@ -593,7 +593,7 @@ fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &m
     let Some(mut window) = open(cx, &EXPERIMENT) else {
         return;
     };
-    // The keyboard plays into `keys`, the one instance at the top that takes notes.
+    // The keyboard plays into `keys`, the instance at the top.
     window.play_midi(64);
     window.until("the note in the record", |window| {
         window.record("keys")["last"] == 64

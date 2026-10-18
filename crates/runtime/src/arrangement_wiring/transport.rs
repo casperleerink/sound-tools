@@ -311,14 +311,14 @@ impl TransportPill {
         let session = self.session.clone();
         let selected = session.read(cx).selected().cloned();
         let project = session.read(cx).project();
-        let destination = recording::live_notes_input(project, selected.as_ref());
+        let destinations = recording::live_notes_inputs(project, selected.as_ref());
         let timing = self.timing.clone();
         let recording_track = self.take.as_ref().map(|take| take.midi_track.clone());
         // A tool of the project may ask for the transport in a new load of its code, which is
         // no project event.
         let shown = shown(&session, cx);
-        if self.takes_notes != destination.is_some() || self.shown != shown {
-            self.takes_notes = destination.is_some();
+        if self.takes_notes != !destinations.is_empty() || self.shown != shown {
+            self.takes_notes = !destinations.is_empty();
             self.shown = shown;
             cx.notify();
         }
@@ -336,7 +336,7 @@ impl TransportPill {
         let wired = match recording_track.is_some() {
             true => Ok(()),
             false => session.update(cx, |session, _| {
-                keyboard.play_into(session.engine(), destination)
+                keyboard.play_into(session.engine(), &destinations)
             }),
         };
         if let Err(error) = polled.and(wired) {

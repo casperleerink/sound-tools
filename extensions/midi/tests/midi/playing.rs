@@ -124,7 +124,7 @@ fn the_keyboard_plays_where_it_is_wired_and_nowhere_else() {
     let mut harness = Harness::new();
     let notes = harness.notes_input();
     harness.wire(Some(notes));
-    assert_eq!(harness.keyboard.destination(), Some(notes));
+    assert_eq!(harness.keyboard.destinations(), [notes]);
 
     harness.wire(None);
     harness.input.send(on(60, 88));
@@ -180,13 +180,13 @@ fn a_key_pressed_while_the_port_switches_is_released_where_it_sounded() {
     let other = harness.add_ears();
     harness
         .keyboard
-        .play_into(&mut harness.control, Some(other))
+        .play_into(&mut harness.control, &[other])
         .unwrap();
     harness.input.send(on(60, 88));
     for _ in 0..4 {
         harness.run(64, 64);
     }
-    assert_eq!(harness.keyboard.destination(), Some(other));
+    assert_eq!(harness.keyboard.destinations(), [other]);
     assert_eq!(
         harness.heard(),
         [

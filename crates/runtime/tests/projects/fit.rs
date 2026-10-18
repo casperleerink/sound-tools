@@ -710,7 +710,7 @@ fn the_whole_path_on_this_machine() {
             .expect("the reports");
         let notes = runtime::arrangement_wiring::recording::notes_input(project, &track);
         keyboard
-            .play_into(project.engine(), notes)
+            .play_into(project.engine(), notes.as_slice())
             .expect("the port");
         project.poll().expect("the watcher");
         project.drain_events();

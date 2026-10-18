@@ -56,9 +56,9 @@ fn keyboard_into_the_top(mut harness: Harness) -> Vec<f32> {
     // Bun's answer, which wires the parent.
     let mut heard = harness.render(64);
     let mut keyboard = Keyboard::attach(harness.project.engine()).unwrap();
-    let notes = runtime::arrangement_wiring::recording::live_notes_input(&harness.project, None);
+    let notes = runtime::arrangement_wiring::recording::live_notes_inputs(&harness.project, None);
     keyboard
-        .play_into(harness.project.engine(), Some(notes.unwrap()))
+        .play_into(harness.project.engine(), &notes)
         .unwrap();
     keyboard.poll(harness.project.engine(), None).unwrap();
     let key = Played::On {
@@ -75,7 +75,7 @@ fn keyboard_into_the_top(mut harness: Harness) -> Vec<f32> {
 }
 
 #[test]
-fn the_keyboard_plays_a_plugin_child_through_the_parents_notes_as_it_plays_one_at_the_top() {
+fn the_keyboard_plays_a_plugin_child_through_the_parents_notes_and_every_instance_at_the_top() {
     if !has_bun() {
         return;
     }
@@ -109,6 +109,27 @@ fn the_keyboard_plays_a_plugin_child_through_the_parents_notes_as_it_plays_one_a
         write(root, "state/keys.json", &plugin);
         let (harness, _plugins) = Harness::with_test_plugin(folder);
         let at_the_top = keyboard_into_the_top(harness);
+
+        // The parent and the plugin, both at the top: the keyboard plays each.
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path();
+        let both = [to_device("pianist"), to_device("solo")].join(", ");
+        write(
+            root,
+            "project.json",
+            &project_json(r#""plugin-host""#, &both),
+        );
+        write(root, "extensions/pianist.ts", PIANIST);
+        write(
+            root,
+            "state/pianist/instance.json",
+            r#"{"tool": "pianist", "state": {}}"#,
+        );
+        write(root, "state/pianist/keys.json", &plugin);
+        write(root, "state/solo.json", &test_plugin_of(format, "solo"));
+        let (harness, _plugins) = Harness::with_test_plugin(folder);
+        let twice: Vec<f32> = at_the_top.iter().map(|sample| sample * 2.0).collect();
+        assert!(keyboard_into_the_top(harness) == twice, "{format:?}");
 
         // The key and the pedal, on the left and on the right, on the frame each was played.
         let right = |render: &[f32]| {

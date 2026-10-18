@@ -3,16 +3,16 @@
 //!
 //! This extension has no tool and no record. It is a processor in the engine, a device layer
 //! over `midir`, and a recorder. It meets the arrangement only through the note contract
-//! ([`sound_notes`]): the window says which port the notes go to and makes the clip. The saved
+//! ([`sound_notes`]): the window says which ports the notes go to and makes the clip. The saved
 //! form of a take lives there too, as [`sound_notes::RawTake`], because the fit extension reads
 //! one and no extension may depend on another.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), sound_core::GraphError> {
 //! # let (mut engine, _) = sound_core::Engine::new(sound_core::EngineConfig::new(48_000, 2));
-//! # let notes: Option<sound_core::InputEndpoint> = None;
+//! # let notes: Vec<sound_core::InputEndpoint> = Vec::new();
 //! let mut keyboard = midi::Keyboard::attach(&mut engine)?;
-//! keyboard.play_into(&mut engine, notes)?;     // the `notes` port of an instrument
+//! keyboard.play_into(&mut engine, &notes)?;    // `notes` ports, such as an instrument's
 //! let mut ports = midi::Ports::new(keyboard.input());
 //! # Ok(())
 //! # }

@@ -334,7 +334,7 @@ impl Recording {
         let notes =
             runtime::arrangement_wiring::recording::notes_input(&harness.project, &track).unwrap();
         keyboard
-            .play_into(harness.project.engine(), Some(notes))
+            .play_into(harness.project.engine(), &[notes])
             .unwrap();
         keyboard.poll(harness.project.engine(), None).unwrap();
         Self { harness, keyboard }
