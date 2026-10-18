@@ -305,3 +305,14 @@ tool({
   children: loose,
   behaviour: (): Declaration => ({ connections: [] }),
 });
+
+tool({
+  name: "inline",
+  title: "Inline",
+  when: "Never",
+  doc: "Names its children in place, with a return type that names none.",
+  state: {},
+  // @ts-expect-error: a plain `Declaration` widens the tool names too.
+  children: { bass: "sequencer" },
+  behaviour: (): Declaration => ({ connections: [] }),
+});

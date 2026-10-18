@@ -802,7 +802,7 @@ export type StateOfTool<T> = T extends keyof Tools ? Tools[T]["state"] : unknown
 
 /** `children` as written. A tool name widened to `string` would check nothing, so it is refused. */
 type LiteralTools<K extends ChildTools> = {
-  [Name in keyof K]: string extends K[Name] ? "write `as const` after the children object, so each tool name is kept" : K[Name];
+  [Name in keyof K]: string extends K[Name] ? "the tool names were widened to string: write the children as `const children = { ... } as const` and give the behaviour the return type `Declaration<typeof children>`, or leave the return type out" : K[Name];
 };
 
 /** The names of its children. */
