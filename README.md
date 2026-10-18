@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="tooling/icon/sound-tools-512.png" alt="Sound Tools" width="160">
+</p>
+
 # Sound Tools
 
 A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent sidebar runs Claude Code in the project folder. Any coding agent in a terminal works too.
