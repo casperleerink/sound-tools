@@ -15,6 +15,7 @@ mod device;
 mod dsp;
 mod engine;
 mod envelope;
+mod event_tap;
 mod gain;
 mod graph;
 mod input;
@@ -55,6 +56,7 @@ pub use dsp::{
 };
 pub use engine::{Engine, EngineStatus};
 pub use envelope::{ENVELOPE_FLOOR, Envelope, EnvelopeCurves, EnvelopeStage, EnvelopeState};
+pub use event_tap::{EventTap, TapRead, Tappable};
 pub use gain::{amplitude, pan_gains};
 pub use graph::{Connection, Destination, GraphError, NodeId, Source};
 pub use input::{
