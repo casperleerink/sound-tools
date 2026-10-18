@@ -1,5 +1,6 @@
-// Bun, which runs the tools: the calls tools make most, for `tsc`. Bun's own types are a package
-// the project does not have; with it installed (`bun-types`), the runtime leaves this file out.
+// Bun, which runs the tools: the calls tools make most, for `bun check`. Bun's own types are a
+// package the project does not have; with it installed (`bun-types`), the runtime leaves this
+// file out.
 // Anything else of Bun (https://bun.sh/docs) is not checked.
 
 /** A process `Bun.spawn` started. */

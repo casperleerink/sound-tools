@@ -1,5 +1,5 @@
-// Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
-// the SDK: every `@ts-expect-error` line must be an error, and nothing else.
+// Types an agent's tool must get right. A test of the crate checks this file with `bun check`
+// next to the SDK: every `@ts-expect-error` line must be an error, and nothing else.
 import { devices, h, input, knob, list, notes, number, output, prefixed, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });

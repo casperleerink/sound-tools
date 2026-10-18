@@ -128,7 +128,7 @@ const BUN_TYPES: &str = include_str!("bun.d.ts");
 const OWNED: [&str; 3] = ["sdk.ts", "tsconfig.json", "bun.d.ts"];
 /// The sounds of a tool that do not build that its problem names; it counts the others.
 const SHOWN_FAILURES: usize = 3;
-/// JSX makes the nodes of `sdk.ts`. Also what `tsc -p extensions` checks with.
+/// JSX makes the nodes of `sdk.ts`. Also what `bun check -p extensions` checks with.
 const TSCONFIG: &str = r#"{
   "compilerOptions": {
     "strict": true,
@@ -573,7 +573,7 @@ mod tests {
         assert_eq!(channel_mode.event(), None);
     }
 
-    /// Bun's own types declare `Bun` too, and two declarations fail `tsc`.
+    /// Bun's own types declare `Bun` too, and two declarations fail `bun check`.
     #[test]
     fn the_types_of_bun_are_left_out_once_bun_types_are_installed() {
         let extensions = tempfile::tempdir().unwrap();
@@ -624,7 +624,7 @@ mod tests {
         std::fs::write(extensions.join("types.ts"), types).unwrap();
         // As the doc for agents says to check a tool.
         let checked = sound_core::process::background_command(bun)
-            .args(["x", "tsc", "-p", FOLDER])
+            .args(["check", "-p", FOLDER])
             .current_dir(project.path())
             .output()
             .unwrap();

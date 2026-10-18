@@ -81,7 +81,7 @@ jobs:
       # pins for the app. Without it they pass without running.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.3
       # With the realtime sanitizer on: any test that allocates, locks or makes a system call
       # inside Engine::process_block aborts.
       - run: cargo nextest run --workspace --locked
@@ -116,7 +116,7 @@ jobs:
       # pins for the app. Without it they pass without running.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.3
       - run: cargo nextest run --workspace --locked
 
   # Windows lints, and on main builds and runs the tests. Nobody here has a Windows computer, so
@@ -146,6 +146,6 @@ jobs:
       - if: github.event_name == 'push'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.3
       - if: github.event_name == 'push'
         run: cargo nextest run --workspace --locked --no-fail-fast

@@ -11,7 +11,7 @@
 # changed after the fact does not get in. A new version is a new version and new sums here.
 set -euo pipefail
 
-version="1.4.2"
+version="1.4.3"
 
 if [[ $# -ne 2 || "$1" == -* ]]; then
   echo "usage: tooling/fetch-bun.sh <folder> <license-folder>" >&2
@@ -19,16 +19,16 @@ if [[ $# -ne 2 || "$1" == -* ]]; then
 fi
 folder="$1"
 license_folder="$2"
-license_sum="b9caf52728691b4057e371232c221a132883198be2f3d2ddf92c90404c984b1a"
+license_sum="056696884250b0d682365260cf1487a6501b1665a343ec60e23a1e647043c572"
 
 # The machines the bundle scripts build on. On x86_64 the baseline build, which runs on a
 # processor without AVX2 too.
 case "$(uname -s)-$(uname -m)" in
-  Darwin-arm64) asset="bun-darwin-aarch64" sum="90987a3a16d7db556d886ac3d551e7b6d3edf0a1cf43acaed622e8676be1d12f" ;;
-  Darwin-x86_64) asset="bun-darwin-x64-baseline" sum="bad5bbd6cf14d0980d115f5954c9ff904df619d5e994d2da1ffccd3f316300b0" ;;
-  Linux-x86_64) asset="bun-linux-x64-baseline" sum="c678040f14fe0440eb839d37cbd0ce4c051a32da72806ac97de6a6aab6bf728f" ;;
-  Linux-aarch64) asset="bun-linux-aarch64" sum="54328bbc2d9c8e0c9f892c544d66c57a83b84139e34909e5ee81758f1ac8fda7" ;;
-  MINGW*-x86_64 | MSYS*-x86_64) asset="bun-windows-x64-baseline" sum="78c221c2376f79731ccf4e4af0b3bb46d81fefa3296c5abee09ad8a1b21e68c6" ;;
+  Darwin-arm64) asset="bun-darwin-aarch64" sum="80afd4c069b46a6fa8f3ec520bebc750a7843e4a8d5b9583d29ad436c00a3403" ;;
+  Darwin-x86_64) asset="bun-darwin-x64-baseline" sum="0fde04e8b092156b97fe6432e899baf16d9ed6ce52cbb4218d2d9c07a2f827ef" ;;
+  Linux-x86_64) asset="bun-linux-x64-baseline" sum="1fc2edac843102909e3a1be1d8d9802cc6071cf074e67e88231f4ffe0f8b397b" ;;
+  Linux-aarch64) asset="bun-linux-aarch64" sum="efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21" ;;
+  MINGW*-x86_64 | MSYS*-x86_64) asset="bun-windows-x64-baseline" sum="d7a7d3eb216614544aab0cde2d8d9f2e4e87839bf5a30a1cd11d077f02d84e0c" ;;
   *) echo "error: no Bun for $(uname -s) $(uname -m)" >&2; exit 1 ;;
 esac
 
