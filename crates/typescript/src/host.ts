@@ -819,13 +819,15 @@ function draw(spec: Spec, page: boolean): Sent {
  * draw again. `what` names that code in a problem.
  */
 function run<Extra extends object>(
-  clock: Clock,
+  // Only the clock: a key or notes request has an `instance` of its own, which the cards would draw.
+  { time, transport }: Clock,
   instances: Played[],
   what: string,
   extra: Extra,
   call: (spec: Spec, tool: Context<State, Controls, unknown> & Extra) => unknown,
 ) {
-  now = clock.time;
+  const clock = { time, transport };
+  now = time;
   for (const { instance, watches } of instances) {
     const record = recordOf(instance);
     const spec = sdk.host.tools.get(record?.tool ?? "");
