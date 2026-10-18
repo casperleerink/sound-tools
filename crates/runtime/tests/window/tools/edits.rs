@@ -246,6 +246,9 @@ tool({
     if (key === "n") update("Add a drone with no name", ({ children }) => {
       children.push({ name: "Not A Name", tool: "drone", state: {} });
     });
+    if (key === "s") update("Add a grandchild", ({ children }) => {
+      children.push({ name: "x/y", tool: "drone", state: {} });
+    });
   },
   page: () => h("div", {}, "Rack"),
 });
@@ -317,6 +320,13 @@ fn a_child_its_tool_refuses_is_a_problem_and_nothing_of_the_edit_applies(cx: &mu
         problems
             .iter()
             .any(|problem| problem.message.contains("names use lowercase"))
+    });
+    window.cx.simulate_keystrokes("s");
+    window.until("the path refused", |window| {
+        let problems = window.problems();
+        problems
+            .iter()
+            .any(|problem| problem.message.contains("named with a `/`"))
     });
     window.after_the_runs();
     let session = window.session.clone();

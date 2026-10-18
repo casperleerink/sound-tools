@@ -58,12 +58,12 @@ pub(crate) enum Request<'a> {
     Render {
         card: u64,
         instance: &'a InstanceId,
-        tool: &'a str,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
         /// The size of the page, the whole window; `None` for a card.
         page: Option<PageSize>,
-        transport: Transport,
+        #[serde(flatten)]
+        clock: Clock,
     },
     /// A click, or a press or a drag on a canvas `at` across and down, 0 to 1.
     Event {
@@ -72,27 +72,30 @@ pub(crate) enum Request<'a> {
         version: u64,
         handler: usize,
         at: Option<(f32, f32)>,
+        time: f64,
     },
     /// One step of the control loop of every instance whose tool has one.
     Frame {
         /// Seconds since the last frame.
         dt: f32,
-        /// Engine time in seconds: the clock `at` of an event counts on.
-        time: f64,
         instances: Vec<Played<'a>>,
+        #[serde(flatten)]
+        clock: Clock,
     },
     /// A key of the computer keyboard went down or up on a card or a page that has the keys.
     Key {
-        time: f64,
         instance: Played<'a>,
         key: &'a str,
         down: bool,
+        #[serde(flatten)]
+        clock: Clock,
     },
     /// What an instance whose tool hears notes heard since it last did.
     Notes {
-        time: f64,
         instance: Played<'a>,
         events: &'a [Heard],
+        #[serde(flatten)]
+        clock: Clock,
     },
     Drop {
         card: u64,
@@ -104,6 +107,14 @@ pub(crate) enum Request<'a> {
         tool: &'a str,
         instance: &'a InstanceId,
     },
+}
+
+/// Where the sound and the piece are, which all code of a tool gets.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub(crate) struct Clock {
+    /// Engine time in seconds: the clock `at` of an event counts on.
+    pub time: f64,
+    pub transport: Transport,
 }
 
 /// A record as Bun is told it: its `state` as the file holds it.
@@ -146,7 +157,6 @@ pub(crate) struct Heard {
 #[derive(Serialize)]
 pub(crate) struct Played<'a> {
     pub instance: &'a InstanceId,
-    pub tool: &'a str,
     pub watches: BTreeMap<String, f32>,
 }
 
@@ -517,11 +527,13 @@ impl Bun {
     /// Whether it went.
     pub(crate) fn tell<'a>(&self, records: impl IntoIterator<Item = Telling<'a>>) -> bool {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-        self.tell_in(&mut told, records)
+        let edits = told.edits;
+        self.tell_in(&mut told, records, edits).is_some()
     }
 
     /// Tells Bun the record of `owner` and of each of its `children` as its behaviour gets
-    /// them, and that each other child it holds is gone.
+    /// them, and that each other child it holds is gone. Whether it went. Not the edits heard
+    /// since the window last told it: the records those changed may be others, still to tell.
     pub(crate) fn tell_owner<'a>(
         &self,
         owner: (&'a InstanceId, &'a str, String),
@@ -530,23 +542,28 @@ impl Bun {
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         let (id, tool, state) = owner;
         let mut records = vec![(id, Some((tool, state)))];
-        records.extend(
-            children
-                .into_iter()
-                .map(|(id, tool, state)| (id, Some((tool, state)))),
-        );
+        records.extend((children.into_iter()).map(|(id, tool, state)| (id, Some((tool, state)))));
+        let given: BTreeSet<&InstanceId> = records.iter().map(|(id, _)| *id).collect();
         let held: Vec<InstanceId> = (told.records.keys())
-            .filter(|child| child.parent().as_ref() == Some(id))
-            .filter(|child| !records.iter().any(|(told, _)| told == child))
+            .filter(|child| child.parent().as_ref() == Some(id) && !given.contains(child))
             .cloned()
             .collect();
         records.extend(held.iter().map(|child| (child, None)));
-        let ids: Vec<InstanceId> = records.iter().map(|(id, _)| (*id).clone()).collect();
-        told.unconfirmed.extend(ids);
-        self.tell_in(&mut told, records)
+        let edits = told.edits_told;
+        let Some(sent) = self.tell_in(&mut told, records, edits) else {
+            return false;
+        };
+        told.unconfirmed.extend(sent);
+        true
     }
 
-    fn tell_in<'a>(&self, told: &mut Told, records: impl IntoIterator<Item = Telling<'a>>) -> bool {
+    /// The ids it told, or `None` when it did not go: what did not go is told again next time.
+    fn tell_in<'a>(
+        &self,
+        told: &mut Told,
+        records: impl IntoIterator<Item = Telling<'a>>,
+        edits: u64,
+    ) -> Option<Vec<InstanceId>> {
         let mut new = Vec::new();
         let mut keys = Vec::new();
         let mut gone = Vec::new();
@@ -569,25 +586,25 @@ impl Bun {
                 Err(error) => eprintln!("error: {id}: {error}"),
             }
         }
-        if new.is_empty() && gone.is_empty() && told.edits == told.edits_told {
-            return true;
+        if new.is_empty() && gone.is_empty() && edits == told.edits_told {
+            return Some(Vec::new());
         }
-        let edits = told.edits;
         let request = Request::Records {
             records: new,
             gone: gone.clone(),
             edits,
         };
-        // What did not go is told again next time.
-        let sent = self.send(&request);
-        if sent {
-            told.edits_told = edits;
-            told.records.extend(keys);
-            for id in gone {
-                told.records.remove(id);
-            }
+        if !self.send(&request) {
+            return None;
         }
-        sent
+        told.edits_told = edits;
+        for id in &gone {
+            told.records.remove(*id);
+        }
+        let mut sent: Vec<InstanceId> = gone.into_iter().cloned().collect();
+        sent.extend(keys.iter().map(|(id, _)| id.clone()));
+        told.records.extend(keys);
+        Some(sent)
     }
 
     /// The runtime heard an edit Bun sent, applied or not.

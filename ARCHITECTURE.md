@@ -92,7 +92,7 @@ my-piece/
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. No field merge and no conflict rejection. Do not reopen this as a sync problem.
 - An edit is `begin`, `publish` (live, writes nothing), then `finish` (writes, one undo step) or `cancel`. No undo step ever holds the middle of a gesture, even when a file edit lands during a drag.
 - An agent request is one undo step, named after it, however far apart its writes are. A window edit, undo or redo during a request ends that step; later writes make another. Rejected: adding them to the older step, under the composer's edit: undo would go out of order.
-- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing else between, are one undo step; else one request became several. A tool's edits of one label under 1 s apart are one too, written when they stop or after 5 s; undo ends them first.
+- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing between, are one undo step; else one request became several. A tool's edits of one label under 1 s apart are one too, written when they stop or after 5 s; undo and other edits end them first, never mid-drag.
 - Undo history lives only in the session. The folder is the truth; versions come from git.
 - `problems.txt` exists only while a runtime holds the project, so an agent can tell "all is well" from "nobody is watching".
 
@@ -239,7 +239,7 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
 - **Cards and pages** are trees Bun draws and `crates/ui` shows. `set` moves no knob: knobs are the composition.
-- **A tool's code edits its record and its children's** by the fields it changed, on the records as they are then: a late edit takes nothing back. Bun hears a record when it changes, not per tick.
+- **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back. Bun hears each record once per change.
 - **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end names its kind, so a wrong pair is a type error. A parent's sound is the last stage of its audio output, so a chain is one connection. Rejected: `ownSound`, an end on both sides. A number drives a knob as a lane does, so built-in devices need nothing new. An instrument sends no notes or bangs: voices come and go.
 - **Patterns in time are a `sequencer` child**, which quantizes launches on the audio thread. Its record names what plays first, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
 - **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved sender sends no off there. Rejected: a reset in the core, for every instrument to declare.

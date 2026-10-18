@@ -173,14 +173,15 @@ fn store() -> MutexGuard<'static, Store> {
     STORE.0.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// What the behaviour of `instance` of `tool` declares for its record and its children as
-/// `bun` was told them, which hash to `key`: the answer of `bun` when it has one, else the last
-/// declaration while `bun` works it out. Never waits.
+/// What the behaviour of `instance` of `tool` declares for its record and its children, which
+/// hash to `key`: the answer of `bun` when it has one, else the last declaration while `bun`
+/// works it out. Before it asks, `tell` tells `bun` those records. Never waits.
 pub(crate) fn declared(
     bun: &Bun,
     (assets, instance): (&Assets, &InstanceId),
     tool: &str,
     key: u64,
+    tell: impl FnOnce() -> bool,
 ) -> Declared {
     let mut store = store();
     let Store {
@@ -233,7 +234,7 @@ pub(crate) fn declared(
             tool,
             instance,
         };
-        if !bun.send(&request) {
+        if !tell() || !bun.send(&request) {
             return last("its behaviour did not run: the TypeScript host does not read".into());
         }
         *next_question += 1;

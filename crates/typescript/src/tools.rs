@@ -1063,11 +1063,12 @@ impl Sounds {
             .map_err(|error| BehaviourError::Other(error.to_string()))?;
         let state = state.to_string();
         let key = key(&(&self.info.name, &state, &children));
-        let told = children
-            .iter()
-            .map(|(id, tool, state)| (id, *tool, state.clone()));
-        bun.tell_owner((&id, &self.info.name, state), told);
-        let declared = behaviours::declared(bun, (context.assets(), &id), &self.info.name, key);
+        let tell = || {
+            let told = (children.iter()).map(|(id, tool, state)| (id, *tool, state.clone()));
+            bun.tell_owner((&id, &self.info.name, state), told)
+        };
+        let instance = (context.assets(), &id);
+        let declared = behaviours::declared(bun, instance, &self.info.name, key, tell);
         if let Some(problem) = declared.problem {
             context.problem(format!("{problem}. It plays what it declared last"));
         }

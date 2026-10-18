@@ -23,7 +23,8 @@ use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
 use crate::bun::{
-    Bun, Event, Heard, PageSize, Played, RecordEdit, Request, Runs, Skipped, Telling, Transport,
+    Bun, Clock, Event, Heard, PageSize, Played, RecordEdit, Request, Runs, Skipped, Telling,
+    Transport,
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
@@ -405,11 +406,10 @@ pub(crate) fn edit_record(
     });
 }
 
-/// An instance of `tool` as its code gets it, with its watches as they are now.
-fn played<'a>(project: &Project, id: &'a InstanceId, tool: &'a str) -> Played<'a> {
+/// An instance as its code gets it, with its watches as they are now.
+fn played<'a>(project: &Project, id: &'a InstanceId) -> Played<'a> {
     Played {
         instance: id,
-        tool,
         watches: watches_of(project, id),
     }
 }
@@ -446,6 +446,14 @@ fn engine_time(session: &Entity<Session>, cx: &mut App) -> f64 {
         let frames = session.engine().poll().map_or(0, |status| status.frames);
         frames as f64 / rate
     })
+}
+
+/// Where the sound and the piece are now.
+fn clock_of(session: &Entity<Session>, cx: &mut App) -> Clock {
+    Clock {
+        time: engine_time(session, cx),
+        transport: transport_of(session.read(cx), cx),
+    }
 }
 
 /// Where the project plays now, as the playhead of the window shows it.
@@ -570,25 +578,21 @@ impl Live {
             Surface::Page(None) => return,
         };
         self.tell(cx);
+        let clock = clock_of(&session, cx);
         let Some(entry) = self.cards.get_mut(&card) else {
             return;
         };
-        let Some(tool) = session.read(cx).project().tool_of(&entry.id) else {
-            return;
-        };
-        let transport = transport_of(session.read(cx), cx);
         let request = Request::Render {
             card,
             instance: &entry.id,
-            tool,
             watches: &entry.watches,
             page,
-            transport,
+            clock,
         };
         // A render that did not go is not waited for: the next change asks again.
         if self.host.send(&request) {
             entry.asked = true;
-            entry.transport = Some(transport);
+            entry.transport = Some(clock.transport);
         }
     }
 
@@ -636,8 +640,11 @@ impl Live {
         version: u64,
         handler: usize,
         at: Option<(f32, f32)>,
-        cx: &App,
+        cx: &mut App,
     ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
         if self.cards.contains_key(&card) {
             self.tell(cx);
             let request = Request::Event {
@@ -645,6 +652,7 @@ impl Live {
                 version,
                 handler,
                 at,
+                time: engine_time(&session, cx),
             };
             self.host.send(&request);
         }
@@ -881,17 +889,13 @@ impl Live {
             return;
         };
         let id = entry.id.clone();
-        let time = engine_time(&session, cx);
+        let clock = clock_of(&session, cx);
         self.tell(cx);
-        let project = session.read(cx).project();
-        let Some(tool) = project.tool_of(&id) else {
-            return;
-        };
         let request = Request::Key {
-            time,
-            instance: played(project, &id, tool),
+            instance: played(session.read(cx).project(), &id),
             key,
             down,
+            clock,
         };
         self.host.send(&request);
     }
@@ -944,7 +948,7 @@ impl Live {
         if heard.is_empty() || !hears {
             return;
         }
-        let time = engine_time(session, cx);
+        let clock = clock_of(session, cx);
         self.tell(cx);
         let session = session.read(cx);
         let rate = f64::from(session.project().clock().sample_rate());
@@ -954,12 +958,12 @@ impl Live {
                 at: *frame as f64 / rate,
             })
             .collect();
-        let instance = played(session.project(), id, tool);
+        let instance = played(session.project(), id);
         let events = &events;
         self.host.send(&Request::Notes {
-            time,
             instance,
             events,
+            clock,
         });
     }
 
@@ -988,7 +992,7 @@ impl Live {
         };
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
-        let time = engine_time(&session, cx);
+        let clock = clock_of(&session, cx);
         self.tell(cx);
         let tools = self.tools.borrow();
         let project = session.read(cx).project();
@@ -996,13 +1000,13 @@ impl Live {
         self.played.retain(|id, _| project.tool_of(id).is_some());
         let instances: Vec<Played> = (project.instances())
             .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.tick))
-            .map(|(id, tool)| played(project, id, tool))
+            .map(|(id, _)| played(project, id))
             .collect();
         if !instances.is_empty() {
             let request = Request::Frame {
                 dt,
-                time,
                 instances,
+                clock,
             };
             let sent = self.host.send(&request);
             if let Host::Running { ticking, .. } = &mut self.host {
@@ -1173,14 +1177,11 @@ impl Live {
             Some(Err(refused)) => Some(refused),
             Some(Ok((changes, touched))) => {
                 self.changed_records.extend(touched);
-                let mut refused = None;
-                session.update(cx, |session, cx| {
-                    session.edit(cx, |project| {
-                        let published = project.publish_run(instance, label, changes);
-                        published.inspect_err(|error| refused = Some(error.to_string()))
-                    })
+                // Not an edit of the composer's: its notice stays, and a refusal is the tool's.
+                let published = session.update(cx, |session, cx| {
+                    session.background(cx, |project| project.publish_run(instance, label, changes))
                 });
-                refused
+                published.err().map(|error| error.to_string())
             }
         };
         if let Some(refused) = refused {
@@ -1188,8 +1189,6 @@ impl Live {
                 format!("its update {label:?} was refused, and none of it applied: {refused}");
             self.tool_problem(instance, problem, cx);
         }
-        // After the edit: Bun's view of the records it touched follows what is told from here.
-        self.changed_records.insert(instance.clone());
         if let Host::Running { bun, .. } = &self.host {
             bun.heard_edit();
         }
@@ -1365,7 +1364,12 @@ fn changes_of(
     instance: &InstanceId,
     edits: Vec<RecordEdit>,
 ) -> Result<(Changes, Vec<InstanceId>), String> {
-    let child = |name: &str| instance.child(name).map_err(|error| error.to_string());
+    let child = |name: &str| match instance.child(name) {
+        // A path would reach a grandchild.
+        Ok(_) if name.contains('/') => Err(format!("the child {name:?} is named with a `/`")),
+        Ok(id) => Ok(id),
+        Err(error) => Err(error.to_string()),
+    };
     let mut changes = Changes::new();
     let mut touched = Vec::new();
     for edit in edits {

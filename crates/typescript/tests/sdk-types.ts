@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { input, list, notes, number, output, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
+import { h, input, list, notes, number, output, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -181,7 +181,9 @@ tool({
   doc: "Saves each take as a child, and edits its sequencer.",
   state: { count: number({ min: 0, max: 100 }) },
   behaviour: (): Declaration => ({ connections: [] }),
-  onNotes: async ({ update, children }, event) => {
+  card: ({ time, transport, children }) => h("div", {}, `${children.length} at ${time} s, ${transport.bpm} bpm`),
+  onNotes: async ({ update, children, state, transport }, event) => {
+    const beats: number = (event.at * transport.bpm) / 60;
     const taken: number = children.length;
     update("Save a take", ({ state, children }) => {
       state.count = taken + 1;
@@ -194,7 +196,11 @@ tool({
       children.push({ name: "take", state: {} });
       // @ts-expect-error: a field it does not have.
       state.counts = 1;
+      // @ts-expect-error: a child keeps its name, the id of its record.
+      children[0]!.name = "renamed";
     });
+    // @ts-expect-error: the record changes through `update`.
+    state.count = 1;
     await new Promise((done) => setTimeout(done, 10));
     update("Name the take", (part) => {
       part.children = part.children.filter((child) => child.name !== "take-0");

@@ -5,7 +5,7 @@
 
 import { writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Controls, Field, Fields, Graph, Handler as Heard, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, in order: the runtime leaves out those whose code hung or stopped Bun. */
@@ -26,20 +26,22 @@ type Size = { width: number; height: number };
 /** The room of a page in the check without a window: the default window's. */
 const CHECKED_PAGE: Size = { width: 1422, height: 824 };
 /** An instance whose code runs, with its watches as they are now. */
-type Played = { instance: string; tool: string; watches: Watches };
+type Played = { instance: string; watches: Watches };
 /** A record as the runtime tells it: its `state` as the file holds it. */
 type Told = { id: string; tool: string; state: unknown };
+/** Where the sound and the piece are now, which all code of a tool gets. */
+type Clock = { time: number; transport: Transport };
 
-type Render = { type: "render"; card: number; instance: string; tool: string; watches: Watches; page: Size | null; transport: Transport };
+type Render = { type: "render"; card: number; instance: string; watches: Watches; page: Size | null } & Clock;
 type Request =
   /** The records this Bun did not hold as they are, those that are gone, and how many of its edits the runtime heard. */
   | { type: "records"; records: Told[]; gone: string[]; edits: number }
   | Render
   /** A click, or a press or a drag on a canvas `at` across and down. */
-  | { type: "event"; card: number; version: number; handler: number; at: [number, number] | null }
-  | { type: "frame"; dt: number; time: number; instances: Played[] }
-  | { type: "key"; time: number; instance: Played; key: string; down: boolean }
-  | { type: "notes"; time: number; instance: Played; events: HeardEvent[] }
+  | { type: "event"; card: number; version: number; handler: number; at: [number, number] | null; time: number }
+  | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
+  | ({ type: "key"; instance: Played; key: string; down: boolean } & Clock)
+  | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
   | { type: "drop"; card: number }
   | { type: "behaviour"; question: number; tool: string; instance: string };
 
@@ -76,7 +78,7 @@ const KEPT_TREES = 8;
 /** The last tree sent of each card, so the same tree again is not sent. */
 const lastTrees = new Map<number, { text: string; version: number }>();
 /** What each card was last drawn from, so it draws again after a tick or a click. */
-const drawn = new Map<number, Render>();
+const drawn = new Map<number, Render & { tool: string }>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
 /** The tools whose tick or a click on whose card failed. */
@@ -425,7 +427,7 @@ function wired(event: NoteEvent): NoteEvent {
 
 // ---------------------------------------------------------------------------------------------
 // The records: what the runtime told, and on top the edits this Bun sent that it has not heard
-// yet. Every record is frozen, so code changes one only through `update`.
+// yet. What code gets is frozen, so it changes a record only through `update`.
 
 type Entry = { tool: string; state: unknown };
 /** One record an edit changes, by its id. The runtime gets the child by name. */
@@ -435,8 +437,8 @@ type Change =
   | { type: "delete"; id: string };
 
 const told = new Map<string, Entry>();
-/** The names of the children of each instance told, in name order, and their list, made when first read. */
-const kids = new Map<string, { names: string[]; children?: OwnedChild[] }>();
+/** The names of the children of each instance told. */
+const kids = new Map<string, Set<string>>();
 /** The edits sent that the runtime has not said it heard, oldest first, by their number. */
 let unheard: Array<{ number: number; changes: Change[] }> = [];
 let edits = 0;
@@ -458,28 +460,23 @@ function parentOf(id: string): [string, string] | undefined {
 
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
   for (const { id, tool, state } of records) {
-    told.set(id, frozen({ tool, state }));
+    told.set(id, { tool, state });
     const [parent, name] = parentOf(id) ?? [];
     if (parent !== undefined && name !== undefined) {
-      const known = kids.get(parent) ?? { names: [] };
-      if (!known.names.includes(name)) {
-        known.names = [...known.names, name].sort();
-      }
-      kids.set(parent, { names: known.names });
+      kids.set(parent, (kids.get(parent) ?? new Set()).add(name));
     }
   }
   for (const id of gone) {
     told.delete(id);
     const [parent, name] = parentOf(id) ?? [];
-    const known = parent === undefined ? undefined : kids.get(parent);
-    if (parent !== undefined && known) {
-      kids.set(parent, { names: known.names.filter((each) => each !== name) });
+    if (parent !== undefined && name !== undefined) {
+      kids.get(parent)?.delete(name);
     }
   }
   unheard = unheard.filter(({ number }) => number > heard);
 }
 
-/** The record of `id` as its code knows it: as told, or with the edits not heard on top when `latest`. */
+/** The record of `id` as its code knows it: as told, and with the edits not heard on top when `latest`. */
 function recordOf(id: string, latest = true): Entry | undefined {
   let entry = told.get(id);
   for (const { changes } of latest ? unheard : []) {
@@ -490,7 +487,7 @@ function recordOf(id: string, latest = true): Entry | undefined {
       if (change.type === "fields") {
         const state: Record<string, unknown> = { ...(entry?.state as object) };
         change.removed.forEach((name) => delete state[name]);
-        entry = entry && frozen({ tool: entry.tool, state: Object.assign(state, change.set) });
+        entry = entry && { tool: entry.tool, state: Object.assign(state, change.set) };
       } else {
         entry = change.type === "record" ? { tool: change.tool, state: change.state } : undefined;
       }
@@ -499,17 +496,10 @@ function recordOf(id: string, latest = true): Entry | undefined {
   return entry;
 }
 
-/** The children of `id`, as a behaviour gets them. */
+/** The children of `id` in name order, as a behaviour gets them. */
 function childrenOf(id: string, latest = true): OwnedChild[] {
-  const known = kids.get(id);
-  if (!latest || unheard.length === 0) {
-    if (known && !known.children) {
-      known.children = frozen(known.names.map((name) => ({ name, ...told.get(`${id}/${name}`)! })));
-    }
-    return known?.children ?? [];
-  }
-  const names = new Set(known?.names);
-  for (const { changes } of unheard) {
+  const names = new Set(kids.get(id));
+  for (const { changes } of latest ? unheard : []) {
     for (const change of changes) {
       const [parent, name] = parentOf(change.id) ?? [];
       if (parent === id && name !== undefined && change.type !== "fields") {
@@ -518,42 +508,49 @@ function childrenOf(id: string, latest = true): OwnedChild[] {
     }
   }
   return frozen([...names].sort().flatMap((name) => {
-    const entry = recordOf(`${id}/${name}`);
+    const entry = recordOf(`${id}/${name}`, latest);
     return entry ? [{ name, ...entry }] : [];
   }));
 }
 
 /** The `state` of a record as the code of its tool gets it: every field, at its default where left out. */
-const filledStates = new WeakMap<Entry, State>();
 function filledState(spec: Spec, entry: Entry): State {
-  let state = filledStates.get(entry);
-  if (!state) {
-    state = frozen(filledObject(spec.state, entry.state));
-    filledStates.set(entry, state);
-  }
-  return state;
+  return frozen(filledObject(spec.state, entry.state));
 }
 
-/** Whether the child a change got is a copy it never read the state of. */
+/** Whether a child a change got is a copy whose state it never read. */
 const untouched = new WeakMap<object, () => boolean>();
 
-/** A copy of a child for a change to edit, whose state is copied when it is first read. */
+/**
+ * A copy of a child for a change to edit, whose state is copied when it is first read. Its name
+ * stays: it is the id of the record, which never changes.
+ */
 function draft(child: OwnedChild): OwnedChild {
   let state: unknown;
   let copied = false;
-  const copy = { name: child.name, tool: child.tool } as OwnedChild;
-  Object.defineProperty(copy, "state", {
-    enumerable: true,
-    get() {
-      if (!copied) {
-        state = structuredClone(child.state);
-        copied = true;
-      }
-      return state;
+  const copy = {} as OwnedChild;
+  Object.defineProperties(copy, {
+    name: {
+      enumerable: true,
+      get: () => child.name,
+      set() {
+        throw new TypeError(`the child ${child.name} keeps its name, the id of its record: keep a title in a field`);
+      },
     },
-    set(value) {
-      state = value;
-      copied = true;
+    tool: { enumerable: true, writable: true, value: child.tool },
+    state: {
+      enumerable: true,
+      get() {
+        if (!copied) {
+          state = structuredClone(child.state);
+          copied = true;
+        }
+        return state;
+      },
+      set(value) {
+        state = value;
+        copied = true;
+      },
     },
   });
   untouched.set(copy, () => !copied);
@@ -580,7 +577,7 @@ function fieldsChanged(before: unknown, after: unknown, what: string) {
     }
   }
   removed.push(...Object.keys(was).filter((name) => !(name in after)));
-  return Object.keys(set).length > 0 || removed.length > 0 ? { set: frozen(structuredClone(set)), removed } : null;
+  return Object.keys(set).length > 0 || removed.length > 0 ? { set: structuredClone(set), removed } : null;
 }
 
 /** What a change made of `part`, against the record of `instance` and its `children` before. */
@@ -607,7 +604,7 @@ function changesOf(instance: string, before: State, children: OwnedChild[], part
     const id = `${instance}/${name}`;
     const was = old.get(name);
     if (!was || was.tool !== tool) {
-      changes.push({ type: "record", id, tool, state: frozen(structuredClone(child.state ?? {})) });
+      changes.push({ type: "record", id, tool, state: structuredClone(child.state ?? {}) });
     } else if (!untouched.get(child)?.()) {
       const fields = fieldsChanged(was.state, child.state, `the state of ${name}`);
       if (fields) {
@@ -629,6 +626,9 @@ function changesOf(instance: string, before: State, children: OwnedChild[], part
  */
 function updater(instance: string) {
   return (label: string, change: (part: Part<State>) => void) => {
+    if (typeof label !== "string") {
+      throw new TypeError(`the label of an update is ${JSON.stringify(label)}: give text, such as "Save the take"`);
+    }
     const own = recordOf(instance);
     const spec = sdk.host.tools.get(own?.tool ?? "");
     if (!own || !spec) {
@@ -642,7 +642,7 @@ function updater(instance: string) {
     if (changes.length === 0) {
       return;
     }
-    const wired = changes.map(({ id, ...change }) => (id === instance ? change : { ...change, child: parentOf(id)![1] }));
+    const wired = changes.map(({ id, ...change }) => (id === instance ? change : { ...change, child: id.slice(instance.length + 1) }));
     // Before it counts: a value JSON cannot hold, such as a cycle, throws here.
     const line = JSON.stringify({ type: "edit", instance, label, changes: wired }) + "\n";
     edits += 1;
@@ -651,15 +651,31 @@ function updater(instance: string) {
   };
 }
 
+/** What all code of an instance gets: a card, a page, `tick`, `onKey` and `onNotes`. */
+function contextOf(instance: string, spec: Spec, record: Entry, watches: Watches, { time, transport }: Clock) {
+  return {
+    state: filledState(spec, record),
+    children: childrenOf(instance),
+    watches,
+    memory: memoryOf(instance, spec),
+    time,
+    transport,
+    update: updater(instance),
+    ...performer(instance),
+  };
+}
+
 /** Draws a card and sends its tree, or why there is none: the window waits for one or the other. */
 function render(request: Render) {
-  const { card, instance, tool, watches, page, transport } = request;
+  const { card, instance, watches, page } = request;
+  now = request.time;
   const record = recordOf(instance);
   if (!record) {
     say({ type: "tree", card, tree: { Err: "drawn without a record" } });
     return;
   }
-  drawn.set(card, request);
+  const { tool } = record;
+  drawn.set(card, { ...request, tool });
   let same = false;
   const tree = made(() => {
     // Such as a tool whose file this Bun runs without.
@@ -667,14 +683,8 @@ function render(request: Render) {
     const kept: Handler[] = [];
     runs(tool, page ? "page" : "card");
     const node = drawerOf(spec, page !== null)({
-      state: filledState(spec, record),
-      children: childrenOf(instance),
-      watches,
+      ...contextOf(instance, spec, record, watches, request),
       ...(page && { size: page }),
-      transport,
-      memory: memoryOf(instance, spec),
-      update: updater(instance),
-      ...performer(instance),
     });
     const drawnTree = serialize(node, kept);
     const text = JSON.stringify(drawnTree);
@@ -737,58 +747,51 @@ function defaultOf(field: Field): unknown {
 
 /** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec, page: boolean): Sent {
-  const memory = spec.memory ? spec.memory() : {};
-  const state = filledObject(spec.state, {});
-  const quiet = { set() {}, fire() {}, play() {}, send() {}, update() {} };
+  const context = {
+    state: frozen(filledObject(spec.state, {})),
+    children: [],
+    watches: {},
+    memory: spec.memory ? spec.memory() : {},
+    time: 0,
+    transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 },
+    set() {},
+    fire() {},
+    play() {},
+    send() {},
+    update() {},
+  };
   try {
-    const ticked = spec.tick?.({ state, children: [], watches: {}, memory, dt: 1 / 30, time: 0, ...quiet });
-    caught(ticked, () => {});
+    spec.tick?.({ ...context, dt: 1 / 30 });
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
-  const node = drawerOf(spec, page)({
-    state,
-    children: [],
-    watches: {},
-    ...(page && { size: CHECKED_PAGE }),
-    transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 },
-    memory,
-    ...quiet,
-  });
+  const node = drawerOf(spec, page)({ ...context, ...(page && { size: CHECKED_PAGE }) });
   return serialize(node, []);
 }
 
 /**
- * Runs the code of each instance that `call` picks, with what a handler gets, then its cards
+ * Runs the code of each instance that `call` picks, with what all its code gets, then its cards
  * draw again. `what` names that code in a problem.
  */
-function run(
-  time: number,
-  instances: Played[],
-  what: string,
-  call: (spec: Spec, tool: Heard<State, Controls, unknown>) => unknown,
-) {
-  now = time;
-  for (const { instance, tool, watches } of instances) {
-    const spec = sdk.host.tools.get(tool);
+function run(clock: Clock, instances: Played[], what: string, call: (spec: Spec, tool: Context<State, Controls, unknown>) => unknown) {
+  now = clock.time;
+  for (const { instance, watches } of instances) {
     const record = recordOf(instance);
+    const spec = sdk.host.tools.get(record?.tool ?? "");
     if (!spec || !record) {
       continue;
     }
-    const failed = (error: unknown) => fail(tool, `its ${what} failed: ${error}`);
+    const failed = (error: unknown) => fail(spec.name, `its ${what} failed: ${error}`);
     try {
-      runs(tool, what);
-      const state = filledState(spec, record);
-      const children = childrenOf(instance);
-      const memory = memoryOf(instance, spec);
-      caught(call(spec, { state, children, watches, memory, time, update: updater(instance), ...performer(instance) }), failed);
+      runs(spec.name, what);
+      caught(call(spec, contextOf(instance, spec, record, watches, clock)), failed);
     } catch (error) {
       failed(error);
       continue;
     }
     for (const last of drawn.values()) {
       if (last.instance === instance) {
-        render({ ...last, watches });
+        render({ ...last, ...clock, watches });
       }
     }
   }
@@ -810,6 +813,7 @@ function handle(request: Request) {
       render(request);
       break;
     case "event": {
+      now = request.time;
       const last = drawn.get(request.card);
       const failed = (error: unknown) => last && fail(last.tool, `a click on its card failed: ${error}`);
       try {
@@ -827,16 +831,16 @@ function handle(request: Request) {
       break;
     }
     case "frame":
-      run(request.time, request.instances, "tick", (spec, tool) => spec.tick?.({ ...tool, dt: request.dt }));
+      run(request, request.instances, "tick", (spec, tool) => spec.tick?.({ ...tool, dt: request.dt }));
       say({ type: "framed" });
       break;
     case "key": {
       const key = { key: request.key, down: request.down };
-      run(request.time, [request.instance], "onKey", (spec, tool) => spec.onKey?.(tool, key));
+      run(request, [request.instance], "onKey", (spec, tool) => spec.onKey?.(tool, key));
       break;
     }
     case "notes":
-      run(request.time, [request.instance], "onNotes", (spec, tool) =>
+      run(request, [request.instance], "onNotes", (spec, tool) =>
         Promise.all(request.events.map((event) => spec.onNotes?.(tool, event))),
       );
       break;
@@ -850,6 +854,7 @@ function handle(request: Request) {
       break;
   }
 }
+
 
 await load();
 
