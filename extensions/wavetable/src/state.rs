@@ -376,8 +376,7 @@ impl Routing {
     pub const ALL: [Self; 3] = [Self::Serial, Self::Parallel, Self::Split];
 }
 
-/// An envelope: attack, decay to the sustain level, and release, each on a curve. The amp
-/// envelope shapes the level of a voice. The other two are modulation sources from 0 to 1.
+/// An envelope: attack, decay to the sustain level, and release, each on a curve.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 #[schemars(transform = ranges(&Adsr::PARAMETERS))]
@@ -630,7 +629,9 @@ pub struct WavetableState {
     pub routing: Routing,
     /// The level of each voice.
     pub amp_env: Adsr,
+    /// A modulation source from 0 to 1.
     pub env_2: Adsr,
+    /// A modulation source from 0 to 1.
     pub env_3: Adsr,
     pub lfo_1: LfoSettings,
     pub lfo_2: LfoSettings,

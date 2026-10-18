@@ -192,10 +192,7 @@ impl Destination {
         }
     }
 
-    /// What a route at amount 1 adds with its source at 1, in the unit of the destination:
-    /// the whole range of a position, an effect amount, a gain, a resonance, the unison amount
-    /// and the pan from the middle to one side; 24 semitones of pitch; 8 octaves of cutoff; 4
-    /// octaves of LFO rate. For [`Self::AmpLevel`] see there.
+    /// What a route at amount 1 adds with its source at 1, in the unit of the destination.
     pub fn scale(self) -> f32 {
         match self {
             Self::Osc1Pitch | Self::Osc2Pitch => 24.0,
@@ -213,7 +210,7 @@ impl Destination {
 pub struct Route {
     pub source: Source,
     pub destination: Destination,
-    /// From -1 to 1. A negative amount works the other way round.
+    /// A negative amount works the other way round.
     pub amount: f32,
 }
 

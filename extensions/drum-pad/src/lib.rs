@@ -433,7 +433,7 @@ struct PadRecord {
     /// A WAV or AIFF file under `assets/audio/`, by its file name, instead of `sound`.
     #[serde(skip_serializing_if = "Option::is_none")]
     sample: Option<AudioAsset>,
-    /// The level of the pad, in dB.
+    /// The level of the pad.
     volume_db: Option<f32>,
     /// Semitones up or down. A sample plays faster or slower, as on a sampler; a synthesized
     /// sound is tuned and keeps its length.

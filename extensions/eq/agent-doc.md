@@ -23,7 +23,7 @@ It takes away the rumble under 100 Hz, makes the vocal a little less boxy at 400
 
 {{fields eq}}
 
-Write the whole list of `bands` every time: to change one band, copy all four from the file and change that one. A band you leave out is reset to its default, not kept. At its defaults the EQ leaves the sound exactly as it is.
+Write the whole list of `bands` every time: to change one band, copy all four from the file and change that one. At its defaults the EQ leaves the sound exactly as it is.
 
 A band:
 
