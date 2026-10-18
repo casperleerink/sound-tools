@@ -15,6 +15,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{AssetName, Assets, InstanceId};
 use sound_media::{Audio, Keep, Loader, MediaError, Read, Stamp};
@@ -28,7 +29,7 @@ pub const INSTRUMENTS_FOLDER: &str = "instruments";
 /// An SFZ file of the project, as a record names it: its path under `assets/instruments/`,
 /// such as `"cello/cello-sustain.sfz"`. Any file names, since packs come with their own, but
 /// never a path that leaves that folder.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "String", into = "String")]
 pub struct SfzPath(String);
 

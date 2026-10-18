@@ -1,5 +1,5 @@
-// Types an agent's tool must get right. A test of the crate checks this file with `bun check`
-// next to the SDK: every `@ts-expect-error` line must be an error, and nothing else.
+// Types an agent's tool must get right. A test checks this file with `bun check` next to the
+// SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
 import { devices, h, input, knob, list, notes, number, output, prefixed, rise, text, tool, trigger, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
@@ -235,6 +235,84 @@ tool({
     devices.reverb(input, { freeze: fields.drive });
     // @ts-expect-error: the fields of the second reverb are named with their prefix.
     fields.far_freeze;
+    devices.filter(far, { type: "high_pass", cutoff_hz: fields.drive });
+    // @ts-expect-error: a choice of a device is one of its options.
+    devices.filter(far, { type: "hi_pass" });
+    // A band takes the defaults of its place for what it leaves out.
+    devices.eq(far, { bands: [{ gain_db: 3 }] });
     return far;
   },
+});
+
+const parts = { bass: "sequencer", fx: "filter", drop: "rain" } as const;
+
+tool({
+  name: "loops",
+  title: "Loops",
+  when: "Never",
+  doc: "Names its children, so their ports and records are typed.",
+  state: {},
+  children: parts,
+  behaviour: ({ children }): Declaration<typeof parts> => {
+    const bass = children.find((child) => child.name === "bass");
+    const length: number | undefined = bass?.state.patterns?.[0]?.length;
+    if (length === 0) return { connections: [] };
+    return {
+      connections: [
+        { from: { child: "drop", number: "level" }, to: { child: "fx", number: "cutoff_hz" } },
+        { from: { child: "drop", number: "level" }, to: { child: "bass", live: "launch" } },
+        { from: { child: "bass", notes: "notes" }, to: { child: "drop", notes: "notes" } },
+        { from: { child: "fx" }, to: { port: "audio" } },
+        // @ts-expect-error: the filter has no number `cutoff`.
+        { from: { child: "drop", number: "level" }, to: { child: "fx", number: "cutoff" } },
+        // @ts-expect-error: and no live control.
+        { from: { child: "drop", number: "level" }, to: { child: "fx", live: "launch" } },
+        // @ts-expect-error: a child it does not name.
+        { from: { child: "synth" }, to: { port: "audio" } },
+      ],
+    };
+  },
+  tick: ({ set, play, update }) => {
+    set({ child: "bass", live: "launch" }, 1);
+    // @ts-expect-error: the sequencer's live control is `launch`.
+    set({ child: "bass", live: "lunch" }, 1);
+    // @ts-expect-error: a child it does not name.
+    play(60, { child: "synth" });
+    update("Edit", ({ children }) => {
+      for (const child of children) {
+        if (child.name === "fx") child.state.type = "high_pass";
+        // @ts-expect-error: a choice of a child is one of its options.
+        if (child.name === "fx") child.state.type = "notches";
+        // @ts-expect-error: a field the record of a sequencer does not have.
+        if (child.name === "bass") child.state.pattern = [];
+      }
+      children.push({ name: "fx", tool: "filter", state: { cutoff_hz: 500 } });
+      // @ts-expect-error: the child `fx` is a filter.
+      children.push({ name: "fx", tool: "delay", state: {} });
+    });
+  },
+});
+
+const loose = { bass: "sequencer" };
+
+tool({
+  name: "loose",
+  title: "Loose",
+  when: "Never",
+  doc: "Names its children without `as const`.",
+  state: {},
+  // @ts-expect-error: TypeScript widens each tool name to `string`, which checks nothing.
+  children: loose,
+  behaviour: (): Declaration => ({ connections: [] }),
+});
+
+tool({
+  name: "inline",
+  title: "Inline",
+  when: "Never",
+  doc: "Names its children in place, with a return type that names none.",
+  state: {},
+  // @ts-expect-error: a plain `Declaration` widens the tool names too.
+  children: { bass: "sequencer" },
+  behaviour: (): Declaration => ({ connections: [] }),
 });

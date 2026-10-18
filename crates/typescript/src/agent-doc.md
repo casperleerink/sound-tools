@@ -115,7 +115,7 @@ tool({
 });
 ```
 
-- A number of a device takes a number, a knob or any signal, such as an LFO, which moves it once per 64 samples. The rest of its record is written as it is: `devices.filter(x, { type: "high_pass" })`.
+- A number of a device takes a number, a knob or any signal, such as an LFO, which moves it once per 64 samples. The rest of its record is written as it is: `devices.filter(x, { type: "high_pass" })`. `sdk.ts` types each with its range, unit and options, and a value the device refuses is a problem of the tool as it loads.
 - `devices.reverb.fields` are its numbers as knobs, with their ranges and defaults. Spread them into `state` and hand the fields on, as above: the card, automation and the record treat them as any knob. `prefixed("far_", devices.reverb.fields)` names those of a second one.
 - What a device plays is of the channel the sound runs on. A sound that returns `{ left, right }` reads `.left` and `.right`, and gives a device `{ left, right }`.
 - The engine waits for the latency of a device, so what goes round it stays in time with it.
@@ -210,7 +210,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
 
 ## Changing records
 
-`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest. Edit a field or a child's `state` (say its tool, such as `as SequencerState`), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
+`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest. Edit a field or a child's `state` (typed when the parent names its `children`, else `as SequencerState`), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
 
 ```ts
 update("Add a bass line", ({ children }) => {
@@ -298,7 +298,8 @@ tool({
 });
 ```
 
-- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through.
+- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through and blames the whole behaviour, not the wrong connection.
+- A parent whose children are fixed names them and their tools in `children`, as `loops` below does: a `const` with `as const`, and the return type `Declaration<typeof children>`. TypeScript then checks each connection, `set`, `fire`, `play`, `send` and child `state` against the child's tool, such as a number the filter does not have. A child of another tool, a missing one or one it does not name is a problem of the parent's record; `children: {}` allows none.
 - A port of a child is `audio` when left out. Leave out `child` for a port of the parent itself: from `{ port: "audio" }` comes what reaches its audio input, from `{ notes: "notes" }` what reaches its `notes`; to `{ port: "audio" }` goes what it plays, through its own `sound` as `input`; to `{ number }`, `{ bang }` or `{ notes }` an output of that name, which its own parent connects as any port of a child.
 - Put the parent at the top of a project that is one tool, or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound and notes and plays into its mixer.
 - The behaviour runs in Bun when the record or a child changes; its answer plays a moment later, the last one until then. `--render` and `--analyze` wait for it.
@@ -310,10 +311,12 @@ tool({
 - A `sequencer` child loops note patterns in time with the bars, also in a render, out of its output `notes` (`agent-docs/sequencer.md`). `set({ child: "bass", live: "launch" }, 1)` launches its second pattern at the next bar. A parent's card and page see the watches of each child as `<child>.<watch>`: a sequencer's `playing` and `queued` are a pattern's index, -1 for none, -2 for a stop that waits.
 - A missing child or port, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
-A clip launcher, with a sequencer `bass`, an instrument `synth` and an effect `fx` as its children:
+A clip launcher, with a sequencer `bass`, an instrument `synth` and a utility `fx` as its children:
 
 ```ts
 import { h, tool, type Declaration } from "./sdk";
+
+const children = { bass: "sequencer", synth: "instrument.synth", fx: "utility" } as const;
 
 tool({
   name: "loops",
@@ -321,7 +324,8 @@ tool({
   when: "You want bass patterns to launch in time with the bars",
   doc: "Plays the patterns of the sequencer `bass` on `synth` through `fx`; the page launches them.",
   state: {},
-  behaviour: (): Declaration => ({
+  children,
+  behaviour: (): Declaration<typeof children> => ({
     connections: [
       { from: { child: "bass", notes: "notes" }, to: { child: "synth", notes: "notes" } },
       { from: { child: "synth" }, to: { child: "fx" } },

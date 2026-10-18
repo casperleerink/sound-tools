@@ -38,6 +38,7 @@ mod take;
 mod timeline;
 mod voices;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{Place, State, Ticks};
 
@@ -100,7 +101,9 @@ pub enum NoteError {
 ///
 /// It loads from any JSON integer, so a value out of range gets the message of [`NoteError`]
 /// and not a message about integer sizes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(try_from = "i64", into = "u8")]
 pub struct Pitch(u8);
 
@@ -152,7 +155,9 @@ impl From<Pitch> for u8 {
 }
 
 /// How hard a note is played, 1 to 127. There is no velocity 0: MIDI uses it for note off.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(try_from = "i64", into = "u8")]
 pub struct Velocity(u8);
 
@@ -370,7 +375,9 @@ impl Controller {
 /// A note of no length would get its off before its on, because offs go first on a frame, and
 /// would sound until the next `AllOff`. A clip of no length could hold no note. So it cannot
 /// be built.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(try_from = "Ticks", into = "Ticks")]
 pub struct Length(Ticks);
 
@@ -409,9 +416,12 @@ impl From<Length> for Ticks {
 
 /// A saved note. `start` counts from the start of whatever holds the note, for example a clip.
 /// Ordered by start, then length, pitch and velocity, so an interface can keep notes in a set.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct Note {
+    /// In ticks, 960 to a quarter note.
     pub start: Ticks,
     pub length: Length,
     pub pitch: Pitch,

@@ -37,6 +37,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -53,7 +54,7 @@ pub const EXTENSION: &str = "reverb";
 /// sound in the delay lines is runtime state and is not saved.
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default reverb.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct ReverbState {
     /// The time from the sound to the first of its reflections.
@@ -207,7 +208,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ReverbState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Reverb::AUTOMATION);
+        .in_code(Reverb::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

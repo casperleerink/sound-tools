@@ -16,6 +16,7 @@
 mod behaviours;
 mod bun;
 mod card;
+mod records;
 mod samples;
 mod sequencer;
 mod tools;
@@ -27,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use sound_core::{AgentDoc, CodeDevice, JsonTool, Problem, Project, Registry};
+use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry, ToolSchema};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{take_declared, wait_for_behaviours};
@@ -158,6 +159,8 @@ pub struct Extensions {
     bun: Option<Arc<Bun>>,
     /// The opening of the project every Bun of it runs for.
     opening: u64,
+    /// The built-in tools, whose devices a sound plays.
+    schemas: Arc<[ToolSchema]>,
     /// The tools of the first load that the registry took.
     tools: Vec<ToolInfo>,
     skipped: Skipped,
@@ -169,6 +172,7 @@ pub struct Extensions {
 pub struct FirstLoad {
     folder: PathBuf,
     opening: u64,
+    schemas: Arc<[ToolSchema]>,
     launched: Result<Option<Launched>, String>,
 }
 
@@ -176,20 +180,22 @@ impl Extensions {
     /// Loads the tools of the project in `folder`, for [`FirstLoad::register`]. `None` when it
     /// has no `extensions/` folder, which is every project that has not asked for its own
     /// tools. Bun starts only when the folder has a tool file; the SDK is written either way,
-    /// for the agent that writes the first one, with the `devices` a sound plays through.
-    /// Waits for Bun, up to a timeout for each file: not on the thread that draws.
-    pub fn load(folder: &Path, devices: &[CodeDevice]) -> Option<FirstLoad> {
+    /// for the agent that writes the first one, with the records of the built-in tools of
+    /// `schemas`. Waits for Bun, up to a timeout for each file: not on the thread that draws.
+    pub fn load(folder: &Path, schemas: &[ToolSchema]) -> Option<FirstLoad> {
         let folder = folder.join(FOLDER);
         if !folder.is_dir() {
             return None;
         }
         let opening = bun::new_opening();
-        let launched = write_sdk(&folder, devices)
+        let schemas: Arc<[ToolSchema]> = schemas.into();
+        let launched = write_sdk(&folder, &schemas)
             .map_err(|error| error.to_string())
-            .and_then(|()| launch((&folder, opening), Skipped::new()));
+            .and_then(|()| launch((&folder, opening, &schemas), Skipped::new()));
         Some(FirstLoad {
             folder,
             opening,
+            schemas,
             launched,
         })
     }
@@ -207,6 +213,7 @@ impl FirstLoad {
         let Self {
             folder,
             opening,
+            schemas,
             launched,
         } = self;
         let none = |problems| (None, Vec::new(), Skipped::new(), problems);
@@ -235,6 +242,7 @@ impl FirstLoad {
             folder,
             bun,
             opening,
+            schemas,
             tools,
             skipped,
             problems,
@@ -244,8 +252,13 @@ impl FirstLoad {
 
 /// The tools of `loaded` by `bun` with their sounds compiled, and what is wrong: the errors of
 /// the files, the files Bun runs without, and every tool whose fields, sounds, card or page
-/// fail. Takes as long as compiling every sound: not on the thread that draws.
-fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, Vec<Problem>) {
+/// fail, such as a sound that plays a device of `schemas` with a setting it refuses. Takes as
+/// long as compiling every sound: not on the thread that draws.
+fn checked(
+    loaded: Loaded,
+    skipped: &Skipped,
+    (bun, schemas): (&Arc<Bun>, &[ToolSchema]),
+) -> (Vec<Sounds>, Vec<Problem>) {
     let file_problem = |file: &str, message: &str| Problem {
         path: format!("{FOLDER}/{file}"),
         message: message.to_string(),
@@ -277,7 +290,7 @@ fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, V
             card,
             page,
         } = tool;
-        let sounds = Sounds::new(&info, sounds, (bun, &infos));
+        let sounds = Sounds::new(&info, sounds, (bun, &infos), schemas);
         // One problem a file: a list keeps one.
         let mut sounds_failed: Vec<&String> = sounds.failures().collect();
         sounds_failed.sort();
@@ -367,11 +380,11 @@ struct Launched {
 }
 
 /// Starts Bun on the tools of `extensions` for the project's `opening` without the `skipped`
-/// files, and waits for its load. A file whose code hangs or stops Bun while it loads is
+/// files, and waits for its load, with the built-in tools of `schemas`. A file whose code hangs or stops Bun while it loads is
 /// skipped too, and Bun starts again without it. `None` when the folder has no tool file.
 /// Blocks for as long as the load takes.
 fn launch(
-    (extensions, opening): (&Path, u64),
+    (extensions, opening, schemas): (&Path, u64, &[ToolSchema]),
     mut skipped: Skipped,
 ) -> Result<Option<Launched>, String> {
     let files = tool_files(extensions);
@@ -394,7 +407,7 @@ fn launch(
                 // The tools that own children ask it what they declare while their records
                 // play, also outside the window.
                 let bun = Arc::new(bun);
-                let (sounds, problems) = checked(loaded, &skipped, &bun);
+                let (sounds, problems) = checked(loaded, &skipped, (&bun, schemas));
                 return Ok(Some(Launched {
                     bun,
                     sounds,
@@ -437,11 +450,11 @@ fn folder_problem(message: String) -> Problem {
 }
 
 /// Writes what the runtime owns in `extensions/`, only where the text changed: the SDK with
-/// the `devices` a sound plays through.
-fn write_sdk(extensions: &Path, devices: &[CodeDevice]) -> std::io::Result<()> {
+/// the records of the built-in tools of `schemas`.
+fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
     // Bun's own types, once installed, declare `Bun` as well.
     let bun_types = extensions.join("node_modules/bun-types").is_dir();
-    let sdk = format!("{SDK}{}", sdk_devices(devices));
+    let sdk = format!("{SDK}{}", records::sdk_records(schemas));
     for (name, text) in OWNED.into_iter().zip([&*sdk, TSCONFIG, BUN_TYPES]) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
@@ -457,54 +470,6 @@ fn write_sdk(extensions: &Path, devices: &[CodeDevice]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// `devices` as the SDK offers them: a knob for each number a signal moves, in its units, and
-/// the rest of its record at its defaults, whose form TypeScript takes.
-fn sdk_devices(devices: &[CodeDevice]) -> String {
-    let mut text = String::from(
-        "
-// ---------------------------------------------------------------------------------------------
-// Built-in devices
-
-/**
- * The built-in devices a sound plays through: `devices.reverb(input, { mix: 0.3 })`. Each of
- * `fields` takes a signal or a number; the rest of its record is written as it is. Not in an
- * instrument, and not inside a `feedback`.
- */
-export const devices = {
-",
-    );
-    let quoted = |text: &str| serde_json::to_string(text).unwrap_or_default();
-    for CodeDevice {
-        tool,
-        numbers,
-        defaults,
-    } in devices
-    {
-        text.push_str(&format!(
-            "  {}: device({}, {{\n",
-            quoted(tool),
-            quoted(tool)
-        ));
-        for (number, default) in numbers {
-            let field = &*number.field;
-            let unit = ["hz", "ms", "db"]
-                .into_iter()
-                .find(|unit| field.ends_with(&format!("_{unit}")))
-                .map_or(String::new(), |unit| format!(", unit: \"{unit}\""));
-            let (min, max) = (number.range.min, number.range.max);
-            text.push_str(&format!(
-                "    {field}: knob({{ min: {min}, max: {max}, default: {default}{unit} }}),\n"
-            ));
-        }
-        let mut rest = defaults.as_object().cloned().unwrap_or_default();
-        rest.retain(|field, _| !numbers.iter().any(|(number, _)| *number.field == **field));
-        let rest = serde_json::to_string(&rest).unwrap_or_default();
-        text.push_str(&format!("  }}, {rest}),\n"));
-    }
-    text.push_str("};\n");
-    text
-}
-
 /// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
 pub fn has_bun() -> bool {
     bun_program().is_some()
@@ -512,7 +477,7 @@ pub fn has_bun() -> bool {
 
 /// The Bun the app ships, else Bun on the `PATH`, else where its installer puts it. An app
 /// opened from the Finder has a short `PATH`.
-fn bun_program() -> Option<PathBuf> {
+pub fn bun_program() -> Option<PathBuf> {
     let bun = format!("bun{}", std::env::consts::EXE_SUFFIX);
     let on_path = std::env::var_os("PATH")
         .into_iter()
@@ -596,39 +561,5 @@ mod tests {
         assert!(project.path().join(FOLDER).join("sdk.ts").is_file());
         // The runtime's own files are no tool.
         assert!(tool_files(&project.path().join(FOLDER)).is_empty());
-    }
-
-    #[test]
-    fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
-        let Some(bun) = bun_program() else {
-            eprintln!("skipped: Bun is not installed");
-            return;
-        };
-        let project = tempfile::tempdir().unwrap();
-        let extensions = project.path().join(FOLDER);
-        std::fs::create_dir(&extensions).unwrap();
-        // A device as the reverb is one, with a number a signal moves and a toggle.
-        let reverb = CodeDevice {
-            tool: "reverb",
-            numbers: vec![(
-                sound_core::ParameterInfo {
-                    field: "mix".into(),
-                    range: sound_core::ValueRange::linear(0.0, 1.0),
-                },
-                0.3,
-            )],
-            defaults: serde_json::json!({ "mix": 0.3, "freeze": false }),
-        };
-        write_sdk(&extensions, &[reverb]).unwrap();
-        let types = include_str!("../tests/sdk-types.ts");
-        std::fs::write(extensions.join("types.ts"), types).unwrap();
-        // As the doc for agents says to check a tool.
-        let checked = sound_core::process::background_command(bun)
-            .args(["check", "-p", FOLDER])
-            .current_dir(project.path())
-            .output()
-            .unwrap();
-        let said = String::from_utf8_lossy(&checked.stdout);
-        assert!(checked.status.success(), "{said}");
     }
 }

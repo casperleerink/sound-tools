@@ -19,6 +19,7 @@ mod processor;
 mod sounds;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::de::Error as _;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -58,7 +59,7 @@ pub fn note_of(pad: usize) -> u8 {
 }
 
 /// A synthesized sound of the default kit.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Sound {
     Kick,
@@ -142,21 +143,15 @@ pub enum Source {
     Sample(AudioAsset),
 }
 
-/// One pad. In the record a field left out takes the default of that pad.
+/// One pad, with the fields of a pad of the record. In the record a field left out takes the
+/// default of that pad.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pad {
     pub source: Source,
-    /// The level of the pad, in dB.
     pub volume_db: f32,
-    /// Semitones up or down. A sample plays faster or slower, as on a sampler; a synthesized
-    /// sound is tuned and keeps its length.
     pub pitch_semitones: f32,
-    /// From the hit to silence. A synthesized sound is made for this length and falls to
-    /// -60 dB in it; a sample fades out over it and is silent at its end.
     pub decay_ms: f32,
-    /// -1 is left, 1 is right, with the pan law of a track.
     pub pan: f32,
-    /// In the choke group: a hit of a pad of the group cuts every other pad of it.
     pub choke: bool,
 }
 
@@ -410,11 +405,12 @@ pub const PAN: usize = 3;
 ///
 /// A pad or a field that a record leaves out takes the default of that pad, so `"state": {}`
 /// is the default kit.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct DrumPadState {
     /// Keyed by note, `"36"` to `"51"`, in the record.
     #[serde(serialize_with = "pads_to_map", deserialize_with = "pads_from_map")]
+    #[schemars(with = "std::collections::BTreeMap<String, PadRecord>")]
     pub pads: [Pad; PADS],
 }
 
@@ -427,17 +423,27 @@ impl Default for DrumPadState {
 }
 
 /// A pad as a record writes it: any field may be left out, and it plays a sound or a sample.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "Pad")]
 struct PadRecord {
+    /// A sound of the default kit.
     #[serde(skip_serializing_if = "Option::is_none")]
     sound: Option<Sound>,
+    /// A file under `assets/audio/`, instead of `sound`.
     #[serde(skip_serializing_if = "Option::is_none")]
     sample: Option<AudioAsset>,
+    /// The level of the pad, in dB.
     volume_db: Option<f32>,
+    /// Semitones up or down. A sample plays faster or slower, as on a sampler; a synthesized
+    /// sound is tuned and keeps its length.
     pitch_semitones: Option<f32>,
+    /// From the hit to silence. A synthesized sound is made for this length and falls to
+    /// -60 dB in it; a sample fades out over it and is silent at its end.
     decay_ms: Option<f32>,
+    /// -1 is left, 1 is right, with the pan law of a track.
     pan: Option<f32>,
+    /// In the choke group: a hit of a pad of the group cuts every other pad of it.
     choke: Option<bool>,
 }
 
@@ -539,7 +545,8 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<DrumPadState>(EXTENSION)?
         .behaviour(apply)
-        .rebinds_on_assets(sound_media::AUDIO_FOLDER);
+        .rebinds_on_assets(sound_media::AUDIO_FOLDER)
+        .schema(DrumPad::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

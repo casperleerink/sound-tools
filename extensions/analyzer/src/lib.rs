@@ -24,6 +24,7 @@ mod analysis;
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -37,7 +38,7 @@ pub use processor::Analyzer;
 pub const EXTENSION: &str = "analyzer";
 
 /// The saved state: nothing. What the card shows is runtime state.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AnalyzerState {}
 
@@ -54,7 +55,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the analyzer tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<AnalyzerState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<AnalyzerState>(EXTENSION)?
+        .behaviour(apply)
+        .schema(&[]);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

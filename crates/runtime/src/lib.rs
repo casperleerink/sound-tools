@@ -21,8 +21,8 @@ use plugin_host::{
 };
 use sound_agent::{AgentSettings, Sidebar};
 use sound_core::{
-    AgentDoc, CodeDevice, Engine, EngineConfig, EngineControl, InstanceId, Project, ProjectError,
-    Registry, SavedDestination, SavedSource, Ticks,
+    AgentDoc, Engine, EngineConfig, EngineControl, InstanceId, Project, ProjectError, Registry,
+    SavedDestination, SavedSource, Ticks, ToolSchema,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
@@ -176,11 +176,11 @@ fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Res
     Ok(())
 }
 
-/// The built-in devices the tools of a project play inside their sound, for their SDK.
-pub fn code_devices() -> Result<Vec<CodeDevice>> {
+/// The built-in tools as the tools of a project see them, for their SDK.
+pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
     let mut registry = Registry::new();
     register_extensions(&mut registry, None)?;
-    Ok(registry.code_devices())
+    Ok(registry.tool_schemas())
 }
 
 /// Every bundled extension with a view registers it here, and what a rack calls its devices
@@ -381,7 +381,7 @@ pub fn open_with_extensions(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
-    let extensions = Extensions::load(folder, &code_devices()?);
+    let extensions = Extensions::load(folder, &tool_schemas()?);
     open_with_loaded(folder, control, plugins, extensions)
 }
 
@@ -430,7 +430,7 @@ pub fn open_for_inspect(folder: &Path) -> Result<Project> {
 /// renders it offline. The plugin host is given, see [`open_or_create_with`].
 pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, Engine)> {
     let (control, engine) = Engine::new(OFFLINE);
-    let extensions = Extensions::load(folder, &code_devices()?);
+    let extensions = Extensions::load(folder, &tool_schemas()?);
     let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open_read_only(folder, registry, control)?;
     if let Some(extensions) = &extensions {

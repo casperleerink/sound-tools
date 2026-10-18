@@ -6,13 +6,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use schemars::JsonSchema;
+
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
 use super::editing::Derived;
 use super::instance::{Instance, InstanceId, JsonState, Record, State, is_valid_name};
-use crate::automation::AutomationInput;
 use crate::clock::Ticks;
-use crate::parameter::ParameterInfo;
+use crate::parameter::{Parameter, ParameterInfo};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RegistryError {
@@ -52,15 +53,38 @@ pub struct JsonTool {
     pub owns_children: bool,
 }
 
-/// A tool that the code of a tool of the project plays as a device, inside its sound. See
-/// [`ToolRegistration::in_code`].
+/// A built-in tool as the code of a tool of the project sees it, see
+/// [`ToolRegistration::schema`].
 #[derive(Clone, Debug)]
-pub struct CodeDevice {
+pub struct ToolSchema {
     pub tool: &'static str,
-    /// The numbers a signal moves, each with its default, by their names in the record.
+    /// The JSON Schema of its `state`, made from its type: a doc comment is a description.
+    pub schema: serde_json::Value,
+    /// The numbers a cable or a signal moves, each with its default, by their paths in the
+    /// record.
     pub numbers: Vec<(ParameterInfo, f32)>,
-    /// Its record at the defaults, which shows the form of every field.
-    pub defaults: serde_json::Value,
+    /// The other numbers a parent plays it from, such as `launch` of the sequencer.
+    pub live: &'static [&'static str],
+    /// A sound may play it as a device, see [`ToolRegistration::in_code`].
+    pub in_code: bool,
+    /// Checks a `state` as a record of the tool is checked. The message names the field.
+    pub check: fn(serde_json::Value) -> Result<(), String>,
+}
+
+impl ToolSchema {
+    /// The schema of the records of `S`, whose `numbers` a cable or a signal moves.
+    pub fn of<S: State + JsonSchema>(numbers: &[&Parameter<S>]) -> Self {
+        Self {
+            tool: S::TOOL,
+            schema: schemars::schema_for!(S).to_value(),
+            numbers: (numbers.iter())
+                .map(|parameter| (parameter.info(), parameter.default))
+                .collect(),
+            live: &[],
+            in_code: false,
+            check: |state| decode::<S>(state).map(drop),
+        }
+    }
 }
 
 /// See [`AgentDoc`], whose name is the tool's.
@@ -170,7 +194,7 @@ pub(crate) struct ToolDefinition {
     /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
     /// again. See [`ToolRegistration::rebinds_on_assets`].
     pub asset_folders: Vec<&'static str>,
-    pub device: Option<CodeDevice>,
+    pub schema: Option<ToolSchema>,
 }
 
 impl ToolDefinition {
@@ -225,7 +249,7 @@ impl Registry {
             end: None,
             owns_children: S::OWNS_CHILDREN,
             asset_folders: Vec::new(),
-            device: None,
+            schema: None,
         });
         Ok(ToolRegistration {
             definition,
@@ -341,16 +365,16 @@ impl Registry {
                 end: None,
                 owns_children,
                 asset_folders,
-                device: None,
+                schema: None,
             },
         );
         Ok(())
     }
 
-    /// The tools that the code of a tool of the project plays as devices, by name.
-    pub fn code_devices(&self) -> Vec<CodeDevice> {
+    /// The tools that describe their record to the code of the tools of a project, by name.
+    pub fn tool_schemas(&self) -> Vec<ToolSchema> {
         (self.tools.values())
-            .filter_map(|definition| definition.device.clone())
+            .filter_map(|definition| definition.schema.clone())
             .collect()
     }
 
@@ -412,25 +436,29 @@ impl<S: State> ToolRegistration<'_, S> {
         self
     }
 
-    /// Lets the code of a tool of the project play this tool inside its sound, as a device
-    /// with no record of its own: its behaviour runs with the record the code gives, see
-    /// [`BehaviourContext::part`]. A signal moves the numbers of `input` that are fields of the
-    /// record itself, through the automation input, so the tool takes `audio` in and out and
-    /// declares its automation. A number inside a list stays as the code writes it.
-    pub fn in_code<const N: usize>(self, input: AutomationInput<S, N>) -> Self
+    /// Describes the record to the code of the tools of a project: its type and docs come
+    /// from the schema of `S`, and `numbers` are those a cable or a signal moves, whose ranges
+    /// and defaults its docs give.
+    pub fn schema(self, numbers: &[&Parameter<S>]) -> Self
     where
-        S: Default,
+        S: JsonSchema,
     {
-        let numbers = (input.parameters().iter())
-            .filter(|parameter| is_valid_name(parameter.field))
-            .map(|parameter| (parameter.info(), parameter.default))
-            .collect();
-        // A plain record of numbers, choices and lists always serializes.
-        let defaults = serde_json::to_value(S::default()).unwrap_or(serde_json::Value::Null);
-        self.definition.device = Some(CodeDevice {
-            tool: S::TOOL,
-            numbers,
-            defaults,
+        self.definition.schema = Some(ToolSchema::of(numbers));
+        self
+    }
+
+    /// [`Self::schema`], and lets the code of a tool of the project play this tool inside its
+    /// sound, as a device with no record of its own: its behaviour runs with the record the
+    /// code gives, see [`BehaviourContext::part`]. A signal moves the `numbers` that are fields
+    /// of the record itself, through the automation input, so the tool takes `audio` in and
+    /// out and declares its automation. A number inside a list stays as the code writes it.
+    pub fn in_code(self, numbers: &[&Parameter<S>]) -> Self
+    where
+        S: JsonSchema,
+    {
+        self.definition.schema = Some(ToolSchema {
+            in_code: true,
+            ..ToolSchema::of(numbers)
         });
         self
     }

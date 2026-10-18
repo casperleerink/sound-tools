@@ -24,6 +24,7 @@
 mod synth;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -37,7 +38,7 @@ pub use synth::{Synth, VOICES};
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "instrument";
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Waveform {
     Saw,
@@ -48,9 +49,10 @@ pub enum Waveform {
 /// Voices, phases and envelope levels are runtime state and are not saved.
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default synth.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct SynthState {
+    /// The wave of the oscillator.
     pub waveform: Waveform,
     /// Where the low-pass filter starts to cut.
     pub cutoff_hz: f32,
@@ -190,7 +192,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the synth tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<SynthState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<SynthState>(EXTENSION)?
+        .behaviour(apply)
+        .schema(Synth::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

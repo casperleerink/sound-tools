@@ -25,7 +25,18 @@ pub const MIN_EXACT_SAMPLE_RATE: u32 = 16_000;
 
 /// A position or a length in musical time. Saved positions use this.
 #[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(transparent)]
 pub struct Ticks(pub u64);

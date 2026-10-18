@@ -17,14 +17,14 @@ use serde_json::{Map, Value};
 use sound_core::{
     Assets, AudioThru, Automation, BehaviourContext, BehaviourError, Event, EventThru, GraphError,
     InputEndpoint, InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo,
-    Problem, RecordStamp, ValueRange, Watch,
+    Problem, RecordStamp, ToolSchema, ValueRange, Watch,
 };
 use sound_notes::{
     AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note, NoteEvent, NoteFeed, NoteFeedUpdate,
 };
 use sound_signals::{
-    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, LinkFrom, LinkTo,
-    Machine, Number, ParameterSpec, Placed, Program, Signals, SignalsUpdate, Sound, Values,
+    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, DeviceUse, Graph, Kind, LinkFrom,
+    LinkTo, Machine, Number, ParameterSpec, Placed, Program, Signals, SignalsUpdate, Sound, Values,
 };
 
 use crate::behaviours::{self, Declaration, End, Key};
@@ -59,6 +59,9 @@ pub(crate) struct ToolInfo {
     pub notes: bool,
     /// It owns children and has a behaviour, which declares how they connect.
     pub behaviour: bool,
+    /// The tools of its children by name, when it names them. An empty map allows none.
+    #[serde(default)]
+    pub children: Option<Named<String>>,
     /// A sound of it plays through a device, so its processors are the stages of a
     /// [`Program`].
     #[serde(skip)]
@@ -403,17 +406,19 @@ fn number_value(number: f64, integer: bool) -> Value {
     }
 }
 
+impl<T> Named<T> {
+    fn names(&self) -> String {
+        let names: Vec<&str> = self.0.iter().map(|(name, _)| name.as_str()).collect();
+        names.join(", ")
+    }
+}
+
 impl Named<Field> {
     fn get(&self, name: &str) -> Option<&Field> {
         let mut fields = self.0.iter();
         fields
             .find(|(field, _)| field == name)
             .map(|(_, field)| field)
-    }
-
-    fn names(&self) -> String {
-        let names: Vec<&str> = self.0.iter().map(|(name, _)| name.as_str()).collect();
-        names.join(", ")
     }
 
     /// Whether `value` is an object of these fields. `at` is its path.
@@ -643,7 +648,8 @@ impl ToolInfo {
                      `project.json`: `{{\"from\": {{\"instance\": \"{name}\", \"port\": \"audio\"}}, \
                      \"to\": {{\"device_output\": 0}}}}`. Or put it in a track's `effects` as \
                      `state/arrangement/<track>/{name}/instance.json`, where it hears the track's \
-                     sound and notes and plays into its mixer"
+                     sound and notes and plays into its mixer{}",
+                    self.children_doc()
                 ),
                 "one at its defaults",
                 format!("state/{name}/instance.json"),
@@ -682,6 +688,20 @@ impl ToolInfo {
              lane of its track, as the numbers of any device (`agent-docs/arrangement.md`).{data}\n",
             defaults.join(", "),
         )
+    }
+
+    /// The children it names, as its doc says them, or nothing.
+    fn children_doc(&self) -> String {
+        let Some(children) = &self.children else {
+            return String::new();
+        };
+        if children.0.is_empty() {
+            return ". It has no children".to_string();
+        }
+        let children: Vec<String> = (children.0.iter())
+            .map(|(name, tool)| format!("`{name}.json`, a `{tool}`"))
+            .collect();
+        format!(". Its children are {}, and no others", children.join("; "))
     }
 }
 
@@ -778,6 +798,7 @@ impl Sounds {
         info: &ToolInfo,
         graphs: Vec<(Map<String, Value>, Result<Graph, String>)>,
         (bun, tools): (&Arc<Bun>, &Arc<Tools>),
+        schemas: &[ToolSchema],
     ) -> Self {
         let declarations = info.declarations();
         let sounds: HashMap<String, Result<Arc<Program>, String>> = (graphs.into_iter())
@@ -794,6 +815,9 @@ impl Sounds {
                     }
                     if !program.devices.is_empty() && instrument {
                         return Err("an instrument plays through no device, as each of its voices would play one: filter a voice with lowpass, highpass or bandpass, or put the device after the instrument, in the track's effects or in a parent".to_string());
+                    }
+                    for device in &program.devices {
+                        check_device(device, schemas)?;
                     }
                     Ok(Arc::new(program))
                 });
@@ -1125,6 +1149,7 @@ impl Sounds {
                 .map(|child| (&child.id, child.tool, child.key, &*child.json));
             bun.tell_owner((&id, &self.info.name, &state), told)
         };
+        self.check_children(&children.children, context);
         let instance = (context.assets(), &id);
         let declared = behaviours::declared(bun, instance, &self.info.name, key, tell);
         if let Some(problem) = declared.problem {
@@ -1144,6 +1169,59 @@ impl Sounds {
             .collect();
         wire(&declared.declaration, own, &child_tools, context)
     }
+
+    /// A problem for each child that is not of the tool its `children` name, and each they
+    /// name that it does not have.
+    fn check_children(&self, children: &[KeptChild], context: &mut BehaviourContext<'_>) {
+        let Some(named) = &self.info.children else {
+            return;
+        };
+        let tool_of = |name: &str| {
+            (named.0.iter())
+                .find(|(named, _)| named == name)
+                .map(|(_, tool)| tool)
+        };
+        for child in children {
+            let name = child.id.name();
+            match tool_of(name) {
+                Some(tool) if tool == child.tool => {}
+                Some(tool) => context.problem(format!(
+                    "its child {name} is a {}, and its `children` say {tool}",
+                    child.tool
+                )),
+                None if named.0.is_empty() => context.problem(format!(
+                    "its child {name} is none of its `children`, which name none"
+                )),
+                None => context.problem(format!(
+                    "its child {name} is none of its `children`: {}",
+                    named.names()
+                )),
+            }
+        }
+        for (name, tool) in &named.0 {
+            if !children.iter().any(|child| child.id.name() == name) {
+                context.problem(format!(
+                    "it has no child {name}, a {tool}, as its `children` say"
+                ));
+            }
+        }
+    }
+}
+
+/// Whether the record of `device` without the numbers a signal moves is one its tool of
+/// `schemas` takes: what it plays with is known as the tool loads.
+fn check_device(device: &DeviceUse, schemas: &[ToolSchema]) -> Result<(), String> {
+    let tool = &device.tool;
+    let schema = (schemas.iter()).find(|schema| schema.tool == tool && schema.in_code);
+    let Some(schema) = schema else {
+        return Err(format!("it plays a {tool:?}, which is no device"));
+    };
+    (schema.check)(Value::Object(device.state.clone())).map_err(|error| {
+        let error = (error.strip_prefix("state."))
+            .or_else(|| error.strip_prefix("state: "))
+            .unwrap_or(&error);
+        format!("devices.{tool}: {error}")
+    })
 }
 
 /// Plays the devices of `program` between its `stages`, with a cable for each number a signal

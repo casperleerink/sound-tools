@@ -21,6 +21,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -35,7 +36,7 @@ pub const EXTENSION: &str = "saturator";
 
 /// The shape the sound is driven into. Every curve has a slope of 1 at silence, so a quiet
 /// sound goes through each at the same level.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Curve {
     /// `tanh`: rounds off early and evenly. Odd harmonics.
@@ -57,7 +58,7 @@ impl Curve {
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default
 /// saturator.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct SaturatorState {
     pub curve: Curve,
@@ -149,7 +150,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<SaturatorState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Saturator::AUTOMATION);
+        .in_code(Saturator::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

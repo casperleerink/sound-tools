@@ -35,6 +35,7 @@
 mod processor;
 pub mod view;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sound_core::{
     AgentDoc, BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, Registry,
@@ -57,7 +58,7 @@ pub const LONGEST_SECONDS: f32 = 4.0;
 /// sound in the delay lines is runtime state and is not saved.
 ///
 /// A field that a record leaves out takes its default, so `"state": {}` is the default delay.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct DelayState {
     /// Whether the time is a note division that follows the tempo, or `time_ms`.
@@ -184,7 +185,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<DelayState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Delay::AUTOMATION);
+        .in_code(Delay::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

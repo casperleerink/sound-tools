@@ -8,6 +8,7 @@
 //! Every voice works its routes out once per block of at most 64 frames, and a position, gain,
 //! cutoff or pan glides across the block to where the routes put it, so nothing steps.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The most routes a matrix has.
@@ -18,7 +19,7 @@ pub const MAX_ROUTES: usize = 16;
 pub const KEY_SEMITONES: f32 = 96.0;
 
 /// Where a route comes from.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Source {
     /// The second envelope, from 0 to 1.
     #[serde(rename = "env_2")]
@@ -84,7 +85,7 @@ impl Source {
 }
 
 /// Where a route goes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Destination {
     #[serde(rename = "osc_1_position")]
     Osc1Position,
@@ -190,7 +191,7 @@ impl Destination {
 }
 
 /// One route of the matrix.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Route {
     pub source: Source,

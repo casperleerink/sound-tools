@@ -92,6 +92,9 @@ raw-window-handle = "0.6"
 rtrb = "0.4"
 # Does nothing unless the build sets RTSAN_ENABLE=1.
 rtsan-standalone = "0.3"
+# The schema of each tool's record, from its Rust type, which the SDK of the tools of a project
+# is typed from. The version gpui uses.
+schemars = "1.2.2"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps key order stable, so agent diffs of project files stay small.
 serde_json = { version = "1", features = ["preserve_order"] }
