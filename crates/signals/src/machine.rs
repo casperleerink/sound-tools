@@ -1339,7 +1339,7 @@ fn write(buffer: Option<&mut Vec<f32>>, index: f32, value: f32) -> f32 {
 }
 
 /// What leaves the code: held to [`LIMIT`], and 0 where it is not a number.
-fn held(sample: f32) -> f32 {
+pub(crate) fn held(sample: f32) -> f32 {
     finite(sample).clamp(-LIMIT, LIMIT)
 }
 

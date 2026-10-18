@@ -425,12 +425,64 @@ impl<E: Event> ErasedEventBuffer for EventBuffer<E> {
     }
 }
 
-/// The first frame after the first of an automation input at which a lane bends, where the
-/// engine starts the next piece of the block of its processor.
-pub(crate) fn next_bend(buffer: &dyn ErasedEventBuffer) -> Option<usize> {
-    let buffer = buffer.as_any().downcast_ref::<EventBuffer<Automation>>()?;
-    let mut offsets = buffer.events.iter().map(|timed| timed.offset);
-    offsets.find(|offset| *offset > 0)
+/// The buffer of an event port, and whether an event reached it since it was last cleared. Most
+/// ports hear nothing in a block, and one that heard nothing costs no call into its buffer.
+pub(crate) struct EventPort {
+    buffer: Box<dyn ErasedEventBuffer>,
+    reached: bool,
+}
+
+impl EventPort {
+    pub(crate) fn new(buffer: Box<dyn ErasedEventBuffer>) -> Self {
+        Self {
+            buffer,
+            reached: false,
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        if std::mem::take(&mut self.reached) {
+            self.buffer.clear();
+        }
+    }
+
+    pub(crate) fn merge_from(&mut self, source: &Self) {
+        if source.reached {
+            self.buffer.merge_from(source.buffer.as_ref());
+            self.reached = true;
+        }
+    }
+
+    pub(crate) fn take_overflow(&mut self) -> u64 {
+        if self.reached {
+            self.buffer.take_overflow()
+        } else {
+            0
+        }
+    }
+
+    pub(crate) fn shift(&mut self, frames: usize) {
+        if self.reached {
+            self.buffer.shift(frames);
+        }
+    }
+
+    /// The first frame after the first of an automation input at which a lane bends, where the
+    /// engine starts the next piece of the block of its processor.
+    pub(crate) fn next_bend(&self) -> Option<usize> {
+        let buffer = self.typed::<Automation>().filter(|_| self.reached)?;
+        let mut offsets = buffer.events.iter().map(|timed| timed.offset);
+        offsets.find(|offset| *offset > 0)
+    }
+
+    fn typed<E: Event>(&self) -> Option<&EventBuffer<E>> {
+        self.buffer.as_any().downcast_ref()
+    }
+
+    fn typed_mut<E: Event>(&mut self) -> Option<&mut EventBuffer<E>> {
+        self.reached = true;
+        self.buffer.as_any_mut().downcast_mut()
+    }
 }
 
 /// The audio inputs of one block. Unconnected inputs are silent. Several connections to one
@@ -515,7 +567,7 @@ impl AudioOutputs<'_> {
 
 /// The event inputs of one block, sorted by offset. Several connections to one input arrive merged.
 pub struct EventInputs<'a> {
-    pub(crate) buffers: &'a [Box<dyn ErasedEventBuffer>],
+    pub(crate) buffers: &'a [EventPort],
     /// The buffers hold the rest of the sub-block too, when the processor plays it in pieces.
     pub(crate) frames: usize,
     pub(crate) misuses: &'a Cell<u64>,
@@ -525,10 +577,7 @@ impl EventInputs<'_> {
     /// A handle with an undeclared index or another event type than declared reads as an empty
     /// slice and counts in `EngineStatus::port_misuses`.
     pub fn get<E: Event>(&self, port: EventInput<E>) -> &[Timed<E>] {
-        let buffer = self
-            .buffers
-            .get(port.index)
-            .and_then(|buffer| buffer.as_any().downcast_ref::<EventBuffer<E>>());
+        let buffer = self.buffers.get(port.index).and_then(EventPort::typed::<E>);
         match buffer {
             Some(buffer) => {
                 let inside = buffer
@@ -543,7 +592,7 @@ impl EventInputs<'_> {
 
 /// The event outputs of one block.
 pub struct EventOutputs<'a> {
-    pub(crate) buffers: &'a mut [Box<dyn ErasedEventBuffer>],
+    pub(crate) buffers: &'a mut [EventPort],
     /// Where this block starts in the buffers.
     pub(crate) start: usize,
     pub(crate) frames: usize,
@@ -564,7 +613,7 @@ impl EventOutputs<'_> {
         let buffer = self
             .buffers
             .get_mut(port.index)
-            .and_then(|buffer| buffer.as_any_mut().downcast_mut::<EventBuffer<E>>());
+            .and_then(EventPort::typed_mut::<E>);
         match buffer {
             Some(buffer) => buffer.insert(Timed { offset, event }),
             None => misused(self.misuses),

@@ -13,7 +13,7 @@ use std::ops::Range;
 
 use sound_core::{
     AudioInput, AudioOutput, Automation, CHANNELS, EventInput, EventOutput, EventOutputs, EventTap,
-    Lane, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Watch,
+    Lane, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor, Smoothed, Timed, Watch,
 };
 use sound_notes::{
     NoteEvent, Performed, Pitch, Schedule, Scheduled, Velocity, Voice, Voices, frequency_hz,
@@ -21,7 +21,7 @@ use sound_notes::{
 
 use crate::cable::{Bang, Control, Number};
 use crate::code::{Code, MAX_LIVES, MAX_OUTPUTS, MAX_PARAMETERS};
-use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values};
+use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values, held};
 
 /// How long the old code fades out while the new one fades in.
 const FADE_SECONDS: f32 = 0.01;
@@ -135,6 +135,9 @@ pub struct Signals {
     sending: Sending,
     /// Where the transport was in the last frame: it stands still while stopped.
     beat: f64,
+    /// What a copy left of moving the beat on: by how much a frame, for how many frames. The
+    /// next block that reads the beat adds it frame by frame, so it rounds as the code would.
+    owed_beat: (f64, usize),
     bend: f32,
     sample_rate: f32,
     fade_frames: usize,
@@ -272,6 +275,7 @@ impl Signals {
                 notes: [None; MAX_OUTPUTS],
             },
             beat: 0.0,
+            owed_beat: (0.0, 0),
             bend: 0.0,
             sample_rate: 48_000.0,
             fade_frames: 1,
@@ -732,6 +736,11 @@ impl Processor for Signals {
         for _ in 0..self.scheduled.take_dropped() {
             context.event_outputs.count_dropped();
         }
+        if self.copies() {
+            self.copy(context);
+            return;
+        }
+        self.settle_beat();
         self.aim(context);
         // The engine's promise: it splits a device buffer into sub-blocks of at most this.
         debug_assert!(context.frames <= MAX_BLOCK);
@@ -800,28 +809,8 @@ impl Processor for Signals {
             channel.fill(0.0);
         }
 
-        // A span from each note or what the interface plays to the next.
-        let mut events = context.event_inputs.get(Self::NOTES).iter().peekable();
-        let mut start = 0;
-        while start < frames {
-            while let Some(timed) = events.next_if(|timed| timed.offset <= start) {
-                self.follow(timed.event);
-            }
-            let now = context.start_frame + start as u64;
-            while let Some((_, what)) = self.scheduled.take(now) {
-                match what {
-                    Played::Note(event) => self.follow(event),
-                    Played::Trigger(index) => self.block.fire(index, start),
-                }
-            }
-            let next_event = events.peek().map_or(frames, |timed| timed.offset);
-            let next_scheduled = self.scheduled.next().map_or(frames, |at| {
-                usize::try_from(at - context.start_frame).unwrap_or(frames)
-            });
-            let end = next_event.min(next_scheduled).min(frames);
-            self.render(start..end, quiet_limit);
-            start = end;
-        }
+        let notes = context.event_inputs.get(Self::NOTES);
+        self.spans((notes, context.start_frame), frames, Some(quiet_limit));
 
         for (out, channel) in [left_out, right_out].into_iter().zip(&self.mix) {
             for (sample, mixed) in out.iter_mut().zip(channel) {
@@ -849,6 +838,85 @@ impl Processor for Signals {
             let counts = (machine.code().bangs.len(), machine.code().notes.len());
             let events = machine.events();
             (self.sending).send(events, counts, frames, &mut context.event_outputs);
+        }
+    }
+}
+
+impl Signals {
+    /// Whether its code passes its input as it comes, with nothing that glides and no old code
+    /// fading out: the code of a tool with no sound, which a copy plays.
+    fn copies(&self) -> bool {
+        let passes = |single: &Single| {
+            single.voice.fade_left == 0 && single.voice.machine.code().passes_input()
+        };
+        self.counts == (0, 0) && matches!(&self.players, Players::One(single) if passes(single))
+    }
+
+    /// Plays a block as [`Self::copies`] says. What code that comes after reads goes on as
+    /// the code would move it: the beat, and the keys the notes hold.
+    fn copy(&mut self, context: &mut ProcessContext<'_>) {
+        let frames = context.frames.min(MAX_BLOCK);
+        self.followed = true;
+        let transport = &context.transport;
+        if let Some(quarters) = transport.quarters() {
+            self.beat = quarters;
+            let bpm = transport.clock.tempo_at(transport.tick_range.start).bpm();
+            self.owed_beat = (bpm / 60.0 / f64::from(self.sample_rate), frames);
+        }
+        self.scheduled.playing(context.start_frame, context.frames);
+        let notes = context.event_inputs.get(Self::NOTES);
+        self.spans((notes, context.start_frame), frames, None);
+        if let Players::One(single) = &mut self.players {
+            single.voice.note.onset = false;
+        }
+        let input = context.audio_inputs.get(Self::INPUT);
+        let output = context.audio_outputs.get(Self::OUTPUT);
+        // An output starts silent, and an input that nothing connects is empty.
+        for (output, input) in output.into_iter().zip(input) {
+            for (sample, input) in output.iter_mut().zip(input) {
+                *sample = held(*input);
+            }
+        }
+    }
+
+    fn settle_beat(&mut self) {
+        let (beats_per_frame, frames) = std::mem::take(&mut self.owed_beat);
+        for _ in 0..frames {
+            self.beat += beats_per_frame;
+        }
+    }
+
+    /// Follows the notes and what the interface plays over the first `frames` of the block, in
+    /// spans from each to the next, and renders each span when given how long a voice may be
+    /// quiet.
+    fn spans(
+        &mut self,
+        (notes, start_frame): (&[Timed<NoteEvent>], u64),
+        frames: usize,
+        render: Option<usize>,
+    ) {
+        let mut events = notes.iter().peekable();
+        let mut start = 0;
+        while start < frames {
+            while let Some(timed) = events.next_if(|timed| timed.offset <= start) {
+                self.follow(timed.event);
+            }
+            let now = start_frame + start as u64;
+            while let Some((_, what)) = self.scheduled.take(now) {
+                match what {
+                    Played::Note(event) => self.follow(event),
+                    Played::Trigger(index) => self.block.fire(index, start),
+                }
+            }
+            let next_event = events.peek().map_or(frames, |timed| timed.offset);
+            let next_scheduled = self.scheduled.next().map_or(frames, |at| {
+                usize::try_from(at - start_frame).unwrap_or(frames)
+            });
+            let end = next_event.min(next_scheduled).min(frames);
+            if let Some(quiet_limit) = render {
+                self.render(start..end, quiet_limit);
+            }
+            start = end;
         }
     }
 }
