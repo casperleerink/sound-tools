@@ -859,13 +859,13 @@ type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } 
 
 /** A sound port of a child: `audio` when left out. An effect has an `audio` input and output. */
 export type ChildPort<K extends ChildTools = ChildTools> = Partial<Keyed<"port">> & { child: ChildName<K> };
-/** Notes of a child: its input `notes`, such as an instrument's, or notes it sends out. */
-export type ChildNotes<K extends ChildTools = ChildTools> = PortOf<"notes", K> | PortOf<"notes", K, true>;
+/** Notes of a child: its input `notes`, such as an instrument's, or with `Out` notes it sends out. */
+export type ChildNotes<K extends ChildTools = ChildTools, Out extends boolean = false> = PortOf<"notes", K, Out>;
 /**
- * A number of a child: one it sends out with `output`, or a knob it takes, such as the knob
- * `cutoff_hz` of a `filter` or a knob of a tool of the project.
+ * A number of a child: a knob it takes, such as the knob `cutoff_hz` of a `filter` or a knob of
+ * a tool of the project, or with `Out` one it sends out with `output`.
  */
-export type ChildNumber<K extends ChildTools = ChildTools> = PortOf<"number", K> | PortOf<"number", K, true>;
+export type ChildNumber<K extends ChildTools = ChildTools, Out extends boolean = false> = PortOf<"number", K, Out>;
 /** A bang a child sends out with `output`. */
 export type ChildBang<K extends ChildTools = ChildTools> = PortOf<"bang", K, true>;
 /** A live control of a child, or another number it plays from, such as `launch` of a `sequencer`. */
@@ -888,8 +888,8 @@ export type OwnNotes = OwnOf<"notes", "notes">;
  */
 export type Connection<K extends ChildTools = ChildTools> =
   | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio }
-  | { from: PortOf<"notes", K, true> | OwnNotes; to: PortOf<"notes", K> | OwnOf<"notes"> }
-  | { from: PortOf<"number", K, true>; to: PortOf<"number", K> | ChildLive<K> | OwnOf<"number"> }
+  | { from: ChildNotes<K, true> | OwnNotes; to: ChildNotes<K> | OwnOf<"notes"> }
+  | { from: ChildNumber<K, true>; to: ChildNumber<K> | ChildLive<K> | OwnOf<"number"> }
   | { from: ChildBang<K>; to: ChildTrigger<K> | OwnOf<"bang"> };
 
 /** What a behaviour declares. A JSON value: no functions, no classes. */
