@@ -185,7 +185,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the limiter tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<LimiterState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<LimiterState>(EXTENSION)?
+        .behaviour(apply)
+        .in_code(Limiter::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

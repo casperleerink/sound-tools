@@ -24,7 +24,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
-pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, RecordStamp};
+pub use binding::{
+    BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, PartPorts, RecordStamp,
+};
 pub use editing::{Changes, Derived, Edit};
 pub use file::{
     FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
@@ -35,7 +37,8 @@ pub use generated::{
 pub use history::OUTSIDE_UNDO_WINDOW;
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
-    AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration, Was,
+    AgentDoc, AgentDocText, CodeDevice, JsonTool, JsonToolDoc, Registry, RegistryError,
+    ToolRegistration, Was,
 };
 pub use runs::{RUN_LONGEST, RUN_QUIET};
 pub use storage::StorageError;

@@ -301,7 +301,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the EQ tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<EqState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<EqState>(EXTENSION)?
+        .behaviour(apply)
+        .in_code(Eq::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

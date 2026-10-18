@@ -92,7 +92,7 @@ my-piece/
 - Last write wins everywhere: file edits, open drags, undo, redo, cancel. No field merge and no conflict rejection. Do not reopen this as a sync problem.
 - An edit is `begin`, `publish` (live, writes nothing), then `finish` (writes, one undo step) or `cancel`. No undo step ever holds the middle of a gesture, even when a file edit lands during a drag.
 - An agent request is one undo step, named after it, however far apart its writes are. A window edit, undo or redo during a request ends that step; later writes make another. Rejected: adding them to the older step, under the composer's edit: undo would go out of order.
-- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing between, are one undo step; else one request became several. A tool's edits of one label under 1 s apart are one too, written when they stop or after 5 s; undo and other edits end them first, never mid-drag.
+- With no request open (an agent in a terminal), outside changes within 15 s of each other, with nothing between, are one undo step; else one request became several. A tool's edits of one label under 1 s apart are one too.
 - Undo history lives only in the session. The folder is the truth; versions come from git.
 - `problems.txt` exists only while a runtime holds the project, so an agent can tell "all is well" from "nobody is watching".
 
@@ -124,8 +124,8 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Latency compensation leads instead of delaying: each processor sees the transport ahead by the latency after it. Delaying would also delay a keyboard played into a track; with leading it waits only for that track's chain.
 - A side input (such as a sidechain) is skipped by the lead, so its source is not led by another track's chain. The detector hears it a little early or late instead.
 - An output feeding paths of different latency (a send) is delayed on faster ones: at most a second at 48 kHz. Rejected: no maximum, which would allocate on the audio thread.
-- Levels leave the audio thread through `Peaks` (atomics), sound through a `Scope` (a ring of atomics). Views measure on their own thread. Rejected: measuring on the audio thread, an FFT per card in every block.
-- Every render is deterministic: the same project gives the same bytes. Nothing random; anything that looks random takes a seed. The click is attached only by the window.
+- Levels leave the audio thread through `Peaks`, sound through a `Scope`. Views measure on their own thread. Rejected: measuring on the audio thread, an FFT per card in every block.
+- Every render is deterministic: the same project gives the same bytes. Anything that looks random takes a seed. The click is attached only by the window.
 
 ## The arrangement
 
@@ -155,7 +155,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 `crates/media`, `extensions/sampler`.
 
 - Audio files a clip names are held in memory, shared, and dropped when nothing names them. Not streamed: the audio thread never waits for a disk, seeks are instant, renders repeat to the byte.
-- Our own WAV and AIFF reader, because these formats are a few chunks around plain samples. FLAC is decoded whole on load.
+- Our own WAV and AIFF reader, because these formats are a few chunks around plain samples.
 - The Sampler reads the part of SFZ real libraries need and ignores the rest: a third-party file that plays a little plainer beats one that is refused.
 - Library samples are memory-mapped and read ahead off the audio thread. Only files nothing writes in place are mapped, because a mapped file cut short ends the process. Rejected: our own disk streaming with ring buffers per voice, far more code for the same result on an SSD.
 - The library is a catalog in code of free instruments at pinned commits, so an id always plays the same. Downloads are shared machine data. Nothing downloads by itself, not for an agent either: its guess must not spend hundreds of megabytes.
@@ -236,10 +236,11 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **A tool is a JSON tool of the core.** Its records are checked in Rust, so a record loads and an agent hears what is wrong without Bun.
 - **An owner's behaviour runs in Bun and lands as a service.** Until Bun answers a change, the last declaration plays. Renders and inspect wait. Rejected: a synchronous call (the window would wait); a structure language read in Rust.
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
+- **A sound plays built-in devices** as engine processors, the code cut into stages around them: the engine compensates their latency. Rejected: devices inside the signals code, where no plugin runs; so none in instruments or feedbacks.
 - **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
-- **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code (a JIT), fast but a compiler to own.
+- **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
 - **Cards and pages** are trees Bun draws and `crates/ui` shows. `set` moves no knob: knobs are the composition.
-- **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back. Bun hears each record once per change.
+- **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back.
 - **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end names its kind, so a wrong pair is a type error. A parent's sound is the last stage of its audio output, so a chain is one connection. Rejected: `ownSound`, an end on both sides. A number drives a knob as a lane does, so built-in devices need nothing new. An instrument sends no notes or bangs: voices come and go.
 - **Patterns in time are a `sequencer` child**, which quantizes launches on the audio thread. Its record names what plays first, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
 - **A child's notes pass its own feed**, which releases the child when its senders change: a removed or moved sender sends no off there. Rejected: a reset in the core, for every instrument to declare.

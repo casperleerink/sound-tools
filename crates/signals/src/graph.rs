@@ -5,53 +5,59 @@
 //! lowers them: a node is one operation, but a field or a control reads the operation made for
 //! it at the start.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use serde::Deserialize;
 
 use crate::code::{
-    ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_LIVES, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_WATCHES, Operation,
-    Output, ParameterSpec, Register, Slots, Table, Unary,
+    ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_CROSSINGS,
+    MAX_DELAY_MS, MAX_DELAYS, MAX_LIVES, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_SENDS,
+    MAX_WATCHES, Operation, Output, ParameterSpec, Register, Slots, Table, Unary,
 };
 
 /// A sound as the SDK sends it.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Graph {
-    nodes: Vec<Node>,
+    pub(crate) nodes: Vec<Node>,
     /// The node each `feedback` is set to, by its slot.
-    feedbacks: Vec<usize>,
+    pub(crate) feedbacks: Vec<usize>,
     /// The seconds of each `buffer`.
-    buffers: Vec<f32>,
-    watches: Vec<NamedNode>,
-    numbers: Vec<NamedNode>,
-    bangs: Vec<NamedNode>,
-    notes: Vec<NotesNode>,
-    output: OutputNode,
+    pub(crate) buffers: Vec<f32>,
+    pub(crate) watches: Vec<NamedNode>,
+    pub(crate) numbers: Vec<NamedNode>,
+    pub(crate) bangs: Vec<NamedNode>,
+    pub(crate) notes: Vec<NotesNode>,
+    pub(crate) output: OutputNode,
+    /// The left and the right node of each signal a stage hands on, see [`crate::Program`].
+    #[serde(skip)]
+    pub(crate) exports: Vec<[usize; 2]>,
+    /// The node of each number of a device a stage moves.
+    #[serde(skip)]
+    pub(crate) sends: Vec<usize>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NamedNode {
-    name: String,
-    node: usize,
+pub(crate) struct NamedNode {
+    pub(crate) name: String,
+    pub(crate) node: usize,
 }
 
 /// Notes a sound sends out: one sounds while `gate` is above 0, at the MIDI `pitch`.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NotesNode {
-    name: String,
-    gate: usize,
-    pitch: usize,
-    velocity: usize,
+pub(crate) struct NotesNode {
+    pub(crate) name: String,
+    pub(crate) gate: usize,
+    pub(crate) pitch: usize,
+    pub(crate) velocity: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(untagged)]
-enum OutputNode {
+pub(crate) enum OutputNode {
     /// Runs on each channel apart.
     Mono { mono: usize },
     /// Runs once for both channels, and hears both.
@@ -59,17 +65,17 @@ enum OutputNode {
 }
 
 /// Where a table reads: a pattern or sample field by name, or a buffer by its number.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-enum TableNode {
+pub(crate) enum TableNode {
     List(String),
     Buffer(usize),
 }
 
 /// A node of the graph. Each `usize` is the index of a node before it.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
-enum Node {
+pub(crate) enum Node {
     Constant(Constant),
     Input,
     InputLeft,
@@ -131,14 +137,21 @@ enum Node {
     Lookup(Lookup),
     Length(Length),
     Write(Write),
+    /// A built-in device the sound plays through: no signal itself, see [`Played`].
+    Device(Device),
+    /// What a device plays.
+    Played(Played),
+    /// What a stage takes from before. Made by [`crate::Program`], never sent.
+    #[serde(skip_deserializing)]
+    Import(Import),
 }
 
 /// The fields of the nodes, as the SDK names them.
 macro_rules! fields {
     ($($name:ident { $($field:ident: $type:ty),* })*) => {$(
-        #[derive(Debug, Deserialize)]
+        #[derive(Clone, Debug, Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct $name { $($field: $type),* }
+        pub(crate) struct $name { $(pub(crate) $field: $type),* }
     )*};
 }
 
@@ -161,6 +174,17 @@ fields! {
     Lookup { table: TableNode, phase: usize }
     Length { table: TableNode }
     Write { buffer: usize, index: usize, value: usize }
+    // The tool of the device, what it hears, the numbers signals move by their fields, and the
+    // rest of its record.
+    Device {
+        tool: String,
+        input: [usize; 2],
+        numbers: BTreeMap<String, usize>,
+        state: serde_json::Map<String, serde_json::Value>
+    }
+    // Of the channel the code runs on when `channel` is left out.
+    Played { device: usize, channel: Option<u8> }
+    Import { port: u16, channel: Option<u8> }
 }
 
 /// What the record and the interface give a sound, in the order of the tool's fields and
@@ -229,7 +253,7 @@ impl Declarations {
 /// Why a sound does not build, in the words of the SDK.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 #[error("{0}")]
-pub struct GraphError(String);
+pub struct GraphError(pub(crate) String);
 
 fn error<T>(message: impl Into<String>) -> Result<T, GraphError> {
     Err(GraphError(message.into()))
@@ -255,6 +279,7 @@ impl Graph {
             triggers: Vec::new(),
             names: HashMap::new(),
             registers: Vec::with_capacity(self.nodes.len()),
+            imports: 0,
         };
         lowering.declare(declarations)?;
         for &seconds in &self.buffers {
@@ -312,6 +337,22 @@ impl Graph {
                 Output::Stereo(lowering.read(left)?, lowering.read(right)?)
             }
         };
+        let exports = (self.exports.iter())
+            .map(|[left, right]| Ok([lowering.read(*left)?, lowering.read(*right)?]))
+            .collect::<Result<Vec<_>, GraphError>>()?;
+        let send_registers = (self.sends.iter())
+            .map(|node| lowering.read(*node))
+            .collect::<Result<Vec<_>, _>>()?;
+        if exports.len() > MAX_CROSSINGS || lowering.imports > MAX_CROSSINGS {
+            return error(format!(
+                "at most {MAX_CROSSINGS} signals go from one side of a device to the other: use fewer signals after it"
+            ));
+        }
+        if send_registers.len() > MAX_SENDS {
+            return error(format!(
+                "signals move at most {MAX_SENDS} numbers of devices"
+            ));
+        }
         let mut hasher = DefaultHasher::new();
         format!("{self:?}{declarations:?}").hash(&mut hasher);
         Ok(Code {
@@ -323,6 +364,7 @@ impl Graph {
             numbers,
             bangs,
             notes,
+            imports: lowering.imports,
             hash: hasher.finish(),
             operations: lowering.operations,
             output,
@@ -330,6 +372,8 @@ impl Graph {
             watch_registers,
             number_registers,
             event_registers,
+            exports,
+            send_registers,
             slots: lowering.slots,
         })
     }
@@ -346,6 +390,8 @@ struct Lowering<'a> {
     names: HashMap<&'a str, Register>,
     /// The register of each node lowered so far.
     registers: Vec<Register>,
+    /// How many ports the imports read.
+    imports: usize,
 }
 
 impl<'a> Lowering<'a> {
@@ -491,6 +537,16 @@ impl<'a> Lowering<'a> {
             Node::Gate => Operation::Gate,
             Node::Velocity => Operation::Velocity,
             Node::Onset => Operation::Onset,
+            Node::Import(Import { port, channel }) => {
+                self.imports = self.imports.max(usize::from(*port) + 1);
+                Operation::Import {
+                    port: *port,
+                    channel: *channel,
+                }
+            }
+            Node::Device(_) | Node::Played(_) => {
+                return error("a device plays only in an effect or a source");
+            }
             Node::Param(Param { name }) => {
                 return match self.names.get(name.as_str()) {
                     Some(register) => Ok(*register),

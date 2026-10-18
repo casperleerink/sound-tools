@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry};
+use sound_core::{AgentDoc, CodeDevice, JsonTool, Problem, Project, Registry};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{take_declared, wait_for_behaviours};
@@ -176,15 +176,15 @@ impl Extensions {
     /// Loads the tools of the project in `folder`, for [`FirstLoad::register`]. `None` when it
     /// has no `extensions/` folder, which is every project that has not asked for its own
     /// tools. Bun starts only when the folder has a tool file; the SDK is written either way,
-    /// for the agent that writes the first one. Waits for Bun, up to a timeout for each file:
-    /// not on the thread that draws.
-    pub fn load(folder: &Path) -> Option<FirstLoad> {
+    /// for the agent that writes the first one, with the `devices` a sound plays through.
+    /// Waits for Bun, up to a timeout for each file: not on the thread that draws.
+    pub fn load(folder: &Path, devices: &[CodeDevice]) -> Option<FirstLoad> {
         let folder = folder.join(FOLDER);
         if !folder.is_dir() {
             return None;
         }
         let opening = bun::new_opening();
-        let launched = write_sdk(&folder)
+        let launched = write_sdk(&folder, devices)
             .map_err(|error| error.to_string())
             .and_then(|()| launch((&folder, opening), Skipped::new()));
         Some(FirstLoad {
@@ -436,11 +436,13 @@ fn folder_problem(message: String) -> Problem {
     }
 }
 
-/// Writes what the runtime owns in `extensions/`, only where the text changed.
-fn write_sdk(extensions: &Path) -> std::io::Result<()> {
+/// Writes what the runtime owns in `extensions/`, only where the text changed: the SDK with
+/// the `devices` a sound plays through.
+fn write_sdk(extensions: &Path, devices: &[CodeDevice]) -> std::io::Result<()> {
     // Bun's own types, once installed, declare `Bun` as well.
     let bun_types = extensions.join("node_modules/bun-types").is_dir();
-    for (name, text) in OWNED.into_iter().zip([SDK, TSCONFIG, BUN_TYPES]) {
+    let sdk = format!("{SDK}{}", sdk_devices(devices));
+    for (name, text) in OWNED.into_iter().zip([&*sdk, TSCONFIG, BUN_TYPES]) {
         let path = extensions.join(name);
         if name == "bun.d.ts" && bun_types {
             match std::fs::remove_file(&path) {
@@ -453,6 +455,54 @@ fn write_sdk(extensions: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `devices` as the SDK offers them: a knob for each number a signal moves, in its units, and
+/// the rest of its record at its defaults, whose form TypeScript takes.
+fn sdk_devices(devices: &[CodeDevice]) -> String {
+    let mut text = String::from(
+        "
+// ---------------------------------------------------------------------------------------------
+// Built-in devices
+
+/**
+ * The built-in devices a sound plays through: `devices.reverb(input, { mix: 0.3 })`. Each of
+ * `fields` takes a signal or a number; the rest of its record is written as it is. Not in an
+ * instrument, and not inside a `feedback`.
+ */
+export const devices = {
+",
+    );
+    let quoted = |text: &str| serde_json::to_string(text).unwrap_or_default();
+    for CodeDevice {
+        tool,
+        numbers,
+        defaults,
+    } in devices
+    {
+        text.push_str(&format!(
+            "  {}: device({}, {{\n",
+            quoted(tool),
+            quoted(tool)
+        ));
+        for (number, default) in numbers {
+            let field = &*number.field;
+            let unit = ["hz", "ms", "db"]
+                .into_iter()
+                .find(|unit| field.ends_with(&format!("_{unit}")))
+                .map_or(String::new(), |unit| format!(", unit: \"{unit}\""));
+            let (min, max) = (number.range.min, number.range.max);
+            text.push_str(&format!(
+                "    {field}: knob({{ min: {min}, max: {max}, default: {default}{unit} }}),\n"
+            ));
+        }
+        let mut rest = defaults.as_object().cloned().unwrap_or_default();
+        rest.retain(|field, _| !numbers.iter().any(|(number, _)| *number.field == **field));
+        let rest = serde_json::to_string(&rest).unwrap_or_default();
+        text.push_str(&format!("  }}, {rest}),\n"));
+    }
+    text.push_str("};\n");
+    text
 }
 
 /// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
@@ -527,10 +577,10 @@ mod tests {
     #[test]
     fn the_types_of_bun_are_left_out_once_bun_types_are_installed() {
         let extensions = tempfile::tempdir().unwrap();
-        write_sdk(extensions.path()).unwrap();
+        write_sdk(extensions.path(), &[]).unwrap();
         assert!(extensions.path().join("bun.d.ts").is_file());
         std::fs::create_dir_all(extensions.path().join("node_modules/bun-types")).unwrap();
-        write_sdk(extensions.path()).unwrap();
+        write_sdk(extensions.path(), &[]).unwrap();
         assert!(!extensions.path().join("bun.d.ts").exists());
     }
 
@@ -538,7 +588,7 @@ mod tests {
     fn a_folder_with_no_tool_starts_no_bun_but_has_the_sdk() {
         let project = tempfile::tempdir().unwrap();
         std::fs::create_dir(project.path().join(FOLDER)).unwrap();
-        let extensions = Extensions::load(project.path())
+        let extensions = Extensions::load(project.path(), &[])
             .unwrap()
             .register(&mut Registry::new());
         assert!(extensions.bun.is_none());
@@ -557,7 +607,19 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         let extensions = project.path().join(FOLDER);
         std::fs::create_dir(&extensions).unwrap();
-        write_sdk(&extensions).unwrap();
+        // A device as the reverb is one, with a number a signal moves and a toggle.
+        let reverb = CodeDevice {
+            tool: "reverb",
+            numbers: vec![(
+                sound_core::ParameterInfo {
+                    field: "mix".into(),
+                    range: sound_core::ValueRange::linear(0.0, 1.0),
+                },
+                0.3,
+            )],
+            defaults: serde_json::json!({ "mix": 0.3, "freeze": false }),
+        };
+        write_sdk(&extensions, &[reverb]).unwrap();
         let types = include_str!("../tests/sdk-types.ts");
         std::fs::write(extensions.join("types.ts"), types).unwrap();
         // As the doc for agents says to check a tool.

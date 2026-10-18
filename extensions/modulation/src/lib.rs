@@ -156,7 +156,8 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ModulationState>(EXTENSION)?
-        .behaviour(apply);
+        .behaviour(apply)
+        .in_code(Modulation::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

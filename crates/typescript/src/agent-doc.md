@@ -94,6 +94,33 @@ tool({
 });
 ```
 
+## Built-in devices
+
+A sound plays the built-in effects through `devices`: `devices.reverb`, `devices.filter`, `devices.compressor` and the others `sdk.ts` lists. Each takes a signal and settings, and gives what it plays as a signal:
+
+```ts
+import { beat, devices, input, sin, TAU, tool } from "./sdk";
+
+tool({
+  name: "swept-room",
+  title: "Swept room",
+  when: "You want a filter that sweeps once a beat, into a room",
+  doc: "A low pass that opens and closes once a beat, then the built-in reverb, whose knobs are this tool's.",
+  state: { ...devices.reverb.fields },
+  sound: (fields) => {
+    const sweep = sin(beat.times(TAU)).times(0.5).plus(0.5);
+    const swept = devices.filter(input, { cutoff_hz: sweep.times(4000).plus(300) });
+    return devices.reverb(swept, fields);
+  },
+});
+```
+
+- A number of a device takes a number, a knob or any signal, such as an LFO, which moves it once per 64 samples. The rest of its record is written as it is: `devices.filter(x, { type: "high_pass" })`. Its agent doc, when the project enables it, says what each field does.
+- `devices.reverb.fields` are its numbers as knobs, with their ranges and defaults. Spread them into `state` and hand the fields on, as above: the card, automation and the record treat them as any knob. `prefixed("far_", devices.reverb.fields)` names those of a second one.
+- What a device plays is of the channel the sound runs on. A sound that returns `{ left, right }` reads `.left` and `.right`, and gives a device `{ left, right }`.
+- The engine waits for the latency of a device, so what goes round it stays in time with it.
+- Not in an `instrument`, where each voice would play one, and not inside a `feedback`, as a device hears a block at once. A plugin, or a device with a record of its own, is a child: see "Children".
+
 ## Fields
 
 | Field | Record holds | In `sound` | A change |

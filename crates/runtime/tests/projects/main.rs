@@ -11,6 +11,7 @@ mod automation;
 mod cables;
 mod compressor;
 mod delay;
+mod devices;
 mod drums;
 mod effects;
 mod eq;

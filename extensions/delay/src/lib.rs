@@ -181,7 +181,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the delay tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<DelayState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<DelayState>(EXTENSION)?
+        .behaviour(apply)
+        .in_code(Delay::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

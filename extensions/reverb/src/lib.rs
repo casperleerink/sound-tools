@@ -204,7 +204,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the reverb tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<ReverbState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<ReverbState>(EXTENSION)?
+        .behaviour(apply)
+        .in_code(Reverb::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

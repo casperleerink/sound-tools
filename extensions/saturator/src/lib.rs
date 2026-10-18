@@ -146,7 +146,10 @@ pub const AGENT_DOC: AgentDoc = AgentDoc {
 
 /// Registers the saturator tool. Call it before the project opens.
 pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
-    registry.tool::<SaturatorState>(EXTENSION)?.behaviour(apply);
+    registry
+        .tool::<SaturatorState>(EXTENSION)?
+        .behaviour(apply)
+        .in_code(Saturator::AUTOMATION);
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }
