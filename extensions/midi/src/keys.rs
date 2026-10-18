@@ -149,11 +149,8 @@ pub(crate) struct Sounded {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Report {
     Sounded(Sounded),
-    /// A release is out at the start of the block of `frame`: the live input holds no note, no
-    /// pedal and no wheel away from rest.
-    Released {
-        frame: u64,
-    },
+    /// A release is out: the live input holds no note, no pedal and no wheel away from rest.
+    Released,
 }
 
 struct Shared {
@@ -435,9 +432,7 @@ impl Processor for Keys {
             if !self.releasing {
                 // Out. The control side lets go of its copy of what is held, and whoever waits
                 // for it may now take the connection away.
-                self.report(Report::Released {
-                    frame: context.start_frame,
-                });
+                self.report(Report::Released);
                 self.release.released.store(self.taken, Ordering::Relaxed);
             }
         }

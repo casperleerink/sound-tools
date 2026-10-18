@@ -9,9 +9,9 @@ use sound_core::{
     monotonic_nanos,
 };
 
-use sound_notes::{Expression, NoteEvent, Pedal, Pitch};
+use sound_notes::{Expression, Pedal};
 
-use crate::keys::{INPUT_CAPACITY, Input, Keys, Played, Report};
+use crate::keys::{Input, Keys, Played, Report};
 use crate::take::{Take, TakeEvent};
 
 /// The name of the processor in the engine graph. Instance processors are named
@@ -119,9 +119,6 @@ pub struct Keyboard {
     /// Reports that were lost. Then this side does not know what is held, and a release is
     /// sent whether the mirror says so or not.
     seen_lost_reports: u64,
-    /// What the live input played since [`Self::take_heard`], for who listens besides the
-    /// instrument, such as a tool of the project.
-    heard: Vec<(u64, NoteEvent)>,
 }
 
 impl Keyboard {
@@ -144,7 +141,6 @@ impl Keyboard {
             live_notes: 0,
             live_expression: Expression::REST,
             seen_lost_reports: 0,
-            heard: Vec::new(),
         })
     }
 
@@ -251,15 +247,13 @@ impl Keyboard {
         while let Ok(report) = self.reports.pop() {
             let sounded = match report {
                 Report::Sounded(sounded) => sounded,
-                Report::Released { frame } => {
-                    self.hear_release(frame);
+                Report::Released => {
                     self.live_notes = 0;
                     self.live_pedal = Pedal::UP;
                     self.live_expression = Expression::REST;
                     continue;
                 }
             };
-            self.hear(sounded.frame, sounded.arrived.played.event());
             if let Some(timing) = timing
                 && let Some(sound_nanos) = timing.sound_time_nanos(sounded.frame)
             {
@@ -296,39 +290,6 @@ impl Keyboard {
                 tick: sounded.tick,
                 played: sounded.arrived.played,
             });
-        }
-    }
-
-    /// What the live input played since the last call, in order, each with the engine frame it
-    /// sounded on: each message the engine sounded, and the end of each note, the pedal and the
-    /// wheels a release let go of, so whoever heard something begin hears it end. Call it every
-    /// poll: past what an input ring holds, the rest is left out.
-    pub fn take_heard(&mut self) -> Vec<(u64, NoteEvent)> {
-        std::mem::take(&mut self.heard)
-    }
-
-    fn hear(&mut self, frame: u64, event: NoteEvent) {
-        if self.heard.len() < INPUT_CAPACITY {
-            self.heard.push((frame, event));
-        }
-    }
-
-    /// What a release at `frame` lets go of, as a hand would have played it.
-    fn hear_release(&mut self, frame: u64) {
-        if self.live_pedal.is_down() {
-            self.hear(frame, NoteEvent::Pedal(Pedal::UP));
-        }
-        for number in 0..128_u8 {
-            if self.live_notes & (1 << number) == 0 {
-                continue;
-            }
-            if let Ok(pitch) = Pitch::new(number) {
-                self.hear(frame, NoteEvent::Off { pitch });
-            }
-        }
-        let wheels = self.live_expression.moves_to(Expression::REST);
-        for event in wheels {
-            self.hear(frame, event);
         }
     }
 
