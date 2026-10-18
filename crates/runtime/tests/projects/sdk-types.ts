@@ -326,6 +326,15 @@ const drone = tool({
   state: { pitch: knob({ min: 0, max: 127, default: 60 }), name: text() },
   controls: { swell: live({ min: 0, max: 1, default: 0 }), hit: trigger() },
 });
+const other = tool({
+  name: "other",
+  title: "Other",
+  when: "Never",
+  doc: "A tool of the project with the same fields as the drone.",
+  kind: "source",
+  state: { pitch: knob({ min: 0, max: 127, default: 60 }), name: text() },
+  controls: { swell: live({ min: 0, max: 1, default: 0 }), hit: trigger() },
+});
 const band = { lead: drone, fx: "filter" } as const;
 
 tool({
@@ -364,6 +373,8 @@ tool({
         // @ts-expect-error: a field the drone does not have.
         if (child.name === "lead") child.state.pitches = 62;
       }
+      // @ts-expect-error: the lead is a drone, not another tool with the same fields.
+      children.push({ name: "lead", tool: other, state: { pitch: 60, name: "" } });
     });
   },
 });

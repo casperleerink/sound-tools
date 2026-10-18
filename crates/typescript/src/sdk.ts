@@ -802,10 +802,10 @@ declare const entry: unique symbol;
  * with an entry as `Tools` has one. Named in a parent's `children`, its `state` and inputs are
  * checked; a name typed as a string checks nothing.
  */
-export type ProjectTool<Entry = unknown> = string & { readonly [entry]: Entry };
+export type ProjectTool<Name extends string = string, Entry = unknown> = Name & { readonly [entry]: Entry };
 
 /** The entry of `T`: in `Tools`, or of a `ProjectTool`. */
-type EntryOf<T> = T extends keyof Tools ? Tools[T] : T extends ProjectTool<infer Entry> ? Entry : {};
+type EntryOf<T> = T extends keyof Tools ? Tools[T] : T extends ProjectTool<string, infer Entry> ? Entry : {};
 
 /** The tools of the children of a parent by their names, as its `children` names them. */
 export type ChildTools = Record<string, ToolName>;
@@ -924,22 +924,29 @@ export type HeardEvent = NoteEvent & { at: number };
 /** The names of the knobs in `S`, the numbers a cable turns. */
 type KnobNames<S extends Fields> = { [Name in keyof S]: S[Name] extends KnobField ? Name : never }[keyof S] & string;
 
-/** Makes a tool of the project. Export what it returns for a parent to name in its `children`. */
-export function tool<const S extends Fields, const C extends Controls = {}, M = {}, const K extends ChildTools = ChildTools>(
-  spec: ToolSpec<S, C, M, K>,
-): ProjectTool<{
+/** The entry of a tool of the project with fields `S` and controls `C`. */
+type ProjectEntry<S extends Fields, C extends Controls> = {
   state: StateOf<S>;
   number: KnobNames<S>;
   live: ControlNames<C, "live">;
   trigger: ControlNames<C, "trigger">;
   notes: "notes";
-}> {
+};
+
+/** Makes a tool of the project. Export what it returns for a parent to name in its `children`. */
+export function tool<
+  const Name extends string,
+  const S extends Fields,
+  const C extends Controls = {},
+  M = {},
+  const K extends ChildTools = ChildTools,
+>(spec: ToolSpec<S, C, M, K> & { name: Name }): ProjectTool<Name, ProjectEntry<S, C>> {
   if (host.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
   host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls, unknown>);
   host.stacks.set(spec.name, new Error().stack ?? "");
-  return spec.name as never;
+  return spec.name as ProjectTool<Name, ProjectEntry<S, C>>;
 }
 
 /**
