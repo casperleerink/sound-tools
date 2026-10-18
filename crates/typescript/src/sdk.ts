@@ -661,10 +661,10 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   sound?: (fields: SoundOf<S, C>) => Operand | Stereo;
   /**
    * Makes it a parent: its record is `state/<name>/instance.json` and the records next to it
-   * are its children. A pure function of its record and its children that says how they
-   * connect. It runs in Bun when either changes, and what it
-   * declares plays a moment later; the sound plays on meanwhile. Its own `sound` hears what it
-   * connects to `ownSound` as `input`, and is its `audio` output.
+   * are its children. A pure function of its record and its children that says how they and
+   * its own ports connect. It runs in Bun when either changes, and what it declares plays a
+   * moment later; the sound plays on meanwhile. Its own `sound` hears what it connects to its
+   * own `{ port: "audio" }` as `input`, and is its `audio` output.
    */
   behaviour?: (parent: Parent<S>) => Declaration;
   /**
@@ -694,9 +694,7 @@ export interface ToolSpec<S extends Fields, C extends Controls, M> {
   onKey?: (tool: Handler<ValuesOf<S>, C, M>, key: Key) => void;
   /**
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
-   * parent's `play` and `send`; not its own. An instrument plays them by itself as well. An
-   * effect or a parent hears the keyboard instead, at the top of the project or on the track it
-   * plays.
+   * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
    */
   onNotes?: (tool: Handler<ValuesOf<S>, C, M>, event: HeardEvent) => void;
 }
@@ -718,11 +716,15 @@ export interface OwnedChild {
   state: unknown;
 }
 
-/** The keys that name a port of a child, one for each kind of what it carries. */
+/** The keys that name a port, one for each kind of what it carries. */
 type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger";
 
-/** A port of a child under the key `K` and no other, so a connection joins two of one kind. */
-type PortOf<K extends PortKey> = { child: string } & Record<K, string> & { [Other in Exclude<PortKey, K>]?: never };
+/** A port named under the key `K` and no other, so a connection joins two of one kind. */
+type Keyed<K extends PortKey, Name extends string = string> = Record<K, Name> & { [Other in Exclude<PortKey, K>]?: never };
+/** A port of a child under the key `K`. */
+type PortOf<K extends PortKey> = { child: string } & Keyed<K>;
+/** A port of the parent itself under the key `K`: no `child`. */
+type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } & Keyed<K, Name>;
 
 /** A sound port of a child: `audio` when left out. An effect has an `audio` input and output. */
 export type ChildPort = Partial<PortOf<"port">> & { child: string };
@@ -740,15 +742,24 @@ export type ChildLive = PortOf<"live">;
 /** A trigger of a child. */
 export type ChildTrigger = PortOf<"trigger">;
 
-/** The parent's own `sound` as the end of a connection: what reaches it is its `input`. */
-export const ownSound = "sound" as const;
+/**
+ * The parent's own sound port. From it, what reaches the parent's `audio` input; to it, what the
+ * parent plays out of its `audio` output, through its own `sound`.
+ */
+export type OwnAudio = OwnOf<"port", "audio">;
+/** What reaches the parent's own `notes`: the keyboard at the top, its track's notes in a track. */
+export type OwnNotes = OwnOf<"notes", "notes">;
 
-/** Joins an output of a child to an input of another child, or to `ownSound`, of one kind. */
+/**
+ * Joins an output of a child, or what reaches an input of the parent, to an input of a child or
+ * an output of the parent, of one kind. A `notes`, `number` or `bang` without `child` is an
+ * output of the parent of that name, which passes what reaches it on to its parent.
+ */
 export type Connection =
-  | { from: ChildPort; to: ChildPort | typeof ownSound }
-  | { from: ChildNotes; to: ChildNotes }
-  | { from: ChildNumber; to: ChildNumber | ChildLive }
-  | { from: ChildBang; to: ChildTrigger };
+  | { from: ChildPort | OwnAudio; to: ChildPort | OwnAudio }
+  | { from: ChildNotes | OwnNotes; to: ChildNotes | OwnOf<"notes"> }
+  | { from: ChildNumber; to: ChildNumber | ChildLive | OwnOf<"number"> }
+  | { from: ChildBang; to: ChildTrigger | OwnOf<"bang"> };
 
 /** What a behaviour declares. A JSON value: no functions, no classes. */
 export interface Declaration {

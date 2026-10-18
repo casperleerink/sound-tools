@@ -25,6 +25,7 @@ mod live;
 mod metronome;
 mod mixer;
 mod modulation;
+mod own_ports;
 mod owners;
 #[path = "../shared/plugin_hosts.rs"]
 mod plugin_hosts;

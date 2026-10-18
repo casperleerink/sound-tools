@@ -132,7 +132,7 @@ function problemsOf(spec: Spec): string[] {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
     if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
-      problems.push("kind: a parent hears its children through `input`, so leave `kind` out");
+      problems.push('kind: a parent\'s sound hears what it connects to its own { port: "audio" } as `input`, so leave `kind` out');
     }
   } catch (error) {
     // A definition its types refuse, such as one without `state`.
@@ -260,6 +260,13 @@ function declare({ question, tool, state, children }: Extract<Request, { type: "
       throw new Error(
         "`players` are gone: a child of tool `sequencer` loops the patterns now (agent-docs/sequencer.md), " +
           'connected by { from: { child, notes: "notes" }, to: { child, notes: "notes" } }, and set({ child, live: "launch" }, index) launches',
+      );
+    }
+    const connections: unknown[] = Array.isArray(declared?.connections) ? declared.connections : [];
+    if (connections.some((connection) => (connection as { to?: unknown } | null)?.to === "sound")) {
+      throw new Error(
+        "`ownSound` is gone: a parent's own ports are ends of its connections, as a child's are. " +
+          'Connect to { port: "audio" }, its own audio output, which plays through its own `sound`',
       );
     }
     return declared;

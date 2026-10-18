@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test of the crate checks this file with `tsc` next to
 // the SDK: every `@ts-expect-error` line must be an error, and nothing else.
-import { input, list, number, output, ownSound, rise, text, tool, trigger, type Declaration, type HeardEvent } from "./sdk";
+import { input, list, number, output, rise, text, tool, trigger, type Declaration, type HeardEvent } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -19,7 +19,7 @@ tool({
     const plain: string = state.plain[0]!;
     // @ts-expect-error: an item has no field `title`.
     state.rows[0]!.title;
-    const connections = [{ from: { child: name + steps + plain }, to: ownSound }];
+    const connections = [{ from: { child: name + steps + plain }, to: { port: "audio" as const } }];
     return { connections };
   },
 });
@@ -67,6 +67,46 @@ tool({
       { from: { child: "ears", notes: "hits", number: "level" }, to: { child: "synth", notes: "notes" } },
     ],
   }),
+});
+
+tool({
+  name: "own",
+  title: "Own",
+  when: "Never",
+  doc: "Its own ports are ends.",
+  state: {},
+  behaviour: (): Declaration => ({
+    connections: [
+      { from: { notes: "notes" }, to: { child: "keys", notes: "notes" } },
+      { from: { port: "audio" }, to: { child: "vocoder" } },
+      { from: { child: "keys" }, to: { port: "audio" } },
+      { from: { child: "lfo", number: "wave" }, to: { number: "wave" } },
+      { from: { child: "ears", bang: "onset" }, to: { bang: "onset" } },
+      { from: { child: "seq", notes: "notes" }, to: { notes: "melody" } },
+      // @ts-expect-error: its own sound output is `audio`.
+      { from: { child: "keys" }, to: { port: "send" } },
+      // @ts-expect-error: its own notes are `notes`.
+      { from: { notes: "keys" }, to: { child: "keys", notes: "notes" } },
+      // @ts-expect-error: its own notes are no sound.
+      { from: { notes: "notes" }, to: { port: "audio" } },
+      // @ts-expect-error: a number goes out as a number.
+      { from: { child: "lfo", number: "wave" }, to: { bang: "wave" } },
+      // @ts-expect-error: a parent takes no number of its own from outside.
+      { from: { number: "wave" }, to: { child: "filter", number: "cutoff_hz" } },
+      // @ts-expect-error: a live control is an input of a child, no output of the parent.
+      { from: { child: "lfo", number: "wave" }, to: { live: "rate" } },
+    ],
+  }),
+});
+
+tool({
+  name: "old-parent",
+  title: "Old parent",
+  when: "Never",
+  doc: "Plays into its sound the old way.",
+  state: {},
+  // @ts-expect-error: `ownSound` is gone: its own audio output is `{ port: "audio" }`.
+  behaviour: (): Declaration => ({ connections: [{ from: { child: "keys" }, to: "sound" }] }),
 });
 
 tool({
