@@ -425,8 +425,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
 ///
 /// The path of an instrument track is sequencer, instrument, the effects in the order of the
 /// record that are not bypassed, and out through its `audio` output, which its arrangement
-/// mixes. Its notes, of its clips and of its `notes` input, reach every one of them that takes
-/// notes. An audio track has its player where the other has sequencer and instrument, and a
+/// mixes. Its notes, of its clips and of its `notes` input, reach every child that takes notes. An audio track has its player where the other has sequencer and instrument, and a
 /// return the sum of the sends into it, which is its input. Every processor keeps what it
 /// holds: a note goes on sounding through an edit of a clip. For its arrangement to wire
 /// sidechains, it also exposes its sound before the effects and the `sidechain` input of each
@@ -436,13 +435,8 @@ fn apply_track(
     context: &mut BehaviourContext<'_>,
 ) -> Result<(), BehaviourError> {
     report_misplaced(track.kind, context);
-    let mut notes = None;
     let source = match track.kind {
-        TrackKind::Instrument => {
-            let (instrument, played) = play_notes(context)?;
-            notes = Some(played);
-            instrument
-        }
+        TrackKind::Instrument => play_notes(context)?,
         TrackKind::Audio => play_audio(context)?,
         TrackKind::Return => Some(take_sends(context)?),
     };
@@ -466,9 +460,6 @@ fn apply_track(
         };
         if *bypass {
             continue;
-        }
-        if let Some(notes) = notes {
-            hear_notes(notes, name, context)?;
         }
         expose_sidechain(slot, context);
         if let Some(sound) = sound {
@@ -505,11 +496,12 @@ fn expose_sidechain(slot: &EffectSlot, context: &mut BehaviourContext<'_>) {
 }
 
 /// The notes of an instrument track: its clips and what plays into its `notes` input, such as
-/// the keyboard, into its instrument. Gives where the sound of the instrument comes out, and
-/// the notes, for the effects that take them too.
+/// the keyboard, into every child that takes notes. A bypassed or unlisted effect hears them
+/// too, so it holds no note it never hears end. Gives where the sound of the instrument comes
+/// out.
 fn play_notes(
     context: &mut BehaviourContext<'_>,
-) -> Result<(Option<OutputEndpoint>, OutputEndpoint), BehaviourError> {
+) -> Result<Option<OutputEndpoint>, BehaviourError> {
     let timeline = NoteTimeline::new(context.children::<Clip>().map(|(_, clip)| clip));
     let sequencer = context.processor(SEQUENCER, NotePlayer::default)?;
     context.update(sequencer, NotePlayerUpdate::Timeline(Arc::new(timeline)))?;
@@ -518,24 +510,17 @@ fn play_notes(
     context.connect(OutputEndpoint::new(sequencer, NotePlayer::NOTES).to(input))?;
     context.input(NOTES_INPUT, input);
     let notes = OutputEndpoint::new(notes, EventThru::<NoteEvent>::OUTPUT);
-    hear_notes(notes, INSTRUMENT, context)?;
-    Ok((context.child_output(INSTRUMENT, AUDIO_OUTPUT), notes))
-}
-
-/// The notes of the track into the child `name`, when it takes notes.
-fn hear_notes(
-    notes: OutputEndpoint,
-    name: &str,
-    context: &mut BehaviourContext<'_>,
-) -> Result<(), BehaviourError> {
-    let Some(input) = context.child_input(name, NOTES_INPUT) else {
-        return Ok(());
-    };
-    match context.connect(notes.to(input)) {
-        // An input named so that takes something else.
-        Err(BehaviourError::Graph(GraphError::PortTypeMismatch { .. })) => Ok(()),
-        connected => connected,
+    let hearing: Vec<InputEndpoint> = (context.child_names())
+        .filter_map(|child| context.child_input(child, NOTES_INPUT))
+        .collect();
+    for input in hearing {
+        match context.connect(notes.to(input)) {
+            // An input named so that takes something else.
+            Err(BehaviourError::Graph(GraphError::PortTypeMismatch { .. })) => {}
+            connected => connected?,
+        }
     }
+    Ok(context.child_output(INSTRUMENT, AUDIO_OUTPUT))
 }
 
 /// The audio clips of an audio track: one player. Gives where its sound comes out.
