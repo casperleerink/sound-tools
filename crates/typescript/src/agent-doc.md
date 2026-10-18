@@ -344,6 +344,6 @@ tool({
 
 ## Check your work
 
-1. `bun x tsc -p extensions` checks the types. The first run downloads TypeScript.
+1. `bun check -p extensions` checks the types.
 2. `problems.txt`, or the problems `sound-tools . --inspect` prints, list what is wrong under `extensions/<file>`: what does not load or build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change.
 3. Use the tool as the composer will: write its record (`"state": {}` is its defaults; an effect in a track is also named in the track's `effects`). Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.
