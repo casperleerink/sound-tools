@@ -90,6 +90,11 @@ function fail(tool: string, message: string) {
 const NAME = /^[a-z][a-z0-9_]*$/;
 /** The most combinations of choices a tool has: the sound of each is made when it loads. */
 const MAX_SOUNDS = 256;
+/** Every key of a tool, so a misspelled or an old one is a problem instead of left out. */
+const KEYS = {
+  name: true, title: true, when: true, doc: true, kind: true, state: true, controls: true, sound: true,
+  behaviour: true, memory: true, tick: true, card: true, page: true, transport: true, onKey: true, onNotes: true,
+} satisfies Record<keyof Spec, true>;
 
 /**
  * What is wrong with the definition of a tool that its types do not say, so the agent that
@@ -98,6 +103,11 @@ const MAX_SOUNDS = 256;
 function problemsOf(spec: Spec): string[] {
   const problems: string[] = [];
   try {
+    for (const key of Object.keys(spec)) {
+      if (!(key in KEYS)) {
+        problems.push(`${key}: a tool has no ${key}; its keys are ${Object.keys(KEYS).join(", ")}`);
+      }
+    }
     for (const key of ["title", "when", "doc"] as const) {
       if (!spec[key]?.trim()) {
         problems.push(`${key}: write it, it is what the composer and agents read`);
