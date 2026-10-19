@@ -42,6 +42,9 @@ pub const MIN_EXACT_SAMPLE_RATE: u32 = 16_000;
 pub struct Ticks(pub u64);
 
 impl Ticks {
+    /// Later than any tick a piece reaches.
+    pub const MAX: Ticks = Ticks(u64::MAX);
+
     pub fn saturating_sub(self, other: Ticks) -> Ticks {
         Ticks(self.0.saturating_sub(other.0))
     }

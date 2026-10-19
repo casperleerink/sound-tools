@@ -73,6 +73,16 @@ impl NoteTimeline {
         (self.span.as_ref()).is_some_and(|span| span.start < range.end && range.start < span.end)
     }
 
+    /// After ranges up to `end`, the tick before which none plays anything, see
+    /// [`Self::plays_in`]: `Ticks::MAX` when all of it is behind. `None` inside it.
+    pub(crate) fn quiet_until(&self, end: Ticks) -> Option<Ticks> {
+        match &self.span {
+            Some(span) if span.start >= end => Some(span.start),
+            Some(span) if span.end > end => None,
+            _ => Some(Ticks::MAX),
+        }
+    }
+
     pub fn pedal(&self) -> &[PlacedPedal] {
         &self.pedal
     }

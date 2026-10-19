@@ -26,6 +26,7 @@ pub(crate) trait ErasedProcessor: Send {
     fn process(&mut self, context: &mut ProcessContext<'_>);
     fn leaving(&mut self);
     fn latency(&self) -> u32;
+    fn rests_until(&self) -> Option<Ticks>;
 }
 
 impl<P: Processor> ErasedProcessor for P {
@@ -46,6 +47,10 @@ impl<P: Processor> ErasedProcessor for P {
     fn latency(&self) -> u32 {
         Processor::latency(self)
     }
+
+    fn rests_until(&self) -> Option<Ticks> {
+        Processor::rests_until(self)
+    }
 }
 
 /// One place in the slot table: a processor, and how far ahead of the device it runs.
@@ -61,6 +66,9 @@ pub(crate) struct Slot {
     /// Where this processor's next range starts after a tempo map change, see
     /// `TransportState::view`.
     resume_from: Option<Ticks>,
+    /// The tick its blocks are skipped until, see [`Processor::rests_until`], and whether the
+    /// project played when it said so.
+    rests: Option<(Ticks, bool)>,
 }
 
 /// One step of an edit. The audio thread applies it by swapping, so the value it replaces
@@ -295,6 +303,7 @@ impl Engine {
                             current.lead = None;
                             current.moved = false;
                             current.resume_from = None;
+                            current.rests = None;
                             // The one that came out gets its last call here, on this thread,
                             // before it rides back with the batch.
                             if let Some(leaving) = processor {
@@ -303,6 +312,9 @@ impl Engine {
                         }
                     }
                     Command::Update { slot, update } => {
+                        if let Some(slot) = self.slots.get_mut(*slot) {
+                            slot.rests = None;
+                        }
                         if let Some(processor) = self.processor_mut(*slot) {
                             processor.update(update.as_mut());
                         }
@@ -316,6 +328,9 @@ impl Engine {
                     }
                     Command::Transport(command) => self.transport.apply(command),
                     Command::SetClock(clock) => {
+                        for slot in self.slots.iter_mut() {
+                            slot.rests = None;
+                        }
                         // The clock keeps the tick the device plays. A processor ahead of it
                         // goes on from the tick after its last block instead.
                         if self.transport.playing() {
@@ -486,6 +501,39 @@ impl Engine {
         let port_misuses = Cell::new(0);
         let dropped_events = Cell::new(0);
         for step in steps.iter() {
+            if let Some(slot) = self.slots.get_mut(step.slot)
+                && let Some((until, played)) = slot.rests
+            {
+                let heard_nothing = step.audio_outputs.is_empty()
+                    && step.audio_sources.iter().all(Vec::is_empty)
+                    && step.event_sources.iter().all(Vec::is_empty);
+                let lead = slot.lead.unwrap_or_default();
+                let still = heard_nothing && !slot.moved && slot.resume_from.is_none() && {
+                    let view = match &led {
+                        _ if lead == 0 => heard.clone(),
+                        Some((key, view)) if *key == (lead, 0, frames) => view.clone(),
+                        _ => {
+                            let view = self.transport.view(0, frames, lead, false, None);
+                            led = Some(((lead, 0, frames), view.clone()));
+                            view
+                        }
+                    };
+                    !view.jumped
+                        && !view.stopped_playing
+                        && view.playing == played
+                        && view.tick_range.end <= until
+                };
+                if still {
+                    let outputs = event_outputs.get_mut(step.event_outputs.clone());
+                    outputs
+                        .unwrap_or_default()
+                        .iter_mut()
+                        .for_each(EventPort::clear);
+                    continue;
+                }
+                slot.rests = None;
+            }
+
             let step_lead = (self.slots.get(step.slot)).and_then(|slot| slot.lead);
             let step_lead = step_lead.unwrap_or_default();
             for (index, (input, sources)) in audio_scratch
@@ -539,6 +587,7 @@ impl Engine {
                 lead,
                 moved,
                 resume_from,
+                rests,
             }) = self.slots.get_mut(step.slot)
             {
                 let lead = lead.unwrap_or_default();
@@ -612,6 +661,7 @@ impl Engine {
                         }
                     }
                 }
+                *rests = processor.rests_until().map(|until| (until, heard.playing));
             }
             for (buffer, block) in step.audio_outputs.clone().zip(step_audio_outputs.iter()) {
                 if let Some(compensation) = compensation_mut(compensations, compensation_of, buffer)

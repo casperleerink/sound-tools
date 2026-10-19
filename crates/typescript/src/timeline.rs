@@ -249,6 +249,10 @@ impl Processor for Timeline {
         self.player.prepare(config);
     }
 
+    fn rests_until(&self) -> Option<Ticks> {
+        self.player.rests_until()
+    }
+
     fn update(&mut self, update: &mut TimelineUpdate) {
         match update {
             TimelineUpdate::Player(update) => self.player.update(update),

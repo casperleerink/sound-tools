@@ -122,6 +122,25 @@ impl Launched {
         range.start <= end && self.anchor < range.end
     }
 
+    /// After ranges up to `end`, the tick before which no note of a pattern of `length` plays,
+    /// see [`Self::plays_in`]: `Ticks::MAX` when its round is behind. `None` while it plays.
+    fn quiet_until(&self, end: Ticks, length: Ticks) -> Option<Ticks> {
+        if !self.placed && !self.once {
+            return None;
+        }
+        let stop = match self.once {
+            true => self.anchor + length,
+            false => Ticks::MAX,
+        };
+        if end > stop {
+            Some(Ticks::MAX)
+        } else if self.anchor >= end {
+            Some(self.anchor)
+        } else {
+            None
+        }
+    }
+
     /// Whether it sounds at `heard`, for the watches.
     fn sounds_at(&self, heard: Ticks, length: Ticks) -> bool {
         let started = !self.placed || heard >= self.anchor;
@@ -154,6 +173,8 @@ pub struct NotePlayer {
     /// Where this player last put the wheels and the pressure, compared with the lanes of
     /// the snapshot every block as the pedal is.
     sent_expression: Expression,
+    /// See [`Processor::rests_until`].
+    rests_until: Option<Ticks>,
 }
 
 impl NotePlayer {
@@ -188,6 +209,7 @@ impl Default for NotePlayer {
             preview_frames: 0,
             sent_pedal: Pedal::UP,
             sent_expression: Expression::REST,
+            rests_until: None,
         }
     }
 }
@@ -204,7 +226,14 @@ impl NotePlayer {
         });
         !transport.jumped
             && !transport.stopped_playing
-            && self.held.is_empty()
+            && self.quiet()
+            && !pattern_plays
+            && !self.timeline.plays_in(range)
+    }
+
+    /// Nothing held, nothing to take in, nothing shown, the pedal up and the lanes at rest.
+    fn quiet(&self) -> bool {
+        self.held.is_empty()
             && self.placing.is_none()
             && self.queued.is_none()
             && !self.timeline_swapped
@@ -214,8 +243,21 @@ impl NotePlayer {
             && self.watches.is_none()
             && self.sent_pedal == Pedal::UP
             && self.sent_expression == Expression::REST
-            && !pattern_plays
-            && !self.timeline.plays_in(range)
+    }
+
+    /// After a block whose range ended at `end`, the tick before which it stays idle.
+    fn quiet_until(&self, end: Ticks) -> Option<Ticks> {
+        if !self.quiet() {
+            return None;
+        }
+        let pattern = match self.launched {
+            Some(launched) => match self.patterns.get(launched.pattern) {
+                Some(pattern) => launched.quiet_until(end, pattern.length().ticks())?,
+                None => Ticks::MAX,
+            },
+            None => Ticks::MAX,
+        };
+        Some(self.timeline.quiet_until(end)?.min(pattern))
     }
 }
 
@@ -249,10 +291,20 @@ impl Processor for NotePlayer {
         }
     }
 
+    fn rests_until(&self) -> Option<Ticks> {
+        self.rests_until
+    }
+
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        if self.idle(&context.transport) {
-            return;
+        if !self.idle(&context.transport) {
+            self.play_block(context);
         }
+        self.rests_until = self.quiet_until(context.transport.tick_range.end);
+    }
+}
+
+impl NotePlayer {
+    fn play_block(&mut self, context: &mut ProcessContext<'_>) {
         let ProcessContext {
             transport,
             event_outputs,
@@ -274,6 +326,7 @@ impl Processor for NotePlayer {
             preview_frames,
             sent_pedal,
             sent_expression,
+            rests_until: _,
         } = self;
         let mut sender = Sender {
             event_outputs,
