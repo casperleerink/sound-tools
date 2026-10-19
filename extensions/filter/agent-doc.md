@@ -4,7 +4,7 @@
 
 Here the bass plays through a darker filter named `dark`:
 
-```json state/song/bass/dark.json
+```json state/song/bass/chain/dark.json
 {
   "tool": "filter",
   "state": {"type": "low_pass", "cutoff_hz": 600.0}

@@ -4,7 +4,7 @@
 
 A drum part is a Drum pad that its parent plays notes into, from `timeline` children (`agent-docs/timeline.md`). Here the one of `beat`:
 
-```json state/song/beat/instrument.json
+```json state/song/beat/synth.json
 {
   "tool": "drum-pad",
   "state": {"pads": {}}
@@ -63,7 +63,7 @@ For a longer part write one timeline of several bars, or one per bar or per patt
 
 Write only the pads you change, by note. A pad you leave out is the pad of the kit, and a field you leave out of a pad is that pad's value in the kit. The runtime writes every pad that differs from the kit with all its fields. Here the open hat rings longer and pad 48 plays a sample:
 
-```json state/song/beat/instrument.json
+```json state/song/beat/synth.json
 {
   "tool": "drum-pad",
   "state": {

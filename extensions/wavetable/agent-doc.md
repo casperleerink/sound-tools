@@ -4,7 +4,7 @@
 
 Here a pad:
 
-```json state/song/synth/instrument.json
+```json state/song/synth/synth.json
 {
   "tool": "wavetable",
   "state": {

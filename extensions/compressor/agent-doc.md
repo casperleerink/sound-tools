@@ -4,7 +4,7 @@
 
 Here the drums play through a compressor named `glue`, for punchier drums:
 
-```json state/song/drums/glue.json
+```json state/song/drums/chain/glue.json
 {
   "tool": "compressor",
   "state": {"ratio": 5.0, "attack_ms": 30.0, "release_ms": 80.0}

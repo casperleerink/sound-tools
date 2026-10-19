@@ -8,7 +8,7 @@ The file must be in `assets/audio/` of the project, and the record names it by i
 
 To play a sample: copy the file in, then write the Sampler where a parent plays notes into it:
 
-```json state/song/kalimba/instrument.json
+```json state/song/kalimba/synth.json
 {
   "tool": "sampler",
   "state": {"sample": "kalimba.wav", "root": 72}
@@ -39,7 +39,7 @@ For a real instrument (piano, strings, brass, woodwinds, guitar, bass, drums), t
 
 An SFZ instrument is a folder of samples and a text file, `.sfz`, that says which sample plays for which key and how hard it is played. Free instruments come in this format, and you can write one. The folder goes under `assets/instruments/`, and the record names the SFZ file by its path there, with `sfz` instead of `sample`:
 
-```json state/song/cello/instrument.json
+```json state/song/cello/synth.json
 {
   "tool": "sampler",
   "state": {"sfz": "cello/cello-sustain.sfz", "gain_db": -3.0}

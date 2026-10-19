@@ -4,7 +4,7 @@
 
 Here the pad plays through a utility named `narrow` that makes it narrower:
 
-```json state/song/pad/narrow.json
+```json state/song/pad/chain/narrow.json
 {
   "tool": "utility",
   "state": {"width": 0.6}

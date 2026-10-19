@@ -4,7 +4,7 @@
 
 Here the organ plays through a warm saturator named `heat`:
 
-```json state/song/organ/heat.json
+```json state/song/organ/chain/heat.json
 {
   "tool": "saturator",
   "state": {"curve": "tube", "drive_db": 9.0}

@@ -9,7 +9,7 @@ CLAP and VST 3 work, as instruments and as effects. AU does not.
 
 A plugin is the tool `plugin`. One record serves both places. Here the instrument of `rhodes`:
 
-```json state/song/rhodes/instrument.json
+```json state/song/rhodes/synth.json
 {
   "tool": "plugin",
   "state": {"format": "clap", "plugin_id": "com.example.piano", "state_asset": "rhodes"}
@@ -19,7 +19,7 @@ A plugin is the tool `plugin`. One record serves both places. Here the instrumen
 A VST 3 plugin is the same record with another `format` and the class id as its `plugin_id`.
 This is a second one, `strings`, with its own state file:
 
-```json state/song/strings/instrument.json
+```json state/song/strings/synth.json
 {
   "tool": "plugin",
   "state": {"format": "vst3", "plugin_id": "A1B2C3D4E5F60718293A4B5C6D7E8F90", "state_asset": "strings"}
@@ -111,7 +111,7 @@ plugin after the plugin's own settings load, and a value you write moves the plu
 plays, with no reload. Every parameter that is not pinned stays in the state file. This pins the
 `Cutoff` of the piano of `rhodes`:
 
-```json state/song/rhodes/instrument.json
+```json state/song/rhodes/synth.json
 {
   "tool": "plugin",
   "state": {
@@ -140,7 +140,7 @@ device (`agent-docs/lane.md`): the parent connects the lane's `value` to the num
 `parameters.<id>.value` of the plugin. This lane opens the `Cutoff` pinned above over bar 1 and
 closes it again over bar 2:
 
-```json state/song/rhodes/cutoff.json
+```json state/song/rhodes/lane-cutoff.json
 {
   "tool": "lane",
   "state": {

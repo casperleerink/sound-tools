@@ -4,7 +4,7 @@
 
 Here soft keys on the track `piano`:
 
-```json state/song/piano/instrument.json
+```json state/song/piano/synth.json
 {
   "tool": "instrument.synth",
   "state": {"cutoff_hz": 1200.0, "attack_seconds": 0.01, "release_seconds": 0.8}

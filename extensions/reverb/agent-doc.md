@@ -4,7 +4,7 @@
 
 Here the keys play through a small room named `room`:
 
-```json state/song/keys/room.json
+```json state/song/keys/chain/room.json
 {
   "tool": "reverb",
   "state": {"size": 0.3, "decay_seconds": 0.8, "pre_delay_ms": 5.0}

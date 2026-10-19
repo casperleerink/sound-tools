@@ -4,7 +4,7 @@
 
 Here the loops play through a limiter named `peaks`, which makes them 4 dB louder:
 
-```json state/song/loops/peaks.json
+```json state/song/loops/chain/peaks.json
 {
   "tool": "limiter",
   "state": {"gain_db": 4.0}

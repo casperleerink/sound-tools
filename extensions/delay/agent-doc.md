@@ -4,7 +4,7 @@
 
 Here the lead plays through a delay named `echo`, on the dotted eighth:
 
-```json state/song/lead/echo.json
+```json state/song/lead/chain/echo.json
 {
   "tool": "delay",
   "state": {"division": "1/8", "feel": "dotted", "feedback": 0.35, "mix": 0.25}

@@ -4,7 +4,7 @@
 
 Here the snare plays through a gate named `tight`:
 
-```json state/song/snare/tight.json
+```json state/song/snare/chain/tight.json
 {
   "tool": "gate",
   "state": {"threshold_db": -30.0, "hold_ms": 15.0, "release_ms": 80.0}

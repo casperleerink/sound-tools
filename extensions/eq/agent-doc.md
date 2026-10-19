@@ -4,7 +4,7 @@
 
 Here the vocal plays through an EQ named `clear`:
 
-```json state/song/vocal/clear.json
+```json state/song/vocal/chain/clear.json
 {
   "tool": "eq",
   "state": {

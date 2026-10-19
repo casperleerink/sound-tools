@@ -1,6 +1,6 @@
 # project.json: tempo, time signatures, sections and extra connections
 
-One file at the top of the project folder. Most work needs no edit here: a track plays through its own instrument and reaches the output by itself.
+One file at the top of the project folder. Most work needs no edit here: the connections a project starts with already reach the speakers.
 
 ```json project.json
 {

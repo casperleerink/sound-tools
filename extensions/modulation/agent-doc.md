@@ -4,7 +4,7 @@
 
 Here the guitar plays through a wide chorus named `swirl`:
 
-```json state/song/guitar/swirl.json
+```json state/song/guitar/chain/swirl.json
 {
   "tool": "modulation",
   "state": {"mode": "chorus", "rate_hz": 0.4, "depth": 0.6, "spread": 1.0}
