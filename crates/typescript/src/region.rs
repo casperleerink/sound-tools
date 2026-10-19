@@ -181,7 +181,9 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
 /// The files regions play, read on a thread of their own in the window.
 static FILES: Loader<PathBuf, Arc<Audio>> = Loader::new("region", Keep::WhileUsed);
 
-/// The file `asset`, or `None` while it is read for the region `waiter`.
+/// The file `asset`, or `None` while it is read for the region `waiter`. The loader keeps an
+/// `Arc` of what it read; a read gives the shared file itself.
+#[allow(clippy::redundant_allocation)]
 fn read(
     assets: &Assets,
     asset: &AudioAsset,

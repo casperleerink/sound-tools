@@ -1215,7 +1215,7 @@ fn a_launch_sent_for_later_waits_for_its_time(cx: &mut TestAppContext) {
         .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
     let later = LAUNCHER.replace(
         r#"send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 1 ? 0 : 1)"#,
-        r#"send({ child: "bass", number: "launch" }, 1, { at: time + 1 })"#,
+        r#"send({ child: "bass", number: "launch" }, 1, { at: time + 7 })"#,
     );
     let later = later.replace(
         "view: ({ size, outputs, send })",
@@ -1256,7 +1256,8 @@ fn a_launch_sent_for_later_waits_for_its_time(cx: &mut TestAppContext) {
     window.wait_for_bun();
     window.poll();
     assert_eq!(queued(&mut window), Some(0.0));
-    window.loudest(60_000);
+    // Seven seconds on, it waits for the bar line after them.
+    window.loudest(7 * 48_000 + 12_000);
     window.poll();
     assert_eq!(queued(&mut window), Some(1.0));
     assert_eq!(window.problems(), []);

@@ -1839,6 +1839,7 @@ mod tests {
             "view": false,
             "keys": false,
             "notes": false,
+            "on_take": false,
             "behaviour": false
         }))
         .unwrap()
@@ -1942,6 +1943,7 @@ mod tests {
             "view": false,
             "keys": false,
             "notes": false,
+            "on_take": false,
             "behaviour": true
         }))
         .unwrap()

@@ -1085,7 +1085,7 @@ mod tests {
                 "info": {
                     "name": name, "file": format!("{name}.ts"), "title": name, "when": "w",
                     "doc": "d", "voices": 1, "input": true, "sound": true, "tick": false, "view": false,
-                    "keys": false, "notes": false, "behaviour": false, "inputs": {},
+                    "keys": false, "notes": false, "on_take": false, "behaviour": false, "inputs": {},
                     "fields": { "rate": { "kind": "number", "min": 0, "max": 1, "default": 0, "unit": unit } }
                 },
                 "sounds": [], "view": { "Err": "no view" }
