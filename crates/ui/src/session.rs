@@ -47,7 +47,6 @@ pub type SpanOf = std::rc::Rc<dyn Fn(&Project) -> Option<(Ticks, Ticks)>>;
 
 /// Turns the click in the engine on or off. The window attaches it; the session holds it, so
 /// every view that shows the click shows the same one.
-
 pub type ClickSwitch = Box<dyn FnMut(&mut EngineControl, bool) -> Result<(), GraphError>>;
 
 /// Where a notice came from decides what clears it.
