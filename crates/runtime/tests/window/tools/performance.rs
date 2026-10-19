@@ -669,8 +669,11 @@ fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {
     }
 
     window.focus_the_window();
+    // Space is the song's key: its code plays the clock.
+    let pressed = Instant::now();
     window.cx.simulate_keystrokes("space");
-    window.poll();
+    window.until("the song plays", Window::playing);
+    println!("{what}: space until the clock plays: {:?}", pressed.elapsed());
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let batches = sound_typescript::heard_batches();
