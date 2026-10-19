@@ -299,3 +299,38 @@ Where the code showed a better cut than the plan:
 - `send("notes", event)` replaces `send(event)`: one more word, one less concept.
 
 **Too specific (to revisit)**, from round 4a's list, now done: `kind`, the default `notes` input in types (it is intrinsic now, see above), the card height in the SDK (the window gives the room). Still open: `transport: true`, `sequencer` beside `timeline`, notes as the only event kind, `devices` as only in-code effects, docs placing tools by `state/arrangement/...`.
+
+### Round 6b
+
+Goal: finish the cut by turning the remaining special cases into children.
+
+**Decisions on 6a's questions:** "a lane moves what plays" stays. A sound sends up to 16 numbers again (`MAX_NUMBERS`, one event port each; bangs and notes stay at 8). `send("notes", event)` stays.
+
+| Before | After |
+| --- | --- |
+| `sequencer` (looping patterns by index, `plays`, launch) beside `timeline` (notes once at a song position) | one `timeline`: `loop`, `plays`, `quantize` and a `launch` input. A song is timelines that play once; a clip launcher is looping timelines, one per pattern |
+| `{ to: { meter: name } }`, a connection end only the owner had, read as `now.peak(name)` | a `meter` child, `{ to: { child: "bass-meter" } }`, read by its path: `now.peak("bass-meter")`, `now.peak("t00/level")` |
+| `"players"` migration message | gone |
+
+The timeline is the note player of the arrangement with two small additions in `sound-notes`: a pattern can be placed on the song (anchored on `start`, still through a seek, nothing before it) and can play one round. The Rust arrangement uses neither. A record edit places the timeline again; a launch only moves it for the performance, so a render plays what the records say. Only a looping timeline keeps watches, so 600 clips add none.
+
+**What stayed, and why:**
+- **Device in and out stay `project.json` connection ends** (`device_input`, `device_output`, `app`). An `audio-out` child would need the parent's own sound as a source, which is the `ownSound` end ARCHITECTURE rejected; a sounding tool at the top would have to split into a parent and a child. And the window opens the microphone and taps apps only for these connections, so a project that never asks never gets a permission prompt. They are where the project meets the machine.
+- **MIDI and the computer keys stay machine inputs**, played into the `notes` of what is selected or at the top. ARCHITECTURE keeps them out of the project (one lock-free ring, no record), and where they play is the `select` hook of a later round, not a child.
+- **`now.devicePeak`** stays: the device's output is the machine's, like the output meter in the title bar.
+
+**Concepts:** the cut is unchanged; two special cases are gone (the sequencer and the meter end), and two built-in children carry them. A meter costs a record file per meter: the song has one per track, the mixer one per strip.
+
+**Numbers** (M1 Max, release-fast). Unchanged from 6a within noise; opening the scale project reads 100 more records:
+
+| | Round 6a | Round 6b |
+| --- | --- | --- |
+| 12 / 150: idle, scroll, play frame | 1.5, 1.5, 1.7 ms | 1.5, 1.5, 1.6 ms |
+| 12 / 150: release that moves a clip, until drawn | 7.2 ms | 7.4 ms |
+| 24 / 600: idle, scroll, play frame | 3.7 to 4.5 ms | 3.5, 3.5, 3.6 ms |
+| Scale project, 100 × 100: idle, scroll across, play; open | 3.3, 3.3, 3.6 ms; 3.1 s | 3.1, 3.1, 3.2 ms; 3.4 s |
+| Mixer, 8 and 32 strips, playing | 0.6, 1.8 ms | 0.6, 1.8 ms |
+
+**Open:** two timelines into one instrument can put an off and an on of one pitch on the same frame, ordered by connection, so a launcher that swaps patterns on a bar may cut the new note of that pitch. The arrangement never meets it: a track's clips are one player.
+
+**Too specific (to revisit)**, now done: `sequencer` beside `timeline`. Still open: `transport: true`, notes as the only event kind, `devices` as only in-code effects, docs placing tools by `state/arrangement/...`.
