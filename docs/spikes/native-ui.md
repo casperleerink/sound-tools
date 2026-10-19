@@ -27,7 +27,11 @@ The rule, the same as the sound graph's: **motion never crosses to Bun**. Bun he
 1. `Knob`, `Steps`, `Meter`, `Pad` rebuilt in TS on the blocks; old native code removed. The knob turns and shows automation without Bun.
 2. A piano roll page on a `notes` field: zoom, scroll, draw, move many selected notes with snap, resize, marquee, playhead, cmd-A/C/V/D, delete.
 3. Stress: the piano roll with 2,000 notes.
-4. Later round, not this one: menus, text input, file drop, engine meters, a built-in device's card inside a page, drag reorder. Proof: a mixer and track panel slice.
+4. Round 3, every other kind of real-time UI, all through live values, not one-off elements:
+   - Engine to UI: track and master meters from the engine's peaks, automation shown moving on a knob, a waveform that grows while recording, a scope or spectrum (a live list, not one number).
+   - UI on its own: time and smoothing ops (meter fall-off, peak hold, fades, a blinking record button), live colours.
+   - Plus menus, text input, file drop, a built-in device's card inside a page, drag reorder.
+   - Proof: a mixer and track panel slice.
 
 ## How to verify
 
