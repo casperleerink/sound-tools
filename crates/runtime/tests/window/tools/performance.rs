@@ -366,3 +366,129 @@ fn performance_of_the_piano_roll_of_2000_notes(cx: &mut TestAppContext) {
         sound_typescript::heard_tree_bytes() - bytes
     );
 }
+
+/// A frame of the mixer as it plays, with `count` strips: the engine plays a frame's worth of
+/// sound between frames, which is not timed.
+fn measure_mixer(cx: &mut TestAppContext, count: usize) {
+    let Some(mut window) = super::mixer::open_mixer(cx, count) else {
+        return;
+    };
+    window.space_at("fader-master");
+    window.until("the master meter to show a level", |window| {
+        window.play_and_draw(800);
+        sound_typescript::shown_by_live_values("peak:master").is_some_and(|peak| peak > 0.1)
+    });
+    let asked = sound_typescript::sent_renders_and_events();
+    let drawn = sound_typescript::live_frames();
+    let frames: Vec<Duration> = (0..MOVES * 2)
+        .map(|_| {
+            // 1/60 s of sound at 48 kHz.
+            window.loudest(800);
+            window.timed(|window| window.cx.update(|window, _| window.refresh()))
+        })
+        .collect();
+    let (renders, events) = sound_typescript::sent_renders_and_events();
+    print(
+        &format!("mixer of {count} strips: a frame as it plays"),
+        frames,
+    );
+    println!(
+        "mixer of {count} strips: {} renders and {} events asked of Bun in {} frames ({} drawn)",
+        renders - asked.0,
+        events - asked.1,
+        MOVES * 2,
+        sound_typescript::live_frames() - drawn,
+    );
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_the_mixer_8(cx: &mut TestAppContext) {
+    measure_mixer(cx, 8);
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_the_mixer_32(cx: &mut TestAppContext) {
+    measure_mixer(cx, 32);
+}
+
+/// `count` waves of the last 8192 frames of a tone, as lines or as bands.
+const SCOPES: &str = r##"import { h, number, Space, tool, Wave, type Declaration } from "./sdk";
+
+tool({
+  name: "scopes",
+  title: "Scopes",
+  when: "A measurement",
+  doc: "Many waves of one meter.",
+  state: { count: number({ min: 0, max: 64, default: 1 }), band: number({ min: 0, max: 1, default: 0 }) },
+  behaviour: (): Declaration => ({ connections: [{ from: { child: "tone" }, to: { meter: "tone" } }] }),
+  page: ({ state, now }) =>
+    h("div", { style: { gap: 2 } },
+      Array.from({ length: state.count }, (_, index) =>
+        h(Space, { key: `wave${index}`, width: 600, height: 30 },
+          h(Wave, { x: 0, y: 0, width: 600, height: 30, list: now.scope("tone", { frames: 8192 }), color: "#7ee0a0", band: state.band === 1 }),
+        ),
+      ),
+    ),
+});
+"##;
+
+fn measure_scopes(cx: &mut TestAppContext, count: usize, band: bool) {
+    let record = format!(
+        r#"{{"tool": "scopes", "state": {{"count": {count}, "band": {}}}}}"#,
+        u8::from(band)
+    );
+    let project = r#"{"format": 1, "extensions": ["tone"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": []}"#;
+    let Some(mut window) = open(
+        cx,
+        &[
+            ("project.json", project),
+            ("state/scopes/instance.json", &record),
+            (
+                "state/scopes/tone.json",
+                r#"{"tool": "tone", "state": {"frequency_hz": 220, "gain": 0.3}}"#,
+            ),
+            ("extensions/scopes.ts", SCOPES),
+        ],
+    ) else {
+        return;
+    };
+    window.space_at("wave0");
+    // A whole scope of sound.
+    for _ in 0..20 {
+        window.loudest(800);
+        window.find("space-wave0");
+    }
+    let frames: Vec<Duration> = (0..MOVES)
+        .map(|_| {
+            window.loudest(800);
+            window.timed(|window| window.cx.update(|window, _| window.refresh()))
+        })
+        .collect();
+    let kind = if band { "bands" } else { "lines" };
+    print(
+        &format!("{count} waves of 8192 frames as {kind}: a frame"),
+        frames,
+    );
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_waves(cx: &mut TestAppContext) {
+    measure_scopes(cx, 1, false);
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_waves_16_lines(cx: &mut TestAppContext) {
+    measure_scopes(cx, 16, false);
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_waves_16_bands(cx: &mut TestAppContext) {
+    measure_scopes(cx, 16, true);
+}

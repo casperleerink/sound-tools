@@ -1527,30 +1527,18 @@ fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Win
         values.get(start..end.min(values.len())).unwrap_or_default()
     };
     if wave.band {
-        let mut path = gpui::PathBuilder::fill();
-        let lows: Vec<f32> = (0..columns)
-            .map(|column| under(column).iter().copied().fold(f32::INFINITY, f32::min))
-            .collect();
-        let highs: Vec<f32> = (0..columns)
-            .map(|column| {
-                under(column)
-                    .iter()
-                    .copied()
-                    .fold(f32::NEG_INFINITY, f32::max)
-            })
-            .collect();
-        path.move_to(point(x_of(0, columns), y_of(highs[0])));
-        for (column, high) in highs.iter().enumerate().skip(1) {
-            path.line_to(point(x_of(column, columns), y_of(*high)));
-        }
-        for (column, low) in lows.iter().enumerate().rev() {
-            // A band at least a point thick, so silence shows as a line.
-            let low = y_of(*low).max(y_of(highs[column]) + px(1.0));
-            path.line_to(point(x_of(column, columns), low));
-        }
-        path.close();
-        if let Ok(path) = path.build() {
-            window.paint_path(path, color);
+        // A quad a column: GPUI draws quads in a batch, where a filled path is tessellated.
+        let width = (bounds.size.width / columns as f32).max(px(1.0));
+        for column in 0..columns {
+            let under = under(column);
+            let low = under.iter().copied().fold(f32::INFINITY, f32::min);
+            let high = under.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let top = y_of(high);
+            // At least a point thick, so silence shows as a line.
+            let bottom = y_of(low).max(top + px(1.0));
+            let left = bounds.origin.x + bounds.size.width * (column as f32 / columns as f32);
+            let column = Bounds::new(point(left, top), size(width, bottom - top));
+            window.paint_quad(fill(column, color));
         }
         return;
     }
