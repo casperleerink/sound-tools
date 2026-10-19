@@ -242,14 +242,9 @@ fn a_take_of_sound_on_a_track_is_a_problem(cx: &mut TestAppContext) {
     let plugins = |_: &std::path::Path| Plugins::new(Vec::new(), scanner(), ScanCache::none());
     let mut window = open_folder_with(cx, folder, plugins, device);
     window.wait_for_bun();
-    // The R of the track, on the first row.
-    let row = window.on_lane(0, 0);
-    let arm = gpui::point(
-        row.x - gpui::px(LEAD + HEADER) + gpui::px(ARM),
-        row.y - gpui::px(ROW / 2.) + gpui::px(TOGGLES),
-    );
-    window.press(arm);
-    window.release(arm);
+    // The track chosen, which records what the keyboard plays.
+    let name = window.until_found("div-name-t00");
+    window.click(name);
     let record = window.until_found("button-record");
     window.cx.simulate_click(record, Modifiers::default());
     window.record_for(&input, 48_000);

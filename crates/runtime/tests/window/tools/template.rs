@@ -14,10 +14,9 @@ fn a_new_daw_project_opens_its_song_and_plays(cx: &mut TestAppContext) {
     let mut window = open_folder(cx, folder);
     window.wait_for_bun();
 
-    // A track from "+ Track".
+    // A track from Add track.
     let add = window.until_found("div-add-track");
     window.click(add);
-    window.pick("menu-0");
     window.until("the track added", |window| window.has("song/track"));
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Add a track"));
@@ -60,7 +59,7 @@ fn three_returns_added_have_three_names(cx: &mut TestAppContext) {
     runtime::templates::write(folder.path(), crate::song::daw()).unwrap();
     let mut window = open_folder(cx, folder);
     for name in ["song/ret-a", "song/ret-b", "song/ret-c"] {
-        let add = window.until_found("div-add-track");
+        let add = window.until_found("div-add-track-kind");
         window.click(add);
         window.pick("menu-2");
         window.until(name, |window| window.has(name));

@@ -165,10 +165,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let mut opened = open_files_with(cx, &files, write_voice)?;
     // Where bar 1 starts on the first row: right of the headers, under the title row and the
     // ruler.
-    let timeline = point(
-        px(crate::song::HEADER + crate::song::LEAD),
-        px(TOP),
-    );
+    let timeline = point(px(crate::song::HEADER + crate::song::LEAD), px(TOP));
     let lane = |tick: u64, row: f32| {
         timeline
             + point(

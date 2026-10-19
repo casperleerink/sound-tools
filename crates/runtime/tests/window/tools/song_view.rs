@@ -11,7 +11,7 @@ use sound_core::Ticks;
 
 use super::song::open_song;
 use super::{Opened, write_sine};
-use crate::song::{ACROSS, BAR, HEADER};
+use crate::song::{ACROSS, BAR, HEADER, LEAD};
 
 /// Points per tick in the note editor at zoom 1, and the height of its lane, as `clip-editor.tsx` has them.
 const EDITOR_ACROSS: f32 = 0.1;
@@ -104,9 +104,9 @@ impl Opened<'_> {
 fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
+    // Add track adds an instrument track; its chevron offers the other kinds.
     let add = window.until_found("div-add-track");
     window.click(add);
-    window.pick("menu-0");
     window.until("the track added", |window| window.has("song/track"));
     let mut parts = window.children_of("song/track");
     parts.sort();
@@ -133,7 +133,7 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
     window.pick("menu-1");
     window.pick("menu-2");
     window.until("the track coloured", |window| {
-        window.record("song/track")["colour"] == "#f0b44c"
+        window.record("song/track")["colour"] == "mauve"
     });
     let name = window.until_found("div-name-track");
     window.click_with(name, MouseButton::Right);
@@ -349,7 +349,7 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     let ruler = window.space_at("ruler");
-    let third = ruler + point(px((2 * BAR + 200) as f32 * ACROSS), px(8.));
+    let third = ruler + point(px(LEAD + (2 * BAR + 200) as f32 * ACROSS), px(8.));
     window.click_with(third, MouseButton::Right);
     window.pick("menu-0");
     window.until_found("div-ruler-edit");
@@ -379,8 +379,8 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Name a section"));
 
-    // A drag under the ruler repeats bars 2 and 3; the repeat is no edit.
-    let strip = window.space_at("loop") + point(px(0.), px(5.));
+    // A drag on the repeat bar at the foot of the ruler repeats bars 2 and 3; it is no edit.
+    let strip = window.space_at("ruler") + point(px(LEAD), px(26.));
     let (from, to) = (
         strip + point(px(BAR as f32 * ACROSS), px(0.)),
         strip + point(px(3. * BAR as f32 * ACROSS), px(0.)),

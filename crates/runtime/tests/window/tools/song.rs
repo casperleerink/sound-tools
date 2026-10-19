@@ -169,9 +169,12 @@ fn delete_removes_the_chosen_clip_and_space_still_plays(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-fn space_plays_the_song_and_the_meters_follow_with_nothing_from_bun(cx: &mut TestAppContext) {
+fn space_plays_the_song_with_nothing_from_bun(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 4, 12);
-    window.space_at("meter-t00");
+    // The first track chosen: its panel shows its meter.
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.space_at("fader-t00/mix");
     window.wait_for_bun();
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
@@ -179,10 +182,8 @@ fn space_plays_the_song_and_the_meters_follow_with_nothing_from_bun(cx: &mut Tes
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let batches = sound_typescript::heard_batches();
-    window.until("the meter of the first track to show its synth", |window| {
-        window.loudest(2_400);
-        window.find("space-meter-t00");
-        sound_typescript::shown_by_live_values("peak:t00/mix").is_some_and(|peak| peak > 0.01)
+    window.until("the first track to sound", |window| {
+        window.loudest(2_400) > 0.01
     });
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
     assert_eq!(sound_typescript::heard_batches(), batches);

@@ -1,4 +1,4 @@
-import { Arc, Circle, DeviceCard, For, TitleBar, Toggle, Icon, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
+import { Arc, Button, Circle, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -18,7 +18,8 @@ const HEADER = 176;
 const RULER = 32;
 const MASTER_ROW = 40;
 const EDITOR = 300;
-const RACK = 220;
+// The panel of the chosen track, as tall as a card and the room around it.
+const RACK = 192 + 24;
 // Points per tick at zoom 1: a bar is 96 points.
 const ACROSS = 0.025;
 // The ticks left of bar 1, eight points at zoom 1.
@@ -42,6 +43,8 @@ const [MOVES, RESIZES] = [["move"], ["resize"]];
 const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tape, "ret-*": bus, "*": track } as const;
 const STRIP = 64;
 const FADER = 160;
+// The fader of the chosen track's panel.
+const PANEL_FADER = 114;
 
 type Clipboard = { from: number; clips: { track: string; state: FilledStateOfTool<"timeline"> }[] };
 /** A track of the song as code reads it. */
@@ -74,7 +77,6 @@ type Memory = {
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 // Where a level sits on a meter or a fader, 0 to 1: its amplitude to this power, 0 dB at 0.8.
 const [CURVE, ZERO_DB] = [20 / 61.94, 0.8];
-const place = (amplitude: Live) => amplitude.pow(CURVE).times(ZERO_DB).min(1);
 
 // Bars: the time signatures are runs of bars, and the last run goes on.
 type Runs = readonly { readonly signature: string; readonly bars: number }[];
@@ -315,7 +317,10 @@ export const song = tool({
 
     /** Turns the recorders of the armed tracks on or off. */
     const recordArmed = (on: boolean) => {
-      for (const name of memory.armed) send({ child: `${name}/rec` as const, number: "record" }, on ? 1 : 0);
+      // The armed audio tracks, and the chosen instrument track, which the keyboard plays.
+      const chosen = tracks().find((each) => each.name === memory.track && recordable(each));
+      const recording = new Set([...memory.armed, ...(chosen ? [chosen.name] : [])]);
+      for (const name of recording) send({ child: `${name}/rec` as const, number: "record" }, on ? 1 : 0);
     };
     const toggleRecording = () => {
       if (memory.recording === null) {
@@ -694,8 +699,34 @@ export const song = tool({
           rest.splice(rest.indexOf(before), 0, moved);
           effects.state.order = rest;
         });
+      const row = () => rows().find((each) => each.name === name);
       return (
-        <div key="rack" style={{ height: RACK, direction: "row", gap: 8, padding: 8, align: "start", scroll: "x" }}>
+        <div style={{ height: RACK, direction: "row", keep: true }}>
+          <div style={{ width: HEADER - 1, keep: true, paddingTop: 13 }}>
+            <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
+              <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
+              <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{() => (row() ? titleOf(row()!) : name)}</div>
+              <Button key="close-panel" icon="x" variant="ghost" size="xs" onPress={() => (memory.track = null)} />
+            </div>
+            <div style={{ direction: "row", paddingLeft: 8, gap: 8 }}>
+              <div style={{ align: "center", gap: 6 }}>
+                <div style={{ direction: "row", gap: 2 }}>
+                  <Fader path={`${name}/mix`} height={PANEL_FADER} />
+                  <PeakMeter of={`${name}/mix`} length={PANEL_FADER} />
+                </div>
+                <GainText path={`${name}/mix`} />
+              </div>
+              <div style={{ align: "center", gap: 4 }}>
+                <Knob value={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} />
+                <div style={{ direction: "row", gap: 4 }}>
+                  <Toggle key={`panel-mute-${name}`} label="M" on={() => (row() ? muted(row()!) : false)} color="peach" onPress={() => toggleMute(name)} />
+                  <Toggle key={`panel-solo-${name}`} label="S" on={() => state.solo.includes(name)} color="yellow" onPress={() => toggleSolo(name)} />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style={{ width: 1, background: "alpha/5", keep: true }} />
+        <div key="rack" style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 12, paddingRight: 16, align: "start", scroll: "x" }}>
           <DeviceCard path={`${name}/synth`} />
           <DeviceCard path={`${name}/fx`} />
           <For each={order}>
@@ -705,14 +736,17 @@ export const song = tool({
               </div>
             )}
           </For>
-          <div key="rack-buttons" style={{ gap: 4 }}>
-            <div key="add-effect" style={{ paddingX: 8, paddingY: 4, radius: 6, background: COLOR.off, fontSize: 11 }} onPress={addEffect}>
-              + Effect
+          <div key="rack-buttons" style={{ gap: 4, keep: true }}>
+            <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: "alpha/5" }} onPress={addEffect}>
+              <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
+              <Icon name="chevron-down" size={14} color="gray-700" />
             </div>
-            <div key="change-instrument" style={{ paddingX: 8, paddingY: 4, radius: 6, background: COLOR.off, fontSize: 11 }} onPress={changeInstrument}>
-              Instrument…
+            <div key="change-instrument" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: "alpha/5" }} onPress={changeInstrument}>
+              <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Instrument</div>
+              <Icon name="chevron-down" size={14} color="gray-700" />
             </div>
           </div>
+        </div>
         </div>
       );
     };
@@ -729,34 +763,23 @@ export const song = tool({
     );
 
     const sendsOf = (each: Child) => (each.tool === "track" ? each.children.filter((child) => child.name.startsWith("send-")).map((child) => child.name) : []);
-    const up = (fraction: Live) => fraction.times(-FADER).plus(FADER);
-    /** Two bars of the level of the fader `path`, falling after the sound, with a peak line held 1.5 s. */
-    const StripMeter = ({ path }: { path: string }) => (
-      <Group>
-        {([0, 1] as const).flatMap((channel) => {
-          const bar = place(now.peak(path, channel)).fall(0.5);
-          const peak = place(now.peak(path, channel)).hold(1.5).fall(0.5);
-          const left = 4 + channel * 7;
-          return [
-            <Rect x={left} y={0} width={5} height={FADER} color={COLOR.lane} />,
-            <Rect x={left} y={up(bar)} width={5} height={bar.times(FADER)} color={COLOR.meter} />,
-            <Rect x={left} y={up(peak)} width={5} height={1} color={COLOR.chosen} opacity={peak.gt(0.01)} />,
-          ];
-        })}
-      </Group>
-    );
-    /** A fader over a meter: a drag up and down turns `gain_db` of the fader `path`, natively. */
-    const Fader = ({ path }: { path: string }) => {
+    /** A fader as the window drew one: a drag up and down turns `gain_db` of the fader `path`, natively. */
+    const Fader = ({ path, height = FADER }: { path: string; height?: number }) => {
       const at = now.value(`${path}.gain_db`, { played: true, fraction: true });
       return (
-        <Space key={`fader-${path}`} width={40} height={FADER} cursor="ns-resize"
-          drag={{ y: { value: `${path}.gain_db`, travel: FADER, default: 0, label: "Change the volume" } }}>
-          <StripMeter path={path} />
-          <Rect x={22} y={0} width={2} height={FADER} color={COLOR.lane} />
-          <Rect x={16} y={up(at).minus(4)} width={16} height={8} radius={2} color={COLOR.edit} />
+        <Space key={`fader-${path}`} width={28} height={height} cursor="ns-resize"
+          drag={{ y: { value: `${path}.gain_db`, travel: height, default: 0, label: "Change the volume" } }}>
+          <Rect x={13} y={0} width={2} height={height} radius={1} color="alpha/10" />
+          <Rect x={0} y={at.times(-(height - 6)).plus(height - 6)} width={28} height={6} radius={3} color="gray-900" />
         </Space>
       );
     };
+    /** The gain of the fader `path` as it plays, in dB. */
+    const GainText = ({ path }: { path: string }) => (
+      <Space key={`gain-${path}`} width={56} height={16}>
+        <Label x={28} y={0} text={now.value(`${path}.gain_db`, { played: true })} unit="db" size={12} color="gray-950" align="center" />
+      </Space>
+    );
     /** A knob on a number of the fader `path`: its pan, or the gain of a send. */
     const Turn = ({ path, field, label }: { path: string; field: "pan" | "gain_db"; label: string }) => {
       const angle = now.value(`${path}.${field}`, { played: true, fraction: true }).minus(0.5).times(0.75);
@@ -771,7 +794,10 @@ export const song = tool({
       <div style={{ width: STRIP, gap: 6, align: "center" }}>
         <For each={() => sendsOf(each)}>{(send) => <Turn path={`${each.name}/${send}`} field="gain_db" label="Change a send" />}</For>
         <Turn path={`${each.name}/mix`} field="pan" label="Change the pan" />
-        <Fader path={`${each.name}/mix`} />
+        <div style={{ direction: "row", gap: 2 }}>
+          <Fader path={`${each.name}/mix`} />
+          <PeakMeter of={`${each.name}/mix`} length={FADER} />
+        </div>
         <div style={{ direction: "row", gap: 4 }}>
           <Toggle key={`strip-mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onPress={() => toggleMute(each.name)} />
           {each.tool === "bus" ? null : <Toggle key={`strip-solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onPress={() => toggleSolo(each.name)} />}
@@ -784,7 +810,10 @@ export const song = tool({
       <div key="mixer" style={{ height: 320, direction: "row", gap: 4, padding: 8, align: "end", scroll: "x" }}>
         <For each={() => [...rows(), ...returns()]}>{(each) => <Strip each={each} />}</For>
         <div style={{ width: STRIP, gap: 6, align: "center" }}>
-          <Fader path="master" />
+          <div style={{ direction: "row", gap: 2 }}>
+            <Fader path="master" />
+            <PeakMeter of="master" length={FADER} />
+          </div>
           <div style={{ fontSize: 11, color: COLOR.text }}>master</div>
         </div>
         <DeviceCard path="limit" />
@@ -1112,7 +1141,7 @@ export const song = tool({
           <div style={{ width: HEADER - 1, keep: true }}>
             <div style={{ height: RULER, direction: "row", align: "center", paddingLeft: 36, paddingRight: 8 }}>
               <div style={{ grow: true, fontSize: 12, color: "gray-700" }}>Snap</div>
-              <div key="snap" style={{ direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: "alpha/10" }}
+              <div key="song-snap" style={{ direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: "alpha/10" }}
                 onPress={pickSnap}>
                 <div style={{ fontSize: 12, weight: "medium", color: "gray-950" }}>{() => snapsOf(4 * BEAT).find((each) => each.ticks === memory.snap)?.label ?? "Off"}</div>
                 <Icon name="chevron-down" size={12} color="gray-700" />
@@ -1206,6 +1235,7 @@ export const song = tool({
           </div>
           <div style={{ width: 1, height: MASTER_ROW - 1, background: "alpha/5" }} />
         </div>
+        <div style={{ height: 1, background: "alpha/5", keep: true }} />
         {() => {
           if (memory.mixer) return <Mixer />;
           const region = memory.region;
