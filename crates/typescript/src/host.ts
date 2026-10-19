@@ -86,7 +86,7 @@ const MAX_SOUNDS = 256;
 const KEYS = {
   name: true, title: true, when: true, doc: true, kind: true, state: true, controls: true, sound: true,
   behaviour: true, children: true, memory: true, tick: true, card: true, page: true, transport: true, onKey: true,
-  onNotes: true,
+  keys: true, onNotes: true,
 } satisfies Record<keyof Spec, true>;
 
 /**
@@ -196,6 +196,7 @@ function described(spec: Spec, file: string) {
       page: spec.page !== undefined,
       transport: spec.transport === true,
       keys: spec.onKey !== undefined,
+      takes: spec.keys ?? null,
       notes: spec.onNotes !== undefined,
       behaviour: spec.behaviour !== undefined,
       children: spec.children,
@@ -581,6 +582,17 @@ function filledState(spec: Spec, entry: Entry): State {
   return frozen(filledObject(spec.state, entry.state));
 }
 
+/**
+ * The state of a child as `update` gives it: every field that has a default at it, as the code
+ * of its tool gets its own, so a change reads `clip.state.start` with no `?? 0`.
+ */
+function filledOf(child: OwnedChild): unknown {
+  const spec = sdk.host.tools.get(child.tool);
+  if (spec) return filledObject(spec.state, child.state);
+  const defaults = (sdk as { defaultStates?: Record<string, object> }).defaultStates?.[child.tool];
+  return defaults && isObject(child.state) ? { ...structuredClone(defaults), ...child.state } : child.state;
+}
+
 /** What a change did with a child it got: whether it read its state, and its children as it left them. */
 type Drafted = { untouched: () => boolean; children: () => [OwnedChild[], unknown] | [] };
 const drafts = new WeakMap<object, Drafted>();
@@ -607,7 +619,7 @@ function draft(child: OwnedChild): OwnedChild {
       enumerable: true,
       get() {
         if (!copied) {
-          state = structuredClone(child.state);
+          state = structuredClone(filledOf(child));
           copied = true;
         }
         return state;
@@ -708,7 +720,8 @@ function childChanges(parent: string, children: OwnedChild[], edited: unknown, c
     }
     const drafted = drafts.get(child);
     if (!drafted?.untouched()) {
-      const fields = fieldsChanged(was.state, child.state, `the state of ${name}`);
+      // Against its defaults too: a field the file leaves out and the change did not touch stays out.
+      const fields = fieldsChanged(filledOf(was), child.state, `the state of ${name}`);
       if (fields) {
         changes.push({ type: "fields", id, ...fields });
       }

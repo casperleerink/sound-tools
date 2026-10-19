@@ -51,6 +51,8 @@ props! {
         style: Style,
         /// It hears a click.
         on_click: bool,
+        /// The spaces whose scroll its children move with, by their keys.
+        follow: Follow,
     }
 }
 
@@ -116,6 +118,8 @@ props! {
         align: Align,
         /// The values a wave draws, oldest first, and the values at its bottom and its top.
         list: List,
+        /// A group's box from its place, outside which its shapes do not show.
+        clip: Clip,
         low: f32,
         high: f32,
         /// A wave as a band from the lowest to the highest value under each point, else a line.
@@ -615,6 +619,7 @@ impl ShapeProps {
             Some(Words::Live(live)) => Some(live),
             _ => None,
         };
+        let clip = (self.clip.iter()).flat_map(|clip| [&clip.width, &clip.height]);
         [
             &self.opacity,
             &self.x,
@@ -628,6 +633,15 @@ impl ShapeProps {
         .flatten()
         .chain(reaches)
         .chain(words)
+        .chain(clip)
+    }
+
+    /// For a group: whether where it puts its shapes never moves, so they may stay too.
+    pub(crate) fn group_stays(&self) -> bool {
+        let fixed = |number: &Option<Num>| number.as_ref().is_none_or(|number| number.fixed().is_some());
+        let clip = (self.clip.as_ref())
+            .is_none_or(|clip| clip.width.fixed().is_some() && clip.height.fixed().is_some());
+        fixed(&self.x) && fixed(&self.y) && clip && self.moves.is_none() && self.grows.is_none()
     }
 
     /// Whether the pointer can do something with it, so it is found under the pointer.
@@ -790,6 +804,14 @@ pub(crate) enum Reach {
 pub(crate) enum Words {
     Fixed(String),
     Live(Num),
+}
+
+/// The size of a group's box, in the units of its space.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Clip {
+    pub width: Num,
+    pub height: Num,
 }
 
 /// A number, or a live value the window works out on every frame. Read by hand: serde's
@@ -1206,6 +1228,19 @@ impl TryFrom<String> for Color {
 }
 
 impl Style {
+    /// How it lines its children up, and nothing of its size or looks: the inside of a div
+    /// whose children scroll.
+    pub(crate) fn lines_up(&self, element: Div) -> Div {
+        let lines = Style {
+            direction: self.direction.clone(),
+            gap: self.gap,
+            align: self.align.clone(),
+            justify: self.justify.clone(),
+            ..Style::default()
+        };
+        lines.apply(element)
+    }
+
     pub(crate) fn apply(&self, element: Div) -> Div {
         let mut element = element.flex();
         element = match self.direction {

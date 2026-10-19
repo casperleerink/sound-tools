@@ -227,9 +227,10 @@ page: ({ state, memory, update, now }) => {
 },
 ```
 
-- `moves` names the drags a shape moves with, `grows` those that make it wider and taller, as the selected notes above: one small change when the selection does. A `<Group x y>` moves its shapes by one live value.
+- `moves` names the drags a shape moves with, `grows` those that make it wider and taller, as the selected notes above: one small change when the selection does. A `<Group x y>` places its shapes from `x`, `y`, and moves them with its own `moves`; with a `clip` of `{ width, height }` they do not show or hear the pointer outside that box: a clip and its notes, which end at its end.
 - `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. Escape lets go of a drag, and its code hears nothing.
-- `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts.
+- `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts. On a `div`, `follow: { y: "timeline" }` scrolls its children with it, cut off at its edges: the heads of the rows of a timeline.
+- `<>...</>` gives several children where one goes, such as a component that gives two shapes; import `Fragment` with `h`.
 - A drag can also turn a field or a live control as it goes, with no code, as a knob does: a drag of `{ y: { field: "cutoff" } }`; for a field the whole drag is one undo step. `onPress` hears a `Press`: where in units, the button, the clicks and the modifiers. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
 
 Levels, the clock and easing are live values too, so a meter or a light moves on every frame with no code. Paths such as `"bass/synth"` reach a record deeper down:
@@ -259,12 +260,12 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
   ```
 
 - `send(event, { at, child })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`.
-- `onKey: (tool, { key, down, shift, cmd, alt, ctrl }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. A key with cmd, ctrl or alt only goes down, and one the window uses, such as cmd-z, stays the window's. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; an instrument's or source's sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The MIDI keyboard plays `notes`, and in a track its clips too.
+- `onKey: (tool, { key, down, shift, cmd, alt, ctrl }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window: those `keys: ["delete", "cmd-d"]` names, the rest staying the window's, so space still plays; without `keys`, every plain key. A key with cmd, ctrl or alt only goes down, and one the window uses, such as cmd-z, stays the window's. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; an instrument's or source's sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The MIDI keyboard plays `notes`, and in a track its clips too.
 - `<Canvas width height shapes background? onPress? onDrag?>` is a space in points that draws `shapes` (`{ kind: "circle", x, y, radius, color }` and the other kinds of `Shape`) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. Give `shapes` as a function to draw what moves, such as from `memory`: they are made again whole when what it reads changes, so keep it to a few hundred.
 
 ## Changing records
 
-`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest. Edit a field or a child's `state` (typed when the parent names its `children`, else `as SequencerState`), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
+`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest, every field at its default where the file leaves it out, children's too. Edit a field or a child's `state` (typed when the parent names its `children`, else `as SequencerState`), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
 
 ```ts
 update("Add a bass line", ({ children }) => {
@@ -275,7 +276,7 @@ update("Add a bass line", ({ children }) => {
 
 ## A project that is one tool
 
-`page: (page) => ...` draws the whole window, from what a card gets and `size`, its width and height in points. Fill it: the window may be any size, so read `size` in a function: `width={() => size.width}`.
+`page: (page) => ...` draws the whole window, from what a card gets and `size`, its width and height in points. Fill it: the window may be any size, so read `size` in a function, `width={() => size.width}`, or give the top `div` and what fills it `grow`.
 
 To make the project one tool:
 

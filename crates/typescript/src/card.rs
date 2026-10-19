@@ -269,6 +269,15 @@ impl TypeScriptCard {
         let modifiers = keystroke.modifiers;
         let chord = modifiers.platform || modifiers.control || modifiers.alt || modifiers.function;
         let key = keystroke.key.clone();
+        // A tool that names its keys leaves the rest to the window, such as space to play. A key
+        // it took comes up here all the same.
+        let takes = (self.live.read(cx).info(self.card)).and_then(|info| info.takes);
+        if let Some(takes) = takes
+            && !takes.contains(&chord_name(keystroke))
+            && (down || !self.keys_down.contains(&key))
+        {
+            return;
+        }
         // A key that went down before the card had the keys has no up here.
         let changed = match (down, chord) {
             (true, true) => !repeat,
@@ -681,6 +690,32 @@ struct Placed {
     index: usize,
     geometry: Geometry,
     color: Hsla,
+    /// The box of the groups around it, outside which it does not show.
+    clip: Option<Area>,
+}
+
+/// A box in the units of a space: left, top, right and bottom.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Area([f64; 4]);
+
+impl Area {
+    /// The part of it inside `other` as well, when there is one.
+    fn within(self, other: Option<Area>) -> Area {
+        let Some(Area([left, top, right, bottom])) = other else {
+            return self;
+        };
+        let [l, t, r, b] = self.0;
+        Area([l.max(left), t.max(top), r.min(right), b.min(bottom)])
+    }
+
+    fn meets(self, extent: &Extent) -> bool {
+        let [left, top, right, bottom] = self.0;
+        let (across, down) = (extent.across, extent.down);
+        across.0.min(across.1) <= right
+            && across.0.max(across.1) >= left
+            && down.0.min(down.1) <= bottom
+            && down.0.max(down.1) >= top
+    }
 }
 
 enum Geometry {
@@ -862,6 +897,8 @@ struct Painted {
     shape: PaintedShape,
     color: Hsla,
     hitbox: Option<(Hitbox, Cursor)>,
+    /// What of the window it shows in, inside the box of its groups.
+    clip: Option<Bounds<Pixels>>,
 }
 
 enum PaintedShape {
@@ -986,6 +1023,7 @@ impl Drawing<'_, '_> {
                 key,
                 style,
                 on_click,
+                follow,
             }) => {
                 let children: Vec<AnyElement> = (entry.children.iter())
                     .filter(|child| {
@@ -997,11 +1035,31 @@ impl Drawing<'_, '_> {
                     .enumerate()
                     .map(|(position, child)| self.draw(*child, &[index, &[position]].concat()))
                     .collect();
-                let element = style
-                    .clone()
-                    .unwrap_or_default()
-                    .apply(div())
-                    .children(children);
+                let style = style.clone().unwrap_or_default();
+                let element = match follow {
+                    // Its children move with the scroll of the spaces it follows, cut off at its
+                    // edges: the heads of the rows of a timeline that scrolls. They lie over it,
+                    // so how tall they are never makes it taller: its style says its size.
+                    Some(follow) => {
+                        let scrolled = |key: &Option<String>, along: fn(&SpaceView) -> f64| {
+                            key.as_ref()
+                                .and_then(|key| self.spaces.get(key))
+                                .map_or(0.0, along) as f32
+                        };
+                        let dx = scrolled(&follow.x, |view| view.left * view.scale().0);
+                        let dy = scrolled(&follow.y, |view| view.top * view.scale().1);
+                        let inside = style
+                            .lines_up(div())
+                            .absolute()
+                            .left(px(-dx))
+                            .top(px(-dy))
+                            .when(follow.x.is_none(), |inside| inside.w_full())
+                            .when(follow.y.is_none(), |inside| inside.h_full())
+                            .children(children);
+                        (style.apply(div()).relative().overflow_hidden()).child(inside)
+                    }
+                    None => style.apply(div()).children(children),
+                };
                 if *on_click != Some(true) {
                     return element.into_any_element();
                 }
@@ -1286,17 +1344,19 @@ pub(crate) struct SpaceIndex {
 }
 
 enum Indexed {
-    /// A shape that stays where it is, at `offset` from the groups around it.
+    /// A shape that stays where it is, at `offset` from the groups around it, inside `clip`.
     Stays {
         slot: usize,
         offset: (f64, f64),
+        clip: Option<Area>,
         extent: Extent,
     },
     /// A shape that moves, or one in a group that does: worked out on every frame, from
-    /// `offset` and the groups in `groups` that move.
+    /// `offset` and `clip` and the groups in `groups` that move.
     Moves {
         slot: usize,
         offset: (f64, f64),
+        clip: Option<Area>,
         groups: Rc<[usize]>,
     },
 }
@@ -1370,14 +1430,14 @@ impl Placing<'_> {
     /// The shapes under `children`, with where those that stay are.
     fn index(&self, children: &[usize], version: u64) -> SpaceIndex {
         let mut shapes = Vec::with_capacity(children.len());
-        self.index_into(children, (0.0, 0.0), &Rc::from([]), &mut shapes);
+        self.index_into(children, ((0.0, 0.0), None), &Rc::from([]), &mut shapes);
         SpaceIndex { version, shapes }
     }
 
     fn index_into(
         &self,
         children: &[usize],
-        (left, top): (f64, f64),
+        (offset, clip): ((f64, f64), Option<Area>),
         groups: &Rc<[usize]>,
         into: &mut Vec<Indexed>,
     ) {
@@ -1390,76 +1450,105 @@ impl Placing<'_> {
                 continue;
             };
             if shape.kind == Some(ShapeKind::Group) {
-                let fixed = |number: &Option<tree::Num>| match number {
-                    Some(number) => number.fixed().map(f64::from),
-                    None => Some(0.0),
-                };
-                match (fixed(&shape.x), fixed(&shape.y)) {
-                    (Some(x), Some(y)) => {
-                        self.index_into(&entry.children, (left + x, top + y), groups, into);
-                    }
-                    _ => {
-                        let groups: Rc<[usize]> = groups.iter().copied().chain([*slot]).collect();
-                        self.index_into(&entry.children, (left, top), &groups, into);
-                    }
+                if groups.is_empty() && shape.group_stays() {
+                    let placed = self.group(shape, (offset, clip));
+                    self.index_into(&entry.children, placed, groups, into);
+                } else {
+                    let groups: Rc<[usize]> = groups.iter().copied().chain([*slot]).collect();
+                    self.index_into(&entry.children, (offset, clip), &groups, into);
                 }
             } else if groups.is_empty() && shape.stays() {
-                let Some(geometry) = self.geometry(shape, (left, top)) else {
+                let Some(geometry) = self.geometry(shape, offset) else {
                     continue;
                 };
                 into.push(Indexed::Stays {
                     slot: *slot,
-                    offset: (left, top),
+                    offset,
+                    clip,
                     extent: Extent::of(&geometry),
                 });
             } else {
                 into.push(Indexed::Moves {
                     slot: *slot,
-                    offset: (left, top),
+                    offset,
+                    clip,
                     groups: groups.clone(),
                 });
             }
         }
     }
 
+    /// Where a group puts its shapes, from where its own group put it: moved by its `x` and
+    /// `y` and the drags it moves with, inside its box when it has one.
+    fn group(
+        &self,
+        group: &tree::ShapeProps,
+        ((left, top), clip): ((f64, f64), Option<Area>),
+    ) -> ((f64, f64), Option<Area>) {
+        let (moved_x, moved_y) = self.followed(&group.moves);
+        let left = left + self.number(&group.x) + moved_x;
+        let top = top + self.number(&group.y) + moved_y;
+        let clip = match &group.clip {
+            Some(tree::Clip { width, height }) => {
+                let (grown_x, grown_y) = self.followed(&group.grows);
+                let right = left + self.sources.number(width) + grown_x;
+                let bottom = top + self.sources.number(height) + grown_y;
+                Some(Area([left, top, right, bottom]).within(clip))
+            }
+            None => clip,
+        };
+        ((left, top), clip)
+    }
+
     /// Places the shapes of `index` that move, and those of the rest that show.
     fn indexed(&mut self, index: &SpaceIndex) {
         let table = self.table;
         for indexed in &index.shapes {
-            let (slot, offset) = match indexed {
+            let (slot, placed) = match indexed {
                 Indexed::Stays {
                     slot,
                     offset,
+                    clip,
                     extent,
                 } => {
                     let shows = self.shown.as_ref().is_none_or(|shown| {
                         shown.reaches(extent.across, extent.down, extent.reach)
-                    });
+                    }) && clip.is_none_or(|clip| clip.meets(extent));
                     if !shows {
                         continue;
                     }
-                    (*slot, *offset)
+                    (*slot, (*offset, *clip))
                 }
                 Indexed::Moves {
                     slot,
                     offset,
+                    clip,
                     groups,
                 } => {
-                    let mut offset = *offset;
+                    // A shape that moves inside the box of a group that stays shows only when
+                    // that box does: the handle at the end of a clip far off.
+                    let boxed_off = |shown: &Shown| {
+                        clip.is_some_and(|Area([left, top, right, bottom])| {
+                            !shown.reaches((left, right), (top, bottom), (0.0, 0.0))
+                        })
+                    };
+                    if groups.is_empty() && self.shown.as_ref().is_some_and(boxed_off) {
+                        continue;
+                    }
+                    let mut placed = (*offset, *clip);
                     for group in groups.iter() {
                         if let Some(Props::Shape(group)) = table.get(*group).map(|entry| &entry.props)
                         {
-                            offset.0 += self.number(&group.x);
-                            offset.1 += self.number(&group.y);
+                            placed = self.group(group, placed);
                         }
                     }
-                    (*slot, offset)
+                    (*slot, placed)
                 }
             };
             if let Some(entry) = table.get(slot)
                 && let Props::Shape(shape) = &entry.props
             {
-                self.shape(entry.id, shape, offset);
+                self.shape(entry.id, shape, placed);
             }
         }
     }
@@ -1474,7 +1563,12 @@ impl Placing<'_> {
         }
     }
 
-    fn shape(&mut self, id: u64, shape: &tree::ShapeProps, (left, top): (f64, f64)) {
+    fn shape(
+        &mut self,
+        id: u64,
+        shape: &tree::ShapeProps,
+        ((left, top), clip): ((f64, f64), Option<Area>),
+    ) {
         let index = self.pointed.len();
         let hovered = self.hovered == Some(id);
         let (moved_x, moved_y) = self.followed(&shape.moves);
@@ -1482,11 +1576,10 @@ impl Placing<'_> {
         let Some(geometry) = self.geometry(shape, (left, top)) else {
             return;
         };
-        if self
-            .shown
-            .as_ref()
-            .is_some_and(|shown| !shown.shows(&geometry))
-        {
+        let extent = Extent::of(&geometry);
+        let hidden = self.shown.as_ref().is_some_and(|shown| !shown.shows(&geometry))
+            || clip.is_some_and(|clip| !clip.meets(&extent));
+        if hidden {
             return;
         }
         let origin = geometry.origin();
@@ -1517,6 +1610,7 @@ impl Placing<'_> {
             index,
             geometry,
             color,
+            clip,
         });
     }
 
@@ -1592,6 +1686,21 @@ impl Placing<'_> {
         };
         Some(geometry)
     }
+}
+
+/// A key as a tool names it in `keys`: `a`, or with cmd, ctrl and alt held first, `cmd-c`.
+fn chord_name(keystroke: &Keystroke) -> String {
+    let modifiers = keystroke.modifiers;
+    let held = [
+        (modifiers.platform, "cmd-"),
+        (modifiers.control, "ctrl-"),
+        (modifiers.alt, "alt-"),
+    ];
+    let prefix: String = (held.iter())
+        .filter(|(held, _)| *held)
+        .map(|(_, name)| *name)
+        .collect();
+    format!("{prefix}{}", keystroke.key)
 }
 
 /// An id for an element, from its key, else from where it is in the tree.
@@ -1670,24 +1779,24 @@ fn prepaint(
                 PaintedShape::Wave(Bounds::new(at((*x, *y)), size), wave.clone())
             }
         };
+        let clip = (placed.clip).map(|Area([left, top, right, bottom])| {
+            Bounds::from_corners(at((left, top)), at((right, bottom))).intersect(&bounds)
+        });
+        let shown = clip.unwrap_or(bounds).intersect(&shape.bounds());
         // What does not show is not painted and not found.
-        if !shape.bounds().intersects(&bounds) {
+        if shown.is_empty() {
             continue;
         }
         let cursor = (frame.pointed.get(placed.index))
             .and_then(Option::as_ref)
             .and_then(|pointer| pointer.cursor);
-        let hitbox = cursor.map(|cursor| {
-            (
-                window.insert_hitbox(shape.bounds(), HitboxBehavior::Normal),
-                cursor,
-            )
-        });
+        let hitbox = cursor.map(|cursor| (window.insert_hitbox(shown, HitboxBehavior::Normal), cursor));
         painted.push(Painted {
             index: placed.index,
             shape,
             color: placed.color,
             hitbox,
+            clip,
         });
     }
     (hitbox, Rc::new(painted))
@@ -1730,7 +1839,13 @@ fn paint(
                     // A shape with no colour is there for the pointer, such as the handle at the
                     // end of a note.
                     if each.color.a > 0.0 {
-                        paint_shape(&each.shape, each.color, window, cx);
+                        match each.clip {
+                            Some(clip) => window.with_content_mask(
+                                Some(gpui::ContentMask { bounds: clip }),
+                                |window| paint_shape(&each.shape, each.color, window, cx),
+                            ),
+                            None => paint_shape(&each.shape, each.color, window, cx),
+                        }
                     }
                     if let Some((hitbox, cursor)) = &each.hitbox {
                         window.set_cursor_style(cursor.style(), hitbox);
@@ -1885,7 +2000,9 @@ fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Win
 fn found(frame: &SpaceFrame, painted: &[Painted], position: Point<Pixels>) -> Option<usize> {
     (painted.iter().rev())
         .filter(|each| frame.pointed.get(each.index).is_some_and(Option::is_some))
-        .find(|each| each.shape.contains(position))
+        .find(|each| {
+            each.shape.contains(position) && each.clip.is_none_or(|clip| clip.contains(&position))
+        })
         .map(|each| each.index)
 }
 
@@ -2043,6 +2160,12 @@ impl Render for TypeScriptCard {
         let live = self.live.read(cx);
         let info = live.info(self.card);
         let hears_keys = info.as_ref().is_some_and(|info| info.keys);
+        // The window's plain keys, space and `r`, stay its own unless the tool takes every
+        // plain key or names one of them.
+        let blocks_plain_keys = info.as_ref().is_some_and(|info| match &info.takes {
+            Some(takes) => takes.iter().any(|key| key == "space" || key == "r"),
+            None => true,
+        });
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
         let watches = live.watches(self.card).cloned().unwrap_or_default();
@@ -2103,7 +2226,7 @@ impl Render for TypeScriptCard {
             element.when(hears_keys, |element| {
                 element
                     .track_focus(&self.focus)
-                    .key_context(crate::KEY_CONTEXT)
+                    .when(blocks_plain_keys, |element| element.key_context(crate::KEY_CONTEXT))
                     .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
                         view.key(&event.keystroke, true, event.is_held, cx)
                     }))
@@ -2147,7 +2270,8 @@ impl Render for TypeScriptCard {
                     .relative()
                     .size_full()
                     .child(measure)
-                    .child(body.size_full());
+                    // A column, so a page whose top div grows fills the window and no more.
+                    .child(body.size_full().flex().flex_col());
                 takes_keys(div().size_full().p(px(24.)).bg(background).child(room))
                     .into_any_element()
             }

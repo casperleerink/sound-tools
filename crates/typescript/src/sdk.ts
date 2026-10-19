@@ -772,9 +772,14 @@ export interface ToolSpec<S extends Fields, C extends Controls, M, K extends Chi
   transport?: boolean;
   /**
    * A key of the computer keyboard goes down or up, while its page shows or after a click on
-   * its card. Plain keys are then the tool's: space and `r` do not play or record.
+   * its card: those `keys` names, else every plain key, so space and `r` do not play or record.
    */
   onKey?: (tool: Context<ValuesOf<S>, C, M, K>, key: Key) => void;
+  /**
+   * The keys `onKey` takes, by name: `"delete"`, `"a"`, `"left"`, or with cmd, ctrl or alt held
+   * first, `"cmd-c"`. The rest stay the window's, so space still plays. Left out, every plain key.
+   */
+  keys?: readonly string[];
   /**
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
    * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
@@ -786,7 +791,9 @@ export interface ToolSpec<S extends Fields, C extends Controls, M, K extends Chi
 export interface Part<State, K extends ChildTools = ChildTools> {
   state: State;
   /** The records next to its own, in name order, each with its own children. */
-  children: OwnedChild<K, true>[];
+  get children(): DraftChildren<K>;
+  /** A new list: push a new child as `{ name, tool, state }`, its own children left out or given. */
+  set children(children: Array<OwnedChild<K, true> | NewChild<K>>);
 }
 
 /** What a behaviour gets. */
@@ -822,6 +829,14 @@ type ChildrenOfTool<T> = string extends T ? ChildTools : EntryOf<T> extends { ch
 /** The `state` of a record of `T` as the file holds it; any value for a tool named by a string. */
 export type StateOfTool<T> = EntryOf<T> extends { state: infer State } ? State : unknown;
 
+/** The `state` of a record of `T` as `update` gives it: every field that has a default at it where the file leaves it out. */
+export type FilledStateOfTool<T> =
+  EntryOf<T> extends { filled: infer Filled }
+    ? Filled
+    : EntryOf<T> extends { state: infer State; defaults: infer Defaults extends string }
+      ? Omit<State, Defaults> & { [Field in Defaults & keyof State]-?: Exclude<State[Field], undefined> }
+      : StateOfTool<T>;
+
 /** `children` as written. A tool name widened to `string` would check nothing, so it is refused. */
 type LiteralTools<K extends ChildTools> = {
   [Name in keyof K]: string extends K[Name] ? "the tool names were widened to string: write the children as `const children = { ... } as const` and give the behaviour the return type `Declaration<typeof children>`, or leave the return type out" : K[Name];
@@ -843,20 +858,39 @@ export type OwnedChild<K extends ChildTools = ChildTools, Edit extends boolean =
     readonly name: ChildNamed<Name>;
     /** Its `tool`, such as `"instrument.synth"`. */
     tool: K[Name];
-    /** Its `state` as the file holds it, such as a `SequencerState`. */
-    state: StateOfTool<K[Name]>;
   } & (Edit extends true
     ? {
-        /** Its own children, to edit as these; a new child may leave them out. */
-        children?: OwnedChild<ChildrenOfTool<K[Name]>, true>[];
+        /** Its `state`, with every field that has a default at it, as `state` of the parent. */
+        state: FilledStateOfTool<K[Name]>;
+        /** Its own children, to edit as these, in name order. */
+        get children(): DraftChildren<ChildrenOfTool<K[Name]>>;
+        /** A new list: push a new child as `{ name, tool, state }`, its own children left out or given. */
+        set children(children: Array<OwnedChild<ChildrenOfTool<K[Name]>, true> | NewChild<ChildrenOfTool<K[Name]>>>);
       }
     : {
+        /** Its `state` as the file holds it, such as a `SequencerState`. */
+        state: StateOfTool<K[Name]>;
         /**
          * Its own children, in name order, when it is a parent, such as the clips of a track.
          * Typed as the `children` of its tool name them.
          */
         children: OwnedChild<ChildrenOfTool<K[Name]>>[];
       });
+}[keyof K & string];
+
+/** The children of a record in an `update`: edit them, `push` a new one, or set a new list. */
+export interface DraftChildren<K extends ChildTools> extends Array<OwnedChild<K, true>> {
+  push(...children: Array<OwnedChild<K, true> | NewChild<K>>): number;
+}
+
+/** A child an `update` makes: its record, and its own children if it has some. */
+export type NewChild<K extends ChildTools = ChildTools> = {
+  [Name in keyof K & string]: {
+    readonly name: ChildNamed<Name>;
+    tool: K[Name];
+    state: StateOfTool<K[Name]>;
+    children?: NewChild<ChildrenOfTool<K[Name]>>[];
+  };
 }[keyof K & string];
 
 /** The keys that name a port, one for each kind of what it carries. */
@@ -956,6 +990,7 @@ type KnobNames<S extends Fields> = { [Name in keyof S]: S[Name] extends KnobFiel
 /** The entry of a tool of the project with fields `S`, controls `C` and children `K`. */
 type ProjectEntry<S extends Fields, C extends Controls, K extends ChildTools> = {
   state: StateOf<S>;
+  filled: ValuesOf<S>;
   number: KnobNames<S>;
   live: ControlNames<C, "live">;
   trigger: ControlNames<C, "trigger">;
@@ -2124,6 +2159,11 @@ function longestRising(values: number[]): number[] {
 }
 
 /** Shows `children` while `when` holds, else `fallback`: made again each time it shows. */
+/** Several children where one goes, as `<>…</>` writes them: a component that gives two shapes. */
+export function Fragment(props: { children?: Child }): Region {
+  return { mount: (into, family) => materialize(props.children, into, family) };
+}
+
 export function Show(props: { when: Accessor<unknown>; children: () => Child; fallback?: () => Child }): Region {
   return {
     mount(into, family) {
@@ -2166,8 +2206,12 @@ interface Pointed {
  * of a line and `size` of text are in points.
  */
 export type Shape =
-  /** Shapes moved together by `x` and `y`: one live value for all of them. */
-  | { kind: "group"; x?: Bind<Num>; y?: Bind<Num> }
+  /**
+   * Shapes moved together by `x` and `y`, which count from there: one live value for all of
+   * them. With `clip`, a box from there out of which they do not show, nor hear the pointer: the
+   * notes of a clip end at its end. `moves` and `grows` move it and its box as a shape's do.
+   */
+  | ({ kind: "group"; x?: Bind<Num>; y?: Bind<Num>; clip?: Bind<{ width: Num; height: Num }> } & Pick<Pointed, "moves" | "grows">)
   | (Pointed &
       (
         | { kind: "rect"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; color: Bind<Paint>; radius?: Bind<number>; border?: Bind<Color>; borderWidth?: Bind<Num> }
@@ -2276,6 +2320,11 @@ interface DivProps {
   key?: string;
   style?: Bind<Style>;
   onClick?: (press: Press) => void;
+  /**
+   * The key of a space whose scroll its children move with, on an axis, cut off at its edges:
+   * the heads of the rows of a timeline, which scroll with it. Rows as tall as the space's unit.
+   */
+  follow?: { x?: string; y?: string };
   children?: Child;
 }
 

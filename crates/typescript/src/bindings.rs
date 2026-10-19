@@ -95,3 +95,94 @@ fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
         "{change:?}"
     );
 }
+
+const HOLDER: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "holder",
+  title: "Holder",
+  when: "A test",
+  doc: "Moves its timeline on.",
+  state: {},
+  children: { clip: "timeline" },
+  behaviour: () => ({ connections: [] }),
+  card: ({ update }) =>
+    h("div", {
+      onClick: () =>
+        update("Move it on", ({ children }) => {
+          const clip = children[0];
+          if (clip?.tool === "timeline") clip.state.start = clip.state.start + 960;
+        }),
+    }, "On"),
+});
+"#;
+
+/// A child's record that leaves its fields out reads them at their defaults in an `update`, and
+/// the edit sets only what the change changed.
+#[test]
+fn an_update_reads_a_childs_defaults_and_sets_only_what_it_changed() {
+    let Some(program) = bun_program() else {
+        return eprintln!("skipped: Bun is not installed");
+    };
+    let folder = tempfile::tempdir().unwrap();
+    write_sdk(folder.path(), &[]).unwrap();
+    std::fs::write(folder.path().join("holder.ts"), HOLDER).unwrap();
+    let host = host_script().unwrap();
+    let (bun, _) = Bun::start(&program, &host, (folder.path(), new_opening()), &["holder.ts"])
+        .unwrap_or_else(|failure| panic!("{}", failure.why));
+    let (id, clip) = (
+        InstanceId::new("holder").unwrap(),
+        InstanceId::new("holder/clip").unwrap(),
+    );
+    let (own, empty) = ("{}".to_string(), "{}".to_string());
+    assert!(bun.tell([
+        (&id, Some(("holder", record_key("holder", &own), own.as_str()))),
+        (&clip, Some(("timeline", record_key("timeline", &empty), empty.as_str()))),
+    ]));
+    let clock = Clock {
+        time: 0.0,
+        transport: Transport {
+            playing: false,
+            tick: 0,
+            bar: 1,
+            beat: 1,
+            bpm: 120.0,
+        },
+    };
+    let watches = BTreeMap::new();
+    bun.send(&Request::Mount {
+        card: 1,
+        instance: &id,
+        watches: &watches,
+        page: None,
+        clock,
+    });
+    let button = (next_ops(&bun).into_iter())
+        .find_map(|op| match op {
+            Op::Create(id, Props::Div(div)) if div.on_click == Some(true) => Some(id),
+            _ => None,
+        })
+        .unwrap();
+    bun.send(&Request::Event {
+        card: 1,
+        node: button,
+        kind: EventKind::Click,
+        payload: json!({ "x": 0, "y": 0, "button": "left", "clicks": 1, "shift": false, "alt": false, "cmd": false, "ctrl": false }),
+        time: 0.0,
+    });
+    let changes = loop {
+        match smol::block_on(bun.events().recv()) {
+            Ok(Event::Edit { changes, .. }) => break changes,
+            Ok(Event::Ended { why, .. }) => panic!("Bun ended: {why}"),
+            Ok(Event::Failed { message, .. }) => panic!("{message}"),
+            Ok(_) => {}
+            Err(error) => panic!("{error}"),
+        }
+    };
+    let [crate::bun::RecordEdit::Fields { child, set, removed }] = changes.as_slice() else {
+        panic!("one change of the clip: {changes:?}");
+    };
+    assert_eq!(child.as_deref(), Some("clip"));
+    assert_eq!(serde_json::Value::Object(set.clone()), json!({ "start": 960 }));
+    assert!(removed.is_empty(), "{removed:?}");
+}

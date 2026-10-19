@@ -147,6 +147,7 @@ const TSCONFIG: &str = r#"{
     "moduleResolution": "bundler",
     "jsx": "react",
     "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
     "noEmit": true
   }
 }

@@ -36,15 +36,33 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
                 .collect(),
         );
         let live = names(schema.live.iter().map(|live| quoted(live)).collect());
+        let defaults = names(defaults_of(schema).keys().map(|field| quoted(field)).collect());
         text.push_str(&format!(
-            "  {}: {{ state: {}; number: {number}; live: {live}; trigger: never }};\n",
+            "  {}: {{ state: {}; number: {number}; live: {live}; trigger: never; defaults: {defaults} }};\n",
             property_name(schema.tool),
             type_name(schema.tool, "State"),
         ));
     }
     text.push_str("}\n");
+    let defaults: serde_json::Map<String, Value> = (tools.iter())
+        .map(|schema| (schema.tool.to_string(), Value::Object(defaults_of(schema))))
+        .collect();
+    text.push_str(&format!(
+        "\n/** What the record of each built-in tool holds where it leaves a field out: what code that edits one gets. */\nexport const defaultStates: Record<string, Record<string, unknown>> = {};\n",
+        Value::Object(defaults)
+    ));
     text.push_str(&sdk_devices(&tools));
     text
+}
+
+/// The fields of the record of a tool that have a default, with it.
+fn defaults_of(schema: &ToolSchema) -> serde_json::Map<String, Value> {
+    let record = RecordSchema::new(&schema.schema);
+    let root = record.resolved(&schema.schema);
+    let properties = root.get("properties").and_then(Value::as_object);
+    (properties.into_iter().flatten())
+        .filter_map(|(name, property)| Some((name.clone(), property.get("default")?.clone())))
+        .collect()
 }
 
 /// `devices` as the SDK offers them: a knob for each number a signal moves, in its units. The

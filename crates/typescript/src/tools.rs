@@ -58,6 +58,9 @@ pub(crate) struct ToolInfo {
     pub transport: bool,
     /// It hears the computer keyboard, `onKey`.
     pub keys: bool,
+    /// The keys it takes, by name such as `delete` or `cmd-c`; every plain key when `None`.
+    #[serde(default)]
+    pub takes: Option<Vec<String>>,
     /// It hears note events, `onNotes`: what reaches its `notes`.
     pub notes: bool,
     /// It owns children and has a behaviour, which declares how they connect.
