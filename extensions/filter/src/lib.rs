@@ -178,7 +178,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<FilterState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Filter::AUTOMATION.parameters());
+        .schema(Filter::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

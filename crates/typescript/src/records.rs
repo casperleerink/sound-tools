@@ -1,10 +1,10 @@
 //! The part of `sdk.ts` the runtime writes: the record of each built-in tool as a TypeScript
-//! type, made from the JSON Schema of its Rust type, the `Tools` that names them, and the
-//! `devices` a sound plays through. Each object type is written once, as a named type. What
+//! type, made from the JSON Schema of its Rust type, and the `Tools` that names them. Each
+//! object type is written once, as a named type. What
 //! [`RecordSchema::field`] says of a field is its TSDoc, as the agent docs say it too.
 
 use serde_json::Value;
-use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc, unit_of};
+use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc};
 
 use crate::built_in_schemas;
 
@@ -16,7 +16,7 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
     let mut text = String::from(
         "
 // ---------------------------------------------------------------------------------------------
-// Built-in tools: their records, from their Rust types, and the devices a sound plays through.
+// Built-in tools: their records, from their Rust types.
 ",
     );
     for schema in &tools {
@@ -59,7 +59,6 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
         "\n/** What the record of each built-in tool holds where it leaves a field out: what code that edits one gets. */\nexport const defaultStates: Record<string, Record<string, unknown>> = {};\n",
         Value::Object(defaults)
     ));
-    text.push_str(&sdk_devices(&tools));
     text
 }
 
@@ -71,49 +70,6 @@ fn defaults_of(schema: &ToolSchema) -> serde_json::Map<String, Value> {
     (properties.into_iter().flatten())
         .filter_map(|(name, property)| Some((name.clone(), property.get("default")?.clone())))
         .collect()
-}
-
-/// `devices` as the SDK offers them: a number for each number a signal moves, in its units. The
-/// docs of their settings are those of the record.
-fn sdk_devices(tools: &[&ToolSchema]) -> String {
-    let mut text = String::from(
-        "
-/**
- * The built-in devices a sound plays through: `devices.reverb(input, { mix: 0.3 })`. Each of
- * `fields` takes a signal or a number; the rest of its record is written as it is. Not in an
- * instrument, and not inside a `feedback`.
- */
-export const devices = {
-",
-    );
-    for schema in tools.iter().filter(|schema| schema.in_code) {
-        let tool = schema.tool;
-        text.push_str(&format!(
-            "  {}: device({}, {{\n",
-            property_name(tool),
-            quoted(tool)
-        ));
-        for (number, default) in &schema.numbers {
-            let field = &*number.field;
-            // A number inside a list is written as the rest of the record is.
-            if !field
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-            {
-                continue;
-            }
-            let unit = unit_of(field)
-                .filter(|(unit, _)| ["hz", "ms", "db"].contains(unit))
-                .map_or(String::new(), |(unit, _)| format!(", unit: \"{unit}\""));
-            let (min, max) = (number.range.min, number.range.max);
-            text.push_str(&format!(
-                "    {field}: number({{ min: {min}, max: {max}, default: {default}{unit} }}),\n",
-            ));
-        }
-        text.push_str("  }),\n");
-    }
-    text.push_str("};\n");
-    text
 }
 
 /// Writes the TypeScript of the record of one tool.

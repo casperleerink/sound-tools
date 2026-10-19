@@ -17,13 +17,12 @@ use serde_json::{Map, Value};
 use sound_core::{
     Assets, AudioThru, Automation, BehaviourContext, BehaviourError, Event, EventThru, GraphError,
     InputEndpoint, InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo,
-    PlayedLanes, Problem, RecordStamp, Ticks, ToolSchema, ValueRange, Watch,
+    PlayedLanes, Problem, RecordStamp, Ticks, ValueRange, Watch,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate};
 use sound_signals::{
-    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, DeviceUse, Graph, Kind, LinkFrom,
-    LinkTo, Machine, Number, ParameterSpec, Placed, Program, Shown, Signals, SignalsUpdate, Sound,
-    Values,
+    ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, Number,
+    ParameterSpec, Placed, Shown, Signals, SignalsUpdate, Values,
 };
 
 use crate::behaviours::{self, Declaration, End, Key};
@@ -72,10 +71,6 @@ pub(crate) struct ToolInfo {
     /// The tools of its children by name, when it names them. An empty map allows none.
     #[serde(default)]
     pub children: Option<Named<String>>,
-    /// A sound of it plays through a device, so its processors are the stages of a
-    /// [`Program`].
-    #[serde(skip)]
-    pub staged: bool,
 }
 
 /// What a tool is to a track, which goes in its `effects` or plays as its instrument.
@@ -514,13 +509,11 @@ impl ToolInfo {
         }
     }
 
-    /// The name of its processor, the first stage of its sound. Another kind is another
-    /// processor, and so is a stage, which has other ports.
+    /// The name of its processor. Another kind is another processor.
     pub(crate) fn processor(&self) -> &'static str {
-        match (self.kind(), self.staged) {
-            (Kind::One, false) => "signals",
-            (Kind::One, true) => "signals-stage",
-            (Kind::Instrument { .. }, _) => "signals-voices",
+        match self.kind() {
+            Kind::One => "signals",
+            Kind::Instrument { .. } => "signals-voices",
         }
     }
 
@@ -755,7 +748,7 @@ pub(crate) type Tools = BTreeMap<String, ToolInfo>;
 pub(crate) struct Sounds {
     info: Arc<ToolInfo>,
     /// Compiled, by [`ToolInfo::sound_key`], or why that sound does not build.
-    sounds: HashMap<String, Result<Arc<Program>, String>>,
+    sounds: HashMap<String, Result<Arc<Code>, String>>,
     /// The Bun that runs its behaviour and the tools of its load, for a tool that owns children.
     parent: Option<(Arc<Bun>, Arc<Tools>)>,
 }
@@ -767,28 +760,19 @@ impl Sounds {
         info: &ToolInfo,
         graphs: Vec<(Map<String, Value>, Result<Graph, String>)>,
         (bun, tools): (&Arc<Bun>, &Arc<Tools>),
-        schemas: &[ToolSchema],
     ) -> Self {
-        let sounds: HashMap<String, Result<Arc<Program>, String>> = (graphs.into_iter())
+        let sounds: HashMap<String, Result<Arc<Code>, String>> = (graphs.into_iter())
             .map(|(choices, graph)| {
                 let key = info.sound_key(&Value::Object(choices));
                 let code = graph.and_then(|graph| {
                     let declarations = info.declarations(&graph);
-                    let program =
-                        graph.program(&declarations).map_err(|error| error.to_string())?;
-                    let voices = info.voices > 1;
-                    let events = (program.stages.iter())
-                        .any(|code| !code.bangs.is_empty() || !code.notes.is_empty());
-                    if events && voices {
+                    let code =
+                        graph.compile(&declarations).map_err(|error| error.to_string())?;
+                    let events = !code.bangs.is_empty() || !code.notes.is_empty();
+                    if events && info.voices > 1 {
                         return Err("a sound of more voices than one sends no bangs or notes, as each of its voices would: give it one voice, which follows the newest note".to_string());
                     }
-                    if !program.devices.is_empty() && voices {
-                        return Err("a sound of more voices than one plays through no device, as each of its voices would play one: filter a voice with lowpass, highpass or bandpass, or put the device after it, in the track's effects or in a parent".to_string());
-                    }
-                    for device in &program.devices {
-                        check_device(device, schemas)?;
-                    }
-                    Ok(Arc::new(program))
+                    Ok(Arc::new(code))
                 });
                 let code = code.map_err(|error| match info.has_choices() {
                     true => format!("its sound with the choices {key} does not build: {error}"),
@@ -797,12 +781,8 @@ impl Sounds {
                 (key, code)
             })
             .collect();
-        let staged = (sounds.values().flatten()).any(|program| !program.devices.is_empty());
         Self {
-            info: Arc::new(ToolInfo {
-                staged,
-                ..info.clone()
-            }),
+            info: Arc::new(info.clone()),
             sounds,
             parent: info.behaviour.then(|| (bun.clone(), tools.clone())),
         }
@@ -861,7 +841,7 @@ impl Sounds {
     }
 
     /// The compiled sound for the choices of `state`.
-    fn program(&self, state: &Value) -> Result<Arc<Program>, String> {
+    fn code(&self, state: &Value) -> Result<Arc<Code>, String> {
         let key = self.info.sound_key(state);
         // A checked record has one of the options of each choice, and Bun sent each combination.
         (self.sounds.get(&key).cloned())
@@ -960,10 +940,8 @@ impl Sounds {
             let own = own_ports(None, context)?;
             return self.declare(parent, state, own, context);
         }
-        let program = self.program(state).map_err(BehaviourError::Other)?;
-        let Some(code) = program.stages.first() else {
-            return Err(BehaviourError::Other("its sound has no stage".to_string()));
-        };
+        let code = self.code(state).map_err(BehaviourError::Other)?;
+        let code = &*code;
         let kind = self.info.kind();
         let mut values = self.values(&code, state);
         let (assets, rate, id) = (
@@ -1007,11 +985,7 @@ impl Sounds {
                 arrays: Some(lists),
                 ..values.clone()
             };
-            let signals = Signals::new(kind, first.unwrap_or_else(made), values, watches.clone());
-            match self.info.staged {
-                true => signals.with_stage_ports(),
-                false => signals,
-            }
+            Signals::new(kind, first.unwrap_or_else(made), values, watches.clone())
         })?;
         if created || new_tap {
             context.update(signals, SignalsUpdate::Tap(tap))?;
@@ -1036,24 +1010,15 @@ impl Sounds {
             }
             context.input(NOTES_INPUT, InputEndpoint::new(signals, Signals::NOTES));
         }
-        let mut stages = vec![signals];
-        for (index, code) in program.stages.iter().enumerate().skip(1) {
-            stages.push(self.stage(index, code, context)?);
+        context.output(AUDIO_OUTPUT, OutputEndpoint::new(signals, Signals::OUTPUT));
+        for (index, name) in code.numbers.iter().enumerate() {
+            context.output(name, OutputEndpoint::new(signals, Signals::number(index)));
         }
-        let sound = devices(&program, &stages, context)?;
-        if let Some(sound) = sound {
-            context.output(AUDIO_OUTPUT, sound);
+        for (index, name) in code.bangs.iter().enumerate() {
+            context.output(name, OutputEndpoint::new(signals, Signals::bang(index)));
         }
-        for (signals, code) in stages.iter().zip(&program.stages) {
-            for (index, name) in code.numbers.iter().enumerate() {
-                context.output(name, OutputEndpoint::new(*signals, Signals::number(index)));
-            }
-            for (index, name) in code.bangs.iter().enumerate() {
-                context.output(name, OutputEndpoint::new(*signals, Signals::bang(index)));
-            }
-            for (index, name) in code.notes.iter().enumerate() {
-                context.output(name, OutputEndpoint::new(*signals, Signals::notes(index)));
-            }
+        for (index, name) in code.notes.iter().enumerate() {
+            context.output(name, OutputEndpoint::new(signals, Signals::notes(index)));
         }
         // A parent's cable reaches an input here; the place comes with it.
         for (name, _) in &self.info.inputs.0 {
@@ -1088,38 +1053,6 @@ impl Sounds {
     fn passes(&self) -> bool {
         let info = &self.info;
         !info.sound && info.inputs.0.is_empty() && !info.notes && info.voices <= 1
-    }
-
-    /// The processor of the stage `index` of its sound, which plays `code`: it hears only what
-    /// the stages and devices before give it.
-    fn stage(
-        &self,
-        index: usize,
-        code: &Code,
-        context: &mut BehaviourContext<'_>,
-    ) -> Result<Node<Signals>, BehaviourError> {
-        let name = format!("{}~{index}", self.info.processor());
-        let watches: Vec<Watch> = (code.watches.iter())
-            .map(|watch| context.watch(watch))
-            .collect();
-        let new_code = context.changed(&name, code.hash);
-        let sample_rate = context.prepare_config().sample_rate as f32;
-        let made = || Box::new(Machine::new(code.clone(), sample_rate));
-        let mut created = false;
-        let signals = context.processor(&name, || {
-            created = true;
-            let watches = watches.clone();
-            Signals::new(Kind::One, made(), Values::default(), watches).with_stage_ports()
-        })?;
-        if new_code && !created {
-            let update = SignalsUpdate::Set {
-                machines: vec![Some(made())],
-                values: Box::default(),
-                watches,
-            };
-            context.update(signals, update)?;
-        }
-        Ok(signals)
     }
 
     /// Connects the children of an owner and its `own` ports as its behaviour declares: what
@@ -1205,89 +1138,6 @@ impl Sounds {
             }
         }
     }
-}
-
-/// Whether the record of `device` without the numbers a signal moves is one its tool of
-/// `schemas` takes: what it plays with is known as the tool loads.
-fn check_device(device: &DeviceUse, schemas: &[ToolSchema]) -> Result<(), String> {
-    let tool = &device.tool;
-    let schema = (schemas.iter()).find(|schema| schema.tool == tool && schema.in_code);
-    let Some(schema) = schema else {
-        return Err(format!("it plays a {tool:?}, which is no device"));
-    };
-    (schema.check)(Value::Object(device.state.clone())).map_err(|error| {
-        let error = (error.strip_prefix("state."))
-            .or_else(|| error.strip_prefix("state: "))
-            .unwrap_or(&error);
-        format!("devices.{tool}: {error}")
-    })
-}
-
-/// Plays the devices of `program` between its `stages`, with a cable for each number a signal
-/// moves, and gives where the sound of the tool comes from. A device that cannot play is a
-/// problem, and what goes through it is silent.
-fn devices(
-    program: &Program,
-    stages: &[Node<Signals>],
-    context: &mut BehaviourContext<'_>,
-) -> Result<Option<OutputEndpoint>, BehaviourError> {
-    let mut parts = Vec::new();
-    for (index, device) in program.devices.iter().enumerate() {
-        let state = Value::Object(device.state.clone());
-        parts.push(context.part(&format!("device{index}"), &device.tool, state)?);
-    }
-    let output = |from: LinkFrom| match from {
-        LinkFrom::Export { stage, port } => {
-            (stages.get(stage)).map(|stage| OutputEndpoint::new(*stage, Signals::export(port)))
-        }
-        LinkFrom::Device(device) => (parts.get(device).and_then(Option::as_ref))
-            .and_then(|part| part.outputs.get(AUDIO_OUTPUT).copied()),
-    };
-    for link in &program.links {
-        let input = match link.to {
-            LinkTo::Import { stage, port } => {
-                (stages.get(stage)).map(|stage| InputEndpoint::new(*stage, Signals::import(port)))
-            }
-            LinkTo::Device(device) => (parts.get(device).and_then(Option::as_ref))
-                .and_then(|part| part.inputs.get(AUDIO_INPUT).copied()),
-        };
-        if let (Some(output), Some(input)) = (output(link.from), input) {
-            context.connect(output.to(input))?;
-        }
-    }
-    let mut made = BTreeSet::new();
-    for (index, (device, part)) in program.devices.iter().zip(&parts).enumerate() {
-        let Some(part) = part else {
-            continue;
-        };
-        for number in &device.numbers {
-            let place = part.automation.as_ref().and_then(|(input, numbers)| {
-                let place = numbers
-                    .iter()
-                    .position(|info| *info.field == *number.field)?;
-                Some((*input, u16::try_from(place).unwrap_or(u16::MAX)))
-            });
-            let Some(into) = place else {
-                context.problem(format!(
-                    "the {} of its sound has no number {:?} that a signal moves",
-                    device.tool, number.field
-                ));
-                continue;
-            };
-            let name = format!("device{index}:{}", number.field);
-            let cable = cable::<Number, Automation>(name, into, None, &mut made, context)?;
-            if let (Some(cable), Some(stage)) = (cable, stages.get(number.stage)) {
-                let sent = OutputEndpoint::new(*stage, Signals::device_number(number.index));
-                context.connect(sent.to(cable))?;
-            }
-        }
-    }
-    Ok(match program.sound {
-        Sound::Stage(stage) => {
-            (stages.get(stage)).map(|stage| OutputEndpoint::new(*stage, Signals::OUTPUT))
-        }
-        Sound::Device(device) => output(LinkFrom::Device(device)),
-    })
 }
 
 /// The children of an owner as its behaviour last read them, in name order, and a key of all

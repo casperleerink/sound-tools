@@ -69,8 +69,6 @@ pub struct ToolSchema {
     pub live: &'static [&'static str],
     /// The numbers it sends out, which a parent connects, such as `value` of a lane.
     pub outputs: &'static [&'static str],
-    /// A sound may play it as a device, see [`ToolRegistration::in_code`].
-    pub in_code: bool,
     /// Checks a `state` as a record of the tool is checked. The message names the field.
     pub check: fn(serde_json::Value) -> Result<(), String>,
 }
@@ -86,7 +84,6 @@ impl ToolSchema {
                 .collect(),
             live: &[],
             outputs: &[],
-            in_code: false,
             check: |state| decode::<S>(state).map(drop),
         }
     }
@@ -452,22 +449,6 @@ impl<S: State> ToolRegistration<'_, S> {
         S: JsonSchema,
     {
         self.definition.schema = Some(ToolSchema::of(numbers));
-        self
-    }
-
-    /// [`Self::schema`], and lets the code of a tool of the project play this tool inside its
-    /// sound, as a device with no record of its own: its behaviour runs with the record the
-    /// code gives, see [`BehaviourContext::part`]. A signal moves the `numbers` that are fields
-    /// of the record itself, through the automation input, so the tool takes `audio` in and
-    /// out and declares its automation. A number inside a list stays as the code writes it.
-    pub fn in_code(self, numbers: &[&Parameter<S>]) -> Self
-    where
-        S: JsonSchema,
-    {
-        self.definition.schema = Some(ToolSchema {
-            in_code: true,
-            ..ToolSchema::of(numbers)
-        });
         self
     }
 

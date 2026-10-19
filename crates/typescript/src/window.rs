@@ -19,7 +19,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
     Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, Scale,
-    Sections, TempoMap, Ticks, ToolSchema,
+    Sections, TempoMap, Ticks,
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
@@ -62,7 +62,6 @@ pub(crate) struct Live {
     host: Host,
     /// The opening of the project every Bun of the window runs for.
     opening: u64,
-    schemas: Arc<[ToolSchema]>,
     skipped: Skipped,
     /// The tools of the last load, shared with the pickers.
     tools: Rc<RefCell<Vec<ToolInfo>>>,
@@ -334,7 +333,6 @@ impl Live {
             folder,
             bun,
             opening,
-            schemas,
             tools: loaded,
             skipped,
             problems,
@@ -388,7 +386,6 @@ impl Live {
                 session: session.downgrade(),
                 host,
                 opening,
-                schemas,
                 skipped,
                 tools: tools.clone(),
                 generation: generation.clone(),
@@ -1724,7 +1721,6 @@ impl Live {
     /// Starts a new Bun on a thread of its own, once `old` ended there.
     fn launch(&mut self, old: Option<Arc<Bun>>, cx: &mut Context<Self>) {
         let (folder, opening, skipped) = (self.folder.clone(), self.opening, self.skipped.clone());
-        let schemas = self.schemas.clone();
         cx.spawn(async move |live, cx| {
             // Ending a Bun waits for it, and a load up to a timeout of each step: not on the
             // thread that draws.
@@ -1733,7 +1729,7 @@ impl Live {
                     if let Some(old) = old {
                         old.end();
                     }
-                    crate::launch((&folder, opening, &schemas), skipped)
+                    crate::launch((&folder, opening), skipped)
                 })
                 .await;
             live.update(cx, |live, cx| live.launched(launched, cx)).ok();

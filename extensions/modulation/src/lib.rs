@@ -162,7 +162,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<ModulationState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Modulation::AUTOMATION.parameters());
+        .schema(Modulation::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

@@ -198,9 +198,6 @@ impl RecordStamp {
 
 pub struct BehaviourContext<'a> {
     id: &'a InstanceId,
-    registry: &'a Registry,
-    /// What it runs for when it runs the behaviour of a part, see [`Self::part`].
-    part: Option<Part<'a>>,
     edit: &'a mut (dyn EngineEdit + 'a),
     assets: &'a Assets,
     instances: &'a BTreeMap<InstanceId, Record>,
@@ -215,86 +212,9 @@ pub struct BehaviourContext<'a> {
     cycle_closing: &'a BTreeSet<String>,
 }
 
-/// A part of an instance that a behaviour of another tool makes, see
-/// [`BehaviourContext::part`].
-struct Part<'a> {
-    /// The start of every name it keeps, so its names are not those of the instance.
-    prefix: String,
-    tool: &'a str,
-    ports: PartPorts,
-}
-
-/// The ports a part names and the numbers it takes automation for, see
-/// [`BehaviourContext::part`].
-#[derive(Default)]
-pub struct PartPorts {
-    pub inputs: BTreeMap<String, InputEndpoint>,
-    pub outputs: BTreeMap<String, OutputEndpoint>,
-    pub automation: Option<(InputEndpoint, Vec<ParameterInfo>)>,
-}
-
 impl BehaviourContext<'_> {
     pub fn id(&self) -> &InstanceId {
         self.id
-    }
-
-    /// The name this run keeps `name` under: in a part, with the part's names before it.
-    fn key(&self, name: &str) -> String {
-        match &self.part {
-            Some(part) => format!("{}{name}", part.prefix),
-            None => name.to_string(),
-        }
-    }
-
-    /// Runs the behaviour of `tool` with `state` as a part of this instance named `name`, such
-    /// as a device the sound of a tool of the project plays: its processors are this
-    /// instance's, and what it names as ports and automation comes back here instead of
-    /// being the instance's. A tool or a state that cannot play is a problem of this instance,
-    /// and gives `None`.
-    pub fn part(
-        &mut self,
-        name: &str,
-        tool: &str,
-        state: serde_json::Value,
-    ) -> Result<Option<PartPorts>, BehaviourError> {
-        let definition = self.registry.definition(tool);
-        let Some((definition, behaviour)) =
-            definition.and_then(|definition| Some((definition, definition.behaviour.as_ref()?)))
-        else {
-            self.problem(format!("its sound plays a {tool:?}, which is no device"));
-            return Ok(None);
-        };
-        let record = match (definition.decode)(state) {
-            Ok(record) => record,
-            Err(message) => {
-                self.problem(format!("the {tool} of its sound: {message}"));
-                return Ok(None);
-            }
-        };
-        let mut part = BehaviourContext {
-            id: self.id,
-            registry: self.registry,
-            part: Some(Part {
-                prefix: self.key(&format!("{name}/")),
-                tool,
-                ports: PartPorts::default(),
-            }),
-            edit: &mut *self.edit,
-            assets: self.assets,
-            instances: self.instances,
-            bindings: self.bindings,
-            previous: self.previous,
-            next: std::mem::take(&mut self.next),
-            removed: std::mem::take(&mut self.removed),
-            device_channels: self.device_channels,
-            cycle_closing: self.cycle_closing,
-        };
-        let ran = behaviour(record.state.as_any(), &mut part);
-        let ports = part.part.take().map(|part| part.ports);
-        self.next = part.next;
-        self.removed = part.removed;
-        ran?;
-        Ok(ports)
     }
 
     /// Output channels of the device. A tool that sounds with no connection in `project.json`
@@ -323,11 +243,7 @@ impl BehaviourContext<'_> {
     /// a state you can play only partly, such as a plugin this machine does not have. Return a
     /// [`BehaviourError`] only for a real fault, which rejects the whole edit group.
     pub fn problem(&mut self, message: impl Into<String>) {
-        let message = match &self.part {
-            Some(part) => format!("the {} of its sound: {}", part.tool, message.into()),
-            None => message.into(),
-        };
-        self.next.problems.push(message);
+        self.next.problems.push(message.into());
     }
 
     /// The processor this instance keeps under `name`. `create` runs only when it does not
@@ -337,7 +253,6 @@ impl BehaviourContext<'_> {
         name: &str,
         create: impl FnOnce() -> P,
     ) -> Result<Node<P>, BehaviourError> {
-        let name = &self.key(name);
         if let Some((id, _)) = self.next.nodes.get(name) {
             return Err(BehaviourError::Other(format!(
                 "processor {name:?} is declared twice ({id:?})"
@@ -370,7 +285,6 @@ impl BehaviourContext<'_> {
     /// [`Self::peaks`] is for a level: the same watch every run while the name is declared, read
     /// with [`Project::watches`](super::Project::watches).
     pub fn watch(&mut self, name: &str) -> Watch {
-        let name = &self.key(name);
         let previous = self
             .previous
             .and_then(|previous| previous.watches.get(name));
@@ -384,7 +298,6 @@ impl BehaviourContext<'_> {
     /// them with [`Project::peaks`](super::Project::peaks). The same peaks every run, as long
     /// as the name is declared, so a processor made in an earlier run keeps showing.
     pub fn peaks(&mut self, name: &str) -> Peaks {
-        let name = &self.key(name);
         let previous = self.previous.and_then(|previous| previous.peaks.get(name));
         let peaks = previous.cloned().unwrap_or_default();
         self.next.peaks.insert(name.to_string(), peaks.clone());
@@ -395,7 +308,6 @@ impl BehaviourContext<'_> {
     /// [`Self::peaks`] is for a level: the same scope every run while the name is declared,
     /// read with [`Project::scope`](super::Project::scope).
     pub fn scope(&mut self, name: &str) -> Scope {
-        let name = &self.key(name);
         let previous = self.previous.and_then(|previous| previous.scopes.get(name));
         let scope = previous.cloned().unwrap_or_default();
         self.next.scopes.insert(name.to_string(), scope.clone());
@@ -406,7 +318,6 @@ impl BehaviourContext<'_> {
     /// hears, as [`Self::scope`] is for a sound: the same tap every run while the name is
     /// declared with the same event type, read with [`Project::tap`](super::Project::tap).
     pub fn tap<T: Tappable + 'static>(&mut self, name: &str) -> EventTap<T> {
-        let name = &self.key(name);
         let previous = self.previous.and_then(|previous| previous.taps.get(name));
         let previous = previous.and_then(|tap| tap.downcast_ref::<EventTap<T>>());
         let tap = previous.cloned().unwrap_or_default();
@@ -422,7 +333,6 @@ impl BehaviourContext<'_> {
     /// when that part changed: a hash of it is the key. A run of a rejected group did not
     /// happen, so the next run compares with the run before it.
     pub fn changed(&mut self, name: &str, key: u64) -> bool {
-        let name = &self.key(name);
         let previous = self.previous.and_then(|previous| previous.keys.get(name));
         self.next.keys.insert(name.to_string(), key);
         previous != Some(&key)
@@ -472,11 +382,7 @@ impl BehaviourContext<'_> {
     /// Names an output so that `project.json` connections and the parent can use it. It may be
     /// the endpoint of a child, to pass that port up.
     pub fn output(&mut self, name: &str, endpoint: OutputEndpoint) {
-        let outputs = match &mut self.part {
-            Some(part) => &mut part.ports.outputs,
-            None => &mut self.next.outputs,
-        };
-        outputs.insert(name.to_string(), endpoint);
+        self.next.outputs.insert(name.to_string(), endpoint);
     }
 
     /// Whether this run named an output `name` already.
@@ -485,11 +391,7 @@ impl BehaviourContext<'_> {
     }
 
     pub fn input(&mut self, name: &str, endpoint: InputEndpoint) {
-        let inputs = match &mut self.part {
-            Some(part) => &mut part.ports.inputs,
-            None => &mut self.next.inputs,
-        };
-        inputs.insert(name.to_string(), endpoint);
+        self.next.inputs.insert(name.to_string(), endpoint);
     }
 
     /// Lets the owner of this instance automate its numbers: lanes reach `input` of `node` as
@@ -503,11 +405,6 @@ impl BehaviourContext<'_> {
     ) {
         let parameters = input.parameters().iter();
         let endpoint = InputEndpoint::new(node, input.port());
-        if let Some(part) = &mut self.part {
-            let parameters = parameters.map(|parameter| parameter.info()).collect();
-            part.ports.automation = Some((endpoint, parameters));
-            return;
-        }
         let record = self.instances.get(self.id);
         let record = record.and_then(|record| record.state.as_any().downcast_ref::<S>());
         // A tool whose state is JSON keeps no `S`: what its record leaves out is the default.
@@ -558,10 +455,6 @@ impl BehaviourContext<'_> {
             }
         }
         let (parameters, records) = numbers.into_iter().unzip();
-        if let Some(part) = &mut self.part {
-            part.ports.automation = Some((input, parameters));
-            return Ok(());
-        }
         self.next.automation = Some(Automatable {
             endpoint: input,
             parameters,
@@ -574,10 +467,6 @@ impl BehaviourContext<'_> {
     /// `child`, or of itself with `None`, so a knob of an automated number shows the value that
     /// plays, see [`Project::lanes`](super::Project::lanes). Declare them each run, as the rest.
     pub fn show_lanes(&mut self, child: Option<&str>, lanes: Arc<dyn PlayedLanes>) {
-        // A part has no knobs to show them on.
-        if self.part.is_some() {
-            return;
-        }
         let instance = match child {
             Some(name) => self.id.child(name),
             None => Ok(self.id.clone()),
@@ -1017,8 +906,6 @@ impl Bindings {
             let previous = run.backups.last().and_then(|(_, binding)| binding.as_ref());
             let mut context = BehaviourContext {
                 id,
-                registry: change.registry,
-                part: None,
                 edit: &mut *edit,
                 assets,
                 instances: change.instances,

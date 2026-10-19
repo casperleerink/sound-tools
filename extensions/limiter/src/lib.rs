@@ -203,7 +203,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<LimiterState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Limiter::AUTOMATION.parameters());
+        .schema(Limiter::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

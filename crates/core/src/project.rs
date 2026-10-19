@@ -25,9 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
-pub use binding::{
-    BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, PartPorts, RecordStamp,
-};
+pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, RecordStamp};
 pub use editing::{Changes, Derived, Edit};
 pub use fields::{FieldDoc, FieldRange, RecordSchema, ranges, type_doc, unit_of};
 pub use file::{

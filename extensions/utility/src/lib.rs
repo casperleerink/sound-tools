@@ -174,7 +174,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<UtilityState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Utility::AUTOMATION.parameters());
+        .schema(Utility::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

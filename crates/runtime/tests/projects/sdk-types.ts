@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { devices, h, input, number, list, notes, output, prefixed, rise, text, tool, bang, type Declaration, type HeardEvent, type TimelineState } from "./sdk";
+import { h, input, number, list, notes, output, rise, text, tool, bang, type Declaration, type HeardEvent, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -221,30 +221,6 @@ tool({
   when: "Never",
   doc: "A take.",
   state: { notes: notes() },
-});
-
-tool({
-  name: "room",
-  title: "Room",
-  when: "Never",
-  doc: "Two reverbs, one with its numbers as knobs.",
-  state: { ...devices.reverb.fields, ...prefixed("far_", devices.reverb.fields), drive: number({ min: 0, max: 1, default: 0 }) },
-  sound: (fields) => {
-    const near = devices.reverb(input, fields);
-    const far = devices.reverb({ left: near.left, right: near.right }, { mix: fields.far_mix, freeze: true });
-    // @ts-expect-error: the reverb has no number `size_m`.
-    devices.reverb(input, { size_m: 1 });
-    // @ts-expect-error: a boolean of the record is written as it is, not played as a signal.
-    devices.reverb(input, { freeze: fields.drive });
-    // @ts-expect-error: the fields of the second reverb are named with their prefix.
-    fields.far_freeze;
-    devices.filter(far, { type: "high_pass", cutoff_hz: fields.drive });
-    // @ts-expect-error: a choice of a device is one of its options.
-    devices.filter(far, { type: "hi_pass" });
-    // A band takes the defaults of its place for what it leaves out.
-    devices.eq(far, { bands: [{ gain_db: 3 }] });
-    return far;
-  },
 });
 
 const parts = { bass: "timeline", fx: "filter", drop: "rain" } as const;

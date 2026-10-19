@@ -245,7 +245,7 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     registry
         .tool::<CompressorState>(EXTENSION)?
         .behaviour(apply)
-        .in_code(Compressor::AUTOMATION.parameters());
+        .schema(Compressor::AUTOMATION.parameters());
     registry.agent_doc(EXTENSION, AGENT_DOC)?;
     Ok(())
 }

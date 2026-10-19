@@ -174,8 +174,6 @@ pub struct Extensions {
     bun: Option<Arc<Bun>>,
     /// The opening of the project every Bun of it runs for.
     opening: u64,
-    /// The built-in tools, whose devices a sound plays.
-    schemas: Arc<[ToolSchema]>,
     /// The tools of the first load that the registry took.
     tools: Vec<ToolInfo>,
     skipped: Skipped,
@@ -187,7 +185,6 @@ pub struct Extensions {
 pub struct FirstLoad {
     folder: PathBuf,
     opening: u64,
-    schemas: Arc<[ToolSchema]>,
     launched: Result<Option<Launched>, String>,
 }
 
@@ -203,14 +200,12 @@ impl Extensions {
             return None;
         }
         let opening = bun::new_opening();
-        let schemas: Arc<[ToolSchema]> = schemas.into();
-        let launched = write_sdk(&folder, &schemas)
+        let launched = write_sdk(&folder, schemas)
             .map_err(|error| error.to_string())
-            .and_then(|()| launch((&folder, opening, &schemas), Skipped::new()));
+            .and_then(|()| launch((&folder, opening), Skipped::new()));
         Some(FirstLoad {
             folder,
             opening,
-            schemas,
             launched,
         })
     }
@@ -228,7 +223,6 @@ impl FirstLoad {
         let Self {
             folder,
             opening,
-            schemas,
             launched,
         } = self;
         let none = |problems| (None, Vec::new(), Skipped::new(), problems);
@@ -257,7 +251,6 @@ impl FirstLoad {
             folder,
             bun,
             opening,
-            schemas,
             tools,
             skipped,
             problems,
@@ -266,14 +259,9 @@ impl FirstLoad {
 }
 
 /// The tools of `loaded` by `bun` with their sounds compiled, and what is wrong: the errors of
-/// the files, the files Bun runs without, and every tool whose fields, sounds or view fail,
-/// such as a sound that plays a device of `schemas` with a setting it refuses. Takes as long as
-/// compiling every sound: not on the thread that draws.
-fn checked(
-    loaded: Loaded,
-    skipped: &Skipped,
-    (bun, schemas): (&Arc<Bun>, &[ToolSchema]),
-) -> (Vec<Sounds>, Vec<Problem>) {
+/// the files, the files Bun runs without, and every tool whose fields, sounds or view fail.
+/// Takes as long as compiling every sound: not on the thread that draws.
+fn checked(loaded: Loaded, skipped: &Skipped, bun: &Arc<Bun>) -> (Vec<Sounds>, Vec<Problem>) {
     let file_problem = |file: &str, message: &str| Problem {
         path: format!("{FOLDER}/{file}"),
         message: message.to_string(),
@@ -299,7 +287,7 @@ fn checked(
     let mut tools = Vec::new();
     for tool in kept {
         let LoadedTool { info, sounds, view } = tool;
-        let sounds = Sounds::new(&info, sounds, (bun, &infos), schemas);
+        let sounds = Sounds::new(&info, sounds, (bun, &infos));
         // One problem a file: a list keeps one.
         let mut sounds_failed: Vec<&String> = sounds.failures().collect();
         sounds_failed.sort();
@@ -408,11 +396,11 @@ struct Launched {
 }
 
 /// Starts Bun on the tools of `extensions` for the project's `opening` without the `skipped`
-/// files, and waits for its load, with the built-in tools of `schemas`. A file whose code hangs or stops Bun while it loads is
+/// files, and waits for its load. A file whose code hangs or stops Bun while it loads is
 /// skipped too, and Bun starts again without it. `None` when the folder has no tool file.
 /// Blocks for as long as the load takes.
 fn launch(
-    (extensions, opening, schemas): (&Path, u64, &[ToolSchema]),
+    (extensions, opening): (&Path, u64),
     mut skipped: Skipped,
 ) -> Result<Option<Launched>, String> {
     let files = tool_files(extensions);
@@ -435,7 +423,7 @@ fn launch(
                 // The tools that own children ask it what they declare while their records
                 // play, also outside the window.
                 let bun = Arc::new(bun);
-                let (sounds, problems) = checked(loaded, &skipped, (&bun, schemas));
+                let (sounds, problems) = checked(loaded, &skipped, &bun);
                 return Ok(Some(Launched {
                     bun,
                     sounds,
