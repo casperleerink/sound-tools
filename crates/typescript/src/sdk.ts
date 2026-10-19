@@ -1246,8 +1246,11 @@ export type DragTurns = ({ field: string } | { control: string }) & {
 export interface Drag {
   /** Names its live values: `now.drag(id)`. */
   id?: string;
-  /** Rounds `dx` and `dy` to whole steps, in units. */
-  snap?: { x?: number; y?: number };
+  /**
+   * Rounds `dx` and `dy` to whole steps, in units. With `grid`, the pressed shape's `anchor` lands
+   * on a whole step instead, as a note lands on the lines of a piano roll wherever it started.
+   */
+  snap?: { x?: number; y?: number; grid?: boolean };
   /** Moves along one axis only. */
   axis?: "x" | "y";
   /** What the drag turns across and up. */
@@ -1273,13 +1276,18 @@ interface Pointed {
   cursor?: "pointer" | "grab" | "crosshair" | "ew-resize" | "ns-resize";
   /** 0 to 1; 1 when left out. */
   opacity?: Num;
+  /** The point a drag with `snap.grid` puts on the grid: its own `x` and `y` when left out, such as the end of a note for its resize handle. */
+  anchor?: { x?: number; y?: number };
 }
 
 /**
  * Something a space draws. Positions and sizes are in the units of the space; `radius`, `width`
  * of a line and `size` of text are in points.
  */
-export type Shape = Pointed &
+export type Shape =
+  /** Shapes moved together by `x` and `y`, such as the selected notes by a drag: one live value for all of them. */
+  | { kind: "group"; x?: Num; y?: Num; children: Child[] }
+  | (Pointed &
   (
     | { kind: "rect"; x: Num; y: Num; width: Num; height: Num; color: Color; radius?: number; border?: Color; borderWidth?: Num }
     | { kind: "circle"; x: Num; y: Num; radius: Num; color: Color }
@@ -1288,7 +1296,7 @@ export type Shape = Pointed &
     | { kind: "arc"; x: Num; y: Num; radius: number; from: Num; to: Num; color: Color; width?: number }
     /** Text at `x`, `y`, its top; a live number shows as a readout in `unit`. */
     | { kind: "text"; x: Num; y: Num; text: string | Live; unit?: Unit; color?: Color; size?: number; align?: "left" | "center" | "right" }
-  );
+  ));
 
 /**
  * A surface that draws shapes in units of its own, such as ticks across and notes down. It
@@ -1340,6 +1348,8 @@ export const Circle = shape("circle");
 export const Line = shape("line");
 export const Arc = shape("arc");
 export const Label = shape("text");
+/** Shapes moved together, see `Shape`. */
+export const Group = ({ children, ...props }: { x?: Num; y?: Num; children?: Child }): Shape => ({ kind: "group", ...props, children: [children] });
 
 /** The file of a sample field at `path`, and a button that opens a file to put there. */
 export const SampleChooser = (props: { path: string; label?: string }): Node => ({ type: "sample", ...props });

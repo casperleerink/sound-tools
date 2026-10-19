@@ -28,7 +28,10 @@ use sound_ui::{ActiveTheme, ControlEdit, Session, typography};
 use crate::bun::PageSize;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
-use crate::tree::{self, Align, Axis, Cursor, Drag, Node, Reach, ShapeKind, SpaceNode, Words};
+use crate::tree::{
+    self, Align, Axis, Cursor, DivNode, Drag, Node, Reach, SampleNode, ShapeKind, SpaceNode,
+    TextNode, Words,
+};
 use crate::window::{Live, Surface, edit_record, state_of};
 
 /// How long an ended drag keeps its values at most, when the tree after its end does not come,
@@ -91,6 +94,8 @@ struct Held {
     now: Point<Pixels>,
     /// The press in the units of its space, and how many units a point is there.
     start_units: (f64, f64),
+    /// What a drag that snaps to the grid puts on it: the anchor of the shape it holds.
+    anchor: (f64, f64),
     per_point: (f64, f64),
     /// Where the space was at the press, for what turns by where the pointer is.
     bounds: Bounds<Pixels>,
@@ -128,11 +133,18 @@ impl Held {
             None => {}
         }
         let snap = self.drag.snap.unwrap_or_default();
+        let whole = |moved: f64, step: Option<f32>, anchor: f64| {
+            let step = f64::from(step.unwrap_or(0.0));
+            match snap.grid {
+                true => live::snap(anchor + moved, step) - anchor,
+                false => live::snap(moved, step),
+            }
+        };
         DragNumbers {
             start_x: self.start_units.0,
             start_y: self.start_units.1,
-            dx: live::snap(dx, f64::from(snap.x.unwrap_or(0.0))),
-            dy: live::snap(dy, f64::from(snap.y.unwrap_or(0.0))),
+            dx: whole(dx, snap.x, self.anchor.0),
+            dy: whole(dy, snap.y, self.anchor.1),
             active: self.ended.is_none(),
         }
     }
@@ -208,6 +220,13 @@ impl TypeScriptCard {
         })
         .detach();
         cx.observe(&live, |_, _, cx| cx.notify()).detach();
+        // Escape lets go of a drag wherever the keys are, as a drag does not take them.
+        cx.observe_keystrokes(|view, event, _, cx| {
+            if event.keystroke.key == "escape" {
+                view.cancel_drag(cx);
+            }
+        })
+        .detach();
         cx.on_release(|view, cx| {
             view.edit.finish(&view.session, cx);
             // A card that is gone hears no focus out.
@@ -236,6 +255,10 @@ impl TypeScriptCard {
     /// cmd, ctrl, alt or fn only goes down, as macOS sends no up while cmd is held; one the
     /// window binds, such as cmd-z, is the window's and never comes here.
     fn key(&mut self, keystroke: &Keystroke, down: bool, repeat: bool, cx: &mut Context<Self>) {
+        if down && keystroke.key == "escape" && self.cancel_drag(cx) {
+            cx.stop_propagation();
+            return;
+        }
         let modifiers = keystroke.modifiers;
         let chord = modifiers.platform || modifiers.control || modifiers.alt || modifiers.function;
         let key = keystroke.key.clone();
@@ -302,18 +325,19 @@ impl TypeScriptCard {
         event: &MouseDownEvent,
         cx: &mut Context<Self>,
     ) {
-        let (on_press, drag, target) = match target {
+        let units = frame.units_at(bounds, event.position);
+        let (on_press, drag, target, anchor) = match target {
             Some(index) => match frame.pointed.get(index).and_then(Option::as_ref) {
                 Some(pointer) => (
                     pointer.on_press,
                     pointer.drag.clone(),
                     Some(pointer.key.clone()),
+                    pointer.anchor,
                 ),
                 None => return,
             },
-            None => (frame.on_press, frame.drag.clone(), None),
+            None => (frame.on_press, frame.drag.clone(), None, units),
         };
-        let units = frame.units_at(bounds, event.position);
         if let Some(handler) = on_press {
             let button = match event.button {
                 MouseButton::Right => "right",
@@ -368,6 +392,7 @@ impl TypeScriptCard {
             start: event.position,
             now: event.position,
             start_units: units,
+            anchor,
             per_point: (1.0 / across, 1.0 / down),
             bounds,
             from,
@@ -456,6 +481,39 @@ impl TypeScriptCard {
             None => None,
         };
         cx.notify();
+    }
+
+    /// Escape: the drag the pointer holds lets go of what it moved and turned, and its code
+    /// hears nothing.
+    fn cancel_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(held) = self.held.take_if(|held| held.ended.is_none()) else {
+            return false;
+        };
+        let turns = [&held.drag.x, &held.drag.y];
+        if turns
+            .iter()
+            .copied()
+            .flatten()
+            .any(|turns| turns.field.is_some())
+        {
+            (self.edit).apply_json(
+                &self.session,
+                &self.id,
+                "",
+                ValueChange::<f32>::DragCancel,
+                |_, _| {},
+                cx,
+            );
+        }
+        for (turns, from) in turns.into_iter().zip(held.from) {
+            if let (Some(control), Some(from)) =
+                (turns.as_ref().and_then(|turns| turns.control.clone()), from)
+            {
+                self.control(&control, from, cx);
+            }
+        }
+        cx.notify();
+        true
     }
 
     /// Turns what the drag turns to where the pointer is.
@@ -549,6 +607,7 @@ struct Pointer {
     on_press: Option<usize>,
     drag: Option<Drag>,
     cursor: Option<Cursor>,
+    anchor: (f64, f64),
 }
 
 /// A shape with its numbers worked out, in the units of its space.
@@ -784,15 +843,15 @@ impl Drawing<'_, '_> {
     /// own.
     fn draw(&mut self, node: &Node, index: &[usize]) -> AnyElement {
         match node {
-            Node::Text { text } => SharedString::from(text.clone()).into_any_element(),
-            Node::Sample { path, label } => self.sample(path, label.as_deref()),
+            Node::Text(TextNode { text }) => SharedString::from(text.clone()).into_any_element(),
+            Node::Sample(SampleNode { path, label }) => self.sample(path, label.as_deref()),
             Node::Space(space) => self.space(space, index),
-            Node::Div {
+            Node::Div(DivNode {
                 key,
                 style,
                 on_click,
                 children,
-            } => {
+            }) => {
                 let children: Vec<AnyElement> = (children.iter().enumerate())
                     .map(|(position, child)| self.draw(child, &[index, &[position]].concat()))
                     .collect();
@@ -866,98 +925,20 @@ impl Drawing<'_, '_> {
             .into_any_element()
     }
 
-    /// The shapes of a space with their numbers worked out, each in the colour it shows.
+    /// The shapes of a space with their numbers worked out, each in the colour it shows, those
+    /// of its groups among them, moved by the group.
     fn place(&self, space: &SpaceNode, key: &str) -> (Vec<Placed>, Vec<Option<Pointer>>) {
-        let sources = self.sources();
-        let number = |number: &Option<tree::Num>| {
-            number.as_ref().map_or(0.0, |number| sources.number(number))
+        let mut placing = Placing {
+            sources: self.sources(),
+            drags: &space.drags,
+            hovered: (self.hovered.as_ref())
+                .filter(|(space, _)| space == key)
+                .map(|(_, shape)| shape.as_str()),
+            placed: Vec::with_capacity(space.children.len()),
+            pointed: Vec::with_capacity(space.children.len()),
         };
-        let mut placed = Vec::with_capacity(space.children.len());
-        let mut pointed = Vec::with_capacity(space.children.len());
-        for (index, shape) in space.children.iter().enumerate() {
-            let shape_key = shape.key.clone().unwrap_or_else(|| index.to_string());
-            let hovered = self
-                .hovered
-                .as_ref()
-                .is_some_and(|(space, hovered)| space == key && *hovered == shape_key);
-            pointed.push(shape.is_pointed().then(|| Pointer {
-                key: shape_key,
-                on_press: shape.on_press,
-                drag: shape.drag.clone(),
-                cursor: shape.cursor,
-            }));
-            let opacity = shape
-                .opacity
-                .as_ref()
-                .map_or(1.0, |opacity| sources.number(opacity).clamp(0.0, 1.0))
-                as f32;
-            if opacity <= 0.0 {
-                continue;
-            }
-            let shown = if hovered {
-                shape.hover.or(shape.color)
-            } else {
-                shape.color
-            };
-            let mut color = shown.map_or(gpui::white(), |color| color.0);
-            color.a *= opacity;
-            let reach = |reach: &Option<Reach>| match reach {
-                Some(Reach::Point([x, y])) => (sources.number(x), sources.number(y)),
-                Some(Reach::Turn(turn)) => (sources.number(turn), 0.0),
-                None => (0.0, 0.0),
-            };
-            let geometry = match shape.kind {
-                ShapeKind::Rect => {
-                    let border_width = number(&shape.border_width) as f32;
-                    Geometry::Rect {
-                        x: number(&shape.x),
-                        y: number(&shape.y),
-                        width: number(&shape.width),
-                        height: number(&shape.height),
-                        radius: number(&shape.radius) as f32,
-                        border: (shape.border)
-                            .filter(|_| border_width > 0.0)
-                            .map(|border| (border.0, border_width)),
-                    }
-                }
-                ShapeKind::Circle => Geometry::Circle {
-                    x: number(&shape.x),
-                    y: number(&shape.y),
-                    radius: number(&shape.radius) as f32,
-                },
-                ShapeKind::Line => Geometry::Line {
-                    from: reach(&shape.from),
-                    to: reach(&shape.to),
-                    width: number(&shape.width).max(0.0) as f32,
-                },
-                ShapeKind::Arc => Geometry::Arc {
-                    x: number(&shape.x),
-                    y: number(&shape.y),
-                    radius: number(&shape.radius) as f32,
-                    turns: (reach(&shape.from).0 as f32, reach(&shape.to).0 as f32),
-                    width: number(&shape.width).max(0.0) as f32,
-                },
-                ShapeKind::Text => Geometry::Text {
-                    x: number(&shape.x),
-                    y: number(&shape.y),
-                    text: match &shape.text {
-                        Some(Words::Fixed(text)) => text.clone().into(),
-                        Some(Words::Live(live)) => {
-                            readout(sources.number(live) as f32, shape.unit).into()
-                        }
-                        None => SharedString::default(),
-                    },
-                    size: shape.size.unwrap_or(12.0),
-                    align: shape.align.unwrap_or(Align::Left),
-                },
-            };
-            placed.push(Placed {
-                index,
-                geometry,
-                color,
-            });
-        }
-        (placed, pointed)
+        placing.shapes(&space.children, (0.0, 0.0));
+        (placing.placed, placing.pointed)
     }
 
     fn space(&mut self, space: &SpaceNode, index: &[usize]) -> AnyElement {
@@ -1032,6 +1013,129 @@ impl Drawing<'_, '_> {
             holder.flex_none()
         };
         holder.into_any_element()
+    }
+}
+
+/// The shapes of a space as they are placed, in the order they paint.
+struct Placing<'a> {
+    sources: Sources<'a>,
+    drags: &'a [Drag],
+    /// The key of the shape of this space the pointer is over.
+    hovered: Option<&'a str>,
+    placed: Vec<Placed>,
+    /// What each shape does with the pointer, by its place; a group has none.
+    pointed: Vec<Option<Pointer>>,
+}
+
+impl Placing<'_> {
+    fn number(&self, number: &Option<tree::Num>) -> f64 {
+        number
+            .as_ref()
+            .map_or(0.0, |number| self.sources.number(number))
+    }
+
+    fn shapes(&mut self, shapes: &[tree::Shape], (left, top): (f64, f64)) {
+        for shape in shapes {
+            if shape.kind == ShapeKind::Group {
+                let offset = (left + self.number(&shape.x), top + self.number(&shape.y));
+                self.shapes(&shape.children, offset);
+            } else {
+                self.shape(shape, (left, top));
+            }
+        }
+    }
+
+    fn shape(&mut self, shape: &tree::Shape, (left, top): (f64, f64)) {
+        let index = self.pointed.len();
+        let shape_key = shape.key.clone().unwrap_or_else(|| index.to_string());
+        let hovered = self.hovered == Some(shape_key.as_str());
+        let reach = |reach: &Option<Reach>| match reach {
+            Some(Reach::Point([x, y])) => {
+                (left + self.sources.number(x), top + self.sources.number(y))
+            }
+            Some(Reach::Turn(turn)) => (self.sources.number(turn), 0.0),
+            None => (left, top),
+        };
+        let (x, y) = (left + self.number(&shape.x), top + self.number(&shape.y));
+        let geometry = match shape.kind {
+            ShapeKind::Rect => {
+                let border_width = self.number(&shape.border_width) as f32;
+                Geometry::Rect {
+                    x,
+                    y,
+                    width: self.number(&shape.width),
+                    height: self.number(&shape.height),
+                    radius: self.number(&shape.radius) as f32,
+                    border: (shape.border)
+                        .filter(|_| border_width > 0.0)
+                        .map(|border| (border.0, border_width)),
+                }
+            }
+            ShapeKind::Circle => Geometry::Circle {
+                x,
+                y,
+                radius: self.number(&shape.radius) as f32,
+            },
+            ShapeKind::Line => Geometry::Line {
+                from: reach(&shape.from),
+                to: reach(&shape.to),
+                width: self.number(&shape.width).max(0.0) as f32,
+            },
+            ShapeKind::Arc => Geometry::Arc {
+                x,
+                y,
+                radius: self.number(&shape.radius) as f32,
+                turns: (reach(&shape.from).0 as f32, reach(&shape.to).0 as f32),
+                width: self.number(&shape.width).max(0.0) as f32,
+            },
+            ShapeKind::Text => Geometry::Text {
+                x,
+                y,
+                text: match &shape.text {
+                    Some(Words::Fixed(text)) => text.clone().into(),
+                    Some(Words::Live(live)) => {
+                        readout(self.sources.number(live) as f32, shape.unit).into()
+                    }
+                    None => SharedString::default(),
+                },
+                size: shape.size.unwrap_or(12.0),
+                align: shape.align.unwrap_or(Align::Left),
+            },
+            ShapeKind::Group => return,
+        };
+        let origin = match &geometry {
+            Geometry::Line { from, .. } => *from,
+            _ => (x, y),
+        };
+        let anchor = shape.anchor.unwrap_or_default();
+        self.pointed.push(shape.is_pointed().then(|| Pointer {
+            key: shape_key,
+            on_press: shape.on_press,
+            drag: shape.drag.and_then(|drag| self.drags.get(drag).cloned()),
+            cursor: shape.cursor,
+            anchor: (
+                anchor.x.map_or(origin.0, |x| left + f64::from(x)),
+                anchor.y.map_or(origin.1, |y| top + f64::from(y)),
+            ),
+        }));
+        let opacity = (shape.opacity.as_ref())
+            .map_or(1.0, |opacity| self.sources.number(opacity).clamp(0.0, 1.0))
+            as f32;
+        if opacity <= 0.0 {
+            return;
+        }
+        let shown = if hovered {
+            shape.hover.or(shape.color)
+        } else {
+            shape.color
+        };
+        let mut color = shown.map_or(gpui::white(), |color| color.0);
+        color.a *= opacity;
+        self.placed.push(Placed {
+            index,
+            geometry,
+            color,
+        });
     }
 }
 

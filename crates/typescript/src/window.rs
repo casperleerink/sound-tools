@@ -25,8 +25,8 @@ use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
 use crate::bun::{
-    Bun, Clock, Event, Heard, PageSize, Played, Reads, RecordEdit, Request, Runs, Skipped, Telling,
-    Transport, record_key,
+    Bun, Clock, Drawn, Event, Heard, PageSize, Played, Reads, RecordEdit, Request, Runs, Skipped,
+    Telling, Transport, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
@@ -1178,11 +1178,8 @@ impl Live {
                     return;
                 };
                 entry.answered(reads, event);
-                entry.tree = Some(tree.and_then(|(version, tree)| {
-                    let node: Node =
-                        serde_json::from_value(tree).map_err(|error| error.to_string())?;
-                    Ok((version, Rc::new(node)))
-                }));
+                entry.tree =
+                    Some(tree.and_then(|(version, Drawn(node))| Ok((version, Rc::new(node?)))));
                 entry.uses = match &entry.tree {
                     Some(Ok((_, node))) => node.uses(),
                     _ => Uses::default(),

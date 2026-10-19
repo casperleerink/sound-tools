@@ -10,10 +10,10 @@ use gpui::{
 
 use super::{ONLY_THE_TOOL, Window, open};
 
-/// `count` notes of a piano roll, all bound to the drag `move` as selected notes are, with a
-/// colour of their own under the pointer; or with `canvas`, the same notes on a canvas whose
-/// drag moves the first one through the code, as a drag did before live values.
-const GRID: &str = r##"import { Canvas, h, number, Rect, Space, tool, type Shape } from "./sdk";
+/// `count` notes of a piano roll, all in a group the drag `move` moves, as selected notes are,
+/// with a colour of their own under the pointer; or with `canvas`, the same notes on a canvas
+/// whose drag moves the first one through the code, as a drag did before live values.
+const GRID: &str = r##"import { Canvas, Group, h, number, Rect, Space, tool, type Drag, type Shape } from "./sdk";
 
 tool({
   name: "grid",
@@ -33,17 +33,20 @@ tool({
       return h(Canvas, { width: 1200, height: 600, shapes, onDrag: (x) => { memory.x = x * 12000; } });
     }
     const move = now.drag("move");
+    const drag: Drag = { id: "move", snap: { x: 240, y: 1 }, onEnd: () => {} };
     return h(Space, { key: "roll", width: 1200, height: 600, unit: { x: 0.1, y: 4 } },
-      notes.map((note, index) => h(Rect, {
-        key: String(index),
-        x: move.dx.plus(note.start),
-        y: move.dy.plus(note.pitch),
-        width: 240,
-        height: 1,
-        color: "#a9b1ff",
-        hover: "#e9ebef",
-        drag: { id: "move", snap: { x: 240, y: 1 }, onEnd: () => {} },
-      })),
+      h(Group, { x: move.dx, y: move.dy },
+        notes.map((note, index) => h(Rect, {
+          key: String(index),
+          x: note.start,
+          y: note.pitch,
+          width: 240,
+          height: 1,
+          color: "#a9b1ff",
+          hover: "#e9ebef",
+          drag,
+        })),
+      ),
     );
   },
 });

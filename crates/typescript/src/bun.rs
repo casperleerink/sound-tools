@@ -20,6 +20,7 @@ use sound_core::InstanceId;
 use sound_signals::Graph;
 
 use crate::tools::ToolInfo;
+use crate::tree::Node;
 use crate::{NoteMessage, behaviours};
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
@@ -195,10 +196,11 @@ pub(crate) enum Event {
     /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
     /// A card drew, with the version of its tree, which a click on it names, so it runs a
-    /// handler of this tree and not of a newer one. Or why it did not.
+    /// handler of this tree and not of a newer one. Or why it did not. Read by [`read_line`].
+    #[serde(skip_deserializing)]
     Tree {
         card: u64,
-        tree: Result<(u64, Value), String>,
+        tree: Result<(u64, Drawn), String>,
         #[serde(default)]
         reads: Reads,
         /// Drawn after a press or a drag, which this tree answers.
@@ -253,6 +255,21 @@ pub(crate) enum Event {
     /// code a timer of a tool ran.
     #[serde(skip_deserializing)]
     Ended { blame: Option<Runs>, why: String },
+}
+
+/// A tree as Bun sends it, read into nodes on the thread that hears Bun, not the window's: a
+/// large tree takes milliseconds. Or why its nodes are wrong, which the card shows.
+#[derive(Debug)]
+pub(crate) struct Drawn(pub Result<Node, String>);
+
+impl<'de> Deserialize<'de> for Drawn {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
+        HEARD_TREE_BYTES.fetch_add(raw.get().len() as u64, Ordering::Relaxed);
+        Ok(Self(
+            serde_json::from_str(raw.get()).map_err(|error| error.to_string()),
+        ))
+    }
 }
 
 /// What the code of a card read as it drew, so the window asks for a tree again only when that
@@ -428,6 +445,7 @@ static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
 static SENT_RENDERS: AtomicU64 = AtomicU64::new(0);
 static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
 static HEARD_TREES: AtomicU64 = AtomicU64::new(0);
+static HEARD_TREE_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// How many bytes this process told every Bun, for a test of what a frame costs.
 pub fn sent_bytes() -> u64 {
@@ -447,6 +465,11 @@ pub fn sent_renders_and_events() -> (u64, u64) {
 /// how long a tree takes to come.
 pub fn heard_trees() -> u64 {
     HEARD_TREES.load(Ordering::Relaxed)
+}
+
+/// How many bytes of trees this process heard from every Bun, for a measurement of their size.
+pub fn heard_tree_bytes() -> u64 {
+    HEARD_TREE_BYTES.load(Ordering::Relaxed)
 }
 
 pub(crate) fn count_tree() {
@@ -691,6 +714,44 @@ impl Bun {
     }
 }
 
+/// The `type` of a line, which every line has.
+#[derive(Deserialize)]
+struct Kind<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: std::borrow::Cow<'a, str>,
+}
+
+/// A tree a card drew, as [`Event::Tree`].
+#[derive(Deserialize)]
+struct TreeLine {
+    card: u64,
+    tree: Result<(u64, Drawn), String>,
+    #[serde(default)]
+    reads: Reads,
+    #[serde(default)]
+    event: bool,
+}
+
+/// A line of Bun. A tree is read on its own road: serde's tagged enums read a line twice, and a
+/// tree may be half a megabyte.
+fn read_line(line: &str) -> serde_json::Result<Line> {
+    if serde_json::from_str::<Kind>(line)?.kind != "tree" {
+        return serde_json::from_str(line);
+    }
+    let TreeLine {
+        card,
+        tree,
+        reads,
+        event,
+    } = serde_json::from_str(line)?;
+    Ok(Line::Event(Event::Tree {
+        card,
+        tree,
+        reads,
+        event,
+    }))
+}
+
 /// Reads what Bun says until it stops, and passes it on to `said`.
 fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
     for line in BufReader::new(stdout).lines() {
@@ -701,7 +762,7 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
                 break;
             }
         };
-        match serde_json::from_str::<Line>(&line) {
+        match read_line(&line) {
             Ok(line) => {
                 if said.send(line).is_err() {
                     break;

@@ -2,32 +2,84 @@
 //! field this side does not know is an error on the card, not something left out.
 
 use gpui::{Div, Hsla, prelude::*, px};
-use serde::Deserialize;
+use serde::de::value::MapAccessDeserializer;
+use serde::de::{Error, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 
 use crate::tools::Unit;
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+/// A node of a tree. Its `type` comes first, as `host.ts` writes it, so a large space is read
+/// in one pass; serde's tagged enums would read it twice.
+#[derive(Debug)]
 pub(crate) enum Node {
-    Div {
-        /// Keeps the state of the element when the tree is drawn again.
-        key: Option<String>,
-        #[serde(default)]
-        style: Style,
-        /// The index of its click handler in the host.
-        #[serde(rename = "onClick")]
-        on_click: Option<usize>,
-        children: Vec<Node>,
-    },
-    Text {
-        text: String,
-    },
+    Div(DivNode),
+    Text(TextNode),
     /// The file of a sample field, and a button that chooses one.
-    Sample {
-        path: String,
-        label: Option<String>,
-    },
+    Sample(SampleNode),
     Space(Box<SpaceNode>),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DivNode {
+    /// Keeps the state of the element when the tree is drawn again.
+    pub key: Option<String>,
+    #[serde(default)]
+    pub style: Style,
+    /// The index of its click handler in the host.
+    #[serde(rename = "onClick")]
+    pub on_click: Option<usize>,
+    pub children: Vec<Node>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TextNode {
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SampleNode {
+    pub path: String,
+    pub label: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for Node {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(NodeVisitor)
+    }
+}
+
+struct NodeVisitor;
+
+impl<'de> Visitor<'de> for NodeVisitor {
+    type Value = Node;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a node with its `type` first")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
+        let first: Option<String> = map.next_key()?;
+        if first.as_deref() != Some("type") {
+            return Err(A::Error::custom("a node names its `type` first"));
+        }
+        let kind: String = map.next_value()?;
+        let rest = MapAccessDeserializer::new(map);
+        Ok(match kind.as_str() {
+            "div" => Node::Div(DivNode::deserialize(rest)?),
+            "text" => Node::Text(TextNode::deserialize(rest)?),
+            "sample" => Node::Sample(SampleNode::deserialize(rest)?),
+            "space" => Node::Space(Box::new(SpaceNode::deserialize(rest)?)),
+            other => {
+                return Err(A::Error::unknown_variant(
+                    other,
+                    &["div", "text", "sample", "space"],
+                ));
+            }
+        })
+    }
 }
 
 /// What of the window a tree moves with, without asking for a new tree.
@@ -49,11 +101,11 @@ impl Uses {
 impl Node {
     pub(crate) fn uses(&self) -> Uses {
         match self {
-            Self::Div { children, .. } => (children.iter())
+            Self::Div(DivNode { children, .. }) => (children.iter())
                 .map(Self::uses)
                 .fold(Uses::default(), Uses::and),
             Self::Space(space) => space.uses(),
-            Self::Text { .. } | Self::Sample { .. } => Uses::default(),
+            Self::Text(_) | Self::Sample(_) => Uses::default(),
         }
     }
 }
@@ -75,15 +127,19 @@ pub(crate) struct SpaceNode {
     pub radius: Option<f32>,
     pub on_press: Option<usize>,
     pub drag: Option<Drag>,
+    /// The drags of its shapes, which name theirs by its place here: a drag every note shares
+    /// comes once.
+    #[serde(default)]
+    pub drags: Vec<Drag>,
     pub cursor: Option<Cursor>,
     pub children: Vec<Shape>,
 }
 
 impl SpaceNode {
     fn uses(&self) -> Uses {
-        (self.children.iter())
-            .flat_map(Shape::numbers)
-            .fold(Uses::default(), |uses, number| uses.and(number.uses()))
+        self.children
+            .iter()
+            .fold(Uses::default(), |uses, shape| uses.and(shape.uses()))
     }
 
     /// Points per unit at zoom 1, across and down.
@@ -140,7 +196,9 @@ pub(crate) struct Shape {
     pub kind: ShapeKind,
     pub key: Option<String>,
     pub on_press: Option<usize>,
-    pub drag: Option<Drag>,
+    /// Its drag, by its place in the space's `drags`.
+    pub drag: Option<usize>,
+    pub anchor: Option<Axes>,
     pub hover: Option<Color>,
     pub cursor: Option<Cursor>,
     pub opacity: Option<Num>,
@@ -158,9 +216,17 @@ pub(crate) struct Shape {
     pub unit: Option<Unit>,
     pub size: Option<f32>,
     pub align: Option<Align>,
+    /// The shapes of a group.
+    #[serde(default)]
+    pub children: Vec<Shape>,
 }
 
 impl Shape {
+    fn uses(&self) -> Uses {
+        let own = (self.numbers()).fold(Uses::default(), |uses, number| uses.and(number.uses()));
+        (self.children.iter()).fold(own, |uses, shape| uses.and(shape.uses()))
+    }
+
     fn numbers(&self) -> impl Iterator<Item = &Num> {
         let reaches = [&self.from, &self.to]
             .into_iter()
@@ -200,6 +266,7 @@ impl Shape {
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ShapeKind {
+    Group,
     Rect,
     Circle,
     Line,
@@ -231,12 +298,46 @@ pub(crate) enum Words {
     Live(Num),
 }
 
-/// A number, or a live value the window works out on every frame.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
+/// A number, or a live value the window works out on every frame. Read by hand: serde's
+/// untagged enums buffer every number of a tree.
+#[derive(Clone, Debug)]
 pub(crate) enum Num {
     Fixed(f32),
     Live(Box<Live>),
+}
+
+impl<'de> Deserialize<'de> for Num {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(NumVisitor)
+    }
+}
+
+struct NumVisitor;
+
+impl<'de> Visitor<'de> for NumVisitor {
+    type Value = Num;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a number or a live value")
+    }
+
+    fn visit_f64<E: Error>(self, value: f64) -> Result<Num, E> {
+        Ok(Num::Fixed(value as f32))
+    }
+
+    fn visit_i64<E: Error>(self, value: i64) -> Result<Num, E> {
+        Ok(Num::Fixed(value as f32))
+    }
+
+    fn visit_u64<E: Error>(self, value: u64) -> Result<Num, E> {
+        Ok(Num::Fixed(value as f32))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Num, A::Error> {
+        Ok(Num::Live(Box::new(Live::deserialize(
+            MapAccessDeserializer::new(map),
+        )?)))
+    }
 }
 
 impl Num {
@@ -344,12 +445,23 @@ pub(crate) enum SpacePart {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct Drag {
     pub id: Option<String>,
-    pub snap: Option<Axes>,
+    pub snap: Option<Snap>,
     pub axis: Option<Axis>,
     pub x: Option<Turns>,
     pub y: Option<Turns>,
     pub on_end: Option<usize>,
     pub on_move: Option<usize>,
+}
+
+/// Whole steps of a drag, in units: of how far it went, or with `grid`, of where the anchor of
+/// what it holds lands.
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Snap {
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    #[serde(default)]
+    pub grid: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

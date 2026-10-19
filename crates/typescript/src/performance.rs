@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use sound_core::InstanceId;
 
-use crate::bun::{Bun, Clock, Event, PageSize, Request, Transport, new_opening, record_key};
+use crate::bun::{Bun, Clock, Drawn, Event, PageSize, Request, Transport, new_opening, record_key};
 use crate::live::{DragNumbers, Sources};
 use crate::tree::{Node, Num};
 use crate::{bun_program, host_script, write_sdk};
@@ -16,10 +16,10 @@ use crate::{bun_program, host_script, write_sdk};
 const SIZES: [usize; 3] = [100, 1_000, 2_000];
 const ROUNDS: usize = 30;
 
-/// A page of `count` notes, each bound to the drag `move` as a selected note of a piano roll
-/// is, the first one at the watch `v` so every draw is a new tree; and a canvas whose drag
-/// moves the first note through the code, as a drag did before live values.
-const GRID: &str = r##"import { Canvas, h, number, Rect, Space, tool, type Shape } from "./sdk";
+/// A page of `count` notes, all in a group the drag `move` moves, as the selected notes of a
+/// piano roll are, the first one at the watch `v` so every draw is a new tree; and a canvas
+/// whose drag moves the first note through the code, as a drag did before live values.
+const GRID: &str = r##"import { Canvas, Group, h, number, Rect, Space, tool, type Drag, type Shape } from "./sdk";
 
 tool({
   name: "grid",
@@ -39,17 +39,20 @@ tool({
       return h(Canvas, { width: 800, height: 600, shapes, onDrag: (x) => { memory.x = x * 8000; } });
     }
     const move = now.drag("move");
+    const drag: Drag = { id: "move", snap: { x: 240, y: 1 }, onEnd: () => {} };
     return h(Space, { key: "roll", grow: true, unit: { x: 0.1, y: 4 }, extent: { x: [0, 38400], y: [0, 128] }, zoom: { x: [0.1, 10] } },
-      notes.map((note, index) => h(Rect, {
-        key: String(index),
-        x: move.dx.plus(index === 0 ? (watches.v ?? 0) : note.start),
-        y: move.dy.plus(note.pitch),
-        width: 240,
-        height: 1,
-        color: "#a9b1ff",
-        hover: "#e9ebef",
-        drag: { id: "move", snap: { x: 240, y: 1 }, onEnd: () => {} },
-      })),
+      h(Group, { x: move.dx, y: move.dy },
+        notes.map((note, index) => h(Rect, {
+          key: String(index),
+          x: index === 0 ? (watches.v ?? 0) : note.start,
+          y: note.pitch,
+          width: 240,
+          height: 1,
+          color: "#a9b1ff",
+          hover: "#e9ebef",
+          drag,
+        })),
+      ),
     );
   },
 });
@@ -76,15 +79,15 @@ fn print(what: &str, mut times: Vec<Duration>) {
     println!("{what}: mean {mean:?}, median {median:?}, worst {worst:?}");
 }
 
-/// The next tree Bun sends, how long it took, and its version.
-fn next_tree(bun: &Bun, sent: Instant) -> (Duration, Value, u64) {
+/// The next tree Bun sends, read into nodes, how long it took, and its version.
+fn next_tree(bun: &Bun, sent: Instant) -> (Duration, Node, u64) {
     let events = bun.events();
     loop {
         match smol::block_on(events.recv()) {
             Ok(Event::Tree {
-                tree: Ok((version, tree)),
+                tree: Ok((version, Drawn(tree))),
                 ..
-            }) => return (sent.elapsed(), tree, version),
+            }) => return (sent.elapsed(), tree.unwrap(), version),
             Ok(Event::Tree {
                 tree: Err(error), ..
             }) => panic!("{error}"),
@@ -124,12 +127,12 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
             let key = record_key("grid", &state);
             assert!(bun.tell([(&id, Some(("grid", key, state.as_str())))]));
             let mut trips = Vec::new();
-            let mut parses = Vec::new();
             let mut bytes = 0;
-            let mut tree = (Value::Null, 0);
+            let mut tree = None;
             for round in 0..ROUNDS {
                 let watches = BTreeMap::from([("v".to_string(), round as f32)]);
                 let card = 1;
+                let heard = crate::heard_tree_bytes();
                 let sent = Instant::now();
                 bun.send(&Request::Render {
                     card,
@@ -139,28 +142,23 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
                     clock: clock(),
                 });
                 let (trip, drawn, version) = next_tree(&bun, sent);
-                bytes = drawn.to_string().len();
-                let parsing = Instant::now();
-                let node: Node = serde_json::from_value(drawn.clone()).unwrap();
-                parses.push(parsing.elapsed());
-                drop(node);
+                bytes = crate::heard_tree_bytes() - heard;
                 trips.push(trip);
-                tree = (drawn, version);
+                tree = Some((drawn, version));
             }
             let kind = if canvas == 1 { "canvas" } else { "space" };
             println!("{count} shapes, {kind}: a tree is {bytes} bytes");
             print(
-                &format!("{count} shapes, {kind}: render asked to tree here"),
+                &format!("{count} shapes, {kind}: render asked to tree read into nodes"),
                 trips,
-            );
-            print(
-                &format!("{count} shapes, {kind}: the tree parsed in Rust"),
-                parses,
             );
             if canvas == 1 {
                 // What one drag step cost before live values: Bun runs `onDrag` and draws again.
-                let (tree, mut version) = tree;
-                let handler = tree["drag"]["onMove"].as_u64().unwrap() as usize;
+                let (tree, mut version) = tree.unwrap();
+                let Node::Space(space) = tree else {
+                    panic!("a canvas is a space");
+                };
+                let handler = space.drag.and_then(|drag| drag.on_move).unwrap();
                 let mut steps = Vec::new();
                 for step in 1..=ROUNDS {
                     let sent = Instant::now();

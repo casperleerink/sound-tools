@@ -312,7 +312,7 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
   say({ type: "declared", question, declaration });
 }
 
-function flatten(child: Child, handlers: Handler[], into: Sent[]) {
+function flatten(child: Child, handlers: Kept, into: Sent[]) {
   if (child === null || child === undefined || typeof child === "boolean") {
     return;
   }
@@ -333,27 +333,65 @@ function flatten(child: Child, handlers: Handler[], into: Sent[]) {
   }
 }
 
+/** The handlers of a tree, by their index, which the runtime names; a handler used twice is kept once. */
+type Kept = { list: Handler[]; index: Map<Handler, number> };
+
+function kept(): Kept {
+  return { list: [], index: new Map() };
+}
+
 /** A node as the runtime gets it, with its handlers kept for its card. */
-function serialize(node: Node, handlers: Handler[]): Sent {
-  const keep = (handler: Handler | undefined) => handler && handlers.push(handler) - 1;
+function serialize(node: Node, handlers: Kept): Sent {
+  const keep = (handler: Handler | undefined) => {
+    if (!handler) {
+      return undefined;
+    }
+    let index = handlers.index.get(handler);
+    if (index === undefined) {
+      index = handlers.list.push(handler) - 1;
+      handlers.index.set(handler, index);
+    }
+    return index;
+  };
   const drag = (drag: Drag | undefined) => drag && { ...drag, onEnd: keep(drag.onEnd), onMove: keep(drag.onMove) };
   if ("kind" in node) {
     throw new Error(`a ${node.kind} is a shape: put it in a Space`);
   }
   if (node.type === "space") {
-    const shapes: Sent[] = [];
-    const collect = (child: Child) => {
+    // A drag many shapes share, such as the one of every note, goes once: shapes name it by its place.
+    const drags: Sent[] = [];
+    const dragIndex = new Map<Drag, number>();
+    const shared = (shape: Drag | undefined) => {
+      if (!shape) {
+        return undefined;
+      }
+      let index = dragIndex.get(shape);
+      if (index === undefined) {
+        index = drags.push(drag(shape) as Sent) - 1;
+        dragIndex.set(shape, index);
+      }
+      return index;
+    };
+    const collect = (child: Child, into: Sent[]) => {
       if (Array.isArray(child)) {
-        child.forEach(collect);
+        for (const each of child) {
+          collect(each, into);
+        }
       } else if (child !== null && typeof child === "object" && "kind" in child) {
-        const shape = child;
-        shapes.push({ ...shape, onPress: keep(shape.onPress), drag: drag(shape.drag) });
+        if (child.kind === "group") {
+          const shapes: Sent[] = [];
+          collect(child.children, shapes);
+          into.push({ ...child, children: shapes });
+        } else {
+          into.push({ ...child, onPress: keep(child.onPress), drag: shared(child.drag) });
+        }
       } else if (child !== null && child !== undefined && typeof child !== "boolean") {
         throw new Error(`a Space draws shapes such as Rect and Label, not ${typeof child === "object" && "type" in child ? `a ${child.type}` : JSON.stringify(child)}`);
       }
     };
-    collect(node.children);
-    return { ...node, onPress: keep(node.onPress), drag: drag(node.drag), children: shapes };
+    const shapes: Sent[] = [];
+    collect(node.children, shapes);
+    return { ...node, onPress: keep(node.onPress), drag: drag(node.drag), drags, children: shapes };
   }
   if (node.type !== "div") {
     return node;
@@ -802,34 +840,42 @@ function render(request: Render, event = false) {
   const tree = made(() => {
     // Such as a tool whose file this Bun runs without.
     const spec = specOf(tool);
-    const kept: Handler[] = [];
+    const drawnHandlers = kept();
     runs(tool, page ? "page" : "card");
     const context = contextOf(instance, spec, record, watches, request, page ? { size: page } : {}, reads);
-    const drawnTree = drawing(spec, context, () => serialize(drawerOf(spec, page !== null)(context), kept));
+    const drawnTree = drawing(spec, context, () => serialize(drawerOf(spec, page !== null)(context), drawnHandlers));
     const text = JSON.stringify(drawnTree);
     const trees = handlers.get(card) ?? new Map<number, Handler[]>();
     const last = lastTrees.get(card);
     // The same tree keeps its version, with the handlers of this draw.
     if (last?.text === text) {
-      trees.set(last.version, kept);
+      trees.set(last.version, drawnHandlers.list);
       same = true;
       return null;
     }
     treeVersion += 1;
     lastTrees.set(card, { text, version: treeVersion });
-    trees.set(treeVersion, kept);
+    trees.set(treeVersion, drawnHandlers.list);
     if (trees.size > KEPT_TREES) {
       const [oldest] = trees.keys();
       trees.delete(oldest);
     }
     handlers.set(card, trees);
-    return [treeVersion, drawnTree];
+    return [treeVersion, text] as const;
   });
   if ("Err" in tree) {
     lastTrees.delete(card);
   }
   const read = { state: reads.all ? null : [...reads.state], children: reads.children, watches: reads.watches, transport: reads.transport };
-  say(same ? { type: "unchanged", card, reads: read, event } : { type: "tree", card, tree, reads: read, event });
+  if (same) {
+    say({ type: "unchanged", card, reads: read, event });
+  } else if ("Err" in tree) {
+    say({ type: "tree", card, tree, reads: read, event });
+  } else {
+    // The tree is JSON already: a large one is not written out twice.
+    const [version, text] = tree.Ok as readonly [number, string];
+    writeSync(1, `{"type":"tree","card":${card},"tree":{"Ok":[${version},${text}]},"reads":${JSON.stringify(read)},"event":${event}}\n`);
+  }
 }
 
 /** Runs `draw` as the card of `context` draws, for the components of the SDK that read it. */
@@ -897,7 +943,7 @@ function draw(spec: Spec, page: boolean): Sent {
     throw new Error(`its tick fails: ${error}`);
   }
   const drawn = { ...context, ...(page && { size: CHECKED_PAGE }) };
-  return drawing(spec, drawn, () => serialize(drawerOf(spec, page)(drawn), []));
+  return drawing(spec, drawn, () => serialize(drawerOf(spec, page)(drawn), kept()));
 }
 
 /**
