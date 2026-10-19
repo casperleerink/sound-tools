@@ -39,7 +39,7 @@ tool({
 - `when` and `doc`: what the next agent reads in the map and in `agent-docs/<name>.md`. Say what the tool does to the sound and what each field does musically, also between its ends: is the middle of a knob half as much, or less? The runtime adds where the record goes and a table of the fields, so do not repeat those.
 - `state`: the fields of its record. A field name is lowercase letters, digits and `_`.
 - `inputs`: what plays it and nothing saves, see below.
-- `sound`: the sound, as a `Signal`. Left out, it passes `input` through. A sound that reads `input` hears what comes in: in a track it goes in the `effects`. One that does not is what a track plays, its `instrument.json`: a drone, a texture, a generative part, or notes.
+- `sound`: the sound, as a `Signal`. Left out, it passes `input` through. A sound that reads `input` hears what comes in: an effect. One that does not makes its own: a drone, a texture, a generative part, or an instrument that plays its notes.
 - `voices`: how many notes the sound plays at once. 1, when left out: one voice that runs all the time, notes or not, and follows the newest held note. Up to 8 for an instrument that plays chords: the sound then runs once per note.
 
 ## The sound
@@ -121,9 +121,9 @@ Every sound also has the input `notes`, which plays its voices. `send` plays an 
 
 ## Its view
 
-Without `view`, it gets a knob per number field and number input, a row of steps per list of numbers, a chooser per file, and a button per option, boolean and bang. For your own, give `view` in a `.tsx` file. It runs once and makes what shows; what it keeps goes in `memory`. The window gives it a room, `size`: a card in the row under the tracks, or the whole window for a tool at the top.
+Without `view`, it gets a knob per number field and number input, a row of steps per list of numbers, a chooser per file, and a button per option, boolean and bang. For your own, give `view` in a `.tsx` file. It runs once and makes what shows; what it keeps goes in `memory`. The window gives it a room, `size`: a card where its parent shows it, or the whole window for a tool at the top.
 
-A card is as tall as its room, 144 points: more is cut off. It is as wide as it needs, at least 200, and the row scrolls sideways. So put things side by side rather than stacked: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
+A card is 144 points tall: more is cut off. It is as wide as it needs, at least 200. So put things side by side: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
 
 ```tsx
 import { Knob, Meter, Pad, Steps, h, type Style, tool } from "./sdk";
@@ -153,14 +153,11 @@ tool({
 | Element | Does |
 | --- | --- |
 | `<div style onPress carry? onDrop?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`. Text goes inside. `onPress` hears a click or a right click. `onDrop` hears the `carry` of a dragged div, to reorder rows, and audio files dropped from the system, copied into `assets/audio/`; a `Space` hears those too, where they fell in its units. |
-| `<Input value onCommit placeholder? width? focus?>` | A text field: `onCommit` gets its text on enter or when it loses the keys; escape takes it back. Keys typed there play nothing. |
-| `<DeviceCard path on? onPower? onClose?>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view. Its power and close icons show with their handlers. |
-| `<Knob value label min max default unit? played?>` | Turns the number `value`, as `now.value` names it: a field, whose drag is one undo step, or a number input. With `played` it moves with a lane. |
-| `<Steps path max? playing?>` | A row of steps on a list of numbers: a click turns a step on (to `max`, the item's max by default) or off (to its min). `playing` names an output whose value is the step that lights up. |
-| `<Meter value label?>` | A bar that shows a number from 0 to 1, such as an output. |
-| `<Pad x y size?>` | A square for the pointer: across moves the number input `x`, up moves `y`. |
+| `<Input>` | A text field; keys typed there play nothing. |
+| `<DeviceCard path>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view. |
+| `<Knob>`, `<Steps>`, `<Meter>`, `<Pad>` | A knob, a row of steps, a level, a square for the pointer, on numbers named as `now.value` names them. |
 
-All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `outputs`, the last value of each number output of its sound and of its children's; `time`; `clock`, see "The clock"; `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; `send` and `play`, which play its inputs and voices as a performer would; and what reaches the window, each with its doc in `sdk.ts`: `openFile()`, `openMenu(items)`, `select(path, { span? })` (what the MIDI keyboard plays and Export selection exports), `offers` and `addOffer` (the devices the window offers for a child), and `numbers(path)` (what a lane can move).
+All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`: `state` and `children`, every field at its default where a record leaves it out; `outputs`; `time`; `clock`; `memory`; `now`; `update`; `send` and `play`; and what reaches the window: `openFile`, `openMenu`, `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
 
 ### Values that change
 
@@ -245,7 +242,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
 ```ts
 update("Add a bass line", ({ children }) => {
   const bass = children.find((child) => child.name === "bass")!.state as TimelineState;
-  bass.notes = [...(bass.notes ?? []), { start: 0, length: 480, pitch: 36, velocity: 100 }];
+  bass.notes = [...bass.notes, { start: 0, length: 480, pitch: 36, velocity: 100 }];
 });
 ```
 
@@ -325,7 +322,7 @@ tool({
 });
 ```
 
-- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through and blames the whole behaviour, not the wrong connection.
+- It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` has its defaults filled in too. It returns `{ connections }`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through and blames the whole behaviour, not the wrong connection.
 - A parent whose children are fixed names them and their tools in `children`, as `loops` below does: a `const` with `as const`, and the return type `Declaration<typeof children>`. TypeScript then checks each connection, `play`, `send` and child `state` against the child's tool. For a tool of this project, name what `tool` returns: `export const drone = tool({ ... })` in its file, then `import { drone } from "./drone"` and `{ lead: drone, fx: "utility" }`. Its `state`, numbers and inputs are then checked; its outputs are not, as its `sound` makes them. `takes("notes")` in place of a tool is any tool that takes notes: a synth, a sampler, a plugin or an instrument of the project, as `offers("notes")` lists them; `addOffer` puts the one picked in its place. A child of another tool, a missing one or one it does not name is a problem of the parent's record; `children: {}` allows none.
 - A child may be a parent too, at `state/<name>/<child>/instance.json`. Each child's `children` holds its own, at any depth, typed by the `children` its tool names, and `update` edits, adds (with their `children`) and takes out records at any depth; one taken out takes all it holds. A name in `children` that ends in `*` stands for every other name that starts as it does: `{ "ret-*": bus, "*": track }` is any number of buses named `ret-…` and tracks of any other name.
 - A port of a child is `audio` when left out; `{ child: "bass/mix" }` is a port of a child of a child, at any depth, so a parent wires across its children, such as a send of one track into another (write such a path `as const`). Leave out `child` for a port of the parent itself: from `{ port: "audio" }` comes what reaches its audio input, from `{ notes: "notes" }` what reaches its `notes`; to `{ port: "audio" }` goes what it plays, through its own `sound` as `input`; to `{ number }`, `{ bang }` or `{ notes }` an output of that name, which its own parent connects as any port of a child.
@@ -337,7 +334,7 @@ tool({
   - `{ from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } }` plays an instrument; `notes` is the input of each. `{ from: { notes: "notes" }, to: { child: "piano", notes: "notes" } }` plays it from the keyboard.
 - A parent plays its children by name: `play(pitch, { child: "synth" })` and `send({ child: "synth", notes: "notes" }, event)` reach its `notes`; `send({ child: "lfo", number: "rate" }, 2)` and `send({ child: "drop", bang: "hit" })` its inputs. A number field of a child is its record: a cable moves it.
 - A `timeline` child plays notes in time out of its output `notes` (`agent-docs/timeline.md`): once at their place in the song, one per clip, so moving a clip changes one file; or round after round with `"loop": true`. `send({ child: "bass", number: "launch" }, 1)` starts it at the next bar, `0` stops it there. A parent's view reads the outputs of each child as `<child>.<name>`: a looping timeline's `playing` is 1 while it plays.
-- A `lane` child moves a number of another child over the song, as automation (`agent-docs/lane.md`): `{ from: { child: "cutoff", number: "value" }, to: { child: "filter", number: "cutoff_hz" } }`. A `region` child plays an audio file at its place in the song (`agent-docs/region.md`). A `recorder` child records the notes it hears and the audio input while its input `record` is on and the song plays, into a `timeline` and a `region` next to it (`agent-docs/recorder.md`).
+- A `lane` child moves a number of another child over the song, as automation (`agent-docs/lane.md`): `{ from: { child: "cutoff", number: "value" }, to: { child: "filter", number: "cutoff_hz" } }`. A `region` child plays an audio file at its place in the song (`agent-docs/region.md`). A `recorder` child records the notes it hears and the audio input while its input `record` is on and the song plays, and hands each take, a `timeline` or a `region`, to its parent's `onTake`, which keeps it as a child with `update` (`agent-docs/recorder.md`).
 - A missing child or port, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
 A clip launcher, with two looping timelines `low` and `high`, an instrument `synth` and a utility `fx` as its children:
@@ -385,10 +382,10 @@ Its timelines, `state/loops/low.json` and `state/loops/high.json`, loop a bar ea
 
 ## The clock
 
-One clock plays the project: `clock` in all code. `clock.play()`, `pause()`, `stop()`, `jump(tick, { at? })` (at a tick, on its frame), `setRepeat({ from, to } | null)` and `setClick(on)` move it; none is saved. `clock.playing`, `repeat`, `click`, `tempo_map` and `sections` follow in a function; `clock.tick`, `bar`, `beat` and `bpm` move on every frame, so read them in a handler and show them with `now.tick`, `now.bpm` and a `Label` of `now.tick` with `unit: "position"`, `"time"` or `"signature"`. `clock.update(label, ({ tempo_map, sections }) => ...)` edits them as `project.json` holds them, one undo step. `<Transport clock={clock} />` is a bar of all of it; with `globalKeys: ["space"]` and `onKey: ({ clock }, { key, down }) => { if (key === "space" && down) (clock.playing ? clock.pause() : clock.play()); }` space plays.
+One clock plays the project, `clock` in all code (`Clock` in `sdk.ts`). Nothing plays it but a tool: no key plays or stops unless a tool takes it. `clock.playing`, `repeat`, `click`, `tempo_map` and `sections` follow in a function. `tick`, `bar`, `beat` and `bpm` move on every frame, so read them in a handler and show them with `now.tick`, `now.bpm` and a `Label` of `now.tick` with `unit: "position"`, `"time"` or `"signature"`. `<Transport clock={clock} />` is a bar of all of it; with `globalKeys: ["space"]` and `onKey: ({ clock }, { key, down }) => { if (key === "space" && down) (clock.playing ? clock.pause() : clock.play()); }` space plays.
 
 ## Check your work
 
 1. `bun check -p extensions` checks the types.
 2. `problems.txt`, or the problems `sound-tools . --inspect` prints, list what is wrong under `extensions/<file>`: what does not load or build, and, while the window is open, the first tick or click that failed. Code that runs for more than a moment, such as a loop that never ends, stops the tools of its file until the next change.
-3. Use the tool as the composer will: write its record (`"state": {}` is its defaults; an effect in a track is also named in the track's `effects`). Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.
+3. Use the tool as the composer will: write its record (`"state": {}` is its defaults) where a parent plays it: the parent's doc says which children it plays, such as the `order` of a `chain`. Then measure it with `agent-docs/inspect.md`: `--analyze` shows the loudness and the bands of each moment.
