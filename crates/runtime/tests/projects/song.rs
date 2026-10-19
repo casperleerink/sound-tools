@@ -193,7 +193,31 @@ fn the_song_ends_where_its_last_clip_stops_and_a_loop_or_a_cue_adds_nothing() {
     // With no length, as long as its notes.
     let free = r#"{"tool": "timeline", "state": {"start": 7680, "notes": [{"start": 960, "length": 480, "pitch": 60, "velocity": 100}]}}"#;
     harness.write_and_apply("state/song/piano/tail.json", free);
-    assert_eq!(harness.project.end(), Some(Ticks(7680 + 1440)));
+    let end = Ticks(7680 + 1440);
+    assert_eq!(harness.project.end(), Some(end));
+
+    // What `--render` and an export play: from the start to that end, then the tail. Its last
+    // note sounds in it.
+    let folder = closed(harness);
+    let (mut project, mut engine, plugins) = open_read_only(folder.path());
+    assert_eq!(project.end(), Some(end));
+    let mut output = Vec::new();
+    let problems = runtime::render_range(
+        &mut project,
+        &mut engine,
+        &plugins,
+        Ticks(0),
+        end,
+        |samples| {
+            output.extend_from_slice(samples);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(problems.is_empty());
+    // 7680 + 960 ticks is 4.5 s at 120 bpm: the last note starts there.
+    let last = first_sound(&output, 216_000 - 480).unwrap();
+    assert!((216_000..216_048).contains(&last), "{last}");
 }
 
 /// `--only song/bass` plays the bass alone: the piano, which plays in the second bar, is not

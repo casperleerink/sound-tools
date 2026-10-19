@@ -183,7 +183,7 @@ tool({
 | `<Meter value label?>` | A bar that shows a number from 0 to 1, such as an output. |
 | `<Pad x y size?>` | A square for the pointer: across moves the number input `x`, up moves `y`. |
 
-All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `outputs`, the last value of each number output of its sound and of its children's; `time`; `clock`, see "The clock"; `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; `openFile()`, which asks the composer for a file, copies it into `assets/audio/` and gives its name for a `file` field; and `send` and `play`, which play its inputs and voices as a performer would.
+All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `outputs`, the last value of each number output of its sound and of its children's; `time`; `clock`, see "The clock"; `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; `openFile()`, which asks the composer for a file, copies it into `assets/audio/` and gives its name for a `file` field; `select(path, { span? })`, which tells the window what the composer works on: the MIDI keyboard and the computer keys play the `notes` of that child, or of the nearest parent of it that has them, and Export selection exports `span`, in ticks; and `send` and `play`, which play its inputs and voices as a performer would.
 
 ### Values that change
 
@@ -278,8 +278,8 @@ At the top of a project, `view` draws the whole window: its `size` is the window
 
 To make the project one tool:
 
-1. Delete `state/arrangement/`.
-2. Put one record of the tool at the top: `state/<name>.json`, or `state/<name>/instance.json` for a parent.
+1. Put one record of the tool at the top: `state/<name>.json`, or `state/<name>/instance.json` for a parent.
+2. Name it in `project.json`, `"main": "<name>"`, so the window shows it and not the arrangement; or delete `state/arrangement/`.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 4. Connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`.
 

@@ -23,8 +23,9 @@ use anyhow::{Context as _, Result, bail};
 use arrangement::view::ArrangementView;
 use gpui::{AppContext as _, Entity, HeadlessAppContext, px, size};
 use plugin_host::{Plugins, ScanCache, ScanCommand};
+use runtime::arrangement_wiring::main_arrangement;
 use runtime::window::Shell;
-use runtime::{OFFLINE, main_arrangement, open_with_extensions, views};
+use runtime::{OFFLINE, open_with_extensions, views};
 use sound_core::Engine;
 use sound_ui::{Assets, POLL_INTERVAL, Session};
 

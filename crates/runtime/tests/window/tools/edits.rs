@@ -199,9 +199,15 @@ fn a_page_writes_the_notes_of_its_timeline_and_they_play(cx: &mut TestAppContext
     window.start_playing();
     assert_eq!(window.loudest(9_600), 0.0);
 
+    // Bun may not have drawn the page yet when the window opens, as when many tests start
+    // their Buns at once: a click on nothing is clicked again.
     let middle = window.middle();
-    window.cx.simulate_click(middle, Modifiers::default());
-    window.until("the bass line", |window| window.loudest(4_800) > 0.05);
+    window.until("the bass line", |window| {
+        if window.record("writer/bass").get("notes").is_none() {
+            window.cx.simulate_click(middle, Modifiers::default());
+        }
+        window.loudest(4_800) > 0.05
+    });
     let bass = window.record("writer/bass");
     assert_eq!(bass["notes"][0]["pitch"], 45, "{bass}");
 

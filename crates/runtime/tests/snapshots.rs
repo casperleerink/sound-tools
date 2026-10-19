@@ -1121,7 +1121,8 @@ fn main() -> Result<()> {
                 .chrome()
                 .clone()
                 .downcast::<TransportPill>()
-                .unwrap(),
+                .ok()
+                .context("the transport")?,
         )
     })?;
     let live = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.live_input().clone()))?;
@@ -1521,7 +1522,8 @@ fn main() -> Result<()> {
                 .chrome()
                 .clone()
                 .downcast::<TransportPill>()
-                .unwrap(),
+                .ok()
+                .context("the transport")?,
         )
     })?;
     anyhow::ensure!(
@@ -1549,7 +1551,8 @@ fn main() -> Result<()> {
                 .chrome()
                 .clone()
                 .downcast::<TransportPill>()
-                .unwrap(),
+                .ok()
+                .context("the transport")?,
         )
     })?;
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));

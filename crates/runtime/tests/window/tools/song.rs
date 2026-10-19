@@ -214,3 +214,83 @@ fn space_plays_the_song_and_the_meters_follow_with_nothing_from_bun(cx: &mut Tes
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
     assert_eq!(sound_typescript::heard_batches(), batches);
 }
+
+/// A click on a track's name selects it, through `select` of the song's code: the MIDI keyboard
+/// plays that track, where with nothing selected it reached only the song, which plays nothing
+/// it hears. A chosen clip is what Export selection exports.
+#[gpui::test]
+fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selection(
+    cx: &mut TestAppContext,
+) {
+    let Some(mut window) = open_song(cx, 4, 12) else {
+        return;
+    };
+    window.wait_for_bun();
+    window.play_midi(60);
+    assert_eq!(window.loudest(4_800), 0.0);
+
+    let lane = window.on_lane(0, 1);
+    let name = point(lane.x - px(HEADER) + px(20.), lane.y);
+    window.press(name);
+    window.release(name);
+    let session = window.session.clone();
+    let selected = |window: &mut Window| {
+        (window.cx).read(|cx| session.read(cx).selected().map(ToString::to_string))
+    };
+    window.until("the track selected", |window| {
+        selected(window).as_deref() == Some("song/t01")
+    });
+    window.play_midi(64);
+    assert!(window.loudest(4_800) > 0.01);
+
+    // The first clip of the first track, half a bar into it.
+    let clip = window.on_lane(BAR / 2, 0);
+    window.press(clip);
+    window.release(clip);
+    let length = window.record("song/t00/c00")["length"].as_u64().unwrap();
+    let span = |window: &mut Window| (window.cx).read(|cx| session.read(cx).selected_span());
+    window.until("the clip selected", |window| span(window).is_some());
+    assert_eq!(
+        span(&mut window),
+        Some((sound_core::Ticks(0), sound_core::Ticks(length)))
+    );
+    assert_eq!(selected(&mut window).as_deref(), Some("song/t00/c00"));
+    assert_eq!(window.problems(), []);
+}
+
+/// `main` in `project.json` picks what the window shows: the song, though the arrangement
+/// comes first by name, and with it the window's live input in place of the arrangement's
+/// transport.
+#[gpui::test]
+fn main_in_the_project_file_shows_the_song_and_not_the_arrangement(cx: &mut TestAppContext) {
+    let mut files = song_files(2, 2);
+    for (path, text) in &mut files {
+        if path == "project.json" {
+            let mut project: serde_json::Value = serde_json::from_str(text).unwrap();
+            project["main"] = "song".into();
+            project["extensions"]
+                .as_array_mut()
+                .unwrap()
+                .push("arrangement".into());
+            *text = project.to_string();
+        }
+    }
+    files.push((
+        "state/arrangement/instance.json".to_string(),
+        r#"{"tool": "arrangement", "state": {}}"#.to_string(),
+    ));
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let session = window.session.clone();
+    let main = window
+        .cx
+        .read(|cx| sound_ui::Views::main_instance(&session, cx).map(|id| id.to_string()));
+    assert_eq!(main.as_deref(), Some("song"));
+    window.space_at("timeline");
+    assert_eq!(window.find("record"), None);
+    assert!(window.find("computer-keys").is_some());
+}

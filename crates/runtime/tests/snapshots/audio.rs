@@ -522,7 +522,12 @@ fn poll_window(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<()> {
     cx.update(|cx| {
         let shell = opened.window.read(cx)?;
         let (transport, live) = (
-            shell.chrome().clone().downcast::<TransportPill>().unwrap(),
+            shell
+                .chrome()
+                .clone()
+                .downcast::<TransportPill>()
+                .ok()
+                .context("the transport")?,
             shell.live_input().clone(),
         );
         live.update(cx, |live, cx| {
@@ -630,7 +635,8 @@ fn recording(
             .chrome()
             .clone()
             .downcast::<TransportPill>()
-            .unwrap();
+            .ok()
+            .context("the transport")?;
         transport.update(cx, |pill, cx| pill.toggle_recording(cx));
         anyhow::Ok(())
     })?;

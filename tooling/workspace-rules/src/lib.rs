@@ -177,61 +177,74 @@ mod tests {
         Ok(())
     }
 
-    /// Whether `code` uses the `arrangement` crate: a path that starts with it, or a `use` of
-    /// it, and not a name such as `crate::arrangement_wiring` or `main_arrangement`.
-    fn names_the_arrangement(code: &str) -> bool {
-        let ident = |c: char| c.is_alphanumeric() || c == '_';
-        code.match_indices("arrangement").any(|(at, word)| {
-            let (before, after) = (&code[..at], &code[at + word.len()..]);
-            // `::arrangement` is the crate too, `crate::arrangement` is not.
-            let before = before
-                .strip_suffix("::")
-                .filter(|rest| !rest.ends_with(ident))
-                .unwrap_or(before);
-            let alone =
-                !before.ends_with(ident) && !before.ends_with(':') && !after.starts_with(ident);
-            alone && (after.starts_with("::") || before.trim_end().ends_with("use"))
-        })
-    }
+    /// Every line of the runtime and of `crates/ui` that names the arrangement, outside its
+    /// wiring and outside comments: the calls that register it, and `--solo`, which plays its
+    /// tracks. A project made of tools of its own works without any of it, so each line here is
+    /// a decision, and a new one fails until it is listed.
+    const NAMES_OF_THE_ARRANGEMENT: [(&str, &str); 7] = [
+        ("crates/runtime/src/lib.rs", "pub mod arrangement_wiring;"),
+        (
+            "crates/runtime/src/lib.rs",
+            "- `--solo <track>`, once per track of the arrangement: only these tracks play, by name or id. No file changes.",
+        ),
+        (
+            "crates/runtime/src/lib.rs",
+            "arrangement_wiring::register(registry)?;",
+        ),
+        (
+            "crates/runtime/src/lib.rs",
+            "arrangement_wiring::register_views(&mut views);",
+        ),
+        (
+            "crates/runtime/src/lib.rs",
+            "pub const NEW_PROJECT: Template = arrangement_wiring::TEMPLATE;",
+        ),
+        (
+            "crates/runtime/src/lib.rs",
+            "pub(crate) const CHROME: window::Chrome = arrangement_wiring::CHROME;",
+        ),
+        (
+            "crates/runtime/src/main.rs",
+            "runtime::arrangement_wiring::solo(&mut project, &mut engine, &plugins, &options.solo)?",
+        ),
+    ];
 
-    /// The arrangement is the one extension the app may know, and in one place, so it is
-    /// never a second core. Every other extension the runtime only registers.
+    /// The arrangement is an extension like the others: the window and the runtime reach it
+    /// only through the calls that register it, so it can be replaced by a project's own tools.
     #[test]
-    fn the_runtime_names_the_arrangement_in_one_place() -> anyhow::Result<()> {
-        let source = workspace_root().join("crates/runtime/src");
-        let allowed =
-            ["lib.rs", "arrangement_wiring.rs", "arrangement_wiring"].map(|path| source.join(path));
-        let mut violations = Vec::new();
-        for path in files(&["crates/runtime/src"])? {
-            if allowed.iter().any(|allowed| path.starts_with(allowed)) {
+    fn the_runtime_names_the_arrangement_only_where_it_registers_it() -> anyhow::Result<()> {
+        let root = workspace_root();
+        let wiring = root.join("crates/runtime/src/arrangement_wiring");
+        let mut found = Vec::new();
+        for path in files(&["crates/runtime/src", "crates/ui/src"])? {
+            let rust = path.extension().is_some_and(|extension| extension == "rs");
+            if !rust || path.starts_with(&wiring) || path == wiring.with_extension("rs") {
                 continue;
             }
-            if names_the_arrangement(&fs::read_to_string(&path)?) {
-                violations.push(path);
+            let relative = path
+                .strip_prefix(&root)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            for line in fs::read_to_string(&path)?.lines().map(str::trim) {
+                if !line.starts_with("//") && line.to_lowercase().contains("arrangement") {
+                    found.push((relative.clone(), line.to_string()));
+                }
             }
         }
+        let unlisted: Vec<_> = (found.iter())
+            .filter(|(file, line)| {
+                !NAMES_OF_THE_ARRANGEMENT.contains(&(file.as_str(), line.as_str()))
+            })
+            .collect();
         assert!(
-            violations.is_empty(),
-            "only the registration in lib.rs and arrangement_wiring may use the arrangement: {violations:?}"
+            unlisted.is_empty(),
+            "only the wiring and the calls that register the arrangement name it: {unlisted:?}"
         );
+        let gone: Vec<_> = (NAMES_OF_THE_ARRANGEMENT.iter())
+            .filter(|(file, line)| !found.iter().any(|(f, l)| f == file && l == line))
+            .collect();
+        assert!(gone.is_empty(), "listed but no longer there: {gone:?}");
         Ok(())
-    }
-
-    #[test]
-    fn finds_a_use_of_the_arrangement_crate() {
-        assert!(names_the_arrangement("use arrangement::TrackState;"));
-        assert!(names_the_arrangement(
-            "let end = arrangement::end(project, id);"
-        ));
-        assert!(names_the_arrangement("use ::arrangement::TrackState;"));
-        assert!(names_the_arrangement("use arrangement as timeline;"));
-        assert!(!names_the_arrangement("// the arrangement is the home"));
-        assert!(!names_the_arrangement(
-            "use crate::arrangement_wiring::recording;"
-        ));
-        assert!(!names_the_arrangement(
-            "crate::arrangement::X; main_arrangement::Y"
-        ));
     }
 
     #[test]

@@ -51,13 +51,13 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, mixer strips or note editor",
   doc:
-    "Tracks of clips in time. Each `track` child plays into the utility `master`; `solo` names the tracks that play alone. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
+    "Tracks of clips in time. Each `track` child plays into the utility `master`; `solo` names the tracks that play alone. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. A click on a track's name or a clip selects it: the keyboard plays that track, and Export selection exports the chosen clips. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
   state: { solo: list(text(), { max: 64 }) },
   children: parts,
   memory: (): Memory => ({ selected: new Set(), open: null, note: null }),
   keys: ["delete", "backspace", "cmd-d"],
   globalKeys: ["space"],
-  onKey: ({ memory, update, clock }, { key, down }) => {
+  onKey: ({ memory, update, clock, select }, { key, down }) => {
     if (key === "space") {
       if (down) (clock.playing ? clock.pause() : clock.play());
       return;
@@ -82,6 +82,7 @@ export const song = tool({
       }
     });
     memory.selected = new Set();
+    select(null);
   },
   behaviour: ({ state, children }): Declaration<typeof parts> => {
     const tracks = children.filter((child) => child.tool === "track").map((child) => child.name);
@@ -95,7 +96,7 @@ export const song = tool({
       ],
     };
   },
-  view: ({ state, children, memory, update, clock }) => {
+  view: ({ state, children, memory, update, clock, select }) => {
     const tracks = () => children.filter((child) => child.tool === "track");
     const isPicked = selector(() => memory.selected);
     const clipsOf = (each: (typeof children)[number]) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);
@@ -103,6 +104,21 @@ export const song = tool({
       const [trackName, clipName] = memory.open?.split("/") ?? [];
       const clip = tracks().find((each) => each.name === trackName)?.children.find((child) => child.name === clipName);
       return clip?.tool === "timeline" ? clip : undefined;
+    };
+
+    const clipAt = (key: string) => {
+      const [trackName, clipName] = key.split("/");
+      const clip = tracks().find((each) => each.name === trackName)?.children.find((child) => child.name === clipName);
+      return clip?.tool === "timeline" ? clip : undefined;
+    };
+    /** Chooses the clips `keys` names, `track/clip`: the keyboard plays the track of the first, or `track`, and Export selection exports their bars. */
+    const choose = (keys: Set<string>, track: string | null = null) => {
+      memory.selected = keys;
+      const clips = [...keys].flatMap((key) => clipAt(key) ?? []);
+      const starts = clips.map((clip) => clip.state.start ?? 0);
+      const ends = clips.map((clip) => (clip.state.start ?? 0) + (clip.state.length ?? BAR));
+      const span = clips.length === 0 ? undefined : { from: Math.min(...starts), to: Math.max(...ends) };
+      select([...keys][0] ?? track, { span });
     };
 
     /** Changes the clips `keys` names, `track/clip`, in one undo step. */
@@ -119,10 +135,10 @@ export const song = tool({
     const moveDrag: Drag = {
       id: "move",
       snap: { x: BEAT, y: 1, grid: true },
-      onEnd: ({ dx, dy, alt }) =>
+      onEnd: ({ dx, dy, alt }) => {
+        const chosen = new Set<string>();
         update(alt ? "Copy clips" : "Move clips", ({ children }) => {
           const rows = children.filter((child) => child.tool === "track");
-          const chosen = new Set<string>();
           for (const key of memory.selected) {
             const [trackName, clipName] = key.split("/");
             const from = rows.findIndex((each) => each.name === trackName);
@@ -142,8 +158,9 @@ export const song = tool({
             if (!alt) source.children = source.children.filter((child) => child !== clip);
             chosen.add(`${to.name}/${name}`);
           }
-          memory.selected = chosen;
-        }),
+        });
+        choose(chosen);
+      },
     };
     const resizeDrag: Drag = {
       id: "resize",
@@ -172,25 +189,27 @@ export const song = tool({
       } else if (shift) {
         const next = new Set(memory.selected);
         if (!next.delete(key)) next.add(key);
-        memory.selected = next;
+        choose(next);
       } else if (!memory.selected.has(key)) {
-        memory.selected = new Set([key]);
+        choose(new Set([key]));
       }
     };
     const pressLane = ({ clicks, x, y }: Press) => {
       const row = tracks()[Math.floor(y)];
       if (clicks !== 2 || !row) {
-        memory.selected = new Set();
+        choose(new Set());
         return;
       }
       const start = Math.floor(x / BAR) * BAR;
+      let added: string | undefined;
       update("Add a clip", ({ children }) => {
         const owner = children.find((child) => child.name === row.name);
         if (owner?.tool !== "track") return;
         const name = freeName(owner.children.map((child) => child.name), "clip");
         owner.children = [...owner.children, { name, tool: "timeline", state: { start, length: BAR, notes: [] } }];
-        memory.selected = new Set([`${owner.name}/${name}`]);
+        added = `${owner.name}/${name}`;
       });
+      if (added) choose(new Set([added]));
     };
     const toggleMute = (name: string) =>
       update("Mute a track", ({ children }) => {
@@ -217,7 +236,7 @@ export const song = tool({
 
     const TrackHead = ({ each }: { each: (typeof children)[number] }) => (
       <>
-        <div style={{ width: 56, fontSize: 11, color: COLOR.text }}>{each.name}</div>
+        <div style={{ width: 56, fontSize: 11, color: COLOR.text }} onPress={() => choose(new Set(), each.name)}>{each.name}</div>
         <Button label="M" on={() => muted(each)} color={COLOR.mute} onPress={() => toggleMute(each.name)} />
         <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onPress={() => toggleSolo(each.name)} />
         <Space key={`meter-${each.name}`} width={40} height={6} background={COLOR.lane} radius={2}>

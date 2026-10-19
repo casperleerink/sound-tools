@@ -603,29 +603,29 @@ impl ToolInfo {
                      behaviour connects them and its own ports, such as its `audio` output. At \
                      the top of the project, connect that to the speakers in \
                      `project.json`: `{{\"from\": {{\"instance\": \"{name}\", \"port\": \"audio\"}}, \
-                     \"to\": {{\"device_output\": 0}}}}`. Or put it in a track's `effects` as \
-                     `state/arrangement/<track>/{name}/instance.json`, where it hears the track's \
-                     sound and notes and plays into its mixer{}",
+                     \"to\": {{\"device_output\": 0}}}}`. Or a parent of this project owns it, \
+                     at `state/<parent>/{name}/instance.json`, and connects what it hears and what \
+                     it plays{}",
                     self.children_doc()
                 ),
                 "one at its defaults",
                 format!("state/{name}/instance.json"),
             ),
             (false, ToolKind::Effect) => (
-                "an effect of this project: one voice whose sound hears what comes in. It goes in \
-                 a track's `effects` like any effect: the record sits in the track's folder and \
-                 its file name is in `effects` of the track's `instance.json`"
+                "an effect of this project: one voice whose sound hears what comes in. Its record \
+                 goes where a parent plays it, next to what the parent connects into it, like any \
+                 effect"
                     .to_string(),
-                "a track `pad` with one, at its defaults",
-                format!("state/arrangement/pad/{name}.json"),
+                "one at its defaults",
+                format!("state/{name}.json"),
             ),
             (false, ToolKind::Instrument) => (
                 "an instrument of this project: its sound plays notes and hears nothing coming in. \
-                 It is what a track plays, like any instrument: its record is the track's \
-                 `instrument.json`"
+                 Its record goes where a parent plays it, like any instrument, and the notes that \
+                 parent connects to it play it"
                     .to_string(),
-                "a track `pad` with one, at its defaults",
-                "state/arrangement/pad/instrument.json".to_string(),
+                "one at its defaults",
+                format!("state/{name}.json"),
             ),
         };
         format!(
@@ -638,8 +638,8 @@ impl ToolInfo {
              What reads a field follows it: its sound glides to a number or a boolean at once, \
              and a choice changes what the sound is made of, the new sound fading in over 10 ms; \
              its behaviour and view run again once Bun has heard of it. A number its sound reads \
-             that is not whole can be automated by a lane of its track, as the numbers of any \
-             device (`agent-docs/arrangement.md`).\n",
+             that is not whole can be moved by a number cable of its parent, or by a lane where \
+             a parent has lanes, as the numbers of any device.\n",
             defaults.join(", "),
         )
     }
@@ -1966,9 +1966,7 @@ mod tests {
     fn the_example_of_the_doc_is_a_record_the_tool_takes() {
         let wobble = wobble();
         let doc = wobble.doc();
-        let start = doc
-            .find("```json state/arrangement/pad/wobble.json\n")
-            .unwrap();
+        let start = doc.find("```json state/wobble.json\n").unwrap();
         let body = &doc[start..];
         let json = &body[body.find('\n').unwrap() + 1..body.find("\n```\n").unwrap()];
         let record: Value = serde_json::from_str(json).unwrap();
