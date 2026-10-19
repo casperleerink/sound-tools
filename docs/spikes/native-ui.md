@@ -407,3 +407,30 @@ Goal: nothing in the runtime or `crates/ui` names the arrangement for a project 
 **Numbers:** nothing in the frame or Bun path changed this round, so Round 7's hold; not measured again. The snapshots look as before, apart from the computer keys of an empty arrangement.
 
 **Too specific (to revisit)**, now done: docs placing tools by `state/arrangement/...`. Still open: notes as the only event kind, `devices` as only in-code effects, `Slot` in the pickers.
+
+### Round 9
+
+Goal: the engine blocks a TS arrangement still lacked, each a child that composes through ports and names no DAW idea.
+
+| Block | What it is | Built from |
+| --- | --- | --- |
+| `lane` | points in song ticks, `"linear"` or `"log"`, out of a number output `value`; a cable moves any automatable number of another child with it | the arrangement's lane player: `sound_notes::pieces` and `value_at_frame` now serve both |
+| `region` | one audio file at a place in the song: trims, gain, fades, declick ramps, stereo | the arrangement's `AudioPlayer`, moved to `sound-media` with a generic `Region` and `snapshot` |
+| `recorder` | records while its input `record` is on and the song plays: notes into a `timeline`, the input's channels into a `region`, next to it, one undo step | the core's capture path, `Placement` and `RawTake`; the live input now runs the recorder and tells every take what it reported |
+
+**Choices:**
+- A lane is its own block, not a timeline event kind: it sends every block, also while stopped, and has no launch or loop. Its lead comes from the graph: it is led by the latency after what it drives, as the arrangement's per-device player is.
+- One region per record, as one clip per timeline: moving a take is one file. Overlapping regions sum; the arrangement's layers are not carried over.
+- The recorder writes what it heard as children of its parent, rather than calling the parent's code: no new handler, works without Bun, and the parent edits them like any child. Audio is placed by capture time, as the arrangement's takes are, so it is exact with any latency.
+- `now.file(asset)` and `now.take(path)` are list sources for `Wave`; a region shows its length as a watch, `seconds`, because a behaviour has no clock.
+- `send` reaches an instance deeper by its path (`"voice/rec"`), as `now.value` does. Its path is typed loosely: ``as const`` on a template.
+
+**The song** now has a lane on every track's filter, a recorder per track (notes), an audio track `voice` of regions with its waveforms, R to arm a track and a record button. A window test records the voice through the song's own view.
+
+**Tests:** offline renders: a lane opens a gain on its frame, led by the filter's 64-frame latency after it; a region plays with its fade, gain and trim, and waits for its file. Window: a recorder records the simulated input and keyboard where they were heard, one undo step; the song records its voice. All runtime window and projects tests, the crate tests, clippy and `bun check` on every example pass. The arrangement's live-notes test now waits a second poll: one more polling task changed the order of the playhead and the take's poll in the test executor.
+
+**Numbers** (M1 Max, release-fast; `projects/render_cost.rs`): 12 tracks, 150 clips, a lane per track and a region, 16 bars rendered: tools of the project 22x real time, the Rust arrangement 30x. Not profiled; likely the 150 timeline players and the cables, against one player per track.
+
+**Not done:** expression lanes of notes; layers of regions; regions in the song's length (the `end` hook gets no file); exact placement of a recorder fed by something other than the machine input (it records the input, not its audio port); the arrangement's pill is still its own recorder of takes.
+
+**Too specific (to revisit)**, new: `"*"` names one tool, so a track cannot hold both timelines and regions under any name; a named child is required, so a lane or recorder cannot be optional.
