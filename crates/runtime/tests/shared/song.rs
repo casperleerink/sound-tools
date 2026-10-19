@@ -79,7 +79,7 @@ fn song_with(
 ) -> Vec<(String, String)> {
     let project = json!({
         "format": 1,
-        "extensions": ["instrument", "filter", "utility", "reverb", "limiter"],
+        "extensions": ["instrument", "filter", "utility", "reverb", "limiter", "wavetable"],
         "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
         "connections": [{ "from": { "instance": "song", "port": "audio" }, "to": { "device_output": 0 } }],
     });

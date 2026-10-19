@@ -619,7 +619,7 @@ export const song = tool({
     const timeline = now.space("timeline");
     const handle = timeline.pointX.times(6);
 
-    /** The devices of the track `name`: its synth, its filter and the effects of its chain, which can be added, turned off, removed and dragged into another order. */
+    /** The devices of the track `name`: its instrument, which can be changed, its filter and the effects of its chain, which can be added, turned off, removed and dragged into another order. */
     const Rack = ({ name }: { name: string }) => {
       const chainOf = () => {
         const row = tracks().find((each) => each.name === name);
@@ -645,6 +645,13 @@ export const song = tool({
         addOffer(offer.key, `${name}/chain/${effect}`, "Add an effect");
         editChain("Add an effect", (effects) => (effects.state.order = [...effects.state.order, effect]));
       };
+      // Another instrument in place of the one the track plays, from what takes notes.
+      const changeInstrument = async () => {
+        const offered = await offers("notes");
+        const picked = await openMenu(offered.map((offer) => ({ label: offer.name, disabled: offer.unavailable !== null })));
+        const offer = picked === null ? undefined : offered[picked];
+        if (offer) addOffer(offer.key, `${name}/synth`, "Change the instrument");
+      };
       const remove = (effect: string) =>
         editChain("Remove an effect", (effects) => {
           effects.state.order = effects.state.order.filter((each) => each !== effect);
@@ -664,7 +671,12 @@ export const song = tool({
         });
       return (
         <div key="rack" style={{ height: RACK, direction: "row", gap: 8, padding: 8, align: "start", scroll: "x" }}>
-          <DeviceCard path={`${name}/synth`} />
+          <div key="instrument" style={{ gap: 4 }}>
+            <DeviceCard path={`${name}/synth`} />
+            <div key="change-instrument" style={{ paddingX: 8, paddingY: 4, radius: 6, background: COLOR.off, fontSize: 11 }} onPress={changeInstrument}>
+              Instrument…
+            </div>
+          </div>
           <DeviceCard path={`${name}/fx`} />
           <For each={order}>
             {(effect) => (

@@ -828,6 +828,9 @@ impl Live {
                 Some(reason) => Some(reason.to_string()),
                 None => {
                     let mut changes = Changes::new();
+                    if project.tool_of(&slot).is_some() {
+                        changes.delete(&slot);
+                    }
                     match offer.write(project, &slot, &mut changes) {
                         Err(error) => Some(error.to_string()),
                         Ok(()) => {

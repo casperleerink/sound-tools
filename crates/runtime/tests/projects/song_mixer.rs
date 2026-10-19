@@ -144,7 +144,7 @@ fn ducked(keyed: bool, t01_gain: &str, bypassed: bool) -> Vec<f32> {
     let folder = tempfile::tempdir().unwrap();
     for (path, text) in song_files(2, 2) {
         let text = match path.as_str() {
-            "project.json" => text.replace(r#""limiter"]"#, r#""limiter", "compressor"]"#),
+            "project.json" => text.replace(r#""wavetable"]"#, r#""wavetable", "compressor"]"#),
             _ => text,
         };
         write(folder.path(), &path, &text);
@@ -203,4 +203,29 @@ fn a_fader_says_what_its_record_holds() {
         .automation(&mix, "gain_db")
         .and_then(|number| number.record);
     assert_eq!(gain, Some(-6.0));
+}
+
+/// A track's `synth` takes any tool that takes notes: a wavetable in its place plays the clip,
+/// and an effect there, which takes none, is a problem that says so.
+#[test]
+fn a_track_plays_any_instrument_and_names_a_tool_that_takes_no_notes() {
+    let mut harness = song();
+    harness.write_and_apply(
+        "state/song/t00/synth.json",
+        r#"{"tool": "wavetable", "state": {}}"#,
+    );
+    assert_eq!(harness.project.problems(), []);
+    assert!(loudest(&play(&mut harness, 48_000)) > 0.01);
+
+    harness.write_and_apply(
+        "state/song/t00/synth.json",
+        r#"{"tool": "utility", "state": {}}"#,
+    );
+    let problems = harness.project.problems();
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.message.contains("takes no notes")),
+        "{problems:?}"
+    );
 }

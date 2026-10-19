@@ -117,6 +117,34 @@ fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
     assert_eq!(window.problems(), []);
 }
 
+/// "Instrument…" lists what takes notes, and the one picked takes the place of the synth, as one
+/// undo step that gives the synth back.
+#[gpui::test]
+fn an_instrument_picked_from_the_offers_takes_the_place_of_the_synth(cx: &mut TestAppContext) {
+    let mut window = open_rack(cx);
+    let change = window.until_found("div-change-instrument");
+    window.click(change);
+    let wavetable = window.cx.update(|_, cx| {
+        (Devices::offered(Takes::Notes, cx).into_iter())
+            .filter(|offer| !offer.is_command())
+            .position(|offer| offer.name == "Wavetable")
+    });
+    let item: &'static str = format!("menu-{}", wavetable.unwrap()).leak();
+    let item = window.until_found(item);
+    window.click(item);
+    let tool = |window: &mut Opened| {
+        let id = crate::support::id("song/t00/synth");
+        window.project(|project| project.tool_of(&id))
+    };
+    window.until("the wavetable in place", |window| {
+        tool(window) == Some("wavetable")
+    });
+    assert_eq!(window.problems(), []);
+    window.after_the_runs();
+    assert_eq!(window.undo().as_deref(), Some("Change the instrument"));
+    assert_eq!(tool(&mut window), Some("instrument.synth"));
+}
+
 #[gpui::test]
 fn the_icons_of_an_effect_card_turn_it_off_and_take_it_out(cx: &mut TestAppContext) {
     let mut window = open_rack(cx);

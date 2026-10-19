@@ -736,6 +736,33 @@ declare const entry: unique symbol;
  */
 export type ProjectTool<Name extends string = string, Entry = unknown> = Name & { readonly [entry]: Entry };
 
+declare const slot: unique symbol;
+
+/**
+ * A child of any tool that takes `port`, in a parent's `children`: `{ synth: takes("notes") }` is
+ * a synth, a sampler, a plugin or an instrument of the project, as `offers("notes")` lists them.
+ * Its state is any; its ports are those of what fills it.
+ */
+export type Takes<Port extends "notes" | "audio" = "notes" | "audio"> = `takes:${Port}` & { readonly [slot]: Port };
+
+/** A slot of `children` for any tool that takes `port`, see `Takes`. */
+export function takes<Port extends "notes" | "audio">(port: Port): Takes<Port> {
+  return `takes:${port}` as Takes<Port>;
+}
+
+declare const filled: unique symbol;
+/**
+ * The tool of a child a `Takes` slot holds: one that takes `Port`, whichever it is. Not a string
+ * to code, so a check such as `child.tool === "timeline"` tells the other children apart; its
+ * name is `String(child.tool)`.
+ */
+export type TakingTool<Port extends string = string> = { readonly [filled]: Port };
+
+/** The tool a child of `T` has, as code reads it: a `TakingTool` for a `Takes`. */
+type ToolOf<T> = T extends Takes<infer Port> ? TakingTool<Port> : T;
+/** The tool a new child of `T` may be: any for a `Takes`. */
+type NewToolOf<T> = T extends Takes ? ToolName : T;
+
 /** The entry of `T`: in `Tools`, or of a `ProjectTool`. */
 type EntryOf<T> = T extends keyof Tools ? Tools[T] : T extends ProjectTool<string, infer Entry> ? Entry : {};
 
@@ -784,7 +811,7 @@ export type OwnedChild<K extends ChildTools = ChildTools, Edit extends boolean =
      */
     readonly name: ChildNamed<Name>;
     /** Its `tool`, such as `"instrument.synth"`. */
-    tool: K[Name];
+    tool: ToolOf<K[Name]>;
     /** Its `state`, with every field that has a default at it, as `state` of the parent. */
     state: FilledStateOfTool<K[Name]>;
   } & (Edit extends true
@@ -812,7 +839,7 @@ export interface DraftChildren<K extends ChildTools> extends Array<OwnedChild<K,
 export type NewChild<K extends ChildTools = ChildTools> = {
   [Name in keyof K & string]: {
     readonly name: ChildNamed<Name>;
-    tool: K[Name];
+    tool: NewToolOf<K[Name]>;
     state: StateOfTool<K[Name]>;
     children?: NewChild<ChildrenOfTool<K[Name]>>[];
   };
@@ -1042,7 +1069,7 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
   offers(takes: "notes" | "audio"): Promise<Offer[]>;
   /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */
   numbers(path: string): Promise<MovedNumber[]>;
-  /** Puts the device of the offer `key` at the child `path`, at its defaults, as one undo step `label`. */
+  /** Puts the device of the offer `key` at the child `path`, at its defaults and in place of what is there, as one undo step `label`. */
   addOffer(key: string, path: string, label: string): void;
   /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
   memory: Memory<M>;

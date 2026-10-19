@@ -1,8 +1,8 @@
 import { chain } from "./chain";
 import { freeName } from "./tape";
-import { list, text, tool, type Connection, type Declaration } from "./sdk";
+import { list, takes, text, tool, type Connection, type Declaration } from "./sdk";
 
-const parts = { synth: "instrument.synth", fx: "filter", chain, mix: "fader", rec: "recorder", "send-*": "fader", "lane-*": "lane", "*": "timeline" } as const;
+const parts = { synth: takes("notes"), fx: "filter", chain, mix: "fader", rec: "recorder", "send-*": "fader", "lane-*": "lane", "*": "timeline" } as const;
 
 /** `"fx.cutoff_hz"` or `"chain/verb.mix"`: the path of the child and the name of its number. */
 export function splitTarget(target: string): [child: string, number: string] {
@@ -14,7 +14,7 @@ export const track = tool({
   name: "track",
   title: "Track",
   when: "You change what a track of the song is made of or how it is wired",
-  doc: "A track of a `song`: its `timeline` children, and what reaches its `notes`, play on its `synth`, through its `fx` and the effects of its `chain`, into its fader `mix`, whose `gain_db`, `pan` and `mute` are the track's volume, pan and mute, and whose level its meter shows. Each of `automation` moves a number of a child over the song: the lane child `lane` into `target`, such as `fx.cutoff_hz` or `chain/verb.mix`. Its recorder `rec` records what reaches its `notes` into new clips while the song records. Each fader `send-<return>` is how loud it sends into that return of the song, which wires it. `colour` is how the song draws its clips, `title` what it calls the track.",
+  doc: "A track of a `song`: its `timeline` children, and what reaches its `notes`, play on its `synth`, any instrument, through its `fx` and the effects of its `chain`, into its fader `mix`, whose `gain_db`, `pan` and `mute` are the track's volume, pan and mute, and whose level its meter shows. Each of `automation` moves a number of a child over the song: the lane child `lane` into `target`, such as `fx.cutoff_hz` or `chain/verb.mix`. Its recorder `rec` records what reaches its `notes` into new clips while the song records. Each fader `send-<return>` is how loud it sends into that return of the song, which wires it. `colour` is how the song draws its clips, `title` what it calls the track.",
   state: { colour: text({ default: "#a9b1ff" }), title: text(), automation: list({ lane: text(), target: text() }, { max: 32 }) },
   children: parts,
   behaviour: ({ state, children }): Declaration<typeof parts> => {

@@ -651,11 +651,18 @@ impl ToolInfo {
             return ". It has no children".to_string();
         }
         let children: Vec<String> = (children.0.iter())
+            .map(|(name, tool)| {
+                let tool = match tool.strip_prefix(TAKES) {
+                    Some(port) => format!("any tool that takes {port}"),
+                    None => format!("a `{tool}`"),
+                };
+                (name, tool)
+            })
             .map(|(name, tool)| match name.strip_suffix(ANY_NAME) {
                 Some(prefix) => format!(
-                    "any number of `{prefix}<name>.json` or `{prefix}<name>/instance.json`, each a `{tool}`"
+                    "any number of `{prefix}<name>.json` or `{prefix}<name>/instance.json`, each {tool}"
                 ),
-                None => format!("`{name}.json`, a `{tool}`"),
+                None => format!("`{name}.json`, {tool}"),
             })
             .collect();
         format!(". Its children are {}, and no others", children.join("; "))
@@ -723,6 +730,10 @@ fn described(field: &Field) -> (&'static str, String) {
 /// Where the samples of an instance are read: its assets, the rate of the engine and itself,
 /// which waits for a sample read on its thread.
 type Read<'a> = (&'a Assets, u32, &'a InstanceId);
+
+/// What starts a tool in a parent's `children` that stands for any tool that takes a port:
+/// `takes:notes`, as `takes("notes")` of the SDK writes it.
+const TAKES: &str = "takes:";
 
 /// What ends a name in a parent's `children` that stands for every other name that starts as it
 /// does: `"*"` any name, `"ret-*"` any that starts with `ret-`.
@@ -1116,6 +1127,14 @@ impl Sounds {
             let name = child.id.name();
             match named_tool(named, name) {
                 Some(tool) if tool == child.tool => {}
+                Some(tool) if let Some(port) = tool.strip_prefix(TAKES) => {
+                    if context.child_input(name, port).is_none() {
+                        context.problem(format!(
+                            "its child {name} is a {}, which takes no {port}, and its `children` say any tool that takes {port}",
+                            child.tool
+                        ));
+                    }
+                }
                 Some(tool) => context.problem(format!(
                     "its child {name} is a {}, and its `children` say {tool}",
                     child.tool
