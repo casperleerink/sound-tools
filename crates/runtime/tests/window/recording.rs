@@ -99,8 +99,10 @@ fn a_take_shows_its_notes_while_it_records(cx: &mut gpui::TestAppContext) {
     assert_eq!(held.notes.len(), 1);
     assert_eq!(held.notes[0].pitch.number(), 60);
 
-    // A held key grows with the playhead.
+    // A held key grows with the playhead. Two polls: the playhead and the take poll in either
+    // order, so the take may see where the playhead was a poll before.
     opened.render(12_000);
+    opened.settle();
     opened.settle();
     let longer = live_notes(&mut opened).flatten().unwrap();
     assert!(longer.notes[0].length > held.notes[0].length);

@@ -11,6 +11,7 @@
 //!   notes of bar 2 selected by a marquee and held by the pointer two beats on and two rows up,
 //!   as the window moves them before their code hears the drag.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
@@ -145,11 +146,16 @@ pub(crate) fn snapshots(
     save(cx, &opened, "typescript-mixer")?;
     drop(opened);
 
-    let files = crate::song::song_files(12, 150);
+    let mut files = crate::song::song_files(12, 150);
+    // A take of the voice, a region on its row from the second bar.
+    files.push((
+        "state/song/voice/take.json".to_string(),
+        r#"{"tool": "region", "state": {"asset": "voice.wav", "start": 3840}}"#.to_string(),
+    ));
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
-    let mut opened = open_files(cx, &files)?;
+    let mut opened = open_files_with(cx, &files, write_voice)?;
     // The timeline's top left: the page's padding, the title bar and the ruler; the headers.
     let timeline = point(px(24. + crate::song::HEADER), px(48. + 24. + 22.));
     let lane = |tick: u64, row: f32| {
@@ -300,6 +306,36 @@ fn open_page(
 
 /// A window on a project of these files.
 fn open_files(cx: &mut HeadlessAppContext, files: &[(&str, &str)]) -> Result<super::Opened> {
+    open_files_with(cx, files, |_| Ok(()))
+}
+
+/// Four seconds of a voice that swells and fades every half second, in `assets/audio/voice.wav`.
+fn write_voice(root: &Path) -> Result<()> {
+    let path = root.join("assets/audio/voice.wav");
+    std::fs::create_dir_all(path.parent().context("a parent folder")?)?;
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 48_000,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec)?;
+    for frame in 0..4 * 48_000 {
+        let seconds = f64::from(frame) / 48_000.0;
+        let swell = (seconds * std::f64::consts::TAU).sin().abs();
+        let tone = (seconds * 220.0 * std::f64::consts::TAU).sin();
+        writer.write_sample((0.6 * swell * tone) as f32)?;
+    }
+    writer.finalize()?;
+    Ok(())
+}
+
+/// [`open_files`], with `prepare` writing more into the project folder first.
+fn open_files_with(
+    cx: &mut HeadlessAppContext,
+    files: &[(&str, &str)],
+    prepare: impl FnOnce(&Path) -> Result<()>,
+) -> Result<super::Opened> {
     let folder = tempfile::tempdir()?;
     let root = folder.path().join("Night Study");
     for (relative, contents) in files {
@@ -307,6 +343,7 @@ fn open_files(cx: &mut HeadlessAppContext, files: &[(&str, &str)]) -> Result<sup
         std::fs::create_dir_all(path.parent().context("a parent folder")?)?;
         std::fs::write(path, contents)?;
     }
+    prepare(&root)?;
     cx.allow_parking();
     let (control, engine) = Engine::new(OFFLINE);
     let plugins = test_plugin_host(&root);

@@ -12,6 +12,7 @@ use std::sync::atomic::Ordering;
 
 use super::{Window, open_with_device, write};
 use crate::plugin_hosts::scanner;
+use crate::song::{HEADER, song_files};
 use crate::support::SimulatedInput;
 
 const STUDIO: &str = r#"import { h, tool, type Declaration } from "./sdk";
@@ -156,4 +157,56 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut 
     (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().stop()));
     window.start_playing();
     assert!(window.loudest(24_000) > 0.4);
+}
+
+/// The song of the examples records its voice: R arms the audio track, the record button
+/// records from the playhead, and a press again ends the take: a region of what the input
+/// captured lands on the voice's row where it was heard.
+#[gpui::test]
+fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) {
+    let folder = tempfile::tempdir().unwrap();
+    for (path, text) in song_files(4, 8) {
+        write(folder.path(), &path, &text);
+    }
+    let input = SimulatedInput::default();
+    let device = DeviceAccess {
+        open_input: Some(input.opener(cx.executor())),
+        ..DeviceAccess::default()
+    };
+    let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
+    let Some(mut window) = open_with_device(cx, folder, plugins, device) else {
+        return;
+    };
+    window.wait_for_bun();
+    // The R of the voice, the fifth row: after its name, M and S in the header.
+    let row = window.on_lane(0, 4);
+    let arm = gpui::point(row.x - gpui::px(HEADER) + gpui::px(132.), row.y);
+    window.press(arm);
+    window.release(arm);
+    window.wait_for_bun();
+    let record = window.until_found("div-record");
+    window.cx.simulate_click(record, Modifiers::default());
+    window.until("the input opens", |_| input.openings.load(Ordering::Relaxed) == 1);
+    window.record_for(&input, 48_000);
+    window.cx.simulate_click(record, Modifiers::default());
+    window.until("a region of the voice", |window| {
+        window.record_for(&input, 2_048);
+        window.song_regions() > 0
+    });
+    let state = window.record("song/voice/rec-sound-1");
+    assert_eq!(state["asset"], "rec-sound-1.wav");
+    assert_eq!(window.problems(), []);
+}
+
+impl Window<'_> {
+    fn song_regions(&mut self) -> usize {
+        let session = self.session.clone();
+        self.cx.read(|cx| {
+            let project = session.read(cx).project();
+            let voice = InstanceId::new("song/voice").unwrap();
+            (project.instances())
+                .filter(|(id, tool)| id.parent().as_ref() == Some(&voice) && *tool == "region")
+                .count()
+        })
+    }
 }

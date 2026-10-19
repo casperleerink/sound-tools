@@ -1,4 +1,5 @@
-import { For, Fragment, Group, h, Label, Line, list, now, Rect, selector, Show, Space, text, tool, Transport, type Accessor, type Declaration, type Drag, type FilledStateOfTool, type Live, type Press } from "./sdk";
+import { For, Fragment, Group, h, Label, Line, list, now, Rect, selector, Show, Space, text, tool, Transport, Wave, type Accessor, type Declaration, type Drag, type FilledStateOfTool, type Live, type Press } from "./sdk";
+import { tape } from "./tape";
 import { track } from "./track";
 
 // A song: tracks of clips in time, with a mixer strip per track and a note editor for one clip.
@@ -7,7 +8,7 @@ const BAR = 4 * BEAT;
 const BARS = 64;
 const END = BARS * BAR;
 const ROW = 40;
-const HEADER = 168;
+const HEADER = 200;
 const RULER = 22;
 const EDITOR = 240;
 const NOTE_ROW = 8;
@@ -19,13 +20,13 @@ const [LOW, HIGH] = [36, 96];
 const COLOR = {
   back: "#121317", lane: "#17191e", bar: "#2a2d35", text: "#7c808c", chosen: "#e9ebef", playhead: "#7ee0a0",
   note: "#00000080", off: "#2a2d35", mute: "#f0b44c", solo: "#7ee0a0", meter: "#7ee0a0", clear: "#00000000",
-  edit: "#a9b1ff",
+  edit: "#a9b1ff", record: "#ff6b6b",
 } as const;
 
 const [MOVES, RESIZES, NOTE] = [["move"], ["resize"], ["note"]];
-const parts = { master: "utility", "*": track } as const;
+const parts = { master: "utility", voice: tape, "*": track } as const;
 
-type Memory = { selected: Set<string>; open: string | null; note: number | null };
+type Memory = { selected: Set<string>; open: string | null; note: number | null; armed: Set<string>; recording: number | null };
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 // Where a level sits on a meter, 0 to 1: 0 dB at 0.8.
@@ -51,10 +52,10 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, mixer strips or note editor",
   doc:
-    "Tracks of clips in time. Each `track` child plays into the utility `master`; `solo` names the tracks that play alone. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. A click on a track's name or a clip selects it: the keyboard plays that track, and Export selection exports the chosen clips. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
+    "Tracks of clips in time. Each `track` child, and the audio track `voice` when there is one, plays into the utility `master`; `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of `voice`. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. A click on a track's name or a clip selects it: the keyboard plays that track, and Export selection exports the chosen clips. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
   state: { solo: list(text(), { max: 64 }) },
   children: parts,
-  memory: (): Memory => ({ selected: new Set(), open: null, note: null }),
+  memory: (): Memory => ({ selected: new Set(), open: null, note: null, armed: new Set(), recording: null }),
   keys: ["delete", "backspace", "cmd-d"],
   globalKeys: ["space"],
   onKey: ({ memory, update, clock, select }, { key, down }) => {
@@ -85,7 +86,7 @@ export const song = tool({
     select(null);
   },
   behaviour: ({ state, children }): Declaration<typeof parts> => {
-    const tracks = children.filter((child) => child.tool === "track").map((child) => child.name);
+    const tracks = children.filter((child) => child.tool === "track" || child.tool === "tape").map((child) => child.name);
     const soloed = state.solo.filter((name) => tracks.includes(name));
     return {
       connections: [
@@ -96,8 +97,34 @@ export const song = tool({
       ],
     };
   },
-  view: ({ state, children, memory, update, clock, select }) => {
+  view: ({ state, children, memory, update, clock, select, send }) => {
     const tracks = () => children.filter((child) => child.tool === "track");
+    // The rows of the timeline: the tracks, then the audio track.
+    const rows = () => children.filter((child) => child.tool === "track" || child.tool === "tape");
+    const regionsOf = (each: (typeof children)[number]) => (each.tool === "tape" ? each.children.filter((child) => child.tool === "region") : []);
+    const recordable = (each: (typeof children)[number]) =>
+      (each.tool === "track" || each.tool === "tape") && each.children.some((child) => child.name === "rec");
+    /** Turns the recorders of the armed tracks on or off. */
+    const recordArmed = (on: boolean) => {
+      for (const name of memory.armed) send({ child: `${name}/rec` as const, number: "record" }, on ? 1 : 0);
+    };
+    const toggleRecording = () => {
+      if (memory.recording === null) {
+        memory.recording = clock.tick;
+        recordArmed(true);
+        clock.play();
+      } else {
+        recordArmed(false);
+        memory.recording = null;
+      }
+    };
+    const toggleArm = (name: string) => {
+      const armed = new Set(memory.armed);
+      const on = !armed.delete(name);
+      if (on) armed.add(name);
+      memory.armed = armed;
+      if (memory.recording !== null) send({ child: `${name}/rec` as const, number: "record" }, on ? 1 : 0);
+    };
     const isPicked = selector(() => memory.selected);
     const clipsOf = (each: (typeof children)[number]) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);
     const open = () => {
@@ -214,7 +241,7 @@ export const song = tool({
     const toggleMute = (name: string) =>
       update("Mute a track", ({ children }) => {
         const owner = children.find((child) => child.name === name);
-        const mix = owner?.tool === "track" ? owner.children.find((child) => child.name === "mix") : undefined;
+        const mix = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.find((child) => child.name === "mix") : undefined;
         if (mix?.tool === "utility") mix.state.mute = !mix.state.mute;
       });
     const toggleSolo = (name: string) =>
@@ -222,13 +249,13 @@ export const song = tool({
         state.solo = state.solo.includes(name) ? state.solo.filter((each) => each !== name) : [...state.solo, name];
       });
     const muted = (each: (typeof children)[number]) => {
-      const mix = each.tool === "track" ? each.children.find((child) => child.name === "mix") : undefined;
+      const mix = each.tool === "track" || each.tool === "tape" ? each.children.find((child) => child.name === "mix") : undefined;
       return mix?.tool === "utility" && mix.state.mute === true;
     };
 
     // A text field holds any text: the colour is checked here.
     const colourOf = (each: (typeof children)[number]) => {
-      const colour = each.tool === "track" ? each.state.colour : undefined;
+      const colour = each.tool === "track" || each.tool === "tape" ? each.state.colour : undefined;
       return (colour?.startsWith("#") ? colour : "#a9b1ff") as `#${string}`;
     };
     const timeline = now.space("timeline");
@@ -239,6 +266,9 @@ export const song = tool({
         <div style={{ width: 56, fontSize: 11, color: COLOR.text }} onPress={() => choose(new Set(), each.name)}>{each.name}</div>
         <Button label="M" on={() => muted(each)} color={COLOR.mute} onPress={() => toggleMute(each.name)} />
         <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onPress={() => toggleSolo(each.name)} />
+        <Show when={() => recordable(each)}>
+          {() => <Button label="R" on={() => memory.armed.has(each.name)} color={COLOR.record} onPress={() => toggleArm(each.name)} />}
+        </Show>
         <Space key={`meter-${each.name}`} width={40} height={6} background={COLOR.lane} radius={2}>
           <Rect x={0} y={0} width={place(now.peak(`${each.name}/level`)).fall(0.6).times(40)} height={6} radius={2} color={COLOR.meter} />
         </Space>
@@ -248,13 +278,17 @@ export const song = tool({
     return (
       <div style={{ grow: true, background: COLOR.back }}>
         <div style={{ paddingX: 8, paddingY: 6 }}>
-          <Transport clock={clock} />
+          <div style={{ direction: "row", gap: 8, align: "center" }}>
+            <Transport clock={clock} />
+            <div key="record" style={() => ({ width: 22, height: 22, radius: 11, background: memory.recording === null ? COLOR.off : COLOR.record })}
+              onPress={toggleRecording} />
+          </div>
         </div>
         <div style={{ direction: "row", grow: true }}>
           <div style={{ width: HEADER }}>
             <div style={{ height: RULER }} />
             <div style={{ grow: true }} follow={{ y: "timeline" }}>
-              <For each={tracks}>
+              <For each={rows}>
                 {(each) => (
                   <div style={{ height: ROW, direction: "row", gap: 6, align: "center", paddingX: 8 }}>
                     <TrackHead each={each} />
@@ -269,13 +303,33 @@ export const song = tool({
                 <Label x={bar * BAR + 60} y={5} text={String(bar + 1)} size={10} color={COLOR.text} />
               ))}
             </Space>
-            <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [0, END], y: [0, Math.max(tracks().length, 1)] })} zoom={{ x: [0.1, 8] }}
+            <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [0, END], y: [0, Math.max(rows().length, 1)] })} zoom={{ x: [0.1, 8] }}
               background={COLOR.lane} onPress={pressLane}>
               {Array.from({ length: BARS }, (_, bar) => (
                 <Line from={[bar * BAR, 0]} to={[bar * BAR, 1000]} color={COLOR.bar} width={1} />
               ))}
-              <For each={tracks}>
+              <For each={rows}>
                 {(each, row) => (
+                  <>
+                  <For each={() => regionsOf(each)}>
+                    {(region) => {
+                      // Seconds of its file, as ticks at the tempo: a beat is 960 ticks.
+                      const width = now.value(`${each.name}/${region.name}.seconds`).times(now.bpm).times(16);
+                      const sound = () => now.file(region.state.asset, { from: region.state.file_start_seconds, to: region.state.file_end_seconds });
+                      return (
+                        <Group x={() => region.state.start ?? 0} y={row}>
+                          <Rect x={0} y={0.06} width={width} height={0.88} radius={3} color={() => colourOf(each)} />
+                          <Wave x={0} y={0.12} width={width} height={0.76} list={sound} band low={-1} high={1} color={COLOR.note} />
+                        </Group>
+                      );
+                    }}
+                  </For>
+                  <Show when={() => memory.recording !== null && memory.armed.has(each.name) && each.tool === "tape"}>
+                    {() => (
+                      <Wave x={() => memory.recording ?? 0} y={() => row() + 0.12} width={() => now.tick.minus(memory.recording ?? 0).max(1)}
+                        height={0.76} list={now.take(`${each.name}/rec`)} band low={-1} high={1} color={COLOR.record} />
+                    )}
+                  </Show>
                   <For each={() => clipsOf(each)}>
                     {(clip) => {
                       const key = `${each.name}/${clip.name}`;
@@ -302,6 +356,7 @@ export const song = tool({
                       );
                     }}
                   </For>
+                  </>
                 )}
               </For>
               <Line from={[now.tick, 0]} to={[now.tick, 1000]} color={COLOR.playhead} width={2} />
