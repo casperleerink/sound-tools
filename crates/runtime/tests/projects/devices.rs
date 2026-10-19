@@ -218,7 +218,10 @@ fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
     write(&extensions, "host.ts", sound_typescript::HOST);
     write(&extensions, "node.d.ts", sound_typescript::HOST_TYPES);
     // And the tools of the DAW template, as a new project from it holds them.
-    let daw = concat!(env!("CARGO_MANIFEST_DIR"), "/../../templates/daw/extensions");
+    let daw = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../templates/daw/extensions"
+    );
     for file in std::fs::read_dir(daw).unwrap() {
         let file = file.unwrap();
         let text = std::fs::read_to_string(file.path()).unwrap();

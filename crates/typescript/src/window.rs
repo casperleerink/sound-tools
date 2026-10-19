@@ -1935,7 +1935,8 @@ fn moved_numbers(project: &Project, instance: &InstanceId, path: &str) -> Vec<Mo
     };
     (project.automatable(&child))
         .filter_map(|name| {
-            let range = project.automation(&child, name)?.range;
+            let number = project.automation(&child, name)?;
+            let range = number.range;
             let scale = match range.scale {
                 Scale::Linear => "linear",
                 Scale::Logarithmic => "log",
@@ -1946,6 +1947,7 @@ fn moved_numbers(project: &Project, instance: &InstanceId, path: &str) -> Vec<Mo
                 min: range.min,
                 max: range.max,
                 scale,
+                value: number.record,
             })
         })
         .collect()

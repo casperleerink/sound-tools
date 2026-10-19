@@ -224,6 +224,23 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     let added = window.record("song/t00")["automation"][1].clone();
     let lane = added["lane"].as_str().unwrap_or_default().to_string();
     assert!(lane.starts_with("lane-synth"), "{added}");
+    // It starts where the number is, which the file of the synth leaves at its default.
+    let number = added["target"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("synth.")
+        .to_string();
+    let session = window.session.clone();
+    let synth = crate::support::id("song/t00/synth");
+    let record = (window.cx).read(|cx| {
+        session
+            .read(cx)
+            .project()
+            .automation(&synth, &number)
+            .and_then(|number| number.record)
+    });
+    let first = window.record(&format!("song/t00/{lane}"))["points"][0]["value"].as_f64();
+    assert_eq!(first.map(|value| value as f32), record, "{number}");
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Add a lane"));
     assert_eq!(window.problems(), []);
@@ -531,7 +548,9 @@ fn the_editor_of_a_clip_whose_file_has_no_notes_takes_its_keys(cx: &mut TestAppC
             *text = format!(r#"{{"tool": "timeline", "state": {{"start": 0, "length": {BAR}}}}}"#);
         }
     }
-    let files: Vec<(&str, &str)> = (files.iter()).map(|(path, text)| (path.as_str(), text.as_str())).collect();
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
     let Some(mut window) = super::open(cx, &files) else {
         return;
     };
@@ -596,7 +615,11 @@ fn a_clip_made_shorter_cuts_what_starts_past_its_end(cx: &mut TestAppContext) {
     });
     let record = window.record("song/t00/c00");
     let short = record["length"].as_u64().unwrap();
-    let starts = record["notes"].as_array().unwrap().iter().map(|note| note["start"].as_u64().unwrap());
+    let starts = record["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|note| note["start"].as_u64().unwrap());
     assert!(starts.into_iter().all(|start| start < short), "{record}");
     assert_eq!(window.problems(), []);
 }
@@ -608,15 +631,23 @@ fn a_region_after_a_tempo_change_is_as_long_as_its_file_at_that_tempo(cx: &mut T
     let mut files = crate::song::song_files(2, 2);
     for (path, text) in &mut files {
         if path == "project.json" {
-            let slow = format!(r#"{{ "tick": 0, "bpm": 120.0 }}, {{ "tick": {}, "bpm": 60.0 }}"#, 2 * BAR);
+            let slow = format!(
+                r#"{{ "tick": 0, "bpm": 120.0 }}, {{ "tick": {}, "bpm": 60.0 }}"#,
+                2 * BAR
+            );
             *text = text.replace(r#"{"tick":0,"bpm":120.0}"#, &slow);
         }
     }
-    let files: Vec<(&str, &str)> = (files.iter()).map(|(path, text)| (path.as_str(), text.as_str())).collect();
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
     let Some(mut window) = super::open(cx, &files) else {
         return;
     };
-    assert_eq!(window.project_file()["tempo_map"]["tempo_changes"][1]["bpm"], 60.0);
+    assert_eq!(
+        window.project_file()["tempo_map"]["tempo_changes"][1]["bpm"],
+        60.0
+    );
     window.wait_for_bun();
     window.drop_sine();
     let end = window.on_lane(2 * BAR + 960, 2) - point(px(2.), px(0.));

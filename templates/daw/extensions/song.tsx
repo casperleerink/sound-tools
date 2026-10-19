@@ -582,8 +582,7 @@ export const song = tool({
       const chosen = picked === null ? undefined : found[picked];
       if (!chosen) return;
       const target = `${chosen.path}.${chosen.number.name}`;
-      const record = (each.children.find((child) => child.name === chosen.path) as { state?: Record<string, unknown> } | undefined)?.state?.[chosen.number.name];
-      const value = typeof record === "number" ? record : valueAt(chosen.number, 0.5);
+      const value = chosen.number.value ?? valueAt(chosen.number, 0.5);
       update("Add a lane", ({ children }) => {
         const owner = children.find((child) => child.name === each.name);
         if (owner?.tool !== "track") return;

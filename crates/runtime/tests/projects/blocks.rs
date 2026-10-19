@@ -229,7 +229,10 @@ fn a_timeline_that_ends_past_the_last_tick_is_a_problem() {
     let Some(mut harness) = keys(r#"[{"tick": 0, "value": 0}]"#) else {
         return;
     };
-    let far = format!(r#"{{"tool": "timeline", "state": {{"start": {}, "length": 1}}}}"#, u64::MAX);
+    let far = format!(
+        r#"{{"tool": "timeline", "state": {{"start": {}, "length": 1}}}}"#,
+        u64::MAX
+    );
     harness.write_and_apply("state/keys/chord.json", &far);
     let problems = harness.project.problems();
     assert!(

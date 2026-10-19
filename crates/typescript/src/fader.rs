@@ -105,7 +105,7 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     let fader = context.processor(PROCESSOR, || Mixer::new(mix, peaks))?;
     context.update(fader, mix)?;
     context.input("audio", InputEndpoint::new(fader, Mixer::INPUT));
-    context.automation(fader, Mixer::AUTOMATION);
+    context.automation_of(fader, Mixer::AUTOMATION, &mix);
     context.output("audio", OutputEndpoint::new(fader, Mixer::OUTPUT));
     Ok(())
 }

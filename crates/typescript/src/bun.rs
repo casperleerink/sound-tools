@@ -183,6 +183,8 @@ pub(crate) struct Moved {
     pub max: f32,
     /// `"linear"`, `"log"` or `"fader"`, as the knob of the number travels.
     pub scale: &'static str,
+    /// What its record holds now.
+    pub value: Option<f32>,
 }
 
 /// A device the window offers, as code gets it: what `addOffer` names it by.

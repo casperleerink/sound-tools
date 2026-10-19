@@ -201,3 +201,18 @@ fn a_sidechain_from_one_track_keys_a_compressor_of_another() {
         energy(&both_open)
     );
 }
+
+/// A fader tells a lane or a knob what its record holds, which a lane starts from.
+#[test]
+fn a_fader_says_what_its_record_holds() {
+    let Some(mut harness) = song() else {
+        return;
+    };
+    harness.write_and_apply("state/song/t01/mix.json", &fader("-6"));
+    let mix = sound_core::InstanceId::new("song/t01/mix").unwrap();
+    let gain = harness
+        .project
+        .automation(&mix, "gain_db")
+        .and_then(|number| number.record);
+    assert_eq!(gain, Some(-6.0));
+}

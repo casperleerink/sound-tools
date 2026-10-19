@@ -3,8 +3,8 @@
 //! play into changes.
 
 use crate::owners::{closed, rendered_frames};
-use sound_core::InstanceId;
 use crate::support::{BAR, Harness, first_sound, write};
+use sound_core::InstanceId;
 
 /// The launcher of the doc for agents that write tools, as it is written there.
 fn doc_launcher() -> String {

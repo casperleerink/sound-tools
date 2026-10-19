@@ -403,18 +403,42 @@ impl BehaviourContext<'_> {
         node: Node<P>,
         input: AutomationInput<S, N>,
     ) {
-        let parameters = input.parameters().iter();
-        let endpoint = InputEndpoint::new(node, input.port());
         let record = self.instances.get(self.id);
         let record = record.and_then(|record| record.state.as_any().downcast_ref::<S>());
-        // A tool whose state is JSON keeps no `S`: what its record leaves out is the default.
-        let records = match record {
-            Some(state) => parameters
-                .clone()
+        // A tool whose state is JSON keeps no `S`: see `automation_of`.
+        let records: Vec<f32> = match record {
+            Some(state) => (input.parameters().iter())
                 .map(|number| (number.get)(state))
                 .collect(),
-            None => parameters.clone().map(|number| number.default).collect(),
+            None => input
+                .parameters()
+                .iter()
+                .map(|number| number.default)
+                .collect(),
         };
+        self.automatable(node, input, records);
+    }
+
+    /// [`automation`](Self::automation) for a tool whose record is JSON, whose numbers are
+    /// as `state` holds them.
+    pub fn automation_of<P, S, const N: usize>(
+        &mut self,
+        node: Node<P>,
+        input: AutomationInput<S, N>,
+        state: &S,
+    ) {
+        let records = input.parameters().iter().map(|number| (number.get)(state));
+        self.automatable(node, input, records.collect());
+    }
+
+    fn automatable<P, S, const N: usize>(
+        &mut self,
+        node: Node<P>,
+        input: AutomationInput<S, N>,
+        records: Vec<f32>,
+    ) {
+        let parameters = input.parameters().iter();
+        let endpoint = InputEndpoint::new(node, input.port());
         self.next.automation = Some(Automatable {
             endpoint,
             parameters: parameters.map(|parameter| parameter.info()).collect(),

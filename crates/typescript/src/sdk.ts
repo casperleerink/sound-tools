@@ -1334,6 +1334,8 @@ export interface MovedNumber {
   max: number;
   /** `"log"` for a frequency or a time, `"fader"` for a volume in dB (`-inf` at the bottom). */
   scale: "linear" | "log" | "fader";
+  /** What its record holds now; `null` for a number that has none, such as one of a plugin that is not loaded. */
+  value: number | null;
 }
 
 // Pointer
