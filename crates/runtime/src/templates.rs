@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 
 pub struct Template {
     pub name: &'static str,
@@ -21,11 +21,15 @@ pub fn named(name: &str) -> Option<&'static Template> {
     TEMPLATES.iter().find(|template| template.name == name)
 }
 
-/// Writes the files of `template` into `folder` when it is a new project: nothing in it but
-/// hidden files. Makes the folder when it is missing. Any other folder is left as it is.
+/// Writes the files of `template` into `folder`, which must hold nothing but hidden files.
+/// Makes the folder when it is missing.
 pub fn write(folder: &Path, template: &Template) -> Result<()> {
-    if !is_new(folder)? {
-        return Ok(());
+    if folder.exists() && !is_empty(folder)? {
+        let name = folder.file_name().unwrap_or(folder.as_os_str());
+        bail!(
+            "“{}” has files in it. Pick a new folder for a new project.",
+            name.to_string_lossy()
+        );
     }
     std::fs::create_dir_all(folder)
         .with_context(|| format!("could not make {}", folder.display()))?;
@@ -41,13 +45,11 @@ pub fn write(folder: &Path, template: &Template) -> Result<()> {
     Ok(())
 }
 
-fn is_new(folder: &Path) -> Result<bool> {
-    if !folder.exists() {
-        return Ok(true);
-    }
-    for entry in
-        std::fs::read_dir(folder).with_context(|| format!("could not read {}", folder.display()))?
-    {
+/// Whether `folder` holds nothing but hidden files.
+pub(crate) fn is_empty(folder: &Path) -> Result<bool> {
+    let entries = std::fs::read_dir(folder)
+        .with_context(|| format!("could not read {}", folder.display()))?;
+    for entry in entries {
         let entry = entry.with_context(|| format!("could not read {}", folder.display()))?;
         if !entry.file_name().to_string_lossy().starts_with('.') {
             return Ok(false);
@@ -69,11 +71,13 @@ mod tests {
         assert!(new.join("extensions/song.tsx").exists());
         assert!(!new.join("template.json").exists());
 
-        // Someone's files: nothing is written.
+        // A project, or someone's files: nothing is written, and the error says why.
+        let error = write(&new, daw).unwrap_err();
+        assert!(error.to_string().contains("Pick a new folder"), "{error}");
         let theirs = folder.path().join("theirs");
         std::fs::create_dir_all(theirs.join("state")).unwrap();
         std::fs::write(theirs.join("state/a.json"), "{}").unwrap();
-        write(&theirs, daw).unwrap();
+        write(&theirs, daw).unwrap_err();
         assert!(!theirs.join(crate::PROJECT_FILE).exists());
     }
 }

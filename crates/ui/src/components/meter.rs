@@ -30,7 +30,7 @@ pub const FLOOR_DB: f32 = -96.;
 
 /// The place of a level on the scale, 0 at -inf and 1 at +6 dB. Not a number is silence. The
 /// scale is [`Scale::Fader`], the one a lane of a track's volume moves on.
-pub fn position_of(db: f32) -> f32 {
+fn position_of(db: f32) -> f32 {
     Scale::Fader.position(f32::NEG_INFINITY, MAX_DB, db)
 }
 
@@ -50,7 +50,7 @@ const HORIZONTAL_LENGTH: f32 = 40.;
 const LIGHT: f32 = 3.;
 const LIGHT_GAP: f32 = 2.;
 /// Where the scale of a vertical meter starts, from its top: under the clip light.
-pub const SCALE_TOP: f32 = LIGHT + LIGHT_GAP;
+const SCALE_TOP: f32 = LIGHT + LIGHT_GAP;
 
 /// Which way the bars of a meter run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

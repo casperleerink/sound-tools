@@ -62,13 +62,14 @@ fn embed_templates(templates: &Path) -> Result<(), Box<dyn Error>> {
         ));
         for file in files {
             let path = file.strip_prefix(&folder)?;
-            if path == Path::new("template.json") {
+            let path = path.to_str().ok_or("a template file name is not UTF-8")?;
+            let path = path.replace('\\', "/");
+            if path == "template.json" || written_by_the_runtime(&path) {
                 continue;
             }
-            let path = path.to_str().ok_or("a template file name is not UTF-8")?;
             code.push_str(&format!(
                 "        ({:?}, include_str!({:?})),\n",
-                path.replace('\\', "/"),
+                path,
                 file.display().to_string()
             ));
         }
@@ -78,6 +79,21 @@ fn embed_templates(templates: &Path) -> Result<(), Box<dyn Error>> {
     let out = PathBuf::from(std::env::var("OUT_DIR")?).join("templates.rs");
     std::fs::write(out, code)?;
     Ok(())
+}
+
+/// What the runtime writes into a project when it opens, as when a template folder is opened
+/// to try it: hidden files, the agent docs and the SDK beside the extensions.
+fn written_by_the_runtime(path: &str) -> bool {
+    path.split('/')
+        .any(|part| part.starts_with('.') || part == "node_modules")
+        || ["AGENTS.md", "CLAUDE.md", "problems.txt"].contains(&path)
+        || path.starts_with("agent-docs/")
+        || [
+            "extensions/sdk.ts",
+            "extensions/tsconfig.json",
+            "extensions/bun.d.ts",
+        ]
+        .contains(&path)
 }
 
 fn files_in(folder: &Path, files: &mut Vec<PathBuf>) -> Result<(), Box<dyn Error>> {

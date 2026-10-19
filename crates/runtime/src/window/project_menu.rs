@@ -13,7 +13,6 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::Context as _;
 use gpui::{
     App, AsyncApp, Context, Entity, IntoElement, PromptLevel, Render, SharedString, Task,
     WeakEntity, Window, prelude::*,
@@ -542,8 +541,7 @@ pub(super) fn choose_new_project(session: Entity<Session>, cx: &mut App) {
 }
 
 /// Asks for the name and place of a new project in the save panel, next to the open project,
-/// and opens it as [`open_another_project`] does. The panel itself asks before it reuses a
-/// folder that is there, and a folder with other files in it is refused as when opened.
+/// and opens it as [`open_another_project`] does. A folder with files in it is refused.
 fn new_project(session: &Session, template: &'static crate::Template, cx: &mut Context<Session>) {
     let root = session.project().root();
     let picked = cx.prompt_for_new_path(root.parent().unwrap_or(root), Some("New project"));
@@ -591,11 +589,9 @@ async fn start_on(
 ) {
     let remembered = cx
         .background_spawn(async move {
-            app::check_project_folder(&folder)?;
-            std::fs::create_dir_all(&folder)
-                .with_context(|| format!("could not make {}", folder.display()))?;
-            if let Some(template) = template {
-                crate::templates::write(&folder, template)?;
+            match template {
+                Some(template) => crate::templates::write(&folder, template)?,
+                None => app::check_project_folder(&folder)?,
             }
             app::remember_project(&folder)
         })

@@ -121,10 +121,7 @@ fn new_project(template: &'static crate::Template, cx: &mut App) {
         let written = cx
             .background_spawn({
                 let folder = folder.clone();
-                async move {
-                    check_project_folder(&folder)?;
-                    crate::templates::write(&folder, template)
-                }
+                async move { crate::templates::write(&folder, template) }
             })
             .await;
         cx.update(|cx| match written {
