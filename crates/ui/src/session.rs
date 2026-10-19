@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
 
+use crate::metering::{PeaksReader, SharedPeaks};
 use crate::recording::Recording;
 use sound_core::{
     EngineControl, EngineStatus, InstanceId, Project, ProjectEdit, ProjectError, ProjectEvent,
@@ -71,6 +72,8 @@ pub struct Session {
     history_moves: u64,
     /// See [`Self::looped`].
     looped: Entity<Loop>,
+    /// What the device plays, for every view that shows its level.
+    output: SharedPeaks,
     _polling: Task<()>,
 }
 
@@ -94,6 +97,7 @@ impl Session {
         });
         let time_signatures = project.project_file().tempo_map.time_signatures();
         let bar_five = time_signatures.bar(5).map_or(Ticks(0), |bar| bar.start);
+        let output = SharedPeaks::new(project.engine().output_peaks().clone());
         Self {
             looped: cx.new(|_| Loop {
                 range: Ticks(0)..bar_five,
@@ -109,8 +113,14 @@ impl Session {
             selected_clips: Vec::new(),
             engine_stopped: false,
             history_moves: 0,
+            output,
             _polling: polling,
         }
+    }
+
+    /// A reader of the levels of what the device plays, for a meter.
+    pub fn output_peaks(&self) -> PeaksReader {
+        self.output.reader()
     }
 
     /// Read the current state from here when rendering.

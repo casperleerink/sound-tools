@@ -38,16 +38,15 @@ use gpui::{
 use metronome::Click;
 use midi::{ComputerKeys, Input, Keyboard, Latency, Lost};
 use sound_core::{
-    Changes, Clock, Instance, InstanceId, Peaks, ProjectEvent, StreamTiming, Tempo, TempoChange,
-    Ticks,
+    Changes, Clock, Instance, InstanceId, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks,
 };
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::meter::Meter;
 use sound_ui::{
-    ActiveTheme, DragEdit, Metering, Playhead, Recording, Session, Views, every_poll, typography,
-    weak_action, weak_callback,
+    ActiveTheme, DragEdit, Metering, PeaksReader, Playhead, Recording, Session, Views, every_poll,
+    typography, weak_action, weak_callback,
 };
 
 use self::take::{AudioTake, Ended};
@@ -141,7 +140,7 @@ pub struct TransportPill {
     keys_focus: FocusHandle,
     click_focus: FocusHandle,
     /// What the device plays, taken once per poll: the master meter at the right end.
-    output: Peaks,
+    output: PeaksReader,
     metering: Metering,
     /// Drains what the engine reports about the MIDI input, as the session polls the engine,
     /// and reads the master meter.
@@ -269,7 +268,7 @@ impl TransportPill {
             pill.poll_input(cx);
             pill.read_meter(cx);
         });
-        let output = session.update(cx, |session, _| session.engine().output_peaks().clone());
+        let output = session.read(cx).output_peaks();
         Self {
             end: session.read(cx).project().end(),
             fit: fit_tempo::fit_of(session.read(cx).project()),
@@ -348,7 +347,7 @@ impl TransportPill {
     /// One poll of the master meter: what the device played since the last one. The timer
     /// calls it; tests call it to skip the wait.
     pub fn read_meter(&mut self, cx: &mut Context<Self>) {
-        if self.metering.read(Some(&self.output)) {
+        if self.metering.read_amplitudes(self.output.take()) {
             cx.notify();
         }
     }
