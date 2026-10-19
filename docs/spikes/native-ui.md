@@ -109,10 +109,50 @@ The 22 ms release splits into: Bun runs `onEnd` and sends the 2,000-note edit (a
 **Verdict.** The model holds. At 2,000 notes everything that moves is native and costs 2.5 to 4 ms a frame, the same as the Rust editor, and Bun hears only presses and releases. What still grows with size is every discrete event, which costs about one tree. For a whole arrangement (10,000 clips, lanes, a rack) trees reach several MB, so keyed patches and shared live values change from optional to needed. Nothing seen so far needs a DAW-specific element.
 
 **Round 3 shortlist,** in order of what an arrangement needs most:
-1. Keyed tree patches, so a click costs what it changes.
+1. Keyed tree patches, so a click costs what it changes. Tried as a Solid-style model on `spike/native-ui-solid`, below.
 2. Engine meters (peaks) and lists (a waveform, a scope) as live values.
 3. Menus and text input (rename, the tempo field).
 4. File drop from the OS onto a space, in units.
 5. A built-in device's own card inside a page, for the rack.
 6. Drag reorder of boxes, for effect chains and tracks.
 7. A pressed shape moving with its own drag before Bun answers, and sizes in points inside unit spaces.
+
+### Solid-style branch
+
+Branch `spike/native-ui-solid`. The question: does a Solid-style model beat redrawing the whole tree? A card, a page and a component run once. A function given as a prop or a child is a binding, which runs again when a field, memory, a watch or the transport it read changes. Only what it changes crosses, as ops on a node table the window keeps by id, as in React Native's Fabric. Live values, spaces, groups and drags stay native, unchanged.
+
+**Design.**
+- *Own runtime, about 800 lines in `sdk.ts`*: signals with owners, stores with a reconcile that keeps objects, `For` (rows kept by item, moved with a longest-rising-run diff), `Show`, `memo`, `selector`. Borrowed from Solid's source. Rejected: Solid with its Babel transform in a Bun plugin (5–8 MB to ship into every project, about 100 ms cold start, a compile step agents cannot see), and Solid without the compiler (`@solidjs/h` is DOM-only in 2.0, and reads are wrapped by hand anyway, so it gives our API plus DOM types). With our own runtime, misuse can fail with an error that says how to fix it.
+- *Wire*: after each Bun message (and in a microtask after an `await`), one batch per card of `create`, `set` (only the changed props), `insert` (an existing node moves), `remove`, `root` and `drag` (a drag shared by many shapes goes once). Events name a node and a kind. This removes tree versions, the handler cache, the "unchanged" check, render requests and "a drag follows the newest tree".
+- *Records* are a store per instance. Our own edits apply at once. Rust's echo then diffs to no ops, and so does undo. Notes have no ids, so a list of the same length is kept by place (a move updates fields in place). A list that grew or shrank keeps the items whose content did not change.
+- *Bun says which fields, children, watches and transport its bindings read.* The window tells Bun of a change at once only when something reads it, so a knob turned on a card still tells Bun nothing. Before an event it tells the watches and the transport, so a handler reads them fresh.
+- *Rust* keeps nodes in slots made in order. A first version walked ids through a hash map, and its frames cost a third more than the tree's.
+
+**Mistakes made into errors.** Reading a value that changes in a component body throws: "x={() => note.start}, not x={note.start}". The load check runs every card at its defaults, so most of these show as problems before the window opens. These are type errors: `each` must be a function, `Show` children must be a function, a `Set` or `Map` in `memory` is read-only (`.add` caught four in-place mutations in the piano roll port), and shapes have no `key`.
+
+**Numbers.** Same machine and profile as phase 2. Both columns come from the same harness, the phase 2 one run from its own commit. "Until drawn" counts from the pointer event and includes the test's own frame for each mouse event, so compare the columns, not the absolute values. Repeat with `cargo nextest run -p runtime --test window --cargo-profile release-fast --run-ignored only performance_of_the_piano --no-capture`.
+
+| Piano roll | 2,000 notes: tree / ops | 20,000 notes: tree / ops |
+| --- | --- | --- |
+| Open: until drawn, bytes | 67 ms, 1.0 MB / 97 ms, 1.25 MB | 299 ms, 9.9 MB / 564 ms, 12.3 MB |
+| Idle frame | 3.1 / 3.2 ms | 19.8 / 21.1 ms |
+| Frame dragging 512 selected | 3.2 / 4.1 ms | 26.5 / 22.8 ms |
+| Click that selects a note | 23 ms, 1.0 MB / 16 ms, 0.7 KB | 178 ms, 9.9 MB / 106 ms, 0.7 KB |
+| ...of which Bun, Rust apply | / 0.6 ms, < 0.01 ms | / 0.8 ms, < 0.01 ms |
+| Marquee of 512, released | 12 ms, 2.1 MB / 23 ms, 457 KB | 98 ms, 19.9 MB / 78 ms, 458 KB |
+| Release that moves 512 | 25 ms, 1.07 MB / 23 ms, 314 KB | 204 ms, 10 MB / 152 ms, 314 KB |
+| ...of which Bun, Rust apply | / 9.6 ms, 0.4 ms | / 41 ms, 0.6 ms |
+
+- A watch that moves one of 2,000 notes: 0.05 ms from the request to ops read, under 200 bytes, applied in under 1 µs. In phase 1 it was a 560 KB tree at 13 + 9 ms (`crates/typescript/src/performance.rs`).
+- At 20,000 notes, 41 ms of a release is the record. `update` copies, compares and writes the whole `notes` field (1 MB), Rust parses and checks it, sends it back, and Bun reconciles 20,000 notes. Edits of list items in records would cut it. This is not the UI model's cost.
+- A selection of 512 costs Bun about 9 ms and 450 KB, because each picked shape gets its own live expressions (`move.dx.plus(start)`) where phase 2 moved one `Group`. Interned live leaves, or a compact live format, would cut the bytes by half or more.
+- At 20,000 notes every frame is 20 ms: 60,000 shapes are placed before culling, in both models. That needs culling before placing, a native fix.
+
+**Agent authoring.** A tool written from the updated doc alone (a 16-step grid with a count and a playhead) type-checked at once. It found a real bug: a step lit by a click kept its colour, because a list index was tracked as `"3"` but changed as `3`. Fixed, with a Bun-driven test in `crates/typescript/src/bindings.rs`. Notes:
+- What changes needs `() =>` all over. It is the biggest change for agents, and the error message is what teaches it. Static cards (knobs, steps, meters) are unchanged.
+- Animation driven by memory (a playhead a `tick` writes) works but sends ops 30 times a second. Continuous motion still belongs in live values (`now.watch`, `now.tick`).
+- A size-dependent `Canvas` needs a function child that makes it again on resize. It works but is not obvious.
+- EVAL_RESULTS
+
+**Verdict.** The model works and the protocol is simpler: no versions, no handler cache, no read/unchanged dance, no render requests. A discrete event now costs what it changes on the wire (a click is 0.7 KB, not 1 MB) and under a millisecond on the main thread. At 2,000 notes the end-to-end win is small (click 23 to 16 ms, release 25 to 23 ms), and a big selection change is slower (12 to 23 ms). Phase 2's off-thread tree read was already cheap at that size. At 20,000 notes everything discrete is faster (click 178 to 106 ms). What then limits is not the UI model but the record round trip and native culling. The cost: an 800-line runtime, and agents must wrap what changes in functions, made safe by an error at load. For an arrangement (10,000+ clips) I'd adopt it, together with list-item record edits, culling before placing, a compact live-value format and stable item ids for selection.
+
