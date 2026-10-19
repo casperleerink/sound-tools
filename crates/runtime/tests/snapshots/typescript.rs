@@ -3,8 +3,8 @@
 //! - `typescript-mixer.png`: the mixer of `tooling/agent-eval/examples` as five tones play:
 //!   meters, faders, a muted strip, the master's scope and the device output.
 //! - `typescript-song.png`: the song of `tooling/agent-eval/examples`, 12 tracks of 150 clips,
-//!   as it plays: the SDK's transport on top, a clip selected, another open in the note editor,
-//!   the meters of the tracks.
+//!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
+//!   under the timeline, another clip open in the note editor, the meters of the tracks.
 //! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, beside
 //!   a small piano roll whose notes and labels are shapes of a space.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
@@ -147,6 +147,15 @@ pub(crate) fn snapshots(
     drop(opened);
 
     let mut files = crate::song::song_files(12, 150);
+    // The fourth track, whose devices show, has a reverb in its chain and a utility turned off.
+    files.retain(|(path, _)| path != "state/song/t03/chain/instance.json");
+    for (path, record) in [
+        ("chain/instance.json", r#"{"tool": "chain", "state": {"order": ["room", "trim"], "off": ["trim"]}}"#),
+        ("chain/room.json", r#"{"tool": "reverb", "state": {}}"#),
+        ("chain/trim.json", r#"{"tool": "utility", "state": {}}"#),
+    ] {
+        files.push((format!("state/song/t03/{path}"), record.to_string()));
+    }
     // A take of the voice, a region on its row from the second bar.
     files.push((
         "state/song/voice/take.json".to_string(),
@@ -187,7 +196,8 @@ pub(crate) fn snapshots(
         }
         anyhow::Ok(())
     };
-    // The first clip of the third track opens below; the second of the fifth is selected.
+    // A clip of the second track opens below; the second of the fourth is selected, which shows
+    // the devices of its track. The transport of the page is above the rows.
     click(&opened, cx, lane(crate::song::BAR / 2, 2.5), 2)?;
     click(&opened, cx, lane(3 * crate::song::BAR + 960, 4.5), 1)?;
     play(&mut opened, cx)?;
