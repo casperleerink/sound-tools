@@ -1,6 +1,7 @@
 //! What rendering a song costs, written as tools of the project and as the Rust arrangement, on
-//! the same content: twelve tracks of a synth, a filter whose cutoff a lane closes and a
-//! utility, 150 clips of 30 to 150 notes, and an audio track with one region. A measurement,
+//! the same content: twelve tracks of a synth and a filter whose cutoff a lane closes, each
+//! sending -12 dB into a return with a reverb, 150 clips of 30 to 150 notes, an audio track with
+//! one region, a second return that hears before the faders, and the master's limiter. A measurement,
 //! not a check. Run with `cargo nextest run -p runtime --test projects --cargo-profile
 //! release-fast --run-ignored only render_cost --no-capture`.
 
@@ -53,7 +54,7 @@ fn rust_arrangement() -> Harness {
     let root = folder.path();
     let project = json!({
         "format": 1,
-        "extensions": ["arrangement", "instrument", "filter", "utility"],
+        "extensions": ["arrangement", "instrument", "filter", "utility", "reverb"],
         "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
         "connections": [],
     });
@@ -67,7 +68,7 @@ fn rust_arrangement() -> Harness {
     let lane = json!([{ "device": "fx", "parameter": "cutoff_hz", "points": [{ "tick": 0, "value": 6000 }, { "tick": 245_760, "value": 1500 }] }]);
     for track in 0..TRACKS {
         let folder = format!("state/arrangement/t{track:02}");
-        let record = json!({ "tool": "arrangement.track", "state": { "name": format!("t{track:02}"), "order": track, "effects": ["fx", "mix"], "automation": lane } });
+        let record = json!({ "tool": "arrangement.track", "state": { "name": format!("t{track:02}"), "order": track, "effects": ["fx"], "automation": lane, "sends": { "ret-a": -12 } } });
         write(
             root,
             &format!("{folder}/instance.json"),
@@ -83,11 +84,6 @@ fn rust_arrangement() -> Harness {
             &format!("{folder}/fx.json"),
             r#"{"tool": "filter", "state": {}}"#,
         );
-        write(
-            root,
-            &format!("{folder}/mix.json"),
-            r#"{"tool": "utility", "state": {}}"#,
-        );
         let prefix = format!("state/song/t{track:02}/");
         for (path, text) in files.iter().filter(|(path, _)| path.starts_with(&prefix)) {
             let clip: Value = serde_json::from_str(text).unwrap();
@@ -99,6 +95,15 @@ fn rust_arrangement() -> Harness {
             write(root, &format!("{folder}/{name}"), &record.to_string());
         }
     }
+    for (order, name, pre_fader, effects) in [(TRACKS + 1, "ret-a", false, vec!["verb"]), (TRACKS + 2, "ret-b", true, vec![])] {
+        let record = json!({ "tool": "arrangement.track", "state": { "name": name, "kind": "return", "order": order, "pre_fader": pre_fader, "effects": effects } });
+        write(root, &format!("state/arrangement/{name}/instance.json"), &record.to_string());
+    }
+    write(
+        root,
+        "state/arrangement/ret-a/verb.json",
+        r#"{"tool": "reverb", "state": {"mix": 1}}"#,
+    );
     let voice = json!({ "tool": "arrangement.track", "state": { "name": "voice", "kind": "audio", "order": TRACKS } });
     write(
         root,
@@ -141,4 +146,20 @@ fn render_cost() {
     println!(
         "{TRACKS} tracks, {CLIPS} clips, a lane per track and a region, {BARS} bars: tools of the project {typescript:.0}x real time, the Rust arrangement {rust:.0}x"
     );
+}
+
+/// Renders the song of tools of the project for as long as `RENDER_COST_SECONDS` says, for a
+/// profiler to look at.
+#[test]
+#[ignore = "a measurement"]
+fn render_cost_of_the_song_alone() {
+    if !sound_typescript::has_bun() {
+        return;
+    }
+    let seconds: f64 = std::env::var("RENDER_COST_SECONDS").ok().and_then(|text| text.parse().ok()).unwrap_or(10.0);
+    let mut typescript = typescript_song();
+    let started = Instant::now();
+    while started.elapsed().as_secs_f64() < seconds {
+        realtime(&mut typescript);
+    }
 }

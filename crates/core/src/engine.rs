@@ -480,6 +480,9 @@ impl Engine {
         // What the device plays in this block. Every processor with no latency after it sees
         // exactly this, so a project without latency builds it once per block, as it always did.
         let heard = self.transport.view(0, frames, 0, false, None);
+        // The last view of a lead, which the next processors of the same lead share: the
+        // processors before one with latency, such as every player of a track, have one lead.
+        let mut led: Option<((u64, usize, usize), crate::Transport<'_>)> = None;
         let port_misuses = Cell::new(0);
         let dropped_events = Cell::new(0);
         for step in steps.iter() {
@@ -552,6 +555,14 @@ impl Engine {
                     let length = bend.map_or(rest, |bend| bend.min(rest));
                     let transport = match (lead, *moved, *resume_from) {
                         (0, false, None) if length == frames => heard.clone(),
+                        (_, false, None) => match &led {
+                            Some((key, view)) if *key == (lead, start, length) => view.clone(),
+                            _ => {
+                                let view = self.transport.view(start, length, lead, false, None);
+                                led = Some(((lead, start, length), view.clone()));
+                                view
+                            }
+                        },
                         _ => self
                             .transport
                             .view(start, length, lead, *moved, *resume_from),
