@@ -20,10 +20,12 @@ use sound_signals::Number;
 pub const RECORDER: &str = "recorder";
 /// Its number input that records while it is above 0.
 pub(crate) const RECORD: &str = "record";
+/// Its number input that keeps the audio input open while it is above 0, recording or not.
+pub(crate) const ARM: &str = "arm";
 /// The tap of when its takes start and end and what notes they hear, see [`Heard`].
 pub const HEARD: &str = "heard";
-/// The watch that is 1 while its input `record` is on, played or not: the window opens the
-/// audio input for it then, so a take has its sound from its first frame.
+/// The watch that is 1 while its input `arm` or `record` is on, played or not: the window opens
+/// the audio input for it then, so a take has its sound from its first frame.
 pub const ARMED: &str = "armed";
 pub(crate) const PROCESSOR: &str = "recorder";
 
@@ -92,7 +94,7 @@ pub(crate) fn json_tool() -> JsonTool {
 /// The record of the recorder, for the SDK.
 pub(crate) fn schema() -> ToolSchema {
     ToolSchema {
-        live: &[RECORD],
+        live: &[RECORD, ARM],
         ..ToolSchema::of::<RecorderState>(&[])
     }
 }
@@ -121,6 +123,7 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     let node = context.processor(PROCESSOR, || Recorder::new(tap, armed))?;
     context.input(NOTES_INPUT, InputEndpoint::new(node, Recorder::NOTES));
     context.input(RECORD, InputEndpoint::new(node, Recorder::RECORD));
+    context.input(ARM, InputEndpoint::new(node, Recorder::ARM));
     Ok(())
 }
 
@@ -131,6 +134,8 @@ pub(crate) struct Recorder {
     record: bool,
     /// What a cable last sent: a number sent every block records once.
     cabled: Option<bool>,
+    /// Its input `arm`.
+    arm: bool,
     /// A take runs.
     taking: bool,
     /// The frame of the song after the last block of the take.
@@ -145,11 +150,14 @@ pub(crate) const MAX_WAITING: usize = 16;
 pub(crate) enum RecorderUpdate {
     /// A performer turned `record` on or off: from the frame of engine time it names, or now.
     Record(bool, Option<u64>),
+    /// A performer turned `arm` on or off, now.
+    Arm(bool),
 }
 
 impl Recorder {
     pub(crate) const NOTES: EventInput<NoteEvent> = EventInput::new(0);
     pub(crate) const RECORD: EventInput<Number> = EventInput::new(1);
+    pub(crate) const ARM: EventInput<Number> = EventInput::new(2);
 
     fn new(heard: EventTap<Heard>, armed: Watch) -> Self {
         Self {
@@ -157,6 +165,7 @@ impl Recorder {
             armed,
             record: false,
             cabled: None,
+            arm: false,
             taking: false,
             played_to: 0,
             waiting: Schedule::new(MAX_WAITING),
@@ -171,6 +180,7 @@ impl Processor for Recorder {
         Ports::new()
             .event_input(Self::NOTES)
             .event_input(Self::RECORD)
+            .event_input(Self::ARM)
     }
 
     fn prepare(&mut self, _: &PrepareConfig) {}
@@ -186,6 +196,7 @@ impl Processor for Recorder {
                     self.record = *on;
                 }
             }
+            RecorderUpdate::Arm(on) => self.arm = *on,
         }
     }
 
@@ -257,7 +268,10 @@ impl Processor for Recorder {
             }
             offset = next;
         }
-        self.armed.set(if self.record { 1.0 } else { 0.0 });
+        if let Some(armed) = context.event_inputs.get(Self::ARM).last() {
+            self.arm = armed.event.0 > 0.0;
+        }
+        self.armed.set(if self.record || self.arm { 1.0 } else { 0.0 });
     }
 }
 

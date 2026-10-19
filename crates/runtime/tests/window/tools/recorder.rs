@@ -178,8 +178,8 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut 
     assert!(window.loudest(24_000) > 0.4);
 }
 
-/// The song of the examples records its voice: R arms the audio track, the record button
-/// records from the playhead, and a press again ends the take: a region of what the input
+/// The song of the examples records its voice: R arms the audio track, which opens its input,
+/// the record button records from the playhead, and a press again ends the take: a region of what the input
 /// captured lands on the voice's row where it was heard.
 #[gpui::test]
 fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) {
@@ -200,12 +200,13 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
     let arm = gpui::point(row.x - gpui::px(HEADER) + gpui::px(132.), row.y);
     window.press(arm);
     window.release(arm);
-    window.wait_for_bun();
-    let record = window.until_found("div-record");
-    window.cx.simulate_click(record, Modifiers::default());
-    window.until("the input opens", |_| {
+    // Armed, its input opens before it records.
+    window.until("the input opens", |window| {
+        window.settle();
         input.openings.load(Ordering::Relaxed) == 1
     });
+    let record = window.until_found("div-record");
+    window.cx.simulate_click(record, Modifiers::default());
     window.record_for(&input, 48_000);
     window.cx.simulate_click(record, Modifiers::default());
     window.until("a region of the voice", |window| {

@@ -1049,8 +1049,8 @@ impl Live {
         });
     }
 
-    /// Turns the input `record` of the recorder `played`, a child of `id`, on or off as `value`
-    /// says, as a performer does: nothing is saved.
+    /// Turns the input `record` or `arm` of the recorder `played`, a child of `id`, on or off as
+    /// `value` says, as a performer does: nothing is saved.
     fn record_on(
         &mut self,
         id: &InstanceId,
@@ -1059,15 +1059,27 @@ impl Live {
         session: &Entity<Session>,
         cx: &mut Context<Self>,
     ) {
-        let Some(value) = value.filter(|_| name == recorder::RECORD) else {
-            let problem = format!(
-                "a performer plays {name:?} of the recorder {:?}, which takes only the number input `record`",
-                played.name()
-            );
-            return self.tool_problem(id, problem, cx);
+        let update = match (name, value, at) {
+            (recorder::RECORD, Some(value), at) => {
+                let at = at.map(|at| performed_frame(Some(at), session, cx));
+                RecorderUpdate::Record(value > 0.0, at)
+            }
+            (recorder::ARM, Some(value), None) => RecorderUpdate::Arm(value > 0.0),
+            (recorder::ARM, Some(_), Some(_)) => {
+                let problem = format!(
+                    "a performer arms the recorder {:?} with an `at`: arming opens the input at once, so send `arm` without one",
+                    played.name()
+                );
+                return self.tool_problem(id, problem, cx);
+            }
+            _ => {
+                let problem = format!(
+                    "a performer plays {name:?} of the recorder {:?}, which takes only the number inputs `record` and `arm`",
+                    played.name()
+                );
+                return self.tool_problem(id, problem, cx);
+            }
         };
-        let at = at.map(|at| performed_frame(Some(at), session, cx));
-        let update = RecorderUpdate::Record(value > 0.0, at);
         session.update(cx, |session, cx| {
             let sent = session.background(cx, |project| {
                 project.send::<Recorder>(played, recorder::PROCESSOR, update)
