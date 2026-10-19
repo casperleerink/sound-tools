@@ -376,3 +376,34 @@ Goal: the clock is a concept of the SDK, the transport bar is SDK code, and the 
 **Open:** a musical key now crosses to Bun before it plays. 18 to 24 ms with the harness is fine for play and stop, not for a key that should sound on the press. If that matters, a key could be declared to do a clock op natively, as a drag turns a field without code.
 
 **Too specific (to revisit)**, now done: `transport: true`. Still open: notes as the only event kind, `devices` as only in-code effects, docs placing tools by `state/arrangement/...`.
+
+### Round 8
+
+Goal: nothing in the runtime or `crates/ui` names the arrangement for a project of TS tools to work. The Rust arrangement stays, as an ordinary extension behind its registration calls, until the TS project reaches parity.
+
+| Named the arrangement | Generic replacement |
+| --- | --- |
+| `lib.rs` called `arrangement::register`, `arrangement::view::register(.., add_track_of_kind, FIT_TEMPO)` and re-exported `add_track`, `main_arrangement`, `solo`, `clips_span` | `arrangement_wiring::register` and `register_views`; the helpers live in `runtime::arrangement_wiring`, where tests and `main.rs` name them |
+| A new folder always became an arrangement (`create_default_project`) | `Template { name, create }`: `NEW_PROJECT` (the arrangement until parity) and `BARE`, an empty `state/`; `open_or_create_from(.., template)` |
+| The window built `TransportPill` and every window had it, in a "keys and meter" mode for other views | `Chrome { tool, make, live_notes }`: what the main tool brings to the title row. The MIDI keyboard, computer keys, audio input and output meter are the window's `LiveInput`, shown alone when the main tool brings no chrome |
+| Live notes went to the selected track, else the first track (`target_track`) | `notes_inputs`: the selected instance's `notes`, or the nearest parent's; with nothing selected every instance at the top that has them. A main tool may say otherwise (`Chrome::live_notes`); the arrangement keeps its first-track rule |
+| Export audio was off without an arrangement; Export selection read `clips_span(selected_clips)` | Export is always offered, and says when nothing has an end; Export selection reads `Session::selected_span`, a function of the project the selection's owner sets, so a moved clip exports where it is |
+| The window showed the first instance at the top with a view | `"main"` in `project.json` names it; else the first, as before |
+| Song length came only from the arrangement's `end` | `JsonTool::end`; `timeline` ends at `start + length` when it plays once. A loop or a cue that waits adds nothing |
+| `--solo <track>` names arrangement tracks | `--only <path>`: in memory, the device plays one instance's `audio` instead of the `project.json` connections to it |
+| Generated tool docs put tools at `state/arrangement/pad/...` | Placed by parent: "a parent of this project owns it" |
+| SDK | `select(path, { span? })`: what the composer works on, which the keyboard plays and Export selection exports |
+
+`tooling/workspace-rules` lists every line of `crates/runtime/src` and `crates/ui/src` outside the wiring that names the arrangement. Seven are left: the module, the two registration calls, `NEW_PROJECT`, `CHROME`, and `--solo` in `main.rs` and the inspect doc. A new one fails until it is listed, and a listed one that goes fails too.
+
+**Where the code said otherwise than the design pass:**
+- **Pickers by ports: not done.** `Slot::{Instrument, Effect}` is used only by the arrangement's track panel, and no TS view has a picker yet. It belongs to the round that embeds device cards and a tool catalogue in TS views. YAGNI until then.
+- **`--only` reroutes `project.json`.** A TS tool cannot connect to the device in its behaviour, so every TS project reaches the device through `project.json`, and an in-memory reroute is all it takes. The arrangement connects its master to the device itself, so `--solo` stays for it until parity. Rejected: a "listen to one port" override in the core's graph compile, for one extension that goes.
+- **Recording takes stay in the arrangement's pill**, but reach the keyboard and the input through `LiveInput` (`Hold` keeps live notes and the input where a take needs them; `InputEvent` tells it the input failed or went away). They move to a `recorder` block in a later round.
+- **The computer keys button shows only while something takes notes**, in every window: the arrangement's pill embeds the live input, so an arrangement with no track no longer shows it.
+
+**Tests:** projects: a bare template leaves `state/` empty; the song ends where its last clip stops, not at a loop or a cue, and a render of it to that end plays its last note; `listen_only` plays one track and changes no file. Window: a track the song selects plays the MIDI keyboard, which reached nothing before, and a chosen clip is the exported span; `main` shows the song over the arrangement, with the live input in place of the pill. Every runtime window (449), projects (169), core, ui, typescript and workspace-rules test passes; clippy is clean; `bun check` passes on every example. The test where a page writes a timeline's notes clicked before Bun had drawn the page when 59 TS tests start their Buns at once; it now clicks until something is written.
+
+**Numbers:** nothing in the frame or Bun path changed this round, so Round 7's hold; not measured again. The snapshots look as before, apart from the computer keys of an empty arrangement.
+
+**Too specific (to revisit)**, now done: docs placing tools by `state/arrangement/...`. Still open: notes as the only event kind, `devices` as only in-code effects, `Slot` in the pickers.
