@@ -37,26 +37,35 @@ def write(folder: Path, relative: str, contents) -> None:
     path.write_text(contents if isinstance(contents, str) else json.dumps(contents))
 
 
+def track(folder: Path, name: str, title: str, synth: dict, clips: dict) -> None:
+    """A track of the song of the DAW template, after the others, with these clips."""
+    base = f"{SONG}/{name}"
+    write(folder, f"{base}/instance.json", {"tool": "track", "state": {"title": title}})
+    write(folder, f"{base}/synth.json", {"tool": "instrument.synth", "state": synth})
+    write(folder, f"{base}/fx.json", {"tool": "filter", "state": {}})
+    write(folder, f"{base}/chain/instance.json", {"tool": "chain", "state": {}})
+    write(folder, f"{base}/mix.json", {"tool": "fader", "state": {}})
+    write(folder, f"{base}/rec.json", {"tool": "recorder", "state": {}})
+    for clip, notes in clips.items():
+        write(folder, f"{base}/{clip}.json", {"tool": "timeline", "state": {"start": 0, "length": 15360, "notes": notes}})
+    song = record(folder, f"{SONG}/instance.json")
+    song.setdefault("state", {}).setdefault("order", []).append(name)
+    write(folder, f"{SONG}/instance.json", song)
+
+
 def piece(folder: Path) -> None:
-    """A pad with four chords and a lead with a melody, both on the built-in synth."""
-    write(folder, "state/arrangement/pad/instance.json",
-          {"tool": "arrangement.track", "state": {"name": "Pad", "colour": "teal", "order": 0}})
-    write(folder, "state/arrangement/lead/instance.json",
-          {"tool": "arrangement.track", "state": {"name": "Lead", "colour": "peach", "order": 1}})
-    write(folder, "state/arrangement/pad/instrument.json",
-          {"tool": "instrument.synth", "state": {"gain": 0.12}})
-    write(folder, "state/arrangement/lead/instrument.json",
-          {"tool": "instrument.synth", "state": {"gain": 0.15}})
+    """A new DAW project whose tracks are a pad with four chords and a lead with a melody, both on
+    the built-in synth."""
+    setup_daw(folder)
+    shutil.rmtree(folder / SONG / "t00")
     chords = [[48, 55, 64], [45, 52, 60], [41, 48, 57], [43, 50, 59]]
     notes = [{"start": i * 3840, "length": 3800, "pitch": p, "velocity": 90}
              for i, chord in enumerate(chords) for p in chord]
-    write(folder, "state/arrangement/pad/chords.json",
-          {"tool": "arrangement.clip", "state": {"start": 0, "length": 15360, "notes": notes}})
+    track(folder, "pad", "Pad", {"gain": 0.12}, {"chords": notes})
     melody = [72, 74, 76, 79, 76, 74, 72, 71, 72, 74, 76, 72, 69, 71, 72, 72]
     notes = [{"start": i * 960, "length": 900, "pitch": p, "velocity": 100}
              for i, p in enumerate(melody)]
-    write(folder, "state/arrangement/lead/melody.json",
-          {"tool": "arrangement.clip", "state": {"start": 0, "length": 15360, "notes": notes}})
+    track(folder, "lead", "Lead", {"gain": 0.15}, {"melody": notes})
 
 
 def record(folder: Path, relative: str) -> dict:
@@ -65,11 +74,9 @@ def record(folder: Path, relative: str) -> dict:
 
 
 def track_effects(folder: Path, track: str) -> list:
-    """The tools of the effects of a track, in order, from its records."""
-    instance = record(folder, f"state/arrangement/{track}/instance.json")
-    effects = instance.get("state", {}).get("effects", [])
-    names = [effect if isinstance(effect, str) else effect.get("name") for effect in effects]
-    return [record(folder, f"state/arrangement/{track}/{name}.json").get("tool") for name in names]
+    """The tools of the effects of a track's chain, in order, from its records."""
+    names = record(folder, f"{SONG}/{track}/chain/instance.json").get("state", {}).get("order", [])
+    return [record(folder, f"{SONG}/{track}/chain/{name}.json").get("tool") for name in names]
 
 
 def no_problems(folder: Path) -> bool:
@@ -84,7 +91,7 @@ def setup_builtin(folder: Path) -> None:
 
 def check_builtin(folder: Path) -> dict:
     lead = track_effects(folder, "lead")
-    synth = record(folder, "state/arrangement/pad/instrument.json").get("state", {})
+    synth = record(folder, f"{SONG}/pad/synth.json").get("state", {})
     brighter = synth.get("filter", {}) != {} or any(
         tool in ("eq", "filter") for tool in track_effects(folder, "pad")) or \
         json.dumps(synth) != json.dumps({"gain": 0.12})
@@ -98,19 +105,17 @@ TAPE_TOOL = (HERE / "fixtures" / "worn-tape.ts").read_text()
 def setup_tape_user(folder: Path) -> None:
     piece(folder)
     write(folder, "extensions/worn-tape.ts", TAPE_TOOL)
-    write(folder, "state/arrangement/pad/tape.json",
+    write(folder, f"{SONG}/pad/chain/tape.json",
           {"tool": "worn-tape", "state": {"wear": 0.5, "character": "cassette"}})
-    pad = record(folder, "state/arrangement/pad/instance.json")
-    pad["state"]["effects"] = ["tape"]
-    write(folder, "state/arrangement/pad/instance.json", pad)
+    write(folder, f"{SONG}/pad/chain/instance.json", {"tool": "chain", "state": {"order": ["tape"]}})
 
 
 def check_tape_user(folder: Path) -> dict:
     lead = track_effects(folder, "lead")
-    lead_tape = [name for name in (folder / "state/arrangement/lead").glob("*.json")
+    lead_tape = [name for name in (folder / SONG / "lead/chain").glob("*.json")
                  if record(folder, str(name.relative_to(folder))).get("tool") == "worn-tape"]
     lead_state = record(folder, str(lead_tape[0].relative_to(folder)))["state"] if lead_tape else {}
-    pad_state = record(folder, "state/arrangement/pad/tape.json").get("state", {})
+    pad_state = record(folder, f"{SONG}/pad/chain/tape.json").get("state", {})
     return {
         "tape on lead": "worn-tape" in lead,
         "lead is a light reel": lead_state.get("character") == "reel"
@@ -126,10 +131,7 @@ def setup_tape_builder(folder: Path) -> None:
 
 def setup_with_bass(folder: Path) -> None:
     piece(folder)
-    write(folder, "state/arrangement/bass/instance.json",
-          {"tool": "arrangement.track", "state": {"name": "Bass", "colour": "red", "order": 2}})
-    write(folder, "state/arrangement/bass/instrument.json",
-          {"tool": "instrument.synth", "state": {}})
+    track(folder, "bass", "Bass", {}, {})
 
 
 def project_tools(folder: Path) -> dict:
@@ -140,22 +142,22 @@ def project_tools(folder: Path) -> dict:
             continue
         text = path.read_text()
         for name in re.findall(r'name:\s*"([a-z0-9_-]+)"', text):
-            tools[name] = text
+            if name not in TEMPLATE_TOOLS:
+                tools[name] = text
     return tools
 
 
 def instruments(folder: Path) -> dict:
     """The tool of the instrument of each track, by track folder."""
     found = {}
-    for track in (folder / "state/arrangement").iterdir():
-        if track.is_dir():
-            found[track.name] = record(folder, f"state/arrangement/{track.name}/instrument.json").get("tool")
+    for synth in (folder / SONG).glob("*/synth.json"):
+        found[synth.parent.name] = record(folder, str(synth.relative_to(folder))).get("tool")
     return found
 
 
 def sounds(folder: Path, track: str) -> bool:
     """Whether the track plays anything in the first eight seconds."""
-    report = runtime(folder, "--analyze", "--seconds", "8", "--solo", track)
+    report = runtime(folder, "--analyze", "--seconds", "8", "--only", f"song/{track}")
     match = re.search(r"loudness (-?[0-9.]+) LUFS", report)
     return bool(match) and float(match.group(1)) > -60
 
@@ -207,14 +209,14 @@ ACID_BASS = (HERE / "fixtures" / "acid-bass.tsx").read_text()
 def setup_acid_bass(folder: Path) -> None:
     setup_with_bass(folder)
     write(folder, "extensions/acid-bass.tsx", ACID_BASS)
-    write(folder, "state/arrangement/bass/instrument.json", {"tool": "acid-bass", "state": {
+    write(folder, f"{SONG}/bass/synth.json", {"tool": "acid-bass", "state": {
         "steps": [1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1],
         "accents": [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0],
         "cutoff": 380, "resonance": 0.7, "note": 36}})
 
 
 def check_acid_bass(folder: Path) -> dict:
-    state = record(folder, "state/arrangement/bass/instrument.json").get("state", {})
+    state = record(folder, f"{SONG}/bass/synth.json").get("state", {})
     accents = state.get("accents", [])
     return {
         "eighths": state.get("steps") == [1, 0] * 8,
@@ -226,9 +228,9 @@ def check_acid_bass(folder: Path) -> dict:
 
 
 def check_sweep(folder: Path) -> dict:
-    lanes = record(folder, "state/arrangement/bass/instance.json").get("state", {}).get("automation", [])
-    cutoff = [lane for lane in lanes if lane.get("parameter") == "cutoff"]
-    points = cutoff[0].get("points", []) if cutoff else []
+    lanes = record(folder, f"{SONG}/bass/instance.json").get("state", {}).get("automation", [])
+    cutoff = [lane["lane"] for lane in lanes if lane.get("target", "").endswith(".cutoff")]
+    points = record(folder, f"{SONG}/bass/{cutoff[0]}.json").get("state", {}).get("points", []) if cutoff else []
     # Bars 3 and 4 are ticks 7680 to 15360; a lane may hold a value before them.
     inside = [point["value"] for point in points if 7680 <= point.get("tick", -1) <= 15360]
     return {
@@ -262,7 +264,7 @@ def check_granular(folder: Path) -> dict:
     tools = project_tools(folder)
     played = [(track, tool) for track, tool in instruments(folder).items() if tool in tools]
     text = tools.get(played[0][1], "") if played else ""
-    state = record(folder, f"state/arrangement/{played[0][0]}/instrument.json").get("state", {}) if played else {}
+    state = record(folder, f"{SONG}/{played[0][0]}/synth.json").get("state", {}) if played else {}
     return {
         "a project tool plays a track": bool(played),
         "with a sample field": "sample(" in text,
@@ -281,7 +283,7 @@ def check_experiment(folder: Path) -> dict:
     text = tools.get(tool, "")
     connections = json.loads((folder / "project.json").read_text()).get("connections", [])
     return {
-        "no arrangement": not (folder / "state/arrangement").exists(),
+        "no song": not (folder / SONG).exists(),
         "a project tool at the top": bool(top),
         "with a view, a space and a tick": all(word in text for word in ("view", "Space", "tick")),
         "connected to the device": any(c.get("from", {}).get("instance") == name for c in connections),
@@ -362,14 +364,18 @@ def check_keys_composer(folder: Path) -> dict:
 
 # The DAW template: a song of tracks written with the SDK, as "New DAW project" makes it.
 DAW = HERE.parents[1] / "templates" / "daw"
+SONG = "state/song"
 TEMPLATE_TOOLS = {"song", "track", "tape", "chain", "bus"}
 
 
 def setup_daw(folder: Path) -> None:
-    """The folder as a new DAW project: the arrangement the runtime made is replaced."""
-    (folder / "project.json").unlink()
-    shutil.rmtree(folder / "state")
-    shutil.copytree(DAW, folder, dirs_exist_ok=True, ignore=shutil.ignore_patterns("template.json"))
+    """The folder as a new DAW project: the files of the template in the project the runtime made,
+    which enables every extension."""
+    project = json.loads((folder / "project.json").read_text())
+    template = json.loads((DAW / "project.json").read_text())
+    shutil.copytree(DAW, folder, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("template.json", "project.json"))
+    write(folder, "project.json", {**project, **template})
 
 
 def setup_daw_chords(folder: Path) -> None:
@@ -448,13 +454,13 @@ def check_launcher(folder: Path) -> dict:
     report = runtime(folder, "--analyze", "--seconds", "8")
     loudness = re.search(r"loudness (-?[0-9.]+) LUFS", report)
     return {
-        "no arrangement": not (folder / "state/arrangement").exists(),
+        "no song": not (folder / SONG).exists(),
         "a project tool owns the parts": owner is not None,
         "it owns the built-in synth": "instrument.synth" in children,
         "and an effect": any(child not in ("instrument.synth", "timeline", None)
                              for child in children),
         "timelines and launches": "timeline" in children and '"launch"' in text,
-        "a view with the transport": "view:" in text and "transport: true" in text,
+        "a view with the transport": "view:" in text and "<Transport" in text,
         "connected to the device": owner is not None
         and any(c.get("from", {}).get("instance") == owner.name for c in connections),
         "it sounds": bool(loudness) and float(loudness.group(1)) > -60,
