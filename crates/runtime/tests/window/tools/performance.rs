@@ -607,6 +607,12 @@ fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {
         bytes,
     );
     window.wait_for_bun();
+    // The cards of the devices of its track show under the timeline now.
+    window.until_found("div-rack");
+    let idle: Vec<Duration> = (0..MOVES)
+        .map(|_| window.timed(|window| window.cx.update(|window, _| window.refresh())))
+        .collect();
+    print(&format!("{what}: an idle frame with the devices of a track"), idle);
 
     // It moves two bars on.
     window.down(clip);
