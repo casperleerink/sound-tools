@@ -227,3 +227,35 @@ For reference, the Rust arrangement scrolls 100 tracks of 100 clips at 3.6 ms a 
 - recording into timeline records and audio takes into `assets/`;
 - rows that scroll with a space (headers next to a timeline), clipping, menus, text input (rename), file drop, drag to reorder, a built-in device's card inside a page (the track panel);
 - keys a page takes one by one.
+
+### Round 5
+
+Goal: the song scales with what shows and what changed, not with the song, and the author pains of round 4b are gone.
+
+**The frame.** A profile said most of a frame of many shapes was GPUI ordering each quad by what it overlaps (`BoundsTree::insert`), not our code. Inside a layer, primitives share one order and paint by kind (quads, then paths, then text), so a run of shapes whose kinds come in that order is now one layer, and an earlier kind starts the next. Then a space keeps an index of its shapes until the next batch of ops: those that stay (no live number places them, no drag moves them) keep where they are, and a frame skips those that do not show before working out anything; those that move are worked out every frame, unless they sit in a group box that does not show.
+
+**Bun.** The 25 ms of a clip move was the first edit after a page opened: the store's copy of the records had never been reconciled, so `reconcile` walked all 54,000 notes once. A store's copy now remembers the frozen value it was made from. A list of children is made again only when an edit not heard yet is inside it. A behaviour's answer says the fields it read; the runtime keeps the answer under the key of those, so a fader on a child, or a clip moving in a track, asks a behaviour that reads names and tools nothing.
+
+**Author pains, fixed generically:**
+- A `Group` places its shapes from `x`, `y`, moves with its own `moves`/`grows`, and with `clip` hides and ignores the pointer outside its box: a clip's notes end at its end and move with it.
+- A `div` with `follow: { y }` scrolls its children with a space, laid over it so they never make it taller. A page's body is a column, so a top `div` that grows fills the window: the timeline scrolls and the editor has room.
+- `<>…</>` fragments.
+- A tool's `keys` are the keys it takes; the rest, space too, stay the window's. The song deletes and copies on chosen clips while space plays.
+- In an `update`, a child's state has every default, built-in tools' too (generated from their schemas), and only what the change changed is sent. Children are typed as a list to edit, `push` to, or replace, so `?? []` and `?? 0` are gone from the song's edits.
+- Not done: moving a child to another parent is still delete and create. An id is its path in the core; a move there is a core change, not an SDK one.
+
+**Numbers** (M1 Max, release-fast; "until drawn" includes about 10 ms of the harness's polling):
+
+| | Round 4b | Round 5 |
+| --- | --- | --- |
+| 12 tracks / 150 clips: idle, scroll, play frame | 4.9, 4.7, 4.9 ms | 1.7, 1.6, 1.8 ms |
+| 24 tracks / 600 clips: idle, scroll, play frame | 12.6, 12.7, 13.0 ms | 3.5, 3.7, 3.6 ms (2.8 ms before clipped groups and the filling layout) |
+| 24 / 600: release that moves a clip, Bun | 25 ms | 1.7 ms |
+| 12 / 150: release that moves a clip, until drawn | 20 ms | 7.6 ms |
+| Scale project, 100 × 100 clips: idle, scroll across, scroll down, play | not measured | 3.2, 3.2, 3.2, 3.7 ms |
+| Scale project: open until drawn | not measured | 3.1 s |
+| Behaviour questions while a fader drags | one per move | none |
+
+The Rust arrangement scrolls the same scale project at 3.6 ms. 24 tracks cost about twice 12 because twice as many rows show. Opening is now the cost that grows with the song: about 0.8 µs per binding in Bun (round 4a), 3 s at 10,000 clips. Fixing that is the next SDK cost, a leaner reactive core or lazy rows.
+
+**Too specific (to revisit)**, added: a tool's `keys` cannot take space or `r` from the window without taking every plain key's binding context; fine for now, a per-key context would be cleaner.
