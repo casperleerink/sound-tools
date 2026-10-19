@@ -129,6 +129,7 @@ impl Harness {
             pattern,
             quantize,
             once: false,
+            after: Ticks(0),
         });
         self.control.update(self.player, launch).unwrap();
     }
@@ -138,6 +139,7 @@ impl Harness {
             pattern: Some(0),
             quantize,
             once: true,
+            after: Ticks(0),
         };
         (self.control)
             .update(self.player, NotePlayerUpdate::Launch(launch))

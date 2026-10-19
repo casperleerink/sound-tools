@@ -188,6 +188,8 @@ pub struct Launch {
     pub quantize: Quantize,
     /// Plays one round and stops, instead of looping.
     pub once: bool,
+    /// It lands no earlier than this tick: a launch sent for a frame inside a block.
+    pub after: Ticks,
 }
 
 /// An edit, not a performance: pattern `pattern` plays from the tick `at` of the song, where it

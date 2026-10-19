@@ -17,9 +17,11 @@ use sound_core::{
 use sound_notes::{
     Amount, Bend, Clip, Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer, NotePlayerUpdate,
     NoteTimeline, Pattern, PedalChange, Placing, PlayerWatches, Point, QUEUED_STOP, Quantize,
+    Schedule,
 };
 use sound_signals::Number;
 
+use crate::recorder::MAX_WAITING;
 use crate::tools::key;
 
 pub(crate) const NAME: &str = "timeline";
@@ -113,7 +115,7 @@ fn end(state: &Value) -> Option<Ticks> {
         let notes = state.get("notes").and_then(Value::as_array)?;
         let ends = notes
             .iter()
-            .filter_map(|note| Some(ticks(note, "start")? + ticks(note, "length")?));
+            .filter_map(|note| ticks(note, "start")?.checked_add(ticks(note, "length")?));
         ends.max()
     })?;
     start.checked_add(length).map(Ticks)
@@ -193,7 +195,7 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     let record = record(state).map_err(BehaviourError::Other)?;
     let pattern = round(&record).map_err(BehaviourError::Other)?;
     let lanes = lanes(&record, &pattern).map_err(BehaviourError::Other)?;
-    let node = context.processor(PROCESSOR, Timeline::default)?;
+    let node = context.processor(PROCESSOR, Timeline::new)?;
     // Only a loop shows what plays: a song of many timelines keeps no watches it never reads.
     let shown = record.looped.then(|| TimelineWatches {
         playing: context.watch("playing"),
@@ -247,7 +249,6 @@ pub(crate) struct TimelineWatches {
 }
 
 /// A [`NotePlayer`] of one round that launches what its input `launch` hears.
-#[derive(Default)]
 pub(crate) struct Timeline {
     player: NotePlayer,
     /// What the player shows, by pattern index, which `shown` turns into the watches above.
@@ -257,8 +258,8 @@ pub(crate) struct Timeline {
     looped: bool,
     /// What the input last launched: a number a cable sends every block launches once.
     heard: Option<bool>,
-    /// A launch a performer sends for a frame of engine time still to come.
-    waiting: Option<(u64, bool)>,
+    /// Launches performers sent for frames of engine time still to come.
+    waiting: Schedule<bool>,
 }
 
 pub(crate) enum TimelineUpdate {
@@ -277,11 +278,25 @@ impl Timeline {
     pub(crate) const LAUNCH: EventInput<Number> = EventInput::new(0);
     pub(crate) const NOTES: EventOutput<NoteEvent> = NotePlayer::NOTES;
 
-    fn launch(&mut self, start: bool) {
+    pub(crate) fn new() -> Self {
+        Self {
+            player: NotePlayer::default(),
+            inner: PlayerWatches::default(),
+            shown: None,
+            quantize: Quantize::default(),
+            looped: false,
+            heard: None,
+            waiting: Schedule::new(MAX_WAITING),
+        }
+    }
+
+    /// Starts or stops it at the next point of its quantize from `after`.
+    fn launch(&mut self, start: bool, after: Ticks) {
         let launch = Launch {
             pattern: start.then_some(0),
             quantize: self.quantize,
             once: !self.looped,
+            after,
         };
         self.player.update(&mut NotePlayerUpdate::Launch(launch));
     }
@@ -304,7 +319,8 @@ impl Processor for Timeline {
     }
 
     fn rests_until(&self) -> Option<Ticks> {
-        self.player.rests_until()
+        // A launch sent for later needs the blocks until it lands.
+        self.waiting.next().map_or(self.player.rests_until(), |_| None)
     }
 
     fn update(&mut self, update: &mut TimelineUpdate) {
@@ -313,8 +329,15 @@ impl Processor for Timeline {
             TimelineUpdate::Launches((quantize, looped)) => {
                 (self.quantize, self.looped) = (*quantize, *looped);
             }
-            TimelineUpdate::Launch(start, None) => self.launch(*start),
-            TimelineUpdate::Launch(start, Some(at)) => self.waiting = Some((*at, *start)),
+            TimelineUpdate::Launch(start, None) => {
+                self.waiting.clear();
+                self.launch(*start, Ticks(0));
+            }
+            TimelineUpdate::Launch(start, Some(at)) => {
+                if !self.waiting.add(Some(*at), *start) {
+                    self.launch(*start, Ticks(0));
+                }
+            }
             TimelineUpdate::Show(shown) => {
                 std::mem::swap(&mut self.shown, shown);
                 let inner = self.shown.as_ref().map(|_| self.inner.clone());
@@ -324,16 +347,20 @@ impl Processor for Timeline {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let end = context.start_frame + context.frames as u64;
-        if let Some((_, start)) = self.waiting.take_if(|(at, _)| *at < end) {
-            self.launch(start);
+        let (first, frames) = (context.start_frame, context.frames);
+        self.waiting.playing(first, frames);
+        let end = first + frames as u64;
+        while let Some((at, start)) = self.waiting.take(end - 1) {
+            let after = context.transport.tick_at_offset(at.saturating_sub(first) as usize);
+            self.launch(start, after);
         }
         // The last of the block: two cables would launch each other again every block.
         if let Some(timed) = context.event_inputs.get(Self::LAUNCH).last() {
             let start = launched(timed.event.0);
             if self.heard != Some(start) {
                 self.heard = Some(start);
-                self.launch(start);
+                let after = context.transport.tick_at_offset(timed.offset);
+                self.launch(start, after);
             }
         }
         self.player.process(context);

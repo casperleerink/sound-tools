@@ -450,7 +450,7 @@ impl NotePlayer {
                 return Some((launch, transport.heard_tick));
             }
             let time_signatures = transport.clock.tempo_map().time_signatures();
-            let at = launch.quantize.point_from(range.start, time_signatures);
+            let at = (launch.quantize).point_from(range.start.max(launch.after), time_signatures);
             (at < range.end).then_some((launch, at))
         });
         let playing = |launched: Option<Launched>| {

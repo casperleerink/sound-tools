@@ -1,9 +1,8 @@
 //! The `recorder`: a child of a parent of the project that records what it hears while its
-//! input `record` is on and the song plays. The notes that reach its input `notes` become a
-//! `timeline` next to it, and the channels of the audio input its record names a `region`,
-//! each where it was heard, in one undo step. The window does the writing (`runtime`'s
-//! recorders); the processor here only says, to the frame, when a take starts and ends and what
-//! notes it heard.
+//! input `record` is on and the song plays: the notes that reach its input `notes`, and the
+//! channels of the audio input its record names. The window writes the takes and gives them to
+//! the parent's `onTake` (`runtime`'s recorders); the processor here only says, to the frame,
+//! when a take starts and ends and what notes it heard.
 
 use std::sync::Arc;
 
@@ -14,7 +13,7 @@ use sound_core::{
     BehaviourContext, BehaviourError, EventInput, EventTap, InputEndpoint, JsonTool, JsonToolDoc,
     Ports, PrepareConfig, ProcessContext, Processor, State, Tappable, ToolSchema, Watch,
 };
-use sound_notes::{NOTES_INPUT, NoteEvent};
+use sound_notes::{NOTES_INPUT, NoteEvent, Schedule};
 use sound_signals::Number;
 
 /// The tool of a recorder.
@@ -136,9 +135,12 @@ pub(crate) struct Recorder {
     taking: bool,
     /// The frame of the song after the last block of the take.
     played_to: u64,
-    /// What a performer sent for a frame of engine time still to come.
-    waiting: Option<(u64, bool)>,
+    /// What performers sent for frames of engine time still to come.
+    waiting: Schedule<bool>,
 }
+
+/// How many sends for later a recorder or a timeline keeps: past that one plays at once.
+pub(crate) const MAX_WAITING: usize = 16;
 
 pub(crate) enum RecorderUpdate {
     /// A performer turned `record` on or off: from the frame of engine time it names, or now.
@@ -157,7 +159,7 @@ impl Recorder {
             cabled: None,
             taking: false,
             played_to: 0,
-            waiting: None,
+            waiting: Schedule::new(MAX_WAITING),
         }
     }
 }
@@ -175,49 +177,182 @@ impl Processor for Recorder {
 
     fn update(&mut self, update: &mut RecorderUpdate) {
         match update {
-            RecorderUpdate::Record(on, None) => self.record = *on,
-            RecorderUpdate::Record(on, Some(at)) => self.waiting = Some((*at, *on)),
+            RecorderUpdate::Record(on, None) => {
+                self.waiting.clear();
+                self.record = *on;
+            }
+            RecorderUpdate::Record(on, Some(at)) => {
+                if !self.waiting.add(Some(*at), *on) {
+                    self.record = *on;
+                }
+            }
         }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
-        let end = context.start_frame + context.frames as u64;
-        if let Some((_, on)) = self.waiting.take_if(|(at, _)| *at < end) {
-            self.record = on;
-        }
-        if let Some(timed) = context.event_inputs.get(Self::RECORD).last() {
-            let on = timed.event.0 > 0.0;
-            if self.cabled != Some(on) {
-                self.cabled = Some(on);
-                self.record = on;
-            }
-        }
-        self.armed.set(if self.record { 1.0 } else { 0.0 });
+        let (start, frames) = (context.start_frame, context.frames);
+        self.waiting.playing(start, frames);
         let transport = &context.transport;
         let range = transport.frame_range.start.0..transport.frame_range.end.0;
         let playing = transport.playing && range.start < range.end;
         // Where the song is at an offset in the block: right after a play in a project with
         // latency the song starts later than the block.
-        let first = context
-            .frames
-            .saturating_sub((range.end - range.start) as usize);
+        let first = frames.saturating_sub((range.end - range.start) as usize);
         let frame_at = |offset: usize| range.start + offset.saturating_sub(first) as u64;
-        if self.taking && (!playing || transport.jumped || !self.record) {
-            // It ends where the song last played to, which a stop or a jump left behind.
-            self.taking = false;
-            let ended = (self.played_to, Heard::Ended);
-            self.heard.write(std::iter::once(ended));
+        let mut cabled = context.event_inputs.get(Self::RECORD).iter().peekable();
+        let notes = context.event_inputs.get(Self::NOTES);
+        let mut read = 0;
+        // The block in stretches between what turns `record` on or off, each at its frame.
+        let mut offset = 0;
+        loop {
+            if self.taking && (!playing || (offset == 0 && transport.jumped) || !self.record) {
+                // It ends where the song last played to, which a stop or a jump left behind.
+                self.taking = false;
+                let end = if offset == 0 { self.played_to } else { frame_at(offset) };
+                self.heard.write(std::iter::once((end, Heard::Ended)));
+            }
+            if !self.taking && self.record && playing {
+                self.taking = true;
+                let begin = frame_at(offset);
+                self.heard.write(std::iter::once((begin, Heard::Started)));
+            }
+            let scheduled = (self.waiting.next())
+                .filter(|at| *at < start + frames as u64)
+                .map(|at| at.saturating_sub(start) as usize);
+            let cable = cabled.peek().map(|timed| timed.offset);
+            let next = scheduled.into_iter().chain(cable).min().unwrap_or(frames);
+            let heard = &notes[read..];
+            let heard = &heard[..heard.partition_point(|timed| timed.offset < next)];
+            read += heard.len();
+            if self.taking {
+                self.heard
+                    .write(heard.iter().map(|timed| (frame_at(timed.offset), Heard::Note(timed.event))));
+                self.played_to = if next >= frames { range.end } else { frame_at(next) };
+            }
+            if next >= frames {
+                break;
+            }
+            if scheduled == Some(next) {
+                if let Some((_, on)) = self.waiting.take(start + next as u64) {
+                    self.record = on;
+                }
+            } else if let Some(timed) = cabled.next() {
+                // A number sent every block records once.
+                let on = timed.event.0 > 0.0;
+                if self.cabled != Some(on) {
+                    self.cabled = Some(on);
+                    self.record = on;
+                }
+            }
+            offset = next;
         }
-        if !self.taking && self.record && playing {
-            self.taking = true;
-            self.heard
-                .write(std::iter::once((range.start, Heard::Started)));
+        self.armed.set(if self.record { 1.0 } else { 0.0 });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use std::sync::Arc;
+
+    use sound_core::{Connection, Engine, EngineConfig, EngineControl, Node, Ticks};
+    use sound_notes::{Length, Note, NotePlayerUpdate, Pattern, Pitch, Quantize, Velocity};
+
+    use super::*;
+    use crate::timeline::{Timeline, TimelineUpdate};
+
+    /// A timeline that waits for a launch, whose notes a recorder hears.
+    struct Rig {
+        control: EngineControl,
+        engine: Engine,
+        recorder: Node<Recorder>,
+        timeline: Node<Timeline>,
+        heard: EventTap<Heard>,
+    }
+
+    fn rig() -> Rig {
+        let (mut control, engine) = Engine::new(EngineConfig::new(48_000, 2));
+        let heard = EventTap::new();
+        let mut edit = control.edit();
+        let recorder = Recorder::new(heard.clone(), Watch::new());
+        let recorder = edit.add_processor("recorder", recorder).unwrap();
+        let timeline = edit.add_processor("timeline", Timeline::new()).unwrap();
+        edit.connect(Connection::new(
+            timeline.id(),
+            Timeline::NOTES,
+            recorder.id(),
+            Recorder::NOTES,
+        ))
+        .unwrap();
+        edit.commit().unwrap();
+        let note = Note {
+            start: Ticks(0),
+            length: Length::new(Ticks(960)).unwrap(),
+            pitch: Pitch::new(60).unwrap(),
+            velocity: Velocity::new(100).unwrap(),
+        };
+        let pattern = Pattern::new(Length::new(Ticks(3_840)).unwrap(), &[note]).unwrap();
+        let patterns = NotePlayerUpdate::Patterns(Arc::new(vec![pattern]));
+        (control.update(timeline, TimelineUpdate::Player(patterns))).unwrap();
+        let launches = TimelineUpdate::Launches((Quantize::Now, false));
+        control.update(timeline, launches).unwrap();
+        control.play();
+        Rig {
+            control,
+            engine,
+            recorder,
+            timeline,
+            heard,
         }
-        if self.taking {
-            let notes = context.event_inputs.get(Self::NOTES).iter();
-            self.heard
-                .write(notes.map(|timed| (frame_at(timed.offset), Heard::Note(timed.event))));
-            self.played_to = range.end;
+    }
+
+    impl Rig {
+        fn record(&mut self, on: bool, at: Option<u64>) {
+            let update = RecorderUpdate::Record(on, at);
+            self.control.update(self.recorder, update).unwrap();
         }
+
+        /// Plays `frames` in blocks of 64 and gives what the recorder heard so far.
+        fn render(&mut self, frames: usize) -> Vec<(u64, Heard)> {
+            let mut output = vec![0.0; frames * 2];
+            for block in output.chunks_mut(64 * 2) {
+                self.engine.process_block(block);
+            }
+            self.control.poll().unwrap();
+            let mut heard = Vec::new();
+            self.heard.read(0, &mut heard);
+            heard
+        }
+    }
+
+    #[test]
+    fn a_take_sent_for_later_starts_and_ends_at_its_frames() {
+        let mut rig = rig();
+        rig.record(true, Some(32));
+        rig.record(false, Some(96));
+        let heard = rig.render(256);
+        assert_eq!(heard, [(32, Heard::Started), (96, Heard::Ended)]);
+    }
+
+    #[test]
+    fn a_send_for_now_drops_what_waits() {
+        let mut rig = rig();
+        rig.record(true, Some(1_000));
+        rig.record(false, None);
+        assert_eq!(rig.render(2_048), []);
+    }
+
+    #[test]
+    fn a_timeline_that_waits_launches_at_the_frame_it_was_sent_for() {
+        let mut rig = rig();
+        rig.record(true, None);
+        rig.render(256);
+        let launch = TimelineUpdate::Launch(true, Some(512 + 32));
+        rig.control.update(rig.timeline, launch).unwrap();
+        let heard = rig.render(2_048);
+        let on = heard.iter().find(|(_, heard)| matches!(heard, Heard::Note(_)));
+        // On the first tick from that frame: a tick is 25 frames at 120 bpm.
+        let frame = on.map(|(frame, _)| *frame).unwrap();
+        assert!((544..569).contains(&frame), "{frame}");
     }
 }
