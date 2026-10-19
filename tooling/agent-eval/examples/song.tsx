@@ -85,8 +85,8 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child, and the audio track `voice` when there is one, plays into the utility `master`; `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of `voice`. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. A click on a track's name or a clip selects it: the keyboard plays that track, and Export selection exports the chosen clips. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
-  state: { solo: list(text(), { max: 64 }) },
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child, and the audio track `voice` when there is one, plays into the utility `master`; `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of `voice`. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. A click on a track's name or a clip selects it: the keyboard plays that track, and Export selection exports the chosen clips. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
+  state: { solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }) },
   children: parts,
   memory: (): Memory => ({ selected: new Set(), open: null, note: null, armed: new Set(), recording: null, track: null, renaming: null, mixer: false }),
   keys: ["delete", "backspace", "cmd-d"],
@@ -127,6 +127,11 @@ export const song = tool({
         connections.push({ from: { child: `${each.name}/${from}` as const }, to: { child: send } });
         connections.push({ from: { child: send }, to: { child: back.name } });
       }
+    }
+    // A sidechain keys an effect of one track with another track, after its fader.
+    for (const { effect, from } of state.sidechains) {
+      if (!tracks.some((each) => each.name === from)) continue;
+      connections.push({ from: { child: `${from}/mix` as const }, to: { child: effect as `${string}/${string}`, port: "sidechain" } });
     }
     return { connections };
   },

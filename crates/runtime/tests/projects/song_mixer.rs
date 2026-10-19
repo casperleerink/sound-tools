@@ -141,3 +141,64 @@ fn overlapping_regions_sum_and_the_last_one_ends_the_song() {
     harness.write_and_apply("state/song/voice/high.json", &region("high.wav", start));
     assert_eq!(harness.project.end(), Some(Ticks(start + 3840)));
 }
+
+/// A compressor in the chain of `t00` that turns down anything over -60 dB, hard and fast, or
+/// passed by when `bypassed`, and `t01` at `t01_gain`, with the song keying the compressor by
+/// `t01` when `keyed`.
+fn ducked(keyed: bool, t01_gain: &str, bypassed: bool) -> Option<Vec<f32>> {
+    if !sound_typescript::has_bun() {
+        eprintln!("skipped: Bun is not installed");
+        return None;
+    }
+    let folder = tempfile::tempdir().unwrap();
+    for (path, text) in song_files(2, 2) {
+        let text = match path.as_str() {
+            "project.json" => text.replace(r#""limiter"]"#, r#""limiter", "compressor"]"#),
+            _ => text,
+        };
+        write(folder.path(), &path, &text);
+    }
+    let compressor = r#"{"tool": "compressor", "state": {"threshold_db": -60, "ratio": 20, "attack_ms": 0.1, "release_ms": 50}}"#;
+    write(folder.path(), "state/song/t00/chain/comp.json", compressor);
+    let off = if bypassed { r#"["comp"]"# } else { "[]" };
+    let chain = format!(r#"{{"tool": "chain", "state": {{"order": ["comp"], "off": {off}}}}}"#);
+    write(folder.path(), "state/song/t00/chain/instance.json", &chain);
+    write(folder.path(), "state/song/t01/mix.json", &fader(t01_gain));
+    let sidechains = match keyed {
+        true => r#"[{"effect": "t00/chain/comp", "from": "t01"}]"#,
+        false => "[]",
+    };
+    let song = format!(r#"{{"tool": "song", "state": {{"sidechains": {sidechains}}}}}"#);
+    write(folder.path(), "state/song/instance.json", &song);
+    let mut harness = Harness::open(folder);
+    assert_eq!(harness.project.problems(), []);
+    Some(play(&mut harness, BAR))
+}
+
+fn energy(samples: &[f32]) -> f32 {
+    samples.iter().map(|sample| sample * sample).sum()
+}
+
+/// A sidechain from one track keys a compressor of another: its detector hears the key and not
+/// the sound it turns down. With the key silent, the compressor leaves `t00` as it is; without a
+/// key it hears `t00` and turns it down; keyed by `t01` playing, it turns `t00` down under it.
+#[test]
+fn a_sidechain_from_one_track_keys_a_compressor_of_another() {
+    let Some(silent_key) = ducked(true, r#""-inf""#, false) else {
+        return;
+    };
+    let unkeyed = ducked(false, r#""-inf""#, false).unwrap();
+    let bypassed = ducked(false, r#""-inf""#, true).unwrap();
+    let most =
+        (silent_key.iter().zip(&bypassed)).fold(0.0_f32, |most, (a, b)| most.max((a - b).abs()));
+    assert!(most < 1e-3 * loudest(&bypassed), "{most}");
+    assert!(energy(&unkeyed) < 0.25 * energy(&bypassed));
+    let keyed = ducked(true, "0", false).unwrap();
+    let both_open = ducked(false, "0", true).unwrap();
+    assert!(
+        energy(&keyed) < 0.75 * energy(&both_open),
+        "{} {}",
+        energy(&keyed),
+        energy(&both_open)
+    );
+}
