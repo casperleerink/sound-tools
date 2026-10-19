@@ -70,6 +70,8 @@ pub(crate) struct TypeScriptCard {
     keys_down: BTreeSet<String>,
     /// What its live values read from the engine and the clock, once a frame.
     feeds: Feeds,
+    /// The shapes of each space, by its key, with where those that stay are.
+    indexes: RefCell<HashMap<String, SpaceIndex>>,
 }
 
 /// A page, which draws again only when it changed, while the window draws every frame as it
@@ -250,6 +252,7 @@ impl TypeScriptCard {
             focus,
             keys_down: BTreeSet::new(),
             feeds: Feeds::default(),
+            indexes: RefCell::default(),
         }
     }
 
@@ -722,6 +725,20 @@ enum Geometry {
     },
 }
 
+impl Geometry {
+    /// Where it starts: its top left, its centre, or where a line starts.
+    fn origin(&self) -> (f64, f64) {
+        match *self {
+            Self::Rect { x, y, .. }
+            | Self::Circle { x, y, .. }
+            | Self::Arc { x, y, .. }
+            | Self::Text { x, y, .. }
+            | Self::Wave { x, y, .. } => (x, y),
+            Self::Line { from, .. } => from,
+        }
+    }
+}
+
 /// The values a wave draws, oldest first, between `low` at its bottom and `high` at its top.
 struct Wave {
     values: Vec<f32>,
@@ -889,6 +906,16 @@ impl PaintedShape {
         }
     }
 
+    /// Where GPUI paints its primitives among those of the same order: quads, paths, text.
+    fn batch_rank(&self) -> u8 {
+        match self {
+            Self::Rect(..) | Self::Circle(..) => 0,
+            Self::Wave(_, wave) if wave.band => 0,
+            Self::Line(..) | Self::Arc(..) | Self::Wave(..) => 1,
+            Self::Text(..) => 2,
+        }
+    }
+
     fn contains(&self, position: Point<Pixels>) -> bool {
         match self {
             Self::Circle(centre, radius) => {
@@ -919,6 +946,7 @@ struct Drawing<'a, 'b> {
     hovered: Option<(String, u64)>,
     table: &'a NodeTable,
     feeds: &'a Feeds,
+    indexes: &'a RefCell<HashMap<String, SpaceIndex>>,
     cx: &'a mut Context<'b, TypeScriptCard>,
 }
 
@@ -1060,7 +1088,17 @@ impl Drawing<'_, '_> {
             placed: Vec::with_capacity(children.len()),
             pointed: Vec::with_capacity(children.len()),
         };
-        placing.shapes(children, (0.0, 0.0));
+        let mut indexes = self.indexes.borrow_mut();
+        let version = self.table.version();
+        let index = match indexes.get(key) {
+            Some(index) if index.version == version => index,
+            _ => {
+                let index = placing.index(children, version);
+                indexes.insert(key.to_string(), index);
+                &indexes[key]
+            }
+        };
+        placing.indexed(index);
         (placing.placed, placing.pointed)
     }
 
@@ -1188,6 +1226,27 @@ impl Shown {
     }
 
     fn shows(&self, geometry: &Geometry) -> bool {
+        let Extent { across, down, reach } = Extent::of(geometry);
+        self.reaches(across, down, reach)
+    }
+}
+
+/// Where a shape is in the units of its space, and how many points it reaches further each
+/// way, as a shape sized in points does.
+#[derive(Clone, Copy)]
+struct Extent {
+    across: (f64, f64),
+    down: (f64, f64),
+    reach: (f32, f32),
+}
+
+impl Extent {
+    fn of(geometry: &Geometry) -> Self {
+        let extent = |across, down, reach| Self {
+            across,
+            down,
+            reach,
+        };
         match *geometry {
             Geometry::Rect {
                 x,
@@ -1202,20 +1261,44 @@ impl Shown {
                 width,
                 height,
                 ..
-            } => self.reaches((x, x + width), (y, y + height), (1.0, 1.0)),
+            } => extent((x, x + width), (y, y + height), (1.0, 1.0)),
             Geometry::Circle { x, y, radius } | Geometry::Arc { x, y, radius, .. } => {
-                self.reaches((x, x), (y, y), (radius + 2.0, radius + 2.0))
+                extent((x, x), (y, y), (radius + 2.0, radius + 2.0))
             }
             Geometry::Line { from, to, width } => {
-                self.reaches((from.0, to.0), (from.1, to.1), (width, width))
+                extent((from.0, to.0), (from.1, to.1), (width, width))
             }
             // A line of text is as wide as its words: a long label far off to the left may
             // still reach in.
             Geometry::Text { x, y, size, .. } => {
-                self.reaches((x, x), (y, y), (size * 40.0, size * 2.0))
+                extent((x, x), (y, y), (size * 40.0, size * 2.0))
             }
         }
     }
+}
+
+/// The shapes of a space in the order they paint, kept from one batch of ops to the next. A
+/// frame works out only the shapes that move and those of the rest that show, so a long piece
+/// costs what shows.
+pub(crate) struct SpaceIndex {
+    version: u64,
+    shapes: Vec<Indexed>,
+}
+
+enum Indexed {
+    /// A shape that stays where it is, at `offset` from the groups around it.
+    Stays {
+        slot: usize,
+        offset: (f64, f64),
+        extent: Extent,
+    },
+    /// A shape that moves, or one in a group that does: worked out on every frame, from
+    /// `offset` and the groups in `groups` that move.
+    Moves {
+        slot: usize,
+        offset: (f64, f64),
+        groups: Rc<[usize]>,
+    },
 }
 
 /// The shapes of a space as they are placed, in the order they paint.
@@ -1284,7 +1367,20 @@ impl Placing<'_> {
             .map_or(0.0, |number| self.sources.number(number))
     }
 
-    fn shapes(&mut self, children: &[usize], (left, top): (f64, f64)) {
+    /// The shapes under `children`, with where those that stay are.
+    fn index(&self, children: &[usize], version: u64) -> SpaceIndex {
+        let mut shapes = Vec::with_capacity(children.len());
+        self.index_into(children, (0.0, 0.0), &Rc::from([]), &mut shapes);
+        SpaceIndex { version, shapes }
+    }
+
+    fn index_into(
+        &self,
+        children: &[usize],
+        (left, top): (f64, f64),
+        groups: &Rc<[usize]>,
+        into: &mut Vec<Indexed>,
+    ) {
         let table = self.table;
         for slot in children {
             let Some(entry) = table.get(*slot) else {
@@ -1294,10 +1390,76 @@ impl Placing<'_> {
                 continue;
             };
             if shape.kind == Some(ShapeKind::Group) {
-                let offset = (left + self.number(&shape.x), top + self.number(&shape.y));
-                self.shapes(&entry.children, offset);
+                let fixed = |number: &Option<tree::Num>| match number {
+                    Some(number) => number.fixed().map(f64::from),
+                    None => Some(0.0),
+                };
+                match (fixed(&shape.x), fixed(&shape.y)) {
+                    (Some(x), Some(y)) => {
+                        self.index_into(&entry.children, (left + x, top + y), groups, into);
+                    }
+                    _ => {
+                        let groups: Rc<[usize]> = groups.iter().copied().chain([*slot]).collect();
+                        self.index_into(&entry.children, (left, top), &groups, into);
+                    }
+                }
+            } else if groups.is_empty() && shape.stays() {
+                let Some(geometry) = self.geometry(shape, (left, top)) else {
+                    continue;
+                };
+                into.push(Indexed::Stays {
+                    slot: *slot,
+                    offset: (left, top),
+                    extent: Extent::of(&geometry),
+                });
             } else {
-                self.shape(entry.id, shape, (left, top));
+                into.push(Indexed::Moves {
+                    slot: *slot,
+                    offset: (left, top),
+                    groups: groups.clone(),
+                });
+            }
+        }
+    }
+
+    /// Places the shapes of `index` that move, and those of the rest that show.
+    fn indexed(&mut self, index: &SpaceIndex) {
+        let table = self.table;
+        for indexed in &index.shapes {
+            let (slot, offset) = match indexed {
+                Indexed::Stays {
+                    slot,
+                    offset,
+                    extent,
+                } => {
+                    let shows = self.shown.as_ref().is_none_or(|shown| {
+                        shown.reaches(extent.across, extent.down, extent.reach)
+                    });
+                    if !shows {
+                        continue;
+                    }
+                    (*slot, *offset)
+                }
+                Indexed::Moves {
+                    slot,
+                    offset,
+                    groups,
+                } => {
+                    let mut offset = *offset;
+                    for group in groups.iter() {
+                        if let Some(Props::Shape(group)) = table.get(*group).map(|entry| &entry.props)
+                        {
+                            offset.0 += self.number(&group.x);
+                            offset.1 += self.number(&group.y);
+                        }
+                    }
+                    (*slot, offset)
+                }
+            };
+            if let Some(entry) = table.get(slot)
+                && let Props::Shape(shape) = &entry.props
+            {
+                self.shape(entry.id, shape, offset);
             }
         }
     }
@@ -1317,6 +1479,49 @@ impl Placing<'_> {
         let hovered = self.hovered == Some(id);
         let (moved_x, moved_y) = self.followed(&shape.moves);
         let (left, top) = (left + moved_x, top + moved_y);
+        let Some(geometry) = self.geometry(shape, (left, top)) else {
+            return;
+        };
+        if self
+            .shown
+            .as_ref()
+            .is_some_and(|shown| !shown.shows(&geometry))
+        {
+            return;
+        }
+        let origin = geometry.origin();
+        let anchor = shape.anchor.unwrap_or_default();
+        self.pointed.push(shape.is_pointed().then(|| Pointer {
+            node: id,
+            on_press: shape.on_press == Some(true),
+            drag: self.table.drag(shape.drag).cloned(),
+            cursor: shape.cursor,
+            anchor: (
+                anchor.x.map_or(origin.0, |x| left + f64::from(x)),
+                anchor.y.map_or(origin.1, |y| top + f64::from(y)),
+            ),
+        }));
+        let opacity = (shape.opacity.as_ref())
+            .map_or(1.0, |opacity| self.sources.number(opacity).clamp(0.0, 1.0))
+            as f32;
+        if opacity <= 0.0 {
+            return;
+        }
+        let mut color = match (hovered.then_some(shape.hover).flatten(), &shape.color) {
+            (Some(hover), _) => hover.0,
+            (None, Some(paint)) => self.paint(paint),
+            (None, None) => gpui::white(),
+        };
+        color.a *= opacity;
+        self.placed.push(Placed {
+            index,
+            geometry,
+            color,
+        });
+    }
+
+    /// Where `shape` is and how big, at `left` and `top` in its space; `None` for a group.
+    fn geometry(&self, shape: &tree::ShapeProps, (left, top): (f64, f64)) -> Option<Geometry> {
         let (grown_x, grown_y) = self.followed(&shape.grows);
         let reach = |reach: &Option<Reach>| match reach {
             Some(Reach::Point([x, y])) => {
@@ -1326,10 +1531,7 @@ impl Placing<'_> {
             None => (left, top),
         };
         let (x, y) = (left + self.number(&shape.x), top + self.number(&shape.y));
-        let Some(kind) = shape.kind else {
-            return;
-        };
-        let geometry = match kind {
+        let geometry = match shape.kind? {
             ShapeKind::Rect => {
                 let border_width = self.number(&shape.border_width) as f32;
                 Geometry::Rect {
@@ -1386,47 +1588,9 @@ impl Placing<'_> {
                     line: shape.size.unwrap_or(1.0),
                 }),
             },
-            ShapeKind::Group => return,
+            ShapeKind::Group => return None,
         };
-        if self
-            .shown
-            .as_ref()
-            .is_some_and(|shown| !shown.shows(&geometry))
-        {
-            return;
-        }
-        let origin = match &geometry {
-            Geometry::Line { from, .. } => *from,
-            _ => (x, y),
-        };
-        let anchor = shape.anchor.unwrap_or_default();
-        self.pointed.push(shape.is_pointed().then(|| Pointer {
-            node: id,
-            on_press: shape.on_press == Some(true),
-            drag: self.table.drag(shape.drag).cloned(),
-            cursor: shape.cursor,
-            anchor: (
-                anchor.x.map_or(origin.0, |x| left + f64::from(x)),
-                anchor.y.map_or(origin.1, |y| top + f64::from(y)),
-            ),
-        }));
-        let opacity = (shape.opacity.as_ref())
-            .map_or(1.0, |opacity| self.sources.number(opacity).clamp(0.0, 1.0))
-            as f32;
-        if opacity <= 0.0 {
-            return;
-        }
-        let mut color = match (hovered.then_some(shape.hover).flatten(), &shape.color) {
-            (Some(hover), _) => hover.0,
-            (None, Some(paint)) => self.paint(paint),
-            (None, None) => gpui::white(),
-        };
-        color.a *= opacity;
-        self.placed.push(Placed {
-            index,
-            geometry,
-            color,
-        });
+        Some(geometry)
     }
 }
 
@@ -1544,15 +1708,35 @@ fn paint(
         window.set_cursor_style(cursor.style(), hitbox);
     }
     window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
-        for each in painted {
-            // A shape with no colour is there for the pointer, such as the handle at the end of
-            // a note; GPUI orders a quad by what it overlaps, so painting it costs as much.
-            if each.color.a > 0.0 {
-                paint_shape(&each.shape, each.color, window, cx);
+        // GPUI orders each primitive by what it overlaps, which costs most of a frame of many
+        // shapes. Inside a layer they share one order and paint as their kinds come: quads, then
+        // paths, then text. So a run of shapes whose kinds come in that order is one layer, and a
+        // shape of an earlier kind starts the next one, which paints over the run before.
+        let mut runs: Vec<&[Painted]> = Vec::new();
+        let mut start = 0;
+        let mut latest = 0;
+        for (index, each) in painted.iter().enumerate() {
+            let rank = each.shape.batch_rank();
+            if rank < latest {
+                runs.extend(painted.get(start..index));
+                start = index;
             }
-            if let Some((hitbox, cursor)) = &each.hitbox {
-                window.set_cursor_style(cursor.style(), hitbox);
-            }
+            latest = rank;
+        }
+        runs.extend(painted.get(start..));
+        for run in runs {
+            window.paint_layer(bounds, |window| {
+                for each in run {
+                    // A shape with no colour is there for the pointer, such as the handle at the
+                    // end of a note.
+                    if each.color.a > 0.0 {
+                        paint_shape(&each.shape, each.color, window, cx);
+                    }
+                    if let Some((hitbox, cursor)) = &each.hitbox {
+                        window.set_cursor_style(cursor.style(), hitbox);
+                    }
+                }
+            });
         }
     });
 }
@@ -1885,6 +2069,7 @@ impl Render for TypeScriptCard {
                     hovered: self.hovered.clone(),
                     table: &table,
                     feeds: &self.feeds,
+                    indexes: &self.indexes,
                     cx,
                 };
                 let body = match table.root() {

@@ -361,6 +361,8 @@ pub(crate) struct NodeTable {
     counts: UseCounts,
     /// What the nodes use together, worked out again after a batch that changed it.
     uses: Uses,
+    /// Goes up with every batch, so what a frame keeps of the nodes knows when to look again.
+    version: u64,
 }
 
 impl NodeTable {
@@ -398,6 +400,10 @@ impl NodeTable {
         &self.uses
     }
 
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
+
     fn slot(&self, id: u64) -> Result<usize, String> {
         self.ids
             .get(&id)
@@ -411,6 +417,7 @@ impl NodeTable {
 
     /// Applies the ops of one batch, or says what is wrong with them.
     pub(crate) fn apply(&mut self, ops: Vec<Op>) -> Result<(), String> {
+        self.version += 1;
         let mut emptied = HashSet::new();
         for op in ops {
             match op {
@@ -551,6 +558,31 @@ fn uses_of(props: &Props) -> Uses {
 }
 
 impl ShapeProps {
+    /// Whether where it is never moves: no live number places or sizes it and no drag moves
+    /// or grows it. A live colour, opacity or readout does not move it. A wave's list is worked
+    /// out on every frame, so a history keeps counting while it does not show.
+    pub(crate) fn stays(&self) -> bool {
+        let reaches = [&self.from, &self.to]
+            .into_iter()
+            .flatten()
+            .all(|reach| match reach {
+                Reach::Point([x, y]) => x.fixed().is_some() && y.fixed().is_some(),
+                Reach::Turn(turn) => turn.fixed().is_some(),
+            });
+        let numbers = [
+            &self.x,
+            &self.y,
+            &self.width,
+            &self.height,
+            &self.radius,
+            &self.border_width,
+        ]
+        .into_iter()
+        .flatten()
+        .all(|number| number.fixed().is_some());
+        self.moves.is_none() && self.grows.is_none() && self.list.is_none() && reaches && numbers
+    }
+
     fn uses(&self) -> Uses {
         let mut uses = Uses::default();
         self.numbers().for_each(|number| number.add_uses(&mut uses));
@@ -803,6 +835,14 @@ impl<'de> Visitor<'de> for NumVisitor {
 }
 
 impl Num {
+    /// Its number, when it is one and not a live value.
+    pub(crate) fn fixed(&self) -> Option<f32> {
+        match self {
+            Self::Fixed(number) => Some(*number),
+            Self::Live(_) => None,
+        }
+    }
+
     fn add_uses(&self, uses: &mut Uses) {
         if let Self::Live(live) = self {
             live.add_uses(uses);
