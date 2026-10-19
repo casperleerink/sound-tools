@@ -5,6 +5,9 @@
 //! changed. So a meter at rest costs no frame, and one that falls after the sound draws until it
 //! is at rest.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use gpui::{Context, Task};
 use sound_core::Peaks;
 
@@ -72,11 +75,78 @@ pub fn every_poll<V: 'static>(
     })
 }
 
+/// Peaks that several views read, such as the device output, which the transport and a page of
+/// a tool of the project both show. [`Peaks`] have one reader: each take empties them. Here
+/// every reader gets the loudest since its own last read, however their reads interleave.
+#[derive(Clone, Debug)]
+pub struct SharedPeaks {
+    peaks: Peaks,
+    /// What each reader has not read yet, by its place; `None` for a reader that is gone.
+    unread: Rc<RefCell<Vec<Option<[f32; 2]>>>>,
+}
+
+impl SharedPeaks {
+    pub fn new(peaks: Peaks) -> Self {
+        Self {
+            peaks,
+            unread: Rc::default(),
+        }
+    }
+
+    pub fn reader(&self) -> PeaksReader {
+        let mut unread = self.unread.borrow_mut();
+        let place = match unread.iter().position(Option::is_none) {
+            Some(place) => place,
+            None => {
+                unread.push(None);
+                unread.len() - 1
+            }
+        };
+        if let Some(slot) = unread.get_mut(place) {
+            *slot = Some([0.0; 2]);
+        }
+        PeaksReader {
+            shared: self.clone(),
+            place,
+        }
+    }
+}
+
+/// One reader of [`SharedPeaks`].
+#[derive(Debug)]
+pub struct PeaksReader {
+    shared: SharedPeaks,
+    place: usize,
+}
+
+impl PeaksReader {
+    /// The loudest of each channel since this reader last took, and zero from now on.
+    pub fn take(&self) -> [f32; 2] {
+        let fresh = self.shared.peaks.take();
+        let mut unread = self.shared.unread.borrow_mut();
+        for reader in unread.iter_mut().flatten() {
+            reader[0] = reader[0].max(fresh[0]);
+            reader[1] = reader[1].max(fresh[1]);
+        }
+        (unread.get_mut(self.place))
+            .and_then(|reader| reader.replace([0.0; 2]))
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for PeaksReader {
+    fn drop(&mut self) {
+        if let Some(slot) = self.shared.unread.borrow_mut().get_mut(self.place) {
+            *slot = None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sound_core::Peaks;
 
-    use super::{Metering, decibels};
+    use super::{Metering, SharedPeaks, decibels};
 
     #[test]
     fn a_reading_takes_the_peaks_and_shows_them_in_decibels() {
@@ -95,5 +165,19 @@ mod tests {
         // A meter at rest does not change, and asks for no frame.
         let mut quiet = Metering::default();
         assert!(!quiet.read(None));
+    }
+
+    #[test]
+    fn every_reader_of_shared_peaks_sees_the_loudest_since_its_own_last_read() {
+        let peaks = Peaks::new();
+        let shared = SharedPeaks::new(peaks.clone());
+        let (transport, page) = (shared.reader(), shared.reader());
+        peaks.record_block([&[0.9], &[0.2]]);
+        assert_eq!(transport.take(), [0.9, 0.2]);
+        peaks.record_block([&[0.3], &[0.4]]);
+        // The page read neither take of the transport, and still sees both.
+        assert_eq!(page.take(), [0.9, 0.4]);
+        assert_eq!(transport.take(), [0.3, 0.4]);
+        assert_eq!(page.take(), [0.0, 0.0]);
     }
 }
