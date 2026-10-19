@@ -59,16 +59,16 @@ fn doc_owner() -> String {
 }
 
 /// A project of `band` at the top, connected to the device, with three drones and a delay.
-fn band(record: &str) -> Option<Harness> {
+fn band(record: &str) -> Harness {
     band_of(BAND, record)
 }
 
 /// [`band`], with the tool `band` of `code`.
-fn band_of(code: &str, record: &str) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn band_of(code: &str, record: &str) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = r#"{"format": 1, "extensions": ["delay"],
@@ -98,7 +98,7 @@ fn band_of(code: &str, record: &str) -> Option<Harness> {
         "state/band/echo.json",
         r#"{"tool": "delay", "state": {}}"#,
     );
-    Some(Harness::open(folder))
+    Harness::open(folder)
 }
 
 /// How often the left channel rises through zero in a second of `samples`.
@@ -114,9 +114,7 @@ fn record(state: &str) -> String {
 
 #[test]
 fn an_owner_plays_its_source_child_through_its_effect_child_into_its_own_sound() {
-    let Some(mut harness) = band_of(&doc_owner(), &record(r#"{"effects": ["echo"]}"#)) else {
-        return;
-    };
+    let mut harness = band_of(&doc_owner(), &record(r#"{"effects": ["echo"]}"#));
     assert_eq!(harness.project.problems(), []);
     let played = harness.play(48_000);
     let peak = played
@@ -133,9 +131,7 @@ fn an_owner_plays_its_source_child_through_its_effect_child_into_its_own_sound()
 
 #[test]
 fn a_change_of_the_record_plays_the_last_wiring_until_bun_answers() {
-    let Some(mut harness) = band(&record("{}")) else {
-        return;
-    };
+    let mut harness = band(&record("{}"));
     let low = harness.play(48_000);
     assert!((rises(&low) as i64 - 220).abs() <= 2, "{}", rises(&low));
 
@@ -168,9 +164,7 @@ fn a_change_of_the_record_plays_the_last_wiring_until_bun_answers() {
 
 #[test]
 fn a_project_opened_again_plays_nothing_an_earlier_opening_declared() {
-    let Some(mut harness) = band(&record(r#"{"lead": "high"}"#)) else {
-        return;
-    };
+    let mut harness = band(&record(r#"{"lead": "high"}"#));
     let high = harness.play(48_000);
     assert!((rises(&high) as i64 - 880).abs() <= 2, "{}", rises(&high));
 
@@ -185,9 +179,7 @@ fn a_project_opened_again_plays_nothing_an_earlier_opening_declared() {
 
 #[test]
 fn a_missing_child_is_a_problem_that_names_it_and_the_rest_plays() {
-    let Some(mut harness) = band(&record(r#"{"effects": ["reverb", "echo"]}"#)) else {
-        return;
-    };
+    let mut harness = band(&record(r#"{"effects": ["reverb", "echo"]}"#));
     let problems: Vec<String> = (harness.project.problems().into_iter())
         .map(|problem| format!("{}: {}", problem.path, problem.message))
         .collect();
@@ -233,9 +225,7 @@ pub(crate) fn rendered_frames(folder: &Path, frames: usize) -> Vec<f32> {
 
 #[test]
 fn a_render_plays_the_declaration_from_its_first_block_and_the_same_every_time() {
-    let Some(harness) = band(&record(r#"{"lead": "high", "effects": ["echo"]}"#)) else {
-        return;
-    };
+    let harness = band(&record(r#"{"lead": "high", "effects": ["echo"]}"#));
     let folder = closed(harness);
     let first = rendered(folder.path());
     assert!((rises(&first[..2 * 4_800]) as i64 - 88).abs() <= 1);
@@ -244,10 +234,10 @@ fn a_render_plays_the_declaration_from_its_first_block_and_the_same_every_time()
 
 #[test]
 fn a_render_starts_with_every_owner_wired_also_more_than_the_engine_takes_in_one_block() {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     // More owners than the 64 edits the engine takes between two polls, each one an edit once
     // Bun answers.
     const OWNERS: usize = 80;
@@ -294,9 +284,7 @@ fn a_render_starts_with_every_owner_wired_also_more_than_the_engine_takes_in_one
 
 #[test]
 fn the_example_of_the_doc_of_an_owner_loads() {
-    let Some(harness) = band(&record("{}")) else {
-        return;
-    };
+    let harness = band(&record("{}"));
     let doc = (harness.project.agent_docs())
         .find(|doc| doc.name == "band")
         .unwrap()
@@ -315,10 +303,10 @@ fn the_example_of_the_doc_of_an_owner_loads() {
 
 #[test]
 fn an_owner_in_the_chain_of_a_rack_plays_its_children_into_it() {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let harness = Harness::new();
     harness.write("extensions/drone.ts", DRONE);
     harness.write("extensions/band.ts", &doc_owner());

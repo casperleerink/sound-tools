@@ -29,11 +29,11 @@ const LOW: &str = r#"{"tool": "timeline", "state": {"length": 3840, "loop": true
 /// A project of the doc's launcher `loops` at the top, connected to the device, with the
 /// timeline `low` of `low` and [`HIGH`], a synth that lets go at once, a utility, and
 /// the tools of `extra` in `extensions/extra.ts`.
-fn loops(low: &str, extra: &str) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn loops(low: &str, extra: &str) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = r#"{"format": 1, "extensions": ["instrument", "utility"],
@@ -54,14 +54,12 @@ fn loops(low: &str, extra: &str) -> Option<Harness> {
     write(root, "state/loops/high.json", HIGH);
     let mut harness = Harness::open(folder);
     harness.write_and_apply("state/loops/low.json", low);
-    Some(harness)
+    harness
 }
 
 #[test]
 fn a_render_of_the_launcher_of_the_doc_loops_the_timeline_that_plays_on_the_bars() {
-    let Some(harness) = loops(LOW, "") else {
-        return;
-    };
+    let harness = loops(LOW, "");
     assert_eq!(harness.project.problems(), []);
     let played = rendered_frames(closed(harness).path(), 2 * BAR);
     // Its notes start on beats 1 and 3 and loop after a bar. A note sounds within a
@@ -83,9 +81,7 @@ fn an_edit_of_a_loop_plays_and_a_note_outside_it_is_refused() {
             r#"{{"tool": "timeline", "state": {{"length": 3840, "loop": true, "notes": [{note}]}}}}"#
         )
     };
-    let Some(mut harness) = loops(&record(960), "") else {
-        return;
-    };
+    let mut harness = loops(&record(960), "");
     let played = harness.play_from_the_start(BAR);
     // 960 ticks are 24 000 frames.
     assert_eq!(first_sound(&played, 0).map(|frame| frame / 48), Some(500));
@@ -129,9 +125,7 @@ tool({
 
 #[test]
 fn a_number_a_cable_sends_starts_and_stops_loops_at_the_next_bar_in_a_render() {
-    let Some(mut harness) = loops(LOW, CONDUCTOR) else {
-        return;
-    };
+    let mut harness = loops(LOW, CONDUCTOR);
     harness.write_and_apply(
         "state/loops/conductor.json",
         r#"{"tool": "conductor", "state": {}}"#,
@@ -180,10 +174,10 @@ tool({
 #[test]
 fn a_note_a_loop_holds_ends_when_it_plays_into_nothing_or_into_another_child() {
     for to in ["none", "other"] {
-        if !sound_typescript::has_bun() {
-            eprintln!("skipped: Bun is not installed");
-            return;
-        }
+        assert!(
+            sound_typescript::has_bun(),
+            "these tests run tools in Bun: see tooling/fetch-bun.sh"
+        );
         let folder = tempfile::tempdir().unwrap();
         let root = folder.path();
         let project = r#"{"format": 1, "extensions": ["instrument"],
@@ -218,9 +212,7 @@ fn a_note_a_loop_holds_ends_when_it_plays_into_nothing_or_into_another_child() {
 fn a_timeline_that_starts_to_loop_shows_that_it_plays() {
     let once = r#"{"tool": "timeline", "state": {"length": 3840, "notes": [
   {"start": 0, "length": 480, "pitch": 36, "velocity": 100}]}}"#;
-    let Some(mut harness) = loops(once, "") else {
-        return;
-    };
+    let mut harness = loops(once, "");
     harness.write_and_apply("state/loops/low.json", LOW);
     harness.play_from_the_start(BAR / 2);
     let low = InstanceId::new("loops/low").unwrap();

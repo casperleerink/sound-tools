@@ -8,18 +8,18 @@ use crate::shared_song::song_files;
 use crate::support::{BAR, Harness, difference, write, write_samples};
 
 /// Two tracks of one clip each from the start, sending into the reverb `ret-a`.
-fn song() -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn song() -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     for (path, text) in song_files(2, 2) {
         write(folder.path(), &path, &text);
     }
     let harness = Harness::open(folder);
     assert_eq!(harness.project.problems(), []);
-    Some(harness)
+    harness
 }
 
 fn fader(gain: &str) -> String {
@@ -43,9 +43,7 @@ fn loudest(samples: &[f32]) -> f32 {
 /// plays as with that fader at `-inf`. The reverb return still plays the soloed track's send.
 #[test]
 fn a_solo_silences_the_other_tracks_and_never_a_return() {
-    let Some(mut harness) = song() else {
-        return;
-    };
+    let mut harness = song();
     let frames = 2 * BAR;
     harness.write_and_apply(
         "state/song/instance.json",
@@ -71,9 +69,7 @@ fn a_solo_silences_the_other_tracks_and_never_a_return() {
 /// as a return with `pre_fader` hears, still sends.
 #[test]
 fn a_send_goes_after_the_fader_unless_its_return_hears_before_it() {
-    let Some(mut harness) = song() else {
-        return;
-    };
+    let mut harness = song();
     for track in ["t00", "t01"] {
         harness.write_and_apply(&format!("state/song/{track}/mix.json"), &fader(r#""-inf""#));
     }
@@ -90,9 +86,7 @@ fn a_send_goes_after_the_fader_unless_its_return_hears_before_it() {
 /// The master turned up 6 dB into a limiter whose ceiling is -18 dB: no sample goes over it.
 #[test]
 fn the_limiter_after_the_master_holds_the_output_under_its_ceiling() {
-    let Some(mut harness) = song() else {
-        return;
-    };
+    let mut harness = song();
     let open = play(&mut harness, 2 * BAR);
     let ceiling = amplitude(-18.0);
     assert!(loudest(&open) > ceiling, "{}", loudest(&open));
@@ -108,9 +102,7 @@ fn the_limiter_after_the_master_holds_the_output_under_its_ceiling() {
 /// Two regions that overlap are heard together, and the song lasts to the end of the last one.
 #[test]
 fn overlapping_regions_sum_and_the_last_one_ends_the_song() {
-    let Some(mut harness) = song() else {
-        return;
-    };
+    let mut harness = song();
     write_samples(&harness, "low.wav", 48_000, 2.0, |seconds| {
         (0.2 * (seconds * 220.0 * std::f64::consts::TAU).sin()) as f32
     });
@@ -144,11 +136,11 @@ fn overlapping_regions_sum_and_the_last_one_ends_the_song() {
 /// A compressor in the chain of `t00` that turns down anything over -60 dB, hard and fast, or
 /// passed by when `bypassed`, and `t01` at `t01_gain`, with the song keying the compressor by
 /// `t01` when `keyed`.
-fn ducked(keyed: bool, t01_gain: &str, bypassed: bool) -> Option<Vec<f32>> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn ducked(keyed: bool, t01_gain: &str, bypassed: bool) -> Vec<f32> {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     for (path, text) in song_files(2, 2) {
         let text = match path.as_str() {
@@ -171,7 +163,7 @@ fn ducked(keyed: bool, t01_gain: &str, bypassed: bool) -> Option<Vec<f32>> {
     write(folder.path(), "state/song/instance.json", &song);
     let mut harness = Harness::open(folder);
     assert_eq!(harness.project.problems(), []);
-    Some(play(&mut harness, BAR))
+    play(&mut harness, BAR)
 }
 
 fn energy(samples: &[f32]) -> f32 {
@@ -183,17 +175,15 @@ fn energy(samples: &[f32]) -> f32 {
 /// key it hears `t00` and turns it down; keyed by `t01` playing, it turns `t00` down under it.
 #[test]
 fn a_sidechain_from_one_track_keys_a_compressor_of_another() {
-    let Some(silent_key) = ducked(true, r#""-inf""#, false) else {
-        return;
-    };
-    let unkeyed = ducked(false, r#""-inf""#, false).unwrap();
-    let bypassed = ducked(false, r#""-inf""#, true).unwrap();
+    let silent_key = ducked(true, r#""-inf""#, false);
+    let unkeyed = ducked(false, r#""-inf""#, false);
+    let bypassed = ducked(false, r#""-inf""#, true);
     let most =
         (silent_key.iter().zip(&bypassed)).fold(0.0_f32, |most, (a, b)| most.max((a - b).abs()));
     assert!(most < 1e-3 * loudest(&bypassed), "{most}");
     assert!(energy(&unkeyed) < 0.25 * energy(&bypassed));
-    let keyed = ducked(true, "0", false).unwrap();
-    let both_open = ducked(false, "0", true).unwrap();
+    let keyed = ducked(true, "0", false);
+    let both_open = ducked(false, "0", true);
     assert!(
         energy(&keyed) < 0.75 * energy(&both_open),
         "{} {}",
@@ -205,9 +195,7 @@ fn a_sidechain_from_one_track_keys_a_compressor_of_another() {
 /// A fader tells a lane or a knob what its record holds, which a lane starts from.
 #[test]
 fn a_fader_says_what_its_record_holds() {
-    let Some(mut harness) = song() else {
-        return;
-    };
+    let mut harness = song();
     harness.write_and_apply("state/song/t01/mix.json", &fader("-6"));
     let mix = sound_core::InstanceId::new("song/t01/mix").unwrap();
     let gain = harness

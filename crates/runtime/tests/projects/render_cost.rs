@@ -59,10 +59,10 @@ fn realtime(harness: &mut Harness) -> f64 {
 #[test]
 #[ignore = "a measurement"]
 fn render_cost() {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let mut song = typescript_song();
     // Once to warm the files and the code, then measured.
     realtime(&mut song);
@@ -77,9 +77,6 @@ fn render_cost() {
 #[test]
 #[ignore = "a measurement"]
 fn render_cost_of_the_song_alone() {
-    if !sound_typescript::has_bun() {
-        return;
-    }
     keep_rendering(&mut typescript_song());
 }
 

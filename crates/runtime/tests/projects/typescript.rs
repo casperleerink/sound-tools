@@ -44,17 +44,17 @@ tool({
 
 /// A project whose `extensions/` holds the first example of the doc, `wobble`, `COMBS` and `LEVEL`,
 /// with a rack `pad` that plays a held chord through `effects`.
-fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
+fn pad_through(effects: &[(&str, &str)]) -> Harness {
     pad_through_with(effects, &[])
 }
 
 /// [`pad_through`], with lanes of the rack: each its name, the number it moves, such as
 /// `wobble.depth`, and its points.
-fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     write(folder.path(), "extensions/wobble.ts", &doc_example());
     write(folder.path(), "extensions/combs.ts", COMBS);
@@ -89,7 +89,7 @@ fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> O
     write(folder.path(), "state/pad/instance.json", &rack.to_string());
     let harness = Harness::open(folder);
     assert_eq!(harness.project.problems(), []);
-    Some(harness)
+    harness
 }
 
 /// The loudness of the left channel over 20 ms around `seconds`.
@@ -103,9 +103,7 @@ fn loudness_at(samples: &[f32], seconds: f32) -> f32 {
 
 #[test]
 fn the_tremolo_of_the_doc_dips_to_silence_at_its_rate() {
-    let Some(mut harness) = pad_through(&[("wobble", r#"{"rate": 2, "depth": 1}"#)]) else {
-        return;
-    };
+    let mut harness = pad_through(&[("wobble", r#"{"rate": 2, "depth": 1}"#)]);
     let output = harness.play_from_the_start(BAR);
     // At 2 Hz and full depth the wave is at its top, and the sound at silence, a quarter of
     // the way into each half second, and the sound is at its loudest three quarters in.
@@ -124,9 +122,7 @@ fn the_tremolo_of_the_doc_dips_to_silence_at_its_rate() {
 fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
     for combs in [2, 4, 8] {
         let state = format!(r#"{{"combs": {combs}, "size": 0.9, "blend": 1}}"#);
-        let Some(mut harness) = pad_through(&[("combs", &state)]) else {
-            return;
-        };
+        let mut harness = pad_through(&[("combs", &state)]);
         let output = harness.play_from_the_start(5 * BAR);
         let peak = output
             .iter()
@@ -142,9 +138,7 @@ fn combs_play_with_every_choice_and_ring_on_after_the_sound() {
 
 #[test]
 fn a_knob_the_record_leaves_out_is_automated_from_its_default() {
-    let Some(harness) = pad_through(&[("wobble", r#"{"rate": 2}"#)]) else {
-        return;
-    };
+    let harness = pad_through(&[("wobble", r#"{"rate": 2}"#)]);
     let wobble = sound_core::InstanceId::new("pad/wobble").unwrap();
     let depth = harness.project.automation(&wobble, "depth").unwrap();
     // A lane added for it starts where it plays: at the default of the doc's `depth`.
@@ -156,10 +150,7 @@ fn a_lane_moves_a_knob_of_the_tremolo() {
     // The record dips to silence; the lane holds the depth at 0 for the whole bar.
     let points = r#"[{"tick": 0, "value": 0.0}, {"tick": 15360, "value": 0.0}]"#;
     let lane = [("depth", "wobble.depth", points)];
-    let Some(mut harness) = pad_through_with(&[("wobble", r#"{"rate": 2, "depth": 1}"#)], &lane)
-    else {
-        return;
-    };
+    let mut harness = pad_through_with(&[("wobble", r#"{"rate": 2, "depth": 1}"#)], &lane);
     let output = harness.play_from_the_start(BAR);
     for half_second in 1..4 {
         let start = half_second as f32 * 0.5;
@@ -186,9 +177,10 @@ tool({
 
 #[test]
 fn a_file_that_hangs_as_it_loads_is_a_problem_and_the_other_tools_load() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/level.ts", LEVEL);
     crate::support::write(folder.path(), "extensions/stuck.ts", "while (true) {}\n");
@@ -212,9 +204,10 @@ fn a_file_that_hangs_as_it_loads_is_a_problem_and_the_other_tools_load() {
 
 #[test]
 fn a_tool_whose_pattern_cannot_be_is_a_problem_before_anything_is_made_of_it() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let steps = r#"import { input, pattern, tool } from "./sdk";
 
 tool({
@@ -242,9 +235,10 @@ tool({
 
 #[test]
 fn a_key_a_tool_does_not_have_is_a_problem_that_names_the_keys_it_has() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let old = LEVEL.replace("sound:", "onMidi: () => {},\n  sound:");
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/level.ts", &old);
@@ -264,9 +258,10 @@ fn a_key_a_tool_does_not_have_is_a_problem_that_names_the_keys_it_has() {
 
 #[test]
 fn a_key_the_app_keeps_is_a_problem_of_the_tool_that_takes_it() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let greedy = LEVEL.replace(
         "sound:",
         "globalKeys: [\"space\", \"cmd-z\"],\n  onKey: () => {},\n  sound:",
@@ -328,9 +323,10 @@ s.tool({
 
 #[test]
 fn every_node_of_the_sdk_builds_in_mono_and_in_stereo() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/every.ts", EVERY_NODE);
     let synth = synth(0.2);
@@ -385,9 +381,10 @@ fn write_sine(root: &Path) {
 
 #[test]
 fn a_sample_plays_once_its_file_is_there() {
-    if !sound_typescript::has_bun() {
-        return eprintln!("skipped: Bun is not installed");
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/player.ts", PLAYER);
     let player = r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#;

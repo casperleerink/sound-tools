@@ -51,11 +51,11 @@ export const hiss = tool({
 "#;
 
 /// A project that plays the instance `top` of `TOOLS` with `records`.
-fn project(top: &str, records: &[(&str, &str)]) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn project(top: &str, records: &[(&str, &str)]) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = format!(
@@ -69,7 +69,7 @@ fn project(top: &str, records: &[(&str, &str)]) -> Option<Harness> {
     for (path, record) in records {
         write(root, path, record);
     }
-    Some(Harness::open(folder))
+    Harness::open(folder)
 }
 
 fn record(tool: &str, state: &str) -> String {
@@ -90,9 +90,7 @@ fn a_built_in_device_plays_as_the_child_of_a_parent() {
     let records: Vec<(&str, &str)> = (records.iter())
         .map(|(path, record)| (*path, record.as_str()))
         .collect();
-    let Some(mut harness) = project("rig", &records) else {
-        return;
-    };
+    let mut harness = project("rig", &records);
     assert_eq!(harness.project.problems(), []);
     let played = harness.play(24_000);
     assert!(rms(&played[2 * 4_800..]) > 0.01, "{}", rms(&played));
@@ -109,9 +107,7 @@ fn a_child_of_another_tool_than_its_parent_names_is_a_problem_of_the_parent() {
     let records: Vec<(&str, &str)> = (records.iter())
         .map(|(path, record)| (*path, record.as_str()))
         .collect();
-    let Some(harness) = project("rig", &records) else {
-        return;
-    };
+    let harness = project("rig", &records);
     let problems: Vec<String> = (harness.project.problems().into_iter())
         .map(|problem| format!("{}: {}", problem.path, problem.message))
         .collect();
@@ -134,9 +130,7 @@ fn a_child_of_a_parent_that_names_none_is_a_problem_of_the_parent() {
     let records: Vec<(&str, &str)> = (records.iter())
         .map(|(path, record)| (*path, record.as_str()))
         .collect();
-    let Some(harness) = project("alone", &records) else {
-        return;
-    };
+    let harness = project("alone", &records);
     let problems: Vec<String> = (harness.project.problems().into_iter())
         .map(|problem| format!("{}: {}", problem.path, problem.message))
         .collect();
@@ -204,10 +198,7 @@ fn every_number_a_lane_moves_has_its_range_in_the_docs() {
 /// built-in tools, as the doc for agents says to check a tool.
 #[test]
 fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
-    let Some(bun) = sound_typescript::bun_program() else {
-        eprintln!("skipped: Bun is not installed");
-        return;
-    };
+    let bun = sound_typescript::bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let project = tempfile::tempdir().unwrap();
     let extensions = project.path().join("extensions");
     std::fs::create_dir(&extensions).unwrap();

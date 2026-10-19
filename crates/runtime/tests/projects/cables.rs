@@ -70,11 +70,11 @@ tool({
 });
 "#;
 
-fn rig(state: &str) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn rig(state: &str) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = r#"{"format": 1, "extensions": ["filter"],
@@ -101,7 +101,7 @@ fn rig(state: &str) -> Option<Harness> {
     );
     let filter = r#"{"tool": "filter", "state": {"cutoff_hz": 20000}}"#;
     write(root, "state/rig/filter.json", filter);
-    Some(Harness::open(folder))
+    Harness::open(folder)
 }
 
 fn record(state: &str) -> String {
@@ -126,9 +126,7 @@ fn rises(samples: &[f32]) -> usize {
 #[test]
 fn a_number_of_a_child_moves_the_cutoff_of_a_built_in_filter_in_time() {
     let state = r#"{"send": "cutoff", "target": "filter", "to": "cutoff_hz"}"#;
-    let Some(mut harness) = rig(state) else {
-        return;
-    };
+    let mut harness = rig(state);
     assert_eq!(harness.project.problems(), []);
     let played = harness.play(48_000);
     // Leave out where the filter glides from one to the other.
@@ -140,9 +138,7 @@ fn a_number_of_a_child_moves_the_cutoff_of_a_built_in_filter_in_time() {
 #[test]
 fn a_number_drives_a_knob_of_a_tool_of_the_project_until_its_cable_goes() {
     let state = r#"{"lead": "drone", "send": "pitch", "target": "drone", "to": "hz"}"#;
-    let Some(mut harness) = rig(state) else {
-        return;
-    };
+    let mut harness = rig(state);
     assert_eq!(harness.project.problems(), []);
     let driven = harness.play(48_000);
     assert!(
@@ -162,9 +158,7 @@ fn a_number_drives_a_knob_of_a_tool_of_the_project_until_its_cable_goes() {
 fn a_cable_declared_twice_is_one_and_a_number_that_is_none_does_not_silence_its_knob() {
     let state =
         r#"{"lead": "drone", "send": "broken", "target": "drone", "to": "hz", "copies": 2}"#;
-    let Some(mut harness) = rig(state) else {
-        return;
-    };
+    let mut harness = rig(state);
     assert_eq!(harness.project.problems(), []);
     let played = harness.play(48_000);
     // After the tenth of a second of no number, the knob plays at the bottom of its range.
@@ -178,9 +172,7 @@ fn a_cable_declared_twice_is_one_and_a_number_that_is_none_does_not_silence_its_
 #[test]
 fn a_number_a_child_does_not_send_or_take_is_a_problem_that_names_what_it_has() {
     let state = r#"{"send": "cutoff", "target": "filter", "to": "cutoff"}"#;
-    let Some(mut harness) = rig(state) else {
-        return;
-    };
+    let mut harness = rig(state);
     let messages = |harness: &Harness| -> Vec<String> {
         let problems = harness.project.problems().into_iter();
         problems.map(|problem| problem.message).collect()

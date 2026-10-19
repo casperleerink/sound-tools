@@ -83,9 +83,7 @@ fn next_ops(bun: &Bun, sent: Instant) -> (Duration, Vec<Op>) {
 #[test]
 #[ignore = "a measurement, not a check; run it locally and read the printed times"]
 fn performance_of_bun_and_live_values_for_many_shapes() {
-    let Some(program) = bun_program() else {
-        return eprintln!("skipped: Bun is not installed");
-    };
+    let program = bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let folder = tempfile::tempdir().unwrap();
     write_sdk(folder.path(), &[]).unwrap();
     std::fs::write(folder.path().join("grid.ts"), GRID).unwrap();

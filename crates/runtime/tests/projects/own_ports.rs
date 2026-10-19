@@ -10,14 +10,6 @@ use sound_notes::{Pedal, Pitch, Velocity};
 
 use crate::support::{Harness, first_sound, test_plugin_of, write};
 
-fn has_bun() -> bool {
-    let bun = sound_typescript::has_bun();
-    if !bun {
-        eprintln!("skipped: Bun is not installed");
-    }
-    bun
-}
-
 /// A `project.json` with these extensions and connections.
 fn project_json(extensions: &str, connections: &str) -> String {
     format!(
@@ -76,9 +68,10 @@ fn keyboard_into_the_top(mut harness: Harness) -> Vec<f32> {
 
 #[test]
 fn the_keyboard_plays_a_plugin_child_through_the_parents_notes_and_every_instance_at_the_top() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     for format in [PluginFormat::Clap, PluginFormat::Vst3] {
         let plugin = test_plugin_of(format, "keys");
         let folder = tempfile::tempdir().unwrap();
@@ -170,9 +163,10 @@ tool({ name: "half", title: "Half", when: "Never", doc: "Half as loud.", state: 
 
 #[test]
 fn the_microphone_into_a_parent_reaches_the_child_it_connects_it_to() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let microphone = r#"{"from": {"device_input": 0}, "to": {"input": {"instance": "router", "port": "audio"}}}"#;
@@ -246,9 +240,10 @@ tool({
 
 #[test]
 fn a_number_of_a_child_passes_out_of_a_parent_to_the_parent_of_that() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     write(root, "project.json", &project_json("", &to_device("rack")));
@@ -302,9 +297,10 @@ tool({
 /// JSON leaves an undefined `child` out, which would make the end the parent's own output.
 #[test]
 fn a_child_that_is_undefined_is_a_problem_and_no_port_of_the_parent() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     write(root, "project.json", &project_json("", ""));
@@ -365,9 +361,10 @@ tool({
 
 #[test]
 fn a_number_reaches_the_number_input_of_a_grandchild() {
-    if !has_bun() {
-        return;
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     write(root, "project.json", &project_json("", &to_device("deep")));

@@ -71,10 +71,10 @@ const METER: &str = r#"{"tool": "meter", "state": {}}"#;
 const SWAY: &str = include_str!("../../../../tooling/agent-eval/examples/sway.ts");
 
 pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Result<()> {
-    if !sound_typescript::has_bun() {
-        println!("Bun is not installed: no snapshot of a page of a tool of the project");
-        return Ok(());
-    }
+    assert!(
+        sound_typescript::has_bun(),
+        "Bun is installed, see tooling/fetch-bun.sh"
+    );
     let demo = r#"{"tool": "demo", "state": {"steps": [1, 0, 0, 1, 0, 1, 0, 0], "cutoff": 2400}}"#;
     let opened = open_page(cx, "demo", demo, "extensions/demo.ts", DEMO)?;
     save(cx, opened.window.into(), "typescript-page")?;

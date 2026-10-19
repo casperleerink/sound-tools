@@ -70,11 +70,11 @@ export const tape = tool({
 "#;
 
 /// A project of one tool at the top, `name`, with these records under it.
-fn project(name: &str, records: &[(&str, String)]) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn project(name: &str, records: &[(&str, String)]) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = format!(
@@ -92,11 +92,11 @@ fn project(name: &str, records: &[(&str, String)]) -> Option<Harness> {
     for (path, record) in records {
         write(root, &format!("state/{name}/{path}"), record);
     }
-    Some(Harness::open(folder))
+    Harness::open(folder)
 }
 
 /// The keys, whose lane holds `points`.
-fn keys(points: &str) -> Option<Harness> {
+fn keys(points: &str) -> Harness {
     let chord = r#"{"tool": "timeline", "state": {"length": 7680, "notes": [{"start": 0, "length": 7680, "pitch": 48, "velocity": 100}, {"start": 0, "length": 7680, "pitch": 64, "velocity": 100}]}}"#;
     let records = [
         (
@@ -117,9 +117,9 @@ fn keys(points: &str) -> Option<Harness> {
             format!(r#"{{"tool": "lane", "state": {{"points": {points}}}}}"#),
         ),
     ];
-    let harness = project("keys", &records)?;
+    let harness = project("keys", &records);
     assert_eq!(harness.project.problems(), []);
-    Some(harness)
+    harness
 }
 
 /// A lane opens the gain from -36 dB to 0 dB between two ticks inside a block. The keys sound as
@@ -130,12 +130,10 @@ fn keys(points: &str) -> Option<Harness> {
 fn a_lane_moves_a_number_of_another_child_on_its_frames() {
     let (start, end) = (BAR_TICKS + 1, BAR_TICKS + 3);
     let gate = format!(r#"[{{"tick": {start}, "value": -36}}, {{"tick": {end}, "value": 0}}]"#);
-    let Some(mut gated) = keys(&gate) else {
-        return;
-    };
+    let mut gated = keys(&gate);
     let gated = gated.play_from_the_start(2 * BAR);
     let held = |value: f32| {
-        let mut harness = keys(&format!(r#"[{{"tick": 0, "value": {value}}}]"#)).unwrap();
+        let mut harness = keys(&format!(r#"[{{"tick": 0, "value": {value}}}]"#));
         harness.play_from_the_start(2 * BAR)
     };
     let (closed, open) = (held(-36.0), held(0.0));
@@ -149,7 +147,7 @@ fn a_lane_moves_a_number_of_another_child_on_its_frames() {
 }
 
 /// A bender whose timeline holds A4 for a bar, with `lanes` beside its notes.
-fn bender(lanes: &str) -> Option<Harness> {
+fn bender(lanes: &str) -> Harness {
     let line = format!(
         r#"{{"tool": "timeline", "state": {{"length": 3840, "notes": [{{"start": 0, "length": 3840, "pitch": 69, "velocity": 100}}]{lanes}}}}}"#
     );
@@ -167,9 +165,7 @@ fn rises(samples: &[f32]) -> usize {
 /// loop with lanes does not load, and says why.
 #[test]
 fn a_timeline_bends_its_notes_as_its_lane_says_and_a_loop_has_no_lanes() {
-    let Some(mut straight) = bender("") else {
-        return;
-    };
+    let mut straight = bender("");
     let straight = straight.play_from_the_start(BAR / 2);
     // A second: 440 rises at A4, 494 two semitones up.
     assert!(
@@ -178,12 +174,12 @@ fn a_timeline_bends_its_notes_as_its_lane_says_and_a_loop_has_no_lanes() {
         rises(&straight)
     );
     let up = r#", "bend": [{"tick": 0, "value": 8191}]"#;
-    let mut bent = bender(up).unwrap();
+    let mut bent = bender(up);
     assert_eq!(bent.project.problems(), []);
     let bent = bent.play_from_the_start(BAR / 2);
     assert!((rises(&bent) as i64 - 494).abs() <= 2, "{}", rises(&bent));
 
-    let looped = bender(&format!(r#", "loop": true{up}"#)).unwrap();
+    let looped = bender(&format!(r#", "loop": true{up}"#));
     let problems = looped.project.problems();
     assert!(
         problems
@@ -196,9 +192,7 @@ fn a_timeline_bends_its_notes_as_its_lane_says_and_a_loop_has_no_lanes() {
 /// A lane checks its record: points in tick order, and a log lane above 0.
 #[test]
 fn a_lane_whose_points_are_out_of_order_or_below_zero_on_a_log_scale_is_a_problem() {
-    let Some(mut harness) = keys(r#"[{"tick": 0, "value": 0}]"#) else {
-        return;
-    };
+    let mut harness = keys(r#"[{"tick": 0, "value": 0}]"#);
     let lane = |state: &str| format!(r#"{{"tool": "lane", "state": {state}}}"#);
     harness.write_and_apply(
         "state/keys/level.json",
@@ -226,9 +220,7 @@ fn a_lane_whose_points_are_out_of_order_or_below_zero_on_a_log_scale_is_a_proble
 
 #[test]
 fn a_timeline_that_ends_past_the_last_tick_is_a_problem() {
-    let Some(mut harness) = keys(r#"[{"tick": 0, "value": 0}]"#) else {
-        return;
-    };
+    let mut harness = keys(r#"[{"tick": 0, "value": 0}]"#);
     let far = format!(
         r#"{{"tool": "timeline", "state": {{"start": {}, "length": 1}}}}"#,
         u64::MAX
@@ -252,9 +244,7 @@ fn a_region_plays_its_file_at_its_place_with_its_fade_gain_and_trim() {
             r#"{{"tool": "region", "state": {{"asset": "steady.wav", "start": {BAR_TICKS}, "fade_in_ms": 10{extra}}}}}"#
         )
     };
-    let Some(mut harness) = project("tape", &[("take.json", region(""))]) else {
-        return;
-    };
+    let mut harness = project("tape", &[("take.json", region(""))]);
     // Half a second of 0.5, then half a second of 0.25.
     write_samples(&harness, "steady.wav", 48_000, 1.0, |seconds| {
         match seconds < 0.5 {
@@ -300,9 +290,7 @@ fn a_region_plays_its_file_at_its_place_with_its_fade_gain_and_trim() {
 fn a_region_waits_for_its_file_and_plays_once_it_arrives() {
     let region =
         format!(r#"{{"tool": "region", "state": {{"asset": "later.wav", "start": {BAR_TICKS}}}}}"#);
-    let Some(mut harness) = project("tape", &[("take.json", region)]) else {
-        return;
-    };
+    let mut harness = project("tape", &[("take.json", region)]);
     let problems = harness.project.problems();
     assert!(
         problems

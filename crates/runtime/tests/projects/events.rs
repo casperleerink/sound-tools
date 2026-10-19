@@ -86,11 +86,11 @@ tool({{
 
 /// A project of the parent `listener` at the top with `connections`, and its children: the
 /// drums, which play `drums.wav`, `ears`, which hears them, a synth and `drop`.
-fn project(connections: &str) -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn project(connections: &str) -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = r#"{"format": 1, "extensions": ["instrument"],
@@ -110,7 +110,7 @@ fn project(connections: &str) -> Option<Harness> {
     state("drop.json", r#"{"tool": "drop", "state": {}}"#);
     let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
     state("synth.json", synth);
-    Some(Harness::open(folder))
+    Harness::open(folder)
 }
 
 /// A second of drum hits at [`HITS`], as a recording of a microphone stands in: each a burst
@@ -151,9 +151,7 @@ fn the_hits_of_a_recording_play_a_synth_on_their_samples_through_notes_a_sound_m
     { from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } },
     { from: { child: "synth" }, to: { port: "audio" } },
   ]"#;
-    let Some(mut harness) = project(connections) else {
-        return;
-    };
+    let mut harness = project(connections);
     assert_eq!(messages(&harness), Vec::<String>::new());
     let played = harness.play(48_000);
     let mut from = 0;
@@ -171,9 +169,7 @@ fn a_bang_reaches_a_bang_input_on_its_sample_and_a_number_moves_a_number_input()
     { from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "hit" } },
     { from: { child: "drop" }, to: { port: "audio" } },
   ]"#;
-    let Some(mut harness) = project(connections) else {
-        return;
-    };
+    let mut harness = project(connections);
     assert_eq!(messages(&harness), Vec::<String>::new());
     let fired = |played: &[f32]| -> Vec<(usize, f32)> {
         let left = played.iter().step_by(2).copied().enumerate();
@@ -187,9 +183,7 @@ fn a_bang_reaches_a_bang_input_on_its_sample_and_a_number_moves_a_number_input()
     { from: { child: "ears", number: "half" }, to: { child: "drop", number: "gain" } },
     { from: { child: "drop" }, to: { port: "audio" } },
   ]"#;
-    let Some(mut harness) = project(connections) else {
-        return;
-    };
+    let mut harness = project(connections);
     assert_eq!(fired(&harness.play(48_000)), HITS.map(|hit| (hit, 0.5)));
 }
 
@@ -200,9 +194,7 @@ fn a_cable_between_two_kinds_or_to_an_input_a_child_does_not_have_is_a_problem()
     { from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "gain" } },
     { from: { child: "ears", number: "half" }, to: { child: "drop", number: "level" } },
   ]"#;
-    let Some(harness) = project(connections) else {
-        return;
-    };
+    let harness = project(connections);
     assert_eq!(
         messages(&harness),
         [
@@ -219,9 +211,7 @@ fn a_held_note_sounds_on_when_new_code_of_its_sender_moves_its_output() {
     { from: { child: "pair", notes: "high" }, to: { child: "synth", notes: "notes" } },
     { from: { child: "synth" }, to: { port: "audio" } },
   ]"#;
-    let Some(mut harness) = project(connections) else {
-        return;
-    };
+    let mut harness = project(connections);
     let pair = |order: &str| format!(r#"{{"tool": "pair", "state": {{"order": "{order}"}}}}"#);
     harness.write_and_apply("state/listener/pair.json", &pair("low first"));
     assert_eq!(messages(&harness), Vec::<String>::new());

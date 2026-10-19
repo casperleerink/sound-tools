@@ -54,11 +54,11 @@ fn clip(start: u64, at: u64) -> String {
 
 /// A song with the track `piano`, whose clip `verse` starts on the second bar with its note on
 /// the second beat. A synth that lets go at once.
-fn song() -> Option<Harness> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
+fn song() -> Harness {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run tools in Bun: see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = r#"{"format": 1, "extensions": ["instrument"],
@@ -79,14 +79,12 @@ fn song() -> Option<Harness> {
     let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
     write(root, "state/song/piano/synth.json", synth);
     write(root, "state/song/piano/verse.json", &clip(3840, 960));
-    Some(Harness::open(folder))
+    Harness::open(folder)
 }
 
 #[test]
 fn a_render_plays_the_note_of_a_clip_of_a_track_at_its_place_in_the_song() {
-    let Some(harness) = song() else {
-        return;
-    };
+    let harness = song();
     assert_eq!(harness.project.problems(), []);
     let played = rendered_frames(closed(harness).path(), 2 * BAR);
     // A bar, then a beat: 4800 ticks are 120 000 frames. Within a millisecond.
@@ -98,9 +96,7 @@ fn a_render_plays_the_note_of_a_clip_of_a_track_at_its_place_in_the_song() {
 
 #[test]
 fn a_clip_moves_alone_a_second_track_plays_and_a_note_outside_its_clip_is_a_problem() {
-    let Some(mut harness) = song() else {
-        return;
-    };
+    let mut harness = song();
     harness.write_and_apply("state/song/piano/verse.json", &clip(0, 960));
     let played = harness.play_from_the_start(BAR);
     assert_eq!(first_sound(&played, 0).map(|frame| frame / 48), Some(500));
@@ -153,9 +149,7 @@ fn a_clip_moves_alone_a_second_track_plays_and_a_note_outside_its_clip_is_a_prob
 #[test]
 fn a_note_that_ends_where_another_clip_starts_it_again_sounds_on() {
     for (first, second) in [("a", "b"), ("b", "a")] {
-        let Some(mut harness) = song() else {
-            return;
-        };
+        let mut harness = song();
         let held = |start: u64, length: u64| {
             format!(
                 r#"{{"tool": "timeline", "state": {{"start": {start}, "length": 3840, "notes": [{{"start": 0, "length": {length}, "pitch": 60, "velocity": 100}}]}}}}"#
@@ -181,9 +175,7 @@ fn a_note_that_ends_where_another_clip_starts_it_again_sounds_on() {
 /// makes the song longer.
 #[test]
 fn the_song_ends_where_its_last_clip_stops_and_a_loop_or_a_cue_adds_nothing() {
-    let Some(mut harness) = song() else {
-        return;
-    };
+    let mut harness = song();
     assert_eq!(harness.project.end(), Some(Ticks(2 * 3840)));
     let looped = r#"{"tool": "timeline", "state": {"start": 38400, "length": 3840, "loop": true}}"#;
     harness.write_and_apply("state/song/piano/groove.json", looped);
@@ -224,9 +216,7 @@ fn the_song_ends_where_its_last_clip_stops_and_a_loop_or_a_cue_adds_nothing() {
 /// heard, and no file changes.
 #[test]
 fn only_one_track_of_the_song_is_heard_and_no_file_changes() {
-    let Some(mut harness) = song() else {
-        return;
-    };
+    let mut harness = song();
     harness.write_and_apply(
         "state/song/bass/instance.json",
         r#"{"tool": "track", "state": {}}"#,

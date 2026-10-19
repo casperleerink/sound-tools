@@ -36,9 +36,7 @@ fn next_ops(bun: &Bun) -> Vec<Op> {
 
 #[test]
 fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
-    let Some(program) = bun_program() else {
-        return eprintln!("skipped: Bun is not installed");
-    };
+    let program = bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let folder = tempfile::tempdir().unwrap();
     write_sdk(folder.path(), &[]).unwrap();
     std::fs::write(folder.path().join("row.ts"), ROW).unwrap();
@@ -117,9 +115,7 @@ tool({
 /// the edit sets only what the change changed.
 #[test]
 fn an_update_reads_the_defaults_of_a_child_and_sets_only_what_it_changed() {
-    let Some(program) = bun_program() else {
-        return eprintln!("skipped: Bun is not installed");
-    };
+    let program = bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let folder = tempfile::tempdir().unwrap();
     write_sdk(folder.path(), &[]).unwrap();
     std::fs::write(folder.path().join("holder.ts"), HOLDER).unwrap();
@@ -231,8 +227,8 @@ tool({
 "#;
 
 /// Starts Bun with one tool and mounts its view, which reads no record.
-fn mounted(file: &str, code: &str, name: &str) -> Option<Bun> {
-    let program = bun_program()?;
+fn mounted(file: &str, code: &str, name: &str) -> Bun {
+    let program = bun_program().expect("Bun is installed, see tooling/fetch-bun.sh");
     let folder = tempfile::tempdir().unwrap();
     write_sdk(folder.path(), &[]).unwrap();
     std::fs::write(folder.path().join(file), code).unwrap();
@@ -258,16 +254,14 @@ fn mounted(file: &str, code: &str, name: &str) -> Option<Bun> {
         },
         clock,
     });
-    Some(bun)
+    bun
 }
 
 /// The tempo map of the window reaches a binding that reads it, and an edit of it in code goes
 /// out as one song edit.
 #[test]
 fn a_binding_follows_the_tempo_map_and_code_edits_it() {
-    let Some(bun) = mounted("tempo.ts", TEMPO, "tempo") else {
-        return eprintln!("skipped: Bun is not installed");
-    };
+    let bun = mounted("tempo.ts", TEMPO, "tempo");
     let button = (next_ops(&bun).into_iter())
         .find_map(|op| match op {
             Op::Create(id, Props::Div(div)) if div.on_press == Some(true) => Some(id),
@@ -306,9 +300,7 @@ fn a_binding_follows_the_tempo_map_and_code_edits_it() {
 /// The playhead moves on every frame: a binding that reads it fails with what to do instead.
 #[test]
 fn a_binding_that_reads_the_playhead_fails_with_what_to_do() {
-    let Some(bun) = mounted("playhead.ts", PLAYHEAD, "playhead") else {
-        return eprintln!("skipped: Bun is not installed");
-    };
+    let bun = mounted("playhead.ts", PLAYHEAD, "playhead");
     let error = loop {
         match smol::block_on(bun.events().recv()) {
             Ok(Event::Ops { ops, .. }) => break ops.unwrap_err(),
