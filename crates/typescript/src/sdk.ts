@@ -1786,7 +1786,7 @@ function sameShallow(a: unknown, b: unknown): boolean {
 /**
  * Makes `target` hold what `next` holds, keeping each object that stays, so only bindings of
  * what changed run. A list of the same length keeps its items by place, so a moved note is the
- * same note; one that grew or shrank keeps the items that did not change by what they hold, so
+ * same note, unless a child there has another name; one that grew or shrank keeps the items that did not change by what they hold, so
  * a note deleted before others leaves them be.
  */
 /** The value each part of a store was last made like: one given again is the same, and is not walked. */
@@ -1840,8 +1840,16 @@ function adopted<T>(value: T): T {
   return copy as T;
 }
 
+/** What an item of a list is called: a child by its name and tool. Other items have none, and a list keeps them by place. */
+function idOf(value: unknown): string | undefined {
+  if (!isWrapped(value) || Array.isArray(value)) return undefined;
+  const { name, tool } = value as { name?: unknown; tool?: unknown };
+  return typeof name === "string" ? `${name}:${String(tool)}` : undefined;
+}
+
 function reconcileList(target: unknown[], next: unknown[]) {
-  if (target.length === next.length) {
+  // A child swapped for another of the same place is another item: its rows are made again.
+  if (target.length === next.length && next.every((value, index) => idOf(value) === idOf(target[index]))) {
     next.forEach((value, index) => reconcileField(target as never, index, value));
     return;
   }
@@ -1866,7 +1874,9 @@ function reconcileList(target: unknown[], next: unknown[]) {
   const unused = [...byContent.values()].flat();
   const result = middle.map((each) => {
     if ("kept" in each) return each.kept;
-    const reused = isWrapped(each.value) ? unused.find((old) => isWrapped(old) && Array.isArray(old) === Array.isArray(each.value)) : undefined;
+    const reused = isWrapped(each.value)
+      ? unused.find((old) => isWrapped(old) && Array.isArray(old) === Array.isArray(each.value) && idOf(old) === idOf(each.value))
+      : undefined;
     if (reused === undefined) return adopted(each.value);
     unused.splice(unused.indexOf(reused), 1);
     reconcile(reused as Record<PropertyKey, unknown>, each.value as Record<PropertyKey, unknown>);

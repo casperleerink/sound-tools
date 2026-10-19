@@ -485,3 +485,51 @@ fn an_edit_the_runtime_refuses_shows_no_more_once_it_is_heard(cx: &mut TestAppCo
     assert_eq!(window.find("div-box"), Some(narrow));
     assert_eq!(window.record("refused"), serde_json::json!({}));
 }
+
+/// A row for each child, named by it; a click swaps the child `a` for a new `c`.
+const ROWS: &str = r#"import { For, h, tool, type Declaration } from "./sdk";
+
+const parts = { "*": "utility" } as const;
+
+tool({
+  name: "rows",
+  title: "Rows",
+  when: "Never",
+  doc: "A row per child.",
+  state: {},
+  children: parts,
+  behaviour: (): Declaration<typeof parts> => ({ connections: [] }),
+  view: ({ children, update }) =>
+    h("div", { style: { width: 300, height: 200 } },
+      h("div", {
+        key: "swap",
+        style: { width: 100, height: 20 },
+        onPress: () => update("Swap", (part) => {
+          part.children = [...part.children.filter((child) => child.name !== "a"), { name: "c", tool: "utility", state: {} }];
+        }),
+      }, "Swap"),
+      h(For, { each: () => children }, (child: { name: string }) => h("div", { key: child.name, style: { width: 100, height: 20 } }, child.name)),
+    ),
+});
+"#;
+
+#[gpui::test]
+fn a_child_swapped_for_another_gets_a_row_of_its_own(cx: &mut TestAppContext) {
+    let project = at_the_top("rows", "\"utility\"");
+    let files = [
+        ("project.json", project.as_str()),
+        ("state/rows/instance.json", r#"{"tool": "rows", "state": {}}"#),
+        ("state/rows/a.json", r#"{"tool": "utility", "state": {}}"#),
+        ("state/rows/b.json", r#"{"tool": "utility", "state": {}}"#),
+        ("extensions/rows.tsx", ROWS),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.until_found("div-a");
+    let swap = window.until_found("div-swap");
+    window.click(swap);
+    window.until_found("div-c");
+    assert!(window.find("div-a").is_none());
+    assert!(window.find("div-b").is_some());
+}
