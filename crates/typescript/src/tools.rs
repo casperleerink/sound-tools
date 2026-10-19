@@ -45,6 +45,9 @@ pub(crate) struct ToolInfo {
     pub voices: u8,
     /// Its sound reads `input`, so it has an audio input.
     pub input: bool,
+    /// It has a sound of its own. A parent without one plays what its children send to its
+    /// `audio` as it comes, with no stage of its own.
+    pub sound: bool,
     /// The saved fields of its record, in the order the code gives them, which is the order
     /// of the knobs of its default view.
     pub fields: Named<Field>,
@@ -951,6 +954,12 @@ impl Sounds {
         // The check of a record is the one of the tool when it loaded, and the tool may have
         // changed since: the new one decides what plays.
         self.info.check(state).map_err(BehaviourError::Other)?;
+        if let Some(parent) = &self.parent
+            && self.passes()
+        {
+            let own = own_ports(None, context)?;
+            return self.declare(parent, state, own, context);
+        }
         let program = self.program(state).map_err(BehaviourError::Other)?;
         let Some(code) = program.stages.first() else {
             return Err(BehaviourError::Other("its sound has no stage".to_string()));
@@ -1067,10 +1076,18 @@ impl Sounds {
             context.runtime_automation(input, numbers)?;
         }
         if let Some(parent) = &self.parent {
-            let own = own_ports(signals, context)?;
+            let own = own_ports(Some(signals), context)?;
             self.declare(parent, state, own, context)?;
         }
         Ok(())
+    }
+
+    /// A parent with nothing of its own to play: no sound, no inputs and no `onNotes`. Its
+    /// children's sound is its sound, with no stage between, so a song of many parents costs
+    /// what its children cost.
+    fn passes(&self) -> bool {
+        let info = &self.info;
+        !info.sound && info.inputs.0.is_empty() && !info.notes && info.voices <= 1
     }
 
     /// The processor of the stage `index` of its sound, which plays `code`: it hears only what
@@ -1428,13 +1445,15 @@ impl Key {
 pub(crate) struct Own {
     audio: OutputEndpoint,
     notes: OutputEndpoint,
-    sound: InputEndpoint,
+    /// Where what goes to its `audio` plays: its sound, or `None` for an owner that passes it
+    /// on as it comes, see [`Sounds::passes`].
+    sound: Option<InputEndpoint>,
 }
 
-/// Declares the inputs of an owner whose own sound is `signals`. Its `notes` reach its sound
-/// too, as every tool hears its `notes`.
+/// Declares the inputs of an owner whose own sound is `signals`, if it has one. Its `notes`
+/// reach its sound too, as every tool hears its `notes`.
 fn own_ports(
-    signals: Node<Signals>,
+    signals: Option<Node<Signals>>,
     context: &mut BehaviourContext<'_>,
 ) -> Result<Own, BehaviourError> {
     let audio = context.processor("in:audio", AudioThru::default)?;
@@ -1443,12 +1462,32 @@ fn own_ports(
     let input = InputEndpoint::new(notes, EventThru::<NoteEvent>::INPUT);
     context.input(NOTES_INPUT, input);
     let notes = OutputEndpoint::new(notes, EventThru::<NoteEvent>::OUTPUT);
-    context.connect(notes.to(InputEndpoint::new(signals, Signals::NOTES)))?;
+    if let Some(signals) = signals {
+        context.connect(notes.to(InputEndpoint::new(signals, Signals::NOTES)))?;
+    }
     Ok(Own {
         audio: OutputEndpoint::new(audio, AudioThru::OUTPUT),
         notes,
-        sound: InputEndpoint::new(signals, Signals::INPUT),
+        sound: signals.map(|signals| InputEndpoint::new(signals, Signals::INPUT)),
     })
+}
+
+/// Makes `sent` the `audio` output of an owner that passes its children's sound on: the one
+/// that is sent, as it is, or a sum of several. An owner nothing sends to is silent.
+fn passed_sound(
+    sent: &[OutputEndpoint],
+    context: &mut BehaviourContext<'_>,
+) -> Result<(), BehaviourError> {
+    if let [one] = sent {
+        context.output(AUDIO_OUTPUT, *one);
+        return Ok(());
+    }
+    let sum = context.processor("out:audio", AudioThru::default)?;
+    for output in sent {
+        context.connect(output.to(InputEndpoint::new(sum, AudioThru::INPUT)))?;
+    }
+    context.output(AUDIO_OUTPUT, OutputEndpoint::new(sum, AudioThru::OUTPUT));
+    Ok(())
 }
 
 /// What a connection may name, for a problem that says so.
@@ -1476,6 +1515,7 @@ fn wire(
     let feeds = feeds(fed, context)?;
     let mut cables = BTreeSet::new();
     let mut outputs = BTreeMap::new();
+    let mut passed = Vec::new();
     // By its processor too, so a sender made again is another sender; not by its port, which
     // new code of the same sender may move.
     let mut fed: BTreeMap<&str, BTreeSet<(&End, NodeId)>> = BTreeMap::new();
@@ -1522,7 +1562,13 @@ fn wire(
         let at = format!("{at}.to");
         let name = format!("cable:{:?}>{:?}", connection.from, connection.to);
         let into = match (to_child, to_key) {
-            (None, Key::Port) if to_name == AUDIO_OUTPUT => Some((own.sound, None)),
+            (None, Key::Port) if to_name == AUDIO_OUTPUT => match own.sound {
+                Some(sound) => Some((sound, None)),
+                None => {
+                    passed.push(output);
+                    None
+                }
+            },
             (None, Key::Port) => {
                 context.problem(format!(
                     "its behaviour declares {at}, its own sound output {to_name:?}, which it does not have: its own sound output is {{ port: \"audio\" }}"
@@ -1580,6 +1626,9 @@ fn wire(
             let sender = (&connection.from, output.node);
             fed.entry(child).or_default().insert(sender);
         }
+    }
+    if own.sound.is_none() {
+        passed_sound(&passed, context)?;
     }
     for (child, feed) in &feeds {
         let senders = fed.get(child.as_str());
@@ -1898,6 +1947,7 @@ mod tests {
             "doc": "A tremolo.",
             "voices": 1,
             "input": true,
+            "sound": true,
             "fields": {
                 "rate": { "kind": "number", "min": 0.1, "max": 20, "default": 4, "unit": "hz" },
                 "shape": { "kind": "choice", "options": ["sine", "square"], "default": "sine" },
@@ -1999,6 +2049,7 @@ mod tests {
             "doc": "Lanes of patterns.",
             "voices": 1,
             "input": true,
+            "sound": true,
             "fields": {
                 "lanes": {
                     "kind": "list",

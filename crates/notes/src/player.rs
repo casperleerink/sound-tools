@@ -110,6 +110,18 @@ impl Launched {
         (!from_anchor || start >= self.anchor) && (!self.once || start < self.anchor + length)
     }
 
+    /// Whether a note of a pattern of `length` may start or end in `range`.
+    fn plays_in(&self, range: &Range<Ticks>, length: Ticks) -> bool {
+        if !self.placed && !self.once {
+            return true;
+        }
+        let end = match self.once {
+            true => self.anchor + length,
+            false => Ticks(u64::MAX),
+        };
+        range.start <= end && self.anchor < range.end
+    }
+
     /// Whether it sounds at `heard`, for the watches.
     fn sounds_at(&self, heard: Ticks, length: Ticks) -> bool {
         let started = !self.placed || heard >= self.anchor;
@@ -180,6 +192,33 @@ impl Default for NotePlayer {
     }
 }
 
+impl NotePlayer {
+    /// Whether a block over `transport` would send nothing and change nothing: no note held or
+    /// due, no edit, launch or preview to take in, the pedal up and the lanes at rest. A song of
+    /// many timelines then pays almost nothing for those that are not playing.
+    fn idle(&self, transport: &Transport<'_>) -> bool {
+        let range = &transport.tick_range;
+        let pattern_plays = self.launched.is_some_and(|launched| {
+            let length = self.patterns.get(launched.pattern);
+            length.is_some_and(|pattern| launched.plays_in(range, pattern.length().ticks()))
+        });
+        !transport.jumped
+            && !transport.stopped_playing
+            && self.held.is_empty()
+            && self.placing.is_none()
+            && self.queued.is_none()
+            && !self.timeline_swapped
+            && !self.patterns_swapped
+            && self.preview_wanted.is_none()
+            && self.previewed.is_none()
+            && self.watches.is_none()
+            && self.sent_pedal == Pedal::UP
+            && self.sent_expression == Expression::REST
+            && !pattern_plays
+            && !self.timeline.plays_in(range)
+    }
+}
+
 impl Processor for NotePlayer {
     type Update = NotePlayerUpdate;
 
@@ -211,6 +250,9 @@ impl Processor for NotePlayer {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if self.idle(&context.transport) {
+            return;
+        }
         let ProcessContext {
             transport,
             event_outputs,

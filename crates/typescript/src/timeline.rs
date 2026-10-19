@@ -208,8 +208,13 @@ impl Timeline {
 
     fn new(shown: Option<TimelineWatches>) -> Self {
         let inner = PlayerWatches::default();
+        // A player that shows nothing can rest while it has nothing to play.
+        let player = match shown {
+            Some(_) => NotePlayer::watched(inner.clone()),
+            None => NotePlayer::default(),
+        };
         Self {
-            player: NotePlayer::watched(inner.clone()),
+            player,
             inner,
             shown,
             quantize: Quantize::default(),

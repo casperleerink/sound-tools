@@ -226,6 +226,7 @@ function described(spec: Spec, file: string) {
       doc: spec.doc,
       voices: spec.voices ?? 1,
       input: sounds.some(([, graph]) => "Ok" in graph && readsInput(graph.Ok)),
+      sound: spec.sound !== undefined,
       fields: spec.state,
       inputs: spec.inputs ?? {},
       tick: spec.tick !== undefined,
