@@ -38,7 +38,10 @@ Settled during rounds 1–14; the round-by-round log is in git history. The last
 - **Realistic means many small records:** a song of tracks of clips, not one 20,000-note field. Children nest at any depth; a pattern name (`"ret-*"`, `"*"`) stands for many children of one tool.
 - **The concept cut:** tool (record, memory, tick), children, typed ports and connections (signal, number, bang, note), signal, view, update, clock. What became a child or a helper: the sequencer (`timeline` with `loop`), meters (`meter`), mixing (`fader`), automation (`lane`), audio clips (`region`), recording (`recorder`), the transport bar (`<Transport/>`), Knob, Steps, Meter, Pad (TS components), the canvas (`Space`).
 - **Two hooks with reasons:** `onTake`, because what a take becomes is structure, which TS owns; `takes(port)` slots, because a list of tools would leave out the project's own instruments and plugins.
-- **Children reach all code filled with defaults**, one shape, no casts.
+- **Children reach all code filled with defaults**, one shape, no casts. A behaviour sees what is inside its children at any depth, and the fields it reads there decide when it is asked again.
+- **Each take of sound is a recording of its own over the one input**, so a second recorder, or the next take at a loop, starts at once instead of waiting for the one before.
+- **What a performer sends for later waits in a bounded queue of its block** (signals, recorder, timeline alike) and lands at its frame; a send for now drops what waits.
+- **The window names no musical key:** the computer keys leave a focused tool the keys it names.
 - **One road to a built-in effect: a child.** `devices.reverb(...)` inside a `sound` was removed: a second road with its own types, checks and engine ports.
 - **Clock in the core, everything musical outside it.** `clock.play/pause/stop/jump(to, { at })/setRepeat/setClick/update`; the transport bar is ~50 lines of SDK; space plays only where a tool's `globalKeys` takes it.
 - **Device in and out stay `project.json` connection ends.** An `audio-out` child would need the parent's own sound as a source, which ARCHITECTURE rejects (`ownSound`).
@@ -76,10 +79,9 @@ M1 Max, release-fast. Repeat with `projects/render_cost.rs` and the ignored test
 - Notes are the only event kind. A second waits for a tool that needs one.
 - Inline TS tools in Rust tests are not type-checked: some are wrong on purpose and need a mark first.
 - Headless snapshots show no meter motion.
-- Recorder fixes with no test that fails without them: expression lanes kept, a take at a loop waiting, the old clock closing a take, missed events reported.
+- Recording paths with no test that fails without them: the old clock closing a take at a tempo change, missed events and falling behind reported, a take held while Bun restarts, questions numbered per Bun.
 - `now` is exported untyped and on the context; they are one object.
 - Two new-project flows (restart on a folder, open from the start window) share one write.
-- A recorder test failed once in a parallel run and passed in reruns.
 
 ## Round 14c
 

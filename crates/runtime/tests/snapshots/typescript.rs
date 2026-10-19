@@ -215,7 +215,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
 
     // As a new project of the template is: written as the menu writes it.
     let opened = open_files_with(cx, &[], |root| {
-        Ok(runtime::templates::write(root, crate::song::daw())?)
+        runtime::templates::write(root, crate::song::daw())
     })?;
     save(cx, opened.window.into(), "typescript-daw")
 }
