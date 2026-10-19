@@ -332,3 +332,70 @@ fn a_child_that_is_undefined_is_a_problem_and_no_port_of_the_parent() {
         "{problem:?}"
     );
 }
+
+/// `level` of `lfo` into the number input `gain` of `amp`, a grandchild inside `holder`, which
+/// plays what it hears.
+const DEEP: &str = r#"import { number, tool, type Declaration } from "./sdk";
+
+tool({ name: "level", title: "Level", when: "Never", doc: "Plays its number.", state: {}, inputs: { gain: number({ min: 0, max: 1, default: 0 }) }, sound: ({ gain }) => gain });
+
+tool({
+  name: "holder",
+  title: "Holder",
+  when: "Never",
+  doc: "Plays its child.",
+  state: {},
+  behaviour: (): Declaration => ({ connections: [{ from: { child: "amp" }, to: { port: "audio" } }] }),
+});
+
+tool({
+  name: "deep",
+  title: "Deep",
+  when: "Never",
+  doc: "A number into a grandchild.",
+  state: {},
+  behaviour: (): Declaration => ({
+    connections: [
+      { from: { child: "lfo", number: "level" }, to: { child: "holder/amp", number: "gain" } },
+      { from: { child: "holder" }, to: { port: "audio" } },
+    ],
+  }),
+});
+"#;
+
+#[test]
+fn a_number_reaches_the_number_input_of_a_grandchild() {
+    if !has_bun() {
+        return;
+    }
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    write(root, "project.json", &project_json("", &to_device("deep")));
+    write(root, "extensions/lfo.ts", LFO);
+    write(root, "extensions/deep.ts", DEEP);
+    write(
+        root,
+        "state/deep/instance.json",
+        r#"{"tool": "deep", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/deep/lfo.json",
+        r#"{"tool": "lfo", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/deep/holder/instance.json",
+        r#"{"tool": "holder", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/deep/holder/amp.json",
+        r#"{"tool": "level", "state": {}}"#,
+    );
+    let mut harness = Harness::open(folder);
+    assert_eq!(harness.project.problems(), []);
+    let played = harness.render(9_600);
+    let last = played[played.len() - 1];
+    assert!((last - 0.5).abs() < 1e-4, "{last}");
+}

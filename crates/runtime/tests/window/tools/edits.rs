@@ -518,7 +518,10 @@ fn a_child_swapped_for_another_gets_a_row_of_its_own(cx: &mut TestAppContext) {
     let project = at_the_top("rows", "\"utility\"");
     let files = [
         ("project.json", project.as_str()),
-        ("state/rows/instance.json", r#"{"tool": "rows", "state": {}}"#),
+        (
+            "state/rows/instance.json",
+            r#"{"tool": "rows", "state": {}}"#,
+        ),
         ("state/rows/a.json", r#"{"tool": "utility", "state": {}}"#),
         ("state/rows/b.json", r#"{"tool": "utility", "state": {}}"#),
         ("extensions/rows.tsx", ROWS),
@@ -580,7 +583,9 @@ fn a_record_of_another_tool_shows_as_that_tool(cx: &mut TestAppContext) {
             })
         })
     });
-    window.until("the narrow box", |window| window.find("div-box").is_some_and(|at| at != wide));
+    window.until("the narrow box", |window| {
+        window.find("div-box").is_some_and(|at| at != wide)
+    });
     let narrow = window.find("div-box").unwrap();
     assert_eq!(wide.x - narrow.x, gpui::px(50.));
 }

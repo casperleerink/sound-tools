@@ -543,6 +543,11 @@ impl BehaviourContext<'_> {
         Some((outputs, inputs))
     }
 
+    /// The tool of the instance at `path` inside this one, such as `bass` or `bass/mix`.
+    pub fn child_tool(&self, path: &str) -> Option<&'static str> {
+        Some(self.instances.get(&self.id.child(path).ok()?)?.tool)
+    }
+
     /// The state of the owned child `name`, when it exists and holds a `C`.
     pub fn child<C: State>(&self, name: &str) -> Option<&C> {
         self.instances.get(&self.id.child(name).ok()?)?.state()

@@ -1099,10 +1099,7 @@ impl Sounds {
             .filter(|connection| matches!(connection.to.port(), Some((Key::Number | Key::Bang, _))))
             .filter_map(|connection| connection.to.child.as_deref());
         let child_tools: BTreeMap<String, &ToolInfo> = controlled
-            .filter_map(|name| {
-                let child = (children.children.iter()).find(|child| child.id.name() == name)?;
-                Some((name.to_string(), tools.get(child.tool)?))
-            })
+            .filter_map(|path| Some((path.to_string(), tools.get(context.child_tool(path)?)?)))
             .collect();
         wire(&declared.declaration, own, &child_tools, context)
     }
