@@ -218,6 +218,44 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
     assert_eq!(window.problems(), []);
 }
 
+/// A track's recorder of the audio input takes a region, which a track does not keep: that is a
+/// problem that says what to do, not a take that goes nowhere.
+#[gpui::test]
+fn a_take_of_sound_on_a_track_is_a_problem(cx: &mut TestAppContext) {
+    let folder = tempfile::tempdir().unwrap();
+    for (path, text) in song_files(1, 1) {
+        write(folder.path(), &path, &text);
+    }
+    write(
+        folder.path(),
+        "state/song/t00/rec.json",
+        r#"{"tool": "recorder", "state": {"channels": [0]}}"#,
+    );
+    let input = SimulatedInput::default();
+    let device = DeviceAccess {
+        open_input: Some(input.opener(cx.executor())),
+        ..DeviceAccess::default()
+    };
+    let plugins = |_: &std::path::Path| Plugins::new(Vec::new(), scanner(), ScanCache::none());
+    let mut window = open_folder_with(cx, folder, plugins, device);
+    window.wait_for_bun();
+    // The R of the track, on the first row.
+    let row = window.on_lane(0, 0);
+    let arm = gpui::point(row.x - gpui::px(HEADER) + gpui::px(132.), row.y);
+    window.press(arm);
+    window.release(arm);
+    let record = window.until_found("div-record");
+    window.cx.simulate_click(record, Modifiers::default());
+    window.record_for(&input, 48_000);
+    window.cx.simulate_click(record, Modifiers::default());
+    window.until("the take refused", |window| {
+        window.record_for(&input, 2_048);
+        !window.problems().is_empty()
+    });
+    let problems = window.problems();
+    assert!(problems[0].message.contains("record sound on an audio track"), "{problems:?}");
+}
+
 impl Opened<'_> {
     fn song_regions(&mut self) -> usize {
         let session = self.session.clone();
