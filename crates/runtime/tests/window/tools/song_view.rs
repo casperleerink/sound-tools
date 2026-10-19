@@ -600,3 +600,39 @@ fn a_clip_made_shorter_cuts_what_starts_past_its_end(cx: &mut TestAppContext) {
     assert!(starts.into_iter().all(|start| start < short), "{record}");
     assert_eq!(window.problems(), []);
 }
+
+/// A region after a change of tempo is as long as its file at that tempo, wherever the playhead
+/// is: a second at 60 bpm is a beat, and its end trimmed half a beat in leaves half a second.
+#[gpui::test]
+fn a_region_after_a_tempo_change_is_as_long_as_its_file_at_that_tempo(cx: &mut TestAppContext) {
+    let mut files = crate::song::song_files(2, 2);
+    for (path, text) in &mut files {
+        if path == "project.json" {
+            let slow = format!(r#"{{ "tick": 0, "bpm": 120.0 }}, {{ "tick": {}, "bpm": 60.0 }}"#, 2 * BAR);
+            *text = text.replace(r#"{"tick":0,"bpm":120.0}"#, &slow);
+        }
+    }
+    let files: Vec<(&str, &str)> = (files.iter()).map(|(path, text)| (path.as_str(), text.as_str())).collect();
+    let Some(mut window) = super::open(cx, &files) else {
+        return;
+    };
+    assert_eq!(window.project_file()["tempo_map"]["tempo_changes"][1]["bpm"], 60.0);
+    window.wait_for_bun();
+    window.drop_sine();
+    let end = window.on_lane(2 * BAR + 960, 2) - point(px(2.), px(0.));
+    window.until_found("div-mixer-toggle");
+    window.press(end);
+    window.drag_to(end - point(px(5.), px(0.)));
+    window.drag_to(end - point(px(480. * ACROSS), px(0.)));
+    window.release(end - point(px(480. * ACROSS), px(0.)));
+    window.until("the end trimmed", |window| {
+        window.record("song/voice/region")["file_end_seconds"]
+            .as_f64()
+            .is_some()
+    });
+    let trimmed = window.record("song/voice/region")["file_end_seconds"]
+        .as_f64()
+        .unwrap();
+    assert!((trimmed - 0.5).abs() < 1e-3, "{trimmed}");
+    assert_eq!(window.record("song/voice/region")["start"], 2 * BAR);
+}

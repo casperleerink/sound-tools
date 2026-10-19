@@ -105,6 +105,39 @@ function barStarts(runs: Runs, count: number): number[] {
 /** Ticks as seconds of a file at `bpm`. */
 const secondsOf = (ticks: number, bpm: number) => (ticks / BEAT) * (60 / bpm);
 
+type TempoChanges = readonly { tick: number; bpm: number }[];
+
+/** The tempo at `tick`, and the tick of the next change after it. */
+function tempoAt(changes: TempoChanges, tick: number): { bpm: number; next: number } {
+  const bpm = [...changes].reverse().find((change) => change.tick <= tick)?.bpm ?? 120;
+  return { bpm, next: changes.find((change) => change.tick > tick)?.tick ?? Infinity };
+}
+
+/** The seconds from `from` to `to`, through each tempo between: below 0 when `to` is before. */
+function secondsBetween(changes: TempoChanges, from: number, to: number): number {
+  if (to < from) return -secondsBetween(changes, to, from);
+  let seconds = 0;
+  for (let tick = from; tick < to; ) {
+    const { bpm, next } = tempoAt(changes, tick);
+    const end = Math.min(next, to);
+    seconds += secondsOf(end - tick, bpm);
+    tick = end;
+  }
+  return seconds;
+}
+
+/** The ticks `seconds` take from `from`, through each tempo after it. */
+function ticksAcross(changes: TempoChanges, from: number, seconds: number): number {
+  let [tick, left] = [from, seconds];
+  while (left > 0) {
+    const { bpm, next } = tempoAt(changes, tick);
+    const fits = secondsOf(next - tick, bpm);
+    if (left <= fits) return tick + (left * bpm * BEAT) / 60 - from;
+    [tick, left] = [next, left - fits];
+  }
+  return tick - from;
+}
+
 /** A name in `names` that is not taken, from `wanted`. */
 function freeName(names: readonly string[], wanted: string): string {
   let name = wanted;
@@ -834,8 +867,8 @@ export const song = tool({
     const RegionShapes = ({ each, region, row }: { each: Child; region: ReturnType<typeof regionsOf>[number]; row: Accessor<number> }) => {
       const key = `${each.name}/${region.name}`;
       const chosen = () => memory.region === key;
-      // Seconds of its file, as ticks at the tempo: a beat is 960 ticks.
-      const width = now.value(`${key}.seconds`).times(now.bpm).times(16);
+      // Seconds of its file, as ticks through the tempo map from where it starts.
+      const width = () => ticksAcross(clock.tempo_map.tempo_changes, region.state.start, outputs[`${key}.seconds`] ?? 0);
       const sound = () => now.file(region.state.asset, { from: region.state.file_start_seconds, to: region.state.file_end_seconds });
       const editRegion = (label: string, change: (state: FilledStateOfTool<"region">) => void) =>
         update(label, ({ children }) => {
@@ -851,8 +884,9 @@ export const song = tool({
         onEnd: ({ dx }) =>
           editRegion("Trim a region", (state) => {
             const ticks = Math.max(dx, -state.start);
+            const moved = secondsBetween(clock.tempo_map.tempo_changes, state.start, state.start + ticks);
             state.start += ticks;
-            state.file_start_seconds = Math.max(state.file_start_seconds + secondsOf(ticks, clock.bpm), 0);
+            state.file_start_seconds = Math.max(state.file_start_seconds + moved, 0);
           }),
       };
       // How long it plays, which the region tells: the end of its file unless it ends before.
@@ -865,7 +899,9 @@ export const song = tool({
             const plays = outputs[`${key}.seconds`] ?? 0;
             // Its whole file plays already: there is nothing after its end.
             if (plays <= 0 || (state.file_end_seconds === undefined && dx >= 0)) return;
-            state.file_end_seconds = state.file_start_seconds + Math.max(plays + secondsOf(dx, clock.bpm), 0.05);
+            const changes = clock.tempo_map.tempo_changes;
+            const end = state.start + ticksAcross(changes, state.start, plays);
+            state.file_end_seconds = state.file_start_seconds + Math.max(plays + secondsBetween(changes, end, end + dx), 0.05);
           }),
       };
       const press = ({ button }: Press) => {
@@ -879,7 +915,7 @@ export const song = tool({
           <Wave x={0} y={0.12} width={width} height={0.76} list={sound} band low={-1} high={1} color={COLOR.note} />
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={press} cursor="ew-resize"
             moves={() => (chosen() ? ["trim"] : undefined)} />
-          <Rect x={width.minus(handle)} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={press} cursor="ew-resize"
+          <Rect x={() => handle.negate().plus(width())} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={press} cursor="ew-resize"
             moves={() => (chosen() ? ["end"] : undefined)} />
         </Group>
       );
