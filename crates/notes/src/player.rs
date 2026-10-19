@@ -182,13 +182,20 @@ impl NotePlayer {
 
     /// A player that shows what it plays in `watches`.
     pub fn watched(watches: PlayerWatches) -> Self {
-        watches.playing.set(NO_PATTERN);
-        watches.queued.set(NO_PATTERN);
-        watches.phase.set(0.0);
-        Self {
-            watches: Some(watches),
-            ..Self::default()
+        let mut player = Self::default();
+        player.show(Some(watches));
+        player
+    }
+
+    /// Shows what it plays in `watches` from now on, or nothing: a player that shows nothing
+    /// can rest.
+    pub fn show(&mut self, watches: Option<PlayerWatches>) {
+        if let Some(watches) = &watches {
+            watches.playing.set(NO_PATTERN);
+            watches.queued.set(NO_PATTERN);
+            watches.phase.set(0.0);
         }
+        self.watches = watches;
     }
 }
 

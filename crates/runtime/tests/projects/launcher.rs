@@ -3,6 +3,7 @@
 //! play into changes.
 
 use crate::owners::{closed, rendered_frames};
+use sound_core::InstanceId;
 use crate::support::{BAR, Harness, first_sound, write};
 
 /// The launcher of the doc for agents that write tools, as it is written there.
@@ -211,4 +212,19 @@ fn a_note_a_loop_holds_ends_when_it_plays_into_nothing_or_into_another_child() {
         // `other` gets the note of the loop at the next round, not before.
         assert_eq!(first_sound(&after, 1_200), None, "{to}");
     }
+}
+
+#[test]
+fn a_timeline_that_starts_to_loop_shows_that_it_plays() {
+    let once = r#"{"tool": "timeline", "state": {"length": 3840, "notes": [
+  {"start": 0, "length": 480, "pitch": 36, "velocity": 100}]}}"#;
+    let Some(mut harness) = loops(once, "") else {
+        return;
+    };
+    harness.write_and_apply("state/loops/low.json", LOW);
+    harness.play_from_the_start(BAR / 2);
+    let low = InstanceId::new("loops/low").unwrap();
+    let watches = harness.project.watches(&low);
+    let playing = watches.iter().find(|(name, _)| name == "playing");
+    assert_eq!(playing.map(|(_, watch)| watch.get()), Some(1.0));
 }

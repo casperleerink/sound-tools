@@ -189,13 +189,16 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     let record = record(state).map_err(BehaviourError::Other)?;
     let pattern = round(&record).map_err(BehaviourError::Other)?;
     let lanes = lanes(&record, &pattern).map_err(BehaviourError::Other)?;
+    let node = context.processor(PROCESSOR, Timeline::default)?;
     // Only a loop shows what plays: a song of many timelines keeps no watches it never reads.
-    let watches = record.looped.then(|| TimelineWatches {
+    let shown = record.looped.then(|| TimelineWatches {
         playing: context.watch("playing"),
         queued: context.watch("queued"),
         phase: context.watch("phase"),
     });
-    let node = context.processor(PROCESSOR, || Timeline::new(watches))?;
+    if context.changed("shown", key(&record.looped)) {
+        context.update(node, TimelineUpdate::Show(shown))?;
+    }
     if context.changed(
         "notes",
         key(&(&record.length, &record.notes, record.looped)),
@@ -233,13 +236,14 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
 
 /// What a looping timeline shows: whether it plays, 1 or 0; a launch that waits, 1 to start
 /// and -1 to stop, else 0; and how far into its round it is, 0 to 1.
-struct TimelineWatches {
+pub(crate) struct TimelineWatches {
     playing: Watch,
     queued: Watch,
     phase: Watch,
 }
 
 /// A [`NotePlayer`] of one round that launches what its input `launch` hears.
+#[derive(Default)]
 pub(crate) struct Timeline {
     player: NotePlayer,
     /// What the player shows, by pattern index, which `shown` turns into the watches above.
@@ -258,28 +262,13 @@ pub(crate) enum TimelineUpdate {
     Launches((Quantize, bool)),
     /// Starts at the next point of its quantize, or stops there with `false`.
     Launch(bool),
+    /// What it shows from now on. The old watches ride back in here.
+    Show(Option<TimelineWatches>),
 }
 
 impl Timeline {
     pub(crate) const LAUNCH: EventInput<Number> = EventInput::new(0);
     pub(crate) const NOTES: EventOutput<NoteEvent> = NotePlayer::NOTES;
-
-    fn new(shown: Option<TimelineWatches>) -> Self {
-        let inner = PlayerWatches::default();
-        // A player that shows nothing can rest while it has nothing to play.
-        let player = match shown {
-            Some(_) => NotePlayer::watched(inner.clone()),
-            None => NotePlayer::default(),
-        };
-        Self {
-            player,
-            inner,
-            shown,
-            quantize: Quantize::default(),
-            looped: false,
-            heard: None,
-        }
-    }
 
     fn launch(&mut self, start: bool) {
         let launch = Launch {
@@ -318,6 +307,11 @@ impl Processor for Timeline {
                 (self.quantize, self.looped) = (*quantize, *looped);
             }
             TimelineUpdate::Launch(start) => self.launch(*start),
+            TimelineUpdate::Show(shown) => {
+                std::mem::swap(&mut self.shown, shown);
+                let inner = self.shown.as_ref().map(|_| self.inner.clone());
+                self.player.show(inner);
+            }
         }
     }
 
