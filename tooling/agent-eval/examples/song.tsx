@@ -1,4 +1,4 @@
-import { For, Fragment, Group, h, Label, Line, list, now, Rect, selector, Show, Space, text, tool, type Accessor, type Declaration, type Drag, type FilledStateOfTool, type Live, type Press } from "./sdk";
+import { For, Fragment, Group, h, Label, Line, list, now, Rect, selector, Show, Space, text, tool, Transport, type Accessor, type Declaration, type Drag, type FilledStateOfTool, type Live, type Press } from "./sdk";
 import { track } from "./track";
 
 // A song: tracks of clips in time, with a mixer strip per track and a note editor for one clip.
@@ -51,13 +51,17 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, mixer strips or note editor",
   doc:
-    "Tracks of clips in time. Each `track` child plays into the utility `master`; `solo` names the tracks that play alone. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it.",
+    "Tracks of clips in time. Each `track` child plays into the utility `master`; `solo` names the tracks that play alone. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
   state: { solo: list(text(), { max: 64 }) },
   children: parts,
-  transport: true,
   memory: (): Memory => ({ selected: new Set(), open: null, note: null }),
   keys: ["delete", "backspace", "cmd-d"],
-  onKey: ({ memory, update }, { key, down }) => {
+  globalKeys: ["space"],
+  onKey: ({ memory, update, clock }, { key, down }) => {
+    if (key === "space") {
+      if (down) (clock.playing ? clock.pause() : clock.play());
+      return;
+    }
     if (!down || memory.selected.size === 0) return;
     const chosen = new Set(memory.selected);
     update(key === "d" ? "Copy clips on" : "Remove clips", ({ children }) => {
@@ -91,7 +95,7 @@ export const song = tool({
       ],
     };
   },
-  view: ({ state, children, memory, update }) => {
+  view: ({ state, children, memory, update, clock }) => {
     const tracks = () => children.filter((child) => child.tool === "track");
     const isPicked = selector(() => memory.selected);
     const clipsOf = (each: (typeof children)[number]) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);
@@ -224,6 +228,9 @@ export const song = tool({
 
     return (
       <div style={{ grow: true, background: COLOR.back }}>
+        <div style={{ paddingX: 8, paddingY: 6 }}>
+          <Transport clock={clock} />
+        </div>
         <div style={{ direction: "row", grow: true }}>
           <div style={{ width: HEADER }}>
             <div style={{ height: RULER }} />

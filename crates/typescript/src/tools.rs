@@ -54,13 +54,14 @@ pub(crate) struct ToolInfo {
     pub tick: bool,
     /// It draws its own view; without one, its default view is a card, and it has no page.
     pub view: bool,
-    /// Its view at the top shows the transport, and draws again as the transport moves.
-    pub transport: bool,
     /// It hears the computer keyboard, `onKey`.
     pub keys: bool,
     /// The keys it takes, by name such as `delete` or `cmd-c`; every plain key when `None`.
     #[serde(default)]
     pub takes: Option<Vec<String>>,
+    /// The keys it hears wherever the focus is, while its view is the main view: `space`.
+    #[serde(default)]
+    pub global_keys: Vec<String>,
     /// It hears note events, `onNotes`: what reaches its `notes`.
     pub notes: bool,
     /// It owns children and has a behaviour, which declares how they connect.
@@ -1901,7 +1902,6 @@ mod tests {
             },
             "tick": false,
             "view": false,
-            "transport": false,
             "keys": false,
             "notes": false,
             "behaviour": false
@@ -2006,7 +2006,6 @@ mod tests {
             "inputs": {},
             "tick": false,
             "view": false,
-            "transport": false,
             "keys": false,
             "notes": false,
             "behaviour": true

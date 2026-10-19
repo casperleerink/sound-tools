@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Context, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Clock as SdkClock, Context, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -33,8 +33,12 @@ const CHECKED_ROOM: Size = { width: 1422, height: 824 };
 type Played = { instance: string; watches: Watches };
 /** A record as the runtime tells it: its `state` as the file holds it. */
 type Told = { id: string; tool: string; state: unknown };
+/** Where the piece plays and how, as the window tells it. */
+type Transport = { playing: boolean; tick: number; bar: number; beat: number; bpm: number; repeat: [number, number] | null; click: boolean };
 /** Where the sound and the piece are now, which all code of a tool gets. */
 type Clock = { time: number; transport: Transport };
+/** The tempo map and the sections, as `project.json` holds them. */
+type Song = { tempo_map: TempoMap; sections: Section[] };
 
 type Request =
   /** The records this Bun did not hold as they are, those that are gone, and how many of its edits the runtime heard. */
@@ -44,6 +48,7 @@ type Request =
   | { type: "resize"; card: number; size: Size }
   | { type: "watches"; instance: string; watches: Watches }
   | ({ type: "clock" } & Clock)
+  | ({ type: "song" } & Song)
   /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
   | { type: "event"; card: number; node: number; kind: "press" | "end" | "move"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
@@ -55,7 +60,7 @@ type Request =
   | { type: "file_opened"; question: number; asset: string | null };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
-type Reads = { state: string[] | null; children: boolean; watches: boolean; transport: boolean };
+type Reads = { state: string[] | null; children: boolean; watches: boolean };
 
 /** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function say(message: object) {
@@ -87,8 +92,8 @@ const MAX_SOUNDS = 256;
 /** Every key of a tool, so a misspelled or an old one is a problem instead of left out. */
 const KEYS = {
   name: true, title: true, when: true, doc: true, voices: true, state: true, inputs: true, sound: true,
-  behaviour: true, children: true, memory: true, tick: true, view: true, transport: true, onKey: true,
-  keys: true, onNotes: true,
+  behaviour: true, children: true, memory: true, tick: true, view: true, onKey: true,
+  keys: true, globalKeys: true, onNotes: true,
 } satisfies Record<keyof Spec, true>;
 /** The keys a tool had before, with what took their place. */
 const GONE: Record<string, string> = {
@@ -96,7 +101,10 @@ const GONE: Record<string, string> = {
   controls: "inputs: number(...) for a live control, bang() for a trigger",
   card: "view, which draws a card in a rack and the whole window at the top",
   page: "view, which draws a card in a rack and the whole window at the top",
+  transport: "clock, which every view gets; <Transport clock={clock} /> shows it, globalKeys: [\"space\"] plays it",
 };
+/** The keys the app keeps, on macOS and elsewhere: no tool takes them. */
+const APP_KEYS = ["z", "n", "o", "q", "l", "b", "k"].flatMap((key) => [`cmd-${key}`, `ctrl-${key}`]).concat(["tab"]);
 /** The most voices a sound plays at once. */
 const MAX_VOICES = 8;
 
@@ -143,6 +151,11 @@ function problemsOf(spec: Spec): string[] {
     }
     if (spec.behaviour && voices !== 1) {
       problems.push('voices: a parent\'s sound is one voice that hears what it connects to its own { port: "audio" } as `input`, so leave `voices` out');
+    }
+    for (const key of spec.globalKeys ?? []) {
+      if (APP_KEYS.includes(key)) {
+        problems.push(`globalKeys: ${key} is the app's: undo, new, open, quit, the panel, the computer keys and tab are`);
+      }
     }
     if (spec.children && !spec.behaviour) {
       problems.push("children: only a parent has children: give it a behaviour that connects them");
@@ -213,9 +226,9 @@ function described(spec: Spec, file: string) {
       inputs: spec.inputs ?? {},
       tick: spec.tick !== undefined,
       view: spec.view !== undefined,
-      transport: spec.transport === true,
       keys: spec.onKey !== undefined,
       takes: spec.keys ?? null,
+      global_keys: spec.globalKeys ?? [],
       notes: spec.onNotes !== undefined,
       behaviour: spec.behaviour !== undefined,
       children: spec.children,
@@ -846,13 +859,14 @@ function contextOf<Extra extends object>(
   spec: Spec,
   record: Entry,
   watches: Watches,
-  { time, transport }: Clock,
+  { time }: Clock,
   extra: Extra,
 ) {
   const context = {
     ...extra,
     memory: memoryOf(instance, spec),
     time,
+    clock: clockFor(instance),
     update: updater(instance),
     openFile: fileOpener(),
     now: sdk.now as Context<State>["now"],
@@ -863,9 +877,8 @@ function contextOf<Extra extends object>(
   return Object.defineProperties(context, {
     state: { enumerable: true, value: filledState(spec, record) },
     outputs: { enumerable: true, value: watches },
-    transport: { enumerable: true, value: transport },
     children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
-  }) as typeof context & { state: State; outputs: Watches; transport: Transport; children: OwnedChild[] };
+  }) as typeof context & { state: State; outputs: Watches; children: OwnedChild[] };
 }
 
 /** `openFile`: the runtime opens the file, copies it, and answers its question. */
@@ -881,7 +894,7 @@ function fileOpener() {
 
 // ---------------------------------------------------------------------------------------------
 // Views: their code runs once and makes nodes; stores of the record, its children,
-// the watches and the transport change what reads them. The window gets the ops of each card
+// the watches and the clock change what reads them. The window gets the ops of each card
 // after every request, and at once after an `await`.
 
 /** What the cards of an instance read, which its stores hold as they are now. */
@@ -890,7 +903,6 @@ type Stores = {
   state: Record<string, unknown>;
   children: OwnedChild[];
   watches: Watches;
-  transport: Transport;
   /** What its bindings read as last told to the window, as JSON. */
   told?: string;
 };
@@ -903,7 +915,57 @@ const cards = new Map<number, Mounted>();
 const mounting = new Set<number>();
 const answering = new Set<number>();
 let flushing = false;
-let transport: Transport = { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 };
+/** Where the piece plays as last told: what moves on every frame, which no binding follows. */
+let transport: Transport = { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120, repeat: null, click: false };
+/** What of the clock bindings follow, one for every tool. */
+const following = sdk.host.adopted({ playing: false, repeat: null as { from: number; to: number } | null, click: false });
+const song = sdk.host.adopted<Song>({ tempo_map: { time_signatures: [{ signature: "4/4", bars: 1 }], tempo_changes: [{ tick: 0, bpm: 120 }] }, sections: [] });
+
+/** A tick as the window takes it: a whole number from 0. */
+function wholeTick(tick: number, what: string): number {
+  if (!Number.isFinite(tick) || tick < 0) throw new Error(`${what} ${tick} is not a tick from 0 on`);
+  return Math.round(tick);
+}
+
+/** The clock as the code of `instance` gets it: what bindings follow, and what moves it. */
+function clockFor(instance: string): SdkClock {
+  const followed = sdk.host.store(following, false);
+  const songOf = sdk.host.store(song, false);
+  const moving = (name: "tick" | "bar" | "beat" | "bpm") => {
+    if (sdk.host.binding()) {
+      throw new Error(`clock.${name} moves on every frame, so no binding follows it: show it with now.tick or now.bpm, or read it in a handler`);
+    }
+    return transport[name];
+  };
+  const op = (message: object) => say({ type: "transport", ...message });
+  return {
+    get playing() { return followed.playing; },
+    get repeat() { return followed.repeat; },
+    get click() { return followed.click; },
+    get tempo_map() { return songOf.tempo_map; },
+    get sections() { return songOf.sections; },
+    get tick() { return moving("tick"); },
+    get bar() { return moving("bar"); },
+    get beat() { return moving("beat"); },
+    get bpm() { return moving("bpm"); },
+    play: () => op({ op: "play" }),
+    pause: () => op({ op: "pause" }),
+    stop: () => op({ op: "stop" }),
+    jump: (to, { at } = {}) => op({ op: "jump", to: wholeTick(to, "jump to"), at: at === undefined ? null : wholeTick(at, "jump at") }),
+    setRepeat: (range) => op({ op: "repeat", range: range && [wholeTick(range.from, "repeat from"), wholeTick(range.to, "repeat to")] }),
+    setClick: (on) => op({ op: "click", on }),
+    update: (label, change) => {
+      const draft = structuredClone({ tempo_map: song.tempo_map, sections: song.sections });
+      change(draft);
+      // Before it counts: a value JSON cannot hold throws here.
+      const line = JSON.stringify({ type: "song_edit", instance, label, ...draft }) + "\n";
+      writeSync(1, line);
+      // What its views show follows at once, before the runtime answers.
+      sdk.host.batch(() => sdk.host.reconcile(song as never, draft as never));
+      later();
+    },
+  };
+}
 
 /** The stores of `instance`, made from the record as code knows it, with its edits not heard. */
 function storesOf(instance: string, spec: Spec, record: Entry): Stores {
@@ -914,7 +976,6 @@ function storesOf(instance: string, spec: Spec, record: Entry): Stores {
       state: sdk.host.adopted(filledState(spec, record)) as Record<string, unknown>,
       children: sdk.host.adopted(childrenOf(instance)) as OwnedChild[],
       watches: {},
-      transport: { ...transport },
     };
     stores.set(instance, known);
   }
@@ -950,9 +1011,8 @@ function setWatches(instance: string, watches: Watches) {
 function setClock({ time, transport: next }: Clock) {
   now = time;
   transport = next;
-  sdk.host.batch(() => {
-    for (const known of stores.values()) sdk.host.reconcile(known.transport as never, next as never);
-  });
+  const repeat = next.repeat && { from: next.repeat[0], to: next.repeat[1] };
+  sdk.host.batch(() => sdk.host.reconcile(following as never, { playing: next.playing, repeat, click: next.click } as never));
 }
 
 /** Sends the ops at once when code changed something outside a request, such as after an `await`. */
@@ -990,7 +1050,6 @@ function flushOps() {
       state: sdk.host.readFields(known.state),
       children: sdk.host.isRead(known.children),
       watches: sdk.host.isRead(known.watches),
-      transport: sdk.host.isRead(known.transport),
     };
     const text = JSON.stringify(reads);
     if (text !== known.told) {
@@ -1037,7 +1096,7 @@ function cardContext<Extra extends object>(instance: string, spec: Spec, known: 
     state: sdk.host.store(known.state, false) as State,
     children: sdk.host.store(known.children, false),
     outputs: sdk.host.store(known.watches, false),
-    transport: sdk.host.store(known.transport, false),
+    clock: clockFor(instance),
     memory: memoryOf(instance, spec),
     update: updater(instance),
     openFile: fileOpener(),
@@ -1079,17 +1138,18 @@ function defaultOf(field: Field): unknown {
 
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
-  const clock: Clock = { time: 0, transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 } };
   const memory = freshMemory(spec);
   const performs = { play() {}, send() {}, update() {}, openFile: async () => null };
   const state = frozen(filledObject(spec.state, {}));
-  const context = { state, children: [], outputs: {}, memory, time: 0, transport: clock.transport, now: sdk.now, ...performs };
+  // What the check plays on the clock goes nowhere.
+  const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, update() {} };
+  const context = { state, children: [], outputs: {}, memory, time: 0, clock, now: sdk.now, ...performs };
   try {
     spec.tick?.({ ...context, dt: 1 / 30 } as never);
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
-  const known: Stores = { tool: spec.name, state: structuredClone(state), children: [], watches: {}, transport: clock.transport };
+  const known: Stores = { tool: spec.name, state: structuredClone(state), children: [], watches: {} };
   const drawn = { ...context, state: sdk.host.store(known.state, false), size: sdk.host.store({ ...CHECKED_ROOM }, false) };
   const root = sdk.host.mount(-1, () => drawerOf(spec)(drawn), { state: drawn.state as never, fields: spec.state, update() {} });
   const taken = sdk.host.takeOps(root);
@@ -1156,6 +1216,9 @@ function handle(request: Request) {
       break;
     case "clock":
       setClock(request);
+      break;
+    case "song":
+      sdk.host.reconcile(song as never, { tempo_map: request.tempo_map, sections: request.sections } as never);
       break;
     case "event": {
       now = request.time;

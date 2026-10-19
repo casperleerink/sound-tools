@@ -188,10 +188,9 @@ fn delete_removes_the_chosen_clip_and_space_still_plays(cx: &mut TestAppContext)
     });
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Remove clips"));
-    // The page names its keys: space is the window's, and plays.
+    // The page names its keys: space is not one of them, and plays as the song's global key.
     window.cx.simulate_keystrokes("space");
-    window.poll();
-    assert!(window.playing());
+    window.until("the song plays", Window::playing);
 }
 
 #[gpui::test]
@@ -203,8 +202,7 @@ fn space_plays_the_song_and_the_meters_follow_with_nothing_from_bun(cx: &mut Tes
     window.wait_for_bun();
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
-    window.poll();
-    assert!(window.playing());
+    window.until("the song plays", Window::playing);
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let batches = sound_typescript::heard_batches();

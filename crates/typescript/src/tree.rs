@@ -108,7 +108,7 @@ props! {
         from: Reach,
         to: Reach,
         text: Words,
-        unit: Unit,
+        unit: Readout,
         size: f32,
         align: Align,
         /// The values a wave draws, oldest first, and the values at its bottom and its top.
@@ -871,6 +871,8 @@ impl Num {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Live {
     Tick,
+    /// The tempo at the playhead.
+    Bpm,
     /// Seconds since the view opened.
     Elapsed,
     /// A number by its name: a field of the record, a number input or a number output of the
@@ -1007,7 +1009,7 @@ pub(crate) enum Ease {
 impl Live {
     fn add_uses(&self, uses: &mut Uses) {
         match self {
-            Self::Tick => uses.tick = true,
+            Self::Tick | Self::Bpm => uses.tick = true,
             Self::Elapsed => uses.animates = true,
             Self::Peak { name, .. } => {
                 uses.peaks.insert(name.clone());
@@ -1126,6 +1128,20 @@ pub(crate) struct Snap {
 pub(crate) enum Axis {
     X,
     Y,
+}
+
+/// How text shows a live number: in a unit, or a tick as a place in the piece, as minutes and
+/// seconds, or as the time signature there.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Readout {
+    Hz,
+    Ms,
+    Db,
+    Percent,
+    Position,
+    Time,
+    Signature,
 }
 
 /// A number a drag turns as it goes: a field of the record, or a live control.

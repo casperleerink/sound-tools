@@ -29,6 +29,7 @@ mod nested;
 mod performance;
 mod piano_roll;
 mod song;
+mod transport;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
@@ -74,7 +75,8 @@ const EXPERIMENT: [(&str, &str); 3] = [
     ("extensions/keys.ts", KEYS),
 ];
 
-/// A page that asks for the transport, at the top. A click keeps the tick it drew with.
+/// A page with the transport of the SDK, at the top, and space as its key. A click keeps the
+/// tick of the clock where it was clicked.
 const BEAT: [(&str, &str); 3] = [
     ONLY_THE_TOOL[0],
     (
@@ -83,24 +85,27 @@ const BEAT: [(&str, &str); 3] = [
     ),
     (
         "extensions/beat.ts",
-        r#"import { h, input, number, tool } from "./sdk";
+        r#"import { h, input, number, tool, Transport } from "./sdk";
 
 tool({
   name: "beat",
   title: "Beat",
   when: "You want to see the beat",
-  doc: "Shows the bar and the beat.",
+  doc: "Shows the transport.",
   state: { tick: number({ min: 0, max: 1000000, default: 0 }) },
   sound: () => input,
-  transport: true,
-  view: ({ size, transport, update }) =>
-    h(
-      "div",
-      {
-        style: () => ({ width: size.width, height: size.height }),
-        onPress: () => update("Keep the tick", ({ state }) => { state.tick = transport.tick; }),
-      },
-      () => `${transport.bar}.${transport.beat}`,
+  globalKeys: ["space"],
+  onKey: ({ clock }, { key, down }) => {
+    if (key === "space" && down) (clock.playing ? clock.pause() : clock.play());
+  },
+  view: ({ size, clock, update }) =>
+    h("div", { style: () => ({ width: size.width, height: size.height }) },
+      h(Transport, { clock }),
+      h("div", {
+        key: "keep",
+        style: { grow: true },
+        onPress: () => update("Keep the tick", ({ state }) => { state.tick = clock.tick; }),
+      }, "Keep"),
     ),
 });
 "#,
@@ -398,6 +403,24 @@ impl Window<'_> {
         });
     }
 
+    /// Where the element of `selector` is, once the page drew it.
+    fn until_found(&mut self, selector: &'static str) -> Point<Pixels> {
+        let mut found = None;
+        self.until(selector, |window| {
+            found = window.find(selector);
+            found.is_some()
+        });
+        found.unwrap()
+    }
+
+    /// Plays the project, as a transport would.
+    fn start_playing(&mut self) {
+        let session = self.session.clone();
+        self.cx
+            .update(|_, cx| session.update(cx, |session, _| session.engine().play()));
+        self.poll();
+    }
+
     fn playing(&mut self) -> bool {
         let session = self.session.clone();
         self.cx
@@ -457,25 +480,44 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 }
 
 #[gpui::test]
-fn a_page_that_asks_for_the_transport_plays_it_and_draws_as_it_moves(cx: &mut TestAppContext) {
+fn the_transport_of_the_sdk_plays_and_a_handler_reads_the_clock(cx: &mut TestAppContext) {
     let Some(mut window) = open(cx, &BEAT) else {
         return;
     };
+    // The app has no transport of its own for a page.
     assert!(window.find("record").is_none());
-    let play = window.find("play").expect("the play button");
+    assert!(window.find("play").is_none());
+    let play = window.until_found("div-transport-play");
     window.cx.simulate_click(play, Modifiers::default());
-    window.poll();
-    assert!(window.playing());
+    window.until("the clock plays", Window::playing);
 
-    // A click keeps a tick its code heard: the text of the page followed the playhead.
-    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
-    let middle = point(middle.width, middle.height);
-    window.until("a draw at a later tick", |window| {
-        window.cx.simulate_click(middle, Modifiers::default());
+    // A click keeps the tick the handler read as it ran.
+    let keep = window.until_found("div-keep");
+    window.until("a later tick", |window| {
+        window.cx.simulate_click(keep, Modifiers::default());
+        window.wait_for_bun();
         window.record("beat")["tick"]
             .as_f64()
             .is_some_and(|tick| tick > 0.)
     });
+
+    // Space is the page's key wherever the focus is: it pauses.
+    window.focus_the_window();
+    window.cx.simulate_keystrokes("space");
+    window.until("the clock stops", |window| !window.playing());
+}
+
+/// A key the main view does not name in `globalKeys` plays nothing: the app plays no key.
+#[gpui::test]
+fn space_does_nothing_in_a_project_whose_tool_does_not_take_it(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &COUNTER) else {
+        return;
+    };
+    window.wait_for_bun();
+    window.focus_the_window();
+    window.cx.simulate_keystrokes("space");
+    window.poll();
+    assert!(!window.playing());
 }
 
 /// A click runs the handler the page made once, which reads the record as it is now.
@@ -1110,7 +1152,6 @@ tool({
       { from: { child: "synth" }, to: { port: "audio" } },
     ],
   }),
-  transport: true,
   view: ({ size, outputs, send }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
@@ -1149,8 +1190,7 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
     let Some(mut window) = open(cx, &files) else {
         return;
     };
-    let play = window.find("play").expect("the play button");
-    window.cx.simulate_click(play, Modifiers::default());
+    window.start_playing();
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
     let queued = |window: &mut Window| {

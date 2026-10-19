@@ -250,6 +250,28 @@ fn a_key_a_tool_does_not_have_is_a_problem_that_names_the_keys_it_has() {
     );
 }
 
+#[test]
+fn a_key_the_app_keeps_is_a_problem_of_the_tool_that_takes_it() {
+    if !sound_typescript::has_bun() {
+        return eprintln!("skipped: Bun is not installed");
+    }
+    let greedy = LEVEL.replace(
+        "sound:",
+        "globalKeys: [\"space\", \"cmd-z\"],\n  onKey: () => {},\n  sound:",
+    );
+    let folder = tempfile::tempdir().unwrap();
+    crate::support::write(folder.path(), "extensions/level.ts", &greedy);
+    let harness = Harness::open(folder);
+    let problems = harness.project.problems();
+    let [problem] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert!(
+        problem.message.contains("cmd-z is the app's"),
+        "{problem:?}"
+    );
+}
+
 /// A lane of a tool of the project bends on its frame, as one of a built-in device does: the
 /// level opens from 0 to 1 in 50 frames, and is silent before and full after.
 #[test]

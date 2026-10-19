@@ -29,8 +29,8 @@ use crate::feeds::Feeds;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
-    self, Align, Axis, Cursor, DivProps, Drag, List, NodeTable, Paint, Props, Reach, ShapeKind,
-    SpaceProps, TextProps, Turned, Words,
+    self, Align, Axis, Cursor, DivProps, Drag, List, NodeTable, Paint, Props, Reach, Readout,
+    ShapeKind, SpaceProps, TextProps, Turned, Words,
 };
 use crate::window::{Live, Surface, state_of};
 
@@ -272,7 +272,7 @@ impl TypeScriptCard {
         // it took comes up here all the same.
         let takes = (self.live.read(cx).info(self.card)).and_then(|info| info.takes);
         if let Some(takes) = takes
-            && !takes.contains(&chord_name(keystroke))
+            && !takes.contains(&sound_ui::global_keys::chord_name(keystroke))
             && (down || !self.keys_down.contains(&key))
         {
             return;
@@ -284,19 +284,18 @@ impl TypeScriptCard {
             (false, _) => self.keys_down.remove(&key),
         };
         if changed {
-            let card = self.card;
+            let id = self.id.clone();
             self.live
-                .update(cx, |live, cx| live.key(card, &key, down, modifiers, cx));
+                .update(cx, |live, cx| live.key(&id, &key, down, modifiers, cx));
         }
         cx.stop_propagation();
     }
 
     /// Every key the card holds goes up.
     fn let_go_of_keys(&mut self, cx: &mut App) {
-        let card = self.card;
         for key in std::mem::take(&mut self.keys_down) {
             self.live.update(cx, |live, cx| {
-                live.key(card, &key, false, Modifiers::default(), cx)
+                live.key(&self.id, &key, false, Modifiers::default(), cx)
             });
         }
     }
@@ -1066,6 +1065,14 @@ impl Drawing<'_, '_> {
                     }
                     None => style.apply(div()).children(children),
                 };
+                // Tests find a div by its key.
+                let element = match key {
+                    Some(key) => {
+                        let selector = format!("div-{key}");
+                        element.debug_selector(move || selector)
+                    }
+                    None => element,
+                };
                 if *on_press != Some(true) {
                     return element.into_any_element();
                 }
@@ -1627,7 +1634,8 @@ impl Placing<'_> {
                 text: match &shape.text {
                     Some(Words::Fixed(text)) => text.clone().into(),
                     Some(Words::Live(live)) => {
-                        readout(self.sources.number(live) as f32, shape.unit).into()
+                        let value = self.sources.number(live);
+                        text_of(value, shape.unit, self.sources.feeds.clock.as_ref()).into()
                     }
                     None => SharedString::default(),
                 },
@@ -1653,21 +1661,6 @@ impl Placing<'_> {
     }
 }
 
-/// A key as a tool names it in `keys`: `a`, or with cmd, ctrl and alt held first, `cmd-c`.
-fn chord_name(keystroke: &Keystroke) -> String {
-    let modifiers = keystroke.modifiers;
-    let held = [
-        (modifiers.platform, "cmd-"),
-        (modifiers.control, "ctrl-"),
-        (modifiers.alt, "alt-"),
-    ];
-    let prefix: String = (held.iter())
-        .filter(|(held, _)| *held)
-        .map(|(_, name)| *name)
-        .collect();
-    format!("{prefix}{}", keystroke.key)
-}
-
 /// An id for an element, from its key, else from where it is in the tree.
 fn element_name(kind: &str, key: Option<&str>, index: &[usize]) -> String {
     match key {
@@ -1687,6 +1680,32 @@ fn readout(value: f32, unit: Option<Unit>) -> String {
         Some(Unit::Db) => decibels_readout(value),
         Some(Unit::Percent) => percent_readout(value),
         None => short(value),
+    }
+}
+
+/// A live number as text shows it: a tick as a place in the piece (`5.3`), as minutes and seconds
+/// (`1:07`), or as the time signature there (`7/8`).
+fn text_of(value: f64, shown: Option<Readout>, clock: Option<&sound_core::Clock>) -> String {
+    let unit = |unit| readout(value as f32, Some(unit));
+    let tick = sound_core::Ticks(value.max(0.0) as u64);
+    let signatures = clock.map(|clock| clock.tempo_map().time_signatures());
+    match shown {
+        None => readout(value as f32, None),
+        Some(Readout::Hz) => unit(Unit::Hz),
+        Some(Readout::Ms) => unit(Unit::Ms),
+        Some(Readout::Db) => unit(Unit::Db),
+        Some(Readout::Percent) => unit(Unit::Percent),
+        Some(Readout::Position) => signatures.map_or_else(String::new, |signatures| {
+            let position = signatures.bar_beat_of(tick);
+            format!("{}.{}", position.bar, position.beat)
+        }),
+        Some(Readout::Time) => clock.map_or_else(String::new, |clock| {
+            let seconds = clock.seconds_of(tick).max(0.0) as u64;
+            format!("{}:{:02}", seconds / 60, seconds % 60)
+        }),
+        Some(Readout::Signature) => signatures.map_or_else(String::new, |signatures| {
+            signatures.bar_at(tick).signature.to_string()
+        }),
     }
 }
 

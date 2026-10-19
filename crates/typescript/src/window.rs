@@ -14,22 +14,25 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext, Context, Entity, Global, PathPromptOptions, Task, WeakEntity};
+use gpui::{App, AppContext, Context, Entity, PathPromptOptions, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
-    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, ToolSchema,
+    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, Sections,
+    TempoMap, Ticks, ToolSchema,
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::components::device_card::{
     CARD_HEIGHT, CARD_PADDING, HEADER_HEIGHT, PLAIN_CARD_WIDTH,
 };
-use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
+use sound_ui::{
+    DeviceLabel, DeviceOffer, Devices, GlobalKeys, Loop, OfferGroup, Playhead, Session, Views,
+};
 
 use crate::bun::{
     Bun, Clock, Event, EventKind, Heard, PageSize, Played, Reads, RecordEdit, Request, Runs,
-    Skipped, Telling, Transport, record_key,
+    Skipped, Telling, Transport, TransportOp, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::feeds::played_name;
@@ -74,8 +77,10 @@ pub(crate) struct Live {
     telling: bool,
     /// What the bindings of the cards of each instance read, as Bun said last.
     reads: HashMap<InstanceId, Reads>,
-    /// The transport and the watches of each instance Bun was told last.
+    /// The transport, the tempo map and the sections, and the watches of each instance Bun was
+    /// told last.
     told_transport: Option<Transport>,
+    told_song: Option<(TempoMap, Sections)>,
     told_watches: HashMap<InstanceId, BTreeMap<String, f32>>,
     /// The tap of what reaches the notes of each instance whose tool hears them, and how far
     /// it was read.
@@ -149,21 +154,6 @@ pub(crate) enum Surface {
     Page(Option<PageSize>),
 }
 
-/// The tools of the window, for what the window asks of them.
-struct WindowTools(Entity<Live>);
-
-impl Global for WindowTools {}
-
-/// Whether the main view of `id`, the page of a tool of the project, shows the transport.
-pub fn page_shows_transport(project: &Project, id: &InstanceId, cx: &App) -> bool {
-    let Some(live) = cx.try_global::<WindowTools>() else {
-        return false;
-    };
-    let tools = live.0.read(cx).tools.borrow();
-    (project.tool_of(id))
-        .is_some_and(|tool| find(&tools, tool).is_some_and(|info| info.view && info.transport))
-}
-
 /// Starts the live part of `extensions` for the window of `session`: the cards of its tools in
 /// `views`, and its tools in the pickers of `devices`.
 pub fn start_window(
@@ -176,7 +166,41 @@ pub fn start_window(
     let tools = Rc::new(RefCell::new(Vec::new()));
     let generation = Rc::new(Cell::new(0));
     let live = Live::start(extensions, session, &tools, &generation, cx);
-    cx.set_global(WindowTools(live.clone()));
+    // The keys the tool of the main view takes wherever the focus is.
+    let keys = GlobalKeys::add(
+        {
+            let (live, session, tools) = (live.downgrade(), session.downgrade(), tools.clone());
+            move |key, cx| {
+                let (Some(live), Some(session)) = (live.upgrade(), session.upgrade()) else {
+                    return false;
+                };
+                let Some(main) = Views::main_instance(&session, cx) else {
+                    return false;
+                };
+                let tool = session
+                    .read(cx)
+                    .project()
+                    .tool_of(&main)
+                    .map(str::to_string);
+                let takes = tool.is_some_and(|tool| {
+                    find(&tools.borrow(), &tool)
+                        .is_some_and(|info| info.global_keys.contains(&key.name))
+                });
+                // A key it took comes up to it whatever it takes now.
+                if !takes && key.down {
+                    return false;
+                }
+                let (name, modifiers) = (key.keystroke.key.clone(), key.keystroke.modifiers);
+                live.update(cx, |live, cx| {
+                    live.key(&main, &name, key.down, modifiers, cx)
+                });
+                true
+            }
+        },
+        cx,
+    );
+    cx.observe_release(&live, move |_, cx| GlobalKeys::remove(keys, cx))
+        .detach();
 
     views.set_other_cards({
         let (tools, live) = (tools.clone(), live.clone());
@@ -369,6 +393,7 @@ impl Live {
                 telling: false,
                 reads: HashMap::new(),
                 told_transport: None,
+                told_song: None,
                 told_watches: HashMap::new(),
                 taps: HashMap::new(),
                 last_frame: Instant::now(),
@@ -473,17 +498,22 @@ fn clock_of(session: &Entity<Session>, cx: &mut App) -> Clock {
     }
 }
 
-/// Where the project plays now, as the playhead of the window shows it.
+/// Where the project plays now, as the playhead of the window shows it, and how it plays.
 fn transport_of(session: &Session, cx: &App) -> Transport {
     let Playhead { playing, tick, .. } = *session.playhead().read(cx);
     let tempo_map = &session.project().project_file().tempo_map;
     let position = tempo_map.time_signatures().bar_beat_of(tick);
+    let looped = session.looped().read(cx);
     Transport {
         playing,
         tick: tick.0,
         bar: position.bar,
         beat: position.beat,
         bpm: tempo_map.change_at(tick).bpm.bpm(),
+        repeat: looped
+            .on
+            .then(|| [looped.range.start.0, looped.range.end.0]),
+        click: session.click_on(),
     }
 }
 
@@ -970,23 +1000,24 @@ impl Live {
         }
     }
 
-    /// A key of the computer keyboard went down or up on a card that has the keys.
+    /// A key of the computer keyboard went down or up on a card of `id` that has the keys, or
+    /// wherever the focus is for the main view of `id`.
     pub(crate) fn key(
         &mut self,
-        card: u64,
+        id: &InstanceId,
         key: &str,
         down: bool,
         modifiers: gpui::Modifiers,
         cx: &mut Context<Self>,
     ) {
-        let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
+        let Some(session) = self.session.upgrade() else {
             return;
         };
-        let id = entry.id.clone();
         let clock = clock_of(&session, cx);
+        self.told_transport = Some(clock.transport);
         self.tell(cx);
         let request = Request::Key {
-            instance: played(session.read(cx).project(), &id),
+            instance: played(session.read(cx).project(), id),
             key,
             down,
             shift: modifiers.shift,
@@ -1124,14 +1155,13 @@ impl Live {
     }
 
     /// Reads the watches of every card, which its live values follow, and tells Bun those its
-    /// bindings read as they move, and the transport to a tool that shows it.
+    /// bindings read as they move, and the clock and the song when they changed.
     fn look_at_watches(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
         let mut moved = BTreeMap::new();
         let mut shown_watches_moved = false;
-        let mut shows_transport = false;
         let tools = self.tools.borrow();
         for entry in self.cards.values_mut() {
             let watches = watches_of(session.read(cx).project(), &entry.id);
@@ -1148,11 +1178,6 @@ impl Live {
             }
             entry.watches = watches;
         }
-        for entry in self.cards.values() {
-            let info = find(&tools, &entry.tool);
-            let reads = self.reads.get(&entry.id).cloned().unwrap_or_default();
-            shows_transport |= info.is_some_and(|info| info.transport) && reads.transport;
-        }
         drop(tools);
         for (instance, watches) in moved {
             if self.host.send(&Request::Watches {
@@ -1162,13 +1187,17 @@ impl Live {
                 self.told_watches.insert(instance, watches);
             }
         }
+        // What bindings follow of the clock, when it changed: never the playhead alone, which
+        // moves on every frame.
         let transport = transport_of(session.read(cx), cx);
-        if shows_transport && self.told_transport != Some(transport) {
+        let told = self.told_transport.map(|told| told.followed());
+        if told != Some(transport.followed()) {
             let clock = clock_of(&session, cx);
             if self.host.send(&Request::Clock { clock }) {
                 self.told_transport = Some(clock.transport);
             }
         }
+        self.tell_song(cx);
         if shown_watches_moved {
             cx.notify();
         }
@@ -1269,6 +1298,13 @@ impl Live {
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
             Event::OpenFile { question, title } => self.open_file(question, title, cx),
+            Event::Transport { op } => self.transport(op, cx),
+            Event::SongEdit {
+                instance,
+                label,
+                tempo_map,
+                sections,
+            } => self.edit_song(&instance, &label, tempo_map, sections, cx),
             Event::Send {
                 instance,
                 child,
@@ -1292,6 +1328,97 @@ impl Live {
             }
         }
         cx.notify();
+    }
+
+    /// Tells Bun the tempo map and the sections when they are not what it was told.
+    fn tell_song(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let file = session.read(cx).project().project_file();
+        let told = self.told_song.as_ref();
+        if told.is_some_and(|(tempo_map, sections)| {
+            *tempo_map == file.tempo_map && *sections == file.sections
+        }) {
+            return;
+        }
+        let (tempo_map, sections) = (file.tempo_map.clone(), file.sections.clone());
+        if self.host.send(&Request::Song {
+            tempo_map: &tempo_map,
+            sections: &sections,
+        }) {
+            self.told_song = Some((tempo_map, sections));
+        }
+    }
+
+    /// Code played, stopped or moved the clock. What it changed reaches Bun with the next frame.
+    fn transport(&mut self, op: TransportOp, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        session.update(cx, |session, cx| match op {
+            TransportOp::Play => session.engine().play(),
+            TransportOp::Pause => session.engine().pause(),
+            TransportOp::Stop => session.engine().stop(),
+            TransportOp::Jump { to, at: None } => session.engine().seek(Ticks(to)),
+            TransportOp::Jump { to, at: Some(at) } => {
+                session.engine().jump_at(Ticks(at), Ticks(to))
+            }
+            TransportOp::Repeat { range } => {
+                let looped = match range {
+                    Some([from, to]) => Loop {
+                        range: Ticks(from)..Ticks(to),
+                        on: true,
+                    },
+                    None => Loop {
+                        on: false,
+                        ..session.looped().read(cx).clone()
+                    },
+                };
+                session.set_loop(looped, cx);
+            }
+            TransportOp::Click { on } => session.set_click(on, cx),
+        });
+    }
+
+    /// The code of `instance` changed the tempo map and the sections: one edit, which lands as
+    /// its record edits do. Bun hears the song again either way, as its own copy went ahead.
+    fn edit_song(
+        &mut self,
+        instance: &InstanceId,
+        label: &str,
+        tempo_map: serde_json::Value,
+        sections: serde_json::Value,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        self.told_song = None;
+        let read = serde_json::from_value::<TempoMap>(tempo_map)
+            .map_err(|error| format!("tempo_map: {error}"))
+            .and_then(|tempo_map| {
+                let sections = serde_json::from_value::<Sections>(sections)
+                    .map_err(|error| format!("sections: {error}"))?;
+                Ok((tempo_map, sections))
+            });
+        let refused = match read {
+            Err(refused) => Some(refused),
+            Ok((tempo_map, sections)) => {
+                let mut changes = Changes::new();
+                changes.set_tempo_map(tempo_map);
+                changes.set_sections(sections);
+                let published = session.update(cx, |session, cx| {
+                    session.background(cx, |project| project.publish_run(instance, label, changes))
+                });
+                published.err().map(|error| error.to_string())
+            }
+        };
+        if let Some(refused) = refused {
+            let problem = format!("its clock.update {label:?} was refused: {refused}");
+            self.tool_problem(instance, problem, cx);
+        }
+        self.tell_song(cx);
     }
 
     /// Opens a file the composer chooses, copies it into `assets/audio/`, and answers the
@@ -1519,6 +1646,7 @@ impl Live {
         // The new Bun knows no card and has read nothing yet.
         self.reads.clear();
         self.told_transport = None;
+        self.told_song = None;
         self.told_watches.clear();
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {

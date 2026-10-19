@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use sound_core::InstanceId;
+use sound_core::{InstanceId, Sections, TempoMap};
 use sound_signals::Graph;
 
 use crate::tools::ToolInfo;
@@ -77,10 +77,17 @@ pub(crate) enum Request<'a> {
         instance: &'a InstanceId,
         watches: &'a BTreeMap<String, f32>,
     },
-    /// The transport moved, and a binding of a card of a tool with the transport reads it.
+    /// The clock started or stopped, or its repeat or click changed: what bindings follow. Also
+    /// before an event, so its handler reads where the playhead is.
     Clock {
         #[serde(flatten)]
         clock: Clock,
+    },
+    /// The tempo map and the sections, as `project.json` holds them: at the start and when they
+    /// change.
+    Song {
+        tempo_map: &'a TempoMap,
+        sections: &'a Sections,
     },
     /// A press, a click, or a drag that ended or moved, on a node: `payload` is what its
     /// handler hears.
@@ -168,7 +175,7 @@ pub(crate) struct PageSize {
     pub height: u32,
 }
 
-/// Where the project plays, as the window's playhead shows it.
+/// Where the project plays, as the window's playhead shows it, and how the clock plays.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize)]
 pub(crate) struct Transport {
     pub playing: bool,
@@ -177,6 +184,52 @@ pub(crate) struct Transport {
     pub beat: u32,
     /// The tempo at `tick`.
     pub bpm: f64,
+    /// The ticks playback goes back from the end to the start of, while it repeats.
+    pub repeat: Option<[u64; 2]>,
+    pub click: bool,
+}
+
+/// Stopped at the start, at 120 bpm.
+impl Default for Transport {
+    fn default() -> Self {
+        Self {
+            playing: false,
+            tick: 0,
+            bar: 1,
+            beat: 1,
+            bpm: 120.0,
+            repeat: None,
+            click: false,
+        }
+    }
+}
+
+impl Transport {
+    /// What bindings follow: not the playhead, which moves on every frame.
+    pub(crate) fn followed(&self) -> (bool, Option<[u64; 2]>, bool) {
+        (self.playing, self.repeat, self.click)
+    }
+}
+
+/// What code does to the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub(crate) enum TransportOp {
+    Play,
+    Pause,
+    Stop,
+    /// Playback goes on from `to`: at once, or once it reaches `at`, on its frame.
+    Jump {
+        to: u64,
+        at: Option<u64>,
+    },
+    /// Playback goes back from the end to the start of `range` while it is set.
+    Repeat {
+        range: Option<[u64; 2]>,
+    },
+    Click {
+        on: bool,
+    },
 }
 
 /// A note event a tool heard, at `at`: engine time in seconds, the clock of `time` and of the
@@ -276,6 +329,19 @@ pub(crate) enum Event {
     },
     /// Code asks the composer for a file, with `title`: the answer goes to its `question`.
     OpenFile { question: u64, title: String },
+    /// Code played, stopped or moved the clock.
+    Transport {
+        #[serde(flatten)]
+        op: TransportOp,
+    },
+    /// The code of an instance changed the tempo map and the sections, as one edit called
+    /// `label`: both as `project.json` holds them.
+    SongEdit {
+        instance: InstanceId,
+        label: String,
+        tempo_map: Value,
+        sections: Value,
+    },
     /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
     /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as
     /// code a timer of a tool ran.
@@ -290,7 +356,6 @@ pub(crate) struct Reads {
     pub state: Option<Vec<String>>,
     pub children: bool,
     pub watches: bool,
-    pub transport: bool,
 }
 
 /// Before Bun says, its cards read everything.
@@ -300,7 +365,6 @@ impl Default for Reads {
             state: None,
             children: true,
             watches: true,
-            transport: true,
         }
     }
 }
@@ -928,7 +992,7 @@ mod tests {
                 "info": {
                     "name": name, "file": format!("{name}.ts"), "title": name, "when": "w",
                     "doc": "d", "voices": 1, "input": true, "tick": false, "view": false,
-                    "transport": false, "keys": false, "notes": false, "behaviour": false, "inputs": {},
+                    "keys": false, "notes": false, "behaviour": false, "inputs": {},
                     "fields": { "rate": { "kind": "number", "min": 0, "max": 1, "default": 0, "unit": unit } }
                 },
                 "sounds": [], "view": { "Err": "no view" }

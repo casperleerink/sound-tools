@@ -42,7 +42,7 @@ use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
 pub use feeds::{live_frames, shown_by_live_values};
-pub use window::{page_shows_transport, start_window};
+pub use window::start_window;
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
 use crate::tools::{Sounds, ToolInfo, Tools};

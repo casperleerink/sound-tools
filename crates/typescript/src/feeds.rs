@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use sound_core::{InstanceId, Project, Scope, Ticks, ValueRange};
+use sound_core::{Clock, InstanceId, Project, Scope, Ticks, ValueRange};
 use sound_ui::{PeaksReader, Session};
 
 use crate::meter;
@@ -67,6 +67,8 @@ pub(crate) struct Feeds {
     pub scopes: HashMap<String, (VecDeque<[f32; 2]>, u64)>,
     pub eased: RefCell<HashMap<String, Eased>>,
     pub histories: RefCell<HashMap<String, (u64, VecDeque<f32>)>>,
+    /// The clock of the project, for the tempo and the places in the piece a tree shows.
+    pub clock: Option<Clock>,
 }
 
 /// What an easing keeps from frame to frame.
@@ -95,6 +97,10 @@ impl Feeds {
         self.time = (now - started).as_secs_f64();
         self.frame += 1;
         let project = session.project();
+        let clock = project.clock();
+        if (self.clock.as_ref()).is_none_or(|kept| kept.tempo_map() != clock.tempo_map()) {
+            self.clock = Some(clock.clone());
+        }
         if self.taken.is_none_or(|taken| now - taken >= SAME_FRAME) {
             self.taken = Some(now);
             self.peaks = (uses.peaks.iter())

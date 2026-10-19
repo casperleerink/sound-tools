@@ -52,13 +52,7 @@ tool({
 fn clock() -> Clock {
     Clock {
         time: 0.0,
-        transport: Transport {
-            playing: false,
-            tick: 0,
-            bar: 1,
-            beat: 1,
-            bpm: 120.0,
-        },
+        transport: Transport::default(),
     }
 }
 

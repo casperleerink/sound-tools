@@ -143,3 +143,32 @@ fn a_clip_moves_alone_a_second_track_plays_and_a_note_outside_its_clip_is_a_prob
         "{problem:?}"
     );
 }
+
+/// Two clips of one track meet on a bar line with one pitch: the first ends the note on the
+/// frame the second starts it. The end comes first, whichever clip connects first, so the new
+/// note sounds on.
+#[test]
+fn a_note_that_ends_where_another_clip_starts_it_again_sounds_on() {
+    for (first, second) in [("a", "b"), ("b", "a")] {
+        let Some(mut harness) = song() else {
+            return;
+        };
+        let held = |start: u64, length: u64| {
+            format!(
+                r#"{{"tool": "timeline", "state": {{"start": {start}, "length": 3840, "notes": [{{"start": 0, "length": {length}, "pitch": 60, "velocity": 100}}]}}}}"#
+            )
+        };
+        harness.write_and_apply("state/song/piano/verse.json", &held(7680, 240));
+        harness.write_and_apply(&format!("state/song/piano/{first}.json"), &held(0, 3840));
+        harness.write_and_apply(&format!("state/song/piano/{second}.json"), &held(3840, 960));
+        assert_eq!(harness.project.problems(), []);
+        let played = harness.play_from_the_start(2 * BAR);
+        // A bar is 96 000 frames; a twentieth of a second into the second clip, it sounds.
+        let later = 96_000 + 2_400;
+        assert_eq!(
+            first_sound(&played, later),
+            Some(later),
+            "{first} then {second}"
+        );
+    }
+}

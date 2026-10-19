@@ -163,7 +163,6 @@ tool({
       { from: { child: "synth" }, to: { port: "audio" } },
     ],
   }),
-  transport: true,
   view: ({ size, update }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
@@ -197,9 +196,7 @@ fn a_page_writes_the_notes_of_its_timeline_and_they_play(cx: &mut TestAppContext
     let Some(mut window) = open(cx, &files) else {
         return;
     };
-    let play = window.find("play").expect("the play button");
-    window.cx.simulate_click(play, Modifiers::default());
-    window.poll();
+    window.start_playing();
     assert_eq!(window.loudest(9_600), 0.0);
 
     let middle = window.middle();

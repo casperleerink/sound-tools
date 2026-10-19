@@ -51,13 +51,7 @@ fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
         &id,
         Some(("row", record_key("row", &state), state.as_str()))
     )]));
-    let transport = Transport {
-        playing: false,
-        tick: 0,
-        bar: 1,
-        beat: 1,
-        bpm: 120.0,
-    };
+    let transport = Transport::default();
     let clock = Clock {
         time: 0.0,
         transport,
@@ -154,13 +148,7 @@ fn an_update_reads_a_childs_defaults_and_sets_only_what_it_changed() {
     ]));
     let clock = Clock {
         time: 0.0,
-        transport: Transport {
-            playing: false,
-            tick: 0,
-            bar: 1,
-            beat: 1,
-            bpm: 120.0,
-        },
+        transport: Transport::default(),
     };
     let watches = BTreeMap::new();
     bun.send(&Request::Mount {

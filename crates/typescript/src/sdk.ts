@@ -743,20 +743,23 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    */
   view?: (view: View<ValuesOf<S>, I, M, K>) => Child;
   /**
-   * Its view at the top of a project shows the transport (play, stop, position, tempo, time
-   * signature, click), and its view draws again as `transport` moves. Recording is the arrangement's.
-   */
-  transport?: boolean;
-  /**
-   * A key of the computer keyboard goes down or up, while its view shows at the top or after a
-   * click on its card: those `keys` names, else every plain key, so space and `r` do not play or record.
+   * A key of the computer keyboard goes down or up: while its view shows at the top or after a
+   * click on its card, those `keys` names, else every plain key; and wherever the focus is, those
+   * `globalKeys` names.
    */
   onKey?: (tool: Context<ValuesOf<S>, I, M, K>, key: Key) => void;
   /**
-   * The keys `onKey` takes, by name: `"delete"`, `"a"`, `"left"`, or with cmd, ctrl or alt held
-   * first, `"cmd-c"`. The rest stay the window's, so space still plays. Left out, every plain key.
+   * The keys `onKey` takes while its view has the keys, by name: `"delete"`, `"a"`, `"left"`, or
+   * with cmd, ctrl or alt held first, `"cmd-c"`. The rest go on to `globalKeys`. Left out, every
+   * plain key.
    */
   keys?: readonly string[];
+  /**
+   * The keys `onKey` hears wherever the focus is, outside a text field, while its view is the
+   * whole window: `["space"]` to play and stop. The app keeps undo, opening, quitting and its
+   * panel; nothing else plays a key by itself.
+   */
+  globalKeys?: readonly string[];
   /**
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
    * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
@@ -1071,8 +1074,8 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
   outputs: Record<string, number>;
   /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
   time: number;
-  /** Where the piece plays. A binding that read it runs again as it moves only when the tool sets `transport: true`. */
-  transport: Transport;
+  /** Where the piece plays, its tempo and its sections, and what plays, stops and moves it. */
+  clock: Clock;
   /** The sources of live values: what a view shows moving without drawing again. */
   now: Now<State, I>;
 }
@@ -1089,16 +1092,55 @@ export interface Tick<State, I extends Inputs = Inputs, M = unknown, K extends C
 // Views: nodes the code makes once, which the window keeps. What moves on them (a drag, a
 // playhead, a meter, a knob turned) moves in the window, without running code: a live value.
 
-/** Where the project plays, as the window shows it. */
-export interface Transport {
-  playing: boolean;
-  /** The position in ticks, 960 to a quarter note. */
-  tick: number;
+/**
+ * The clock of the project, one for all tools: where the piece plays and how fast. A binding
+ * that reads `playing`, `repeat`, `click`, `tempo_map` or `sections` runs again when it changes.
+ * `tick`, `bar`, `beat` and `bpm` move on every frame: read them in a handler, `tick` or
+ * `onKey`, and show them with `now.tick` and `now.bpm`, which move without code.
+ */
+export interface Clock {
+  readonly playing: boolean;
+  /** The position in ticks, 960 to a quarter note, as the code runs. */
+  readonly tick: number;
   /** The bar and the beat of `tick`, from 1. */
-  bar: number;
-  beat: number;
+  readonly bar: number;
+  readonly beat: number;
   /** The tempo at `tick`, in beats per minute. */
-  bpm: number;
+  readonly bpm: number;
+  /** The ticks playback goes back from the end to the start of, while it repeats. */
+  readonly repeat: { readonly from: number; readonly to: number } | null;
+  /** Whether the click sounds the beats. Not saved. */
+  readonly click: boolean;
+  /** As `project.json` holds them: the time signatures and the tempo changes. */
+  readonly tempo_map: Frozen<TempoMap>;
+  /** As `project.json` holds them: the named parts of the piece, sorted by bar. */
+  readonly sections: Frozen<Section[]>;
+  play(): void;
+  pause(): void;
+  /** Pauses and goes back to the start. */
+  stop(): void;
+  /** Playback goes on from `to`: at once, or with `at` once it reaches that tick, on its frame. */
+  jump(to: number, options?: { at?: number }): void;
+  /** Playback goes back from `to` to `from` while it is set; `null` plays on. Not saved. */
+  setRepeat(range: { from: number; to: number } | null): void;
+  setClick(on: boolean): void;
+  /**
+   * Changes the tempo map and the sections: `change` gets a copy to edit, and what `project.json`
+   * does not accept is refused whole. Updates of one `label` in a row are one undo step.
+   */
+  update(label: string, change: (song: { tempo_map: TempoMap; sections: Section[] }) => void): void;
+}
+
+/** The time signatures, as runs of bars, and the tempo from a tick on, as steps. */
+export interface TempoMap {
+  time_signatures: { signature: string; bars: number }[];
+  tempo_changes: { tick: number; bpm: number }[];
+}
+
+/** A part of the piece from the start of `bar`, counted from 1, up to the next section. */
+export interface Section {
+  bar: number;
+  name: string;
 }
 
 /** What a view gets: what all code gets, and the room the window gives it. */
@@ -1115,7 +1157,7 @@ export interface View<State, I extends Inputs = Inputs, M = unknown, K extends C
 
 /** What a live value is made of, as the window gets it. */
 type LiveNode =
-  | { op: "tick" | "elapsed" }
+  | { op: "tick" | "elapsed" | "bpm" }
   | { op: "value"; name: string; child?: string; played: boolean; fraction: boolean }
   | { op: "peak"; name: string; channel?: Channel }
   | { op: "device_peak"; channel?: Channel }
@@ -1231,6 +1273,8 @@ type ValueNames<State, I extends Inputs> = NumberNames<State> | InputNames<I, "n
 export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs> {
   /** Where the piece plays, in ticks: it moves on every frame as it plays. */
   tick: Live;
+  /** The tempo at `tick`, in beats per minute. */
+  bpm: Live;
   /** Seconds since the view opened, on every frame: `now.elapsed.mod(1).lt(0.5)` blinks once a second. */
   elapsed: Live;
   /**
@@ -1264,6 +1308,7 @@ function sources(): Now<Record<string, number>> {
     Object.fromEntries(parts.map((each) => [each, new Live(make(each))])) as Record<Part, Live>;
   return {
     tick: new Live({ op: "tick" }),
+    bpm: new Live({ op: "bpm" }),
     elapsed: new Live({ op: "elapsed" }),
     value: (path, options) => {
       // `bass/synth.cutoff_hz` is the field `cutoff_hz` of the child at `bass/synth`.
@@ -2214,8 +2259,11 @@ export type Shape =
         | { kind: "line"; from: Bind<readonly [Num, Num]>; to: Bind<readonly [Num, Num]>; color: Bind<Paint>; width?: Bind<number> }
         /** Along a circle from one angle to another, in turns clockwise from the top: a dial. */
         | { kind: "arc"; x: Bind<Num>; y: Bind<Num>; radius: Bind<number>; from: Bind<Num>; to: Bind<Num>; color: Bind<Paint>; width?: Bind<number> }
-        /** Text at `x`, `y`, its top; a live number shows as a readout in `unit`. */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live>; unit?: Unit; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        /**
+         * Text at `x`, `y`, its top. A live number shows as a readout in `unit`, and a tick, such as
+         * `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"` (the one there).
+         */
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live>; unit?: Unit | "position" | "time" | "signature"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
          * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
@@ -2479,6 +2527,60 @@ export function Pad(props: { x: string; y: string; size?: number }): UiNode {
   });
 }
 
+const TRANSPORT = { text: "#e9ebef", muted: "#7c808c", play: "#7ee0a0", button: "#2a2f3a", on: "#7c3aed" } as const;
+/** Points of a drag up for one beat per minute more. */
+const TEMPO_DRAG = 2;
+
+/** A readout of a tick of the clock as it moves: a place in the piece, a time or a signature. */
+function clockText(key: string, width: number, text: Live, unit?: "position" | "time" | "signature", color: Color = TRANSPORT.text): UiNode {
+  return Space({ key, width, height: 16, children: [Label({ x: 0, y: 1, text, unit, color, size: 13 })] });
+}
+
+/**
+ * Play and pause, stop, where the piece plays as a bar and a beat and as a time, the tempo, which
+ * a drag up or down changes as one undo step, the time signature, the repeat and the click.
+ * Everything that moves moves without code.
+ */
+export function Transport(props: { clock: Clock }): UiNode {
+  const { clock } = props;
+  const button = (key: string, label: Bind<string>, lit: Accessor<boolean>, press: () => void) =>
+    h("div", { key: `transport-${key}`, style: () => ({ ...BUTTON, ...(lit() ? { background: TRANSPORT.on, color: "#ffffff" } : {}) }), onPress: press }, label);
+  const tempo = now.drag("transport-tempo");
+  return h("div", { style: { direction: "row", gap: 12, align: "center" } },
+    button("play", () => (clock.playing ? "Pause" : "Play"), () => clock.playing, () => (clock.playing ? clock.pause() : clock.play())),
+    button("stop", "Stop", () => false, () => clock.stop()),
+    clockText("transport-position", 44, now.tick, "position"),
+    clockText("transport-time", 40, now.tick, "time", TRANSPORT.muted),
+    Space({
+      key: "transport-tempo",
+      width: 64,
+      height: 16,
+      cursor: "ns-resize",
+      drag: {
+        id: "transport-tempo",
+        axis: "y",
+        onEnd: ({ dy }) => {
+          const at = clock.tick;
+          const bpm = Math.min(Math.max(Math.round(clock.bpm - dy / TEMPO_DRAG), 10), 1000);
+          clock.update("Change the tempo", ({ tempo_map }) => {
+            const change = tempo_map.tempo_changes.findLast((change) => change.tick <= at);
+            if (change) change.bpm = bpm;
+          });
+        },
+      },
+      children: [Label({ x: 0, y: 1, text: now.bpm.minus(tempo.dy.over(TEMPO_DRAG)).round(), color: TRANSPORT.text, size: 13 }), Label({ x: 34, y: 2, text: "bpm", color: TRANSPORT.muted, size: 11 })],
+    }),
+    clockText("transport-signature", 36, now.tick, "signature"),
+    button("repeat", "Repeat", () => clock.repeat !== null, () => {
+      if (clock.repeat) return clock.setRepeat(null);
+      // Four bars of the first time signature, from the start.
+      const [beats, unit] = (clock.tempo_map.time_signatures[0]?.signature ?? "4/4").split("/").map(Number);
+      clock.setRepeat({ from: 0, to: (4 * beats * 3840) / unit });
+    }),
+    button("click", "Click", () => clock.click, () => clock.setClick(!clock.click)),
+  );
+}
+
 /** `tone_hz` is `Tone hz`. */
 export function words(name: string): string {
   const spaced = name.replaceAll("_", " ");
@@ -2644,4 +2746,6 @@ export const host = {
   readFields,
   isRead,
   batch,
+  /** Whether a binding runs now, or a component is made: what reads there is followed. */
+  binding: () => listener !== null || settingUp > 0,
 };

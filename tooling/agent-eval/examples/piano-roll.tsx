@@ -55,7 +55,6 @@ export const pianoRoll = tool({
   doc:
     "A piano roll of the record's `notes`. Double-click to add a note or remove one; drag notes to move them on the grid of sixteenths, alt to copy; drag a note's right end to resize; drag on empty space to select, shift to add; drag a bar in the lane under it to change velocity. Keys: delete, cmd-A, cmd-C, cmd-X, cmd-V, cmd-D, the arrows, escape.",
   state: { notes: notes() },
-  transport: true,
   memory: (): Memory => ({ selected: new Set(), clipboard: [], length: BEAT / 2 }),
   sound: () => 0,
   onKey: ({ state, memory, update }, key: Key) => {
