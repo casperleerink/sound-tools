@@ -395,8 +395,8 @@ tool({
   // @ts-expect-error: no key is called `del`, and shift is not a name of a key.
   globalKeys: ["del", "shift-a"],
   onKey: ({ clock }, key) => {
-    // @ts-expect-error: no key is called `spcae`.
-    if (key.key === "spcae") clock.play();
+    // @ts-expect-error: no key is called `spacebar`.
+    if (key.key === "spacebar") clock.play();
     // @ts-expect-error: a jump waits for a tick named `atTick`, not `at`, which is a time elsewhere.
     clock.jump(0, { at: 3840 });
     clock.jump(0, { atTick: 3840 });
