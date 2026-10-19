@@ -584,3 +584,73 @@ View parity of the TS song with main's arrangement views, in project code (`tool
 The frames grew with what each row and clip now draws: a colour and an A button per head, a title per clip (150 to 10,000 more texts), bar lines that follow the signatures. Still under the Rust arrangement's scroll.
 
 **Too specific (to revisit):** a view's child records are not filled with defaults where an update's are; a file's length is not readable in TS.
+
+### Round 12
+
+Closing the goal: the last parity gaps, the song as a template a new project starts from, the final numbers, an eval, and an audit.
+
+**The DAW template.** `templates/daw` holds the song's tools (moved from `tooling/agent-eval/examples`), a `project.json` and a start of one instrument track and one audio track. The app embeds it (`crates/runtime/src/templates.rs`). A template is the files a new folder gets before it opens, so tools of the project load with it; the runtime's own `create` stays for the arrangement. The project menu offers "New project…", "New DAW project…" and "New Bare project…", the start window the last two. Its `project.json` enables every extension but `arrangement` and `fit-tempo`; a test fails when an extension is added, so the template hears of it. A window test makes a project from it with no arrangement enabled, adds a track, plays the track it selects from the MIDI keyboard, draws a clip and plays from space.
+
+**The last gaps, all project code:** a region trims from its end (its length comes from what the region says it plays, the `seconds` output a handler reads in `outputs`: no SDK piece needed); a clip moved on its own track takes its automation along, by the arrangement's rule (the line under it replaces the line where it lands, the edges keep what plays outside); a marquee over empty timeline chooses clips; cmd-C/X/V of notes in the editor, a paste at the playhead inside the clip.
+
+**Decision for Casper:** "New project…" still makes the Rust arrangement. Make it the DAW template, and delete `extensions/arrangement` and `arrangement_wiring`, once you are happy with the template.
+
+**Agent eval** (`tooling/agent-eval`, new scenarios `daw-arp-builder`, `daw-return`), all passed:
+
+| Scenario | Passed | Cost | Turns |
+| --- | --- | --- | --- |
+| `daw-arp-builder`: an arpeggiator before Track 1's synth, in a DAW project | yes | $1.90 | 27 |
+| `daw-return`: a return with a long reverb, Track 1 sent quietly | yes | $0.18 | 6 |
+| `ui-chords`: a chord player card on an arrangement track | yes | $0.75 | 15 |
+
+The arpeggiator agent wrote `arp.ts` and changed the template's `track.ts` to put it between the clips and the synth, typed by the track's `children`: the arrangement is the project's to change, as intended.
+
+**Final numbers** (M1 Max, release-fast; `projects/render_cost.rs`, `window/tools/performance.rs`, and `snapshots.rs` for the Rust arrangement):
+
+| | TS song | Rust arrangement |
+| --- | --- | --- |
+| Render, 12 tracks / 150 clips, same content | 26x real time | 28x |
+| Scale project 100 × 100: open | 3.3 s, until drawn | 1.8 s, made and opened |
+| Scale project: frame playing | 2.1 ms | 1.1 ms |
+| Scale project: frame scrolling / far zoomed out | 2.0 / 1.9 ms | 3.4 / 3.5 ms |
+| Clip drag, per move | 2.5 ms (12 / 150), 3.5 ms (24 / 600), 0 Bun requests | 3.9 ms (scale) |
+| Select a clip / release a move, until drawn (12 / 150) | 12.4 / 14.0 ms, of which Bun 1.0 / 1.5 ms | |
+| Space until the clock plays (12 / 150) | 17 ms | |
+| Song 12 / 150: open | 0.22 s | |
+
+"Until drawn" includes about 10 ms of the test's polling. The arrangement is faster to open and while playing; the TS song is faster to scroll and drag.
+
+### Final audit
+
+**Concepts an author meets, against the cut:**
+
+| Concept | What it is | Why it is one |
+| --- | --- | --- |
+| Tool | `name`, `title`, `when`, `doc`, `state` (fields: number, boolean, choice, text, file, list), `inputs` (number, bang), `voices`, `memory`, `tick` | The unit of code and of saved state |
+| Children | `children` typed by tool or pattern, any depth | Ownership is the folder tree |
+| Ports and connections | `behaviour` returns connections of signal, number, bang and note | How blocks compose |
+| Signal | `sound` | Sample-rate code, run natively |
+| View | `view`: elements, `Space` and shapes, live values (`now`), drags, keys (`keys`, `globalKeys`, `onKey`), `onNotes` | What a composer sees and plays |
+| Update | `update(label, change)` | Every edit, one undo step |
+| Clock | `clock`, one per project | The one shared musical time |
+
+Seven, as cut. What was a concept and is now a child or a helper: the sequencer (`timeline` with `loop`), meters (`meter` child), mixing (`fader`), automation (`lane`), audio clips (`region`), recording (`recorder`), the transport bar (`<Transport/>`), Knob, Steps, Meter, Pad (TS components), the canvas (`Space`). `play` is a helper over `send`.
+
+**Rust blocks** a project composes: `timeline`, `lane`, `region`, `recorder`, `fader`, `meter`; the instruments `instrument.synth`, `wavetable`, `sampler`, `drum-pad`; the effects `filter`, `eq`, `compressor`, `gate`, `limiter`, `reverb`, `delay`, `saturator`, `modulation`, `utility`, `analyzer`, `tone`; `plugin`. None names a track or a clip.
+
+**What still names the arrangement**, as `tooling/workspace-rules` lists it: its registration calls, the default template, its chrome, and `--solo` (which plays its tracks). A TS project needs none of it.
+
+**Open decisions for Casper:**
+- The default template (above).
+- `devices` in a `sound` next to device children: two roads to a built-in effect. Kept until an eval says which agents use well.
+- Notes are the only event kind; the timeline's lanes are what a clip needed. A second kind waits for a tool that needs one.
+
+**Known gaps:**
+- Opening grows with the song: about 0.8 µs per binding in Bun, 3.3 s at 10,000 clips. A leaner reactive core or rows made only when they show.
+- A playing frame costs about twice the arrangement's on the scale project.
+- From 11c: dragging a ruler marker, a double-click that clears a lane, the foldable returns section, the arrangement's layer rule (overlapping regions sum), fades as dials rather than handles.
+- A clip moved to another track leaves its automation behind; a device lane belongs to its track.
+- A clip moved to another track is a delete and a create: a record's id is its path.
+- Copied notes and copied clips are two clipboards: cmd-V pastes notes while the editor is open.
+- `"*"` children and named children cannot be optional.
+- A view's child records are not filled with defaults as an update's are.

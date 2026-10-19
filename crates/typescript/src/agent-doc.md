@@ -177,7 +177,7 @@ tool({
 
 | Element | Does |
 | --- | --- |
-| `<div style onPress carry? onDrop?>` | A box; `Style` in `sdk.ts` lists every style. Text goes inside; with `scroll: "x"` or `"y"` in its style what does not fit scrolls, as a long rack. `onPress` hears a click or a right click, as a `Press`. A drag of a div with `carry` brings that text to one with `onDrop`, which also hears audio files dropped from the system, copied into `assets/audio/` (a `Space` hears them too, where they fell in its units): rows dragged into another order. |
+| `<div style onPress carry? onDrop?>` | A box; `Style` in `sdk.ts` lists every style, such as `scroll: "y"`. Text goes inside. `onPress` hears a click or a right click. `onDrop` hears the `carry` of a dragged div, to reorder rows, and audio files dropped from the system, copied into `assets/audio/`; a `Space` hears those too, where they fell in its units. |
 | `<Input value onCommit placeholder? width? focus?>` | A text field: `onCommit` gets its text on enter or when it loses the keys; escape takes it back. Keys typed there play nothing. |
 | `<DeviceCard path on? onPower? onClose?>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view. Its power and close icons show with their handlers. |
 | `<Knob value label min max default unit? played?>` | Turns the number `value`, as `now.value` names it: a field, whose drag is one undo step, or a number input. With `played` it moves with a lane. |
@@ -185,7 +185,7 @@ tool({
 | `<Meter value label?>` | A bar that shows a number from 0 to 1, such as an output. |
 | `<Pad x y size?>` | A square for the pointer: across moves the number input `x`, up moves `y`. |
 
-All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `outputs`, the last value of each number output of its sound and of its children's; `time`; `clock`, see "The clock"; `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; `openFile()`, which asks the composer for a file, copies it into `assets/audio/` and gives its name for a `file` field; `select(path, { span? })`, which tells the window what the composer works on: the MIDI keyboard and the computer keys play the `notes` of that child, or of the nearest parent of it that has them, and Export selection exports `span`, in ticks; `openMenu(items)`, which shows a menu where the pointer is and gives the place of the item picked, or `null`; `offers("notes" | "audio")`, what the window offers to put in a child, and `addOffer(key, path, label)`, which puts one there as an undo step; `numbers(path)`, the numbers of a child a lane or a cable can move, with their ranges, for a menu that adds a lane; and `send` and `play`, which play its inputs and voices as a performer would.
+All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `outputs`, the last value of each number output of its sound and of its children's; `time`; `clock`, see "The clock"; `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; `send` and `play`, which play its inputs and voices as a performer would; and what reaches the window, each with its doc in `sdk.ts`: `openFile()`, `openMenu(items)`, `select(path, { span? })` (what the MIDI keyboard plays and Export selection exports), `offers` and `addOffer` (the devices the window offers for a child), and `numbers(path)` (what a lane can move).
 
 ### Values that change
 
@@ -232,12 +232,12 @@ view: ({ state, memory, update, now }) => {
 - `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. Escape lets go of a drag, and its code hears nothing.
 - `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts. On a `div`, `follow: { y: "timeline" }` scrolls its children with it, cut off at its edges: the heads of the rows of a timeline.
 - `<>...</>` gives several children where one goes, such as a component that gives two shapes; import `Fragment` with `h`.
-- A drag can also turn a number as it goes, with no code, as a knob does: a drag of `{ y: { value: "cutoff" } }`, named as `now.value` names it; for a field, also a child's, the whole drag is one undo step. `onPress` hears a `Press`: where in units, the button, the clicks and the modifiers. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
+- A drag can also turn a number as it goes, with no code, as a knob does: `{ y: { value: "cutoff" } }`, named as `now.value` names it; for a field the whole drag is one undo step. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
 
 Levels, the clock and easing are live values too, so a meter or a light moves on every frame with no code. Paths such as `"bass/synth"` reach a record deeper down:
 
 - `now.peak(path, channel?)`: the loudest sample since the last frame of a `meter` child (`agent-docs/meter.md`) by its path, `"bass-meter"` or `"bass/meter"`, which hears what its parent connects to it; `"child.name"`, peaks a child keeps. `now.devicePeak()` is the device's.
-- `now.value(name, { played: true })`: a field as it plays, what a lane or a cable plays into it, else its record. A drag of `{ y: { value: "bass-mix.gain_db" } }` turns a child's.
+- `now.value(name, { played: true })`: a field as it plays, what a lane or a cable plays into it, else its record.
 - `now.elapsed`, seconds, and `.mod`, `.pow`, `.decibels()`. `.smooth(ms)`, `.fall(perSecond)` and `.hold(seconds)` follow a value over frames: a meter's bar is `level.fall(0.5)`, its peak line `level.hold(1.5).fall(0.5)`.
 - `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.elapsed.mod(1).lt(0.5))` blinks.
 - `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far. `band` from `low: -1` to `high: 1` draws a waveform.
