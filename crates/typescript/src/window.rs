@@ -1234,7 +1234,9 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let read = crate::samples::take_read(session.read(cx).project().assets());
+        let assets = session.read(cx).project().assets();
+        let mut read = crate::samples::take_read(assets);
+        read.extend(crate::region::take_read(assets));
         if !read.is_empty() {
             session.update(cx, |session, cx| session.rebind(&read, cx));
         }

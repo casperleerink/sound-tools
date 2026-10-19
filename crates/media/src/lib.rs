@@ -243,6 +243,23 @@ pub fn load(assets: &Assets, asset: &AudioAsset) -> Result<Arc<Audio>, MediaErro
     load_path(&assets.path(asset.asset_name()), &asset.project_path())
 }
 
+/// The file a record names when it is in memory already and unchanged on disk: never a read,
+/// so the control side asks it before it reads a long file on a thread of its own.
+pub fn in_memory(assets: &Assets, asset: &AudioAsset) -> Option<Arc<Audio>> {
+    let path = assets.path(asset.asset_name());
+    let stamp = fs::metadata(&path)
+        .ok()
+        .map(|metadata| (metadata.len(), metadata.modified().ok()))?;
+    let known = known();
+    let entry = known
+        .get(&path)
+        .filter(|entry| (entry.length, entry.modified) == stamp)?;
+    match &entry.outcome {
+        Outcome::Plays { audio, .. } => audio.upgrade(),
+        _ => None,
+    }
+}
+
 /// [`load`] for a file at any path, such as a sample of an instrument library in nested
 /// folders. `shown` is how messages name the file.
 pub fn load_path(path: &Path, shown: &str) -> Result<Arc<Audio>, MediaError> {

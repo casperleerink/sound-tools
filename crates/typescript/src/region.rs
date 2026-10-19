@@ -1,16 +1,19 @@
 //! The `region`: a child of a parent of the project that plays a stretch of an audio file at its
 //! place in the song, out of its output `audio`, as an audio clip of the arrangement plays.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
-    BehaviourContext, BehaviourError, Frames, JsonTool, JsonToolDoc, OutputEndpoint, Project,
-    State, Ticks, ToolSchema,
+    Assets, BehaviourContext, BehaviourError, Frames, InstanceId, JsonTool, JsonToolDoc,
+    OutputEndpoint, Project, State, Ticks, ToolSchema,
 };
-use sound_media::{AUDIO_FOLDER, AudioAsset, AudioPlayer, AudioUpdate, Region};
+use sound_media::{
+    AUDIO_FOLDER, Audio, AudioAsset, AudioPlayer, AudioUpdate, Keep, Loader, Region, Stamp,
+};
 
 pub(crate) const NAME: &str = "region";
 const PROCESSOR: &str = "player";
@@ -154,13 +157,49 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     let seconds = sound_media::info(context.assets(), &region.asset)
         .map(|file| region.length(&file, rate) as f64 / f64::from(rate.max(1)));
     context.watch(SECONDS).set(seconds.unwrap_or(0.0) as f32);
+    let player = context.processor(PROCESSOR, AudioPlayer::new)?;
+    context.output("audio", OutputEndpoint::new(player, AudioPlayer::OUTPUT));
+    // A long file is read on a thread of its own: silent until it is there, then this runs again.
+    let _audio = match sound_media::in_memory(context.assets(), &region.asset) {
+        Some(audio) => Some(audio),
+        None => match read(context.assets(), &region.asset, context.id()) {
+            Ok(None) => return Ok(()),
+            Ok(Some(audio)) => Some(Arc::clone(&*audio)),
+            // The snapshot says why.
+            Err(_) => None,
+        },
+    };
     let what = format!("the region {:?}", context.id().name());
     let (snapshot, problems) = sound_media::snapshot([(what, region)], context.assets(), rate);
     for problem in problems {
         context.problem(problem);
     }
-    let player = context.processor(PROCESSOR, AudioPlayer::new)?;
     context.update(player, AudioUpdate::new(snapshot))?;
-    context.output("audio", OutputEndpoint::new(player, AudioPlayer::OUTPUT));
     Ok(())
+}
+
+/// The files regions play, read on a thread of their own in the window.
+static FILES: Loader<PathBuf, Arc<Audio>> = Loader::new("region", Keep::WhileUsed);
+
+/// The file `asset`, or `None` while it is read for the region `waiter`.
+fn read(
+    assets: &Assets,
+    asset: &AudioAsset,
+    waiter: &InstanceId,
+) -> Result<Option<Arc<Arc<Audio>>>, String> {
+    let path = assets.path(asset.asset_name());
+    let read = {
+        let (assets, asset, path) = (assets.clone(), asset.clone(), path.clone());
+        move || {
+            let audio = sound_media::load(&assets, &asset).map_err(|error| error.to_string());
+            (audio, vec![Stamp::of(&path)])
+        }
+    };
+    FILES.get(path, (assets, waiter), read)
+}
+
+/// The regions of the project of `assets` whose file was read since the last call, to run
+/// their behaviour again.
+pub(crate) fn take_read(assets: &Assets) -> Vec<InstanceId> {
+    FILES.take_done(assets)
 }
