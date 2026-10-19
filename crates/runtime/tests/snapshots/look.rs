@@ -7,6 +7,8 @@
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
+//! - `look-picker.png`, `look-effect-picker.png`: the panel of a track whose instrument is the
+//!   test plugin, the menu of its card's title open, and the menu of Add effect.
 
 use std::time::Duration;
 
@@ -22,6 +24,10 @@ use crate::song::{ACROSS, BAR, HEADER, LEAD, ROW, piece_files};
 
 /// Where a song's rows start: under the title row, the ruler and its line.
 const TOP: f32 = 48.0 + 32.0 + 1.0;
+
+/// The title of the first card of a track's panel, and its Add effect after a plugin's card.
+const PICKER: (f32, f32) = (230., 920. - 216. + 12. + 22.);
+const ADD_EFFECT: (f32, f32) = (441., 920. - 216. + 12. + 16.);
 
 /// The middle of `row` at `tick` on the timeline.
 fn at(tick: u64, row: f32) -> Point<Pixels> {
@@ -116,6 +122,25 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     ])?;
     click(&opened, point(px(32.), px(TOP + ROW + 41.)), 1, cx)?;
     save(cx, opened.window.into(), "look-lanes")?;
+    drop(opened);
+
+    // Track 1 alone, its instrument the test plugin.
+    let plugin: serde_json::Value = serde_json::from_str(&super::test_plugin(plugin_host::PluginFormat::Clap, "test-tone"))?;
+    let files: Vec<(String, String)> = piece_files(&[("track-1/synth.json", plugin)])
+        .into_iter()
+        .filter(|(path, _)| !path.starts_with("state/song/bass") && !path.starts_with("state/song/melody"))
+        .map(|(path, text)| match path.as_str() {
+            "state/song/instance.json" => (path, json!({ "tool": "song", "state": { "order": ["track-1"] } }).to_string()),
+            _ => (path, text),
+        })
+        .collect();
+    let opened = super::Opened::open(cx, &files)?;
+    click(&opened, header(0.), 1, cx)?;
+    click(&opened, point(px(PICKER.0), px(PICKER.1)), 1, cx)?;
+    save(cx, opened.window.into(), "look-picker")?;
+    opened.key("escape", cx)?;
+    click(&opened, point(px(ADD_EFFECT.0), px(ADD_EFFECT.1)), 1, cx)?;
+    save(cx, opened.window.into(), "look-effect-picker")?;
     drop(opened);
 
     let limiter = json!({ "tool": "limiter", "state": { "ceiling_db": 0, "lookahead_ms": 0, "gain_db": 18 } });

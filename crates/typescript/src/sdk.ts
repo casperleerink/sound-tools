@@ -1064,9 +1064,9 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    * Opens a menu of `items` where the pointer is, after a press: the place of the item the
    * composer picked, or `null` when they picked none.
    */
-  openMenu(items: readonly MenuItem[]): Promise<number | null>;
+  openMenu(items: readonly MenuItem[], options?: { notes?: readonly string[] }): Promise<number | null>;
   /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. */
-  offers(takes: "notes" | "audio"): Promise<Offer[]>;
+  offers(takes: "notes" | "audio"): Promise<Offers>;
   /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */
   numbers(path: string): Promise<MovedNumber[]>;
   /** Puts the device of the offer `key` at the child `path`, at its defaults and in place of what is there, as one undo step `label`. */
@@ -1373,6 +1373,11 @@ export interface MenuItem {
   disabled?: boolean;
   /** A tick beside it. */
   checked?: boolean;
+  icon?: IconName;
+  /** A quiet second line, such as who made a plugin. */
+  detail?: string;
+  /** The heading it is under, with the items next to it of the same group. */
+  group?: string;
 }
 
 /** A device `offers` gives. */
@@ -1383,8 +1388,16 @@ export interface Offer {
   detail: string | null;
   /** The group a picker lists it under, such as "Built-in" or "Plugins". */
   group: string;
+  /** The icon a picker shows beside it. */
+  icon: IconName;
   /** Why it cannot be added here, or `null` when it can. */
   unavailable: string | null;
+}
+
+/** What `offers` gives: the devices, and what the window's pickers say under them, such as whose trademark a plugin format is. */
+export interface Offers {
+  offers: Offer[];
+  notes: string[];
 }
 
 /** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */

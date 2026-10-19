@@ -208,7 +208,8 @@ fn song_with(
 
 /// The piece the Rust arrangement's snapshots drew, as the DAW template's tools: chords on
 /// `track-1`, a bass line on `bass` and a melody with a gap on `melody`, over twelve bars, with
-/// nothing in their chains. `more` adds files after the tracks.
+/// nothing in their chains, in a project of every bundled extension, as a new one is. `more`
+/// adds files after the tracks.
 pub(crate) fn piece_files(more: &[(&str, Value)]) -> Vec<(String, String)> {
     let note = |start: u64, length: u64, pitch: u64| json!({ "start": start, "length": length, "pitch": pitch, "velocity": 100 });
     let mut chords = Vec::new();
@@ -243,7 +244,7 @@ pub(crate) fn piece_files(more: &[(&str, Value)]) -> Vec<(String, String)> {
     ];
     let project = json!({
         "format": 1,
-        "extensions": ["instrument", "filter", "utility", "reverb", "compressor", "limiter", "wavetable"],
+        "extensions": runtime::bundled_extensions().unwrap_or_default(),
         "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
         "connections": [{ "from": { "instance": "song", "port": "audio" }, "to": { "device_output": 0 } }],
     });

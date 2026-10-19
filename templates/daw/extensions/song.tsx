@@ -658,6 +658,14 @@ export const song = tool({
     const timeline = now.space("timeline");
     const handle = timeline.pointX.times(6);
 
+    /** A device the composer picks from what the window offers that takes `takes`, as the window's pickers list them. */
+    const pick = async (takes: "notes" | "audio") => {
+      const { offers: offered, notes } = await offers(takes);
+      const items = offered.map(({ name, detail, group, icon, unavailable }) => ({ label: name, detail: detail ?? undefined, group, icon, disabled: unavailable !== null }));
+      const picked = await openMenu(items, { notes });
+      return picked === null ? undefined : offered[picked];
+    };
+
     /** The devices of the track `name`: its instrument, which can be changed, its filter and the effects of its chain, which can be added, turned off, removed and dragged into another order. */
     const Rack = ({ name }: { name: string }) => {
       const chainOf = () => {
@@ -675,9 +683,7 @@ export const song = tool({
           if (effects?.tool === "chain") change(effects);
         });
       const addEffect = async () => {
-        const offered = await offers("audio");
-        const picked = await openMenu(offered.map((offer) => ({ label: offer.name, disabled: offer.unavailable !== null })));
-        const offer = picked === null ? undefined : offered[picked];
+        const offer = await pick("audio");
         if (!offer) return;
         const taken = chainOf()?.children.map((child) => child.name) ?? [];
         const effect = freeName(taken, nameFrom(offer.key) || "effect");
@@ -686,9 +692,7 @@ export const song = tool({
       };
       /** Another device in place of the one at `path`: an instrument from what takes notes, an effect from what takes sound. */
       const replace = async (takes: "notes" | "audio", path: string, label: string) => {
-        const offered = await offers(takes);
-        const picked = await openMenu(offered.map((offer) => ({ label: offer.name, disabled: offer.unavailable !== null })));
-        const offer = picked === null ? undefined : offered[picked];
+        const offer = await pick(takes);
         if (offer) addOffer(offer.key, path, label);
       };
       const remove = (effect: string) =>

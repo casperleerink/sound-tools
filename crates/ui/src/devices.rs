@@ -368,6 +368,15 @@ impl Devices {
         offers.push(Rc::new(move || vec![offer.clone()]));
     }
 
+    /// What the sources of offers say under them in a picker, such as whose trademark a format
+    /// is.
+    pub fn notes_of(cx: &App) -> Vec<SharedString> {
+        let Some(devices) = cx.try_global::<Self>() else {
+            return Vec::new();
+        };
+        devices.notes.iter().flat_map(|list| list()).collect()
+    }
+
     /// Everything on offer that takes `takes`, from the installed registry.
     pub fn offered(takes: Takes, cx: &App) -> Vec<DeviceOffer> {
         let Some(devices) = cx.try_global::<Self>() else {

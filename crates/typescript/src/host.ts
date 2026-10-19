@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MovedNumber, NoteEvent, Offer, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -941,9 +941,9 @@ function ask<Answer>(message: { type: string } & Record<string, unknown>): Promi
 function askers(instance: string) {
   return {
     /** The window shows it where the pointer is. */
-    openMenu: (items: readonly MenuItem[]) =>
-      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked }) => ({ label, disabled, checked })) }),
-    offers: (takes: "notes" | "audio") => ask<Offer[]>({ type: "offers", takes }),
+    openMenu: (items: readonly MenuItem[], { notes = [] }: { notes?: readonly string[] } = {}) =>
+      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group }) => ({ label, disabled, checked, icon, detail, group })), notes }),
+    offers: (takes: "notes" | "audio") => ask<Offers>({ type: "offers", takes }),
     numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
     /** The runtime opens the file and copies it under `assets/audio/`. */
     openFile: ({ title = "Choose a file" }: { title?: string } = {}) => ask<string | null>({ type: "open_file", title }),

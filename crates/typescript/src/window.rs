@@ -149,7 +149,7 @@ struct Card {
     events_sent: u64,
     events_answered: u64,
     /// A menu its code opened and the card did not show yet, with its question.
-    menu: Option<(u64, Vec<MenuItemSpec>)>,
+    menu: Option<(u64, Vec<MenuItemSpec>, Vec<String>)>,
 }
 
 /// What a tree is drawn on.
@@ -792,7 +792,7 @@ impl Live {
     }
 
     /// The menu the code of the card opened, which the card shows now.
-    pub(crate) fn take_menu(&mut self, card: u64) -> Option<(u64, Vec<MenuItemSpec>)> {
+    pub(crate) fn take_menu(&mut self, card: u64) -> Option<(u64, Vec<MenuItemSpec>, Vec<String>)> {
         self.cards.get_mut(&card)?.menu.take()
     }
 
@@ -1496,10 +1496,14 @@ impl Live {
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
             Event::OpenFile { question, title } => self.open_file(question, title, cx),
-            Event::OpenMenu { question, items } => {
+            Event::OpenMenu {
+                question,
+                items,
+                notes,
+            } => {
                 match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
                     Some(card) => {
-                        card.menu = Some((question, items));
+                        card.menu = Some((question, items, notes));
                         cx.notify();
                     }
                     None => self.menu_picked(question, None),
@@ -1509,7 +1513,10 @@ impl Live {
                 let offers = offered(takes_of(&takes), self.session.upgrade(), cx);
                 self.host.send(&Request::Answer {
                     question,
-                    answer: Answer::Offers(offers),
+                    answer: Answer::Offers {
+                        offers,
+                        notes: (Devices::notes_of(cx).iter()).map(ToString::to_string).collect(),
+                    },
                 });
             }
             Event::AddOffer {
@@ -2097,6 +2104,7 @@ fn offered(takes: Takes, session: Option<Entity<Session>>, cx: &App) -> Vec<Offe
             name: offer.name.to_string(),
             detail: offer.detail.as_ref().map(ToString::to_string),
             group: offer.group.label().to_string(),
+            icon: offer.icon.to_string(),
         })
         .collect()
 }

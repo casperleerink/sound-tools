@@ -396,8 +396,9 @@ impl TypeScriptCard {
     /// another instance, and a menu its code opened. Outside a draw, which may not make them.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let card = self.card;
-        if let Some((question, items)) = self.live.update(cx, |live, _| live.take_menu(card)) {
-            self.open_menu(question, items, window, cx);
+        if let Some((question, items, notes)) = self.live.update(cx, |live, _| live.take_menu(card))
+        {
+            self.open_menu(question, items, notes, window, cx);
         }
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
@@ -583,15 +584,41 @@ impl TypeScriptCard {
         &mut self,
         question: u64,
         items: Vec<MenuItemSpec>,
+        notes: Vec<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let items = items.into_iter().enumerate().map(|(index, item)| {
-            MenuItem::new(index.to_string(), item.label)
-                .disabled(item.disabled)
-                .checked(item.checked)
-        });
-        let entries = vec![MenuEntry::Group(MenuGroup::new().items(items))];
+        // A group a run of items of one `group`, under its heading.
+        let mut entries: Vec<(Option<String>, MenuGroup)> = Vec::new();
+        for (index, spec) in items.into_iter().enumerate() {
+            let mut item = MenuItem::new(index.to_string(), spec.label)
+                .disabled(spec.disabled)
+                .checked(spec.checked);
+            if let Some(icon) = spec.icon {
+                item = item.icon(icon);
+            }
+            if let Some(detail) = spec.detail {
+                item = item.description(detail);
+            }
+            match entries.last_mut() {
+                Some((group, items)) if *group == spec.group => {
+                    *items = std::mem::take(items).item(item);
+                }
+                _ => {
+                    let heading = spec.group.clone();
+                    let group = MenuGroup::new().item(item);
+                    let group = match &heading {
+                        Some(heading) => group.label(heading.clone()),
+                        None => group,
+                    };
+                    entries.push((heading, group));
+                }
+            }
+        }
+        let entries: Vec<MenuEntry> = (entries.into_iter())
+            .map(|(_, group)| MenuEntry::Group(group))
+            .chain(notes.into_iter().map(|note| MenuEntry::Note(note.into())))
+            .collect();
         let menu = match self.menu.take() {
             Some((menu, waiting)) => {
                 if let Some(waiting) = waiting {

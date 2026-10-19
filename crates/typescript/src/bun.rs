@@ -191,8 +191,12 @@ pub(crate) enum Answer<'a> {
     Asset(Option<&'a str>),
     /// The place of the item the composer picked in a menu, or none.
     Item(Option<usize>),
-    /// What the window offers that takes what was asked for.
-    Offers(Vec<Offered>),
+    /// What the window offers that takes what was asked for, and what its pickers say under
+    /// them.
+    Offers {
+        offers: Vec<Offered>,
+        notes: Vec<String>,
+    },
     /// What a lane or a cable can move of the child asked about.
     Numbers(Vec<Moved>),
 }
@@ -204,6 +208,8 @@ pub(crate) struct Offered {
     pub name: String,
     pub detail: Option<String>,
     pub group: String,
+    /// The icon a picker shows beside it.
+    pub icon: String,
     /// Why it cannot be picked here, or `None` when it can.
     pub unavailable: Option<String>,
 }
@@ -217,6 +223,11 @@ pub(crate) struct MenuItemSpec {
     pub disabled: bool,
     #[serde(default)]
     pub checked: bool,
+    pub icon: Option<String>,
+    /// A quiet second line.
+    pub detail: Option<String>,
+    /// The heading it goes under, with the items before and after it of the same group.
+    pub group: Option<String>,
 }
 
 /// Where the sound and the piece are, which all code of a tool gets.
@@ -276,8 +287,8 @@ impl Default for Transport {
 
 impl Transport {
     /// What bindings follow: not the playhead, which moves on every frame.
-    pub(crate) fn followed(&self) -> (bool, Option<[u64; 2]>, bool) {
-        (self.playing, self.repeat, self.click)
+    pub(crate) fn followed(&self) -> (bool, Option<[u64; 2]>, bool, bool) {
+        (self.playing, self.repeat, self.click, self.keys)
     }
 }
 
@@ -406,6 +417,9 @@ pub(crate) enum Event {
     OpenMenu {
         question: u64,
         items: Vec<MenuItemSpec>,
+        /// Quiet lines under the items.
+        #[serde(default)]
+        notes: Vec<String>,
     },
     /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
     Offers { question: u64, takes: String },
