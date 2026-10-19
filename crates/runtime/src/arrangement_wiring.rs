@@ -8,10 +8,31 @@ pub mod transport;
 
 use anyhow::{Result, bail};
 use arrangement::{ArrangementState, Colour, TrackKind, TrackState};
+use gpui::AppContext as _;
 use instrument::SynthState;
 use plugin_host::Plugins;
-use sound_core::{Changes, Engine, Instance, InstanceId, Project, ProjectError, State, Ticks};
-use sound_ui::extension_is_enabled;
+use sound_core::{Changes, Engine, Instance, Project, ProjectError, Registry, State};
+use sound_ui::{Views, extension_is_enabled};
+
+/// Registers the arrangement's tools, as every bundled extension registers its own.
+pub(crate) fn register(registry: &mut Registry) -> Result<()> {
+    arrangement::register(registry)?;
+    Ok(())
+}
+
+/// Registers the arrangement's views, with what it must not know: the default instrument and
+/// the tempo fit.
+pub(crate) fn register_views(views: &mut Views) {
+    arrangement::view::register(views, add_track_of_kind, FIT_TEMPO);
+}
+
+/// The arrangement's transport in the title row while it is the main view, and where live notes
+/// go then: the selected track, or the first one, see [`recording::live_notes_inputs`].
+pub(crate) const CHROME: Chrome = Chrome {
+    tool: ArrangementState::TOOL,
+    make: |session, live, _, cx| cx.new(|cx| TransportPill::new(session, live, cx)).into(),
+    live_notes: recording::live_notes_inputs,
+};
 
 /// A new project with one arrangement and no track, see [`crate::Template`].
 pub(crate) const TEMPLATE: crate::Template = crate::Template {
@@ -20,6 +41,8 @@ pub(crate) const TEMPLATE: crate::Template = crate::Template {
 };
 
 use crate::render_into;
+use crate::window::Chrome;
+use transport::TransportPill;
 
 /// The arrangement of the piece: the first one at the top of the project.
 pub fn main_arrangement(project: &Project) -> Option<Instance<ArrangementState>> {
@@ -148,19 +171,4 @@ pub fn add_track_of_kind(
             project.commit("Add return", changes)
         }
     }
-}
-
-/// The time `clips` cover together, from the first start to the last end, which is what the
-/// window exports as the selection. `None` when none of them is a clip.
-pub fn clips_span(project: &Project, clips: &[InstanceId]) -> Option<(Ticks, Ticks)> {
-    let spans = clips.iter().filter_map(|id| {
-        if let Some(clip) = project.resolve::<sound_notes::Clip>(id) {
-            let clip = project.state(&clip)?;
-            return Some((clip.start, clip.end()));
-        }
-        let clip = project.resolve::<arrangement::AudioClip>(id)?;
-        let clip = project.state(&clip)?;
-        Some((clip.start, arrangement::audio_clip_end(project, clip)))
-    });
-    spans.reduce(|(start, end), (from, to)| (start.min(from), end.max(to)))
 }

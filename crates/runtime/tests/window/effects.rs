@@ -238,8 +238,8 @@ fn a_panel_opened_while_the_scan_runs_offers_the_effects_when_it_ends(cx: &mut T
         cx,
         |root| support::slow_test_plugin_host(root, 250),
         |project| {
-            let arrangement = runtime::main_arrangement(project).unwrap();
-            runtime::add_track(project, &arrangement).unwrap();
+            let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+            runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         },
     );
     let plugins = opened.plugins.upgrade().unwrap();

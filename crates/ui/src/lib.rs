@@ -31,7 +31,7 @@ pub use global_keys::{GlobalKey, GlobalKeys};
 pub use lanes::Lanes;
 pub use metering::{Metering, PeaksReader, SharedPeaks, every_poll};
 pub use recording::{InputLevels, LiveBody, LiveNotes, LiveSound, LiveTake, Recording};
-pub use session::{ClickSwitch, Loop, POLL_INTERVAL, Playhead, Session};
+pub use session::{ClickSwitch, Loop, POLL_INTERVAL, Playhead, Session, SpanOf};
 pub use spare_keys::{SpareKey, SpareKeys};
 pub use theme::{ActiveTheme, Theme};
 pub use views::Views;

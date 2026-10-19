@@ -156,7 +156,9 @@ impl Views {
             id.parent().is_none() && (views.by_tool.contains_key(tool) || other(tool))
         };
         let named = project.project_file().main.as_ref();
-        if let Some(main) = named.filter(|main| project.tool_of(main).is_some_and(|tool| shown(main, tool))) {
+        if let Some(main) =
+            named.filter(|main| project.tool_of(main).is_some_and(|tool| shown(main, tool)))
+        {
             return Some(main.clone());
         }
         let mut instances = project.instances();

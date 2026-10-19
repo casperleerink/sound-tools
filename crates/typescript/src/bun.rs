@@ -329,6 +329,12 @@ pub(crate) enum Event {
     },
     /// Code asks the composer for a file, with `title`: the answer goes to its `question`.
     OpenFile { question: u64, title: String },
+    /// The code of `instance` selected its child at `path`, or nothing, and the ticks `span`.
+    Select {
+        instance: InstanceId,
+        path: Option<String>,
+        span: Option<[u64; 2]>,
+    },
     /// Code played, stopped or moved the clock.
     Transport {
         #[serde(flatten)]

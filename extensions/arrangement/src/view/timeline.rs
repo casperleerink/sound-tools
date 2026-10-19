@@ -690,15 +690,21 @@ impl Timeline {
     }
 
     /// The selected clips go to the session too, the first one first, as the selected track
-    /// does: the window offers to export the time the selected clips cover, and the arrangement
+    /// does, with the time they cover: the window offers to export it, and the arrangement
     /// knows nothing of exports.
     fn publish_selection(&self, cx: &mut Context<Self>) {
         let primary = self.clips.primary();
         let others = self.clips.iter().filter(|id| Some(*id) != primary);
         let clips: Vec<_> = primary.into_iter().chain(others).cloned().collect();
         if self.session.read(cx).selected_clips() != clips {
-            self.session
-                .update(cx, |session, cx| session.select_clips(clips, cx));
+            let span: Option<sound_ui::SpanOf> = (!clips.is_empty()).then(|| {
+                let clips = clips.clone();
+                Rc::new(move |project: &Project| crate::clips_span(project, &clips)) as _
+            });
+            self.session.update(cx, |session, cx| {
+                session.select_clips(clips, cx);
+                session.select_span(span, cx);
+            });
         }
     }
 

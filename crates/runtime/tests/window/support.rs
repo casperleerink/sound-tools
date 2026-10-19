@@ -14,9 +14,11 @@ use gpui::{
     ScrollWheelEvent, TestAppContext, VisualTestContext, point, px,
 };
 use plugin_host::WeakPlugins;
+use runtime::arrangement_wiring::transport::TransportPill;
 use runtime::window::audio_input::{OpenInput, OpenedInput};
+use runtime::window::live_input::LiveInput;
 use runtime::window::other_apps::AppSounds;
-use runtime::window::{DeviceAccess, ListDevices, Shell, TransportPill, bind_keys};
+use runtime::window::{DeviceAccess, ListDevices, Shell, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project, Ticks};
 use sound_notes::{Clip, Length, Note, Pitch, Velocity};
@@ -113,8 +115,8 @@ pub(crate) fn open_new(cx: &mut TestAppContext) -> Opened<'_> {
 /// Adds `Track 1` to a new project, as the add track button makes it, with no undo step: the
 /// track most tests start from.
 pub(crate) fn add_first_track(project: &mut Project) {
-    let arrangement = runtime::main_arrangement(project).unwrap();
-    runtime::add_track(project, &arrangement).unwrap();
+    let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+    runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
     project.clear_history();
 }
 
@@ -529,7 +531,20 @@ impl Opened<'_> {
 
     pub(crate) fn transport(&mut self) -> Entity<TransportPill> {
         let shell = self.shell.clone();
-        self.cx.read(|cx| shell.read(cx).transport().clone())
+        self.cx.read(|cx| {
+            shell
+                .read(cx)
+                .chrome()
+                .clone()
+                .downcast::<TransportPill>()
+                .unwrap()
+        })
+    }
+
+    /// The window's MIDI keyboard, computer keys, audio input and meter.
+    pub(crate) fn live_input(&mut self) -> Entity<LiveInput> {
+        let shell = self.shell.clone();
+        self.cx.read(|cx| shell.read(cx).live_input().clone())
     }
 
     /// The tempo the transport shows, in bpm.
@@ -545,8 +560,8 @@ impl Opened<'_> {
 
     /// Where a MIDI keyboard would put what it plays.
     pub(crate) fn midi_input(&mut self) -> midi::Input {
-        let transport = self.transport();
-        self.cx.read(|cx| transport.read(cx).midi_input()).unwrap()
+        let live = self.live_input();
+        self.cx.read(|cx| live.read(cx).midi_input()).unwrap()
     }
 
     pub(crate) fn is_recording(&mut self) -> bool {

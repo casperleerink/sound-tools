@@ -28,7 +28,12 @@ fn a_soloed_track_plays_alone_unmuted_and_no_file_changes() {
     let harness = bass_and_lead();
     let before = files(harness.project.root());
     let (mut project, mut engine, plugins) = open_read_only(harness.project.root());
-    let problems = runtime::solo(&mut project, &mut engine, &plugins, &["bass".to_string()]);
+    let problems = runtime::arrangement_wiring::solo(
+        &mut project,
+        &mut engine,
+        &plugins,
+        &["bass".to_string()],
+    );
     assert!(problems.unwrap().is_empty());
     project.engine().play();
     let soloed = runtime::render(&mut project, &mut engine, &plugins, BAR).unwrap();
@@ -53,8 +58,9 @@ fn a_soloed_track_plays_alone_unmuted_and_no_file_changes() {
 fn a_track_that_is_not_there_names_the_ones_that_are() {
     let harness = bass_and_lead();
     let (mut project, mut engine, plugins) = open_read_only(harness.project.root());
-    let mut solo =
-        |name: &str| runtime::solo(&mut project, &mut engine, &plugins, &[name.to_string()]);
+    let mut solo = |name: &str| {
+        runtime::arrangement_wiring::solo(&mut project, &mut engine, &plugins, &[name.to_string()])
+    };
     let error = solo("drums").unwrap_err();
     assert_eq!(
         error.to_string(),

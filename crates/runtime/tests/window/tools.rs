@@ -430,8 +430,8 @@ impl Window<'_> {
     /// Plays a key of the MIDI keyboard, once it plays where the window wired it.
     fn play_midi(&mut self, pitch: u8) {
         let shell = self.shell.clone();
-        let transport = self.cx.read(|cx| shell.read(cx).transport().clone());
-        let input = self.cx.read(|cx| transport.read(cx).midi_input()).unwrap();
+        let live = self.cx.read(|cx| shell.read(cx).live_input().clone());
+        let input = self.cx.read(|cx| live.read(cx).midi_input()).unwrap();
         self.poll();
         self.poll();
         let pitch = Pitch::new(pitch).unwrap();

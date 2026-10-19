@@ -41,7 +41,8 @@ fn kalimba(time: f64) -> f64 {
 
 /// A Kalimba track at the end of the piece, whose Sampler is `sampler`, playing a phrase.
 fn add_kalimba(project: &mut Project, sampler: SamplerState) -> Result<Instance<TrackState>> {
-    let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
+    let arrangement =
+        runtime::arrangement_wiring::main_arrangement(project).context("no arrangement")?;
     let mut changes = Changes::new();
     let track = arrangement::add_track(
         project,
@@ -94,7 +95,8 @@ fn open_panel(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<Entity<Sam
     let view = opened.arrangement_view(cx)?;
     let track = cx.update(|cx| {
         let project = opened.session.read(cx).project();
-        let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
+        let arrangement =
+            runtime::arrangement_wiring::main_arrangement(project).context("no arrangement")?;
         let tracks = project.children::<TrackState>(arrangement.id());
         let last = tracks.max_by_key(|(_, state)| state.order);
         last.map(|(track, _)| track).context("no track")

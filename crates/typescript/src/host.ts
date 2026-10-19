@@ -869,6 +869,7 @@ function contextOf<Extra extends object>(
     clock: clockFor(instance),
     update: updater(instance),
     openFile: fileOpener(),
+    select: selector(instance),
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
   };
@@ -879,6 +880,14 @@ function contextOf<Extra extends object>(
     outputs: { enumerable: true, value: watches },
     children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
   }) as typeof context & { state: State; outputs: Watches; children: OwnedChild[] };
+}
+
+/** `select`: what the composer works on, a child by its path, which the window plays live notes into. */
+function selector(instance: string) {
+  return (path: string | null, { span }: { span?: { from: number; to: number } } = {}) => {
+    const range = span && [wholeTick(span.from, "span from"), wholeTick(span.to, "span to")];
+    say({ type: "select", instance, path, span: range ?? null });
+  };
 }
 
 /** `openFile`: the runtime opens the file, copies it, and answers its question. */
@@ -1100,6 +1109,7 @@ function cardContext<Extra extends object>(instance: string, spec: Spec, known: 
     memory: memoryOf(instance, spec),
     update: updater(instance),
     openFile: fileOpener(),
+    select: selector(instance),
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
   };
@@ -1139,7 +1149,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, openFile: async () => null };
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, update() {} };

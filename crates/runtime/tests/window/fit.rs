@@ -3,6 +3,7 @@
 
 use fit_tempo::FitState;
 use gpui::{TestAppContext, px};
+use runtime::arrangement_wiring::transport::TransportPill;
 use sound_core::{Changes, Ticks};
 use sound_notes::Clip;
 
@@ -65,9 +66,15 @@ fn project_file(opened: &mut Opened<'_>) -> String {
 /// The steadiness the transport shows, as whole percent, which is what it draws. A saved
 /// steadiness is an `f32`, so 0.4 of it comes back as 40.000001 percent.
 fn steadiness(opened: &mut Opened<'_>) -> Option<f64> {
-    let transport = opened
-        .cx
-        .read(|cx| opened.shell.read(cx).transport().clone());
+    let transport = opened.cx.read(|cx| {
+        opened
+            .shell
+            .read(cx)
+            .chrome()
+            .clone()
+            .downcast::<TransportPill>()
+            .unwrap()
+    });
     let percent = opened.cx.read(|cx| transport.read(cx).shown_steadiness(cx));
     percent.map(|percent| percent.round())
 }

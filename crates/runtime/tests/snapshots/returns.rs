@@ -20,7 +20,8 @@ const MASTER_ROW_HEIGHT: f32 = arrangement::view::MASTER_ROW_HEIGHT;
 
 fn with_returns(project: &mut Project) -> Result<()> {
     piece(project)?;
-    let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
+    let arrangement =
+        runtime::arrangement_wiring::main_arrangement(project).context("no arrangement")?;
     let mut changes = Changes::new();
     let returns = [
         ("space", "Space", Colour::Teal, 0),

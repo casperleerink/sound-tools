@@ -22,10 +22,8 @@ fn shows_lanes(opened: &mut Opened<'_>) -> bool {
 }
 
 fn keys_are_on(opened: &mut Opened<'_>) -> bool {
-    let transport = opened.transport();
-    opened
-        .cx
-        .read(|cx| transport.read(cx).computer_keys_are_on())
+    let live = opened.live_input();
+    opened.cx.read(|cx| live.read(cx).computer_keys_are_on())
 }
 
 /// `keys` only sends a key going down.

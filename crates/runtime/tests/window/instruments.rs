@@ -211,8 +211,8 @@ fn picking_the_synth_again_after_a_plugin_brings_its_controls_back(cx: &mut Test
     // The plugin on another track, and picking it again there: the second pick changes
     // nothing, so the plugin keeps the state file it has and the composer keeps their sound.
     opened.edit(|project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement)
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement)
     });
     let second_track = "state/arrangement/track-2/instrument.json";
     let header = opened.track_header(1);

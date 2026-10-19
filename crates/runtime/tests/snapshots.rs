@@ -110,6 +110,7 @@
 //! are those of one real mouse move on that project: the publish into the gesture, every
 //! project event it causes and the frame after it.
 
+use runtime::arrangement_wiring::transport::TransportPill;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -140,8 +141,9 @@ use plugin_host::{PluginFormat, PluginRecord, WeakPlugins};
 use reverb::ReverbState;
 use reverb::view::ReverbView;
 use runtime::app::ChosenDevices;
+use runtime::arrangement_wiring::main_arrangement;
 use runtime::window::{DeviceAccess, DeviceMenu, Shell};
-use runtime::{OFFLINE, main_arrangement, open_or_create_with, views};
+use runtime::{OFFLINE, open_or_create_with, views};
 use saturator::{Curve, SaturatorState};
 use sound_core::{
     Changes, DeviceChoice, Engine, Instance, InstanceId, Project, Tempo, TempoChange, TempoMap,
@@ -221,7 +223,7 @@ impl Opened {
             // `Track 1`, as the add track button makes it, with no undo step: the track most
             // snapshots start from.
             let arrangement = main_arrangement(project).context("the arrangement")?;
-            runtime::add_track(project, &arrangement)?;
+            runtime::arrangement_wiring::add_track(project, &arrangement)?;
             project.clear_history();
             fill(project)
         };
@@ -358,8 +360,8 @@ impl Opened {
             let view = self.arrangement_view(cx)?;
             cx.update(|cx| {
                 let shell = self.window.read(cx)?;
-                let transport = shell.transport().clone();
-                transport.update(cx, |pill, cx| pill.read_meter(cx));
+                let live = shell.live_input().clone();
+                live.update(cx, |live, cx| live.read_meter(cx));
                 let (track, master) = {
                     let view = view.read(cx);
                     (view.track_panel().cloned(), view.master_panel().cloned())
@@ -1111,7 +1113,18 @@ fn main() -> Result<()> {
     // The transport with the tempo and the click, off and on. The click is a switch on the
     // engine, not project state: nothing is written and there is no undo step.
     save(&mut cx, &opened, "transport-click-off")?;
-    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
+    let transport = cx.update(|cx| {
+        anyhow::Ok(
+            opened
+                .window
+                .read(cx)?
+                .chrome()
+                .clone()
+                .downcast::<TransportPill>()
+                .unwrap(),
+        )
+    })?;
+    let live = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.live_input().clone()))?;
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
     cx.run_until_parked();
     anyhow::ensure!(
@@ -1119,14 +1132,14 @@ fn main() -> Result<()> {
         "the click did not come on"
     );
     save(&mut cx, &opened, "transport-click-on")?;
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_computer_keys(cx)));
+    cx.update(|cx| live.update(cx, |live, cx| live.toggle_computer_keys(cx)));
     cx.run_until_parked();
     anyhow::ensure!(
-        cx.update(|cx| transport.read(cx).computer_keys_are_on()),
+        cx.update(|cx| live.read(cx).computer_keys_are_on()),
         "the computer keys did not come on"
     );
     save(&mut cx, &opened, "transport-keys-on")?;
-    cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_computer_keys(cx)));
+    cx.update(|cx| live.update(cx, |live, cx| live.toggle_computer_keys(cx)));
 
     // Recording: the record control in red, next to play and stop, and the take on the
     // selected track growing to the playhead with what was played so far, the last key held.
@@ -1136,7 +1149,7 @@ fn main() -> Result<()> {
         cx.update(|cx| transport.read(cx).is_recording()),
         "the recording did not start"
     );
-    let input = cx.update(|cx| transport.read(cx).midi_input());
+    let input = cx.update(|cx| live.read(cx).midi_input());
     let input = input.context("no MIDI input")?;
     let key = |pitch: u8| Pitch::new(pitch).context("no pitch");
     let velocity = Velocity::new(96).context("no velocity")?;
@@ -1150,7 +1163,10 @@ fn main() -> Result<()> {
                 velocity: 64,
             });
         }
-        cx.update(|cx| transport.update(cx, |pill, cx| pill.poll_input(cx)));
+        cx.update(|cx| {
+            live.update(cx, |live, cx| live.poll_input(cx));
+            transport.update(cx, |pill, cx| pill.poll_takes(cx));
+        });
     }
     save(&mut cx, &opened, "transport-recording")?;
     input.send(Played::Off {
@@ -1208,7 +1224,9 @@ fn main() -> Result<()> {
     cx.update(|cx| {
         opened.session.update(cx, |session, cx| {
             let arrangement = main_arrangement(session.project()).context("no arrangement")?;
-            session.edit(cx, |project| runtime::add_track(project, &arrangement));
+            session.edit(cx, |project| {
+                runtime::arrangement_wiring::add_track(project, &arrangement)
+            });
             anyhow::Ok(())
         })
     })?;
@@ -1495,7 +1513,17 @@ fn main() -> Result<()> {
         })
     })?;
     opened.play_from(Ticks(5 * BAR), &mut cx)?;
-    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
+    let transport = cx.update(|cx| {
+        anyhow::Ok(
+            opened
+                .window
+                .read(cx)?
+                .chrome()
+                .clone()
+                .downcast::<TransportPill>()
+                .unwrap(),
+        )
+    })?;
     anyhow::ensure!(
         cx.update(|cx| transport.read(cx).shown_steadiness(cx)) == Some(0.0),
         "the transport shows no steadiness"
@@ -1513,7 +1541,17 @@ fn main() -> Result<()> {
     });
     cx.run_until_parked();
     save(&mut cx, &opened, "fit-steady")?;
-    let transport = cx.update(|cx| anyhow::Ok(opened.window.read(cx)?.transport().clone()))?;
+    let transport = cx.update(|cx| {
+        anyhow::Ok(
+            opened
+                .window
+                .read(cx)?
+                .chrome()
+                .clone()
+                .downcast::<TransportPill>()
+                .unwrap(),
+        )
+    })?;
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_recording(cx)));
     cx.run_until_parked();
     save(&mut cx, &opened, "fit-recording")?;

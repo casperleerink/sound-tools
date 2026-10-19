@@ -936,6 +936,21 @@ pub fn audio_clips<'a>(
     clips
 }
 
+/// The time `clips` cover together, from the first start to the last end, which the window
+/// exports as the selection. `None` when none of them is a clip.
+pub fn clips_span(project: &Project, clips: &[InstanceId]) -> Option<(Ticks, Ticks)> {
+    let spans = clips.iter().filter_map(|id| {
+        if let Some(clip) = project.resolve::<sound_notes::Clip>(id) {
+            let clip = project.state(&clip)?;
+            return Some((clip.start, clip.end()));
+        }
+        let clip = project.resolve::<AudioClip>(id)?;
+        let clip = project.state(&clip)?;
+        Some((clip.start, audio_clip_end(project, clip)))
+    });
+    spans.reduce(|(start, end), (from, to)| (start.min(from), end.max(to)))
+}
+
 /// The first tick after an audio clip under the clock of the project. Its start when its file
 /// is not there.
 pub fn audio_clip_end(project: &Project, clip: &AudioClip) -> Ticks {

@@ -28,9 +28,6 @@ use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use window::{LeftPanel, LeftPanelSlot};
 
-use arrangement_wiring::{FIT_TEMPO, add_track_of_kind};
-pub use arrangement_wiring::{add_audio_track, add_track, clips_span, main_arrangement, solo};
-
 const PROJECT_FILE: &str = "project.json";
 
 /// Offline renders have no device to ask. `offline` is what every processor is told, and what a
@@ -154,7 +151,7 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
 /// Registers every bundled extension, and the plugin host when given the plugins it hosts.
 fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Result<()> {
     analyzer::register(registry)?;
-    arrangement::register(registry)?;
+    arrangement_wiring::register(registry)?;
     compressor::register(registry)?;
     delay::register(registry)?;
     drum_pad::register(registry)?;
@@ -193,7 +190,7 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
 pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();
-    arrangement::view::register(&mut views, add_track_of_kind, FIT_TEMPO);
+    arrangement_wiring::register_views(&mut views);
     // The order here is the order of a picker: the instruments, then the effects group by
     // group, and the plugins of this Mac after the built-in devices.
     instrument::view::register(&mut views, &mut devices);
@@ -368,6 +365,9 @@ pub const BARE: Template = Template {
 /// What a new folder becomes unless it is asked to be another [`Template`].
 pub const NEW_PROJECT: Template = arrangement_wiring::TEMPLATE;
 
+/// What the arrangement adds to the window while it is the main view: its transport.
+pub(crate) const CHROME: window::Chrome = arrangement_wiring::CHROME;
+
 /// Opens the project with its lock. The plugin host is given: the application passes
 /// [`plugins`], which scans this machine, and a test passes one that looks in a folder of its
 /// own. A host that was not told to scan on a thread scans on this one, the first time a
@@ -452,7 +452,9 @@ fn registry_of(
 pub fn listen_only(project: &mut Project, path: &str) -> Result<()> {
     let id = InstanceId::new(path)?;
     if project.tool_of(&id).is_none() {
-        bail!("no instance is called {path:?}: name it by its path under state/, such as song/bass");
+        bail!(
+            "no instance is called {path:?}: name it by its path under state/, such as song/bass"
+        );
     }
     let mut changes = Changes::new();
     let to_device = (project.project_file().connections.iter())
@@ -460,7 +462,10 @@ pub fn listen_only(project: &mut Project, path: &str) -> Result<()> {
     for connection in to_device {
         changes.disconnect(connection.clone());
     }
-    changes.connect(SavedConnection::to_device(PortReference::new(&id, "audio"), 0));
+    changes.connect(SavedConnection::to_device(
+        PortReference::new(&id, "audio"),
+        0,
+    ));
     project.apply_in_memory(changes)?;
     Ok(())
 }

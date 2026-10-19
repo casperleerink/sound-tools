@@ -87,7 +87,8 @@ fn pad() -> WavetableState {
 
 /// A Pad track at the end of the piece whose instrument is `sound`, holding a chord.
 fn add_pad(project: &mut Project, sound: WavetableState) -> Result<()> {
-    let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
+    let arrangement =
+        runtime::arrangement_wiring::main_arrangement(project).context("no arrangement")?;
     let mut changes = Changes::new();
     let track = arrangement::add_track(
         project,
@@ -111,7 +112,8 @@ fn open_panel(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<Entity<Wav
     let view = opened.arrangement_view(cx)?;
     let track = cx.update(|cx| {
         let project = opened.session.read(cx).project();
-        let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
+        let arrangement =
+            runtime::arrangement_wiring::main_arrangement(project).context("no arrangement")?;
         let tracks = project.children::<TrackState>(arrangement.id());
         let last = tracks.max_by_key(|(_, state)| state.order);
         last.map(|(track, _): (Instance<TrackState>, _)| track)

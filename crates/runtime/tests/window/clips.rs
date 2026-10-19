@@ -13,8 +13,8 @@ const PART: &str = "arrangement/track-1/part";
 /// Two tracks. `part` on the first: bars 2 and 3, with a note in each bar.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let mut changes = Changes::new();
         changes.create(id(PART), part());
         project.commit("Add clip", changes).unwrap();

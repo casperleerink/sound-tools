@@ -29,8 +29,8 @@ fn other() -> Clip {
 /// Two tracks with a clip each, and the editor open on `part` by a double click.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     let mut opened = support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let mut changes = Changes::new();
         changes.create(id(PART), part());
         changes.create(id(OTHER), other());

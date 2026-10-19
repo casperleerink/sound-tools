@@ -6,6 +6,7 @@ use arrangement::view::layout::{HEADER_WIDTH, Viewport};
 use gpui::{Point, TestAppContext, point, px};
 use instrument::SynthState;
 use reverb::ReverbState;
+use runtime::arrangement_wiring::transport::TransportPill;
 use sound_core::{Changes, Ticks};
 use sound_ui::Loop;
 
@@ -123,9 +124,9 @@ fn shift_makes_a_tempo_drag_finer_from_where_it_is(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_click_or_a_double_click_on_the_tempo_holds_no_drag(cx: &mut TestAppContext) {
     let mut opened = open(cx);
-    let pill = opened
-        .shell
-        .read_with(opened.cx, |shell, _| shell.transport().clone());
+    let pill = opened.shell.read_with(opened.cx, |shell, _| {
+        shell.chrome().clone().downcast::<TransportPill>().unwrap()
+    });
     let holds =
         |opened: &mut Opened<'_>| pill.read_with(opened.cx, |pill, _| pill.holds_a_tempo_drag());
     let tempo = tempo_control(&mut opened);

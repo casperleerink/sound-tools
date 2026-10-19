@@ -246,8 +246,8 @@ fn no_loop(opened: &mut Opened<'_>) {
 /// Track 1 with the compressor and its panel open, and Track 2.
 fn open_two_tracks(cx: &mut TestAppContext) -> Opened<'_> {
     open_panel_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
     })
 }
 

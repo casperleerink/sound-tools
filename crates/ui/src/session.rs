@@ -44,6 +44,9 @@ pub struct Loop {
 
 /// Turns the click in the engine on or off. The window attaches it; the session holds it, so
 /// every view that shows the click shows the same one.
+/// What stretch of the piece a selection covers in a project, see [`Session::selected_span`].
+pub type SpanOf = std::rc::Rc<dyn Fn(&Project) -> Option<(Ticks, Ticks)>>;
+
 pub type ClickSwitch = Box<dyn FnMut(&mut EngineControl, bool) -> Result<(), GraphError>>;
 
 /// Where a notice came from decides what clears it.
@@ -70,6 +73,8 @@ pub struct Session {
     selected: Option<InstanceId>,
     /// The clips the composer is working on, see [`Self::select_clips`].
     selected_clips: Vec<InstanceId>,
+    /// See [`Self::selected_span`].
+    span: Option<SpanOf>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
     /// See [`Self::history_moves`].
@@ -119,6 +124,7 @@ impl Session {
             gesture: None,
             selected: None,
             selected_clips: Vec::new(),
+            span: None,
             engine_stopped: false,
             history_moves: 0,
             output,
@@ -193,6 +199,21 @@ impl Session {
             self.selected_clips = clips;
             cx.notify();
         }
+    }
+
+    /// The stretch of the piece the composer has selected, from a tick to a tick, which the
+    /// project menu exports: worked out from the project as it is now, so a selected clip that
+    /// moved exports where it is. `None` when nothing is selected.
+    pub fn selected_span(&self) -> Option<(Ticks, Ticks)> {
+        let (from, to) = (self.span.as_ref()?)(&self.project)?;
+        (from < to).then_some((from, to))
+    }
+
+    /// The view that owns a selection says what stretch it covers. Interface state, as
+    /// [`Self::select`].
+    pub fn select_span(&mut self, span: Option<SpanOf>, cx: &mut Context<Self>) {
+        self.span = span;
+        cx.notify();
     }
 
     /// The transport: `play`, `pause`, `stop` and `seek`. The result shows in the

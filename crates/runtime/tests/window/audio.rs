@@ -49,7 +49,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
         let audio = project.root().join("assets/audio");
         write_wav(&audio.join("steady.wav"), 1., 0.5);
         write_wav(&audio.join("long.wav"), 4., 0.25);
-        let arrangement = runtime::main_arrangement(project).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
         let mut changes = Changes::new();
         let add = |project: &Project, changes: &mut Changes, name, colour| {
             arrangement::add_audio_track(project, changes, arrangement.id(), name, colour).unwrap()
@@ -736,7 +736,7 @@ fn the_menu_of_the_add_track_button_adds_an_audio_track(cx: &mut TestAppContext)
     let audio = opened.control("menu-audio-track");
     opened.click(audio);
     let tracks = opened.project(|project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
         let tracks = arrangement::tracks(project, arrangement.id());
         tracks
             .iter()

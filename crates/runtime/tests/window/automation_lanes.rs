@@ -56,8 +56,8 @@ fn lane(device: Option<&str>, parameter: &str, points: &[(u64, f32)]) -> Automat
 /// [`volume`] and [`sweep`], shown when `shown`. No undo history.
 fn open(cx: &mut TestAppContext, shown: bool) -> Opened<'_> {
     let mut opened = support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let track = project.resolve::<TrackState>(&id(ONE)).unwrap();
         let mut changes = Changes::new();
         changes.create(id(PART), clip(BAR, 2 * BAR, vec![note(960, 480, 60)]));
@@ -298,7 +298,7 @@ fn erasing_every_point_takes_the_lane_away(cx: &mut TestAppContext) {
 fn the_ghost_of_a_drag_is_the_drop(cx: &mut TestAppContext) {
     let mut opened = open(cx, true);
     let tracks = opened.project(|project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
         let tracks = arrangement::tracks(project, arrangement.id()).into_iter();
         let tracks = tracks.map(|(track, state)| (track.id().clone(), state.clone()));
         tracks.collect::<std::collections::BTreeMap<_, _>>()
@@ -344,7 +344,7 @@ fn the_ghost_of_a_drag_is_the_drop(cx: &mut TestAppContext) {
 /// The order of the tracks of the arrangement, by name.
 fn order(opened: &mut Opened<'_>) -> Vec<String> {
     opened.project(|project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
         let tracks = arrangement::tracks(project, arrangement.id()).into_iter();
         let names = tracks.map(|(track, _)| track.id().name().to_string());
         names.collect()
@@ -378,8 +378,8 @@ fn a_track_dragged_past_open_lanes_stays_where_the_pointer_is(cx: &mut TestAppCo
 #[gpui::test]
 fn a_lane_that_holds_one_value_does_not_move(cx: &mut TestAppContext) {
     let mut opened = support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let mut changes = Changes::new();
         changes.create(id(PART), clip(0, BAR, vec![note(0, 480, 60)]));
         project.commit("Add clip", changes).unwrap();

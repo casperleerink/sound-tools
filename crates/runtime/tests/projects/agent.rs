@@ -8,7 +8,8 @@
 
 use std::time::{Duration, Instant};
 
-use runtime::{OFFLINE, main_arrangement};
+use runtime::OFFLINE;
+use runtime::arrangement_wiring::main_arrangement;
 use smol::future;
 use sound_agent::{
     AgentEvent, ApprovalAnswer, ApprovalMode, Installed, Provider, Thread, ThreadOptions,
@@ -40,7 +41,7 @@ fn the_agent_adds_a_clip_as_one_undo_step() {
     let (mut project, _plugins) = open_or_create(folder.path(), control);
     // The track the add track button makes. Its step is not the one the test undoes.
     let arrangement = main_arrangement(&project).unwrap();
-    runtime::add_track(&mut project, &arrangement).unwrap();
+    runtime::arrangement_wiring::add_track(&mut project, &arrangement).unwrap();
     project.clear_history();
     project.watch().unwrap();
     // Writes the map and the docs the agent reads.

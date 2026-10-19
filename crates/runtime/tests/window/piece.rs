@@ -33,7 +33,7 @@ fn a_short_piece_is_made_by_hand_and_is_there_after_closing_and_opening(cx: &mut
     let mut opened = support::open_new(cx);
     let tracks = |opened: &mut Opened<'_>| {
         opened.project(|project| {
-            let arrangement = runtime::main_arrangement(project).unwrap();
+            let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
             arrangement::tracks(project, arrangement.id()).len()
         })
     };

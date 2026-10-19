@@ -383,7 +383,9 @@ fn open_for_render(folder: &Path, options: &Options) -> Result<(Project, Engine,
     let plugins = runtime::plugins(true)?;
     let (mut project, mut engine) = open_read_only_with(folder, plugins.clone())?;
     print_problems(&project);
-    for problem in runtime::solo(&mut project, &mut engine, &plugins, &options.solo)? {
+    for problem in
+        runtime::arrangement_wiring::solo(&mut project, &mut engine, &plugins, &options.solo)?
+    {
         println!("error: {problem}");
     }
     if let Some(only) = &options.only {

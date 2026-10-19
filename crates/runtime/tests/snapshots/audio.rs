@@ -23,6 +23,7 @@
 //!   growing to the playhead at 7.3 with their waveforms, and the panel of the voice with no
 //!   clip selected. `recording.png` of the mockups.
 
+use runtime::arrangement_wiring::transport::TransportPill;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -101,7 +102,8 @@ fn add_audio_track(
     colour: Colour,
     clips: &[(&str, f64, f64, Option<f64>, f32, (f32, f32))],
 ) -> Result<Instance<TrackState>> {
-    let arrangement = runtime::main_arrangement(project).context("no arrangement")?;
+    let arrangement =
+        runtime::arrangement_wiring::main_arrangement(project).context("no arrangement")?;
     let mut changes = Changes::new();
     let track =
         arrangement::add_audio_track(project, &mut changes, arrangement.id(), name, colour)?;
@@ -518,11 +520,16 @@ fn run_input(
 fn poll_window(opened: &Opened, cx: &mut HeadlessAppContext) -> Result<()> {
     let view = view(opened, cx)?;
     cx.update(|cx| {
-        let transport = opened.window.read(cx)?.transport().clone();
-        transport.update(cx, |pill, cx| {
-            pill.poll_input(cx);
-            pill.read_meter(cx);
+        let shell = opened.window.read(cx)?;
+        let (transport, live) = (
+            shell.chrome().clone().downcast::<TransportPill>().unwrap(),
+            shell.live_input().clone(),
+        );
+        live.update(cx, |live, cx| {
+            live.poll_input(cx);
+            live.read_meter(cx);
         });
+        transport.update(cx, |pill, cx| pill.poll_takes(cx));
         if let Some(panel) = view.read(cx).track_panel().cloned() {
             panel.update(cx, |panel, cx| panel.read_meter(cx));
         }
@@ -617,7 +624,13 @@ fn recording(
     });
     opened.advance(64, cx);
     cx.update(|cx| {
-        let transport = opened.window.read(cx)?.transport().clone();
+        let transport = opened
+            .window
+            .read(cx)?
+            .chrome()
+            .clone()
+            .downcast::<TransportPill>()
+            .unwrap();
         transport.update(cx, |pill, cx| pill.toggle_recording(cx));
         anyhow::Ok(())
     })?;

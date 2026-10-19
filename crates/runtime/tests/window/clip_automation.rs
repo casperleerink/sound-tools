@@ -60,8 +60,8 @@ fn lane(device: Option<&str>, parameter: &str, points: &[(u64, f32)]) -> Automat
 /// [`volume`] and [`sweep`]. No undo history.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let track = project.resolve::<TrackState>(&id(ONE)).unwrap();
         let mut changes = Changes::new();
         changes.create(id(PART), clip(BAR, 2 * BAR, vec![note(960, 480, 60)]));

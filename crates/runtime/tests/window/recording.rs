@@ -166,8 +166,8 @@ fn a_recording_with_nothing_played_makes_no_clip_and_no_file(cx: &mut gpui::Test
 #[gpui::test]
 fn the_keyboard_plays_into_the_selected_track(cx: &mut gpui::TestAppContext) {
     let mut opened = open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
     });
     opened.settle();
     assert_eq!(opened.selected_track(), None);
@@ -203,8 +203,8 @@ fn the_keyboard_plays_into_the_selected_track(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn a_take_stays_on_the_track_it_began_on(cx: &mut gpui::TestAppContext) {
     let mut opened = open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
     });
     opened.settle();
     opened.keys("r");
@@ -325,8 +325,8 @@ fn a_second_take_after_an_undo_leaves_the_first_one_untouched(cx: &mut gpui::Tes
 #[gpui::test]
 fn a_clip_dragged_to_another_track_still_names_its_take(cx: &mut gpui::TestAppContext) {
     let mut opened = open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
     });
     opened.settle();
     opened.keys("r");

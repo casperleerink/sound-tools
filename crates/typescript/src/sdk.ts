@@ -1065,6 +1065,13 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    * `file` field, or `null` when they chose none.
    */
   openFile(options?: { title?: string }): Promise<string | null>;
+  /**
+   * Tells the window what the composer works on: the child at `path`, such as `"bass"` or
+   * `"bass/verse"`, or nothing with `null`. The MIDI keyboard and the computer keys play the
+   * `notes` of the nearest of it and its parents that has them; `span`, in ticks, is what Export
+   * selection exports. Nothing is saved.
+   */
+  select(path: string | null, options?: { span?: { from: number; to: number } }): void;
   /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
   memory: Memory<M>;
   /**

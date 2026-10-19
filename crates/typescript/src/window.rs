@@ -1299,6 +1299,11 @@ impl Live {
             }
             Event::OpenFile { question, title } => self.open_file(question, title, cx),
             Event::Transport { op } => self.transport(op, cx),
+            Event::Select {
+                instance,
+                path,
+                span,
+            } => self.select(&instance, path.as_deref(), span, cx),
             Event::SongEdit {
                 instance,
                 label,
@@ -1349,6 +1354,42 @@ impl Live {
         }) {
             self.told_song = Some((tempo_map, sections));
         }
+    }
+
+    /// The code of `instance` selected its child at `path`, or nothing, and a stretch of ticks.
+    /// A path it does not own is a problem of the tool, as its types do not check it.
+    fn select(
+        &mut self,
+        instance: &InstanceId,
+        path: Option<&str>,
+        span: Option<[u64; 2]>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let selected = match path {
+            None => None,
+            Some(path) => {
+                let project = session.read(cx).project();
+                let id = InstanceId::new(&format!("{instance}/{path}")).ok();
+                match id.filter(|id| project.tool_of(id).is_some()) {
+                    Some(id) => Some(id),
+                    None => {
+                        let problem = format!("it selects {path:?}, which {instance} does not own");
+                        self.tool_problem(instance, problem, cx);
+                        return;
+                    }
+                }
+            }
+        };
+        let span = span.map(|[from, to]| -> sound_ui::SpanOf {
+            std::rc::Rc::new(move |_: &Project| Some((Ticks(from), Ticks(to))))
+        });
+        session.update(cx, |session, cx| {
+            session.select(selected, cx);
+            session.select_span(span, cx);
+        });
     }
 
     /// Code played, stopped or moved the clock. What it changed reaches Bun with the next frame.

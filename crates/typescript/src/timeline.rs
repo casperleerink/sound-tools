@@ -82,7 +82,8 @@ pub(crate) fn json_tool() -> JsonTool {
 /// the piece: none for a loop, or for one that waits for a launch. Read from the JSON as it is,
 /// with no copy of the notes, as every timeline of a long song is asked after each edit.
 fn end(state: &Value) -> Option<Ticks> {
-    let flag = |name: &str, default: bool| state.get(name).and_then(Value::as_bool).unwrap_or(default);
+    let flag =
+        |name: &str, default: bool| state.get(name).and_then(Value::as_bool).unwrap_or(default);
     if flag("loop", false) || !flag("plays", true) {
         return None;
     }
@@ -90,7 +91,9 @@ fn end(state: &Value) -> Option<Ticks> {
     let start = ticks(state, "start").unwrap_or(0);
     let length = ticks(state, "length").or_else(|| {
         let notes = state.get("notes").and_then(Value::as_array)?;
-        let ends = notes.iter().filter_map(|note| Some(ticks(note, "start")? + ticks(note, "length")?));
+        let ends = notes
+            .iter()
+            .filter_map(|note| Some(ticks(note, "start")? + ticks(note, "length")?));
         ends.max()
     })?;
     Some(Ticks(start + length))

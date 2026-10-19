@@ -23,8 +23,8 @@ const CUTOFF: &str = "knob-cutoff_hz";
 /// bars, so there is a sound to change.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let mut changes = Changes::new();
         changes.create(id(PART), clip(0, 2 * BAR, vec![note(0, 2 * BAR, 45)]));
         project.commit("Add clip", changes).unwrap();
@@ -524,8 +524,8 @@ fn an_outside_delete_of_the_track_during_a_knob_drag_closes_the_panel_cleanly(
 fn the_panel_closes_with_its_track_when_an_undo_takes_the_track_away(cx: &mut TestAppContext) {
     let mut opened = open(cx);
     opened.edit(|project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement)
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement)
     });
     let header = opened.track_header(2);
     opened.click(header);

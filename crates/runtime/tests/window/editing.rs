@@ -19,8 +19,8 @@ const HOOK: &str = "arrangement/track-2/hook";
 /// history.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
     support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let mut changes = Changes::new();
         changes.create(id(PART), part());
         changes.create(id(HOOK), hook());
@@ -160,11 +160,7 @@ fn the_selected_clips_reach_the_session_and_give_the_time_an_export_covers(
     let exported = |opened: &mut Opened<'_>| {
         opened.cx.read(|cx| {
             let session = session.read(cx);
-            let clips = session.selected_clips().to_vec();
-            (
-                clips.clone(),
-                runtime::clips_span(session.project(), &clips),
-            )
+            (session.selected_clips().to_vec(), session.selected_span())
         })
     };
     assert_eq!(exported(&mut opened), (vec![], None));
@@ -217,7 +213,7 @@ fn exporting_a_project_without_clips_says_there_is_nothing_to_export(cx: &mut Te
     let notice = opened.notice().unwrap();
     assert_eq!(
         notice,
-        "The project has no clips, so there is nothing to export."
+        "Nothing in the project plays to an end, such as a clip, so there is nothing to export."
     );
     pick_in_project_menu(&mut opened, "export-selection");
     assert!(!opened.cx.did_prompt_for_new_path());
@@ -244,9 +240,9 @@ fn a_drag_of_several_clips_moves_them_all_as_one_undo_step(cx: &mut TestAppConte
 #[gpui::test]
 fn a_drag_of_several_clips_to_other_tracks_moves_their_files_together(cx: &mut TestAppContext) {
     let mut opened = support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let mut changes = Changes::new();
         changes.create(id(PART), part());
         changes.create(id(HOOK), hook());
@@ -826,9 +822,9 @@ fn the_snap_setting_is_the_grid_of_every_drag_and_cmd_bypasses_it(cx: &mut TestA
 /// Two tracks with a clip named `clip` each, as double clicks leave them, and a third track.
 fn open_with_clips_of_one_name(cx: &mut TestAppContext) -> Opened<'_> {
     support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
-        runtime::add_track(project, &arrangement).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
+        runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         let mut changes = Changes::new();
         changes.create(id("arrangement/track-1/clip"), part());
         changes.create(id("arrangement/track-2/clip"), hook());

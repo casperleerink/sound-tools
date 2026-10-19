@@ -1,15 +1,16 @@
-//! The application window: the title row with the project menu at its left and the transport
-//! in its middle, the view of the project's main instance under it, the left panel beside it,
+//! The application window: the title row with the project menu at its left and the main tool's
+//! chrome, such as a transport, in its middle, the view of the project's main instance under it, the left panel beside it,
 //! and a quiet line for errors and problems top-right, under the title row.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
-//! view the installed [`Views`] has for the first instance at the top of the project, and the
-//! transport is the arrangement's, see [`crate::arrangement_wiring`]. Nor does it name the
-//! agent: the left panel is whatever the installed [`LeftPanelSlot`] makes. Its own keys are the
-//! app's: undo, the panel, opening and quitting. Musical keys, such as space to play, are the
-//! project's, through [`GlobalKeys`].
+//! view the installed [`Views`] has for the main instance of the project, and the title row
+//! what [`Chrome`] the main tool brings. Nor does it name the agent: the left panel is whatever
+//! the installed [`LeftPanelSlot`] makes. Its own keys are the app's: undo, the panel, opening
+//! and quitting. Musical keys, such as space to play, are the project's, through
+//! [`GlobalKeys`].
 
 pub mod audio_input;
+pub mod live_input;
 pub mod other_apps;
 mod project_menu;
 mod start;
@@ -28,8 +29,8 @@ use gpui::{
 };
 use plugin_host::{Plugins, WeakPlugins};
 use sound_core::{
-    Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
-    StreamTiming,
+    Engine, EngineConfig, InputEndpoint, InstanceId, OutputDevice, OutputStream, Project,
+    ProjectEvent, StreamTiming,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -42,11 +43,10 @@ use sound_ui::{
 };
 
 use audio_input::OpenInput;
+use live_input::LiveInput;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
 use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
-
-pub use crate::arrangement_wiring::transport::TransportPill;
 
 use crate::app::ChosenDevices;
 use crate::{open_with_loaded, update, views};
@@ -165,13 +165,26 @@ pub struct DeviceAccess {
     pub list_devices: Option<ListDevices>,
 }
 
+/// What a tool adds to the window while its instance is the main view: a view in the middle of
+/// the title row, made once with the window, and where live notes go. The window shows the
+/// live input there instead, and routes live notes to what is selected, for every other tool.
+#[derive(Clone, Copy)]
+pub struct Chrome {
+    pub tool: &'static str,
+    pub make: fn(Entity<Session>, Entity<LiveInput>, &mut Window, &mut App) -> AnyView,
+    pub live_notes: fn(&Project, Option<&InstanceId>) -> Vec<InputEndpoint>,
+}
+
 /// The root view of the window.
 pub struct Shell {
     session: Entity<Session>,
     /// The instance in the main area and its view. Both change when it comes or goes.
     main: Option<(InstanceId, AnyView)>,
     project_menu: Entity<ProjectMenu>,
-    transport: Entity<TransportPill>,
+    /// The machine's live input and the meter of the device, see [`LiveInput`].
+    live: Entity<LiveInput>,
+    /// What the main tool of [`crate::CHROME`] shows in the title row while it is the main view.
+    chrome: AnyView,
     focus_handle: FocusHandle,
     dismiss_focus: FocusHandle,
     left_panel: Option<LeftPanel>,
@@ -257,9 +270,7 @@ impl Shell {
         // A key the computer keys hold comes up in the app that has the keys now.
         cx.observe_window_activation(window, |shell, window, cx| {
             if !window.is_window_active() {
-                shell
-                    .transport
-                    .update(cx, TransportPill::let_go_of_computer_keys);
+                shell.live.update(cx, LiveInput::let_go_of_computer_keys);
                 GlobalKeys::let_go(cx);
             }
         })
@@ -284,10 +295,14 @@ impl Shell {
             let session = session.clone();
             cx.new(|cx| OtherApps::new(session, sounds, cx))
         });
+        let chrome = crate::CHROME;
+        let live =
+            cx.new(|cx| LiveInput::new(session.clone(), timing, open_input, Some(chrome), cx));
+        let chrome_view = (chrome.make)(session.clone(), live.clone(), window, cx);
         let mut shell = Self {
             project_menu,
-            transport: cx
-                .new(|cx| TransportPill::with_device(session.clone(), timing, open_input, cx)),
+            live,
+            chrome: chrome_view,
             session,
             main: None,
             focus_handle,
@@ -303,17 +318,17 @@ impl Shell {
         };
         // A plugin's window passes on the keys its plugin does not use, to play the computer
         // keys. The plain keys are always free there: it has no text field and no tool.
-        let transport = shell.transport.downgrade();
+        let live = shell.live.downgrade();
         let pass = move |key: SpareKey<'_>, cx: &mut App| {
             // Fails only when the window is gone.
-            (transport.update(cx, |pill, cx| match key {
+            (live.update(cx, |live, cx| match key {
                 SpareKey::Down(event) => {
-                    pill.computer_key_down(event, true);
+                    live.computer_key_down(event, true);
                 }
                 SpareKey::Up(event) => {
-                    pill.computer_key_up(&event.keystroke.key);
+                    live.computer_key_up(&event.keystroke.key);
                 }
-                SpareKey::LetGo => pill.let_go_of_computer_keys(cx),
+                SpareKey::LetGo => live.let_go_of_computer_keys(cx),
             }))
             .ok();
         };
@@ -334,8 +349,24 @@ impl Shell {
         &self.project_menu
     }
 
-    pub fn transport(&self) -> &Entity<TransportPill> {
-        &self.transport
+    /// The machine's live input: the keyboard, the computer keys, the audio input and the meter.
+    pub fn live_input(&self) -> &Entity<LiveInput> {
+        &self.live
+    }
+
+    /// What the main tool of [`crate::CHROME`] shows in the title row, while it is the main view.
+    pub fn chrome(&self) -> &AnyView {
+        &self.chrome
+    }
+
+    /// The chrome, when the main view is of its tool, else the live input.
+    fn title_middle(&self, cx: &App) -> AnyView {
+        let project = self.session.read(cx).project();
+        let main_tool = (self.main.as_ref()).and_then(|(id, _)| project.tool_of(id));
+        match main_tool == Some(crate::CHROME.tool) {
+            true => self.chrome.clone(),
+            false => self.live.clone().into(),
+        }
     }
 
     /// The view in the left panel, open or not.
@@ -655,24 +686,20 @@ impl Render for Shell {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|shell, _: &ToggleComputerKeys, _, cx| {
-                shell
-                    .transport
-                    .update(cx, TransportPill::toggle_computer_keys)
+                shell.live.update(cx, LiveInput::toggle_computer_keys)
             }))
             // Before the focused view hears it, so a key that plays does nothing else, such as
             // `a` in the arrangement.
             .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
                 let free = keys_are_free(window);
-                if (shell.transport).update(cx, |pill, _| pill.computer_key_down(event, free)) {
+                if (shell.live).update(cx, |live, _| live.computer_key_down(event, free)) {
                     cx.stop_propagation();
                 }
             }))
             // Wherever the focus went since its key went down.
             .capture_key_up(cx.listener(|shell, event: &KeyUpEvent, _, cx| {
                 let key = &event.keystroke.key;
-                if shell
-                    .transport
-                    .update(cx, |pill, _| pill.computer_key_up(key))
+                if shell.live.update(cx, |live, _| live.computer_key_up(key))
                     || GlobalKeys::key_up(&event.keystroke, cx)
                 {
                     cx.stop_propagation();
@@ -691,9 +718,7 @@ impl Render for Shell {
             // macOS sends no key up while cmd is held.
             .on_modifiers_changed(cx.listener(|shell, event: &ModifiersChangedEvent, _, cx| {
                 if event.modifiers.platform {
-                    shell
-                        .transport
-                        .update(cx, TransportPill::let_go_of_computer_keys);
+                    shell.live.update(cx, LiveInput::let_go_of_computer_keys);
                     GlobalKeys::let_go(cx);
                 }
             }))
@@ -740,7 +765,7 @@ impl Render for Shell {
                     .children(self.left_panel_icon(cx))
                     .child(div().flex_none().child(self.project_menu.clone()))
                     .child(Self::drag_region().flex_1())
-                    .child(self.transport.clone())
+                    .child(self.title_middle(cx))
                     .child(Self::drag_region().flex_1())
                     .children(Self::window_controls(window)),
             )
@@ -943,7 +968,8 @@ impl Opened {
         // up: the tick below runs its behaviour again.
         let plugins = crate::plugins(false)?;
         plugins.start_scanning();
-        let (mut project, extensions) = open_with_loaded(folder, control, plugins.clone(), tools, crate::NEW_PROJECT)?;
+        let (mut project, extensions) =
+            open_with_loaded(folder, control, plugins.clone(), tools, crate::NEW_PROJECT)?;
         project.watch()?;
         // From here only the project holds the plugins, so that dropping the project ends them
         // and saves the state of every one. A handle kept here would outlive the project: the
@@ -1127,7 +1153,7 @@ impl Opened {
         let input = shell
             .read(cx)
             .ok()
-            .and_then(|shell| shell.transport().read(cx).midi_input());
+            .and_then(|shell| shell.live_input().read(cx).midi_input());
         if let Some(input) = input {
             cx.spawn({
                 let session = session.downgrade();

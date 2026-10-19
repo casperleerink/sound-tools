@@ -28,7 +28,6 @@ use sound_ui::components::dropdown_menu::{
 use crate::app::ChosenDevices;
 #[cfg(unix)]
 use crate::app::Installed;
-use crate::main_arrangement;
 use crate::{app, log_file};
 
 const EXPORT: &str = "export";
@@ -87,7 +86,6 @@ pub struct ProjectMenu {
 /// All that the items depend on in the project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Shown {
-    has_arrangement: bool,
     has_selection: bool,
     exporting: bool,
     undo: Option<String>,
@@ -98,8 +96,7 @@ impl Shown {
     fn of(session: &Session, exporting: bool) -> Self {
         let project = session.project();
         Self {
-            has_arrangement: main_arrangement(project).is_some(),
-            has_selection: !session.selected_clips().is_empty(),
+            has_selection: session.selected_span().is_some(),
             exporting,
             undo: project.undo_label().map(str::to_string),
             redo: project.redo_label().map(str::to_string),
@@ -295,7 +292,7 @@ fn export_span(session: &Session, selection: bool) -> Option<Vec<String>> {
     if !selection {
         return project.end().map(|_| Vec::new());
     }
-    let (from, to) = crate::clips_span(project, session.selected_clips())?;
+    let (from, to) = session.selected_span()?;
     Some(vec![
         "--from".into(),
         from.0.to_string(),
@@ -319,7 +316,7 @@ fn export_audio(
         (folder, export_span(session, selection))
     });
     let Some(span) = span else {
-        let message = "The project has no clips, so there is nothing to export.";
+        let message = "Nothing in the project plays to an end, such as a clip, so there is nothing to export.";
         session.update(cx, |session, cx| session.report(message, cx));
         return;
     };
@@ -705,8 +702,7 @@ fn entries(
     vec![
         MenuEntry::Group(
             MenuGroup::new().items([
-                command(EXPORT, "Export audio…".to_string())
-                    .disabled(!shown.has_arrangement || shown.exporting),
+                command(EXPORT, "Export audio…".to_string()).disabled(shown.exporting),
                 command(EXPORT_SELECTION, "Export selection…".to_string())
                     .disabled(!shown.has_selection || shown.exporting),
             ]),

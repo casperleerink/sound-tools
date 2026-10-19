@@ -1,5 +1,5 @@
-//! The record control: a take from its start to its clips, of MIDI and of audio, and the
-//! audio input it records from.
+//! The record control: a take from its start to its clips, of MIDI and of audio, from the
+//! window's live input.
 
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use crate::arrangement_wiring::recording;
 use crate::recorder::{
     Placement, RecorderCommand, RecorderReport, StartedTake, TakeRequest, take_seconds_at,
 };
-use crate::window::audio_input::OpenedInput;
+use crate::window::live_input::{Hold, InputEvent, LiveInput};
 
 /// Polls a finished recording waits for its audio files to hold what was heard up to its end,
 /// about two seconds, before it closes them with what they have.
@@ -40,13 +40,14 @@ impl TransportPill {
         let Some(take) = self.take.as_ref().filter(|take| take.ended.is_none()) else {
             return;
         };
-        let (Some(track), Some(keyboard)) = (&take.midi_track, &self.keyboard) else {
+        let (Some(track), clock) = (take.midi_track.clone(), take.clock.clone()) else {
             return;
         };
         let until = self.playhead.read(cx).tick;
-        let notes = keyboard
-            .keys_so_far(until)
-            .and_then(|keys| keys.clip(&take.clock));
+        let notes = self.live.update(cx, |live, _| {
+            let keys = live.keyboard()?.keys_so_far(until)?;
+            keys.clip(&clock)
+        });
         self.recording.update(cx, |recording, cx| {
             recording.show_notes(track.id(), notes, cx)
         });
@@ -80,23 +81,26 @@ impl TransportPill {
         let selected = session.read(cx).selected().cloned();
         let midi_track = recording::target_track(session.read(cx).project(), selected.as_ref());
         let clock = Arc::new(session.read(cx).project().clock().clone());
-        let live = midi_track.iter().filter(|_| self.keyboard.is_some());
-        let live = live.map(|track| LiveTake {
+        let has_keyboard = self.live.read(cx).midi_input().is_some();
+        let shown = midi_track.iter().filter(|_| has_keyboard);
+        let shown = shown.map(|track| LiveTake {
             track: track.id().clone(),
             start: tick,
             body: LiveBody::Notes(None),
         });
-        let live = live.collect();
+        let shown = shown.collect();
         self.recording
-            .update(cx, |recording, cx| recording.set_takes(live, cx));
+            .update(cx, |recording, cx| recording.set_takes(shown, cx));
         let audio_tracks = self.tracks_to_record(selected.as_ref(), cx);
         let audio = match audio_tracks.is_empty() {
             true => None,
             false => self.start_audio(audio_tracks, tick, clock.clone(), cx),
         };
-        if let Some(keyboard) = self.keyboard.as_mut() {
-            keyboard.start_recording(tick);
-        }
+        self.live.update(cx, |live, _| {
+            if let Some(keyboard) = live.keyboard() {
+                keyboard.start_recording(tick);
+            }
+        });
         self.take = Some(Take {
             start: tick,
             clock,
@@ -104,6 +108,7 @@ impl TransportPill {
             audio,
             ended: None,
         });
+        self.hold_live(cx);
         if !playing {
             session.update(cx, |session, _| session.engine().play());
         }
@@ -150,14 +155,14 @@ impl TransportPill {
         clock: Arc<Clock>,
         cx: &mut Context<Self>,
     ) -> Option<AudioTake> {
-        if !self.audio.can_open() {
+        if !self.live.read(cx).can_open_input() {
             let error = sound_core::DeviceError::NoInputDevice;
             self.session
                 .update(cx, |session, cx| session.report(error, cx));
             return None;
         }
         // The takes start as soon as the input is open: the start waits for the recorder.
-        self.open_input(cx);
+        self.live.update(cx, LiveInput::open_input);
         let project = self.session.read(cx).project();
         let requests: Vec<_> = tracks
             .iter()
@@ -178,7 +183,8 @@ impl TransportPill {
         let live = live.collect();
         self.recording
             .update(cx, |recording, cx| recording.set_audio_takes(live, cx));
-        self.audio.send(RecorderCommand::Start(requests));
+        self.live
+            .update(cx, |live, _| live.record(RecorderCommand::Start(requests)));
         Some(AudioTake {
             placement: Placement::new(start, clock),
             started: Vec::new(),
@@ -190,46 +196,50 @@ impl TransportPill {
     /// the clips, of MIDI and audio alike, are one undo step once the audio files hold what was
     /// heard up to `until`, which the input brings a little later.
     pub(super) fn finish_recording(&mut self, until: Ticks, cx: &mut Context<Self>) {
+        if !self.is_recording() {
+            return;
+        }
         let session = self.session.clone();
         let timing = self.timing.clone();
-        let input_rate = self.audio.sample_rate();
-        let Some(take) = self.take.as_mut().filter(|take| take.ended.is_none()) else {
-            return;
-        };
-        let mut midi = None;
-        if let Some(keyboard) = self.keyboard.as_mut() {
-            // The last block of the take is still in the ring.
+        let input_rate = self.live.read(cx).input_rate();
+        // The last block of the take is still in the ring. Nothing played: no clip and no file.
+        let played = self.live.update(cx, |live, cx| {
+            let keyboard = live.keyboard()?;
             let polled = session.update(cx, |session, _| {
                 keyboard.poll(session.engine(), timing.as_deref())
             });
             if let Err(error) = polled {
                 session.update(cx, |session, cx| session.report(error, cx));
             }
-            // Nothing was played: no clip and no file.
-            if let Some(played) = keyboard
+            keyboard
                 .finish_recording(until)
                 .filter(|take| !take.is_empty())
-            {
-                // The performance first, and whatever happens to the clip. It is the only copy
-                // of what the composer played, and a clip can fail to be made: its track may be
-                // gone.
-                let written = recording::write_take(session.read(cx).project(), &played);
-                let name = match written {
-                    Ok(name) => Some(name),
-                    Err(error) => {
-                        session.update(cx, |session, cx| session.report(error, cx));
-                        None
-                    }
-                };
-                midi = take.midi_track.clone().map(|track| (track, played, name));
-            }
+        });
+        let Some(take) = self.take.as_mut().filter(|take| take.ended.is_none()) else {
+            return;
+        };
+        let mut midi = None;
+        if let Some(played) = played {
+            // The performance first, and whatever happens to the clip. It is the only copy of
+            // what the composer played, and a clip can fail to be made: its track may be gone.
+            let written = recording::write_take(session.read(cx).project(), &played);
+            let name = match written {
+                Ok(name) => Some(name),
+                Err(error) => {
+                    session.update(cx, |session, cx| session.report(error, cx));
+                    None
+                }
+            };
+            midi = take.midi_track.clone().map(|track| (track, played, name));
         }
         if let Some(audio) = &take.audio {
             let frames = input_rate.and_then(|rate| {
                 let placement = &audio.placement;
                 placement.input_frames_until(until, timing.as_deref(), rate)
             });
-            self.audio.send(RecorderCommand::Finish { frames });
+            self.live.update(cx, |live, _| {
+                live.record(RecorderCommand::Finish { frames })
+            });
         }
         let waits = take.audio.is_some();
         take.ended = Some(Ended {
@@ -302,118 +312,61 @@ impl TransportPill {
             });
         }
         drop(audio_takes);
-        self.follow_input(cx);
+        self.hold_live(cx);
     }
 
-    /// Opens the input on the background executor, when it is not open or on its way.
-    fn open_input(&mut self, cx: &mut Context<Self>) {
-        let Some((opener, generation)) = self.audio.start_opening() else {
-            return;
+    /// What the take holds of the window's live input: its notes stay where it began, and the
+    /// input stays open while it records audio.
+    fn hold_live(&mut self, cx: &mut Context<Self>) {
+        let hold = Hold {
+            notes: self.take.is_some(),
+            audio: (self.take.as_ref()).is_some_and(|take| take.audio.is_some()),
         };
-        let work = cx.background_spawn(async move { opener() });
-        cx.spawn(async move |pill, cx| {
-            let opened = work.await;
-            match pill.update(cx, |pill, cx| pill.input_opened(generation, opened, cx)) {
-                Ok(()) => {}
-                // A window that went away takes the input with it.
-                Err(_) => {}
-            }
-        })
-        .detach();
+        self.live.update(cx, |live, cx| live.hold(hold, cx));
     }
 
-    /// The input opened, or why not. With no input, nothing is armed and no audio records.
-    fn input_opened(
-        &mut self,
-        generation: u64,
-        mut opened: Result<OpenedInput, sound_core::DeviceError>,
-        cx: &mut Context<Self>,
-    ) {
-        let assets = self.session.read(cx).project().assets().clone();
-        let notice = opened.as_mut().ok().and_then(|input| input.notice.take());
-        match self.audio.opened(generation, opened, &assets, cx) {
-            None => {}
-            Some(Ok((channels, live))) => {
-                if let Some(notice) = notice {
-                    self.session
-                        .update(cx, |session, cx| session.report(notice, cx));
-                }
-                let plays = live.sample_rate() == self.session.read(cx).project().sample_rate();
-                // The engine reads it while the input is open, whether a connection hears it
-                // or not, so it never falls behind.
-                self.session.update(cx, |session, cx| {
-                    session.background(cx, |project| project.set_live_input(Some(live)))
-                });
-                // Opened for a connection alone, an input at another rate plays nothing. The
-                // problem of the connection says why, and the device closes. A track records
-                // at any rate.
-                let armed = self.recording.read(cx).armed().next().is_some();
-                let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
-                if !plays && !armed && !records {
-                    self.audio.give_up(cx);
-                    return;
-                }
-                self.recording.update(cx, |recording, cx| {
-                    recording.set_input_channels(Some(channels), cx)
-                });
-            }
-            Some(Err(error)) => {
-                self.session
-                    .update(cx, |session, cx| session.report(error, cx));
-                // Armed with no input would show a level that never moves.
-                self.recording.update(cx, |recording, cx| {
-                    recording.retain_armed(|_| false, cx);
-                    recording.set_audio_takes(Vec::new(), cx);
-                });
+    /// The input failed to open, or went away. A take that records audio ends here and keeps
+    /// what was recorded.
+    pub(super) fn input_did(&mut self, event: InputEvent, cx: &mut Context<Self>) {
+        match event {
+            InputEvent::Failed => {
                 let ended = self.take.as_mut().is_some_and(|take| {
                     take.audio = None;
                     take.ended.is_some()
                 });
+                self.hold_live(cx);
                 // A take that ended while the input opened waited for audio that never comes.
                 if ended {
                     self.make_clips(Vec::new(), cx);
                 }
             }
-        }
-    }
-
-    /// The input is open while a track is armed, audio records or a `project.json` connection
-    /// in the graph hears the device input, and closed otherwise, so the device is not held and
-    /// macOS shows no microphone in use. One that failed or went away is closed and not opened
-    /// again here until something new wants it: the next arming, or a connection that comes,
-    /// opens the input there is then.
-    pub(super) fn follow_input(&mut self, cx: &mut Context<Self>) {
-        let armed: Vec<InstanceId> = self.recording.read(cx).armed().cloned().collect();
-        let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
-        let heard = self.session.read(cx).project().hears_device_input();
-        if self.audio.wants(armed, heard) && !self.audio.is_gone() {
-            self.open_input(cx);
-        } else if !records && self.audio.is_open_or_opening() {
-            self.audio.close(cx);
-            self.recording
-                .update(cx, |recording, cx| recording.set_input_channels(None, cx));
-            self.session.update(cx, |session, cx| {
-                session.background(cx, |project| project.set_live_input(None))
-            });
-        }
-    }
-
-    /// One poll of the audio input: the level, a device that went away, what ties a take to
-    /// the timeline, and a run of the recorder on the background executor.
-    pub(super) fn poll_audio(&mut self, cx: &mut Context<Self>) {
-        if let Some((levels, silent)) = self.audio.poll_levels() {
-            self.recording
-                .update(cx, |recording, cx| recording.set_levels(levels, cx));
-            if silent {
-                let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then open the project again.";
+            InputEvent::Gone => {
+                let records = (self.take.as_ref()).is_some_and(|take| take.audio.is_some());
+                if !records {
+                    return;
+                }
+                let ends_a_take = self.is_recording();
+                if ends_a_take {
+                    let tick = self.playhead.read(cx).tick;
+                    self.finish_recording(tick, cx);
+                }
+                let notice = match ends_a_take {
+                    true => {
+                        "The audio input went away. The take ends here and keeps what was recorded."
+                    }
+                    false => "The audio input went away.",
+                };
                 self.session
                     .update(cx, |session, cx| session.report(notice, cx));
             }
         }
-        if self.audio.went_away() {
-            self.input_gone(cx);
-        }
+    }
+
+    /// One poll of a take's audio: what ties it to the timeline, and a run of the recorder on
+    /// the background executor.
+    pub(super) fn poll_audio(&mut self, cx: &mut Context<Self>) {
         let status = self.session.read(cx).engine_status();
+        let mut gave_up = false;
         if let Some(take) = &mut self.take {
             // Only while it records: after its end the engine may play under another tempo.
             if let Some(audio) = take.audio.as_mut().filter(|_| take.ended.is_none()) {
@@ -422,37 +375,16 @@ impl TransportPill {
             // The input never brought the end: the files close with what they have.
             if let Some(ended) = &mut take.ended {
                 ended.polls += 1;
-                if ended.polls == FINISH_POLLS {
-                    self.audio.send(RecorderCommand::Finish { frames: None });
-                }
+                gave_up = ended.polls == FINISH_POLLS;
             }
+        }
+        if gave_up {
+            self.live.update(cx, |live, _| {
+                live.record(RecorderCommand::Finish { frames: None })
+            });
         }
         self.show_takes(cx);
         self.run_recorder(cx);
-    }
-
-    /// The input went away, such as an interface that was unplugged. A take that records ends
-    /// here and keeps what was recorded, and every track is disarmed: arming again opens the
-    /// default input that macOS has then.
-    fn input_gone(&mut self, cx: &mut Context<Self>) {
-        let records = self.take.as_ref().is_some_and(|take| take.audio.is_some());
-        let ends_a_take = self.is_recording() && records;
-        if ends_a_take {
-            let tick = self.playhead.read(cx).tick;
-            self.finish_recording(tick, cx);
-        }
-        let notice = match ends_a_take {
-            true => "The audio input went away. The take ends here and keeps what was recorded.",
-            false => "The audio input went away.",
-        };
-        self.session
-            .update(cx, |session, cx| session.report(notice, cx));
-        self.recording
-            .update(cx, |recording, cx| recording.retain_armed(|_| false, cx));
-        // The recorder writes the last of the take first; the input closes once it is done.
-        if !records {
-            self.follow_input(cx);
-        }
     }
 
     /// Lines the waveforms of the takes up with the timeline, once the first frames came and
@@ -490,14 +422,14 @@ impl TransportPill {
     /// Runs the recorder once on the background executor, when it is here: it takes what the
     /// input captured, writes the takes and says what came of it.
     fn run_recorder(&mut self, cx: &mut Context<Self>) {
-        let Some(run) = self.audio.start_run() else {
+        let Some(run) = self.live.update(cx, |live, _| live.audio().start_run()) else {
             return;
         };
         let work = cx.background_spawn(async move { run.run() });
         cx.spawn(async move |pill, cx| {
             let (recorder, reports, generation) = work.await;
             let ended = pill.update(cx, |pill, cx| {
-                pill.audio.end_run(recorder, generation);
+                (pill.live).update(cx, |live, _| live.audio().end_run(recorder, generation));
                 pill.on_reports(reports, cx);
             });
             match ended {

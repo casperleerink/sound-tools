@@ -23,7 +23,7 @@ const FRAMES_PER_TICK: u64 = 25;
 /// input 1, the guitar inputs 1 and 2 as a stereo take.
 fn open(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedInput) {
     open_with_input(cx, |project: &mut Project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
         let mut changes = Changes::new();
         let add = |project: &Project, changes: &mut Changes, name, colour| {
             arrangement::add_audio_track(project, changes, arrangement.id(), name, colour).unwrap()

@@ -54,7 +54,7 @@ fn add_space(project: &mut Project) {
 
 fn returns(opened: &mut Opened<'_>) -> Vec<String> {
     opened.project(|project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
         let returns = arrangement::returns(project, arrangement.id());
         returns
             .iter()
@@ -116,7 +116,7 @@ fn the_add_track_menu_adds_the_first_return(cx: &mut TestAppContext) {
     opened.click(item);
     assert_eq!(returns(&mut opened), ["Return 1"]);
     let kinds = opened.project(|project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
         let tracks = arrangement::tracks(project, arrangement.id());
         tracks
             .iter()
@@ -255,7 +255,7 @@ fn a_paste_with_a_return_selected_lands_on_no_track(cx: &mut TestAppContext) {
 #[gpui::test]
 fn many_open_returns_scroll_and_keep_the_master_row_in_the_window(cx: &mut TestAppContext) {
     let mut opened = support::open_with(cx, |project| {
-        let arrangement = runtime::main_arrangement(project).unwrap();
+        let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
         for _ in 0..20 {
             runtime::arrangement_wiring::add_track_of_kind(
                 project,

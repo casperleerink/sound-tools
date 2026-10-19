@@ -15,8 +15,9 @@ use gpui::{
     ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext, Window, div, point,
     prelude::*, px,
 };
+use runtime::OFFLINE;
+use runtime::arrangement_wiring::main_arrangement;
 use runtime::window::{DeviceMenu, ListDevices, Shell, bind_keys};
-use runtime::{OFFLINE, main_arrangement};
 use sound_core::{Changes, DeviceChoice, Engine, Instance, InstanceId, Ticks};
 use sound_notes::Clip;
 use sound_ui::components::text_input::TextInput;
@@ -154,7 +155,9 @@ fn the_timeline_is_notified_for_its_arrangement_and_not_for_the_playhead(cx: &mu
         .unwrap();
     opened.cx.update(|_, cx| {
         session.update(cx, |session, cx| {
-            session.edit(cx, |project| runtime::add_track(project, &arrangement));
+            session.edit(cx, |project| {
+                runtime::arrangement_wiring::add_track(project, &arrangement)
+            });
         })
     });
     opened.cx.run_until_parked();
@@ -209,7 +212,7 @@ fn tab_scrolls_the_add_track_button_into_view_under_many_tracks(cx: &mut TestApp
     let mut opened = support::open_with(cx, |project| {
         let arrangement = main_arrangement(project).unwrap();
         for _ in 0..40 {
-            runtime::add_track(project, &arrangement).unwrap();
+            runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
         }
     });
     let master = opened.bounds("master-row").unwrap();
@@ -245,7 +248,7 @@ fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppC
     let (control, mut engine) = Engine::new(OFFLINE);
     let (mut project, _plugins) = open_or_create(folder.path(), control);
     let arrangement = main_arrangement(&project).unwrap();
-    runtime::add_track(&mut project, &arrangement).unwrap();
+    runtime::arrangement_wiring::add_track(&mut project, &arrangement).unwrap();
     cx.update(sound_ui::init);
     cx.update(bind_keys);
     let session = cx.new(|cx| Session::new(project, cx));
