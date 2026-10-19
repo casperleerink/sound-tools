@@ -1500,22 +1500,22 @@ impl Live {
                 question,
                 items,
                 notes,
-            } => {
-                match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
-                    Some(card) => {
-                        card.menu = Some((question, items, notes));
-                        cx.notify();
-                    }
-                    None => self.menu_picked(question, None),
+            } => match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
+                Some(card) => {
+                    card.menu = Some((question, items, notes));
+                    cx.notify();
                 }
-            }
+                None => self.menu_picked(question, None),
+            },
             Event::Offers { question, takes } => {
                 let offers = offered(takes_of(&takes), self.session.upgrade(), cx);
                 self.host.send(&Request::Answer {
                     question,
                     answer: Answer::Offers {
                         offers,
-                        notes: (Devices::notes_of(cx).iter()).map(ToString::to_string).collect(),
+                        notes: (Devices::notes_of(cx).iter())
+                            .map(ToString::to_string)
+                            .collect(),
                     },
                 });
             }

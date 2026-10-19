@@ -30,7 +30,11 @@ impl Editor {
     /// Where `tick` of the clip and the middle of the row of `pitch` are in the roll.
     pub(super) fn at(&self, tick: f32, pitch: u8) -> Point<Pixels> {
         let row = 127. - f32::from(pitch) - self.top;
-        self.roll.origin + point(px(8. + tick * self.across), px(row * EDITOR_ROW + EDITOR_ROW / 2.))
+        self.roll.origin
+            + point(
+                px(8. + tick * self.across),
+                px(row * EDITOR_ROW + EDITOR_ROW / 2.),
+            )
     }
 
     /// Where `tick` of the clip is in the lane, `down` points from its top.
@@ -46,13 +50,21 @@ impl Opened<'_> {
         let roll = self.space_at(&key);
         self.wait_for_bun();
         let selector: &'static str = format!("space-{key}").leak();
-        let roll = self.cx.debug_bounds(selector).map_or(Bounds::new(roll, Default::default()), |bounds| bounds);
+        let roll = self
+            .cx
+            .debug_bounds(selector)
+            .map_or(Bounds::new(roll, Default::default()), |bounds| bounds);
         let lane = self.space_at(&format!("{key}-lane"));
         let record = self.record(&format!("song/{clip}"));
         let notes = record["notes"].as_array().cloned().unwrap_or_default();
         let field = |note: &serde_json::Value, name: &str| note[name].as_f64().unwrap_or(0.) as f32;
-        let end = notes.iter().map(|note| field(note, "start") + field(note, "length")).fold(1., f32::max);
-        let length = record["length"].as_f64().map_or(end, |length| length as f32);
+        let end = notes
+            .iter()
+            .map(|note| field(note, "start") + field(note, "length"))
+            .fold(1., f32::max);
+        let length = record["length"]
+            .as_f64()
+            .map_or(end, |length| length as f32);
         let width = f32::from(roll.size.width);
         let across = ((width - 104.) / length).clamp(0.025, 0.2);
         let pitches = notes.iter().map(|note| field(note, "pitch"));
@@ -62,7 +74,12 @@ impl Opened<'_> {
         };
         let height = f32::from(roll.size.height);
         let top = ((127. - middle + 0.5) * EDITOR_ROW - height / 2.).round() / EDITOR_ROW;
-        Editor { roll, lane, across, top }
+        Editor {
+            roll,
+            lane,
+            across,
+            top,
+        }
     }
 
     fn alt_click(&mut self, position: Point<Pixels>) {
@@ -160,14 +177,7 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
     // A send to each return of the song.
     assert_eq!(
         parts,
-        [
-            "chain",
-            "mix",
-            "rec",
-            "send-ret-a",
-            "send-ret-b",
-            "synth"
-        ]
+        ["chain", "mix", "rec", "send-ret-a", "send-ret-b", "synth"]
     );
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Add a track"));

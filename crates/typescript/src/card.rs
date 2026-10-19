@@ -538,12 +538,18 @@ impl TypeScriptCard {
         let on_press = icons.2.then(|| {
             let card = cx.weak_entity();
             Rc::new(move |cx: &mut App| {
-                card.update(cx, |view, cx| view.event(node, EventKind::Title, json!({}), cx))
-                    .ok();
+                card.update(cx, |view, cx| {
+                    view.event(node, EventKind::Title, json!({}), cx)
+                })
+                .ok();
             }) as Rc<dyn Fn(&mut App)>
         });
         let instance_name = instance.as_str().to_string();
-        let title = cx.new(|_| CardTitle { name, instance: instance_name, on_press });
+        let title = cx.new(|_| CardTitle {
+            name,
+            instance: instance_name,
+            on_press,
+        });
         let mut frame = CardFrame::new(format!("card-{}", instance.as_str()), title);
         let shown = Rc::new(Cell::new(on));
         if icons.0 {

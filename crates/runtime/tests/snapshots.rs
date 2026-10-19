@@ -144,14 +144,13 @@ impl Opened {
         self.engine.process_block(&mut buffer);
         cx.update(|cx| self.session.update(cx, |session, cx| session.poll(cx)));
         // And what the timer of the tools of the project does, which a headless window runs not.
-        cx.update(|cx| {
-            let shell = self.window.read(cx)?;
-            let page = shell.main_view().cloned();
-            anyhow::Ok(page)
-        })
-        .ok()
-        .flatten()
-        .map(|page| cx.update(|cx| sound_typescript::run_frame(&page, cx)));
+        let page = cx.update(|cx| {
+            let shell = self.window.read(cx).ok()?;
+            shell.main_view().cloned()
+        });
+        if let Some(page) = page {
+            cx.update(|cx| sound_typescript::run_frame(&page, cx));
+        }
         cx.run_until_parked();
     }
 
