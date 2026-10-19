@@ -53,6 +53,36 @@ props! {
         on_press: bool,
         /// The spaces whose scroll its children move with, by their keys.
         follow: Follow,
+        /// What a drag of it carries to a node that hears a drop.
+        carry: String,
+        /// It hears a drop: files from the system, or what a drag of a node carries.
+        on_drop: bool,
+    }
+}
+
+props! {
+    /// A text field. It shows `value` until it is typed in, and tells its text on enter or when
+    /// it loses the keys.
+    InputProps / InputChange {
+        key: String,
+        value: String,
+        placeholder: String,
+        width: f32,
+        /// It takes the keys when it is made.
+        focus: bool,
+        on_commit: bool,
+    }
+}
+
+props! {
+    /// The card of an instance below the tool's, by its path, as a rack shows it.
+    CardProps / CardChange {
+        key: String,
+        instance: String,
+        /// Whether its power icon is on. The icons show only with their handlers.
+        on: bool,
+        on_power: bool,
+        on_close: bool,
     }
 }
 
@@ -80,6 +110,7 @@ props! {
         /// Its drag, by its number among the drags of the card.
         drag: u64,
         cursor: Cursor,
+        on_drop: bool,
     }
 }
 
@@ -129,6 +160,8 @@ pub(crate) enum Props {
     Text(TextProps),
     Space(Box<SpaceProps>),
     Shape(Box<ShapeProps>),
+    Input(InputProps),
+    Card(CardProps),
     /// Where a list or a part that changes puts its nodes: draws nothing.
     Marker,
 }
@@ -139,6 +172,8 @@ pub(crate) enum Change {
     Text(TextChange),
     Space(Box<SpaceChange>),
     Shape(Box<ShapeChange>),
+    Input(InputChange),
+    Card(CardChange),
     Marker,
 }
 
@@ -195,6 +230,8 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "text" => Props::Text(next(&mut seq, "props")?),
                         "space" => Props::Space(Box::new(next(&mut seq, "props")?)),
                         "shape" => Props::Shape(Box::new(next(&mut seq, "props")?)),
+                        "input" => Props::Input(next(&mut seq, "props")?),
+                        "card" => Props::Card(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Props::Marker
@@ -212,6 +249,8 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "text" => Change::Text(next(&mut seq, "props")?),
                         "space" => Change::Space(Box::new(next(&mut seq, "props")?)),
                         "shape" => Change::Shape(Box::new(next(&mut seq, "props")?)),
+                        "input" => Change::Input(next(&mut seq, "props")?),
+                        "card" => Change::Card(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Change::Marker
@@ -238,7 +277,7 @@ impl<'de> Visitor<'de> for OpVisitor {
     }
 }
 
-const FAMILIES: &[&str] = &["div", "text", "space", "shape", "marker"];
+const FAMILIES: &[&str] = &["div", "text", "space", "shape", "input", "card", "marker"];
 
 /// What of the window the live values of a card move with, without its code, and what the
 /// window reads for them on every frame.
@@ -379,6 +418,11 @@ impl NodeTable {
         self.slots.get(slot)?.as_ref()
     }
 
+    /// Every node there is now, in the order they were made.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = &Entry> {
+        self.slots.iter().flatten()
+    }
+
     pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Drag> {
         self.drags.get(&id?)
     }
@@ -462,6 +506,8 @@ impl NodeTable {
                         (Props::Div(props), Change::Div(change)) => props.apply(change),
                         (Props::Text(props), Change::Text(change)) => props.apply(change),
                         (Props::Space(props), Change::Space(change)) => props.apply(*change),
+                        (Props::Input(props), Change::Input(change)) => props.apply(change),
+                        (Props::Card(props), Change::Card(change)) => props.apply(change),
                         (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
                         (Props::Marker, Change::Marker) => {}
                         _ => return Err(format!("a change of another kind of node for {id}")),

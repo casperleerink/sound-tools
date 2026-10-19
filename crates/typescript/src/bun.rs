@@ -134,6 +134,16 @@ pub(crate) enum Request<'a> {
         question: u64,
         asset: Option<&'a str>,
     },
+    /// The answer to an `openMenu`: the place of the item the composer picked, or none.
+    MenuPicked {
+        question: u64,
+        item: Option<usize>,
+    },
+    /// The answer to an `offers`: what the window offers that takes what was asked for.
+    Offered {
+        question: u64,
+        offers: Vec<Offered>,
+    },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {
@@ -150,6 +160,36 @@ pub(crate) enum EventKind {
     Press,
     End,
     Move,
+    /// Text a field tells.
+    Commit,
+    /// Files, or what a drag of a node carried, let go on a node.
+    Drop,
+    /// The power icon of an embedded card.
+    Power,
+    /// The close icon of an embedded card.
+    Close,
+}
+
+/// A device the window offers, as code gets it: what `addOffer` names it by.
+#[derive(Debug, Serialize)]
+pub(crate) struct Offered {
+    pub key: String,
+    pub name: String,
+    pub detail: Option<String>,
+    pub group: String,
+    /// Why it cannot be picked here, or `None` when it can.
+    pub unavailable: Option<String>,
+}
+
+/// An item of a menu code opens.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MenuItemSpec {
+    pub label: String,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub checked: bool,
 }
 
 /// Where the sound and the piece are, which all code of a tool gets.
@@ -329,6 +369,20 @@ pub(crate) enum Event {
     },
     /// Code asks the composer for a file, with `title`: the answer goes to its `question`.
     OpenFile { question: u64, title: String },
+    /// Code opens a menu of `items` where the pointer is: the answer goes to its `question`.
+    OpenMenu {
+        question: u64,
+        items: Vec<MenuItemSpec>,
+    },
+    /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
+    Offers { question: u64, takes: String },
+    /// The code of `instance` puts the offer `key` at its child `path`, as one edit `label`.
+    AddOffer {
+        instance: InstanceId,
+        path: String,
+        key: String,
+        label: String,
+    },
     /// The code of `instance` selected its child at `path`, or nothing, and the ticks `span`.
     Select {
         instance: InstanceId,

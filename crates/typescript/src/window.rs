@@ -27,12 +27,13 @@ use sound_ui::components::device_card::{
     CARD_HEIGHT, CARD_PADDING, HEADER_HEIGHT, PLAIN_CARD_WIDTH,
 };
 use sound_ui::{
-    DeviceLabel, DeviceOffer, Devices, GlobalKeys, Loop, OfferGroup, Playhead, Session, Views,
+    DeviceLabel, DeviceOffer, Devices, GlobalKeys, Loop, OfferGroup, Playhead, Session, Takes,
+    Views,
 };
 
 use crate::bun::{
-    Bun, Clock, Event, EventKind, Heard, PageSize, Played, Reads, RecordEdit, Request, Runs,
-    Skipped, Telling, Transport, TransportOp, record_key,
+    Bun, Clock, Event, EventKind, Heard, MenuItemSpec, Offered, PageSize, Played, Reads,
+    RecordEdit, Request, Runs, Skipped, Telling, Transport, TransportOp, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::feeds::played_name;
@@ -96,6 +97,8 @@ pub(crate) struct Live {
     watch_problem: Option<Problem>,
     changed: smol::channel::Sender<()>,
     _tasks: [Task<()>; 2],
+    /// The card that heard the last press or drag: a menu its code opens shows there.
+    last_event_card: Option<u64>,
 }
 
 /// The Bun of the window.
@@ -144,6 +147,8 @@ struct Card {
     /// answered: a drag's preview stays until its answer.
     events_sent: u64,
     events_answered: u64,
+    /// A menu its code opened and the card did not show yet, with its question.
+    menu: Option<(u64, Vec<MenuItemSpec>)>,
 }
 
 /// What a tree is drawn on.
@@ -403,6 +408,7 @@ impl Live {
                 watch_problem,
                 changed,
                 _tasks: [hearing_changes, framing],
+                last_event_card: None,
             };
             // Only the watcher's problem is new.
             if live.watch_problem.is_some() {
@@ -586,6 +592,7 @@ impl Live {
             stale: false,
             events_sent: 0,
             events_answered: 0,
+            menu: None,
         };
         self.cards.insert(card, entry);
         self.mount(card, cx);
@@ -740,6 +747,7 @@ impl Live {
         {
             self.told_transport = Some(clock.transport);
         }
+        self.last_event_card = Some(card);
         let request = Request::Event {
             card,
             node,
@@ -753,6 +761,65 @@ impl Live {
         };
         entry.events_sent += u64::from(sent);
         entry.events_sent
+    }
+
+    /// The menu the code of the card opened, which the card shows now.
+    pub(crate) fn take_menu(&mut self, card: u64) -> Option<(u64, Vec<MenuItemSpec>)> {
+        self.cards.get_mut(&card)?.menu.take()
+    }
+
+    /// Answers an `openMenu` with the place of the item picked, or none.
+    pub(crate) fn menu_picked(&mut self, question: u64, item: Option<usize>) {
+        self.host.send(&Request::MenuPicked { question, item });
+    }
+
+    /// Puts the offer `key` at the child `path` of `instance`, as one edit `label`: a device a
+    /// view of the project picked.
+    fn add_offer(
+        &mut self,
+        instance: &InstanceId,
+        path: &str,
+        key: &str,
+        label: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let offer = [Takes::Notes, Takes::Audio]
+            .into_iter()
+            .flat_map(|takes| Devices::offered(takes, cx))
+            .find(|offer| offer.key == key);
+        let project = session.read(cx).project();
+        let slot = path
+            .split('/')
+            .try_fold(instance.clone(), |id, name| id.child(name));
+        let refused = match (offer, slot) {
+            (None, _) => Some(format!("nothing is offered as {key:?}")),
+            (_, Err(error)) => Some(error.to_string()),
+            (Some(offer), Ok(slot)) => match offer.unavailable_in(project) {
+                Some(reason) => Some(reason.to_string()),
+                None => {
+                    let mut changes = Changes::new();
+                    match offer.write(project, &slot, &mut changes) {
+                        Err(error) => Some(error.to_string()),
+                        Ok(()) => {
+                            self.changed_records.insert(slot);
+                            let published = session.update(cx, |session, cx| {
+                                session.background(cx, |project| {
+                                    project.publish_run(instance, label, changes)
+                                })
+                            });
+                            published.err().map(|error| error.to_string())
+                        }
+                    }
+                }
+            },
+        };
+        if let Some(refused) = refused {
+            let problem = format!("its addOffer {label:?} was refused: {refused}");
+            self.tool_problem(instance, problem, cx);
+        }
     }
 
     /// How many presses and drags of the card its code answered.
@@ -1332,6 +1399,25 @@ impl Live {
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
             Event::OpenFile { question, title } => self.open_file(question, title, cx),
+            Event::OpenMenu { question, items } => {
+                match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
+                    Some(card) => {
+                        card.menu = Some((question, items));
+                        cx.notify();
+                    }
+                    None => self.menu_picked(question, None),
+                }
+            }
+            Event::Offers { question, takes } => {
+                let offers = offered(takes_of(&takes), self.session.upgrade(), cx);
+                self.host.send(&Request::Offered { question, offers });
+            }
+            Event::AddOffer {
+                instance,
+                path,
+                key,
+                label,
+            } => self.add_offer(&instance, &path, &key, &label, cx),
             Event::Transport { op } => self.transport(op, cx),
             Event::Select {
                 instance,
@@ -1823,4 +1909,30 @@ fn performed_frame(at: Option<f64>, session: &Entity<Session>, cx: &mut App) -> 
 fn frames_of(seconds: f64, session: &Session) -> u64 {
     let rate = f64::from(session.project().clock().sample_rate());
     (seconds.max(0.0) * rate).round() as u64
+}
+
+/// What a view of the project asks offers for: `"notes"` takes notes, anything else sound.
+fn takes_of(takes: &str) -> Takes {
+    match takes {
+        "notes" => Takes::Notes,
+        _ => Takes::Audio,
+    }
+}
+
+/// What the window offers that takes `takes`, as code gets it. Commands, such as a scan, are
+/// the window's own pickers'.
+fn offered(takes: Takes, session: Option<Entity<Session>>, cx: &App) -> Vec<Offered> {
+    let project = session.as_ref().map(|session| session.read(cx).project());
+    (Devices::offered(takes, cx).into_iter())
+        .filter(|offer| !offer.is_command())
+        .map(|offer| Offered {
+            unavailable: project
+                .and_then(|project| offer.unavailable_in(project))
+                .map(|reason| reason.to_string()),
+            key: offer.key.to_string(),
+            name: offer.name.to_string(),
+            detail: offer.detail.as_ref().map(ToString::to_string),
+            group: offer.group.label().to_string(),
+        })
+        .collect()
 }

@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Context, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Child, Clock as SdkClock, Context, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, NoteEvent, Offer, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -50,14 +50,18 @@ type Request =
   | ({ type: "clock" } & Clock)
   | ({ type: "song" } & Song)
   /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
-  | { type: "event"; card: number; node: number; kind: "press" | "end" | "move"; payload: unknown; time: number }
+  | { type: "event"; card: number; node: number; kind: "press" | "end" | "move" | "commit" | "drop" | "power" | "close"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: string; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
   | { type: "drop"; card: number }
   | { type: "behaviour"; question: number; tool: string; instance: string }
   /** The file the composer chose for an `openFile`, as it is named under `assets/audio/` now, or `null`. */
-  | { type: "file_opened"; question: number; asset: string | null };
+  | { type: "file_opened"; question: number; asset: string | null }
+  /** The place of the item the composer picked in an `openMenu`, or `null`. */
+  | { type: "menu_picked"; question: number; item: number | null }
+  /** What the window offers, the answer to `offers`. */
+  | { type: "offered"; question: number; offers: Offer[] };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
 type Reads = { state: string[] | null; children: boolean; watches: boolean };
@@ -870,6 +874,9 @@ function contextOf<Extra extends object>(
     update: updater(instance),
     openFile: fileOpener(),
     select: selector(instance),
+    openMenu: menuOpener(),
+    offers: offerAsker(),
+    addOffer: offerAdder(instance),
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
   };
@@ -888,6 +895,33 @@ function selector(instance: string) {
     const range = span && [wholeTick(span.from, "span from"), wholeTick(span.to, "span to")];
     say({ type: "select", instance, path, span: range ?? null });
   };
+}
+
+/** `openMenu`: the window shows it where the pointer is, and answers its question. */
+const menusAsked = new Map<number, (item: number | null) => void>();
+let menuQuestions = 0;
+function menuOpener() {
+  return (items: readonly MenuItem[]): Promise<number | null> => {
+    const question = ++menuQuestions;
+    say({ type: "open_menu", question, items: items.map(({ label, disabled, checked }) => ({ label, disabled, checked })) });
+    return new Promise((resolve) => menusAsked.set(question, resolve));
+  };
+}
+
+/** `offers`: the window lists them and answers its question. */
+const offersAsked = new Map<number, (offers: Offer[]) => void>();
+let offerQuestions = 0;
+function offerAsker() {
+  return (takes: "notes" | "audio"): Promise<Offer[]> => {
+    const question = ++offerQuestions;
+    say({ type: "offers", question, takes });
+    return new Promise((resolve) => offersAsked.set(question, resolve));
+  };
+}
+
+/** `addOffer`: the window writes the offer's record into the child, as one edit. */
+function offerAdder(instance: string) {
+  return (key: string, path: string, label: string) => say({ type: "add_offer", instance, path, key, label });
 }
 
 /** `openFile`: the runtime opens the file, copies it, and answers its question. */
@@ -1110,6 +1144,9 @@ function cardContext<Extra extends object>(instance: string, spec: Spec, known: 
     update: updater(instance),
     openFile: fileOpener(),
     select: selector(instance),
+    openMenu: menuOpener(),
+    offers: offerAsker(),
+    addOffer: offerAdder(instance),
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
   };
@@ -1149,7 +1186,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null };
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, openMenu: async () => null, offers: async () => [], addOffer() {} };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, update() {} };
@@ -1271,6 +1308,14 @@ function handle(request: Request) {
     case "file_opened":
       filesAsked.get(request.question)?.(request.asset);
       filesAsked.delete(request.question);
+      break;
+    case "menu_picked":
+      menusAsked.get(request.question)?.(request.item);
+      menusAsked.delete(request.question);
+      break;
+    case "offered":
+      offersAsked.get(request.question)?.(request.offers);
+      offersAsked.delete(request.question);
       break;
   }
 }

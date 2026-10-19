@@ -1079,6 +1079,15 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    * selection exports. Nothing is saved.
    */
   select(path: string | null, options?: { span?: { from: number; to: number } }): void;
+  /**
+   * Opens a menu of `items` where the pointer is, after a press: the place of the item the
+   * composer picked, or `null` when they picked none.
+   */
+  openMenu(items: readonly MenuItem[]): Promise<number | null>;
+  /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. */
+  offers(takes: "notes" | "audio"): Promise<Offer[]>;
+  /** Puts the device of the offer `key` at the child `path`, at its defaults, as one undo step `label`. */
+  addOffer(key: string, path: string, label: string): void;
   /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
   memory: Memory<M>;
   /**
@@ -1357,6 +1366,26 @@ function sources(): Now<Record<string, number>> {
 export const now: Now<Record<string, number>> = sources();
 
 
+/** An item of `openMenu`. */
+export interface MenuItem {
+  label: string;
+  disabled?: boolean;
+  /** A tick beside it. */
+  checked?: boolean;
+}
+
+/** A device `offers` gives. */
+export interface Offer {
+  /** What `addOffer` names it by. */
+  key: string;
+  name: string;
+  detail: string | null;
+  /** The group a picker lists it under, such as "Built-in" or "Plugins". */
+  group: string;
+  /** Why it cannot be added here, or `null` when it can. */
+  unavailable: string | null;
+}
+
 // Pointer
 
 /** Which modifier keys were held. */
@@ -1373,6 +1402,18 @@ export interface Press extends Modifiers {
   y: number;
   button: "left" | "right";
   clicks: number;
+}
+
+/**
+ * What was let go on a node that hears drops: audio files from the system, copied into
+ * `assets/audio/` under the names in `files`, or what a dragged `div` carries. `x` and `y` are
+ * where, in the units of a space (0 on a `div`).
+ */
+export interface Dropped {
+  files: string[];
+  carried: string | null;
+  x: number;
+  y: number;
 }
 
 /** A drag at its end, or at a move with `onMove`: as `DragValues` says, in numbers. */
@@ -1918,7 +1959,7 @@ interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "space" | "shape" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
@@ -1931,6 +1972,10 @@ interface Made {
   /** Sent to the window: changes after this go as `set`. */
   sent: boolean;
   onPress?: (press: Press) => void;
+  onDrop?: (drop: Dropped) => void;
+  onCommit?: (text: string) => void;
+  onPower?: () => void;
+  onClose?: () => void;
   drag?: Drag;
   children: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
@@ -2010,7 +2055,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
-const HANDLERS = new Set(["onPress"]);
+const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onPower", "onClose"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {
@@ -2018,7 +2063,7 @@ function element(family: Family, props: Record<string, unknown>, children: Child
   for (const [name, value] of Object.entries(props)) {
     if (name === "children" || value === undefined) continue;
     if (HANDLERS.has(name)) {
-      made[name as "onPress"] = value as Made["onPress"];
+      (made as unknown as Record<string, unknown>)[name] = value;
       made.props[name] = true;
     } else if (name === "drag") {
       made.drag = value as Drag;
@@ -2354,12 +2399,45 @@ export interface SpaceProps {
   onPress?: (press: Press) => void;
   /** A drag from where no shape that hears the pointer is, such as a marquee. */
   drag?: Drag;
+  /** Files or a carried value let go on it, where in its units. */
+  onDrop?: (drop: Dropped) => void;
   cursor?: Pointed["cursor"];
   children?: Child;
 }
 
 /** A space, see `SpaceProps`. */
 export const Space = ({ children, ...props }: SpaceProps): UiNode => element("space", props, [children]);
+
+/** A text field: it shows `value` until it is typed in, and calls `onCommit` with its text on enter or when it loses the keys. Escape shows `value` again. */
+export interface InputProps {
+  key?: string;
+  value: Bind<string>;
+  placeholder?: string;
+  /** In points; 160 when left out. */
+  width?: number;
+  /** It takes the keys when it is made, with its text selected. */
+  focus?: boolean;
+  onCommit: (text: string) => void;
+}
+
+/** A text field, see `InputProps`. */
+export const Input = (props: InputProps): UiNode => element("input", { ...props }, []);
+
+/**
+ * The card of an instance below this tool's, by its `path` as `now.value` names it, such as
+ * `"bass/synth"`: the built-in device's own card, a plugin's with its window, or a tool of the
+ * project's view. Its power icon shows `on` with `onPower`, its close icon with `onClose`.
+ */
+export interface DeviceCardProps {
+  key?: string;
+  path: Bind<string>;
+  on?: Bind<boolean>;
+  onPower?: () => void;
+  onClose?: () => void;
+}
+
+/** The card of an instance, see `DeviceCardProps`. */
+export const DeviceCard = ({ path, ...props }: DeviceCardProps): UiNode => element("card", { instance: path, ...props }, []);
 
 /** How a `div` lays out and looks. Numbers are points. */
 export interface Style {
@@ -2388,8 +2466,12 @@ export interface Style {
 interface DivProps {
   key?: string;
   style?: Bind<Style>;
-  /** A click on it. */
+  /** A click on it, or a press of the right button. */
   onPress?: (press: Press) => void;
+  /** A drag of it carries this to a node that hears drops, such as another row of a list it reorders. */
+  carry?: string;
+  /** Files from the system, or what a dragged `div` carries, let go on it. */
+  onDrop?: (drop: Dropped) => void;
   /**
    * The key of a space whose scroll its children move with, on an axis, cut off at its edges:
    * the heads of the rows of a timeline, which scroll with it. Rows as tall as the space's unit.
@@ -2748,12 +2830,22 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
   return { ops };
 }
 
-/** A press, or the end or a move of a drag, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "end" | "move", payload: never) {
+/** A press, the end or a move of a drag, a drop, a field's text or a card's icon, on the node `id`. */
+function nodeEvent(id: number, kind: "press" | "end" | "move" | "commit" | "drop" | "power" | "close", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
-  const handler = { press: made.onPress, end: made.drag?.onEnd, move: made.drag?.onMove }[kind];
-  return handler?.(payload);
+  switch (kind) {
+    case "commit":
+      return made.onCommit?.((payload as { text: string }).text);
+    case "power":
+      return made.onPower?.();
+    case "close":
+      return made.onClose?.();
+    default: {
+      const handler = { press: made.onPress, end: made.drag?.onEnd, move: made.drag?.onMove, drop: made.onDrop }[kind];
+      return handler?.(payload);
+    }
+  }
 }
 
 /** What the host reads. Not for tools. */

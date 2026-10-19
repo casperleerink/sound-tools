@@ -3,13 +3,14 @@
 //! zooms, a drag moves what binds to it and turns what it turns, and live values follow the
 //! playhead, the watches and the record. Code hears a press, and a drag once, at its end.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, FocusHandle, Hitbox,
+    AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity,
+    ExternalPaths, FocusHandle, Focusable, Hitbox,
     HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
     ScrollWheelEvent, SharedString, StyleRefinement, TextAlign, TextRun, WeakEntity, Window,
@@ -18,20 +19,26 @@ use gpui::{
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
+use sound_ui::components::dropdown_menu::{
+    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
+};
+use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
 use sound_media::AudioAsset;
-use sound_ui::{ActiveTheme, ControlEdit, LiveBody, Session, Waveforms, typography};
+use sound_ui::{
+    ActiveTheme, ControlEdit, Devices, LiveBody, Session, Views, Waveforms, typography,
+};
 
-use crate::bun::{EventKind, PageSize};
+use crate::bun::{EventKind, MenuItemSpec, PageSize};
 use crate::feeds::Feeds;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
-    self, Align, Axis, Cursor, DivProps, Drag, List, NodeTable, Paint, Props, Reach, Readout,
-    ShapeKind, SpaceProps, TextProps, Turned, Words,
+    self, Align, Axis, CardProps, Cursor, DivProps, Drag, InputProps, List, NodeTable, Paint,
+    Props, Reach, Readout, ShapeKind, SpaceProps, TextProps, Turned, Words,
 };
 use crate::window::{Live, Surface, state_of};
 
@@ -72,6 +79,50 @@ pub(crate) struct TypeScriptCard {
     feeds: Feeds,
     /// The shapes of each space, by its key, with where those that stay are.
     indexes: RefCell<HashMap<String, SpaceIndex>>,
+    /// The menu its code opens where the pointer is, and the question of the open one.
+    menu: Option<(Entity<DropdownMenu>, Option<u64>)>,
+    /// The text fields of its nodes, by node, with the text the field last showed or told.
+    inputs: HashMap<u64, (Entity<TextInput>, String)>,
+    /// The cards of other instances it shows, by node.
+    embedded: HashMap<u64, Embedded>,
+}
+
+/// The card of another instance, as a node shows it.
+struct Embedded {
+    instance: InstanceId,
+    tool: String,
+    /// Whether its power icon and its close icon show.
+    icons: (bool, bool),
+    on: Rc<Cell<bool>>,
+    frame: CardFrame,
+    view: Option<AnyView>,
+}
+
+/// The title of an embedded card.
+struct CardTitle(SharedString);
+
+impl Render for CardTitle {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().px(px(8.)).child(self.0.clone())
+    }
+}
+
+/// What a drag of a node carries, by its `carry`.
+#[derive(Clone)]
+struct Carried(String);
+
+impl Render for Carried {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(6.))
+            .bg(theme.lavender)
+            .text_color(theme.gray_950)
+            .text_size(px(12.))
+            .child(self.0.clone())
+    }
 }
 
 /// A page, which draws again only when it changed, while the window draws every frame as it
@@ -223,7 +274,11 @@ impl TypeScriptCard {
             _ => {}
         })
         .detach();
-        cx.observe(&live, |_, _, cx| cx.notify()).detach();
+        cx.observe_in(&live, window, |view, _, window, cx| {
+            view.sync(window, cx);
+            cx.notify();
+        })
+        .detach();
         // A waveform it draws is made in the background.
         let waveforms = Waveforms::entity(cx);
         cx.observe(&waveforms, |view, _, cx| {
@@ -261,7 +316,274 @@ impl TypeScriptCard {
             keys_down: BTreeSet::new(),
             feeds: Feeds::default(),
             indexes: RefCell::default(),
+            menu: None,
+            inputs: HashMap::new(),
+            embedded: HashMap::new(),
         }
+    }
+
+    /// Makes what its nodes show that is an entity of the window: a text field, the card of
+    /// another instance, and a menu its code opened. Outside a draw, which may not make them.
+    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let card = self.card;
+        if let Some((question, items)) = self.live.update(cx, |live, _| live.take_menu(card)) {
+            self.open_menu(question, items, window, cx);
+        }
+        let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
+            return;
+        };
+        let mut inputs = HashMap::new();
+        let mut embedded = HashMap::new();
+        for entry in table.entries() {
+            match &entry.props {
+                Props::Input(props) => {
+                    let input = self.input(entry.id, props, window, cx);
+                    inputs.insert(entry.id, input);
+                }
+                Props::Card(props) => {
+                    if let Some(card) = self.embed(entry.id, props, window, cx) {
+                        embedded.insert(entry.id, card);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.inputs = inputs;
+        self.embedded = embedded;
+    }
+
+    /// The text field of the node `node`: the one it had, showing `value` when that changed and
+    /// it is not typed in, or a new one.
+    fn input(
+        &mut self,
+        node: u64,
+        props: &InputProps,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<TextInput>, String) {
+        let value = props.value.clone().unwrap_or_default();
+        if let Some((input, shown)) = self.inputs.remove(&node) {
+            if shown != value && !input.focus_handle(cx).is_focused(window) {
+                input.update(cx, |input, cx| input.set_text(value.clone(), cx));
+                return (input, value);
+            }
+            return (input, shown);
+        }
+        let placeholder = props.placeholder.clone().unwrap_or_default();
+        let input = cx.new(|cx| TextInput::new(cx).placeholder(placeholder));
+        let card = cx.weak_entity();
+        input.update(cx, |input, cx| {
+            input.set_text(value.clone(), cx);
+            input.set_on_submit({
+                let card = card.clone();
+                move |text, _, cx| {
+                    card.update(cx, |view, cx| view.commit(node, text, cx)).ok();
+                }
+            });
+            // Escape shows the text it had again, once the field's own update is over.
+            input.set_on_cancel(move |_, window, cx| {
+                let card = card.clone();
+                window.defer(cx, move |window, cx| {
+                    card.update(cx, |view, cx| view.revert(node, window, cx))
+                        .ok();
+                });
+            });
+        });
+        let focus = input.focus_handle(cx);
+        // What was typed counts when the field loses the keys too.
+        cx.on_blur(&focus, window, move |view, _, cx| {
+            if let Some(text) = view.inputs.get(&node).map(|(input, _)| input.read(cx).text().to_string()) {
+                view.commit(node, &text, cx);
+            }
+        })
+        .detach();
+        if props.focus == Some(true) {
+            window.focus(&focus, cx);
+            input.update(cx, TextInput::select_all_text);
+        }
+        (input, value)
+    }
+
+    /// Tells the code of the field `node` its text, unless it shows what it last told.
+    fn commit(&mut self, node: u64, text: &str, cx: &mut Context<Self>) {
+        let Some((_, shown)) = self.inputs.get_mut(&node) else {
+            return;
+        };
+        if shown == text {
+            return;
+        }
+        *shown = text.to_string();
+        self.event(node, EventKind::Commit, json!({ "text": text }), cx);
+    }
+
+    /// Shows in the field `node` what it last showed or told, and gives the keys back.
+    fn revert(&mut self, node: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((input, shown)) = self.inputs.get(&node) else {
+            return;
+        };
+        let shown = shown.clone();
+        input.update(cx, |input, cx| input.set_text(shown, cx));
+        window.focus(&self.focus, cx);
+    }
+
+    /// The card of the instance a node shows: the one it had, or a new one when the instance,
+    /// its tool or the icons changed.
+    fn embed(
+        &mut self,
+        node: u64,
+        props: &CardProps,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Embedded> {
+        let path = props.instance.as_deref()?;
+        let instance = (path.split('/')).try_fold(self.id.clone(), |id, name| id.child(name));
+        let instance = instance.ok()?;
+        let tool = self.session.read(cx).project().tool_of(&instance)?.to_string();
+        let on = props.on.unwrap_or(true);
+        let icons = (props.on_power == Some(true), props.on_close == Some(true));
+        if let Some(old) = self.embedded.remove(&node)
+            && old.instance == instance
+            && old.tool == tool
+            && old.icons == icons
+        {
+            old.on.set(on);
+            return Some(old);
+        }
+        let name = (Devices::label_of(&self.session, &instance, cx))
+            .map_or_else(|| SharedString::from(tool.clone()), |label| label.name);
+        let title = cx.new(|_| CardTitle(name));
+        let mut frame = CardFrame::new(format!("card-{}", instance.as_str()), title);
+        let shown = Rc::new(Cell::new(on));
+        if icons.0 {
+            let (card, shown) = (cx.weak_entity(), shown.clone());
+            frame = frame.power(
+                move |_| shown.get(),
+                move |_, cx| {
+                    card.update(cx, |view, cx| {
+                        view.event(node, EventKind::Power, json!({}), cx);
+                    })
+                    .ok();
+                },
+            );
+        }
+        if icons.1 {
+            let card = cx.weak_entity();
+            frame = frame.close(move |_, cx| {
+                card.update(cx, |view, cx| {
+                    view.event(node, EventKind::Close, json!({}), cx);
+                })
+                .ok();
+            });
+        }
+        let view = Views::card_of(&self.session, &instance, frame.clone(), window, cx);
+        Some(Embedded {
+            instance,
+            tool,
+            icons,
+            on: shown,
+            frame,
+            view,
+        })
+    }
+
+    /// Opens a menu of `items` where the pointer is, which answers `question`. A menu still open
+    /// answers that nothing was picked.
+    fn open_menu(
+        &mut self,
+        question: u64,
+        items: Vec<MenuItemSpec>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let items = items.into_iter().enumerate().map(|(index, item)| {
+            MenuItem::new(index.to_string(), item.label)
+                .disabled(item.disabled)
+                .checked(item.checked)
+        });
+        let entries = vec![MenuEntry::Group(MenuGroup::new().items(items))];
+        let menu = match self.menu.take() {
+            Some((menu, waiting)) => {
+                if let Some(waiting) = waiting {
+                    self.live.update(cx, |live, _| live.menu_picked(waiting, None));
+                }
+                menu
+            }
+            None => {
+                let menu = cx.new(|cx| {
+                    DropdownMenu::new("", Vec::new(), cx)
+                        .trigger(Trigger::Pointer)
+                        .debug_name("menu")
+                });
+                cx.subscribe(&menu, |view, _, picked: &MenuPicked, cx| {
+                    let item = picked.0.parse().ok();
+                    view.answer_menu(item, cx);
+                })
+                .detach();
+                // Closed with nothing picked: after a pick's event, which comes after its close.
+                cx.observe(&menu, |_, menu, cx| {
+                    if !menu.read(cx).is_open() {
+                        let card = cx.entity().downgrade();
+                        cx.defer(move |cx| {
+                            card.update(cx, |view, cx| view.answer_menu(None, cx)).ok();
+                        });
+                    }
+                })
+                .detach();
+                menu
+            }
+        };
+        let position = window.mouse_position();
+        menu.update(cx, |menu, cx| {
+            menu.set_entries(entries, cx);
+            menu.open_at(position, window, cx);
+        });
+        self.menu = Some((menu, Some(question)));
+    }
+
+    /// Answers the open menu's question, once.
+    fn answer_menu(&mut self, item: Option<usize>, cx: &mut Context<Self>) {
+        let Some(question) = self.menu.as_mut().and_then(|(_, waiting)| waiting.take()) else {
+            return;
+        };
+        self.live
+            .update(cx, |live, _| live.menu_picked(question, item));
+    }
+
+    /// Copies dropped files into `assets/audio/`, in the background, and tells the code of
+    /// `node` their names there and where they fell.
+    fn drop_files(
+        &mut self,
+        node: u64,
+        paths: Vec<std::path::PathBuf>,
+        (x, y): (f64, f64),
+        cx: &mut Context<Self>,
+    ) {
+        let assets = self.session.read(cx).project().assets().clone();
+        let imported = cx.background_spawn(async move {
+            (paths.iter())
+                .map(|path| sound_media::import(&assets, path))
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |view, cx| {
+            let imported = imported.await;
+            view.update(cx, |view, cx| {
+                let mut files = Vec::new();
+                for file in imported {
+                    match file {
+                        Ok(file) => files.push(file.asset.to_string()),
+                        Err(error) => view
+                            .session
+                            .update(cx, |session, cx| session.report(error, cx)),
+                    }
+                }
+                if !files.is_empty() {
+                    let dropped = json!({ "files": files, "carried": null, "x": x, "y": y });
+                    view.event(node, EventKind::Drop, dropped, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// A key went down or up while the card has the keys, not a `repeat`: of a key held
@@ -1001,6 +1323,8 @@ struct Drawing<'a, 'b> {
     table: &'a NodeTable,
     feeds: &'a Feeds,
     indexes: &'a RefCell<HashMap<String, SpaceIndex>>,
+    inputs: &'a HashMap<u64, (Entity<TextInput>, String)>,
+    embedded: &'a HashMap<u64, Embedded>,
     cx: &'a mut Context<'b, TypeScriptCard>,
 }
 
@@ -1033,11 +1357,29 @@ impl Drawing<'_, '_> {
             Props::Space(space) => self.space(id, space, &entry.children, index),
             // A shape outside a space, or a marker, draws nothing.
             Props::Shape(_) | Props::Marker => div().into_any_element(),
+            Props::Input(_) => match self.inputs.get(&id) {
+                Some((input, _)) => {
+                    let width = match &entry.props {
+                        Props::Input(InputProps { width: Some(width), .. }) => *width,
+                        _ => 160.0,
+                    };
+                    div().w(px(width)).child(input.clone()).into_any_element()
+                }
+                None => div().into_any_element(),
+            },
+            Props::Card(_) => match self.embedded.get(&id) {
+                Some(Embedded { view: Some(view), .. }) => view.clone().into_any_element(),
+                // A tool with no card shows its frame with its name.
+                Some(Embedded { frame, .. }) => frame.card().into_any_element(),
+                None => div().into_any_element(),
+            },
             Props::Div(DivProps {
                 key,
                 style,
                 on_press,
                 follow,
+                carry,
+                on_drop,
             }) => {
                 let children: Vec<AnyElement> = (entry.children.iter())
                     .filter(|child| {
@@ -1082,24 +1424,61 @@ impl Drawing<'_, '_> {
                     }
                     None => element,
                 };
-                if *on_press != Some(true) {
+                let hears = *on_press == Some(true) || *on_drop == Some(true) || carry.is_some();
+                if !hears {
                     return element.into_any_element();
                 }
-                element
+                let lavender = self.cx.theme().lavender;
+                let element = element
                     .id(ElementId::Name(
                         element_name("div", key.as_deref(), index).into(),
                     ))
-                    .cursor_pointer()
-                    .on_click(
-                        (self.cx).listener(move |view, event: &gpui::ClickEvent, _, cx| {
-                            let mut press = json!({
-                                "x": 0, "y": 0, "button": "left",
-                                "clicks": event.click_count(),
-                            });
-                            add_modifiers(&mut press, event.modifiers());
-                            view.event(id, EventKind::Press, press, cx);
-                        }),
-                    )
+                    .when(*on_press == Some(true), |element| {
+                        element
+                            .cursor_pointer()
+                            .on_click((self.cx).listener(
+                                move |view, event: &gpui::ClickEvent, _, cx| {
+                                    let mut press = json!({
+                                        "x": 0, "y": 0, "button": "left",
+                                        "clicks": event.click_count(),
+                                    });
+                                    add_modifiers(&mut press, event.modifiers());
+                                    view.event(id, EventKind::Press, press, cx);
+                                },
+                            ))
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                (self.cx).listener(move |view, event: &MouseDownEvent, _, cx| {
+                                    let mut press = json!({
+                                        "x": 0, "y": 0, "button": "right",
+                                        "clicks": event.click_count,
+                                    });
+                                    add_modifiers(&mut press, event.modifiers);
+                                    view.event(id, EventKind::Press, press, cx);
+                                    cx.stop_propagation();
+                                }),
+                            )
+                    });
+                let element = match carry {
+                    Some(carry) => element.on_drag(
+                        Carried(carry.clone()),
+                        |carried: &Carried, _, _, cx| cx.new(|_| carried.clone()),
+                    ),
+                    None => element,
+                };
+                if *on_drop != Some(true) {
+                    return element.into_any_element();
+                }
+                element
+                    .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
+                    .drag_over::<Carried>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
+                    .on_drop((self.cx).listener(move |view, paths: &ExternalPaths, _, cx| {
+                        view.drop_files(id, paths.paths().to_vec(), (0.0, 0.0), cx);
+                    }))
+                    .on_drop((self.cx).listener(move |view, carried: &Carried, _, cx| {
+                        let dropped = json!({ "files": [], "carried": carried.0, "x": 0, "y": 0 });
+                        view.event(id, EventKind::Drop, dropped, cx);
+                    }))
                     .into_any_element()
             }
         }
@@ -1177,6 +1556,8 @@ impl Drawing<'_, '_> {
         let selector = format!("space-{}", frame.key);
         let card = self.cx.entity().downgrade();
         let spaces = self.laid_out.clone();
+        // Where it was painted, for where a drop falls in its units.
+        let painted_at = Rc::new(Cell::new(None));
         let element = canvas(
             {
                 let frame = frame.clone();
@@ -1184,10 +1565,13 @@ impl Drawing<'_, '_> {
                     prepaint(&frame, bounds, window)
                 }
             },
+            {
+            let (frame, painted_at) = (frame.clone(), painted_at.clone());
             move |bounds: Bounds<Pixels>,
                   (hitbox, painted): (Hitbox, Rc<Vec<Painted>>),
                   window: &mut Window,
                   cx: &mut App| {
+                painted_at.set(Some(bounds));
                 // The size it was laid out at, for live values of what shows and the next scroll.
                 if let Some(view) = spaces.borrow_mut().get_mut(&frame.key) {
                     view.width = f64::from(f32::from(bounds.size.width));
@@ -1195,11 +1579,13 @@ impl Drawing<'_, '_> {
                 }
                 paint(&frame, bounds, &hitbox, &painted, window, cx);
                 listen(&frame, &card, bounds, hitbox, painted, window);
+            }
             },
         );
         let holder = div()
             .debug_selector(move || selector)
             .child(element.size_full());
+
         let holder = match space.width {
             Some(width) => holder.w(px(width)),
             None => holder.w_full(),
@@ -1213,7 +1599,29 @@ impl Drawing<'_, '_> {
         } else {
             holder.flex_none()
         };
-        holder.into_any_element()
+        if space.on_drop != Some(true) {
+            return holder.into_any_element();
+        }
+        let element_id = ElementId::Name(format!("{}-drop", frame.key).into());
+        let units = move |window: &Window| match painted_at.get() {
+            Some(bounds) => frame.units_at(bounds, window.mouse_position()),
+            None => (0.0, 0.0),
+        };
+        let lavender = self.cx.theme().lavender;
+        let dropped_files = units.clone();
+        holder
+            .id(element_id)
+            .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(lavender.opacity(0.1)))
+            .on_drop((self.cx).listener(move |view, paths: &ExternalPaths, window, cx| {
+                let at = dropped_files(window);
+                view.drop_files(id, paths.paths().to_vec(), at, cx);
+            }))
+            .on_drop((self.cx).listener(move |view, carried: &Carried, window, cx| {
+                let (x, y) = units(window);
+                let dropped = json!({ "files": [], "carried": carried.0, "x": x, "y": y });
+                view.event(id, EventKind::Drop, dropped, cx);
+            }))
+            .into_any_element()
     }
 }
 
@@ -1675,6 +2083,11 @@ impl Placing<'_> {
 }
 
 /// An id for an element, from its key, else from where it is in the tree.
+/// Whether a text field has the keys.
+fn typing(window: &Window) -> bool {
+    (window.context_stack().iter()).any(|context| context.contains(text_input::KEY_CONTEXT))
+}
+
 fn element_name(kind: &str, key: Option<&str>, index: &[usize]) -> String {
     match key {
         Some(key) => key.to_string(),
@@ -2212,6 +2625,8 @@ impl Render for TypeScriptCard {
                     table: &table,
                     feeds: &self.feeds,
                     indexes: &self.indexes,
+                    inputs: &self.inputs,
+                    embedded: &self.embedded,
                     cx,
                 };
                 let body = match table.root() {
@@ -2248,8 +2663,11 @@ impl Render for TypeScriptCard {
                     .when(blocks_plain_keys, |element| {
                         element.key_context(crate::KEY_CONTEXT)
                     })
-                    .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
-                        view.key(&event.keystroke, true, event.is_held, cx)
+                    .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+                        // A text field in it has the keys first.
+                        if !typing(window) {
+                            view.key(&event.keystroke, true, event.is_held, cx)
+                        }
                     }))
                     .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| {
                         view.key(&event.keystroke, false, false, cx)
@@ -2264,7 +2682,11 @@ impl Render for TypeScriptCard {
                     ))
             })
         };
-        let body = div().text_size(px(12.)).text_color(text).child(body);
+        let body = div()
+            .text_size(px(12.))
+            .text_color(text)
+            .child(body)
+            .children(self.menu.as_ref().map(|(menu, _)| menu.clone()));
         match &self.frame {
             // At least as wide as a plain card, so the title fits.
             Some(frame) => frame
