@@ -520,3 +520,26 @@ fn notes_are_copied_and_pasted_in_the_editor(cx: &mut TestAppContext) {
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Paste notes"));
 }
+
+/// A clip whose file leaves out its notes reads as one of no notes: cmd-a and cmd-c in the
+/// editor choose and copy nothing, and nothing fails.
+#[gpui::test]
+fn the_editor_of_a_clip_whose_file_has_no_notes_takes_its_keys(cx: &mut TestAppContext) {
+    let mut files = crate::song::song_files(1, 1);
+    for (path, text) in &mut files {
+        if path == "state/song/t00/c00.json" {
+            *text = format!(r#"{{"tool": "timeline", "state": {{"start": 0, "length": {BAR}}}}}"#);
+        }
+    }
+    let files: Vec<(&str, &str)> = (files.iter()).map(|(path, text)| (path.as_str(), text.as_str())).collect();
+    let Some(mut window) = super::open(cx, &files) else {
+        return;
+    };
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR / 2, 0);
+    window.double_click(clip);
+    window.space_at("editor");
+    window.cx.simulate_keystrokes("cmd-a cmd-c");
+    window.wait_for_bun();
+    assert_eq!(window.problems(), []);
+}

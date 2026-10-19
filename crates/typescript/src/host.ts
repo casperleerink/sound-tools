@@ -624,7 +624,7 @@ function listed(id: string, told: Set<string>, latest: boolean): OwnedChild[] {
   return frozen([...names].sort().flatMap((name) => {
     const child = `${id}/${name}`;
     const entry = recordOf(child, latest);
-    return entry ? [{ name, ...entry, children: childrenOf(child, latest) } as OwnedChild] : [];
+    return entry ? [{ name, tool: entry.tool, state: filledOf(entry), children: childrenOf(child, latest) } as OwnedChild] : [];
   }));
 }
 
@@ -634,10 +634,10 @@ function filledState(spec: Spec, entry: Entry): State {
 }
 
 /**
- * The state of a child as `update` gives it: every field that has a default at it, as the code
- * of its tool gets its own, so a change reads `clip.state.start` with no `?? 0`.
+ * The state of a child as code gets it: every field that has a default at it, as the code of its
+ * tool gets its own, so a view or a change reads `clip.state.start` with no `?? 0`.
  */
-function filledOf(child: OwnedChild): unknown {
+function filledOf(child: { tool: string; state: unknown }): unknown {
   const spec = sdk.host.tools.get(child.tool);
   if (spec) return filledObject(spec.state, child.state);
   const defaults = (sdk as { defaultStates?: Record<string, object> }).defaultStates?.[child.tool];

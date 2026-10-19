@@ -1,4 +1,4 @@
-import { Arc, DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Key, type Live, type MovedNumber, type Part, type Press } from "./sdk";
+import { Arc, DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, type EditorMemory, type Lane } from "./clip-editor";
@@ -38,6 +38,10 @@ const STRIP = 64;
 const FADER = 160;
 
 type Clipboard = { from: number; clips: { track: string; state: FilledStateOfTool<"timeline"> }[] };
+/** A track of the song as code reads it. */
+type TrackRow = Extract<Frozen<OwnedChild<typeof parts>>, { tool: typeof track }>;
+/** A copy of a clip's state to change. */
+const copyOf = (state: Frozen<FilledStateOfTool<"timeline">>) => structuredClone(state) as FilledStateOfTool<"timeline">;
 type Editing = { kind: "tempo" | "signature" | "section"; bar: number } | null;
 
 type Memory = {
@@ -180,7 +184,7 @@ export const song = tool({
           if (draft?.tool === "timeline") change(draft.state);
         });
       const forNotes = memory.notes.size > 0 || (key.cmd && (key.key === "a" || (key.key === "v" && memory.copied !== null)));
-      const state = clip?.tool === "timeline" ? (clip.state as FilledStateOfTool<"timeline">) : undefined;
+      const state = clip?.tool === "timeline" ? clip.state : undefined;
       if (forNotes && editorKey(key, state, clock.tick, memory, edit)) return;
     }
     if (memory.region && (key.key === "delete" || key.key === "backspace")) {
@@ -193,7 +197,7 @@ export const song = tool({
       return;
     }
     const tracks = children
-      .filter((child) => child.tool === "track")
+      .filter((child): child is TrackRow => child.tool === "track")
       .slice()
       .sort((a, b) => order(a.name) - order(b.name) || (a.name < b.name ? -1 : 1));
     clipKey(key, { memory, update, clock, select, tracks });
@@ -241,7 +245,7 @@ export const song = tool({
     const rows = memo(() =>
       children.filter((child) => child.tool === "track" || child.tool === "tape").slice().sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : 1)),
     );
-    const tracks = () => rows().filter((each) => each.tool === "track");
+    const tracks = () => rows().filter((each): each is TrackRow => each.tool === "track");
     const returns = () => children.filter((child) => child.tool === "bus");
     const lanesOf = (each: Child) =>
       each.tool === "track"
@@ -953,7 +957,7 @@ export const song = tool({
       const [trackName] = key.split("/");
       return (
         <ClipEditor
-          clip={() => (open()?.state as FilledStateOfTool<"timeline"> | undefined)}
+          clip={() => open()?.state}
           title={() => {
             const shown = open();
             return shown ? `${trackName} · ${shown.state.title || shown.name}` : "";
@@ -1109,11 +1113,11 @@ function removeOrCopy({ children }: Part<unknown, typeof parts>, chosen: Readonl
 }
 
 /** The clips `chosen` names, from the earliest one, to paste. */
-function copied(tracks: readonly { name: string; tool: string; children: readonly { name: string; tool: string; state: unknown }[] }[], chosen: ReadonlySet<string>): Clipboard | null {
+function copied(tracks: readonly TrackRow[], chosen: ReadonlySet<string>): Clipboard | null {
   const clips = [...chosen].flatMap((key) => {
     const [trackName, clipName] = key.split("/");
     const clip = tracks.find((each) => each.name === trackName)?.children.find((child) => child.name === clipName);
-    return clip?.tool === "timeline" ? [{ track: trackName!, state: JSON.parse(JSON.stringify(clip.state)) as FilledStateOfTool<"timeline"> }] : [];
+    return clip?.tool === "timeline" ? [{ track: trackName!, state: copyOf(clip.state) }] : [];
   });
   if (clips.length === 0) return null;
   return { from: Math.min(...clips.map((clip) => clip.state.start ?? 0)), clips };
@@ -1209,7 +1213,7 @@ function clipKey(
     update: (label: string, change: (part: Part<unknown, typeof parts>) => void) => void;
     clock: { tick: number };
     select: (path: string | null) => void;
-    tracks: readonly { name: string; tool: string; children: readonly { name: string; tool: string; state: unknown }[] }[];
+    tracks: readonly TrackRow[];
   },
 ) {
   const chosen = new Set(memory.selected);

@@ -1,4 +1,4 @@
-import { For, Fragment, h, Label, Line, memo, now, Rect, selector, signal, Space, type Accessor, type Drag, type FilledStateOfTool, type Key, type Memory, type MenuItem, type Note, type Press } from "./sdk";
+import { For, Fragment, h, Label, Line, memo, now, Rect, selector, signal, Space, type Accessor, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type MenuItem, type Note, type Press } from "./sdk";
 
 // The note editor of one timeline: its notes on a grid of pitches, and under them a lane of
 // their velocities or of one of its expression lanes. Times are ticks from the clip's start.
@@ -44,7 +44,7 @@ const snapped = (tick: number, snap: number) => (snap > 0 ? Math.floor(tick / sn
 /** A point of a lane as the record holds it: the pedal counts from `start`, the others from `tick`. */
 type Point = { at: number; value: number };
 const LIMITS: Record<Exclude<Lane, "velocity">, [number, number]> = { pedal: [0, 127], bend: [-8192, 8191], mod_wheel: [0, 127], pressure: [0, 127] };
-function pointsOf(clip: Clip, lane: Exclude<Lane, "velocity">): Point[] {
+function pointsOf(clip: Frozen<Clip>, lane: Exclude<Lane, "velocity">): Point[] {
   // A view reads the record as the file holds it: a lane it leaves out is empty.
   return lane === "pedal" ? (clip.pedal ?? []).map(({ start, value }) => ({ at: start, value })) : (clip[lane] ?? []).map(({ tick, value }) => ({ at: tick, value }));
 }
@@ -67,7 +67,7 @@ function moved(notes: readonly Note[], chosen: ReadonlySet<number>, ticks: numbe
 }
 
 export interface EditorProps {
-  clip: Accessor<Clip | undefined>;
+  clip: Accessor<Frozen<Clip> | undefined>;
   title: Accessor<string>;
   memory: Memory<EditorMemory>;
   /** Changes the clip as one undo step `label`. */
@@ -90,7 +90,7 @@ function spanOf(notes: readonly Note[]) {
  * the playhead at `playhead`; whether it did something. A paste goes to the playhead when it is
  * inside the clip, else right after the chosen notes, else to the start of the clip.
  */
-export function editorKey(key: Key, clip: Clip | undefined, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
+export function editorKey(key: Key, clip: Frozen<Clip> | undefined, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
   if (!clip || !key.down) return false;
   const chosen = memory.notes;
   const change = (label: string, next: (notes: Note[]) => { notes: Note[]; chosen: ReadonlySet<number> }) =>

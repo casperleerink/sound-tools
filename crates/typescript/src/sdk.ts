@@ -770,18 +770,16 @@ export type OwnedChild<K extends ChildTools = ChildTools, Edit extends boolean =
     readonly name: ChildNamed<Name>;
     /** Its `tool`, such as `"instrument.synth"`. */
     tool: K[Name];
+    /** Its `state`, with every field that has a default at it, as `state` of the parent. */
+    state: FilledStateOfTool<K[Name]>;
   } & (Edit extends true
     ? {
-        /** Its `state`, with every field that has a default at it, as `state` of the parent. */
-        state: FilledStateOfTool<K[Name]>;
         /** Its own children, to edit as these, in name order. */
         get children(): DraftChildren<ChildrenOfTool<K[Name]>>;
         /** A new list: push a new child as `{ name, tool, state }`, its own children left out or given. */
         set children(children: Array<OwnedChild<ChildrenOfTool<K[Name]>, true> | NewChild<ChildrenOfTool<K[Name]>>>);
       }
     : {
-        /** Its `state` as the file holds it, such as a `TimelineState`. */
-        state: StateOfTool<K[Name]>;
         /**
          * Its own children, in name order, when it is a parent, such as the clips of a track.
          * Typed as the `children` of its tool name them.
