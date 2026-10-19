@@ -80,7 +80,10 @@ impl Render for Page {
 #[derive(Clone)]
 struct Held {
     space: String,
-    /// The version of the tree whose handlers it calls.
+    /// The key of the shape it holds, or `None` for the space itself, which finds its drag in
+    /// each new tree.
+    target: Option<String>,
+    /// The version of the tree whose handlers it calls: the last one drawn.
     version: u64,
     drag: Drag,
     /// Where it was pressed and where the pointer is, in the window.
@@ -101,6 +104,21 @@ struct Held {
 }
 
 impl Held {
+    /// Takes the drag of what it holds from the tree drawn last, whose handlers its code
+    /// keeps: the tree of the press may be gone by the end of a long drag.
+    fn follow(&mut self, frame: &SpaceFrame) {
+        let drag = match &self.target {
+            None => frame.drag.clone(),
+            Some(key) => (frame.pointed.iter().flatten())
+                .find(|pointer| pointer.key == *key)
+                .and_then(|pointer| pointer.drag.clone()),
+        };
+        if let Some(drag) = drag {
+            self.drag = drag;
+            self.version = frame.version;
+        }
+    }
+
     fn numbers(&self) -> DragNumbers {
         let mut dx = f64::from(f32::from(self.now.x - self.start.x)) * self.per_point.0;
         let mut dy = f64::from(f32::from(self.now.y - self.start.y)) * self.per_point.1;
@@ -281,12 +299,12 @@ impl TypeScriptCard {
         event: &MouseDownEvent,
         cx: &mut Context<Self>,
     ) {
-        let (on_press, drag) = match target {
+        let (on_press, drag, target) = match target {
             Some(index) => match frame.pointed.get(index).and_then(Option::as_ref) {
-                Some(pointer) => (pointer.on_press, pointer.drag.clone()),
+                Some(pointer) => (pointer.on_press, pointer.drag.clone(), Some(pointer.key.clone())),
                 None => return,
             },
-            None => (frame.on_press, frame.drag.clone()),
+            None => (frame.on_press, frame.drag.clone(), None),
         };
         let units = frame.units_at(bounds, event.position);
         if let Some(handler) = on_press {
@@ -337,6 +355,7 @@ impl TypeScriptCard {
         let (across, down) = frame.view.scale();
         let held = Held {
             space: frame.key.clone(),
+            target,
             version: frame.version,
             drag,
             start: event.position,
@@ -357,11 +376,12 @@ impl TypeScriptCard {
         cx.notify();
     }
 
-    /// The pointer moved while it holds a drag of the space `space`.
-    fn drag_to(&mut self, space: &str, position: Point<Pixels>, modifiers: Modifiers, cx: &mut Context<Self>) {
-        let Some(held) = self.held.as_mut().filter(|held| held.space == space && held.ended.is_none()) else {
+    /// The pointer moved while it holds a drag of the space of `frame`.
+    fn drag_to(&mut self, frame: &SpaceFrame, position: Point<Pixels>, modifiers: Modifiers, cx: &mut Context<Self>) {
+        let Some(held) = self.held.as_mut().filter(|held| held.space == frame.key && held.ended.is_none()) else {
             return;
         };
+        held.follow(frame);
         if held.now == position && held.modifiers == modifiers {
             return;
         }
@@ -376,11 +396,12 @@ impl TypeScriptCard {
         cx.notify();
     }
 
-    /// The pointer let go of the drag it held.
-    fn drag_ends(&mut self, cx: &mut Context<Self>) {
-        let Some(held) = self.held.clone().filter(|held| held.ended.is_none()) else {
+    /// The pointer let go of the drag it held, over the space of `frame`.
+    fn drag_ends(&mut self, frame: &SpaceFrame, cx: &mut Context<Self>) {
+        let Some(mut held) = self.held.clone().filter(|held| held.space == frame.key && held.ended.is_none()) else {
             return;
         };
+        held.follow(frame);
         if !held.moved {
             self.held = None;
             return;
@@ -1106,7 +1127,7 @@ fn listen(
             let over = hitbox.is_hovered(window);
             card.update(cx, |card, cx| {
                 if event.dragging() {
-                    card.drag_to(&frame.key, event.position, event.modifiers, cx);
+                    card.drag_to(&frame, event.position, event.modifiers, cx);
                     return;
                 }
                 let hovered = found(&frame, &painted, event.position)
@@ -1122,10 +1143,10 @@ fn listen(
         }
     });
     window.on_mouse_event({
-        let card = card.clone();
+        let (frame, card) = (frame.clone(), card.clone());
         move |_: &MouseUpEvent, phase, _, cx| {
             if phase == DispatchPhase::Bubble {
-                card.update(cx, |card, cx| card.drag_ends(cx)).ok();
+                card.update(cx, |card, cx| card.drag_ends(&frame, cx)).ok();
             }
         }
     });

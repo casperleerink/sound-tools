@@ -427,6 +427,7 @@ static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
 static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
 static SENT_RENDERS: AtomicU64 = AtomicU64::new(0);
 static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
+static HEARD_TREES: AtomicU64 = AtomicU64::new(0);
 
 /// How many bytes this process told every Bun, for a test of what a frame costs.
 pub fn sent_bytes() -> u64 {
@@ -437,6 +438,16 @@ pub fn sent_bytes() -> u64 {
 /// for a test that a drag does not cross to Bun.
 pub fn sent_renders_and_events() -> (u64, u64) {
     (SENT_RENDERS.load(Ordering::Relaxed), SENT_EVENTS.load(Ordering::Relaxed))
+}
+
+/// How many new trees the windows of this process heard from every Bun, for a measurement of
+/// how long a tree takes to come.
+pub fn heard_trees() -> u64 {
+    HEARD_TREES.load(Ordering::Relaxed)
+}
+
+pub(crate) fn count_tree() {
+    HEARD_TREES.fetch_add(1, Ordering::Relaxed);
 }
 
 /// A number for one opening of a project, which every Bun of it runs for: the first, and those

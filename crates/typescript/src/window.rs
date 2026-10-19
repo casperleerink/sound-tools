@@ -1175,6 +1175,7 @@ impl Live {
                     Some(Ok((_, node))) => node.uses(),
                     _ => Uses::default(),
                 };
+                crate::bun::count_tree();
                 if std::mem::take(&mut entry.stale) {
                     self.render(card, cx);
                 }

@@ -180,3 +180,39 @@ fn a_click_on_a_step_turns_it_on_through_its_code(cx: &mut TestAppContext) {
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Turn a step on"));
 }
+
+const SKETCH: &str = r##"import { Canvas, h, number, tool } from "./sdk";
+
+tool({
+  name: "sketch",
+  title: "Sketch",
+  when: "You want to draw with the pointer",
+  doc: "Keeps where the pointer is across, in the record, at every move.",
+  kind: "source",
+  state: { x: number({ min: 0, max: 1, default: 0 }) },
+  sound: () => 0,
+  page: ({ state, update }) =>
+    h(Canvas, {
+      width: 400,
+      height: 100,
+      shapes: [{ kind: "circle", x: state.x * 400, y: 50, radius: 4, color: "#ffffff" }],
+      onDrag: (x) => update("Draw", ({ state }) => { state.x = x; }),
+    }),
+});
+"##;
+
+/// Each move draws a new tree, many more than Bun keeps the handlers of: the drag runs the
+/// handler of the newest.
+#[gpui::test]
+fn a_drawing_drag_reaches_its_code_at_every_move_through_many_trees(cx: &mut TestAppContext) {
+    let Some(mut window) = open_project(cx, &project("sketch", SKETCH)) else {
+        return;
+    };
+    let canvas = window.space("space-") + point(px(0.), px(50.));
+    window.press(canvas + point(px(10.), px(0.)));
+    for step in 1..=30 {
+        window.drag_to(canvas + point(px(10. + step as f32 * 10.), px(0.)));
+        window.until("the move to land", |window| window.record("sketch")["x"] == (10. + step as f64 * 10.) / 400.);
+    }
+    window.release(canvas + point(px(310.), px(0.)));
+}
