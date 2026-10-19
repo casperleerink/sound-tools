@@ -24,11 +24,14 @@ use sound_notes::{
 };
 use sound_signals::{
     ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, DeviceUse, Graph, Kind, LinkFrom,
-    LinkTo, Machine, Number, ParameterSpec, Placed, Program, Signals, SignalsUpdate, Sound, Values,
+    LinkTo, Machine, Number, ParameterSpec, Placed, Program, Shown, Signals, SignalsUpdate, Sound,
+    Values,
 };
 
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
+use crate::feeds::{meter_name, played_name};
+use crate::meter::Meter;
 use crate::{FOLDER, samples, tree};
 
 /// A tool as `host.ts` sends it.
@@ -1276,7 +1279,7 @@ fn devices(
                 continue;
             };
             let name = format!("device{index}:{}", number.field);
-            let cable = cable::<Number, Automation>(name, into, &mut made, context)?;
+            let cable = cable::<Number, Automation>(name, into, None, &mut made, context)?;
             if let (Some(cable), Some(stage)) = (cable, stages.get(number.stage)) {
                 let sent = OutputEndpoint::new(*stage, Signals::device_number(number.index));
                 context.connect(sent.to(cable))?;
@@ -1391,7 +1394,7 @@ enum Carries {
 impl Key {
     fn carries(self) -> Carries {
         match self {
-            Key::Port => Carries::Sound,
+            Key::Port | Key::Meter => Carries::Sound,
             Key::Notes => Carries::Notes,
             Key::Number | Key::Live => Carries::Number,
             Key::Bang | Key::Trigger => Carries::Bang,
@@ -1403,7 +1406,7 @@ impl Key {
     fn fits(self, output: bool) -> bool {
         match self {
             Key::Live | Key::Trigger => !output,
-            Key::Bang => output,
+            Key::Bang | Key::Meter => output,
             Key::Port | Key::Notes | Key::Number => true,
         }
     }
@@ -1439,7 +1442,7 @@ fn own_ports(
 }
 
 /// What a connection may name, for a problem that says so.
-const ENDS: &str = "a sound goes from { child, port? } or { port: \"audio\" } to the same, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }";
+const ENDS: &str = "a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }";
 
 /// Makes the connections of `declaration`, between the children and the `own` ports of the
 /// owner, with the tool of each child that is a tool of this project in `child_tools`. A
@@ -1478,7 +1481,9 @@ fn wire(
         };
         let from_child = connection.from.child.as_deref();
         let to_child = connection.to.child.as_deref();
-        let fits = from_key.fits(from_child.is_some()) && to_key.fits(to_child.is_none());
+        let fits = from_key.fits(from_child.is_some())
+            && to_key.fits(to_child.is_none())
+            && from_key != Key::Meter;
         if from_key.carries() != to_key.carries() || !fits {
             let (from, to) = (&connection.from, &connection.to);
             context.problem(format!(
@@ -1523,9 +1528,21 @@ fn wire(
             (Some(child), Key::Port | Key::Notes) => {
                 input_of(&feeds, (child, to_name), &at, context)
             }
+            (None, Key::Meter) => {
+                let (peaks, scope) = (
+                    context.peaks(&meter_name(to_name)),
+                    context.scope(&meter_name(to_name)),
+                );
+                let meter = context.processor(&meter_name(to_name), || Meter::new(peaks, scope))?;
+                Some((InputEndpoint::new(meter, Meter::INPUT), None))
+            }
             (Some(child), Key::Number) => match automation(child, to_name, &at, context) {
-                Some(into) => (cable::<Number, Automation>(name, into, &mut cables, context)?)
-                    .map(|input| (input, None)),
+                Some(into) => {
+                    // What it plays, for a view that shows the number as it plays.
+                    let shown = context.watch(&played_name(&format!("{child}.{to_name}")));
+                    (cable::<Number, Automation>(name, into, Some(shown), &mut cables, context)?)
+                        .map(|input| (input, None))
+                }
                 None => None,
             },
             (Some(child), Key::Live) => {
@@ -1539,7 +1556,7 @@ fn wire(
                     .map(|input| (input, None))
             }
             // Refused by `fits`.
-            (None, Key::Live | Key::Trigger) | (Some(_), Key::Bang) => None,
+            (None, Key::Live | Key::Trigger) | (Some(_), Key::Bang | Key::Meter) => None,
         };
         let Some((input, feed)) = into else {
             continue;
@@ -1640,7 +1657,7 @@ fn automation(
 /// Where a connection `at` into the live control `name` of `child` goes, or into its trigger
 /// when not `live`. A tool of this project in `child_tools` takes all of them on one input, so a
 /// cable says which; another, such as a sequencer, takes each on an input of its own.
-fn control<From: Event>(
+fn control<From: Event + Shown>(
     cable_name: String,
     (child, name, live): (&str, &str, bool),
     child_tools: &BTreeMap<String, &ToolInfo>,
@@ -1666,7 +1683,7 @@ where
             // At most `MAX_LIVES` of each kind, far under `u16::MAX`.
             let place = u16::try_from(index).unwrap_or(u16::MAX);
             let into = (input, place);
-            cable::<From, sound_signals::Control>(cable_name, into, made, context)
+            cable::<From, sound_signals::Control>(cable_name, into, None, made, context)
         }
         _ => {
             let kind = if live { "live control" } else { "trigger" };
@@ -1688,16 +1705,24 @@ where
 
 /// A [`Cable`] named `name` that delivers what reaches it at `place` of `into`. `None` for a
 /// cable `made` already: the same connection twice is one.
-fn cable<From: Event, To: Placed<From>>(
+fn cable<From: Event + Shown, To: Placed<From>>(
     name: String,
     (into, place): (InputEndpoint, u16),
+    shown: Option<Watch>,
     made: &mut BTreeSet<String>,
     context: &mut BehaviourContext<'_>,
 ) -> Result<Option<InputEndpoint>, BehaviourError> {
     if !made.insert(name.clone()) {
         return Ok(None);
     }
-    let cable = context.processor(&name, Cable::<From, To>::default)?;
+    let cable = context.processor(&name, || match shown {
+        Some(watch) => {
+            // Nothing shows until it delivers.
+            watch.set(f32::NAN);
+            Cable::<From, To>::showing(watch)
+        }
+        None => Cable::<From, To>::default(),
+    })?;
     if context.changed(&name, key(&place)) {
         context.update(cable, place)?;
     }

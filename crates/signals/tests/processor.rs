@@ -828,7 +828,7 @@ fn patched_in(
 }
 
 /// A [`Cable`] from `output` of `sender` into the controls of `receiver`, at `place`.
-fn cable<From: sound_core::Event>(
+fn cable<From: sound_core::Event + sound_signals::Shown>(
     edit: &mut sound_core::Edit<'_>,
     (sender, output): (Node<Signals>, EventOutput<From>),
     (receiver, place): (Node<Signals>, u16),

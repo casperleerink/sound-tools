@@ -273,11 +273,15 @@ impl<'de> Deserialize<'de> for Drawn {
 }
 
 /// What the code of a card read as it drew, so the window asks for a tree again only when that
-/// changed. `state` names the fields it read, or is `None` for all of them.
+/// changed. `state` names the fields of its record it read, or is `None` for all of them.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub(crate) struct Reads {
     pub state: Option<Vec<String>>,
+    /// Whether it read which children there are; `child_fields` names the fields of theirs it
+    /// read, as `child.field`, or is `None` for all of them.
     pub children: bool,
+    #[serde(default)]
+    pub child_fields: Option<Vec<String>>,
     pub watches: bool,
     pub transport: bool,
 }
@@ -288,6 +292,7 @@ impl Default for Reads {
         Self {
             state: None,
             children: true,
+            child_fields: None,
             watches: true,
             transport: true,
         }

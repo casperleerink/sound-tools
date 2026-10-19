@@ -56,7 +56,7 @@ type Sent = { [key: string]: unknown };
 type Handler = (payload: never) => unknown;
 
 /** What the code of a card read as it drew: it draws again only when one of those changes. */
-type Reads = { state: Set<string>; all: boolean; children: boolean; watches: boolean; transport: boolean };
+type Reads = { state: Set<string>; all: boolean; children: boolean; childFields: Set<string>; childAll: boolean; watches: boolean; transport: boolean };
 
 /** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function say(message: object) {
@@ -794,8 +794,31 @@ function contextOf<Extra extends object>(
     state: { enumerable: true, value: state },
     watches: read("watches", () => watches),
     transport: read("transport", () => transport),
-    children: read("children", () => (children ??= childrenOf(instance))),
+    children: read("children", () => (children ??= reads ? childrenOf(instance).map((child) => trackedChild(child, reads)) : childrenOf(instance))),
   }) as typeof context & { state: State; watches: Watches; transport: Transport; children: OwnedChild[] };
+}
+
+/** A child whose `state` notes in `reads` each field code reads of it, as `child.field`. */
+function trackedChild(child: OwnedChild, reads: Reads): OwnedChild {
+  const state = new Proxy(child.state as object, {
+    get(target, name, receiver) {
+      if (typeof name === "string") {
+        reads.childFields.add(`${child.name}.${name}`);
+      }
+      return Reflect.get(target, name, receiver);
+    },
+    has(target, name) {
+      if (typeof name === "string") {
+        reads.childFields.add(`${child.name}.${name}`);
+      }
+      return Reflect.has(target, name);
+    },
+    ownKeys(target) {
+      reads.childAll = true;
+      return Reflect.ownKeys(target);
+    },
+  });
+  return { ...child, state } as OwnedChild;
 }
 
 /** `state` that notes in `reads` each field code reads of it. */
@@ -836,7 +859,7 @@ function render(request: Render, event = false) {
   const { tool } = record;
   drawn.set(card, { ...request, tool });
   let same = false;
-  const reads: Reads = { state: new Set(), all: false, children: false, watches: false, transport: false };
+  const reads: Reads = { state: new Set(), all: false, children: false, childFields: new Set(), childAll: false, watches: false, transport: false };
   const tree = made(() => {
     // Such as a tool whose file this Bun runs without.
     const spec = specOf(tool);
@@ -866,7 +889,13 @@ function render(request: Render, event = false) {
   if ("Err" in tree) {
     lastTrees.delete(card);
   }
-  const read = { state: reads.all ? null : [...reads.state], children: reads.children, watches: reads.watches, transport: reads.transport };
+  const read = {
+    state: reads.all ? null : [...reads.state],
+    children: reads.children,
+    child_fields: reads.childAll ? null : [...reads.childFields],
+    watches: reads.watches,
+    transport: reads.transport,
+  };
   if (same) {
     say({ type: "unchanged", card, reads: read, event });
   } else if ("Err" in tree) {

@@ -29,6 +29,7 @@ use crate::bun::{
     Telling, Transport, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
+use crate::feeds::played_name;
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
 use crate::tools::{Control, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
 use crate::tree::{Node, Uses};
@@ -119,6 +120,8 @@ struct Card {
     /// the record asks for a tree again only when what the code read changed.
     reads: Reads,
     drawn_record: Option<Value>,
+    /// The fields of children the code read, as they were when its tree came, as `child.field`.
+    drawn_children: BTreeMap<String, Option<Value>>,
     /// The record told with the render out, which the next tree is drawn from.
     asked_record: Option<Value>,
     /// The presses and drags of the card told to its code, and how many of them its code
@@ -457,6 +460,13 @@ fn told_to_bun(project: &Project, tools: &[ToolInfo], id: &InstanceId) -> bool {
     ours(id) || id.parent().is_some_and(|parent| ours(&parent))
 }
 
+/// The field `child.field` of a child of `id` as its record holds it.
+fn child_field(project: &Project, id: &InstanceId, name: &str) -> Option<Value> {
+    let (child, field) = name.split_once('.')?;
+    let record = state_of(project, &id.child(child).ok()?)?;
+    record.get(field).cloned()
+}
+
 /// The watches of `id` as its code reads them: its own, and those of each child as
 /// `<child>.<watch>`, such as what a sequencer plays.
 fn watches_of(project: &Project, id: &InstanceId) -> BTreeMap<String, f32> {
@@ -466,6 +476,8 @@ fn watches_of(project: &Project, id: &InstanceId) -> BTreeMap<String, f32> {
         watches.map(|(name, watch)| (format!("{}.{name}", child.name()), watch))
     });
     let watches = project.watches(id).into_iter().chain(children);
+    // What a cable plays is read as it plays, by live values, and draws no new tree.
+    let watches = watches.filter(|(name, _)| !name.starts_with(&played_name("")));
     watches.map(|(name, watch)| (name, watch.get())).collect()
 }
 
@@ -557,6 +569,7 @@ impl Live {
             uses: Uses::default(),
             reads: Reads::default(),
             drawn_record: None,
+            drawn_children: BTreeMap::new(),
             asked_record: None,
             events_sent: 0,
             events_answered: 0,
@@ -704,7 +717,7 @@ impl Live {
     pub(crate) fn uses(&self, card: u64) -> Uses {
         self.cards
             .get(&card)
-            .map_or(Uses::default(), |entry| entry.uses)
+            .map_or(Uses::default(), |entry| entry.uses.clone())
     }
 
     /// Where each live control of the instance was put last.
@@ -714,12 +727,28 @@ impl Live {
 
     /// The record of the card, or of a child of it, changed: its tree is drawn again when its
     /// code read what changed. Its live values follow by themselves.
-    pub(crate) fn record_changed(&mut self, card: u64, id: &InstanceId, cx: &mut Context<Self>) {
+    pub(crate) fn record_changed(
+        &mut self,
+        card: u64,
+        id: &InstanceId,
+        listed: bool,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
             return;
         };
         let read = if *id != entry.id {
+            let project = session.read(cx).project();
+            let field_changed = |name: &String| {
+                let drawn = entry.drawn_children.get(name).cloned().flatten();
+                name.split_once('.')
+                    .is_some_and(|(child, _)| child == id.name())
+                    && child_field(project, &entry.id, name) != drawn
+            };
             entry.reads.children
+                && (listed
+                    || (entry.reads.child_fields.as_ref())
+                        .is_none_or(|fields| fields.iter().any(field_changed)))
         } else {
             match (&entry.reads.state, &entry.drawn_record) {
                 (Some(names), Some(drawn)) => {
@@ -1152,6 +1181,18 @@ impl Live {
         }
     }
 
+    /// Keeps the fields of children the code of `entry` read, as they are as its tree comes.
+    fn keep_children_drawn(entry: &mut Card, session: Option<Entity<Session>>, cx: &App) {
+        let (Some(session), Some(fields)) = (session, &entry.reads.child_fields) else {
+            entry.drawn_children.clear();
+            return;
+        };
+        let project = session.read(cx).project();
+        entry.drawn_children = (fields.iter())
+            .map(|name| (name.clone(), child_field(project, &entry.id, name)))
+            .collect();
+    }
+
     fn heard(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
             Event::Framed => {
@@ -1178,6 +1219,7 @@ impl Live {
                     return;
                 };
                 entry.answered(reads, event);
+                Self::keep_children_drawn(entry, self.session.upgrade(), cx);
                 entry.tree =
                     Some(tree.and_then(|(version, Drawn(node))| Ok((version, Rc::new(node?)))));
                 entry.uses = match &entry.tree {
@@ -1192,6 +1234,7 @@ impl Live {
             Event::Unchanged { card, reads, event } => {
                 if let Some(entry) = self.cards.get_mut(&card) {
                     entry.answered(reads, event);
+                    Self::keep_children_drawn(entry, self.session.upgrade(), cx);
                     if std::mem::take(&mut entry.stale) {
                         self.render(card, cx);
                     }

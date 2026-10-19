@@ -6,8 +6,9 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 use sound_core::ValueRange;
 
+use crate::feeds::Feeds;
 use crate::tools::{Control, Field, ToolInfo, knob_range};
-use crate::tree::{DragPart, Live, Num, SpacePart};
+use crate::tree::{Axis, DragPart, Live, Num, SpacePart};
 
 /// Where a drag is, in the units of its space, as `now.drag(id)` reads it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -94,6 +95,9 @@ pub(crate) struct Sources<'a> {
     pub played: Option<&'a BTreeMap<String, f32>>,
     pub drag: Option<(&'a str, DragNumbers)>,
     pub spaces: &'a HashMap<String, SpaceView>,
+    pub feeds: &'a Feeds,
+    /// Points per unit of the space it draws in now, across and down.
+    pub scale: (f64, f64),
 }
 
 impl Sources<'_> {
@@ -123,13 +127,59 @@ impl Sources<'_> {
     fn live(&self, live: &Live) -> f64 {
         let both = |a: &Num, b: &Num| (self.number(a), self.number(b));
         let truth = |holds: bool| f64::from(u8::from(holds));
+        let along = |(value, range): (f32, Option<ValueRange>), fraction: bool| {
+            let range = range.filter(|_| fraction);
+            f64::from(range.map_or(value, |range| range.position(value)))
+        };
+        let channel = |peaks: [f32; 2], channel: Option<u8>| {
+            f64::from(match channel {
+                Some(0) => peaks[0],
+                Some(_) => peaks[1],
+                None => peaks[0].max(peaks[1]),
+            })
+        };
         match live {
             Live::Tick => self.tick,
+            Live::Time => self.feeds.time,
             Live::Watch { name } => self.watches.get(name).copied().map_or(0.0, f64::from),
-            Live::Field { name, fraction } => {
+            Live::Field {
+                name,
+                fraction,
+                child: None,
+            } => {
                 let value = self.field(name).unwrap_or(0.0);
-                let range = field_range(self.info, name).filter(|_| *fraction);
-                f64::from(range.map_or(value, |range| range.position(value)))
+                along((value, field_range(self.info, name)), *fraction)
+            }
+            Live::Field {
+                name,
+                fraction,
+                child: Some(child),
+            } => {
+                let field = self.feeds.children.get(&format!("{child}.{name}"));
+                field.map_or(0.0, |field| along(*field, *fraction))
+            }
+            Live::Played { name, fraction } => {
+                let played = self.feeds.played.get(name);
+                played.map_or(0.0, |played| along(*played, *fraction))
+            }
+            Live::Peak {
+                name,
+                channel: which,
+            } => {
+                let peaks = self.feeds.peaks.get(name).copied().unwrap_or_default();
+                channel(peaks, *which)
+            }
+            Live::Output { channel: which } => channel(self.feeds.output, *which),
+            Live::Points { points, axis } => {
+                let scale = match axis {
+                    Axis::X => self.scale.0,
+                    Axis::Y => self.scale.1,
+                };
+                if scale > 0.0 {
+                    f64::from(*points) / scale
+                } else {
+                    0.0
+                }
             }
             Live::Control { name, fraction } => {
                 let value = self.control(name).unwrap_or(0.0);
@@ -185,6 +235,15 @@ impl Sources<'_> {
                 let (a, b) = both(a, b);
                 truth(a != b)
             }
+            Live::Mod { a, b } => {
+                let (a, b) = both(a, b);
+                if b == 0.0 { 0.0 } else { a.rem_euclid(b) }
+            }
+            Live::Pow { a, b } => {
+                let (a, b) = both(a, b);
+                let power = a.powf(b);
+                if power.is_finite() { power } else { 0.0 }
+            }
             Live::Snap { a, b } => {
                 let (value, step) = both(a, b);
                 snap(value, step)
@@ -195,6 +254,8 @@ impl Sources<'_> {
             Live::Round { x } => self.number(x).round(),
             Live::Sin { x } => self.number(x).sin(),
             Live::Cos { x } => self.number(x).cos(),
+            Live::Decibels { x } => (20.0 * self.number(x).abs().log10()).max(-120.0),
+            Live::Ease { x, ease, key } => self.feeds.ease(key, *ease, self.number(x)),
         }
     }
 }
@@ -251,6 +312,8 @@ mod tests {
             played: None,
             drag: Some(("move", numbers)),
             spaces: &spaces,
+            feeds: &Feeds::default(),
+            scale: (1.0, 1.0),
         };
         let moved = live(serde_json::json!({
             "op": "plus",

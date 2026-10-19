@@ -1,6 +1,8 @@
 //! The tree a card draws, as the host sends it. The types are the contract with `sdk.ts`: a
 //! field this side does not know is an error on the card, not something left out.
 
+use std::collections::BTreeSet;
+
 use gpui::{Div, Hsla, prelude::*, px};
 use serde::de::value::MapAccessDeserializer;
 use serde::de::{Error, MapAccess, Visitor};
@@ -82,30 +84,40 @@ impl<'de> Visitor<'de> for NodeVisitor {
     }
 }
 
-/// What of the window a tree moves with, without asking for a new tree.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// What of the window a tree moves with, without asking for a new tree, and what the window
+/// reads for it on every frame.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Uses {
     pub watches: bool,
     pub tick: bool,
-}
-
-impl Uses {
-    fn and(self, other: Self) -> Self {
-        Self {
-            watches: self.watches || other.watches,
-            tick: self.tick || other.tick,
-        }
-    }
+    /// It moves on every frame by itself: with the clock, the engine's levels or what a lane
+    /// or a cable plays, or as it eases.
+    pub animates: bool,
+    /// The peaks it reads, by name, and whether it reads the device output.
+    pub peaks: BTreeSet<String>,
+    pub output: bool,
+    /// The numbers it reads as they play.
+    pub played: BTreeSet<String>,
+    /// The scopes it draws.
+    pub scopes: BTreeSet<String>,
+    /// The fields of children it reads, as `child.field`.
+    pub children: BTreeSet<String>,
 }
 
 impl Node {
     pub(crate) fn uses(&self) -> Uses {
+        let mut uses = Uses::default();
+        self.add_uses(&mut uses);
+        uses
+    }
+
+    fn add_uses(&self, uses: &mut Uses) {
         match self {
-            Self::Div(DivNode { children, .. }) => (children.iter())
-                .map(Self::uses)
-                .fold(Uses::default(), Uses::and),
-            Self::Space(space) => space.uses(),
-            Self::Text(_) | Self::Sample(_) => Uses::default(),
+            Self::Div(DivNode { children, .. }) => {
+                children.iter().for_each(|child| child.add_uses(uses));
+            }
+            Self::Space(space) => space.children.iter().for_each(|shape| shape.add_uses(uses)),
+            Self::Text(_) | Self::Sample(_) => {}
         }
     }
 }
@@ -139,12 +151,6 @@ pub(crate) struct SpaceNode {
 }
 
 impl SpaceNode {
-    fn uses(&self) -> Uses {
-        self.children
-            .iter()
-            .fold(Uses::default(), |uses, shape| uses.and(shape.uses()))
-    }
-
     /// Points per unit at zoom 1, across and down.
     pub(crate) fn unit(&self) -> (f64, f64) {
         let unit = self.unit.unwrap_or_default();
@@ -218,7 +224,7 @@ pub(crate) struct Shape {
     pub width: Option<Num>,
     pub height: Option<Num>,
     pub radius: Option<Num>,
-    pub color: Option<Color>,
+    pub color: Option<Paint>,
     pub border: Option<Color>,
     pub border_width: Option<Num>,
     pub from: Option<Reach>,
@@ -227,15 +233,36 @@ pub(crate) struct Shape {
     pub unit: Option<Unit>,
     pub size: Option<f32>,
     pub align: Option<Align>,
+    /// The values a wave draws, oldest first, and the values at its bottom and its top.
+    pub list: Option<List>,
+    pub low: Option<f32>,
+    pub high: Option<f32>,
+    /// A wave as a band from the lowest to the highest value under each point, else a line.
+    #[serde(default)]
+    pub band: bool,
     /// The shapes of a group.
     #[serde(default)]
     pub children: Vec<Shape>,
 }
 
 impl Shape {
-    fn uses(&self) -> Uses {
-        let own = (self.numbers()).fold(Uses::default(), |uses, number| uses.and(number.uses()));
-        (self.children.iter()).fold(own, |uses, shape| uses.and(shape.uses()))
+    fn add_uses(&self, uses: &mut Uses) {
+        self.numbers().for_each(|number| number.add_uses(uses));
+        if let Some(Paint::Mix { by, .. }) = &self.color {
+            by.add_uses(uses);
+        }
+        match &self.list {
+            Some(List::Scope { name, .. }) => {
+                uses.scopes.insert(name.clone());
+                uses.animates = true;
+            }
+            Some(List::History { of, .. }) => {
+                of.add_uses(uses);
+                uses.animates = true;
+            }
+            None => {}
+        }
+        self.children.iter().for_each(|shape| shape.add_uses(uses));
     }
 
     fn numbers(&self) -> impl Iterator<Item = &Num> {
@@ -283,6 +310,7 @@ pub(crate) enum ShapeKind {
     Line,
     Arc,
     Text,
+    Wave,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -291,6 +319,68 @@ pub(crate) enum Align {
     Left,
     Center,
     Right,
+}
+
+/// The colour of a shape: as it is, or between two by a live value, 0 the first and 1 the second.
+#[derive(Debug, Clone)]
+pub(crate) enum Paint {
+    Fixed(Color),
+    Mix { from: Color, to: Color, by: Num },
+}
+
+impl<'de> Deserialize<'de> for Paint {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(PaintVisitor)
+    }
+}
+
+struct PaintVisitor;
+
+impl<'de> Visitor<'de> for PaintVisitor {
+    type Value = Paint;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a colour, or a mix of two")
+    }
+
+    fn visit_str<E: Error>(self, text: &str) -> Result<Paint, E> {
+        Color::try_from(text.to_string())
+            .map(Paint::Fixed)
+            .map_err(E::custom)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Paint, A::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Mix {
+            mix: [Color; 2],
+            by: Num,
+        }
+        let Mix {
+            mix: [from, to],
+            by,
+        } = Mix::deserialize(MapAccessDeserializer::new(map))?;
+        Ok(Paint::Mix { from, to, by })
+    }
+}
+
+/// What a wave draws: the last sound of a meter, or the last values of a live value, one a frame.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum List {
+    Scope {
+        name: String,
+        /// 0 left, 1 right; their mean when left out.
+        channel: Option<u8>,
+        /// How many of the last frames, at most [`sound_core::Scope::FRAMES`].
+        frames: Option<u32>,
+    },
+    History {
+        of: Num,
+        frames: u32,
+        /// The same history wherever it is drawn: its live value, as `sdk.ts` writes it.
+        key: String,
+    },
 }
 
 /// An end of a line, a point, or of an arc, a turn.
@@ -352,10 +442,9 @@ impl<'de> Visitor<'de> for NumVisitor {
 }
 
 impl Num {
-    fn uses(&self) -> Uses {
-        match self {
-            Self::Fixed(_) => Uses::default(),
-            Self::Live(live) => live.uses(),
+    fn add_uses(&self, uses: &mut Uses) {
+        if let Self::Live(live) = self {
+            live.add_uses(uses);
         }
     }
 }
@@ -365,50 +454,193 @@ impl Num {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Live {
     Tick,
-    Watch { name: String },
-    Field { name: String, fraction: bool },
-    Control { name: String, fraction: bool },
-    Drag { id: String, part: DragPart },
-    Space { key: String, part: SpacePart },
-    Plus { a: Num, b: Num },
-    Minus { a: Num, b: Num },
-    Times { a: Num, b: Num },
-    Over { a: Num, b: Num },
-    Min { a: Num, b: Num },
-    Max { a: Num, b: Num },
-    Lt { a: Num, b: Num },
-    Gt { a: Num, b: Num },
-    Le { a: Num, b: Num },
-    Ge { a: Num, b: Num },
-    Eq { a: Num, b: Num },
-    Ne { a: Num, b: Num },
-    Snap { a: Num, b: Num },
-    Negate { x: Num },
-    Abs { x: Num },
-    Floor { x: Num },
-    Round { x: Num },
-    Sin { x: Num },
-    Cos { x: Num },
+    /// Seconds on the clock of the window.
+    Time,
+    Watch {
+        name: String,
+    },
+    Field {
+        name: String,
+        fraction: bool,
+        /// Of this child's record instead.
+        child: Option<String>,
+    },
+    Control {
+        name: String,
+        fraction: bool,
+    },
+    /// The loudest sample since the last frame: of a meter its behaviour declares, or of peaks
+    /// a child keeps, as `child.name`.
+    Peak {
+        name: String,
+        /// 0 left, 1 right; the louder when left out.
+        channel: Option<u8>,
+    },
+    /// The same, of what the device plays.
+    Output {
+        channel: Option<u8>,
+    },
+    /// A number as it plays: what a lane or a cable plays into it, else its record. A child's as
+    /// `child.name`.
+    Played {
+        name: String,
+        fraction: bool,
+    },
+    Drag {
+        id: String,
+        part: DragPart,
+    },
+    Space {
+        key: String,
+        part: SpacePart,
+    },
+    /// Points along an axis of the space it is drawn in, in its units.
+    Points {
+        points: f32,
+        axis: Axis,
+    },
+    Plus {
+        a: Num,
+        b: Num,
+    },
+    Minus {
+        a: Num,
+        b: Num,
+    },
+    Times {
+        a: Num,
+        b: Num,
+    },
+    Over {
+        a: Num,
+        b: Num,
+    },
+    Mod {
+        a: Num,
+        b: Num,
+    },
+    Pow {
+        a: Num,
+        b: Num,
+    },
+    Min {
+        a: Num,
+        b: Num,
+    },
+    Max {
+        a: Num,
+        b: Num,
+    },
+    Lt {
+        a: Num,
+        b: Num,
+    },
+    Gt {
+        a: Num,
+        b: Num,
+    },
+    Le {
+        a: Num,
+        b: Num,
+    },
+    Ge {
+        a: Num,
+        b: Num,
+    },
+    Eq {
+        a: Num,
+        b: Num,
+    },
+    Ne {
+        a: Num,
+        b: Num,
+    },
+    Snap {
+        a: Num,
+        b: Num,
+    },
+    Negate {
+        x: Num,
+    },
+    Abs {
+        x: Num,
+    },
+    Floor {
+        x: Num,
+    },
+    Round {
+        x: Num,
+    },
+    Sin {
+        x: Num,
+    },
+    Cos {
+        x: Num,
+    },
+    /// An amplitude in decibels, -120 at most down.
+    Decibels {
+        x: Num,
+    },
+    /// What moves from frame to frame: `key` is its live value as `sdk.ts` writes it, so the
+    /// same one drawn twice is one, as a signal used twice is.
+    Ease {
+        x: Num,
+        ease: Ease,
+        key: String,
+    },
+}
+
+/// How a live value follows another over time.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Ease {
+    /// Glides toward it, about two thirds of the way in `ms`.
+    Smooth { ms: f32 },
+    /// Rises with it at once and falls at most `per_second`.
+    Fall { per_second: f32 },
+    /// Rises with it at once and stays for `seconds`, then follows it.
+    Hold { seconds: f32 },
 }
 
 impl Live {
-    fn uses(&self) -> Uses {
+    fn add_uses(&self, uses: &mut Uses) {
         match self {
-            Self::Tick => Uses {
-                tick: true,
-                ..Uses::default()
-            },
-            Self::Watch { .. } => Uses {
-                watches: true,
-                ..Uses::default()
-            },
-            Self::Field { .. } | Self::Control { .. } | Self::Drag { .. } | Self::Space { .. } => {
-                Uses::default()
+            Self::Tick => uses.tick = true,
+            Self::Watch { .. } => uses.watches = true,
+            Self::Time => uses.animates = true,
+            Self::Peak { name, .. } => {
+                uses.peaks.insert(name.clone());
+                uses.animates = true;
             }
+            Self::Output { .. } => {
+                uses.output = true;
+                uses.animates = true;
+            }
+            Self::Played { name, .. } => {
+                uses.played.insert(name.clone());
+                if name.contains('.') {
+                    uses.children.insert(name.clone());
+                }
+                uses.animates = true;
+            }
+            Self::Field {
+                child: Some(child),
+                name,
+                ..
+            } => {
+                uses.children.insert(format!("{child}.{name}"));
+            }
+            Self::Field { child: None, .. }
+            | Self::Control { .. }
+            | Self::Drag { .. }
+            | Self::Space { .. }
+            | Self::Points { .. } => {}
             Self::Plus { a, b }
             | Self::Minus { a, b }
             | Self::Times { a, b }
             | Self::Over { a, b }
+            | Self::Mod { a, b }
+            | Self::Pow { a, b }
             | Self::Min { a, b }
             | Self::Max { a, b }
             | Self::Lt { a, b }
@@ -417,13 +649,21 @@ impl Live {
             | Self::Ge { a, b }
             | Self::Eq { a, b }
             | Self::Ne { a, b }
-            | Self::Snap { a, b } => a.uses().and(b.uses()),
+            | Self::Snap { a, b } => {
+                a.add_uses(uses);
+                b.add_uses(uses);
+            }
             Self::Negate { x }
             | Self::Abs { x }
             | Self::Floor { x }
             | Self::Round { x }
             | Self::Sin { x }
-            | Self::Cos { x } => x.uses(),
+            | Self::Cos { x }
+            | Self::Decibels { x } => x.add_uses(uses),
+            Self::Ease { x, .. } => {
+                x.add_uses(uses);
+                uses.animates = true;
+            }
         }
     }
 }
@@ -487,6 +727,8 @@ pub(crate) enum Axis {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Turns {
     pub field: Option<String>,
+    /// The child whose `field` it turns, else its own record.
+    pub child: Option<String>,
     pub control: Option<String>,
     pub min: Option<f32>,
     pub max: Option<f32>,

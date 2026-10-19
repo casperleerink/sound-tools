@@ -837,7 +837,7 @@ export type OwnedChild<K extends ChildTools = ChildTools> = {
 }[ChildName<K>];
 
 /** The keys that name a port, one for each kind of what it carries. */
-type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger";
+type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger" | "meter";
 
 /** A port named under the key `K` and no other, so a connection joins two of one kind. */
 type Keyed<K extends PortKey, Name extends string = string> = Record<K, Name> & { [Other in Exclude<PortKey, K>]?: never };
@@ -880,6 +880,8 @@ export type ChildTrigger<K extends ChildTools = ChildTools> = PortOf<"trigger", 
 export type OwnAudio = OwnOf<"port", "audio">;
 /** What reaches the parent's own `notes`: the MIDI keyboard at the top, its track's notes in a track. */
 export type OwnNotes = OwnOf<"notes", "notes">;
+/** A meter of the parent, which keeps the level and the last sound of what reaches it, for `now.peak` and `now.scope`. */
+export type OwnMeter = OwnOf<"meter">;
 
 /**
  * Joins an output of a child, or what reaches an input of the parent, to an input of a child or
@@ -887,7 +889,7 @@ export type OwnNotes = OwnOf<"notes", "notes">;
  * is an output of the parent of that name, which passes what reaches it on to its parent.
  */
 export type Connection<K extends ChildTools = ChildTools> =
-  | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio }
+  | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio | OwnMeter }
   | { from: ChildNotes<K, true> | OwnNotes; to: ChildNotes<K> | OwnOf<"notes"> }
   | { from: ChildNumber<K, true>; to: ChildNumber<K> | ChildLive<K> | OwnOf<"number"> }
   | { from: ChildBang<K>; to: ChildTrigger<K> | OwnOf<"bang"> };
@@ -1077,13 +1079,33 @@ export interface Page<State, C extends Controls = Controls, M = unknown, K exten
 
 /** What a live value is made of, as the window gets it. */
 type LiveNode =
-  | { op: "tick" }
+  | { op: "tick" | "time" }
   | { op: "watch"; name: string }
-  | { op: "field" | "control"; name: string; fraction: boolean }
+  | { op: "field"; name: string; fraction: boolean; child?: string }
+  | { op: "control" | "played"; name: string; fraction: boolean }
+  | { op: "peak"; name: string; channel?: Channel }
+  | { op: "output"; channel?: Channel }
+  | { op: "points"; points: number; axis: "x" | "y" }
   | { op: "drag"; id: string; part: keyof DragValues }
   | { op: "space"; key: string; part: keyof SpaceValues }
-  | { op: "plus" | "minus" | "times" | "over" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
-  | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos"; x: Num };
+  | { op: "plus" | "minus" | "times" | "over" | "mod" | "pow" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
+  | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos" | "decibels"; x: Num }
+  | { op: "ease"; x: Num; ease: EaseNode; key: string };
+
+type EaseNode = { kind: "smooth"; ms: number } | { kind: "fall"; per_second: number } | { kind: "hold"; seconds: number };
+
+/** 0 the left channel, 1 the right. */
+export type Channel = 0 | 1;
+
+/** A short name of what a live value is made of: the same value drawn twice keeps one memory. */
+function keyOf(value: unknown): string {
+  const text = JSON.stringify(value);
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index++) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 16777619);
+  }
+  return (hash >>> 0).toString(36) + text.length.toString(36);
+}
 
 /**
  * A number the window works out again on every frame, without running code: where the
@@ -1117,6 +1139,18 @@ export class Live {
   /** Of an angle in radians. */
   sin(): Live { return new Live({ op: "sin", x: this }); }
   cos(): Live { return new Live({ op: "cos", x: this }); }
+  /** What is left over after whole `other`s, from 0 up: `now.time.mod(1)` goes 0 to 1 every second. */
+  mod(other: Num): Live { return new Live({ op: "mod", a: this, b: other }); }
+  pow(exponent: Num): Live { return new Live({ op: "pow", a: this, b: exponent }); }
+  /** An amplitude in decibels: 1 is 0 dB; -120 at the lowest. */
+  decibels(): Live { return new Live({ op: "decibels", x: this }); }
+  /** Glides to it, about two thirds of the way in `ms`. */
+  smooth(ms: number): Live { return this.ease({ kind: "smooth", ms }); }
+  /** Rises with it at once and falls at most `perSecond` a second: a meter's bar. */
+  fall(perSecond: number): Live { return this.ease({ kind: "fall", per_second: perSecond }); }
+  /** Rises with it at once and stays `seconds` before it follows it: a meter's peak line, `level.hold(1.5).fall(0.3)`. */
+  hold(seconds: number): Live { return this.ease({ kind: "hold", seconds }); }
+  private ease(ease: EaseNode): Live { return new Live({ op: "ease", x: this, ease, key: keyOf([this, ease]) }); }
 }
 
 /** A number, or a live value the window works out on every frame. */
@@ -1152,10 +1186,17 @@ export interface SpaceValues {
 /** The numbers of fields `State` holds. */
 type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? Name : never }[keyof State] & string;
 
+/** What a wave draws: see `now.scope` and `now.history`. */
+export type WaveList =
+  | { source: "scope"; name: string; channel?: Channel; frames?: number }
+  | { source: "history"; of: Num; frames: number; key: string };
+
 /** The sources of live values, which all code gets as `now`. */
 export interface Now<State = Record<string, unknown>, C extends Controls = Controls> {
   /** Where the piece plays, in ticks: it moves on every frame as it plays. */
   tick: Live;
+  /** Seconds on the clock of the window, on every frame: `now.time.mod(1).lt(0.5)` blinks once a second. */
+  time: Live;
   /** The last value of a watch of the sound. */
   watch(name: string): Live;
   /**
@@ -1163,6 +1204,27 @@ export interface Now<State = Record<string, unknown>, C extends Controls = Contr
    * along the travel of its knob it is, 0 to 1, on a log scale for `"hz"`.
    */
   field(name: NumberNames<State>, options?: { fraction?: boolean }): Live;
+  /** A number of a child's record as it is now, also as a drag turns it, such as a fader's `gain_db`. */
+  childField(child: string, name: string, options?: { fraction?: boolean }): Live;
+  /**
+   * A number as it plays now: what a lane or a cable plays into it, else its record. A knob
+   * that shows it moves with the automation. A child's as `"child.name"`.
+   */
+  played(name: NumberNames<State> | `${string}.${string}`, options?: { fraction?: boolean }): Live;
+  /**
+   * The loudest sample since the last frame, 0 to 1 and above when it clips: of a meter the
+   * behaviour declares, `{ from: { child: "bass" }, to: { meter: "bass" } }`, or of peaks a
+   * child keeps, as `"child.name"`. The louder channel unless `channel` says.
+   */
+  peak(name: string, channel?: Channel): Live;
+  /** The same, of what the device plays. */
+  output(channel?: Channel): Live;
+  /** `points` points along an axis of the space it is drawn in, in its units: a bar 4 points wide at any zoom. */
+  pt(points: number, axis?: "x" | "y"): Live;
+  /** The last sound of a meter, as `peak` names it, for a `Wave`: -1 to 1, `frames` long (at most 8192). */
+  scope(name: string, options?: { channel?: Channel; frames?: number }): WaveList;
+  /** The last `frames` values of a live value, one a frame, for a `Wave`. */
+  history(of: Num, frames: number): WaveList;
   /** Where a live control was put last; with `fraction`, 0 to 1 over its range. */
   control(name: ControlNames<C, "live">, options?: { fraction?: boolean }): Live;
   /** The drag of `id`, see `Drag`. */
@@ -1176,8 +1238,16 @@ function sources(): Now<Record<string, number>> {
     Object.fromEntries(parts.map((each) => [each, new Live(make(each))])) as Record<Part, Live>;
   return {
     tick: new Live({ op: "tick" }),
+    time: new Live({ op: "time" }),
     watch: (name) => new Live({ op: "watch", name }),
     field: (name, options) => new Live({ op: "field", name, fraction: options?.fraction ?? false }),
+    childField: (child, name, options) => new Live({ op: "field", name, child, fraction: options?.fraction ?? false }),
+    played: (name, options) => new Live({ op: "played", name, fraction: options?.fraction ?? false }),
+    peak: (name, channel) => new Live({ op: "peak", name, channel }),
+    output: (channel) => new Live({ op: "output", channel }),
+    pt: (points, axis = "x") => new Live({ op: "points", points, axis }),
+    scope: (name, options) => ({ source: "scope", name, ...options }),
+    history: (of, frames) => ({ source: "history", of, frames, key: keyOf([of, frames]) }),
     control: (name, options) => new Live({ op: "control", name, fraction: options?.fraction ?? false }),
     drag: (id) =>
       part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
@@ -1219,10 +1289,10 @@ export interface DragResult extends Modifiers {
 
 /**
  * A number a drag turns as it goes, in the window, with no code: a knob or a fader. The whole
- * drag is one undo step for a `field`; a `control` is played, not saved. Without `min` and `max`
- * it takes the field's or the control's.
+ * drag is one undo step for a `field`, of the record or of the `child`'s; a `control` is played,
+ * not saved. Without `min` and `max` it takes the field's or the control's.
  */
-export type DragTurns = ({ field: string } | { control: string }) & {
+export type DragTurns = ({ field: string; child?: string } | { control: string }) & {
   min?: number;
   max?: number;
   /** `"hz"` turns on a log scale. */
@@ -1289,14 +1359,26 @@ export type Shape =
   | { kind: "group"; x?: Num; y?: Num; children: Child[] }
   | (Pointed &
   (
-    | { kind: "rect"; x: Num; y: Num; width: Num; height: Num; color: Color; radius?: number; border?: Color; borderWidth?: Num }
-    | { kind: "circle"; x: Num; y: Num; radius: Num; color: Color }
-    | { kind: "line"; from: [Num, Num]; to: [Num, Num]; color: Color; width?: number }
+    | { kind: "rect"; x: Num; y: Num; width: Num; height: Num; color: Paint; radius?: number; border?: Color; borderWidth?: Num }
+    | { kind: "circle"; x: Num; y: Num; radius: Num; color: Paint }
+    | { kind: "line"; from: [Num, Num]; to: [Num, Num]; color: Paint; width?: number }
     /** Along a circle from one angle to another, in turns clockwise from the top: a dial. */
-    | { kind: "arc"; x: Num; y: Num; radius: number; from: Num; to: Num; color: Color; width?: number }
+    | { kind: "arc"; x: Num; y: Num; radius: number; from: Num; to: Num; color: Paint; width?: number }
     /** Text at `x`, `y`, its top; a live number shows as a readout in `unit`. */
-    | { kind: "text"; x: Num; y: Num; text: string | Live; unit?: Unit; color?: Color; size?: number; align?: "left" | "center" | "right" }
+    | { kind: "text"; x: Num; y: Num; text: string | Live; unit?: Unit; color?: Paint; size?: number; align?: "left" | "center" | "right" }
+    /**
+     * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
+     * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
+     * the highest under each point, as a waveform.
+     */
+    | { kind: "wave"; x: Num; y: Num; width: Num; height: Num; list: WaveList; color: Paint; low?: number; high?: number; band?: boolean; size?: number }
   ));
+
+/** A colour, or one between two by a live value: see `blend`. */
+export type Paint = Color | { mix: [Color, Color]; by: Num };
+
+/** `from` at 0, `to` at 1, and between: a light that glows with a level. */
+export const blend = (from: Color, to: Color, by: Num): Paint => ({ mix: [from, to], by });
 
 /**
  * A surface that draws shapes in units of its own, such as ticks across and notes down. It
@@ -1355,6 +1437,7 @@ export const Circle = shape("circle");
 export const Line = shape("line");
 export const Arc = shape("arc");
 export const Label = shape("text");
+export const Wave = shape("wave");
 /** Shapes moved together, see `Shape`. */
 export const Group = ({ children, ...props }: { x?: Num; y?: Num; children?: Child }): Shape => ({ kind: "group", ...props, children: [children] });
 

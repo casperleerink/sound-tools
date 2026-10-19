@@ -16,7 +16,9 @@
 mod behaviours;
 mod bun;
 mod card;
+mod feeds;
 mod live;
+mod meter;
 #[cfg(test)]
 mod performance;
 mod records;
@@ -36,6 +38,7 @@ use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{take_declared, wait_for_behaviours};
 pub use bun::{heard_tree_bytes, heard_trees, sent_bytes, sent_renders_and_events};
+pub use feeds::{live_frames, shown_by_live_values};
 pub use window::{page_shows_transport, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};

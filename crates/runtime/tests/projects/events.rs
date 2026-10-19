@@ -215,7 +215,7 @@ fn a_cable_between_two_kinds_or_to_a_control_a_child_does_not_have_is_a_problem(
     assert_eq!(
         messages(&harness),
         [
-            "its behaviour declares connections[1] from { child: \"ears\", notes: \"hits\" } to { child: \"drop\", number: \"gain\" }, which do not connect: a sound goes from { child, port? } or { port: \"audio\" } to the same, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }",
+            "its behaviour declares connections[1] from { child: \"ears\", notes: \"hits\" } to { child: \"drop\", number: \"gain\" }, which do not connect: a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }",
             "its behaviour names the trigger \"gain\" of \"drop\" at connections[2].to, which it does not have: its triggers are hit",
             "its behaviour names the live control \"level\" of \"drop\" at connections[3].to, which it does not have: its live controls are gain",
         ]
