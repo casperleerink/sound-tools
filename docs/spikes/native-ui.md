@@ -33,7 +33,7 @@ The rule, the same as the sound graph's: **motion never crosses to Bun**. Bun he
 
 - Window tests (`crates/runtime/tests/window`) drive the piano roll with a simulated mouse and keys and check the records and undo steps.
 - A snapshot PNG of the piano roll page.
-- Numbers in Findings: frame time while dragging 2,000 notes, Bun round trip at release, tree size in bytes. Compare by hand with the Rust note editor.
+- Performance, measured by a repeatable test from phase 1 on, numbers in Findings with machine and profile: native frame cost at 100 / 1,000 / 2,000 elements (idle and dragging), live value cost per frame, Bun round trip and tree size at the same sizes, and old path (Bun per drag step) vs new path (Bun at release only). Compare with the Rust note editor.
 
 ## Findings
 
