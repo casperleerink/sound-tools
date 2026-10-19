@@ -576,7 +576,7 @@ fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {
     if tracks <= 12 {
         let first = window.on_lane(crate::song::BAR / 2, 0);
         window.double_click(first);
-        let editor = window.space_at("editor");
+        let editor = window.space_at("editor-t00/c00");
         window.wait_for_bun();
         let (batches, bytes) = (
             sound_typescript::heard_batches(),

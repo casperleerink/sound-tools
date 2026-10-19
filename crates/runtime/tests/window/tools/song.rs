@@ -82,9 +82,10 @@ fn a_double_click_opens_a_clip_below_and_a_double_click_there_adds_a_note(cx: &m
     let clip = window.on_lane(BAR / 2, 0);
     window.wait_for_bun();
     window.double_click(clip);
-    let editor = window.space_at("editor");
-    // Past a sixteenth into the clip, high up, where no note is: on the sixteenth.
-    window.double_click(editor + point(px(300. * ACROSS * 4.), px(4.)));
+    let editor = window.editor("t00/c00");
+    // Past a sixteenth into the clip, where no note is: on the sixteenth.
+    let pitch = super::song_view::free_pitch(&window.record("song/t00/c00"), 300.);
+    window.double_click(editor.at(300., pitch));
     window.until("the note added", |window| notes(window) == count + 1);
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Add a note"));
@@ -273,7 +274,7 @@ fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
 ) {
     let mut window = open_song(cx, 4, 12);
     window.wait_for_bun();
-    let toggle = window.until_found("div-mixer-toggle");
+    let toggle = window.until_found("button-mixer-toggle");
     window.press(toggle);
     window.release(toggle);
     let fader = window.space_at("fader-t01/mix") + point(px(20.), px(80.));

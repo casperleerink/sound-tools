@@ -17,7 +17,7 @@ const ROW = 64;
 const HEADER = 176;
 const RULER = 32;
 const MASTER_ROW = 40;
-const EDITOR = 300;
+const EDITOR = 352;
 // The panel of the chosen track, as tall as a card and the room around it.
 const RACK = 192 + 24;
 // Points per tick at zoom 1: a bar is 96 points.
@@ -60,10 +60,13 @@ type Memory = {
   open: string | null;
   armed: Set<string>;
   recording: number | null;
-  /** The track whose devices show under the timeline, and the one whose name is typed. */
+  /** The track the keyboard plays, the one whose panel shows under the timeline, and the one whose name is typed. */
   track: string | null;
+  panel: string | null;
   renaming: string | null;
   renamingClip: string | null;
+  /** What shows under the timeline in place of a track's panel: the master's, or the mixer. */
+  master: boolean;
   mixer: boolean;
   clipboard: Clipboard | null;
   /** The tracks whose automation lanes show under them, and each lane's range by `track/target`. */
@@ -193,8 +196,8 @@ export const song = tool({
   state: { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }) },
   children: parts,
   memory: (): Memory => ({
-    selected: new Set(), region: null, open: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
-    mixer: false, clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT },
+    selected: new Set(), region: null, open: null, armed: new Set(), recording: null, track: null, panel: null, renaming: null, renamingClip: null,
+    master: false, mixer: false, clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT },
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
   keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "escape"],
@@ -359,8 +362,13 @@ export const song = tool({
       const span = clips.length === 0 ? undefined : { from: Math.min(...starts), to: Math.max(...ends) };
       select([...keys][0] ?? track, { span });
     };
+    /** Shows the panel of the track `name` under the timeline, and gives it the keyboard. */
+    const openPanel = (name: string) => {
+      choose(new Set(), name);
+      [memory.panel, memory.master, memory.open] = [name, false, null];
+    };
     const openClip = (key: string) => {
-      memory.open = key;
+      [memory.open, memory.mixer, memory.master] = [key, false, false];
       memory.notes = new Set();
     };
 
@@ -526,7 +534,7 @@ export const song = tool({
           part.children.push({
             name, tool: track, state: { colour, title: `Track ${tracks().length + 1}` },
             children: [
-              { name: "synth", tool: "instrument.synth", state: {} }, { name: "fx", tool: "filter", state: {} },
+              { name: "synth", tool: "instrument.synth", state: {} },
               { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, { name: "rec", tool: "recorder", state: {} },
               ...sends,
             ],
@@ -556,6 +564,7 @@ export const song = tool({
         children.splice(0, children.length, ...children.filter((child) => child.name !== name));
       });
       if (memory.track === name) memory.track = null;
+      if (memory.panel === name) memory.panel = null;
       memory.selected = new Set([...memory.selected].filter((key) => !key.startsWith(`${name}/`)));
       if (memory.open?.startsWith(`${name}/`)) memory.open = null;
     };
@@ -592,11 +601,11 @@ export const song = tool({
       const found = (await numbers(`${track}/${child}`)).find((each) => each.name === number);
       if (found) memory.ranges = { ...memory.ranges, [`${track}/${target}`]: found };
     };
-    /** The devices of a track whose numbers a lane can move: its synth, its filter, its fader and its chain's effects. */
+    /** The devices of a track whose numbers a lane can move: its synth, its fader and its chain's effects. */
     const devicesOf = (each: Child) => {
       const effects = each.tool === "track" ? each.children.find((child) => child.name === "chain") : undefined;
       const order = effects?.tool === "chain" ? effects.state.order : [];
-      return [["synth", "Synth"], ["fx", "Filter"], ["mix", "Fader"], ...order.map((effect) => [`chain/${effect}`, effect])] as [string, string][];
+      return [["synth", "Synth"], ["mix", "Fader"], ...order.map((effect) => [`chain/${effect}`, effect])] as [string, string][];
     };
     const addLane = async (each: Child) => {
       if (each.tool !== "track") return;
@@ -706,7 +715,7 @@ export const song = tool({
             <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
               <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
               <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{() => (row() ? titleOf(row()!) : name)}</div>
-              <Button key="close-panel" icon="x" variant="ghost" size="xs" onPress={() => (memory.track = null)} />
+              <Button key="close-panel" icon="x" variant="ghost" size="xs" onPress={() => (memory.panel = null)} />
             </div>
             <div style={{ direction: "row", paddingLeft: 8, gap: 8 }}>
               <div style={{ align: "center", gap: 6 }}>
@@ -728,7 +737,6 @@ export const song = tool({
           <div style={{ width: 1, background: "alpha/5", keep: true }} />
         <div key="rack" style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 12, paddingRight: 16, align: "start", scroll: "x" }}>
           <DeviceCard path={`${name}/synth`} />
-          <DeviceCard path={`${name}/fx`} />
           <For each={order}>
             {(effect) => (
               <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && carried !== effect && moveBefore(carried, effect)}>
@@ -820,9 +828,33 @@ export const song = tool({
       </div>
     );
 
+    /** The master's panel: its fader and meter, and its limiter. */
+    const MasterPanel = () => (
+      <div style={{ height: RACK, direction: "row", keep: true }}>
+        <div style={{ width: HEADER - 1, keep: true, paddingTop: 13 }}>
+          <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 18, paddingRight: 8 }}>
+            <Icon name="circle" size={12} color="gray-800" />
+            <div style={{ grow: true, fontSize: 14, weight: "medium", color: "gray-900" }}>Master</div>
+            <Button key="close-master" icon="x" variant="ghost" size="xs" onPress={() => (memory.master = false)} />
+          </div>
+          <div style={{ paddingLeft: 8, align: "start", gap: 6 }}>
+            <div style={{ direction: "row", gap: 2 }}>
+              <Fader path="master" height={PANEL_FADER} />
+              <PeakMeter of="master" length={PANEL_FADER} />
+            </div>
+            <GainText path="master" />
+          </div>
+        </div>
+        <div style={{ width: 1, background: "alpha/5", keep: true }} />
+        <div style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 12, paddingRight: 16, align: "start" }}>
+          <DeviceCard path="limit" />
+        </div>
+      </div>
+    );
+
     /** A track's header as the window drew it: its dot and name, and under them its automation, arm, mute and solo. */
     const TrackHead = ({ each }: { each: Child }) => (
-      <div style={() => ({ height: ROW - 8, radius: 6, background: memory.track === each.name ? "alpha/5" : COLOR.clear })}>
+      <div style={() => ({ height: ROW - 8, radius: 6, background: memory.panel === each.name ? "alpha/5" : COLOR.clear })}>
         <div style={{ height: 25, paddingTop: 3, paddingLeft: 12, direction: "row", align: "center", gap: 8 }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
           {() =>
@@ -831,7 +863,7 @@ export const song = tool({
             ) : (
               <div key={`name-${each.name}`} style={() => ({ width: 124, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}
                 onPress={({ clicks, button }) =>
-                  button === "right" ? trackMenu(each) : clicks === 2 && each.tool === "track" ? (memory.renaming = each.name) : choose(new Set(), each.name)
+                  button === "right" ? trackMenu(each) : clicks === 2 && each.tool === "track" ? (memory.renaming = each.name) : openPanel(each.name)
                 }>
                 {() => titleOf(each)}
               </div>
@@ -1090,10 +1122,15 @@ export const song = tool({
         <ClipEditor
           clip={() => open()?.state}
           bars={() => starts().map((tick) => tick - (open()?.state.start ?? 0))}
-          title={() => {
-            const shown = open();
-            return shown ? `${trackName} · ${shown.state.title || shown.name}` : "";
+          name={() => {
+            const row = rows().find((each) => each.name === trackName);
+            return row ? titleOf(row) : trackName ?? "";
           }}
+          colour={() => {
+            const row = rows().find((each) => each.name === trackName);
+            return row ? colourOf(row) : "blue";
+          }}
+          id={key}
           memory={memory}
           edit={(label, change) => editClips(label, [key], change)}
           preview={(pitch) => play(pitch, { child: trackName as `audio-${string}`, seconds: 0.3 })}
@@ -1229,22 +1266,28 @@ export const song = tool({
         </div>
         <div style={{ height: 1, background: "alpha/5", keep: true }} />
         <div style={{ height: MASTER_ROW - 1, direction: "row", align: "center", keep: true }}>
-          <div key="mixer-toggle" style={{ width: HEADER - 1, height: MASTER_ROW - 1, direction: "row", align: "center", gap: 8, paddingLeft: 18 }}
-            onPress={() => (memory.mixer = !memory.mixer)}>
-            <Icon name="circle" size={12} color="gray-800" />
-            <div style={{ fontSize: 14, weight: "medium", color: "gray-900" }}>Master</div>
+          <div style={{ width: HEADER - 1, height: MASTER_ROW - 1, paddingX: 8, paddingY: 4, keep: true }}>
+            <div key="master-row" style={() => ({ grow: true, direction: "row", align: "center", gap: 8, paddingLeft: 10, radius: 6, background: memory.master ? "alpha/5" : COLOR.clear })}
+              onPress={() => ([memory.master, memory.panel, memory.mixer, memory.open] = [true, null, false, null])}>
+              <Icon name="circle" size={12} color="gray-800" />
+              <div style={{ fontSize: 14, weight: "medium", color: "gray-900" }}>Master</div>
+            </div>
           </div>
           <div style={{ width: 1, height: MASTER_ROW - 1, background: "alpha/5" }} />
+          <div style={{ grow: true }} />
+          <Button key="mixer-toggle" label="Mixer" variant="ghost" size="xs" onPress={() => ([memory.mixer, memory.master, memory.panel, memory.open] = [!memory.mixer, false, null, null])} />
+          <div style={{ width: 8 }} />
         </div>
         <div style={{ height: 1, background: "alpha/5", keep: true }} />
         {() => {
+          if (memory.open) return openEditor();
           if (memory.mixer) return <Mixer />;
+          if (memory.master) return <MasterPanel />;
           const region = memory.region;
           if (region) return <RegionPanel path={region} />;
-          const shown = memory.track;
+          const shown = memory.panel;
           return shown !== null && tracks().some((each) => each.name === shown) ? <Rack name={shown} /> : null;
         }}
-        {openEditor}
       </div>
     );
   },

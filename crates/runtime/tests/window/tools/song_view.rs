@@ -4,8 +4,8 @@
 //! sections and repeat; a region chosen and deleted. Each gesture is one undo step.
 
 use gpui::{
-    ExternalPaths, FileDropEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels,
-    Point, TestAppContext, point, px,
+    Bounds, ExternalPaths, FileDropEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
+    Pixels, Point, TestAppContext, point, px,
 };
 use sound_core::Ticks;
 
@@ -13,11 +13,58 @@ use super::song::open_song;
 use super::{Opened, write_sine};
 use crate::song::{ACROSS, BAR, HEADER, LEAD};
 
-/// Points per tick in the note editor at zoom 1, and the height of its lane, as `clip-editor.tsx` has them.
-const EDITOR_ACROSS: f32 = 0.1;
-const EDITOR_LANE: f32 = 64.;
+/// The note editor's rows and lane, as `clip-editor.tsx` has them: 12 points a pitch, a lane 56
+/// tall, and as it opens on a clip, 8 points before it and 96 after it, 24 to 192 points a beat.
+const EDITOR_ROW: f32 = 12.;
+const EDITOR_LANE: f32 = 56.;
+
+/// The note editor of one clip, as it opened on it.
+pub(super) struct Editor {
+    roll: Bounds<Pixels>,
+    lane: Point<Pixels>,
+    across: f32,
+    top: f32,
+}
+
+impl Editor {
+    /// Where `tick` of the clip and the middle of the row of `pitch` are in the roll.
+    pub(super) fn at(&self, tick: f32, pitch: u8) -> Point<Pixels> {
+        let row = 127. - f32::from(pitch) - self.top;
+        self.roll.origin + point(px(8. + tick * self.across), px(row * EDITOR_ROW + EDITOR_ROW / 2.))
+    }
+
+    /// Where `tick` of the clip is in the lane, `down` points from its top.
+    pub(super) fn lane(&self, tick: f32, down: f32) -> Point<Pixels> {
+        self.lane + point(px(8. + tick * self.across), px(down))
+    }
+}
 
 impl Opened<'_> {
+    /// The editor of `clip`, `track/clip` of the song, once it is open and fitted to the clip.
+    pub(super) fn editor(&mut self, clip: &str) -> Editor {
+        let key = format!("editor-{clip}");
+        let roll = self.space_at(&key);
+        self.wait_for_bun();
+        let selector: &'static str = format!("space-{key}").leak();
+        let roll = self.cx.debug_bounds(selector).map_or(Bounds::new(roll, Default::default()), |bounds| bounds);
+        let lane = self.space_at(&format!("{key}-lane"));
+        let record = self.record(&format!("song/{clip}"));
+        let notes = record["notes"].as_array().cloned().unwrap_or_default();
+        let field = |note: &serde_json::Value, name: &str| note[name].as_f64().unwrap_or(0.) as f32;
+        let end = notes.iter().map(|note| field(note, "start") + field(note, "length")).fold(1., f32::max);
+        let length = record["length"].as_f64().map_or(end, |length| length as f32);
+        let width = f32::from(roll.size.width);
+        let across = ((width - 104.) / length).clamp(0.025, 0.2);
+        let pitches = notes.iter().map(|note| field(note, "pitch"));
+        let middle = match (pitches.clone().reduce(f32::min), pitches.reduce(f32::max)) {
+            (Some(low), Some(high)) => (low + high) / 2.,
+            _ => 60.,
+        };
+        let height = f32::from(roll.size.height);
+        let top = ((127. - middle + 0.5) * EDITOR_ROW - height / 2.).round() / EDITOR_ROW;
+        Editor { roll, lane, across, top }
+    }
+
     fn alt_click(&mut self, position: Point<Pixels>) {
         let modifiers = Modifiers {
             alt: true,
@@ -115,7 +162,6 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
         parts,
         [
             "chain",
-            "fx",
             "mix",
             "rec",
             "send-ret-a",
@@ -271,7 +317,7 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
 
     // The filter's card shows what the lane plays into its cutoff.
     let session = window.session.clone();
-    let filter = crate::support::id("song/t00/fx");
+    let filter = crate::support::id("song/t00/chain/filter");
     assert!(
         window
             .cx
@@ -285,13 +331,13 @@ fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppCo
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 1);
     window.double_click(clip);
-    let lane = window.space_at("editor-lane");
+    let editor = window.editor("t01/c00");
 
     // The velocity of the first note, which starts the clip, dragged up.
     let velocity = window.record("song/t01/c00")["notes"][0]["velocity"]
         .as_u64()
         .unwrap_or(100);
-    let bar = lane + point(px(4.), px(EDITOR_LANE * (1. - velocity as f32 / 127.) + 3.));
+    let bar = editor.lane(1., EDITOR_LANE - 4. - 44. * velocity as f32 / 127. + 3.);
     window.press(bar);
     window.drag_to(bar - point(px(0.), px(10.)));
     window.drag_to(bar - point(px(0.), px(20.)));
@@ -304,9 +350,10 @@ fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppCo
     assert_eq!(window.undo_label().as_deref(), Some("Change velocity"));
 
     // The bend lane: a double click in its middle adds a point at rest.
-    let bend = window.until_found("div-lane-bend");
-    window.click(bend);
-    let at = lane + point(px(960. * EDITOR_ACROSS), px(EDITOR_LANE / 2.));
+    let lanes = window.until_found("div-editor-lane-pick");
+    window.click(lanes);
+    window.pick("menu-2");
+    let at = editor.lane(1000., EDITOR_LANE / 2.);
     window.double_click(at);
     window.until("a bend point", |window| {
         window.record("song/t01/c00")["bend"]
@@ -324,15 +371,15 @@ fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppCo
     );
 
     // A grid of bars: a note added half way into the second bar starts at the bar.
-    let snap = window.until_found("div-snap");
+    let snap = window.until_found("div-song-snap");
     window.click(snap);
     window.pick("menu-0");
     let notes = window.record("song/t01/c00")["notes"]
         .as_array()
         .map(Vec::len)
         .unwrap_or(0);
-    let editor = window.space_at("editor");
-    window.double_click(editor + point(px(1.5 * BAR as f32 * EDITOR_ACROSS), px(2.)));
+    let pitch = free_pitch(&window.record("song/t01/c00"), 1.5 * BAR as f32);
+    window.double_click(editor.at(1.5 * BAR as f32, pitch));
     window.until("a note added", |window| {
         window.record("song/t01/c00")["notes"]
             .as_array()
@@ -409,7 +456,7 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     assert_eq!(region["start"], 2 * BAR);
     // Its waveform shows once its length is known: a click on it chooses it.
     let inside = window.on_lane(2 * BAR + 960, 2);
-    window.until_found("div-mixer-toggle");
+    window.until_found("button-mixer-toggle");
     window.click(inside);
     window.until_found("div-region-panel");
     window.cx.simulate_keystrokes("backspace");
@@ -464,7 +511,7 @@ fn a_region_trims_from_its_end(cx: &mut TestAppContext) {
     window.drop_sine();
     // A second at 120 bpm is two beats: its end, a little inside.
     let end = window.on_lane(2 * BAR + 1920, 2) - point(px(2.), px(0.));
-    window.until_found("div-mixer-toggle");
+    window.until_found("button-mixer-toggle");
     window.press(end);
     window.drag_to(end - point(px(5.), px(0.)));
     window.drag_to(end - point(px(960. * ACROSS), px(0.)));
@@ -524,7 +571,7 @@ fn notes_are_copied_and_pasted_in_the_editor(cx: &mut TestAppContext) {
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
-    window.space_at("editor");
+    window.editor("t00/c00");
     window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
     window.after_the_runs();
@@ -548,7 +595,7 @@ fn the_editor_of_a_clip_whose_file_has_no_notes_takes_its_keys(cx: &mut TestAppC
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
-    window.space_at("editor");
+    window.editor("t00/c00");
     window.cx.simulate_keystrokes("cmd-a cmd-c");
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
@@ -568,7 +615,7 @@ fn the_editor_keeps_notes_inside_the_clip_and_forgets_what_an_undo_took(cx: &mut
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
-    window.space_at("editor");
+    window.editor("t00/c00");
     // A copy of every note a span on starts past the end of the clip.
     window.cx.simulate_keystrokes("cmd-a cmd-d");
     window.wait_for_bun();
@@ -636,7 +683,7 @@ fn a_region_after_a_tempo_change_is_as_long_as_its_file_at_that_tempo(cx: &mut T
     window.wait_for_bun();
     window.drop_sine();
     let end = window.on_lane(2 * BAR + 960, 2) - point(px(2.), px(0.));
-    window.until_found("div-mixer-toggle");
+    window.until_found("button-mixer-toggle");
     window.press(end);
     window.drag_to(end - point(px(5.), px(0.)));
     window.drag_to(end - point(px(480. * ACROSS), px(0.)));
@@ -712,7 +759,7 @@ fn notes_pasted_into_a_clip_with_no_length_are_kept(cx: &mut TestAppContext) {
     window.wait_for_bun();
     let at = window.on_lane(BAR / 4, 0);
     window.double_click(at);
-    window.space_at("editor");
+    window.editor("t00/c00");
     window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
     window.until("the notes pasted", |window| notes(window) == 2 * count);
 }
@@ -750,7 +797,7 @@ fn a_region_that_plays_its_whole_file_trims_no_further_out(cx: &mut TestAppConte
     window.wait_for_bun();
     window.drop_sine();
     let end = window.on_lane(2 * BAR + 1920, 2) - point(px(2.), px(0.));
-    window.until_found("div-mixer-toggle");
+    window.until_found("button-mixer-toggle");
     window.press(end);
     window.drag_to(end + point(px(5.), px(0.)));
     window.drag_to(end + point(px(960. * ACROSS), px(0.)));
@@ -776,9 +823,9 @@ fn a_chosen_note_stays_chosen_when_the_notes_move_in_the_list(cx: &mut TestAppCo
     window.wait_for_bun();
     let at = window.on_lane(BAR / 2, 0);
     window.double_click(at);
-    // The note of pitch 60: the editor shows pitch 84 at its top, a row of 8 points each.
-    let editor = window.space_at("editor");
-    window.click(editor + point(px(30.), px((84. - 60.) * 8. + 4.)));
+    // The note of pitch 60.
+    let editor = window.editor("t00/c00");
+    window.click(editor.at(30., 60));
     window.wait_for_bun();
     let session = window.session.clone();
     let notes =
@@ -826,4 +873,25 @@ fn a_clip_added_in_three_four_fills_its_bar(cx: &mut TestAppContext) {
         (clip["start"].as_u64(), clip["length"].as_u64()),
         (Some(2880), Some(2880))
     );
+}
+
+/// A pitch the editor shows of `clip` with no note at `tick`, near the middle of its notes.
+pub(super) fn free_pitch(clip: &serde_json::Value, tick: f32) -> u8 {
+    let notes = clip["notes"].as_array().cloned().unwrap_or_default();
+    let field = |note: &serde_json::Value, name: &str| note[name].as_f64().unwrap_or(0.) as f32;
+    let taken = |pitch: f32| {
+        notes.iter().any(|note| {
+            field(note, "pitch") == pitch
+                && field(note, "start") <= tick
+                && tick < field(note, "start") + field(note, "length")
+        })
+    };
+    let pitches: Vec<f32> = notes.iter().map(|note| field(note, "pitch")).collect();
+    let middle = pitches.iter().copied().fold(0., f32::max).min(127.) / 2.
+        + pitches.iter().copied().fold(127., f32::min) / 2.;
+    (0..20)
+        .flat_map(|step| [middle + step as f32, middle - step as f32])
+        .map(f32::round)
+        .find(|pitch| !taken(*pitch))
+        .unwrap_or(middle) as u8
 }

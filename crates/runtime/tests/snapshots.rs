@@ -12,6 +12,8 @@
 //! - `wavetable*.png`: the Wavetable, collapsed and on each page, see `snapshots/wavetable.rs`.
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
 //! - `typescript-*.png`: pages of tools of the project, see `snapshots/typescript.rs`.
+//! - `look-*.png`: the DAW template with the content of the deleted arrangement's snapshots,
+//!   see `snapshots/look.rs`.
 //!
 //! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent` or `=typescript` renders the default
 //! project and those alone.
@@ -43,6 +45,8 @@ use plugin_hosts::test_plugin_host;
 mod agent;
 #[path = "snapshots/cards.rs"]
 mod cards;
+#[path = "snapshots/look.rs"]
+mod look;
 #[allow(dead_code)]
 #[path = "shared/plugin_hosts.rs"]
 mod plugin_hosts;
@@ -240,6 +244,9 @@ fn main() -> Result<()> {
     }
     if runs("typescript") {
         typescript::snapshots(&mut cx, &save)?;
+    }
+    if runs("look") {
+        look::snapshots(&mut cx, &save)?;
     }
     if only.is_some() {
         return Ok(());

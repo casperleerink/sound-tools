@@ -1,12 +1,19 @@
-import { For, Fragment, h, Label, Line, memo, now, Rect, selector, signal, Space, type Accessor, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type MenuItem, type Note, type Press } from "./sdk";
+import { Button, For, Fragment, h, Icon, Label, Line, memo, now, Rect, selector, signal, Space, untrack, type Accessor, type Color, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type MenuItem, type Note, type Press } from "./sdk";
 
-// The note editor of one timeline: its notes on a grid of pitches, and under them a lane of
-// their velocities or of one of its expression lanes. Times are ticks from the clip's start.
+// The note editor of one timeline, as the window drew it: a header with its track and a ruler,
+// its notes on a grid of pitches, and under them a lane of their velocities or of one of its
+// expression lanes. Times are ticks from the clip's start.
 const BEAT = 960;
-const ROW = 8;
-const KEYS = 36;
-const LANE = 64;
-const ACROSS = 0.1;
+// Rows of 12 points, keys 32 wide at the right of a header 176 wide, a ruler 32 tall and a lane 56.
+const ROW = 12;
+const HEADER = 176;
+const KEYS = 32;
+const RULER = 32;
+const LANE = 56;
+// Points per tick at zoom 1, 24 a beat; it opens fitted to the clip, up to 192 a beat.
+const ACROSS = 0.025;
+// The top of a velocity of 127, and the bottom of every one, in the lane.
+const [VELOCITY_TOP, VELOCITY_BOTTOM] = [8, LANE - 4];
 /** The grids a note snaps to: a bar is as long as the bar the clip starts in. */
 export const snapsOf = (bar: number) => [
   { label: "Bar", ticks: bar },
@@ -17,13 +24,7 @@ export const snapsOf = (bar: number) => [
   { label: "Off", ticks: 0 },
 ];
 const LANES = ["velocity", "pedal", "bend", "mod_wheel", "pressure"] as const;
-const LANE_NAMES: Record<Lane, string> = { velocity: "Velocity", pedal: "Pedal", bend: "Bend", mod_wheel: "Mod", pressure: "Pressure" };
-
-const COLOR = {
-  back: "#121317", dark: "#17191e", bar: "#3a3e48", beat: "#23262d", note: "#a9b1ff", hover: "#c8cdff",
-  chosen: "#e9ebef", clear: "#00000000", playhead: "#7ee0a0", marquee: "#a9b1ff33", text: "#7c808c",
-  white: "#d8dbe2", black: "#2a2d35", off: "#2a2d35", on: "#a9b1ff",
-} as const;
+const LANE_NAMES: Record<Lane, string> = { velocity: "Velocity", pedal: "Pedal", bend: "Bend", mod_wheel: "Mod wheel", pressure: "Pressure" };
 
 export type Lane = (typeof LANES)[number];
 export type Clip = FilledStateOfTool<"timeline">;
@@ -95,7 +96,11 @@ export interface EditorProps {
   clip: Accessor<Frozen<Clip> | undefined>;
   /** Where the bars of the song start, in ticks from the clip's start. */
   bars: Accessor<readonly number[]>;
-  title: Accessor<string>;
+  /** The track's name and colour. */
+  name: Accessor<string>;
+  colour: Accessor<Color>;
+  /** Keeps the editor's scroll and zoom, and fits it to a clip once: the clip's `track/clip`. */
+  id: string;
   memory: Memory<EditorMemory>;
   /** Changes the clip as one undo step `label`. */
   edit: (label: string, change: (clip: Clip) => void) => void;
@@ -155,17 +160,25 @@ export function editorKey(key: Key, clip: Frozen<Clip> | undefined, playhead: nu
   return true;
 }
 
-/** The editor: a header with the grid and the lane, the notes, and the lane under them. */
-export function ClipEditor({ clip, bars, title, memory, edit, preview, openMenu, onClose, height }: EditorProps) {
+/** The editor: a header with the track and the ruler, the notes, and the lane under them. */
+export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview, openMenu, onClose, height }: EditorProps) {
   const isPicked = selector(() => memory.notes);
   const notes = () => clip()?.notes ?? [];
-  const bar = () => (bars()[1] ?? 4 * BEAT) - (bars()[0] ?? 0);
-  const end = () => {
+  const length = () => {
     const shown = clip();
-    return Math.max(shown ? lengthOf(shown) : 0, bars()[2] ?? 0);
+    return shown ? lengthOf(shown) : 4 * BEAT;
   };
+  const end = () => length() + 8 * BEAT;
+  const key = `editor-${id}`;
+  const space = now.space(key);
   const marquee = now.drag("note-marquee");
-  const roll = height - 28 - LANE;
+  const roll = height - RULER - LANE - 2;
+  // It opens on the clip: the middle of its notes in the middle of the roll, on whole points.
+  const [opening, middleRow] = untrack(() => {
+    const pitches = notes().map((note) => note.pitch);
+    const middle = pitches.length > 0 ? (Math.min(...pitches) + Math.max(...pitches)) / 2 : 60;
+    return [length(), Math.round((127 - middle + 0.5) * ROW - roll / 2) / ROW] as const;
+  });
 
   const change = changer(memory, edit);
   // A drag is made once: the notes are drawn again with new ones when the grid changes.
@@ -191,7 +204,7 @@ export function ClipEditor({ clip, bars, title, memory, edit, preview, openMenu,
     axis: "y",
     onEnd: ({ dy }) =>
       change("Change velocity", (all, chosen) => ({
-        notes: all.map((note, index) => (chosen.has(index) ? { ...note, velocity: Math.round(clamp(note.velocity - dy * 127, 1, 127)) } : note)),
+        notes: all.map((note, index) => (chosen.has(index) ? { ...note, velocity: Math.round(clamp(note.velocity - (dy * 127 * LANE) / (VELOCITY_BOTTOM - VELOCITY_TOP), 1, 127)) } : note)),
         chosen,
       })),
   };
@@ -231,10 +244,9 @@ export function ClipEditor({ clip, bars, title, memory, edit, preview, openMenu,
       memory.notes = new Set();
     }
   };
-  const chooseSnap = async () => {
-    const snaps = snapsOf(bar());
-    const picked = await openMenu(snaps.map(({ label, ticks }) => ({ label, checked: ticks === memory.snap })));
-    if (picked !== null) memory.snap = snaps[picked]!.ticks;
+  const chooseLane = async () => {
+    const picked = await openMenu(LANES.map((lane) => ({ label: LANE_NAMES[lane], checked: memory.lane === lane })));
+    if (picked !== null) memory.lane = LANES[picked]!;
   };
 
   // A chosen note follows the drags, natively, until the code hears the end.
@@ -242,20 +254,22 @@ export function ClipEditor({ clip, bars, title, memory, edit, preview, openMenu,
     const picked = memo(() => isPicked(noteKey(note)));
     const handle = () => Math.min(90, note.length / 3);
     const onPress = pressNote(note, index);
+    // A point short of its length and of its row, as the window drew notes apart.
     return [
-      <Rect x={() => note.start} y={() => rowOf(note.pitch)} width={() => note.length} height={1} radius={2}
+      <Rect x={() => note.start} y={() => rowOf(note.pitch)} width={() => space.pointX.negate().plus(note.length).max(space.pointX.times(2))} height={(ROW - 1) / ROW} radius={2}
         moves={() => (picked() ? ["note-move"] : undefined)} grows={() => (picked() ? ["note-resize"] : undefined)}
-        color={() => (picked() ? COLOR.chosen : COLOR.note)} hover={() => (picked() ? undefined : COLOR.hover)} cursor="grab" drag={drags.move} onPress={onPress} />,
+        color={() => (picked() ? "gray-950" : colour())} cursor="grab" drag={drags.move} onPress={onPress} />,
       <Rect x={() => note.start + note.length - handle()} y={() => rowOf(note.pitch)} width={handle} height={1}
         moves={() => (picked() ? ["note-move", "note-resize"] : undefined)}
-        color={COLOR.clear} cursor="ew-resize" drag={drags.resize} onPress={onPress} anchor={() => ({ x: note.start + note.length })} />,
+        color="#00000000" cursor="ew-resize" drag={drags.resize} onPress={onPress} anchor={() => ({ x: note.start + note.length })} />,
     ];
   };
   const VelocityBar = (note: Note, index: Accessor<number>) => {
     const picked = memo(() => isPicked(noteKey(note)));
+    const top = () => (VELOCITY_BOTTOM - ((VELOCITY_BOTTOM - VELOCITY_TOP) * note.velocity) / 127) / LANE;
     return (
-      <Rect x={() => note.start} y={() => 1 - note.velocity / 127} width={() => Math.min(note.length, 120)} height={() => note.velocity / 127}
-        moves={() => (picked() ? ["note-velocity"] : undefined)} color={() => (picked() ? COLOR.chosen : COLOR.note)}
+      <Rect x={() => note.start} y={top} width={space.pointX.times(3)} height={() => VELOCITY_BOTTOM / LANE - top()}
+        moves={() => (picked() ? ["note-velocity"] : undefined)} color={() => (picked() ? "gray-950" : (`${colour()}/70` as Color))}
         cursor="ns-resize" drag={velocityDrag} onPress={pressNote(note, index)} />
     );
   };
@@ -283,14 +297,14 @@ export function ClipEditor({ clip, bars, title, memory, edit, preview, openMenu,
             const next = () => points()[index() + 1];
             return [
               <Line from={() => [point.at, 1 - upOf(lane, point.value)] as const} to={() => [next()?.at ?? end(), 1 - upOf(lane, next()?.value ?? point.value)] as const}
-                color={COLOR.note} width={2} />,
-              <Rect x={() => point.at - 30} y={() => 1 - upOf(lane, point.value) - 0.06} width={60} height={0.12} radius={2} color={COLOR.chosen} cursor="grab"
+                color={colour} width={2} />,
+              <Rect x={() => space.pointX.times(-4).plus(point.at)} y={() => 1 - upOf(lane, point.value) - 4 / LANE} width={space.pointX.times(8)} height={8 / LANE} radius={4} color="gray-950" cursor="grab"
                 drag={pointDrag} moves={() => (pressed() === index() ? ["lane-point"] : undefined)}
                 onPress={({ alt }) => (alt ? editPoints("Remove a point", (all) => all.filter((_, each) => each !== index())) : press(index()))} />,
             ];
           }}
         </For>
-        <Label x={() => (points()[0]?.at ?? 0) + 40} y={0.04} text={() => (points().length === 0 ? "Double-click to add a point" : "")} size={9} color={COLOR.text} />
+        <Label x={() => space.pointX.times(8).plus(points()[0]?.at ?? 0)} y={0.08} text={() => (points().length === 0 ? "Double-click to add a point" : "")} size={11} color="gray-700" />
       </>
     );
   };
@@ -301,51 +315,71 @@ export function ClipEditor({ clip, bars, title, memory, edit, preview, openMenu,
   };
 
   const pitches = Array.from({ length: 128 }, (_, row) => 127 - row);
-  const lines = () => bars().filter((tick) => tick >= 0 && tick <= end());
+  const lines = () => bars().filter((tick) => tick >= -BEAT && tick <= end());
   const beats = () => {
     const starts = new Set(lines());
     return Array.from({ length: Math.ceil(end() / BEAT) }, (_, beat) => beat * BEAT).filter((tick) => !starts.has(tick));
   };
-  const across = { unit: { x: ACROSS }, extent: () => ({ x: [0, end()] as const }), zoom: { x: [0.1, 8] as const } };
-  const button = (on: boolean) => ({ paddingX: 6, paddingY: 2, radius: 4, fontSize: 10, background: on ? COLOR.on : COLOR.off, color: on ? COLOR.back : COLOR.white });
+  // The roll and what follows it across: the ruler and the lane.
+  const across = { unit: { x: ACROSS }, extent: () => ({ x: [-BEAT, end()] as const }), zoom: { x: [1, 8] as const } };
+  const Rule = () => <div style={{ width: 1, background: "alpha/5", keep: true }} />;
 
   return (
-    <div style={{ height, gap: 2, paddingX: 8 }}>
-      <div style={{ height: 24, direction: "row", gap: 8, align: "center" }}>
-        <div style={{ fontSize: 11, color: COLOR.text }}>{title}</div>
-        <div key="snap" style={button(false)} onPress={chooseSnap}>{() => `Snap ${snapsOf(bar()).find(({ ticks }) => ticks === memory.snap)?.label ?? "Off"}`}</div>
-        {LANES.map((lane) => (
-          <div key={`lane-${lane}`} style={() => button(memory.lane === lane)} onPress={() => (memory.lane = lane)}>{LANE_NAMES[lane]}</div>
-        ))}
-        <div key="close-editor" style={{ fontSize: 11, color: COLOR.on }} onPress={onClose}>Close</div>
+    <div style={{ height, keep: true }}>
+      <div style={{ height: RULER, direction: "row", keep: true }}>
+        <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8, keep: true }}>
+          <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: colour() })} />
+          <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{name}</div>
+          <Button key="close-editor" icon="x" variant="ghost" size="xs" onPress={onClose} />
+        </div>
+        <Rule />
+        <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}>
+          <For each={() => bars().map((tick, index) => ({ tick, index }))}>
+            {({ tick, index }) => [
+              <Rect x={tick} y={RULER - 8} width={space.pointX} height={8} color="alpha/10" />,
+              <Label x={space.pointX.times(8).plus(tick)} y={8} text={String(index + 1)} size={12} color="gray-700" />,
+            ]}
+          </For>
+        </Space>
       </div>
-      <div style={{ direction: "row" }}>
-        <Space key="editor-keys" width={KEYS} height={roll} unit={{ y: ROW }} extent={{ y: [0, 128] }} scroll={{ y: 127 - 84 }} follow={{ y: "editor" }}>
+      <div style={{ height: 1, background: "alpha/5", keep: true }} />
+      <div style={{ height: roll, direction: "row", keep: true }}>
+        <Space key={`${key}-keys`} width={HEADER - 1} height={roll} unit={{ y: ROW }} extent={{ y: [0, 128] }} scroll={{ y: middleRow }} follow={{ y: key }}>
           {pitches.map((pitch) => (
-            <Rect x={0} y={rowOf(pitch) + 0.04} width={isBlack(pitch) ? 22 : KEYS} height={0.92} color={isBlack(pitch) ? COLOR.black : COLOR.white}
+            <Rect x={HEADER - 1 - KEYS} y={rowOf(pitch) + 0.5 / ROW} width={KEYS} height={(ROW - 1) / ROW} color={isBlack(pitch) ? "alpha/3" : "alpha/10"}
               onPress={() => preview(pitch)} />
           ))}
           {pitches.filter((pitch) => pitch % 12 === 0).map((pitch) => (
-            <Label x={KEYS - 3} y={rowOf(pitch) + 0.05} text={`C${pitch / 12 - 1}`} size={7} color={COLOR.back} align="right" />
+            <Label x={HEADER - 1 - KEYS - 8} y={rowOf(pitch)} text={`C${pitch / 12 - 1}`} size={12} color="gray-700" align="right" />
           ))}
         </Space>
-        <Space key="editor" grow height={roll} background={COLOR.back} unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [0, end()], y: [0, 128] })}
-          zoom={{ x: [0.1, 8] }} scroll={{ y: 127 - 84 }} drag={marqueeDrag} onPress={pressEmpty}>
-          {pitches.filter(isBlack).map((pitch) => <Rect x={0} y={rowOf(pitch)} width={1e6} height={1} color={COLOR.dark} />)}
-          <For each={beats}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color={COLOR.beat} width={1} />}</For>
-          <For each={lines}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color={COLOR.bar} width={1} />}</For>
-          <Rect x={() => clip()?.length ?? end()} y={0} width={1e6} height={128} color="#00000055" />
+        <Rule />
+        <Space key={key} grow height={roll} {...across} unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-BEAT, end()] as const, y: [0, 128] as const })}
+          fit={{ x: [0, opening], before: 8, after: 96 }} scroll={{ y: middleRow }} drag={marqueeDrag} onPress={pressEmpty}>
+          {pitches.filter((pitch) => !isBlack(pitch)).map((pitch) => <Rect x={-1e6} y={rowOf(pitch)} width={2e6} height={1} color="alpha/2" />)}
+          <For each={beats}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="alpha/5" width={1} />}</For>
+          <For each={lines}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="alpha/7" width={1} />}</For>
+          <Rect x={length} y={0} width={1e6} height={128} color="#00000030" />
+          <Rect x={-1e6} y={0} width={1e6} height={128} color="#00000030" />
           {() => {
             const snap = memory.snap;
             return <For each={notes}>{NoteShapes({ move: moveDrag(snap), resize: resizeDrag(snap) })}</For>;
           }}
           <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
-            color={COLOR.marquee} opacity={marquee.active} />
+            color="alpha/5" border="alpha/20" borderWidth={1} radius={2} opacity={marquee.active} />
         </Space>
       </div>
-      <div style={{ direction: "row" }}>
-        <div style={{ width: KEYS, fontSize: 9, color: COLOR.text, paddingY: 4 }}>{() => LANE_NAMES[memory.lane]}</div>
-        <Space key="editor-lane" grow height={LANE} background={COLOR.dark} {...across} unit={{ x: ACROSS, y: LANE }} follow={{ x: "editor" }} onPress={pressLane}>
+      <div style={{ height: 1, background: "alpha/5", keep: true }} />
+      <div style={{ height: LANE, direction: "row", keep: true }}>
+        <div style={{ width: HEADER - 1, paddingLeft: 16, justify: "center", align: "start", keep: true }}>
+          <div key="editor-lane-pick" style={{ direction: "row", align: "center", gap: 6, height: 24, paddingLeft: 9, paddingRight: 8, radius: 6, background: "alpha/5", hover: "alpha/10" }}
+            onPress={chooseLane}>
+            <div style={{ fontSize: 13, weight: "medium", color: "gray-950" }}>{() => LANE_NAMES[memory.lane]}</div>
+            <Icon name="chevron-down" size={12} color="gray-700" />
+          </div>
+        </div>
+        <Rule />
+        <Space key={`${key}-lane`} grow height={LANE} {...across} unit={{ x: ACROSS, y: LANE }} follow={{ x: key }} onPress={pressLane}>
           {() => {
             const lane = memory.lane;
             return lane === "velocity" ? <For each={notes}>{VelocityBar}</For> : <ExpressionLane lane={lane} />;
