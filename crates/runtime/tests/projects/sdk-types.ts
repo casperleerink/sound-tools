@@ -180,9 +180,13 @@ tool({
   doc: "Saves each take as a child, and edits its timeline.",
   state: { count: number({ min: 0, max: 100 }) },
   behaviour: (): Declaration => ({ connections: [] }),
-  view: ({ time, transport, children }) => h("div", {}, () => `${children.length} at ${time} s, ${transport.bpm} bpm`),
-  onNotes: async ({ update, children, state, transport }, event) => {
-    const beats: number = (event.at * transport.bpm) / 60;
+  view: ({ time, clock, children }) => h("div", {}, () => `${children.length} at ${time} s, ${clock.playing ? "playing" : "stopped"}`),
+  onNotes: async ({ update, children, state, clock }, event) => {
+    const beats: number = (event.at * clock.bpm) / 60;
+    // @ts-expect-error: the clock moves only through its calls.
+    clock.tick = 0;
+    // @ts-expect-error: a jump goes to a tick, not to a bar and beat.
+    clock.jump({ bar: 2 });
     const taken: number = children.length;
     update("Save a take", ({ state, children }) => {
       state.count = taken + 1;

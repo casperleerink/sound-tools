@@ -557,11 +557,12 @@ fn a_project_without_an_arrangement_has_no_transport(cx: &mut TestAppContext) {
     }
     assert!(opened.find("computer-keys").is_some());
 
+    // No tool takes a key: the app plays none.
     opened.keys("r");
     assert!(!opened.is_recording());
     opened.keys("space");
     opened.settle();
-    assert!(opened.playhead().playing);
+    assert!(!opened.playhead().playing);
 
     opened.edit(|project| {
         let mut changes = Changes::new();
