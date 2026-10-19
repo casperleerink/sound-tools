@@ -584,12 +584,12 @@ fn a_plugin_that_is_picked_never_starts_from_a_state_file_that_was_there(cx: &mu
 #[gpui::test]
 fn every_device_a_rack_offers_has_a_card(cx: &mut TestAppContext) {
     use sound_ui::components::device_card::CardFrame;
-    use sound_ui::{Devices, Slot, Views};
+    use sound_ui::{Devices, Takes, Views};
 
     let mut opened = support::open_with_test_plugin(cx, |_| {});
     let session = opened.session.clone();
     let slot = id(SLOT);
-    for kind in [Slot::Instrument, Slot::Effect] {
+    for kind in [Takes::Notes, Takes::Audio] {
         let offers = opened.cx.update(|_, cx| Devices::offered(kind, cx));
         assert!(!offers.is_empty(), "nothing is offered for {kind:?}");
         for offer in offers {

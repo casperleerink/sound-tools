@@ -7,7 +7,7 @@
 use arrangement::TrackState;
 use gpui::{Pixels, Point, TestAppContext, point, px};
 use sound_core::InstanceId;
-use sound_ui::{DeviceOffer, Devices, OfferGroup, Slot};
+use sound_ui::{DeviceOffer, Devices, OfferGroup, Takes};
 
 use crate::support::{self, Opened, files, id, mark, one_undo_step, write_outside};
 
@@ -28,7 +28,7 @@ fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
 }
 
 fn built_in_effects(opened: &mut Opened<'_>) -> Vec<DeviceOffer> {
-    let offers = opened.cx.update(|_, cx| Devices::offered(Slot::Effect, cx));
+    let offers = opened.cx.update(|_, cx| Devices::offered(Takes::Audio, cx));
     let built_in = offers
         .into_iter()
         .filter(|offer| offer.group != OfferGroup::Plugins);

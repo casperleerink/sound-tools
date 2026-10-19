@@ -9,7 +9,7 @@ use arrangement::view::track_panel::remove_control;
 use gpui::{AssetSource, TestAppContext};
 use plugin_host::{PluginFormat, PluginRecord, Plugins, ScanCache};
 use sound_ui::components::dropdown_menu::MenuItem;
-use sound_ui::{Assets, Devices, Slot};
+use sound_ui::{Assets, Devices, Takes};
 
 use crate::plugin_hosts::{scanner, test_plugin_folders};
 use crate::support::{self, BAR, Opened, clip, id, note, test_plugin_id};
@@ -449,7 +449,7 @@ fn the_power_icon_bypasses_an_effect_as_one_undo_step(cx: &mut TestAppContext) {
 fn every_offer_names_an_icon_the_app_has(cx: &mut TestAppContext) {
     let opened = support::open_with_test_plugin(cx, |_| {});
     opened.cx.update(|_, cx| {
-        for slot in [Slot::Instrument, Slot::Effect] {
+        for slot in [Takes::Notes, Takes::Audio] {
             for offer in Devices::offered(slot, cx) {
                 let path = format!("icons/{}.svg", offer.icon);
                 let icon = Assets.load(&path).unwrap();

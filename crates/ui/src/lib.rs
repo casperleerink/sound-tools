@@ -23,7 +23,7 @@ pub use assets::Assets;
 pub use control_edit::{ControlEdit, DragEdit, weak_action, weak_callback};
 pub use device_edit::{DeviceEdit, DeviceView};
 pub use devices::{
-    DeviceLabel, DeviceOffer, Devices, LaneNumber, Needs, Numbers, OfferGroup, Slot,
+    DeviceLabel, DeviceOffer, Devices, LaneNumber, Needs, Numbers, OfferGroup, Takes,
     extension_is_enabled,
 };
 pub use focus::KeyboardFocus;

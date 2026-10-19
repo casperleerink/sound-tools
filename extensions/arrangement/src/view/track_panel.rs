@@ -63,7 +63,7 @@ use sound_ui::components::toggle::{self, Toggle};
 use sound_ui::components::volume::{self, Volume};
 use sound_ui::{
     ActiveTheme, ControlEdit, DeviceLabel, DeviceOffer, Devices, InputLevels, Lanes, Metering,
-    Recording, Session, Slot, Views, every_poll, weak_action, weak_callback,
+    Recording, Session, Takes, Views, every_poll, weak_action, weak_callback,
 };
 
 use super::clip_card::{self, ClipCard};
@@ -222,7 +222,7 @@ fn offer_entries(
 /// that says what else could go there.
 struct Device {
     slot: InstanceId,
-    kind: Slot,
+    kind: Takes,
     /// `None` while the slot is empty.
     tool: Option<&'static str>,
     view: Option<AnyView>,
@@ -238,7 +238,7 @@ impl Device {
     fn new(
         session: &Entity<Session>,
         slot: InstanceId,
-        kind: Slot,
+        kind: Takes,
         window: &mut Window,
         cx: &mut Context<TrackPanel>,
     ) -> Self {
@@ -249,8 +249,8 @@ impl Device {
         let label = device_label(session, &slot, kind, cx);
         let title = label.name.clone();
         let name = match kind {
-            Slot::Instrument => SharedString::from("instrument-picker"),
-            Slot::Effect => effect_picker(&slot),
+            Takes::Notes => SharedString::from("instrument-picker"),
+            Takes::Audio => effect_picker(&slot),
         };
         let picker = cx.new(|cx| {
             let mut picker = DropdownMenu::new(label.name, entries, cx)
@@ -274,8 +274,8 @@ impl Device {
         let frame = CardFrame::new(card_id(&slot), picker.clone());
         // The header of an effect card drags it to another place in the chain.
         let frame = match kind {
-            Slot::Instrument => frame,
-            Slot::Effect => {
+            Takes::Notes => frame,
+            Takes::Audio => {
                 let dragged = DraggedEffect {
                     slot: slot.clone(),
                     name: title,
@@ -290,8 +290,8 @@ impl Device {
         // power icon. Both hold the panel weakly, as every callback of a control does. Whether
         // it is on is read from the track record when the card draws.
         let frame = match kind {
-            Slot::Instrument => frame,
-            Slot::Effect => {
+            Takes::Notes => frame,
+            Takes::Audio => {
                 let (panel, removed, toggled) = (cx.weak_entity(), slot.clone(), slot.clone());
                 let project = session.read(cx).project();
                 let track = slot
@@ -355,7 +355,7 @@ struct SlotLabel {
     key: Option<SharedString>,
 }
 
-fn device_label(session: &Entity<Session>, slot: &InstanceId, kind: Slot, cx: &App) -> SlotLabel {
+fn device_label(session: &Entity<Session>, slot: &InstanceId, kind: Takes, cx: &App) -> SlotLabel {
     if let Some(DeviceLabel { key, name }) = Devices::label_of(session, slot, cx) {
         return SlotLabel {
             name,
@@ -363,8 +363,8 @@ fn device_label(session: &Entity<Session>, slot: &InstanceId, kind: Slot, cx: &A
         };
     }
     let empty = match kind {
-        Slot::Instrument => EMPTY_SLOT,
-        Slot::Effect => EMPTY_EFFECT_SLOT,
+        Takes::Notes => EMPTY_SLOT,
+        Takes::Audio => EMPTY_EFFECT_SLOT,
     };
     let name = match session.read(cx).project().tool_of(slot) {
         Some(tool) => tool.into(),
@@ -493,7 +493,7 @@ impl TrackPanel {
         cx.observe(&session, |panel, _, cx| panel.refill_menus(cx))
             .detach();
         let add_effect = cx.new(|cx| {
-            let offers = Devices::offered(Slot::Effect, cx);
+            let offers = Devices::offered(Takes::Audio, cx);
             let entries = offer_entries(&offers, false, &session, cx);
             DropdownMenu::new(ADD_EFFECT, entries, cx)
                 .debug_name("add-effect")
@@ -731,7 +731,7 @@ impl TrackPanel {
                 .picker
                 .update(cx, |picker, cx| picker.set_entries(entries, cx));
         }
-        let effects = Devices::offered(Slot::Effect, cx);
+        let effects = Devices::offered(Takes::Audio, cx);
         let entries = offer_entries(&effects, false, &session, cx);
         self.add_effect
             .update(cx, |add, cx| add.set_entries(entries, cx));
@@ -766,8 +766,8 @@ impl TrackPanel {
             .map(|slot| {
                 // An audio track has no instrument, so its first slot is an effect.
                 let kind = match slot.name() == crate::INSTRUMENT {
-                    true => Slot::Instrument,
-                    false => Slot::Effect,
+                    true => Takes::Notes,
+                    false => Takes::Audio,
                 };
                 match kept.iter().position(|device| device.slot == slot) {
                     Some(had) => kept.remove(had),
@@ -781,7 +781,7 @@ impl TrackPanel {
     /// and the name in the list are one group, so adding an effect is one undo step.
     fn add_effect(&mut self, key: &SharedString, cx: &mut Context<Self>) {
         self.end_drag(cx);
-        let offers = Devices::offered(Slot::Effect, cx);
+        let offers = Devices::offered(Takes::Audio, cx);
         let Some(offer) = offers.into_iter().find(|offer| offer.key == *key) else {
             return;
         };
@@ -808,7 +808,7 @@ impl TrackPanel {
     /// undo brings it back where it was, and a plugin as it sounded.
     fn remove_effect(&mut self, slot: &InstanceId, cx: &mut Context<Self>) {
         self.end_drag(cx);
-        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
+        let name = device_label(&self.session, slot, Takes::Audio, cx).name;
         let (track, slot) = (self.track.clone(), slot.clone());
         self.session.update(cx, |session, cx| {
             session.edit(cx, |project| {
@@ -822,7 +822,7 @@ impl TrackPanel {
     /// Bypasses an effect, or turns it on again: one flag on its slot in the track record, as
     /// one undo step named after it.
     fn toggle_bypass(&mut self, slot: &InstanceId, cx: &mut Context<Self>) {
-        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
+        let name = device_label(&self.session, slot, Takes::Audio, cx).name;
         self.edit_slot(slot, cx, |effect| {
             effect.bypass = !effect.bypass;
             match effect.bypass {
@@ -878,7 +878,7 @@ impl TrackPanel {
     /// A slot that is where it would go already, or that the track does not list, which a drop
     /// from another track's panel would be, is no edit. Any other error is reported.
     fn move_effect(&mut self, slot: &InstanceId, to: usize, cx: &mut Context<Self>) {
-        let name = device_label(&self.session, slot, Slot::Effect, cx).name;
+        let name = device_label(&self.session, slot, Takes::Audio, cx).name;
         let (track, slot) = (self.track.clone(), slot.clone());
         let project = self.session.read(cx).project();
         let mut changes = Changes::new();
@@ -1233,8 +1233,8 @@ impl Render for TrackPanel {
                 None => {
                     let says = match (device.tool, device.kind) {
                         (Some(_), _) => "This tool has no view.",
-                        (None, Slot::Instrument) => "This track is silent.",
-                        (None, Slot::Effect) => "This slot has no record.",
+                        (None, Takes::Notes) => "This track is silent.",
+                        (None, Takes::Audio) => "This slot has no record.",
                     };
                     let line = div()
                         .text_size(px(12.))
@@ -1254,14 +1254,14 @@ impl Render for TrackPanel {
         let ring = theme.lavender;
         let instruments = cards
             .iter()
-            .filter(|(_, kind, _)| matches!(kind, Slot::Instrument))
+            .filter(|(_, kind, _)| matches!(kind, Takes::Notes))
             .count();
         let cards: Vec<AnyElement> = cards
             .into_iter()
             .enumerate()
             .map(|(index, (slot, kind, card))| {
                 let name = SharedString::from(format!("rack-{}", slot.name()));
-                let effect = matches!(kind, Slot::Effect).then_some(slot);
+                let effect = matches!(kind, Takes::Audio).then_some(slot);
                 let to = index.saturating_sub(instruments);
                 self.drop_target(card, name, to, effect, ring, cx)
             })

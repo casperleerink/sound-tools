@@ -1,11 +1,11 @@
 //! What a composer can put in a device slot of a rack, and what to call what is in one.
 //!
-//! The track panel is a rack of slots. It knows no instrument and no plugin, so it has to be
-//! told. This registry is that telling: a list of offers, and a name per tool. Whoever makes
-//! the window fills it, as it fills [`crate::Views`], and installs it as a GPUI global.
+//! A rack of slots knows no instrument and no plugin, so it has to be told. This registry is that
+//! telling: a list of offers, and a name per tool. Whoever makes the window fills it, as it
+//! fills [`crate::Views`], and installs it as a GPUI global.
 //!
-//! Provisional and small, like the view registry. There are two kinds of slot, the instrument
-//! of a track and an effect after it, and an offer is made for one of them.
+//! Provisional and small, like the view registry. An offer is asked for by what its device takes
+//! in, see [`Takes`].
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -303,12 +303,12 @@ pub struct DeviceLabel {
     pub name: SharedString,
 }
 
-/// Which slot of a rack an offer is for. A rack asks for one kind at a time: the picker on the
-/// instrument card offers instruments, and the control that adds one offers effects.
+/// What the device of an offer takes in, by its ports: notes, which it plays into sound, or
+/// sound, which it changes. A picker asks for one at a time.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Slot {
-    Instrument,
-    Effect,
+pub enum Takes {
+    Notes,
+    Audio,
 }
 
 #[derive(Default)]
@@ -417,14 +417,14 @@ impl Devices {
         offers.push(Rc::new(move || vec![offer.clone()]));
     }
 
-    /// Everything on offer for one kind of slot, from the installed registry.
-    pub fn offered(slot: Slot, cx: &App) -> Vec<DeviceOffer> {
+    /// Everything on offer that takes `takes`, from the installed registry.
+    pub fn offered(takes: Takes, cx: &App) -> Vec<DeviceOffer> {
         let Some(devices) = cx.try_global::<Self>() else {
             return Vec::new();
         };
-        let sources = match slot {
-            Slot::Instrument => &devices.instruments,
-            Slot::Effect => &devices.effects,
+        let sources = match takes {
+            Takes::Notes => &devices.instruments,
+            Takes::Audio => &devices.effects,
         };
         sources.iter().flat_map(|list| list()).collect()
     }
