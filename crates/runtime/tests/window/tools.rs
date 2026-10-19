@@ -28,6 +28,7 @@ mod mixer;
 mod nested;
 mod performance;
 mod piano_roll;
+mod rack;
 mod recorder;
 mod song;
 mod transport;

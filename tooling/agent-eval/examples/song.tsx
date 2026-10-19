@@ -270,7 +270,7 @@ export const song = tool({
       const row = rows()[Math.floor(y)];
       const owner = row?.tool === "tape" ? row : rows().find((each) => each.tool === "tape");
       if (!owner || files.length === 0) return;
-      const start = Math.max(Math.floor(x / BEAT) * BEAT, 0);
+      const start = Math.max(Math.round(x / BEAT) * BEAT, 0);
       update("Add audio", ({ children }) => {
         const tape = children.find((child) => child.name === owner.name);
         if (tape?.tool !== "tape") return;

@@ -1,0 +1,235 @@
+//! The blocks the song builds the devices of a track with: the cards of its children, a menu
+//! of what the window offers, a text field, rows dragged onto each other and audio files
+//! dropped from the system.
+
+use gpui::{
+    ExternalPaths, FileDropEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels,
+    Point, TestAppContext, point, px,
+};
+use sound_ui::{Devices, Takes};
+
+use super::{Window, open, write_sine};
+use crate::song::{BAR, song_files};
+
+/// The song of two tracks of a clip each, the first with a reverb `room` and a utility `trim` in its chain, with
+/// the devices of that track showing.
+fn open_rack(cx: &mut TestAppContext) -> Option<Window<'_>> {
+    let mut files = song_files(2, 2);
+    files.retain(|(path, _)| path != "state/song/t00/chain/instance.json");
+    for (path, record) in [
+        ("chain/instance.json", r#"{"tool": "chain", "state": {"order": ["room", "trim"]}}"#),
+        ("chain/room.json", r#"{"tool": "reverb", "state": {}}"#),
+        ("chain/trim.json", r#"{"tool": "utility", "state": {}}"#),
+    ] {
+        files.push((format!("state/song/t00/{path}"), record.to_string()));
+    }
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let mut window = open(cx, &files)?;
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.until_found("div-effect-room");
+    Some(window)
+}
+
+impl Window<'_> {
+    fn click(&mut self, position: Point<Pixels>) {
+        self.click_with(position, MouseButton::Left);
+    }
+
+    fn click_with(&mut self, position: Point<Pixels>, button: MouseButton) {
+        self.cx
+            .simulate_mouse_move(position, None, Modifiers::default());
+        let modifiers = Modifiers::default();
+        self.cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+            first_mouse: false,
+        });
+        self.cx.simulate_event(MouseUpEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+        });
+        self.cx.run_until_parked();
+    }
+
+    fn chain_order(&mut self) -> serde_json::Value {
+        self.record("song/t00/chain")["order"].clone()
+    }
+
+    fn has(&mut self, instance: &str) -> bool {
+        let session = self.session.clone();
+        let id = crate::support::id(instance);
+        self.cx
+            .read(|cx| session.read(cx).project().tool_of(&id).is_some())
+    }
+}
+
+#[gpui::test]
+fn a_knob_on_the_card_of_an_effect_turns_its_record_as_one_undo_step(cx: &mut TestAppContext) {
+    let Some(mut window) = open_rack(cx) else {
+        return;
+    };
+    let before = window.record("song/t00/chain/room");
+    let knob = window.until_found("knob-size");
+    window.press(knob);
+    window.drag_to(knob - point(px(0.), px(20.)));
+    window.drag_to(knob - point(px(0.), px(40.)));
+    window.release(knob - point(px(0.), px(40.)));
+    let after = window.record("song/t00/chain/room");
+    assert_ne!(after["size"], before["size"]);
+    window.undo();
+    assert_eq!(window.record("song/t00/chain/room"), before);
+    assert_eq!(window.problems(), []);
+}
+
+#[gpui::test]
+fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
+    cx: &mut TestAppContext,
+) {
+    let Some(mut window) = open_rack(cx) else {
+        return;
+    };
+    let add = window.until_found("div-add-effect");
+    window.click(add);
+    // The menu lists what the window offers that takes sound, as a picker of the window does.
+    let reverb = window.cx.update(|_, cx| {
+        (Devices::offered(Takes::Audio, cx).into_iter())
+            .filter(|offer| !offer.is_command())
+            .position(|offer| offer.name == "Reverb")
+    });
+    let item: &'static str = format!("menu-{}", reverb.unwrap()).leak();
+    let item = window.until_found(item);
+    window.click(item);
+    window.until("the reverb added", |window| {
+        window.chain_order().as_array().is_some_and(|order| order.len() == 3)
+    });
+    assert_eq!(window.chain_order(), serde_json::json!(["room", "trim", "reverb"]));
+    assert!(window.has("song/t00/chain/reverb"));
+    window.after_the_runs();
+    window.undo();
+    assert_eq!(window.chain_order(), serde_json::json!(["room", "trim"]));
+    assert!(!window.has("song/t00/chain/reverb"));
+    assert_eq!(window.problems(), []);
+}
+
+#[gpui::test]
+fn the_icons_of_an_effect_card_turn_it_off_and_take_it_out(cx: &mut TestAppContext) {
+    let Some(mut window) = open_rack(cx) else {
+        return;
+    };
+    let power = window.until_found("card-song/t00/chain/room-power");
+    window.click(power);
+    window.until("the room turned off", |window| {
+        window.record("song/t00/chain")["off"] == serde_json::json!(["room"])
+    });
+    let close = window.until_found("card-song/t00/chain/trim-close");
+    window.click(close);
+    window.until("the trim taken out", |window| !window.has("song/t00/chain/trim"));
+    assert_eq!(window.chain_order(), serde_json::json!(["room"]));
+    window.after_the_runs();
+    assert_eq!(window.undo().as_deref(), Some("Remove an effect"));
+    assert!(window.has("song/t00/chain/trim"));
+    assert_eq!(window.chain_order(), serde_json::json!(["room", "trim"]));
+}
+
+#[gpui::test]
+fn an_effect_dragged_onto_another_goes_before_it_as_one_undo_step(cx: &mut TestAppContext) {
+    let Some(mut window) = open_rack(cx) else {
+        return;
+    };
+    let room = window.until_found("div-effect-room");
+    let trim = window.until_found("div-effect-trim");
+    // By the header of its card, above the knobs, which take a drag themselves.
+    let (from, to) = (trim - point(px(0.), px(60.)), room - point(px(0.), px(60.)));
+    window.press(from);
+    for step in [0.2, 0.5, 0.8, 1.0] {
+        window.drag_to(from + (to - from) * step);
+        window.find("div-effect-room");
+    }
+    window.release(to);
+    window.until("the trim moved", |window| {
+        window.chain_order() == serde_json::json!(["trim", "room"])
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo().as_deref(), Some("Move an effect"));
+    assert_eq!(window.chain_order(), serde_json::json!(["room", "trim"]));
+}
+
+#[gpui::test]
+fn a_track_is_renamed_in_a_text_field_and_space_types_there(cx: &mut TestAppContext) {
+    let Some(mut window) = open_rack(cx) else {
+        return;
+    };
+    let name = window.until_found("div-name-t00");
+    window.double_click(name);
+    window.cx.simulate_input("Bass");
+    window.cx.simulate_keystrokes("space");
+    assert!(!window.playing(), "space plays nothing while a field has the keys");
+    window.cx.simulate_input("line");
+    window.cx.simulate_keystrokes("enter");
+    window.until("the title changed", |window| {
+        window.record("song/t00")["title"] == "Bass line"
+    });
+    // Its name shows again, and a click elsewhere tells nothing more.
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.after_the_runs();
+    assert_eq!(window.undo().as_deref(), Some("Rename a track"));
+    assert_eq!(window.record("song/t00").get("title"), None);
+}
+
+#[gpui::test]
+fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
+    let Some(mut window) = open_rack(cx) else {
+        return;
+    };
+    assert!(window.has("song/t01/c00"));
+    let clip = window.on_lane(BAR / 2, 1);
+    window.wait_for_bun();
+    window.click_with(clip, MouseButton::Right);
+    let delete = window.until_found("menu-2");
+    window.click(delete);
+    window.until("the clip deleted", |window| !window.has("song/t01/c00"));
+    assert_eq!(window.problems(), []);
+}
+
+#[gpui::test]
+fn an_audio_file_dropped_on_the_audio_track_becomes_a_region_where_it_fell(
+    cx: &mut TestAppContext,
+) {
+    let Some(mut window) = open_rack(cx) else {
+        return;
+    };
+    let files = tempfile::tempdir().unwrap();
+    write_sine(files.path(), 0.5);
+    let file = files.path().join("assets/audio/sine.wav");
+    // The rows are the two tracks, then the audio track.
+    let to = window.on_lane(2 * BAR, 2);
+    let paths = ExternalPaths(vec![file].into());
+    window.cx.simulate_event(FileDropEvent::Entered {
+        position: to - point(px(20.), px(0.)),
+        paths,
+    });
+    for step in [10., 0.] {
+        window.cx.update(|window, _| window.refresh());
+        window.cx.run_until_parked();
+        let position = to - point(px(step), px(0.));
+        window
+            .cx
+            .simulate_event(FileDropEvent::Pending { position });
+    }
+    window
+        .cx
+        .simulate_event(FileDropEvent::Submit { position: to });
+    window.until("the region added", |window| window.has("song/voice/region"));
+    let region = window.record("song/voice/region");
+    assert_eq!(region["asset"], "sine.wav");
+    assert_eq!(region["start"], 2 * BAR);
+    assert_eq!(window.problems(), []);
+}
