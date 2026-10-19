@@ -476,6 +476,9 @@ impl NodeTable {
                     {
                         return Err(format!("the shape {id} has no kind"));
                     }
+                    if self.ids.contains_key(&id) {
+                        return Err(format!("the node {id} is made twice"));
+                    }
                     let uses = uses_of(&props);
                     self.counts.count(&uses, true);
                     let entry = Entry {
@@ -485,17 +488,8 @@ impl NodeTable {
                         parent: None,
                         uses,
                     };
-                    match self.ids.get(&id) {
-                        Some(&slot) => {
-                            if let Some(old) = self.slots[slot].replace(entry) {
-                                self.counts.count(&old.uses, false);
-                            }
-                        }
-                        None => {
-                            self.ids.insert(id, self.slots.len());
-                            self.slots.push(Some(entry));
-                        }
-                    }
+                    self.ids.insert(id, self.slots.len());
+                    self.slots.push(Some(entry));
                 }
                 Op::Set(id, change) => {
                     let slot = self.slot(id)?;
@@ -525,6 +519,13 @@ impl NodeTable {
                     before,
                 } => {
                     let (parent, node) = (self.slot(parent)?, self.slot(node)?);
+                    let mut above = Some(parent);
+                    while let Some(slot) = above {
+                        if slot == node {
+                            return Err("a node goes into itself or into a node inside it".to_string());
+                        }
+                        above = self.get(slot).and_then(|entry| entry.parent);
+                    }
                     let before = before.and_then(|before| self.ids.get(&before).copied());
                     let Some(entry) = self.entry_mut(node) else {
                         return Err(format!("no node to put in {parent}"));
@@ -1541,5 +1542,19 @@ mod tests {
         };
         assert!(matches!(shape.x, Some(Num::Fixed(5.0))));
         assert!(shape.hover.is_none() && shape.color.is_some());
+    }
+
+    #[test]
+    fn a_node_made_twice_or_put_inside_itself_is_an_error() {
+        let mut table = NodeTable::default();
+        let made = ops(serde_json::json!([
+            ["create", 1, "div", {}], ["create", 2, "div", {}], ["insert", 1, 2, null],
+        ]));
+        table.apply(made.unwrap()).unwrap();
+        let twice = ops(serde_json::json!([["create", 1, "div", {}]]));
+        assert!(table.apply(twice.unwrap()).unwrap_err().contains("made twice"));
+        let inside = ops(serde_json::json!([["insert", 2, 1, null]]));
+        assert!(table.apply(inside.unwrap()).unwrap_err().contains("into itself"));
+        assert_eq!(table.children_of(1), [2]);
     }
 }
