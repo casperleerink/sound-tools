@@ -232,6 +232,14 @@ page: ({ state, memory, update, now }) => {
 - `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts.
 - A drag can also turn a field or a live control as it goes, with no code, as a knob does: a drag of `{ y: { field: "cutoff" } }`; for a field the whole drag is one undo step. `onPress` hears a `Press`: where in units, the button, the clicks and the modifiers. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
 
+Levels, the clock and easing are live values too, so a meter or a light moves on every frame with no code. Paths such as `"bass/synth"` reach a record deeper down:
+
+- `now.peak(name, channel?)`: the loudest sample since the last frame of a meter the behaviour declares, `{ from: { child: "bass" }, to: { meter: "bass" } }`, or of one a child declares or keeps, `"child.name"`. `now.output()` is the device's.
+- `now.played(name)`: a number as it plays, what a lane or a cable plays into it, else its record; `"child.name"` for a child's. `now.childField(child, name)` is a child's record as a drag turns it; a drag of `{ y: { field: "gain_db", child: "bass-mix" } }` turns it.
+- `now.time`, seconds, and `.mod`, `.pow`, `.decibels()`. `.smooth(ms)`, `.fall(perSecond)` and `.hold(seconds)` follow a value over frames: a meter's bar is `level.fall(0.5)`, its peak line `level.hold(1.5).fall(0.5)`.
+- `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.time.mod(1).lt(0.5))` blinks.
+- `<Wave list>` draws a list across its box: `now.scope(name)`, the last sound of a meter, or `now.history(value, frames)`, the last values of any live value. `band` draws a waveform.
+
 ## A control loop, the keys
 
 For more than knobs, a tool keeps a `memory` and runs a control loop:

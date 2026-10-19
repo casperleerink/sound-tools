@@ -425,3 +425,212 @@ fn measure_roll(cx: &mut TestAppContext, count: usize, rows: usize) {
         sound_typescript::sent_bytes()
     );
 }
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_the_mixer_8(cx: &mut TestAppContext) {
+    measure_mixer(cx, 8);
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_the_mixer_32(cx: &mut TestAppContext) {
+    measure_mixer(cx, 32);
+}
+
+/// The mixer of `count` strips as it plays: a frame, and what it asks of Bun.
+fn measure_mixer(cx: &mut TestAppContext, count: usize) {
+    let Some(mut window) = super::mixer::open_mixer(cx, count) else {
+        return;
+    };
+    window.space_at("fader-master");
+    window.until("the master meter to show a level", |window| {
+        window.play_and_draw(800);
+        sound_typescript::shown_by_live_values("peak:master").is_some_and(|peak| peak > 0.1)
+    });
+    window.wait_for_bun();
+    let asked = sound_typescript::sent_updates_and_events();
+    let batches = sound_typescript::heard_batches();
+    let frames: Vec<Duration> = (0..MOVES * 2)
+        .map(|_| {
+            // 1/60 s of sound at 48 kHz.
+            window.loudest(800);
+            window.timed(|window| window.cx.update(|window, _| window.refresh()))
+        })
+        .collect();
+    let (updates, events) = sound_typescript::sent_updates_and_events();
+    print(
+        &format!("mixer of {count} strips: a frame as it plays"),
+        frames,
+    );
+    println!(
+        "mixer of {count} strips: {} updates, {} events and {} batches of ops in {} frames",
+        updates - asked.0,
+        events - asked.1,
+        sound_typescript::heard_batches() - batches,
+        MOVES * 2,
+    );
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_a_song_of_12_tracks_of_150_clips(cx: &mut TestAppContext) {
+    measure_song(cx, 12, 150);
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_a_song_of_24_tracks_of_600_clips(cx: &mut TestAppContext) {
+    measure_song(cx, 24, 600);
+}
+
+/// The song of `tooling/agent-eval/examples`: how long it takes to open, frames idle, as it
+/// scrolls, zooms and plays with every meter, and what a click on a clip, a move of one and a
+/// note added in the editor cost until they are drawn.
+fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {
+    let what = format!("{tracks} tracks of {clips} clips");
+    let bytes = sound_typescript::heard_bytes();
+    let opened = Instant::now();
+    let Some(mut window) = super::song::open_song(cx, tracks, clips) else {
+        return;
+    };
+    let timeline = window.space_at("timeline");
+    let (bun, apply) = sound_typescript::last_batch();
+    println!(
+        "{what}: opened and drawn in {:?}, its first ops are {} bytes; Bun {bun:.2} ms, apply {apply:.2} ms",
+        opened.elapsed(),
+        sound_typescript::heard_bytes() - bytes
+    );
+    window.wait_for_bun();
+    let idle: Vec<Duration> = (0..MOVES)
+        .map(|_| window.timed(|window| window.cx.update(|window, _| window.refresh())))
+        .collect();
+    print(&format!("{what}: an idle frame"), idle);
+    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollWheelEvent {
+        position: timeline + point(px(300.), px(100.)),
+        delta: ScrollDelta::Pixels(delta),
+        modifiers,
+        touch_phase: TouchPhase::Moved,
+    };
+    let scrolling: Vec<Duration> = (0..MOVES)
+        .map(|step| {
+            let sign = if step < MOVES / 2 { -1. } else { 1. };
+            let event = wheel(point(px(sign * 30.), px(0.)), Modifiers::default());
+            window.timed(|window| window.cx.simulate_event(event))
+        })
+        .collect();
+    print(&format!("{what}: a frame as it scrolls"), scrolling);
+    let zooming: Vec<Duration> = (0..MOVES)
+        .map(|step| {
+            // Never as far as the zoom's ends, so it comes back to where it was.
+            let sign = if step < MOVES / 2 { 1. } else { -1. };
+            let event = wheel(point(px(0.), px(sign * 4.)), Modifiers::command());
+            window.timed(|window| window.cx.simulate_event(event))
+        })
+        .collect();
+    print(&format!("{what}: a frame as it zooms"), zooming);
+
+    // A click on the second clip of the second track selects it.
+    let clip = window.on_lane(3 * crate::song::BAR + 960, 1);
+    let (batches, bytes) = (
+        sound_typescript::heard_batches(),
+        sound_typescript::heard_bytes(),
+    );
+    let clicked = Instant::now();
+    window.down(clip);
+    window.up(clip);
+    window.next_batch(
+        &format!("{what}: a click that selects a clip"),
+        clicked,
+        batches,
+        bytes,
+    );
+    window.wait_for_bun();
+
+    // It moves two bars on.
+    window.down(clip);
+    let asked = sound_typescript::sent_updates_and_events();
+    let dragging: Vec<Duration> = (1..=MOVES)
+        .map(|step| {
+            let to = clip + point(px(step as f32 * 192. / MOVES as f32), px(0.));
+            window.timed(|window| {
+                window
+                    .cx
+                    .simulate_mouse_move(to, MouseButton::Left, Modifiers::default())
+            })
+        })
+        .collect();
+    let (updates, events) = sound_typescript::sent_updates_and_events();
+    print(
+        &format!("{what}: a frame as a clip moves with the drag"),
+        dragging,
+    );
+    println!(
+        "{what}: {} updates and {} events told Bun in {MOVES} moves",
+        updates - asked.0,
+        events - asked.1
+    );
+    let (batches, bytes) = (
+        sound_typescript::heard_batches(),
+        sound_typescript::heard_bytes(),
+    );
+    let released = Instant::now();
+    window.up(clip + point(px(192.), px(0.)));
+    window.next_batch(
+        &format!("{what}: a release that moves a clip"),
+        released,
+        batches,
+        bytes,
+    );
+    window.wait_for_bun();
+
+    // The first clip of the first track opens below, and a double click adds a note to it.
+    // Under more tracks than the window is tall there is no room for it: the tracks do not
+    // scroll.
+    if tracks <= 12 {
+        let first = window.on_lane(crate::song::BAR / 2, 0);
+        window.double_click(first);
+        let editor = window.space_at("editor");
+        window.wait_for_bun();
+        let (batches, bytes) = (
+            sound_typescript::heard_batches(),
+            sound_typescript::heard_bytes(),
+        );
+        let added = Instant::now();
+        window.double_click(editor + point(px(30.), px(4.)));
+        window.next_batch(
+            &format!("{what}: a note added in the editor"),
+            added,
+            batches,
+            bytes,
+        );
+        window.wait_for_bun();
+    }
+
+    window.focus_the_window();
+    window.cx.simulate_keystrokes("space");
+    window.poll();
+    window.wait_for_bun();
+    let asked = sound_typescript::sent_updates_and_events();
+    let batches = sound_typescript::heard_batches();
+    let started = Instant::now();
+    let playing: Vec<Duration> = (0..MOVES * 2)
+        .map(|_| {
+            window.loudest(800);
+            window.timed(|window| window.cx.update(|window, _| window.refresh()))
+        })
+        .collect();
+    let seconds = started.elapsed().as_secs_f64();
+    let (updates, events) = sound_typescript::sent_updates_and_events();
+    print(
+        &format!("{what}: a frame as it plays, every meter moving"),
+        playing,
+    );
+    println!(
+        "{what}: {} updates, {} events and {} batches of ops in {} frames ({seconds:.2} s)",
+        updates - asked.0,
+        events - asked.1,
+        sound_typescript::heard_batches() - batches,
+        MOVES * 2,
+    );
+}

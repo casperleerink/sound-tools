@@ -6,11 +6,11 @@ use serde_json::{Value, json};
 const SONG: &str = include_str!("../../../../tooling/agent-eval/examples/song.tsx");
 const TRACK: &str = include_str!("../../../../tooling/agent-eval/examples/track.ts");
 
-pub const BAR: u64 = 3840;
+pub(crate) const BAR: u64 = 3840;
 /// The page's sizes, as `song.tsx` has them: a track's row and its header, and points per tick.
-pub const ROW: f32 = 40.0;
-pub const HEADER: f32 = 168.0;
-pub const ACROSS: f32 = 0.025;
+pub(crate) const ROW: f32 = 40.0;
+pub(crate) const HEADER: f32 = 168.0;
+pub(crate) const ACROSS: f32 = 0.025;
 
 /// A number from `seed`, the same on every machine.
 fn noise(seed: &mut u64) -> u64 {
@@ -22,7 +22,7 @@ fn noise(seed: &mut u64) -> u64 {
 
 /// The files of a song of `tracks` tracks with `clips` clips in all, each of 30 to 150 notes: a
 /// synth, a filter and a utility per track, and a utility `master`.
-pub fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
+pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
     let project = json!({
         "format": 1,
         "extensions": ["instrument", "filter", "utility"],

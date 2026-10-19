@@ -198,3 +198,48 @@ Goal: realistic DAW-shaped examples. A song is many small records (tracks of cli
 1. Port round 3a's feeds and mixer from `spike/native-ui` by hand (engine peaks, scope/waveform lists, time and smoothing ops, live colours, the mixer example and its tests).
 2. A TS mini-arrangement example, built only from general blocks: about 12 tracks, about 150 timelines of 30 to 150 notes, an instrument and an effect per track; a timeline page with the clips, click a clip to edit its notes in the piano roll, meters in the track headers.
 3. Measure: select and move a clip, edit notes in one clip, scroll and zoom, play with meters. Compare with the Rust arrangement where `snapshots.rs` has numbers.
+
+### Round 4b
+
+**Built.** Round 3a ported by hand onto the Solid-style model: engine peaks, the device output, numbers as they play, child fields (at any depth, by path), the clock, `.smooth`/`.fall`/`.hold`, `blend` and `Wave`; the mixer and its window tests pass. Then a song as plain example code (`tooling/agent-eval/examples/song.tsx`, `track.ts`): tracks that each own a synth, a filter, a utility and their `timeline` clips, a meter per track, clips that move on the grid (alt copies, up and down to another track) and resize, a note editor for one clip, M and S, space plays. Window tests (`crates/runtime/tests/window/tools/song.rs`) move a clip (one undo step, only its file changes), add a note in the editor, mute a track, and play with every meter moving and nothing asked of Bun. Snapshots `typescript-song.png` and `typescript-mixer.png`. One fixture (`crates/runtime/tests/shared/song.rs`) feeds the tests, the snapshots and the measurement.
+
+**Fixed on the way:** a component may read a child's `name` and `tool` as it is made: they never change (a rename is another record), and the row of a list needs them as its key. Before, that threw the "read inside a function" error.
+
+**Numbers** (M1 Max, release-fast, `measure_song` in `crates/runtime/tests/window/tools/performance.rs`; "until drawn" includes the harness's polling, about 10 ms):
+
+| Song | 12 tracks, 150 clips (13,500 notes) | 24 tracks, 600 clips (54,000 notes) |
+| --- | --- | --- |
+| Open until drawn | 220 ms (Bun mount 66 ms, 2 MB of ops) | 620 ms (Bun 223 ms, 8 MB) |
+| Idle frame | 4.9 ms | 12.6 ms |
+| Frame scrolling / zooming | 4.7 / 3.1 ms | 12.7 / 8.1 ms |
+| Frame as it plays, every meter moving | 4.9 ms, 0 Bun requests | 13.0 ms, 0 Bun requests |
+| Frame dragging a clip | 4.8 ms, 0 Bun requests | 12.6 ms, 0 Bun requests |
+| Click that selects a clip, until drawn | 19 ms (Bun 0.7 ms, 4 KB of ops) | 50 ms (Bun 0.5 ms) |
+| Release that moves a clip, until drawn | 20 ms (Bun 8.9 ms, 3 KB) | 52 ms (Bun 25 ms) |
+| Note added in the open clip, until drawn | 32 ms (Bun 1.8 ms, 0.5 KB) | not measured: no room, see below |
+| Mixer playing, 8 / 32 strips | 0.6 / 1.8 ms a frame, 0 Bun requests | |
+
+For reference, the Rust arrangement scrolls 100 tracks of 100 clips at 3.6 ms a frame (phase 1). Two costs grow with the whole song, not with what changed:
+- *Every frame places every shape.* A page draws whole when anything on it moves, and the meters and the playhead move on every frame while it plays, so the play frame costs what an idle frame does: 4.9 ms at 13,500 shapes, 13 ms at 54,000. Culling skips painting, not working out each shape's numbers. Next: keep each space's placed shapes and work out again only those whose live values move.
+- *Bun brings a page's stores up to date by walking every record under it after an update*, most likely, which is why one clip move costs 9 ms in Bun at 150 clips and 25 ms at 600. Next: reconcile only the records that changed.
+
+**Painful as an author** (what an agent will hit):
+- Inside `update`, a child's `children` and its tool's fields are optional, so every step down needs `?? []` or `?? 0`, and a push becomes a reassignment.
+- Track headers are `div`s, which cannot scroll with the timeline (a space holds shapes only, a `div` does not scroll). Past the window's height tracks are cut off and the note editor has no room.
+- A group's shapes are not clipped to a box: the notes of a clip draw past its end.
+- No JSX fragment: a component that gives several shapes wraps them in a `Group`.
+- No colour field: a `text` field and a check before it is a `Paint`.
+- Keys are all or nothing: a page with `onKey` takes every plain key, so space no longer plays. The song has no shortcuts (delete, copy) to keep space for the transport.
+- Moving a clip to another track is a new record in that track and the old one gone (the id is the path), so its file moves and its name may change. One undo step still.
+- A press on a clip that is not selected waits for Bun before the drag preview follows it (phase 2 already said so).
+
+**Too specific (to revisit)**, added to round 4a's list:
+- Keys taken all or none, as above: a page should take the keys it names.
+- A behaviour runs again in Bun on any change below its record, even a field it does not read: a fader dragged on a child sends Bun a question per move. The window's bindings already track the fields they read; behaviours could too.
+- A colour is `#rrggbb` text in shapes but no field kind holds one.
+
+**Verdict.** The model carries an arrangement-shaped page: at a realistic size (12 tracks, 150 clips) every frame stays under 5 ms, nothing that moves asks Bun, and a click or a release is drawn in about 20 ms, all from about 300 lines of example code with no DAW-specific block. A full TS arrangement template is realistic once two SDK costs stop growing with the song (above), and these blocks exist:
+- audio clips (stereo, long files, trims, fades), automation lanes into any device number, expression lanes;
+- recording into timeline records and audio takes into `assets/`;
+- rows that scroll with a space (headers next to a timeline), clipping, menus, text input (rename), file drop, drag to reorder, a built-in device's card inside a page (the track panel);
+- keys a page takes one by one.
