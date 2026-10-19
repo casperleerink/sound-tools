@@ -369,7 +369,7 @@ def setup_daw(folder: Path) -> None:
     """The folder as a new DAW project: the arrangement the runtime made is replaced."""
     (folder / "project.json").unlink()
     shutil.rmtree(folder / "state")
-    shutil.copytree(DAW, folder, dirs_exist_ok=True)
+    shutil.copytree(DAW, folder, dirs_exist_ok=True, ignore=shutil.ignore_patterns("template.json"))
 
 
 def setup_daw_chords(folder: Path) -> None:
@@ -408,7 +408,9 @@ def check_daw_return(folder: Path) -> dict:
                if record(folder, str(path.relative_to(folder))).get("tool") == "bus"]
     reverb = any("reverb" in tools_under(folder, f"song/{name}") for name in returns)
     sends = [record(folder, f"state/song/t00/send-{name}.json").get("state", {}) for name in returns]
-    quiet = any(-40 < send.get("gain_db", 0) < 0 for send in sends if send)
+    # A send at "-inf" is off, and no number.
+    gains = [send.get("gain_db", 0) for send in sends if send]
+    quiet = any(isinstance(gain, (int, float)) and -40 < gain < 0 for gain in gains)
     return {"a return with a reverb": reverb, "track 1 sends quietly": quiet,
             "no problems": no_problems(folder)}
 
