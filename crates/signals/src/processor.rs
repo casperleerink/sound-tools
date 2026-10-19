@@ -46,12 +46,10 @@ const MAX_SCHEDULED: usize = 256;
 /// What a tool is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// Sound in, sound out: the code reads `input`.
-    Effect,
-    /// Notes in, sound out: the code runs once per note, up to `voices` at once.
+    /// One voice, always running: it hears `input` and follows the newest held note.
+    One,
+    /// The code runs once per note, up to `voices` at once.
     Instrument { voices: usize },
-    /// Sound out, always running, as one voice that follows the newest held note.
-    Source,
 }
 
 impl Kind {
@@ -59,7 +57,7 @@ impl Kind {
     pub fn machines(self) -> usize {
         match self {
             Self::Instrument { .. } => MAX_VOICES,
-            Self::Effect | Self::Source => 1,
+            Self::One => 1,
         }
     }
 }
@@ -275,7 +273,7 @@ impl Signals {
                 }
                 Players::Many(voices)
             }
-            Kind::Effect | Kind::Source => Players::One(Box::new(Single {
+            Kind::One => Players::One(Box::new(Single {
                 voice,
                 keys: Keys {
                     pressed: [0; 128],

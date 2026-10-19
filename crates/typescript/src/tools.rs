@@ -75,16 +75,13 @@ pub(crate) struct ToolInfo {
     pub staged: bool,
 }
 
-/// What a tool is to the engine and to a track, from its voices and whether its sound hears
-/// what comes in.
+/// What a tool is to a track, which goes in its `effects` or plays as its instrument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolKind {
-    /// One voice that hears what comes in.
+    /// One voice whose sound reads what comes in.
     Effect,
-    /// A voice per note.
+    /// A sound that hears nothing coming in, or a voice per note.
     Instrument,
-    /// One voice that hears nothing coming in.
-    Source,
 }
 
 /// Named things in the order the code gives them.
@@ -422,24 +419,22 @@ impl Named<Field> {
 
 impl ToolInfo {
     /// What the `Signals` processor of this tool is.
-    /// What the tool is to the engine and to a track: a voice per note with more voices than
-    /// one; else an effect when its sound hears what comes in, as a parent's always does.
+    /// What the tool is to a track: an effect when it has one voice whose sound reads what
+    /// comes in, as a parent's does; else an instrument.
     pub(crate) fn tool_kind(&self) -> ToolKind {
-        match (self.voices > 1, self.input || self.behaviour) {
-            (true, _) => ToolKind::Instrument,
-            (false, true) => ToolKind::Effect,
-            (false, false) => ToolKind::Source,
+        match self.voices == 1 && (self.input || self.behaviour) {
+            true => ToolKind::Effect,
+            false => ToolKind::Instrument,
         }
     }
 
     /// What the `Signals` processor of this tool is.
     pub(crate) fn kind(&self) -> Kind {
-        match self.tool_kind() {
-            ToolKind::Effect => Kind::Effect,
-            ToolKind::Instrument => Kind::Instrument {
+        match self.voices > 1 {
+            true => Kind::Instrument {
                 voices: usize::from(self.voices).min(sound_signals::MAX_VOICES),
             },
-            ToolKind::Source => Kind::Source,
+            false => Kind::One,
         }
     }
 
@@ -517,14 +512,12 @@ impl ToolInfo {
     }
 
     /// The name of its processor, the first stage of its sound. Another kind is another
-    /// processor, with other ports, and so is a stage.
+    /// processor, and so is a stage, which has other ports.
     pub(crate) fn processor(&self) -> &'static str {
-        match (self.tool_kind(), self.staged) {
-            (ToolKind::Effect, false) => "signals-effect",
-            (ToolKind::Effect, true) => "signals-effect-stage",
-            (ToolKind::Instrument, _) => "signals-instrument",
-            (ToolKind::Source, false) => "signals-source",
-            (ToolKind::Source, true) => "signals-source-stage",
+        match (self.kind(), self.staged) {
+            (Kind::One, false) => "signals",
+            (Kind::One, true) => "signals-stage",
+            (Kind::Instrument { .. }, _) => "signals-voices",
         }
     }
 
@@ -626,7 +619,7 @@ impl ToolInfo {
                 "a track `pad` with one, at its defaults",
                 format!("state/arrangement/pad/{name}.json"),
             ),
-            (false, ToolKind::Instrument | ToolKind::Source) => (
+            (false, ToolKind::Instrument) => (
                 "an instrument of this project: its sound plays notes and hears nothing coming in. \
                  It is what a track plays, like any instrument: its record is the track's \
                  `instrument.json`"
@@ -1009,9 +1002,10 @@ impl Sounds {
                 },
             )?;
         }
-        // A parent's own inputs are ends of its connections, see `declare`.
+        // A parent's own inputs are ends of its connections, see `declare`. One voice hears
+        // what comes in, also when its sound does not read it, as an effect that plays notes.
         if self.parent.is_none() {
-            if kind == Kind::Effect {
+            if kind == Kind::One {
                 context.input(AUDIO_INPUT, InputEndpoint::new(signals, Signals::INPUT));
             }
             context.input(NOTES_INPUT, InputEndpoint::new(signals, Signals::NOTES));
@@ -1081,7 +1075,7 @@ impl Sounds {
         let signals = context.processor(&name, || {
             created = true;
             let watches = watches.clone();
-            Signals::new(Kind::Effect, made(), Values::default(), watches).with_stage_ports()
+            Signals::new(Kind::One, made(), Values::default(), watches).with_stage_ports()
         })?;
         if new_code && !created {
             let update = SignalsUpdate::Set {
@@ -1555,15 +1549,23 @@ fn wire(
                 (control::<Number>(name, number, child_tools, &mut cables, &at, context)?)
                     .map(|input| (input, None))
             }
-            (Some(child), Key::Number) => match automation(child, to_name, &at, context) {
-                Some(into) => {
-                    // What it plays, for a view that shows the number as it plays.
-                    let shown = context.watch(&played_name(&format!("{child}.{to_name}")));
-                    (cable::<Number, Automation>(name, into, Some(shown), &mut cables, context)?)
+            (Some(child), Key::Number) => {
+                match automation(child, to_name, &at, child_tools, context) {
+                    Some(into) => {
+                        // What it plays, for a view that shows the number as it plays.
+                        let shown = context.watch(&played_name(&format!("{child}.{to_name}")));
+                        (cable::<Number, Automation>(
+                            name,
+                            into,
+                            Some(shown),
+                            &mut cables,
+                            context,
+                        )?)
                         .map(|input| (input, None))
+                    }
+                    None => None,
                 }
-                None => None,
-            },
+            }
             (Some(child), Key::Bang) => {
                 let bang = (child, to_name, false);
                 (control::<Bang>(name, bang, child_tools, &mut cables, &at, context)?)
@@ -1646,12 +1648,14 @@ fn input_of<'a>(
     }
 }
 
-/// The automation input of `child` and the place of `number` there, the knob or the number of a
-/// built-in device a lane moves. `None` when it takes no such number, a problem.
+/// The automation input of `child` and the place of `number` there, the number field or the
+/// number of a built-in device a lane moves. `None` when it takes no such number, a problem,
+/// which names the number inputs too of a tool of this project in `child_tools`.
 fn automation(
     child: &str,
     number: &str,
     at: &str,
+    child_tools: &BTreeMap<String, &ToolInfo>,
     context: &mut BehaviourContext<'_>,
 ) -> Option<(InputEndpoint, u16)> {
     let found = context
@@ -1662,7 +1666,18 @@ fn automation(
             Some((automation, u16::try_from(place).unwrap_or(u16::MAX)))
         });
     if found.is_none() {
-        let problem = missing(context, at, (child, number), Side::Number);
+        let mut problem = missing(context, at, (child, number), Side::Number);
+        if let Some(info) = child_tools.get(child) {
+            let inputs: Vec<&str> = (info.inputs.0.iter())
+                .filter(|(_, input)| matches!(input, Input::Number { .. }))
+                .map(|(name, _)| name.as_str())
+                .collect();
+            let inputs = match inputs.is_empty() {
+                true => "none".to_string(),
+                false => inputs.join(", "),
+            };
+            problem.push_str(&format!("; its number inputs are {inputs}"));
+        }
         context.problem(problem);
     }
     found
