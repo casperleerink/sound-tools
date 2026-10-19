@@ -123,6 +123,9 @@ pub(crate) struct SpaceNode {
     pub unit: Option<Axes>,
     pub extent: Option<Ranges>,
     pub zoom: Option<Ranges>,
+    /// Where it shows from when it first draws.
+    pub scroll: Option<Axes>,
+    pub follow: Option<Follow>,
     pub background: Option<Color>,
     pub radius: Option<f32>,
     pub on_press: Option<usize>,
@@ -157,6 +160,14 @@ impl SpaceNode {
 pub(crate) struct Axes {
     pub x: Option<f32>,
     pub y: Option<f32>,
+}
+
+/// The spaces a space shows the scroll and zoom of, on an axis, by their keys.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Follow {
+    pub x: Option<String>,
+    pub y: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]

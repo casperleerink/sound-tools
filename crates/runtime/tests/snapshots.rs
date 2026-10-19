@@ -102,7 +102,8 @@
 //! - `track-panel-plugin-*.png`: parameters pinned on the card of a plugin, see
 //!   `snapshots/plugin.rs`.
 //! - `returns-*.png`: the returns and the sends of a track, see `snapshots/returns.rs`.
-//! - `typescript-page.png`: a page of a tool of the project, see `snapshots/typescript.rs`.
+//! - `typescript-page.png`, `typescript-piano-roll.png`: pages of tools of the project, see
+//!   `snapshots/typescript.rs`.
 //!
 //! The frame times it prints are those of one update and the `Window::draw` it causes on the
 //! scale project: rendering, layout and painting into the scene, not the GPU. The drag times

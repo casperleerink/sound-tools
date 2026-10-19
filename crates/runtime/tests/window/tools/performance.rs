@@ -5,9 +5,11 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
+    ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
 };
 
+use super::piano_roll::{ROW, open_roll};
 use super::{ONLY_THE_TOOL, Window, open};
 
 /// `count` notes of a piano roll, all in a group the drag `move` moves, as selected notes are,
@@ -246,4 +248,121 @@ fn measure_old(cx: &mut TestAppContext, count: usize) {
         events - asked.1
     );
     window.up(at);
+}
+
+/// 2,000 notes of the piano roll of `tooling/agent-eval/examples`: 16 pitches from 56 on every
+/// sixteenth for 125 sixteenths.
+fn many_notes() -> serde_json::Value {
+    let notes: Vec<serde_json::Value> = (0..2_000)
+        .map(|index| {
+            serde_json::json!({
+                "start": (index / 16) * 240, "length": 200, "pitch": 56 + index % 16, "velocity": 40 + index % 80,
+            })
+        })
+        .collect();
+    serde_json::Value::Array(notes)
+}
+
+/// The piano roll with 2,000 notes: frames as the pointer hovers, as it scrolls, as it zooms
+/// and as it drags 512 selected notes, and how long a release takes to come back as a tree.
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_the_piano_roll_of_2000_notes(cx: &mut TestAppContext) {
+    let heard = sound_typescript::heard_tree_bytes();
+    let Some(mut window) = open_roll(cx, &many_notes()) else {
+        return;
+    };
+    let roll = window.space_at("roll");
+    println!(
+        "piano roll: the first tree is {} bytes",
+        sound_typescript::heard_tree_bytes() - heard
+    );
+    let (note, empty) = (window.on_roll(100.0, 60), window.on_roll(20_000.0, 80));
+    let hovering: Vec<Duration> = (0..MOVES)
+        .map(|step| {
+            let to = if step % 2 == 0 { note } else { empty };
+            window.timed(|window| {
+                window
+                    .cx
+                    .simulate_mouse_move(to, None, Modifiers::default())
+            })
+        })
+        .collect();
+    print(
+        "piano roll: a frame as the pointer hovers on and off a note",
+        hovering,
+    );
+    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollWheelEvent {
+        position: roll + point(px(300.), px(200.)),
+        delta: ScrollDelta::Pixels(delta),
+        modifiers,
+        touch_phase: TouchPhase::Moved,
+    };
+    let scrolling: Vec<Duration> = (0..MOVES)
+        .map(|step| {
+            let sign = if step < MOVES / 2 { -1. } else { 1. };
+            let event = wheel(point(px(sign * 20.), px(sign * 6.)), Modifiers::default());
+            window.timed(|window| window.cx.simulate_event(event))
+        })
+        .collect();
+    print("piano roll: a frame as it scrolls", scrolling);
+    let zooming: Vec<Duration> = (0..MOVES)
+        .map(|step| {
+            let sign = if step < MOVES / 2 { 1. } else { -1. };
+            let event = wheel(point(px(0.), px(sign * 8.)), Modifiers::command());
+            window.timed(|window| window.cx.simulate_event(event))
+        })
+        .collect();
+    print("piano roll: a frame as it zooms", zooming);
+
+    // A marquee over the first 32 sixteenths: 512 notes.
+    let from = window.on_roll(0.0, 72) + point(px(1.), px(-ROW));
+    let to = window.on_roll(7_500.0, 55);
+    window.down(from);
+    window
+        .cx
+        .simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
+    window.cx.run_until_parked();
+    window.up(to);
+    window.wait_for_bun();
+    let pressed = window.on_roll(10.0, 60);
+    window.down(pressed);
+    window.wait_for_bun();
+    let asked = sound_typescript::sent_renders_and_events();
+    let dragging: Vec<Duration> = (1..=MOVES)
+        .map(|step| {
+            let to = pressed + point(px(step as f32 * 2.), px(step as f32 * 0.5));
+            window.timed(|window| {
+                window
+                    .cx
+                    .simulate_mouse_move(to, MouseButton::Left, Modifiers::default())
+            })
+        })
+        .collect();
+    let (renders, events) = sound_typescript::sent_renders_and_events();
+    print(
+        "piano roll: a frame as 512 selected notes move with the drag",
+        dragging,
+    );
+    println!(
+        "piano roll: {} renders and {} events asked of Bun in {MOVES} moves",
+        renders - asked.0,
+        events - asked.1
+    );
+    let (trees, bytes) = (
+        sound_typescript::heard_trees(),
+        sound_typescript::heard_tree_bytes(),
+    );
+    let released = Instant::now();
+    window.up(pressed + point(px(MOVES as f32 * 2.), px(MOVES as f32 * 0.5)));
+    while sound_typescript::heard_trees() == trees {
+        window.cx.run_until_parked();
+        assert!(released.elapsed() < Duration::from_secs(5), "no tree came");
+    }
+    window.cx.run_until_parked();
+    println!(
+        "piano roll: release until its new tree is drawn: {:?}, a tree of {} bytes",
+        released.elapsed(),
+        sound_typescript::heard_tree_bytes() - bytes
+    );
 }

@@ -188,31 +188,40 @@ All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record wi
 
 ## Shapes that move
 
-A `<Space>` draws shapes: `<Rect>`, `<Circle>`, `<Line>`, `<Arc>` and `<Label>` (text). It has units of its own, such as ticks across and notes down (`unit` is points per unit), scrolls over `extent` and zooms in `zoom` by itself, and draws only what shows. The knob, steps, meter and pad above are spaces.
+A `<Space>` draws shapes: `<Rect>`, `<Circle>`, `<Line>`, `<Arc>`, `<Label>` (text) and `<Group>`. It has units of its own, such as ticks across and notes down (`unit` is points per unit), scrolls over `extent` and zooms in `zoom` by itself, and draws only what shows. The knob, steps, meter and pad above are spaces.
 
 What moves on a space moves in the window with no code running, so it keeps up with the pointer and the playhead: give a number a live value from `now` in place of a number. `now.tick` is where the piece plays, `now.watch(name)` a watch, `now.field(name)` a number of the record as a drag turns it, and `now.drag(id)` how far the drag `id` went, rounded to its `snap`. Combine them with `.plus`, `.times`, `.snap` and the rest. Code hears a drag once, at `onEnd`, and what moved stays where it is until the tree its code draws then arrives:
 
 ```tsx
-const ticks = { unit: { x: 0.1, y: 12 }, extent: { x: [0, 38400], y: [0, 128] }, zoom: { x: [0.1, 10] } } as const;
+const roll = { unit: { x: 0.1, y: 12 }, extent: { x: [0, 38400], y: [0, 128] }, zoom: { x: [0.1, 10] }, scroll: { y: 40 } } as const;
 
-page: ({ state, update, now }) => {
-  const move = (index: number): Drag => ({
-    id: "move", snap: { x: 240 }, axis: "x",
-    onEnd: ({ dx }) => update("Move a note", ({ state }) => { state.notes[index].start += dx; }),
-  });
+page: ({ state, memory, update, now }) => {
+  const move = now.drag("move");
+  // One drag for every note: a drag many shapes share crosses once.
+  const drag: Drag = {
+    id: "move", snap: { x: 240, grid: true }, axis: "x",
+    onEnd: ({ dx }) => update("Move notes", ({ state }) => {
+      state.notes = state.notes.map((note, index) => (memory.selected.has(index) ? { ...note, start: note.start + dx } : note));
+    }),
+  };
+  const note = (each: Note, index: number) => (
+    <Rect key={String(index)} x={each.start} y={127 - each.pitch} width={each.length} height={1}
+      color="#a9b1ff" drag={drag} onPress={() => { memory.selected = new Set([index]); }} />
+  );
   return (
-    <Space key="roll" grow {...ticks}>
-      {state.notes.map((note, index) => (
-        <Rect key={String(index)} x={now.drag("move").dx.plus(note.start)} y={127 - note.pitch}
-          width={note.length} height={1} color="#a9b1ff" drag={move(index)} />
-      ))}
+    <Space key="roll" width={800} height={400} {...roll}>
+      {state.notes.map((each, index) => (memory.selected.has(index) ? null : note(each, index)))}
+      <Group x={move.dx}>{state.notes.map((each, index) => (memory.selected.has(index) ? note(each, index) : null))}</Group>
       <Line from={[now.tick, 0]} to={[now.tick, 128]} color="#7ee0a0" width={2} />
     </Space>
   );
 },
 ```
 
-A drag can also turn a field or a live control as it goes, with no code, as a knob does: a drag of `{ y: { field: "cutoff" } }`; for a field the whole drag is one undo step. `onPress` hears a `Press`: where in units, the button, the clicks and the modifiers. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
+- A `<Group x y>` moves its shapes by one live value, as the selected notes above. Bind a group, not each shape: a tree of thousands of shapes stays small.
+- `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. Escape lets go of a drag, and its code hears nothing.
+- `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts.
+- A drag can also turn a field or a live control as it goes, with no code, as a knob does: a drag of `{ y: { field: "cutoff" } }`; for a field the whole drag is one undo step. `onPress` hears a `Press`: where in units, the button, the clicks and the modifiers. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
 
 ## A control loop, the keys
 

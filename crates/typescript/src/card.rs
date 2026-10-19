@@ -575,8 +575,23 @@ impl TypeScriptCard {
     }
 
     /// A wheel or a pinch scrolled or zoomed a space.
-    fn moved_space(&mut self, key: &str, view: SpaceView, cx: &mut Context<Self>) {
-        self.spaces.borrow_mut().insert(key.to_string(), view);
+    /// The spaces it follows move with it, on their axes.
+    fn moved_space(
+        &mut self,
+        key: &str,
+        view: SpaceView,
+        follow: &tree::Follow,
+        cx: &mut Context<Self>,
+    ) {
+        let mut spaces = self.spaces.borrow_mut();
+        spaces.insert(key.to_string(), view);
+        if let Some(leader) = follow.x.as_ref().and_then(|key| spaces.get_mut(key)) {
+            (leader.left, leader.zoom_x) = (view.left, view.zoom_x);
+        }
+        if let Some(leader) = follow.y.as_ref().and_then(|key| spaces.get_mut(key)) {
+            (leader.top, leader.zoom_y) = (view.top, view.zoom_y);
+        }
+        drop(spaces);
         cx.notify();
     }
 
@@ -668,6 +683,7 @@ struct SpaceFrame {
     cursor: Option<Cursor>,
     extent: tree::Ranges,
     zoom: tree::Ranges,
+    follow: tree::Follow,
 }
 
 impl SpaceFrame {
@@ -730,6 +746,21 @@ impl SpaceFrame {
             || self.zoom.x.is_some()
             || self.zoom.y.is_some()
     }
+}
+
+/// `view` with the scroll and zoom of the spaces it follows, on their axes.
+fn followed(
+    mut view: SpaceView,
+    follow: &tree::Follow,
+    spaces: &HashMap<String, SpaceView>,
+) -> SpaceView {
+    if let Some(leader) = follow.x.as_ref().and_then(|key| spaces.get(key)) {
+        (view.left, view.zoom_x) = (leader.left, leader.zoom_x);
+    }
+    if let Some(leader) = follow.y.as_ref().and_then(|key| spaces.get(key)) {
+        (view.top, view.zoom_y) = (leader.top, leader.zoom_y);
+    }
+    view
 }
 
 /// `view` scrolled inside `extent`: an axis without one shows from 0.
@@ -944,19 +975,19 @@ impl Drawing<'_, '_> {
     fn space(&mut self, space: &SpaceNode, index: &[usize]) -> AnyElement {
         let key = element_name("space", space.key.as_deref(), index);
         let (unit_x, unit_y) = space.unit();
+        let extent = space.extent.unwrap_or_default();
+        let scroll = space.scroll.unwrap_or_default();
+        let first = |scroll: Option<f32>, extent: Option<[f32; 2]>| {
+            scroll.or(extent.map(|[low, _]| low)).map_or(0.0, f64::from)
+        };
         let mut view = self.spaces.get(&key).copied().unwrap_or(SpaceView {
-            left: space
-                .extent
-                .and_then(|extent| extent.x)
-                .map_or(0.0, |[low, _]| f64::from(low)),
-            top: space
-                .extent
-                .and_then(|extent| extent.y)
-                .map_or(0.0, |[low, _]| f64::from(low)),
+            left: first(scroll.x, extent.x),
+            top: first(scroll.y, extent.y),
             ..SpaceView::default()
         });
         (view.unit_x, view.unit_y) = (unit_x, unit_y);
-        let view = clamped(view, &space.extent.unwrap_or_default());
+        let follow = space.follow.clone().unwrap_or_default();
+        let view = followed(clamped(view, &extent), &follow, &self.spaces);
         self.spaces.insert(key.clone(), view);
         let (placed, pointed) = self.place(space, &key);
         let frame = Rc::new(SpaceFrame {
@@ -972,6 +1003,7 @@ impl Drawing<'_, '_> {
             cursor: space.cursor,
             extent: space.extent.unwrap_or_default(),
             zoom: space.zoom.unwrap_or_default(),
+            follow,
         });
         let selector = format!("space-{}", frame.key);
         let card = self.cx.entity().downgrade();
@@ -1244,7 +1276,11 @@ fn paint(
     }
     window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
         for each in painted {
-            paint_shape(&each.shape, each.color, window, cx);
+            // A shape with no colour is there for the pointer, such as the handle at the end of
+            // a note; GPUI orders a quad by what it overlaps, so painting it costs as much.
+            if each.color.a > 0.0 {
+                paint_shape(&each.shape, each.color, window, cx);
+            }
             if let Some((hitbox, cursor)) = &each.hitbox {
                 window.set_cursor_style(cursor.style(), hitbox);
             }
@@ -1420,8 +1456,10 @@ fn listen(
                 return;
             }
             let view = frame_now(&frame, &card, bounds, cx).scrolled(event, bounds);
-            card.update(cx, |card, cx| card.moved_space(&frame.key, view, cx))
-                .ok();
+            card.update(cx, |card, cx| {
+                card.moved_space(&frame.key, view, &frame.follow, cx)
+            })
+            .ok();
             cx.stop_propagation();
         }
     });
@@ -1432,8 +1470,10 @@ fn listen(
         }
         let factor = f64::from(1.0 + event.delta);
         let view = frame_now(&frame, &card, bounds, cx).zoomed(factor, bounds, event.position);
-        card.update(cx, |card, cx| card.moved_space(&frame.key, view, cx))
-            .ok();
+        card.update(cx, |card, cx| {
+            card.moved_space(&frame.key, view, &frame.follow, cx)
+        })
+        .ok();
         cx.stop_propagation();
     });
 }
@@ -1447,7 +1487,11 @@ fn frame_now(
     cx: &App,
 ) -> SpaceFrame {
     let mut view = (card.upgrade())
-        .and_then(|card| card.read(cx).spaces.borrow().get(&frame.key).copied())
+        .and_then(|card| {
+            let spaces = card.read(cx).spaces.borrow();
+            let view = spaces.get(&frame.key).copied()?;
+            Some(followed(view, &frame.follow, &spaces))
+        })
         .unwrap_or(frame.view);
     view.width = f64::from(f32::from(bounds.size.width));
     view.height = f64::from(f32::from(bounds.size.height));
@@ -1464,6 +1508,7 @@ fn frame_now(
         cursor: None,
         extent: frame.extent,
         zoom: frame.zoom,
+        follow: frame.follow.clone(),
     }
 }
 
@@ -1612,6 +1657,7 @@ mod tests {
             cursor: None,
             extent,
             zoom,
+            follow: tree::Follow::default(),
         }
     }
 

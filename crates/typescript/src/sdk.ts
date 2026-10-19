@@ -1316,6 +1316,13 @@ export interface SpaceProps {
   extent?: { x?: readonly [number, number]; y?: readonly [number, number] };
   /** How far it zooms in and out, as a factor; an axis without one does not zoom. Cmd and scroll, or a pinch. */
   zoom?: { x?: readonly [number, number]; y?: readonly [number, number] };
+  /** Where it is scrolled to when it first draws, in units; the window keeps where it is after. */
+  scroll?: { x?: number; y?: number };
+  /**
+   * The key of a space whose scroll and zoom it shows on an axis, and moves as it scrolls: the
+   * ruler and the keys of a piano roll. Give it the same `unit`, `extent` and `zoom` on that axis.
+   */
+  follow?: { x?: string; y?: string };
   background?: Color;
   radius?: number;
   /** A press where no shape that hears the pointer is. */

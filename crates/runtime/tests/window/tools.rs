@@ -25,6 +25,7 @@ use crate::support::{id, peak};
 mod edits;
 mod gestures;
 mod performance;
+mod piano_roll;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.

@@ -1,12 +1,18 @@
-//! A page of a tool of the project, drawn by Bun:
+//! Pages of tools of the project, drawn by Bun:
 //!
 //! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, beside
 //!   a small piano roll whose notes and labels are shapes of a space.
+//! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
+//!   notes of bar 2 selected by a marquee and held by the pointer two beats on and two rows up,
+//!   as the window moves them before their code hears the drag.
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use gpui::{AppContext, HeadlessAppContext, px, size};
+use gpui::{
+    AppContext, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformInput, Point, point, px, size,
+};
 use runtime::window::{DeviceAccess, Shell};
 use runtime::{OFFLINE, views};
 use sound_core::Engine;
@@ -56,6 +62,8 @@ tool({
 });
 "##;
 
+const PIANO_ROLL: &str = include_str!("../../../../tooling/agent-eval/examples/piano-roll.tsx");
+
 pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
     save: &impl Fn(&mut HeadlessAppContext, &super::Opened, &str) -> Result<()>,
@@ -64,6 +72,104 @@ pub(crate) fn snapshots(
         println!("Bun is not installed: no snapshot of a page of a tool of the project");
         return Ok(());
     }
+    let demo = r#"{"tool": "demo", "state": {"steps": [1, 0, 0, 1, 0, 1, 0, 0], "cutoff": 2400}}"#;
+    let opened = open_page(cx, "demo", demo, "extensions/demo.ts", DEMO)?;
+    save(cx, &opened, "typescript-page")?;
+    drop(opened);
+
+    let record = serde_json::json!({ "tool": "piano-roll", "state": { "notes": melody() } });
+    let opened = open_page(
+        cx,
+        "piano-roll",
+        &record.to_string(),
+        "extensions/piano-roll.tsx",
+        PIANO_ROLL,
+    )?;
+    // The roll's top left: the page's padding, the title bar and the ruler; the keys.
+    let roll = point(px(24. + 44.), px(48. + 24. + 22. + 1.));
+    let at = |tick: f32, row: f32| roll + point(px(tick * 0.1), px((row - 40.) * 12.));
+    let mouse = |opened: &super::Opened, cx: &mut HeadlessAppContext, event| {
+        opened.mouse(event, cx).map(|_| wait_for_bun(cx))
+    };
+    let moved = |position: Point<Pixels>, pressed_button| {
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            pressed_button,
+            modifiers: Modifiers::default(),
+        })
+    };
+    let down = |position| {
+        PlatformInput::MouseDown(MouseDownEvent {
+            position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 1,
+            first_mouse: false,
+        })
+    };
+    // A marquee over bar 2, between rows 44 and 56.
+    let (from, to) = (at(3800., 44.), at(7600., 56.));
+    mouse(&opened, cx, moved(from, None))?;
+    mouse(&opened, cx, down(from))?;
+    mouse(&opened, cx, moved(to, Some(MouseButton::Left)))?;
+    mouse(
+        &opened,
+        cx,
+        PlatformInput::MouseUp(MouseUpEvent {
+            position: to,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 1,
+        }),
+    )?;
+    // The first note of bar 2, on 76: row 51.
+    let note = at(3840. + 100., 51.5);
+    mouse(&opened, cx, moved(note, None))?;
+    mouse(&opened, cx, down(note))?;
+    let held = note + point(px(192.), px(-24.));
+    mouse(&opened, cx, moved(held, Some(MouseButton::Left)))?;
+    save(cx, &opened, "typescript-piano-roll")
+}
+
+/// Two bars of melody over chords, on the sixteenths.
+fn melody() -> Vec<serde_json::Value> {
+    let tune = [
+        72, 74, 76, 79, 77, 76, 74, 72, 76, 79, 81, 79, 77, 76, 74, 76,
+    ];
+    let chords = [[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]];
+    let mut notes: Vec<serde_json::Value> = (tune.iter().enumerate())
+        .map(|(step, pitch)| {
+            let start = step * 480;
+            let velocity = 60 + (step * 37) % 60;
+            serde_json::json!({ "start": start, "length": 420, "pitch": pitch, "velocity": velocity })
+        })
+        .collect();
+    for (bar, chord) in chords.iter().enumerate() {
+        for pitch in chord {
+            let start = bar * 1920;
+            notes.push(serde_json::json!({ "start": start, "length": 1800, "pitch": pitch, "velocity": 70 }));
+        }
+    }
+    notes
+}
+
+/// Bun answers in real time, on a thread of its own.
+fn wait_for_bun(cx: &mut HeadlessAppContext) {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(300) {
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A window on a project of one tool at its top, `name`, whose code is `code` at `file`.
+fn open_page(
+    cx: &mut HeadlessAppContext,
+    name: &str,
+    record: &str,
+    file: &str,
+    code: &str,
+) -> Result<super::Opened> {
     let folder = tempfile::tempdir()?;
     let root = folder.path().join("Night Study");
     let write = |relative: &str, contents: &str| -> Result<()> {
@@ -78,11 +184,8 @@ pub(crate) fn snapshots(
         "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
         "connections": []}"#,
     )?;
-    write(
-        "state/demo.json",
-        r#"{"tool": "demo", "state": {"steps": [1, 0, 0, 1, 0, 1, 0, 0], "cutoff": 2400}}"#,
-    )?;
-    write("extensions/demo.ts", DEMO)?;
+    write(&format!("state/{name}.json"), record)?;
+    write(file, code)?;
     cx.allow_parking();
     let (control, engine) = Engine::new(OFFLINE);
     let plugins = test_plugin_host(&root);
@@ -106,18 +209,16 @@ pub(crate) fn snapshots(
             )
         })
     })?;
-    // Bun answers in real time, on a thread of its own.
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(2) {
         cx.run_until_parked();
         std::thread::sleep(Duration::from_millis(20));
     }
-    let opened = super::Opened {
+    Ok(super::Opened {
         _folder: folder,
         engine,
         plugins,
         session,
         window,
-    };
-    save(cx, &opened, "typescript-page")
+    })
 }
