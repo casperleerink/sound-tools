@@ -159,7 +159,7 @@ def process_tree(root):
 
 def edit_choice(folder, edits):
     record = {"tool": "gravity-harp", "state": {"root": ROOTS[edits % len(ROOTS)]}}
-    (folder / "state/arrangement/gravity-harp/instrument.json").write_text(json.dumps(record))
+    (folder / "state/song/gravity-harp/synth.json").write_text(json.dumps(record))
 
 
 def live_once(build, job, window):
