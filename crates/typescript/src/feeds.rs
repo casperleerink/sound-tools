@@ -6,11 +6,13 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use sound_core::{Clock, InstanceId, Project, Scope, Ticks, ValueRange};
+use sound_media::Overview;
 use sound_ui::{PeaksReader, Session};
 
 use crate::meter;
@@ -38,6 +40,10 @@ pub fn shown_by_live_values(name: &str) -> Option<f32> {
 pub fn live_frames() -> u64 {
     FRAMES.load(Ordering::Relaxed)
 }
+
+/// How many stretches a waveform of a file holds: more than a wave draws columns, so each
+/// column holds a stretch's `+peak` and `-peak`.
+const WAVE_COLUMNS: usize = 4096;
 
 /// Two reads closer than this take nothing new: the second draw of one frame would otherwise
 /// see silence, as a take empties the peaks.
@@ -69,6 +75,10 @@ pub(crate) struct Feeds {
     pub histories: RefCell<HashMap<String, (u64, VecDeque<f32>)>>,
     /// The clock of the project, for the tempo and the places in the piece a tree shows.
     pub clock: Option<Clock>,
+    /// The overviews of the audio files it draws, by file name, once they are made.
+    pub files: HashMap<String, Arc<Overview>>,
+    /// Waveforms as drawn, by file name and the seconds of it, which stay until it changes.
+    pub waves: RefCell<HashMap<(String, u64, u64), (u64, Rc<[f32]>)>>,
 }
 
 /// What an easing keeps from frame to frame.
@@ -139,6 +149,25 @@ impl Feeds {
         let frame = self.frame;
         (self.eased.borrow_mut()).retain(|_, eased| frame - eased.frame < 60);
         (self.histories.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+        (self.waves.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+    }
+
+    /// The waveform of `file` from `from` to `to` seconds: the peak of each of
+    /// [`WAVE_COLUMNS`] stretches, as `+peak` then `-peak`. Empty until its overview is made.
+    pub(crate) fn wave(&self, file: &str, from: Option<f64>, to: Option<f64>) -> Rc<[f32]> {
+        let Some(overview) = self.files.get(file) else {
+            return Rc::from([]);
+        };
+        let (from, to) = (from.unwrap_or(0.0), to.unwrap_or(overview.seconds()));
+        let key = (file.to_string(), from.to_bits(), to.to_bits());
+        let mut waves = self.waves.borrow_mut();
+        let (last, wave) = waves.entry(key).or_insert_with(|| {
+            let peaks = overview.columns(from, to, WAVE_COLUMNS);
+            let both = peaks.iter().flat_map(|peak| [*peak, -*peak]);
+            (0, both.collect())
+        });
+        *last = self.frame;
+        wave.clone()
     }
 
     fn tell_tests(&self) {

@@ -21,7 +21,9 @@ mod bun;
 mod card;
 mod feeds;
 mod live;
+mod lane;
 mod meter;
+mod region;
 #[cfg(test)]
 mod performance;
 mod records;
@@ -326,7 +328,7 @@ fn define(
 ) -> Vec<ToolInfo> {
     let mut infos: Vec<ToolInfo> = sounds.iter().map(|sounds| sounds.info().clone()).collect();
     // First, so a tool of the project of its name is the one refused.
-    let tools = [timeline::json_tool(), meter::json_tool()].into_iter();
+    let tools = built_in().into_iter();
     let refused = define(
         tools
             .chain(sounds.into_iter().map(Sounds::json_tool))
@@ -340,6 +342,26 @@ fn define(
         false
     });
     infos
+}
+
+/// The built-in children a parent of the project plays with.
+fn built_in() -> [JsonTool; 4] {
+    [
+        timeline::json_tool(),
+        meter::json_tool(),
+        lane::json_tool(),
+        region::json_tool(),
+    ]
+}
+
+/// The records of the built-in children, for `sdk.ts`.
+pub(crate) fn built_in_schemas() -> [ToolSchema; 4] {
+    [
+        timeline::schema(),
+        meter::schema(),
+        lane::schema(),
+        region::schema(),
+    ]
 }
 
 /// Whether a card or a page made nodes the window can show.

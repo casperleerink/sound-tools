@@ -884,9 +884,11 @@ type Keyed<K extends PortKey, Name extends string = string> = Record<K, Name> & 
  */
 type PortName<T, P extends PortKey | "input", Out extends boolean> = [Out, T] extends [true, ProjectTool]
   ? string
-  : P extends keyof EntryOf<T>
-    ? EntryOf<T>[P]
-    : string;
+  : [Out, P] extends [true, "number"]
+    ? EntryOf<T> extends { out: infer Sent extends string } ? Sent : string
+    : P extends keyof EntryOf<T>
+      ? EntryOf<T>[P]
+      : string;
 /** A port of a child under the key `P`, of a name its tool has as an input, or as an output with `Out`. */
 type PortOf<P extends PortKey, K extends ChildTools, Out extends boolean = false, Names extends PortKey | "input" = P> = {
   [Name in keyof K & string]: { child: ChildNamed<Name> } & Keyed<P, PortName<K[Name], Names, Out> & string>;
@@ -1268,10 +1270,11 @@ export interface SpaceValues {
 /** The numbers of fields `State` holds. */
 type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? Name : never }[keyof State] & string;
 
-/** What a wave draws: see `now.scope` and `now.history`. */
+/** What a wave draws: see `now.scope`, `now.history` and `now.file`. */
 export type WaveList =
   | { source: "scope"; name: string; channel?: Channel; frames?: number }
-  | { source: "history"; of: Num; frames: number; key: string };
+  | { source: "history"; of: Num; frames: number; key: string }
+  | { source: "file"; asset: string; from?: number; to?: number };
 
 /** The names a tool reads with `now.value`: its numbers, its number inputs, and any output, by any name. */
 type ValueNames<State, I extends Inputs> = NumberNames<State> | InputNames<I, "number"> | (string & {});
@@ -1304,6 +1307,12 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   scope(name: string, options?: { channel?: Channel; frames?: number }): WaveList;
   /** The last `frames` values of a live value, one a frame, for a `Wave`. */
   history(of: Num, frames: number): WaveList;
+  /**
+   * The waveform of a file under `assets/audio/`, such as `"take-1.wav"`, from `from` to `to`
+   * seconds of it (all of it when left out), for a `Wave` with `band` from `low: -1` to `high: 1`.
+   * Made in the background: it shows once it is ready.
+   */
+  file(asset: string, options?: { from?: number; to?: number }): WaveList;
   /** The drag of `id`, see `Drag`. */
   drag(id: string): DragValues;
   /** The space of `key`, see `Space`. */
@@ -1327,6 +1336,7 @@ function sources(): Now<Record<string, number>> {
     devicePeak: (channel) => new Live({ op: "device_peak", channel }),
     scope: (name, options) => ({ source: "scope", name, ...options }),
     history: (of, frames) => ({ source: "history", of, frames, key: liveKey([of, frames]) }),
+    file: (asset, options) => ({ source: "file", asset, ...options }),
     drag: (id) =>
       part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
     space: (key) =>

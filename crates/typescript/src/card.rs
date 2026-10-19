@@ -22,7 +22,8 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
-use sound_ui::{ActiveTheme, ControlEdit, Session, typography};
+use sound_media::AudioAsset;
+use sound_ui::{ActiveTheme, ControlEdit, Session, Waveforms, typography};
 
 use crate::bun::{EventKind, PageSize};
 use crate::feeds::Feeds;
@@ -223,6 +224,14 @@ impl TypeScriptCard {
         })
         .detach();
         cx.observe(&live, |_, _, cx| cx.notify()).detach();
+        // A waveform it draws is made in the background.
+        let waveforms = Waveforms::entity(cx);
+        cx.observe(&waveforms, |view, _, cx| {
+            if !view.live.read(cx).uses(view.card).files.is_empty() {
+                cx.notify();
+            }
+        })
+        .detach();
         // Escape lets go of a drag wherever the keys are, as a drag does not take them.
         cx.observe_keystrokes(|view, event, _, cx| {
             if event.keystroke.key == "escape" {
@@ -1385,6 +1394,7 @@ impl Placing<'_> {
             Some(List::History { of, frames, key }) => {
                 feeds.history(key, *frames, self.sources.number(of))
             }
+            Some(List::File { asset, from, to }) => feeds.wave(asset, *from, *to).to_vec(),
             None => Vec::new(),
         }
     }
@@ -2158,6 +2168,17 @@ impl Render for TypeScriptCard {
         let playhead = *self.session.read(cx).playhead().read(cx);
         if (uses.tick && playhead.playing) || uses.animates {
             window.request_animation_frame();
+        }
+        self.feeds.files.retain(|file, _| uses.files.contains(file));
+        let assets = self.session.read(cx).project().assets().clone();
+        for file in &uses.files {
+            let Ok(asset) = AudioAsset::new(file) else {
+                continue;
+            };
+            // Made in the background; the cache tells the card when it is ready.
+            if let Some(overview) = Waveforms::overview(&assets, &asset, cx) {
+                self.feeds.files.insert(file.clone(), overview);
+            }
         }
         let session = self.session.read(cx);
         (self.feeds).read(session, &self.id, &state, &uses, playhead.tick);

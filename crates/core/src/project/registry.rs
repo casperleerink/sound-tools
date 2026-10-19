@@ -67,6 +67,8 @@ pub struct ToolSchema {
     pub numbers: Vec<(ParameterInfo, f32)>,
     /// The other numbers a parent plays it from, such as `launch` of the timeline.
     pub live: &'static [&'static str],
+    /// The numbers it sends out, which a parent connects, such as `value` of a lane.
+    pub outputs: &'static [&'static str],
     /// A sound may play it as a device, see [`ToolRegistration::in_code`].
     pub in_code: bool,
     /// Checks a `state` as a record of the tool is checked. The message names the field.
@@ -83,6 +85,7 @@ impl ToolSchema {
                 .map(|parameter| (parameter.info(), parameter.default))
                 .collect(),
             live: &[],
+            outputs: &[],
             in_code: false,
             check: |state| decode::<S>(state).map(drop),
         }

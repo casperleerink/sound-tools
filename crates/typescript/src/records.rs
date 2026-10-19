@@ -6,12 +6,12 @@
 use serde_json::Value;
 use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc, unit_of};
 
-use crate::{meter, timeline};
+use crate::built_in_schemas;
 
 /// The runtime's part of `sdk.ts` for the tools of `schemas` and the built-in children.
 pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
-    let (timeline, meter) = (timeline::schema(), meter::schema());
-    let mut tools: Vec<&ToolSchema> = schemas.iter().chain([&timeline, &meter]).collect();
+    let built_in = built_in_schemas();
+    let mut tools: Vec<&ToolSchema> = schemas.iter().chain(&built_in).collect();
     tools.sort_by_key(|schema| schema.tool);
     let mut text = String::from(
         "
@@ -23,7 +23,7 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
         text.push_str(&Writer::new(schema).types());
     }
     text.push_str(
-        "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * the number inputs `send` plays (`input`), and its bang inputs (`bang`).\n */\nexport interface Tools {\n",
+        "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * the number inputs `send` plays (`input`), its bang inputs (`bang`) and the numbers it sends\n * out (`out`).\n */\nexport interface Tools {\n",
     );
     for schema in &tools {
         let names = |names: Vec<String>| match names.is_empty() {
@@ -38,6 +38,7 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
                 .collect(),
         );
         let input = names(inputs.collect());
+        let out = names(schema.outputs.iter().map(|output| quoted(output)).collect());
         let defaults = names(
             defaults_of(schema)
                 .keys()
@@ -45,7 +46,7 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
                 .collect(),
         );
         text.push_str(&format!(
-            "  {}: {{ state: {}; number: {number}; input: {input}; bang: never; defaults: {defaults} }};\n",
+            "  {}: {{ state: {}; number: {number}; input: {input}; bang: never; out: {out}; defaults: {defaults} }};\n",
             property_name(schema.tool),
             type_name(schema.tool, "State"),
         ));

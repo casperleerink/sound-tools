@@ -27,6 +27,7 @@ pub mod analysis;
 mod file;
 mod loader;
 mod overview;
+mod player;
 mod resample;
 mod stream;
 mod take;
@@ -48,6 +49,9 @@ use sound_core::{ASSETS_FOLDER, AssetName, Assets, InvalidAssetName};
 pub use file::{Audio, Container, Encoding, FormatError, Info, SAMPLE_RATES, SampleLoop};
 pub use loader::{Keep, Loader, Read, Stamp, load_in_background};
 pub use overview::{FINEST_FRAMES, Overview};
+pub use player::{
+    AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS, Region, file_frames, snapshot,
+};
 pub use resample::{Resampler, SCRATCH_FRAMES};
 pub use stream::{HEAD_SECONDS, ReadAhead};
 pub use take::{TakeFile, TakeOverview};

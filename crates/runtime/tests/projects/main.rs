@@ -8,6 +8,7 @@ mod agent;
 mod agent_doc;
 mod audio;
 mod automation;
+mod blocks;
 mod cables;
 mod compressor;
 mod delay;

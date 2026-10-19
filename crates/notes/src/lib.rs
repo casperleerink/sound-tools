@@ -45,7 +45,10 @@ use sound_core::{Place, State, Ticks};
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
 pub use feed::{NoteFeed, NoteFeedUpdate};
-pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
+pub use lane::{
+    ExpressionValue, LaneValue, MAX_PIECES, Point, check_order, cut, pieces, thinned, value_at,
+    value_at_frame,
+};
 pub use pattern::{Launch, Pattern, PatternError, Placing, Quantize};
 pub use player::{
     HELD_CAPACITY, NO_PATTERN, NotePlayer, NotePlayerUpdate, PREVIEW_SECONDS, PlayerWatches,

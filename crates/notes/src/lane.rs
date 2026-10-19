@@ -9,13 +9,14 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sound_core::Ticks;
+use sound_core::{Clock, Frames, Ticks, Transport};
 
 use crate::{Amount, Bend};
 
 /// Where a lane stands at `tick`, which counts from the start of the clip like a note start.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Point<V> {
     pub tick: Ticks,
@@ -126,6 +127,73 @@ pub fn value_at<V: LaneValue>(points: &[Point<V>], tick: Ticks) -> Option<V> {
     let before = after.checked_sub(1).and_then(|index| points.get(index));
     match (before, points.get(after)) {
         (Some(before), Some(next)) => Some(before.towards(*next, tick)),
+        (Some(only), None) | (None, Some(only)) => Some(only.value),
+        (None, None) => None,
+    }
+}
+
+/// The most pieces a player of lanes cuts a block into, see [`pieces`]. Bends past these in one
+/// block, which only lanes with points a few frames apart have, ramp straight to the end of the
+/// block.
+pub const MAX_PIECES: usize = 4;
+
+/// The pieces a player of `lines` plays a block in: each starts at an offset in the block and
+/// takes the value of every line at the project frame where it ends, so the ramp of each piece
+/// ends on the line. One piece without a bend; else a cut at each frame inside the block where
+/// some line bends, the earliest first. Gives the pieces and how many there are.
+pub fn pieces<'a>(
+    lines: impl IntoIterator<Item = &'a [Point<f32>]>,
+    transport: &Transport<'_>,
+) -> ([(usize, Frames); MAX_PIECES], usize) {
+    let mut bends = [(0, Frames(0)); MAX_PIECES - 1];
+    let mut count = 0;
+    let range = &transport.tick_range;
+    for points in lines {
+        let after = points.partition_point(|point| point.tick < range.start);
+        let points = points.get(after..).unwrap_or_default().iter();
+        for point in points.take_while(|point| point.tick < range.end) {
+            let Some(offset) = transport.offset_of(point.tick).filter(|offset| *offset > 0) else {
+                continue;
+            };
+            let found = bends.get(..count).unwrap_or_default();
+            let at = found.partition_point(|(other, _)| *other < offset);
+            if found.get(at).is_some_and(|(other, _)| *other == offset) || at == bends.len() {
+                continue;
+            }
+            count = (count + 1).min(bends.len());
+            if let Some(later) = bends.get_mut(at..count) {
+                later.rotate_right(1);
+                if let Some(bend) = later.first_mut() {
+                    *bend = (offset, transport.clock.frame_of(point.tick));
+                }
+            }
+        }
+    }
+    let mut pieces = [(0, transport.frame_range.end); MAX_PIECES];
+    for (index, (offset, frame)) in bends.iter().take(count).enumerate() {
+        if let Some(piece) = pieces.get_mut(index) {
+            piece.1 = *frame;
+        }
+        if let Some(piece) = pieces.get_mut(index + 1) {
+            piece.0 = *offset;
+        }
+    }
+    (pieces, count + 1)
+}
+
+/// Where a lane of places on a travel stands at the project frame `frame`, on the straight line
+/// between the frames of the points around it: what a device hears. A tick is many frames, so a
+/// ramp a few ticks long would reach its point up to a tick early if it ended on a whole tick.
+pub fn value_at_frame(points: &[Point<f32>], frame: Frames, clock: &Clock) -> Option<f32> {
+    let after = points.partition_point(|point| clock.frame_of(point.tick) <= frame);
+    let before = after.checked_sub(1).and_then(|index| points.get(index));
+    match (before, points.get(after)) {
+        (Some(before), Some(next)) => {
+            let from = clock.frame_of(before.tick).0;
+            let to = clock.frame_of(next.tick).0;
+            let done = (frame.0 - from) as f64 / (to - from) as f64;
+            Some(f32::between(before.value, next.value, done))
+        }
         (Some(only), None) | (None, Some(only)) => Some(only.value),
         (None, None) => None,
     }

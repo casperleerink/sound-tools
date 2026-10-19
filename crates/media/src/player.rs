@@ -1,11 +1,13 @@
-//! Plays the audio clips of one track: one immutable snapshot of its clips on the control side,
-//! one processor that reads them from the transport's frame range on the audio thread.
+//! Plays stretches of audio files at places in the song: one immutable snapshot of them on the
+//! control side, one processor that reads them from the transport's frame range on the audio
+//! thread. A track of the arrangement plays its clips through one; a region of a parent of the
+//! project plays itself through one.
 //!
 //! The rules that shape this file:
 //!
 //! - Nothing reads a file here. Every file is in memory, in the snapshot, before it arrives.
-//! - Where clips overlap, the one that comes last in the snapshot is heard (see
-//!   [`crate::AudioClip::layer`]). The others are not changed, only not heard there.
+//! - Where clips overlap, the one that comes last in the snapshot is heard. The others are not
+//!   changed, only not heard there.
 //! - No edge clicks, and no join dips. Where a clip hands over to another, at a cut between
 //!   two clips or where one covers or uncovers another, the outgoing clip plays on past the
 //!   edge for [`DECLICK_SECONDS`], reading its file past its trim, and fades out while the
@@ -17,27 +19,139 @@
 
 use std::sync::Arc;
 
-use sound_core::{AudioOutput, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor, Ticks};
-use sound_media::{Audio, Resampler, SCRATCH_FRAMES};
+use sound_core::{
+    Assets, AudioOutput, MAX_BLOCK, Ports, PrepareConfig, ProcessContext, Processor, Ticks,
+};
+
+use crate::{Audio, AudioAsset, MediaError, Resampler, SCRATCH_FRAMES};
 
 /// How long the ramp at every edge of a clip is. Not a setting, and not drawn.
 pub const DECLICK_SECONDS: f64 = 0.002;
 
 /// One clip as the audio thread plays it: its file, where it starts, and its level, all in
 /// engine frames except the start.
-pub(crate) struct PlacedAudio {
-    pub(crate) start: Ticks,
-    pub(crate) audio: Arc<Audio>,
-    pub(crate) resampler: Arc<Resampler>,
+struct PlacedAudio {
+    start: Ticks,
+    audio: Arc<Audio>,
+    resampler: Arc<Resampler>,
     /// The file frame the clip starts playing at.
-    pub(crate) origin: u64,
+    origin: u64,
     /// Engine frames the clip plays, 1 or more.
-    pub(crate) length: u64,
+    length: u64,
     /// Engine frames the file holds from `origin` on: `length`, and what is past the trim.
-    pub(crate) available: u64,
-    pub(crate) gain: f32,
-    pub(crate) fade_in: u64,
-    pub(crate) fade_out: u64,
+    available: u64,
+    gain: f32,
+    fade_in: u64,
+    fade_out: u64,
+}
+
+/// A stretch of an audio file at a place in the song, as a player is given it. It plays at the
+/// speed of its file, so a tempo change moves only where it starts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Region {
+    /// The file, under `assets/audio/`.
+    pub asset: AudioAsset,
+    /// Where it starts in the song.
+    pub start: Ticks,
+    /// Where in the file it starts playing.
+    pub file_start_seconds: f64,
+    /// Where in the file it stops: the end of the file with `None`.
+    pub file_end_seconds: Option<f64>,
+    /// How much louder it plays than its file, as a factor.
+    pub gain: f32,
+    /// A straight line from silence at its start to its level, and from its level to silence
+    /// at its end.
+    pub fade_in_ms: f32,
+    pub fade_out_ms: f32,
+}
+
+impl Region {
+    /// The part of the file that plays, in frames of the file: from, and up to.
+    pub fn file_frames(&self, file: &crate::Info) -> (u64, u64) {
+        file_frames(file, self.file_start_seconds, self.file_end_seconds)
+    }
+
+    /// How many engine frames it plays at `engine_rate`.
+    pub fn length(&self, file: &crate::Info, engine_rate: u32) -> u64 {
+        let (from, to) = self.file_frames(file);
+        crate::engine_frames(to - from, file.sample_rate, engine_rate)
+    }
+}
+
+/// The part of `file` from `start_seconds` to `end_seconds`, the end of the file with `None`, in
+/// frames of the file: from, and up to.
+pub fn file_frames(file: &crate::Info, start_seconds: f64, end_seconds: Option<f64>) -> (u64, u64) {
+    let rate = f64::from(file.sample_rate);
+    let frame = |seconds: f64| ((seconds * rate).round().max(0.0) as u64).min(file.frames);
+    let from = frame(start_seconds);
+    let to = end_seconds.map_or(file.frames, frame);
+    (from, to.max(from))
+}
+
+/// The snapshot of `regions`, which `what` names in a problem such as `the clip "verse"`, the
+/// last one heard where they overlap, and a line for each that cannot play.
+///
+/// Reads every file the first time it is named, on this thread, see [`crate::load`]. A file
+/// that does not play, or a region that plays none of its file, costs one look at the file
+/// after that, see [`crate::info`].
+pub fn snapshot(
+    regions: impl IntoIterator<Item = (String, Region)>,
+    assets: &Assets,
+    engine_rate: u32,
+) -> (AudioSnapshot, Vec<String>) {
+    let mut clips = Vec::new();
+    let mut problems = Vec::new();
+    for (what, region) in regions {
+        let file = match crate::info(assets, &region.asset) {
+            Ok(file) => file,
+            Err(MediaError::Missing { path }) => {
+                problems.push(format!(
+                    "{what} plays {path}, which is not there. It keeps its place and is silent, and the rest plays. Copy the file into assets/audio/ under that name and it plays, or correct `asset`"
+                ));
+                continue;
+            }
+            Err(error) => {
+                problems.push(format!("{what} is silent: {error}"));
+                continue;
+            }
+        };
+        let length = region.length(&file, engine_rate);
+        if length == 0 {
+            problems.push(format!(
+                "{what} plays nothing: file_start_seconds {} is at or past the end of {}, which is {:.3} s long",
+                region.file_start_seconds,
+                region.asset,
+                file.seconds()
+            ));
+            continue;
+        }
+        let audio = match crate::load(assets, &region.asset) {
+            Ok(audio) => audio,
+            Err(error) => {
+                problems.push(format!("{what} is silent: {error}"));
+                continue;
+            }
+        };
+        let file = audio.info();
+        let (origin, _) = region.file_frames(&file);
+        // What the file holds from where it starts, which a join may play past its end.
+        let rate = file.sample_rate;
+        let available = crate::engine_frames(file.frames - origin, rate, engine_rate);
+        let milliseconds =
+            |ms: f32| (f64::from(ms) / 1000.0 * f64::from(engine_rate)).round() as u64;
+        clips.push(PlacedAudio {
+            start: region.start,
+            resampler: crate::resampler(audio.sample_rate(), engine_rate),
+            audio,
+            origin,
+            length,
+            available,
+            gain: region.gain,
+            fade_in: milliseconds(region.fade_in_ms),
+            fade_out: milliseconds(region.fade_out_ms),
+        });
+    }
+    (AudioSnapshot { clips }, problems)
 }
 
 /// A part of a clip that is heard, in frames of the clip: from, up to, and whether it hands
@@ -103,10 +217,6 @@ pub struct AudioSnapshot {
 }
 
 impl AudioSnapshot {
-    pub(crate) fn new(clips: Vec<PlacedAudio>) -> Self {
-        Self { clips }
-    }
-
     pub fn len(&self) -> usize {
         self.clips.len()
     }

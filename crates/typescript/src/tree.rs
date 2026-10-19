@@ -258,6 +258,8 @@ pub(crate) struct Uses {
     pub scopes: BTreeSet<String>,
     /// The fields of instances inside it it reads, as `path.field`.
     pub inside: BTreeSet<String>,
+    /// The audio files whose waveforms it draws.
+    pub files: BTreeSet<String>,
 }
 
 /// How many nodes of a table use each thing, so a node that goes takes its use with it.
@@ -276,6 +278,7 @@ enum Named {
     Played,
     Scope,
     Inside,
+    File,
 }
 
 impl UseCounts {
@@ -298,6 +301,7 @@ impl UseCounts {
             (Named::Played, &uses.played),
             (Named::Scope, &uses.scopes),
             (Named::Inside, &uses.inside),
+            (Named::File, &uses.files),
         ];
         for (kind, names) in named {
             for name in names {
@@ -327,6 +331,7 @@ impl UseCounts {
             played: names(Named::Played),
             scopes: names(Named::Scope),
             inside: names(Named::Inside),
+            files: names(Named::File),
         }
     }
 }
@@ -592,6 +597,9 @@ impl ShapeProps {
                 of.add_uses(&mut uses);
                 uses.animates = true;
             }
+            Some(List::File { asset, .. }) => {
+                uses.files.insert(asset.clone());
+            }
             None => {}
         }
         uses
@@ -781,6 +789,13 @@ pub(crate) enum List {
         frames: u32,
         /// The same history wherever it is drawn: its live value, as `sdk.ts` writes it.
         key: String,
+    },
+    /// The waveform of an audio file under `assets/audio/`, from `from` to `to` seconds of it:
+    /// the peak of each stretch, as `+peak` then `-peak`, for a band from -1 to 1.
+    File {
+        asset: String,
+        from: Option<f64>,
+        to: Option<f64>,
     },
 }
 

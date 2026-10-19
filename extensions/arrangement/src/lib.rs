@@ -39,7 +39,6 @@ pub mod decibels;
 mod input;
 mod master;
 mod mixer;
-mod player;
 mod slot;
 mod summary;
 pub mod view;
@@ -69,7 +68,7 @@ pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};
 pub use mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
-pub use player::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
+pub use sound_media::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
 pub use slot::{EffectSlot, Sidechain, Tap};
 
 /// The name to enable in `project.json`.
