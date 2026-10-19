@@ -100,4 +100,13 @@ SDK additions, each generic, none a new concept (all are view elements or style)
 - `clock.computerKeys` / `setComputerKeys`: the computer keys are a switch of the session, as the click is, so a tool's transport shows and turns them. The live input keeps no view of its own; cmd-K still turns them.
 - A page has no 24-point padding; its view decides.
 
-Still different: the master opens the TS mixer, not main's master panel; pan reads `0`, not `C`; the note editor keeps its own look; a card's title has no instrument menu, so the panel has an Instrument button.
+Round 16b compares the same content: `snapshots/look.rs` draws the piece of main's snapshots in the template. A track is a synth and its chain, as main's was, so a filter is an effect like any. Master opens main's master panel; Mixer is a button on the master row. The editor, lanes, pickers, knobs and strips match main.
+
+More SDK, none a new concept:
+- `Space` `fit`: a range fills its width once laid out. An editor opens on its clip and TS knows no window size.
+- `untrack` is exported: what a component takes once as it opens.
+- `DeviceCard` `onTitle`: the title is a menu, as main's slot pickers were, for any device in a slot.
+- Menu items take `icon`, `detail` and `group`, and `openMenu` notes. `offers()` gives icons and the pickers' notes. A tool's picker then lists devices as the window's do.
+- A `pan` readout; `Knob` draws as the app's; `#rrggbb/NN` colours.
+
+Still different: the menus open at the pointer, not under their trigger; the current device has no tick; the limiter card has its lookahead select. The audio scenes (regions with handles, the Clip card, an armed track's input select) are not compared yet.
