@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Context, Field, Fields, Graph, HeardEvent, Inputs, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -22,13 +22,13 @@ for (const name of ["log", "info", "debug", "warn"] as const) {
 // Code of a tool that fails after an `await`, where nothing waits for it, must not stop Bun.
 process.on("unhandledRejection", (error) => console.error(error));
 
-type Spec = ToolSpec<Fields, Controls, unknown>;
+type Spec = ToolSpec<Fields, Inputs, unknown>;
 type State = ValuesOf<Fields>;
 type Choices = Record<string, string | number>;
 type Watches = Record<string, number>;
 type Size = { width: number; height: number };
-/** The room of a page in the check without a window: the default window's. */
-const CHECKED_PAGE: Size = { width: 1422, height: 824 };
+/** The room of a view in the check without a window: the default window's. */
+const CHECKED_ROOM: Size = { width: 1422, height: 824 };
 /** An instance whose code runs, with its watches as they are now. */
 type Played = { instance: string; watches: Watches };
 /** A record as the runtime tells it: its `state` as the file holds it. */
@@ -39,18 +39,20 @@ type Clock = { time: number; transport: Transport };
 type Request =
   /** The records this Bun did not hold as they are, those that are gone, and how many of its edits the runtime heard. */
   | { type: "records"; records: Told[]; gone: string[]; edits: number }
-  /** A card or a page opens: its code makes its nodes. */
-  | ({ type: "mount"; card: number; instance: string; watches: Watches; page: Size | null } & Clock)
-  | { type: "resize"; card: number; page: Size }
+  /** A view opens in the room the window gives it: its code makes its nodes. */
+  | ({ type: "mount"; card: number; instance: string; watches: Watches; size: Size } & Clock)
+  | { type: "resize"; card: number; size: Size }
   | { type: "watches"; instance: string; watches: Watches }
   | ({ type: "clock" } & Clock)
   /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
-  | { type: "event"; card: number; node: number; kind: "press" | "click" | "end" | "move"; payload: unknown; time: number }
+  | { type: "event"; card: number; node: number; kind: "press" | "end" | "move"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: string; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
   | { type: "drop"; card: number }
-  | { type: "behaviour"; question: number; tool: string; instance: string };
+  | { type: "behaviour"; question: number; tool: string; instance: string }
+  /** The file the composer chose for an `openFile`, as it is named under `assets/audio/` now, or `null`. */
+  | { type: "file_opened"; question: number; asset: string | null };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
 type Reads = { state: string[] | null; children: boolean; watches: boolean; transport: boolean };
@@ -84,10 +86,19 @@ const NAME = /^[a-z][a-z0-9_]*$/;
 const MAX_SOUNDS = 256;
 /** Every key of a tool, so a misspelled or an old one is a problem instead of left out. */
 const KEYS = {
-  name: true, title: true, when: true, doc: true, kind: true, state: true, controls: true, sound: true,
-  behaviour: true, children: true, memory: true, tick: true, card: true, page: true, transport: true, onKey: true,
+  name: true, title: true, when: true, doc: true, voices: true, state: true, inputs: true, sound: true,
+  behaviour: true, children: true, memory: true, tick: true, view: true, transport: true, onKey: true,
   keys: true, onNotes: true,
 } satisfies Record<keyof Spec, true>;
+/** The keys a tool had before, with what took their place. */
+const GONE: Record<string, string> = {
+  kind: "voices: a sound with one voice is what kind effect and source were, more voices what instrument was",
+  controls: "inputs: number(...) for a live control, bang() for a trigger",
+  card: "view, which draws a card in a rack and the whole window at the top",
+  page: "view, which draws a card in a rack and the whole window at the top",
+};
+/** The most voices a sound plays at once. */
+const MAX_VOICES = 8;
 
 /**
  * What is wrong with the definition of a tool that its types do not say, so the agent that
@@ -97,7 +108,9 @@ function problemsOf(spec: Spec): string[] {
   const problems: string[] = [];
   try {
     for (const key of Object.keys(spec)) {
-      if (!(key in KEYS)) {
+      if (key in GONE) {
+        problems.push(`${key}: a tool has no ${key} now; use ${GONE[key]}`);
+      } else if (!(key in KEYS)) {
         problems.push(`${key}: a tool has no ${key}; its keys are ${Object.keys(KEYS).join(", ")}`);
       }
     }
@@ -106,26 +119,30 @@ function problemsOf(spec: Spec): string[] {
         problems.push(`${key}: write it, it is what the composer and agents read`);
       }
     }
-    const names = [...Object.keys(spec.state), ...Object.keys(spec.controls ?? {})];
+    const names = [...Object.keys(spec.state), ...Object.keys(spec.inputs ?? {})];
     for (const name of names) {
       if (!NAME.test(name)) {
-        problems.push(`${name}: a field or control name is lowercase letters, digits and _, starting with a letter`);
+        problems.push(`${name}: a field or input name is lowercase letters, digits and _, starting with a letter`);
       }
       if (names.indexOf(name) !== names.lastIndexOf(name)) {
-        problems.push(`${name}: a field and a control cannot share a name`);
+        problems.push(`${name}: a field and an input cannot share a name`);
       }
     }
-    for (const name of Object.keys(spec.controls ?? {})) {
+    for (const name of Object.keys(spec.inputs ?? {})) {
       if (name === "audio" || name === "notes") {
-        problems.push(`${name}: a control is not named ${name}, the input of the sound`);
+        problems.push(`${name}: an input is not named ${name}, an input every sound has`);
       }
+    }
+    const voices = spec.voices ?? 1;
+    if (!Number.isInteger(voices) || voices < 1 || voices > MAX_VOICES) {
+      problems.push(`voices: ${voices} is not a whole number from 1 to ${MAX_VOICES}`);
     }
     const sounds = choiceFields(spec).reduce((count, [, field]) => count * field.options.length, 1);
     if (sounds > MAX_SOUNDS) {
       problems.push(`its choices make ${sounds} sounds, at most ${MAX_SOUNDS}: make some of them knobs or toggles`);
     }
-    if (spec.behaviour && (spec.kind ?? "effect") !== "effect") {
-      problems.push('kind: a parent\'s sound hears what it connects to its own { port: "audio" } as `input`, so leave `kind` out');
+    if (spec.behaviour && voices !== 1) {
+      problems.push('voices: a parent\'s sound is one voice that hears what it connects to its own { port: "audio" } as `input`, so leave `voices` out');
     }
     if (spec.children && !spec.behaviour) {
       problems.push("children: only a parent has children: give it a behaviour that connects them");
@@ -178,10 +195,11 @@ async function load() {
 
 /**
  * A tool as the runtime reads it: what it is, the sound of every combination of its choices,
- * and the nodes of its card and page at their defaults, so a card that fails is a problem at
+ * and the nodes of its view at its defaults, so a view that fails is a problem at
  * once. A function of the wrong type is called anyway, so it fails as a problem of its tool.
  */
 function described(spec: Spec, file: string) {
+  const sounds = combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))] as const);
   return {
     info: {
       name: spec.name,
@@ -189,11 +207,12 @@ function described(spec: Spec, file: string) {
       title: spec.title,
       when: spec.when,
       doc: spec.doc,
-      kind: spec.kind ?? "effect",
+      voices: spec.voices ?? 1,
+      input: sounds.some(([, graph]) => "Ok" in graph && readsInput(graph.Ok)),
       fields: spec.state,
-      controls: spec.controls ?? {},
+      inputs: spec.inputs ?? {},
       tick: spec.tick !== undefined,
-      page: spec.page !== undefined,
+      view: spec.view !== undefined,
       transport: spec.transport === true,
       keys: spec.onKey !== undefined,
       takes: spec.keys ?? null,
@@ -201,10 +220,14 @@ function described(spec: Spec, file: string) {
       behaviour: spec.behaviour !== undefined,
       children: spec.children,
     },
-    sounds: combinations(spec).map((choices) => [choices, made(() => sound(spec, choices))]),
-    card: made(() => draw(spec, false)),
-    page: spec.page === undefined ? null : made(() => draw(spec, true)),
+    sounds,
+    view: made(() => draw(spec)),
   };
+}
+
+/** Whether a sound hears what comes in, so its tool has an audio input. */
+function readsInput(graph: Graph): boolean {
+  return graph.nodes.some((node) => node.op === "input" || node.op === "inputLeft" || node.op === "inputRight");
 }
 
 /** What `make` gives, or why it failed, as the runtime reads a `Result`. */
@@ -242,14 +265,15 @@ function specOf(tool: string): Spec {
 function sound(spec: Spec, choices: Choices): Graph {
   const fields: Record<string, unknown> = {};
   for (const [name, field] of Object.entries(spec.state)) {
-    fields[name] =
-      field.kind === "choice"
-        ? (choices[name] ?? field.default)
-        : field.kind === "pattern" || field.kind === "sample"
-          ? new sdk.Table({ list: name })
-          : new sdk.Param(name);
+    if (field.kind === "number" || field.kind === "boolean") {
+      fields[name] = new sdk.Param(name);
+    } else if (field.kind === "choice") {
+      fields[name] = choices[name] ?? field.default;
+    } else if (field.kind === "file" || (field.kind === "list" && field.item.kind === "number")) {
+      fields[name] = new sdk.Table({ list: name });
+    }
   }
-  for (const name of Object.keys(spec.controls ?? {})) {
+  for (const name of Object.keys(spec.inputs ?? {})) {
     fields[name] = new sdk.Param(name);
   }
   const build = spec.sound ?? (() => sdk.input);
@@ -341,7 +365,7 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
     if (declared !== null && typeof declared === "object" && "players" in declared) {
       throw new Error(
         "`players` are gone: a child of tool `sequencer` loops the patterns now (agent-docs/sequencer.md), " +
-          'connected by { from: { child, notes: "notes" }, to: { child, notes: "notes" } }, and set({ child, live: "launch" }, index) launches',
+          'connected by { from: { child, notes: "notes" }, to: { child, notes: "notes" } }, and send({ child, number: "launch" }, index) launches',
       );
     }
     return declared;
@@ -351,13 +375,9 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
   say({ type: "declared", question, declaration, reads });
 }
 
-/** What draws the card of a tool, or its page. */
-function drawerOf(spec: Spec, page: boolean) {
-  const draw = page ? spec.page : (spec.card ?? sdk.defaultCard(spec.state, spec.controls));
-  if (!draw) {
-    throw new Error(`${spec.name} has no page`);
-  }
-  return draw as (card: unknown) => Child;
+/** What draws the view of a tool. */
+function drawerOf(spec: Spec) {
+  return (spec.view ?? sdk.defaultView(spec.state, spec.inputs)) as (view: unknown) => Child;
 }
 
 /** The memory of an instance, made when it is first needed: a store its cards follow. */
@@ -386,27 +406,45 @@ function checkAt(at: number | undefined) {
   }
 }
 
-/** What a card, a page and the control loop use to play an instance. */
-function performer(instance: string): Performer<Controls> {
-  const send: Performer<Controls>["send"] = (event, { at, child } = {}) => {
+/** An input as `send` names it, as the runtime reads it: the child it is of, its name, and what it carries. */
+function inputOf(input: unknown): { child?: string; name: string; kind?: "number" | "bang" | "notes" } {
+  if (typeof input === "string") return { name: input, kind: input === "notes" ? "notes" : undefined };
+  if (input !== null && typeof input === "object" && "child" in input && typeof input.child === "string") {
+    for (const kind of ["number", "bang", "notes"] as const) {
+      const name = (input as Record<string, unknown>)[kind];
+      if (typeof name === "string") return { child: input.child, name, kind };
+    }
+  }
+  throw new TypeError(`send plays an input: its name, "notes", or { child, number }, { child, bang } or { child, notes }, not ${JSON.stringify(input)}`);
+}
+
+/** What a view and the control loop use to play an instance. */
+function performer(instance: string): Performer<Inputs> {
+  const notes = (event: NoteEvent, at: number | undefined, child: string | undefined) => {
     checkAt(at);
     say({ type: "send", instance, child, event: wired(event), at });
   };
   return {
-    set(control, value) {
-      const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.live];
-      say({ type: "control", instance, child, name, value });
-    },
-    fire(control, { at } = {}) {
+    send: ((input: unknown, ...rest: unknown[]) => {
+      const { child, name, kind } = inputOf(input);
+      const [first, second] = rest as [unknown, { at?: number } | undefined];
+      if (kind === "notes") {
+        notes(first as NoteEvent, second?.at, child);
+        return;
+      }
+      // A number input takes a number; a bang takes only when it happens.
+      const value = typeof first === "number" ? finite(first, name) : undefined;
+      if (kind === "number" && value === undefined) {
+        throw new TypeError(`send({ child: "${child}", number: "${name}" }, value) takes a number`);
+      }
+      const { at } = ((value === undefined ? first : second) ?? {}) as { at?: number };
       checkAt(at);
-      const [child, name] = typeof control === "string" ? [undefined, control] : [control.child, control.trigger];
-      say({ type: "control", instance, child, name, at });
-    },
-    send,
+      say({ type: "control", instance, child, name, value, at });
+    }) as Performer<Inputs>["send"],
     play(pitch, { seconds = 0.25, hold = false, velocity = 0.8, at, child } = {}) {
       checkAt(at);
       if (hold) {
-        send({ type: "noteOn", pitch, velocity }, { at, child });
+        notes({ type: "noteOn", pitch, velocity }, at, child);
       } else {
         say({ type: "note", instance, child, pitch: keyOf(finite(pitch, "pitch")), velocity: finite(velocity, "velocity"), seconds: finite(seconds, "seconds"), at });
       }
@@ -823,6 +861,7 @@ function contextOf<Extra extends object>(
     memory: memoryOf(instance, spec),
     time,
     update: updater(instance),
+    openFile: fileOpener(),
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
   };
@@ -830,14 +869,25 @@ function contextOf<Extra extends object>(
   let children: OwnedChild[] | undefined;
   return Object.defineProperties(context, {
     state: { enumerable: true, value: filledState(spec, record) },
-    watches: { enumerable: true, value: watches },
+    outputs: { enumerable: true, value: watches },
     transport: { enumerable: true, value: transport },
     children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
-  }) as typeof context & { state: State; watches: Watches; transport: Transport; children: OwnedChild[] };
+  }) as typeof context & { state: State; outputs: Watches; transport: Transport; children: OwnedChild[] };
+}
+
+/** `openFile`: the runtime opens the file, copies it, and answers its question. */
+const filesAsked = new Map<number, (asset: string | null) => void>();
+let fileQuestions = 0;
+function fileOpener() {
+  return ({ title = "Choose a file" }: { title?: string } = {}): Promise<string | null> => {
+    const question = ++fileQuestions;
+    say({ type: "open_file", question, title });
+    return new Promise((resolve) => filesAsked.set(question, resolve));
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
-// Cards and pages: their code runs once and makes nodes; stores of the record, its children,
+// Views: their code runs once and makes nodes; stores of the record, its children,
 // the watches and the transport change what reads them. The window gets the ops of each card
 // after every request, and at once after an `await`.
 
@@ -960,9 +1010,9 @@ function flushOps() {
 /** Milliseconds this Bun spent on the request whose ops go now. */
 let took = 0;
 
-/** Opens a card or a page: its code runs once and makes its nodes, or the window hears why not. */
+/** Opens a view: its code runs once and makes its nodes, or the window hears why not. */
 function mount(request: Extract<Request, { type: "mount" }>) {
-  const { card, instance, watches, page } = request;
+  const { card, instance, watches } = request;
   setClock(request);
   const record = recordOf(instance);
   const spec = sdk.host.tools.get(record?.tool ?? "");
@@ -974,11 +1024,11 @@ function mount(request: Extract<Request, { type: "mount" }>) {
   cards.delete(card);
   const known = storesOf(instance, spec, record);
   setWatches(instance, watches);
-  const size = sdk.host.store({ width: page?.width ?? 0, height: page?.height ?? 0 }, false);
-  runs(spec.name, page ? "page" : "card");
+  const size = sdk.host.store({ ...request.size }, false);
+  runs(spec.name, "view");
   try {
-    const context = cardContext(instance, spec, known, page ? { size } : {});
-    const draw = drawerOf(spec, page !== null);
+    const context = cardContext(instance, spec, known, { size });
+    const draw = drawerOf(spec);
     const root = sdk.host.mount(card, () => draw(context), { state: context.state, fields: spec.state, update: context.update });
     cards.set(card, { root, instance, tool: spec.name, size: sdk.host.store(size, false) });
     mounting.add(card);
@@ -987,16 +1037,17 @@ function mount(request: Extract<Request, { type: "mount" }>) {
   }
 }
 
-/** What a card or a page gets: the stores of its instance, its memory, and what plays it. */
+/** What a view gets: the stores of its instance, its memory, and what plays it. */
 function cardContext<Extra extends object>(instance: string, spec: Spec, known: Stores, extra: Extra) {
   const context = {
     ...extra,
     state: sdk.host.store(known.state, false) as State,
     children: sdk.host.store(known.children, false),
-    watches: sdk.host.store(known.watches, false),
+    outputs: sdk.host.store(known.watches, false),
     transport: sdk.host.store(known.transport, false),
     memory: memoryOf(instance, spec),
     update: updater(instance),
+    openFile: fileOpener(),
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
   };
@@ -1020,11 +1071,8 @@ function filledObject(fields: Fields, value: unknown): State {
 
 function defaultOf(field: Field): unknown {
   switch (field.kind) {
-    case "pattern":
-      return Array(field.length).fill(field.default);
-    case "sample":
+    case "file":
       return "";
-    case "notes":
     case "list":
       return field.default ?? [];
     case "text":
@@ -1036,25 +1084,21 @@ function defaultOf(field: Field): unknown {
   }
 }
 
-/** The ops of a tool's card or page at its defaults, after one tick: a check without a window. */
-function draw(spec: Spec, page: boolean): unknown {
+/** The ops of a tool's view at its defaults, after one tick: a check without a window. */
+function draw(spec: Spec): unknown {
   const clock: Clock = { time: 0, transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 } };
   const memory = freshMemory(spec);
-  const performs = { set() {}, fire() {}, play() {}, send() {}, update() {} };
+  const performs = { play() {}, send() {}, update() {}, openFile: async () => null };
   const state = frozen(filledObject(spec.state, {}));
-  const context = { state, children: [], watches: {}, memory, time: 0, transport: clock.transport, now: sdk.now, ...performs };
+  const context = { state, children: [], outputs: {}, memory, time: 0, transport: clock.transport, now: sdk.now, ...performs };
   try {
     spec.tick?.({ ...context, dt: 1 / 30 } as never);
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
   const known: Stores = { tool: spec.name, state: structuredClone(state), children: [], watches: {}, transport: clock.transport };
-  const drawn = {
-    ...context,
-    state: sdk.host.store(known.state, false),
-    ...(page && { size: sdk.host.store({ ...CHECKED_PAGE }, false) }),
-  };
-  const root = sdk.host.mount(-1, () => drawerOf(spec, page)(drawn), { state: drawn.state as never, fields: spec.state, update() {} });
+  const drawn = { ...context, state: sdk.host.store(known.state, false), size: sdk.host.store({ ...CHECKED_ROOM }, false) };
+  const root = sdk.host.mount(-1, () => drawerOf(spec)(drawn), { state: drawn.state as never, fields: spec.state, update() {} });
   const taken = sdk.host.takeOps(root);
   root.dispose();
   if ("error" in taken) {
@@ -1111,7 +1155,7 @@ function handle(request: Request) {
       break;
     case "resize": {
       const mounted = cards.get(request.card);
-      if (mounted) sdk.host.reconcile(mounted.size as never, request.page as never);
+      if (mounted) sdk.host.reconcile(mounted.size as never, request.size as never);
       break;
     }
     case "watches":
@@ -1157,6 +1201,10 @@ function handle(request: Request) {
       break;
     case "behaviour":
       declare(request);
+      break;
+    case "file_opened":
+      filesAsked.get(request.question)?.(request.asset);
+      filesAsked.delete(request.question);
       break;
   }
 }

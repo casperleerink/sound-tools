@@ -22,7 +22,7 @@ pub(crate) const MAX_DELAYS: usize = 16;
 /// The seconds of all the buffers of one code together, per channel and voice.
 pub(crate) const MAX_BUFFER_SECONDS: f32 = 30.0;
 /// The longest a pattern can be.
-pub(crate) const MAX_ARRAY_LENGTH: usize = 1024;
+pub const MAX_ARRAY_LENGTH: usize = 1024;
 pub(crate) const MAX_OPERATIONS: usize = 4096;
 /// The most signals a stage of a sound takes from the stages and devices before it, and the
 /// most it hands on: each is a sound port of its processor.

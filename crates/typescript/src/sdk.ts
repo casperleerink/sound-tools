@@ -2,28 +2,36 @@
 // an edit here is lost. Read `agent-docs/extensions.md` first.
 //
 // A tool is a `.ts` or `.tsx` file next to this one that calls `tool`: the fields of its
-// record, the controls its card plays, its doc for agents, its sound and its card.
+// record, its inputs, its doc for agents, its sound and its view.
 
 // ---------------------------------------------------------------------------------------------
-// Fields of a record: saved, undoable, and what an agent writes.
+// Fields of a record: saved, undoable, and what an agent writes. Whatever reads a field follows
+// it: a sound that reads a number glides to it, a behaviour or a view that reads it runs again.
 
 /** What a readout shows after the number. */
 export type Unit = "hz" | "ms" | "db" | "percent";
 
-/** A number a knob turns. It plays live: a turn glides the sound and runs no code. */
-export interface KnobField {
-  kind: "knob";
+/**
+ * A number from `min` to `max`. A sound that reads it hears it as a signal that glides, and a
+ * lane or a cable can move it unless it is `integer`.
+ */
+export interface NumberField {
+  kind: "number";
   min: number;
   max: number;
-  default: number;
+  /** `min` when left out. */
+  default?: number;
+  /** Only whole numbers. */
+  integer?: boolean;
+  /** `"hz"` turns on a log scale; `"percent"` still holds 0 to 1. */
   unit?: Unit;
-  /** What the card calls it. The field name, in words, when left out. */
+  /** What a view calls it. The field name, in words, when left out. */
   label?: string;
 }
 
-/** On or off. It plays live, as a signal of 1 or 0. */
-export interface ToggleField {
-  kind: "toggle";
+/** On or off. A sound hears it as a signal of 1 or 0. */
+export interface BooleanField {
+  kind: "boolean";
   default: boolean;
   label?: string;
 }
@@ -39,36 +47,6 @@ export interface ChoiceField<Option extends string | number = string | number> {
   label?: string;
 }
 
-/** A list of numbers, such as the steps of a sequence. It plays live, as a `Table`. */
-export interface PatternField {
-  kind: "pattern";
-  length: number;
-  min: number;
-  max: number;
-  default: number;
-  label?: string;
-}
-
-/**
- * A sound to play from, such as a recording: the record holds the name of a file under
- * `assets/audio/`, or "" for none. A `Table` in `sound`, at the rate of the engine, mixed to
- * one channel, up to 60 seconds.
- */
-export interface SampleField {
-  kind: "sample";
-  label?: string;
-}
-
-// Data a behaviour, a card and a page read: no signal, so `sound` does not get them.
-
-/** Notes in ticks, 960 to a quarter note, from where the parent's code plays them. */
-export interface NotesField {
-  kind: "notes";
-  /** `[]` when left out. */
-  default?: Note[];
-  label?: string;
-}
-
 export interface TextField {
   kind: "text";
   /** `""` when left out. */
@@ -76,14 +54,12 @@ export interface TextField {
   label?: string;
 }
 
-export interface NumberField {
-  kind: "number";
-  min: number;
-  max: number;
-  /** Only whole numbers. */
-  integer?: boolean;
-  /** `min` when left out. */
-  default?: number;
+/**
+ * A sound file: the name of a file under `assets/audio/`, or "" for none. A sound hears it as a
+ * `Table` at the rate of the engine, mixed to one channel, up to 60 seconds.
+ */
+export interface FileField {
+  kind: "file";
   label?: string;
 }
 
@@ -93,7 +69,7 @@ export interface ObjectItem<F extends Fields = Fields> {
   fields: F;
 }
 
-/** Items of one kind: a field, or an object of fields. `[]` when left out. */
+/** Items of one kind: a field, or an object of fields. A sound hears a list of numbers as a `Table`. */
 export interface ListField<I extends Field | ObjectItem = Field | ObjectItem> {
   kind: "list";
   item: I;
@@ -104,11 +80,10 @@ export interface ListField<I extends Field | ObjectItem = Field | ObjectItem> {
   label?: string;
 }
 
-export type DataField = NotesField | TextField | NumberField | ListField;
-export type Field = KnobField | ToggleField | ChoiceField | PatternField | SampleField | DataField;
+export type Field = NumberField | BooleanField | ChoiceField | TextField | FileField | ListField;
 export type Fields = Record<string, Field>;
 
-/** A note of a `notes` field. */
+/** A note of a `notes()` list. */
 export interface Note {
   /** In ticks from where it is played from. */
   start: number;
@@ -120,19 +95,16 @@ export interface Note {
   velocity: number;
 }
 
-export const knob = (field: Omit<KnobField, "kind">): KnobField => ({ kind: "knob", ...field });
-export const toggle = (field: Omit<ToggleField, "kind">): ToggleField => ({ kind: "toggle", ...field });
+export const number = (field: Omit<NumberField, "kind">): NumberField => ({ kind: "number", ...field });
+export const boolean = (field: Omit<BooleanField, "kind">): BooleanField => ({ kind: "boolean", ...field });
 /** `default` is one of `options`, which are at least one. */
 export const choice = <const Option extends string | number>(field: {
   options: readonly [Option, ...Option[]];
   default: NoInfer<Option>;
   label?: string;
 }): ChoiceField<Option> => ({ kind: "choice", ...field });
-export const pattern = (field: Omit<PatternField, "kind">): PatternField => ({ kind: "pattern", ...field });
-export const sample = (field: Omit<SampleField, "kind"> = {}): SampleField => ({ kind: "sample", ...field });
-export const notes = (field: Omit<NotesField, "kind"> = {}): NotesField => ({ kind: "notes", ...field });
 export const text = (field: Omit<TextField, "kind"> = {}): TextField => ({ kind: "text", ...field });
-export const number = (field: Omit<NumberField, "kind">): NumberField => ({ kind: "number", ...field });
+export const file = (field: Omit<FileField, "kind"> = {}): FileField => ({ kind: "file", ...field });
 
 /**
  * The item of a list: a field as it is, an object of fields as an `ObjectItem`. Not `I & Fields`,
@@ -141,8 +113,8 @@ export const number = (field: Omit<NumberField, "kind">): NumberField => ({ kind
 type ItemOf<I extends Field | Fields> = I extends Field ? I : I extends Fields ? ObjectItem<I> : never;
 
 /**
- * A list whose items are `item`: a field, such as `notes()`, or an object of fields. A field an
- * item of `default` leaves out is at its own default.
+ * A list whose items are `item`: a field, such as `number(...)`, or an object of fields. A field
+ * an item of `default` leaves out is at its own default.
  */
 export function list<const I extends Field | Fields>(
   item: I,
@@ -152,77 +124,83 @@ export function list<const I extends Field | Fields>(
   return { kind: "list", item: field as ItemOf<I>, ...options };
 }
 
+/** A row of `length` numbers, such as the steps of a sequence: a list that starts as `length` times `default`. */
+export function pattern(field: { length: number; min: number; max: number; default: number; label?: string }): ListField<NumberField> {
+  const { length, min, max, label } = field;
+  return list(number({ min, max, default: field.default }), { max: length, label, default: Array<number>(length).fill(field.default) });
+}
+
+/** The fields of a `Note`, with their ranges. */
+export const noteFields = {
+  start: number({ min: 0, max: 2 ** 31, integer: true }),
+  length: number({ min: 1, max: 2 ** 31, default: 1, integer: true }),
+  pitch: number({ min: 0, max: 127, default: 60, integer: true }),
+  velocity: number({ min: 1, max: 127, default: 100, integer: true }),
+} as const;
+
+/** Notes in ticks, 960 to a quarter note, from where the parent's code plays them: a list of `noteFields`. */
+export function notes(field: { default?: Note[]; label?: string } = {}): ListField<ObjectItem<typeof noteFields>> {
+  return list(noteFields, field);
+}
+
 // ---------------------------------------------------------------------------------------------
-// Controls: what the card plays and nothing saves, as a performer plays an instrument.
+// Inputs: what plays a tool and nothing saves, as a performer plays an instrument. A cable, a
+// view or code plays them with `send`. Every sound also has the input `notes`, which plays its voices.
 
-/** A number the card sets as it is played, such as an XY pad. Not saved; starts at `default`. */
-export interface LiveControl {
-  kind: "live";
-  min: number;
-  max: number;
-  default: number;
+/** A bang: a signal that is 1 for the one sample after it is sent. */
+export interface BangInput {
+  kind: "bang";
   label?: string;
 }
 
-/** A bang: a signal that is 1 for the one sample after the card fires it. */
-export interface TriggerControl {
-  kind: "trigger";
-  label?: string;
-}
+/** A number input is a `number(...)` that nothing saves: it starts at its default, and glides. */
+export type Input = NumberField | BangInput;
+export type Inputs = Record<string, Input>;
 
-export type Control = LiveControl | TriggerControl;
-export type Controls = Record<string, Control>;
+export const bang = (input: Omit<BangInput, "kind"> = {}): BangInput => ({ kind: "bang", ...input });
 
-/** The names of the controls in `C` of kind `K`, so `set` takes no trigger and `fire` no live control. */
-type ControlNames<C extends Controls, K extends Control["kind"]> = {
-  [Name in keyof C]: C[Name] extends infer Each ? (Each extends { kind: K } ? Name : never) : never;
-}[keyof C] &
+/** The names of the inputs in `I` of kind `K`. */
+type InputNames<I extends Inputs, K extends Input["kind"]> = {
+  [Name in keyof I]: I[Name] extends infer Each ? (Each extends { kind: K } ? Name : never) : never;
+}[keyof I] &
   string;
 
-export const live = (control: Omit<LiveControl, "kind">): LiveControl => ({ kind: "live", ...control });
-export const trigger = (control: Omit<TriggerControl, "kind"> = {}): TriggerControl => ({
-  kind: "trigger",
-  ...control,
-});
-
 /** A value of a field as a record holds it; `Filled` says whether the fields of an item may be left out. */
-type ValueOf<F, Filled extends boolean> = F extends KnobField | NumberField
+type ValueOf<F, Filled extends boolean> = F extends NumberField
   ? number
-  : F extends ToggleField
+  : F extends BooleanField
     ? boolean
     : F extends ChoiceField<infer Option>
       ? Option
-      : F extends PatternField
-        ? number[]
-        : F extends SampleField | TextField
-          ? string
-          : F extends NotesField
-            ? Note[]
-            : F extends ListField<infer I>
-              ? Array<I extends ObjectItem<infer G> ? (Filled extends true ? ValuesOf<G> : StateOf<G>) : ValueOf<I, Filled>>
-              : never;
+      : F extends FileField | TextField
+        ? string
+        : F extends ListField<infer I>
+          ? Array<I extends ObjectItem<infer G> ? (Filled extends true ? ValuesOf<G> : StateOf<G>) : ValueOf<I, Filled>>
+          : never;
 
 /** The `state` of a record as a file may hold it: a field left out is at its default. */
 export type StateOf<S extends Fields> = { -readonly [Name in keyof S]?: ValueOf<S[Name], false> };
 
 /**
- * The `state` of a record as a behaviour, a card, a page and the control loop get it: every
- * field, at its default where the record leaves it out. Not readonly as the fields of a tool
- * are, so `update` can change it.
+ * The `state` of a record as a behaviour, a view and the control loop get it: every field, at
+ * its default where the record leaves it out. Not readonly as the fields of a tool are, so
+ * `update` can change it.
  */
 export type ValuesOf<S extends Fields> = { -readonly [Name in keyof S]: ValueOf<S[Name], true> };
 
-/**
- * What `sound` gets: a choice as its value, a pattern as a `Table`, a data field not at all,
- * anything else as a `Param`, which is a `Signal`.
- */
-export type SoundOf<S extends Fields, C extends Controls> = {
-  [Name in keyof S as S[Name] extends DataField ? never : Name]: S[Name] extends ChoiceField<infer Option>
+/** What a sound hears of a field: a number or a boolean as a `Param`, a choice as its value, a file or a list of numbers as a `Table`. */
+type Heard<F> = F extends NumberField | BooleanField
+  ? Param
+  : F extends ChoiceField<infer Option>
     ? Option
-    : S[Name] extends PatternField | SampleField
+    : F extends FileField | ListField<NumberField>
       ? Table
-      : Param;
-} & { [Name in keyof C]: Param };
+      : never;
+
+/** What `sound` gets: the fields it can hear, and every input, a bang as a `Param` that is 1 for one sample. */
+export type SoundOf<S extends Fields, I extends Inputs> = {
+  [Name in keyof S as [Heard<S[Name]>] extends [never] ? never : Name]: Heard<S[Name]>;
+} & { [Name in keyof I]: Param };
 
 // ---------------------------------------------------------------------------------------------
 // The sound graph: a sound is a `Signal`, built from the functions below. The SDK sends the graph
@@ -242,13 +220,13 @@ type Binary =
   | "add" | "subtract" | "multiply" | "divide" | "remainder" | "less" | "greater" | "lessOrEqual"
   | "greaterOrEqual" | "equal" | "notEqual" | "min" | "max" | "pow";
 
-/** Where a table reads: a pattern or sample field by name, or a `buffer` by its number. */
+/** Where a table reads: a list or file field by name, or a `buffer` by its number. */
 export type TableRef = { list: string } | { buffer: number };
 
 /** A node of the sound graph, with `R` for each signal it reads. */
 type SignalNode<R> =
   | { op: Source }
-  /** A field or a control. */
+  /** A field or an input. */
   | { op: "param"; name: string }
   | { op: "feedback"; slot: number }
   | { op: Unary; x: R }
@@ -313,13 +291,13 @@ export class Signal {
   ne(other: Operand): Signal { return new Signal({ op: "notEqual", a: this, b: other }); }
 }
 
-/** A value read where it is used, with no memory: a source, a field, a control, a feedback. */
+/** A value read where it is used, with no memory: a source, a field, an input, a feedback. */
 class Named extends Signal {
   declare readonly node: Extract<SignalNode<Operand>, { op: Source | "param" | "feedback" }>;
 }
 
 /**
- * A field or a control of the tool. A `Signal`, so the sound uses it as any other; it is no
+ * A field or an input of the tool. A `Signal`, so the sound uses it as any other; it is no
  * number, so code cannot branch on it: a turn of a knob must not run `sound` again.
  */
 export class Param extends Named {
@@ -328,7 +306,7 @@ export class Param extends Named {
   }
 }
 
-/** A list to read by index or by phase: a pattern of the record, or a `buffer`. */
+/** A list to read by index or by phase: a list of numbers or a file of the record, or a `buffer`. */
 export class Table {
   constructor(readonly ref: TableRef) {}
   /** The value at `index`: its whole part, wrapped, so any index reads. */
@@ -370,7 +348,6 @@ interface Building {
   feedbacks: Feedback[];
   buffers: number[];
   writes: Array<{ buffer: number; index: Operand; value: Operand }>;
-  watches: Array<{ name: string; value: Operand }>;
   numbers: Array<{ name: string; value: Operand }>;
   bangs: Array<{ name: string; value: Operand }>;
   notes: Array<{ name: string; gate: Operand; pitch: Operand; velocity: Operand }>;
@@ -379,7 +356,7 @@ interface Building {
 let current: Building | undefined;
 
 function building(): Building {
-  if (!current) throw new Error("feedback, buffer, write, watch and output belong inside `sound`");
+  if (!current) throw new Error("feedback, buffer, write and output belong inside `sound`");
   return current;
 }
 
@@ -581,11 +558,6 @@ export function buffer(seconds: number): Buffer {
   return made;
 }
 
-/** Shows `value` to the card as `watches[name]`. Inside `sound` only. */
-export function watch(name: string, value: Operand): void {
-  building().watches.push({ name, value });
-}
-
 /** Notes from signals: one sounds while `gate` is above 0, at the MIDI `pitch` it starts with. */
 export interface Notes {
   gate: Operand;
@@ -596,9 +568,10 @@ export interface Notes {
 }
 
 /**
- * Sends out what a parent connects to another child: a number, in the units of the number it
- * drives; `{ bang }`, a bang where it goes above 0; or `Notes`, a note that ends where the gate
- * falls or the pitch moves. Inside `sound` only; an instrument sends only numbers.
+ * An output of the sound, which a parent connects to another child: a number, in the units of
+ * the number it drives, which a view also reads as `now.value(name)` and `outputs[name]`;
+ * `{ bang }`, a bang where it goes above 0; or `Notes`, a note that ends where the gate falls or
+ * the pitch moves. Inside `sound` only; a sound with more than one voice sends only numbers.
  */
 export function output(name: string, value: Operand | { bang: Operand; gate?: never } | Notes): void {
   const declared = building();
@@ -617,7 +590,7 @@ export function output(name: string, value: Operand | { bang: Operand; gate?: ne
  * of its own wherever it is read.
  */
 export function graphToJson(build: () => Operand | Stereo): Graph {
-  current = { feedbacks: [], buffers: [], writes: [], watches: [], numbers: [], bangs: [], notes: [] };
+  current = { feedbacks: [], buffers: [], writes: [], numbers: [], bangs: [], notes: [] };
   try {
     const declared = current;
     const output = build();
@@ -658,8 +631,9 @@ export function graphToJson(build: () => Operand | Stereo): Graph {
     };
     const outputs = typeof output === "object" && !(output instanceof Signal) ? [output.left, output.right] : [output];
     outputs.forEach(prepare);
-    const watches = declared.watches.map(({ name, value }) => ({ name, node: use(value) }));
     const numbers = declared.numbers.map(({ name, value }) => ({ name, node: use(value) }));
+    // A view reads a number output as the window reads a watch.
+    const watches = numbers;
     const bangs = declared.bangs.map(({ name, value }) => ({ name, node: use(value) }));
     const notes = declared.notes.map(({ name, gate, pitch, velocity }) => ({
       name,
@@ -709,35 +683,34 @@ function quantize(value: number): number {
 // ---------------------------------------------------------------------------------------------
 // Tools
 
-export interface ToolSpec<S extends Fields, C extends Controls, M, K extends ChildTools = ChildTools> {
+export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends ChildTools = ChildTools> {
   /** The `tool` of its records and the name of its doc: lowercase letters, digits, `-`, `_`. */
   name: string;
-  /** What the card and the picker call it. */
+  /** What its view and the picker call it. */
   title: string;
   /** One line for the map of docs: when an agent should read the doc. */
   when: string;
   /** What it does and how its fields change the sound, in Markdown. Goes into its doc. */
   doc: string;
   /**
-   * `effect` (the default) goes in a track's effects and reads `input`. `instrument` is what a
-   * track plays: the sound runs once per note. `source` is what a track plays too, one voice
-   * that runs all the time and follows the newest note; at the top of a project, connected to
-   * the device in `project.json`, it is an experiment of its own.
+   * How many voices its sound plays at once. 1, when left out: one voice that runs all the time
+   * and follows the newest note, such as an effect, a drone or a generative part. More, up to 8:
+   * a voice for each note, which ends when the note has ended and the voice is silent.
    */
-  kind?: "effect" | "instrument" | "source";
+  voices?: number;
   /** The fields of its record. Field names are lowercase letters, digits and `_`. */
   state: S;
-  /** What its card plays and nothing saves. Names are as field names. */
-  controls?: C;
+  /** What plays it and nothing saves: `number(...)` and `bang()`. Names are as field names. */
+  inputs?: I;
   /**
-   * Its sound: a `Signal` made with the functions of the sound graph, or a `Stereo` pair.
-   * `input` when left out, which passes the sound through.
+   * Its sound: a `Signal` made with the functions of the sound graph, or a `Stereo` pair. A sound
+   * that reads `input` has an audio input. `input` when left out, which passes the sound through.
    */
-  sound?: (fields: SoundOf<S, C>) => Operand | Stereo;
+  sound?: (fields: SoundOf<S, I>) => Operand | Stereo;
   /**
    * Makes it a parent: its record is `state/<name>/instance.json` and the records next to it
    * are its children. A pure function of its record and its children that says how they and
-   * its own ports connect. It runs in Bun when either changes, and what it declares plays a
+   * its own ports connect. It runs in Bun when what it read changes, and what it declares plays a
    * moment later; the sound plays on meanwhile. Its own `sound` hears what it connects to its
    * own `{ port: "audio" }` as `input`, and is its `audio` output.
    */
@@ -745,36 +718,37 @@ export interface ToolSpec<S extends Fields, C extends Controls, M, K extends Chi
   /**
    * The children it has, by name, and the tool of each: `{ bass: "sequencer", lead: drone }`,
    * where `drone` is what `tool` returned for a tool of this project. TypeScript then checks
-   * every connection, `set`, `fire`, `play`, `send` and edit of them against their tools, and a
-   * child of another tool, a missing one or one it does not name is a problem. Leave it out for
-   * children whose names a record decides.
+   * every connection, `send` and edit of them against their tools, and a child of another tool,
+   * a missing one or one it does not name is a problem. Leave it out for children whose names a
+   * record decides.
    */
   children?: K & LiteralTools<K>;
   /**
-   * What the control loop and the card of an instance keep, and nothing saves: positions of
+   * What the control loop and the view of an instance keep, and nothing saves: positions of
    * a simulation, the last thing played. Made new for each instance, and when the code loads.
    */
   memory?: () => M;
   /**
    * The control loop: about 30 times a second while the window is open, for each instance. It
-   * plays the sound with `set` and `fire`, as a performer would, and keeps what it needs in
-   * `memory`.
+   * plays the sound with `send`, as a performer would, and keeps what it needs in `memory`.
    */
-  tick?: (tool: Tick<ValuesOf<S>, C, M, K>) => void;
-  /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
-  card?: (card: Context<ValuesOf<S>, C, M, K>) => Child;
-  /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
-  page?: (page: Page<ValuesOf<S>, C, M, K>) => Child;
+  tick?: (tool: Tick<ValuesOf<S>, I, M, K>) => void;
   /**
-   * Its page shows the transport (play, stop, position, tempo, time signature, click), and its
-   * card and page draw again as `transport` moves. Recording is the arrangement's.
+   * Its view, drawn in the room the window gives it: a card in a rack, or the whole window for
+   * an instance at the top of a project. Without one it gets a knob per number and a button per
+   * option, boolean and bang.
+   */
+  view?: (view: View<ValuesOf<S>, I, M, K>) => Child;
+  /**
+   * Its view at the top of a project shows the transport (play, stop, position, tempo, time
+   * signature, click), and its view draws again as `transport` moves. Recording is the arrangement's.
    */
   transport?: boolean;
   /**
-   * A key of the computer keyboard goes down or up, while its page shows or after a click on
-   * its card: those `keys` names, else every plain key, so space and `r` do not play or record.
+   * A key of the computer keyboard goes down or up, while its view shows at the top or after a
+   * click on its card: those `keys` names, else every plain key, so space and `r` do not play or record.
    */
-  onKey?: (tool: Context<ValuesOf<S>, C, M, K>, key: Key) => void;
+  onKey?: (tool: Context<ValuesOf<S>, I, M, K>, key: Key) => void;
   /**
    * The keys `onKey` takes, by name: `"delete"`, `"a"`, `"left"`, or with cmd, ctrl or alt held
    * first, `"cmd-c"`. The rest stay the window's, so space still plays. Left out, every plain key.
@@ -784,7 +758,7 @@ export interface ToolSpec<S extends Fields, C extends Controls, M, K extends Chi
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
    * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
    */
-  onNotes?: (tool: Context<ValuesOf<S>, C, M, K>, event: HeardEvent) => void;
+  onNotes?: (tool: Context<ValuesOf<S>, I, M, K>, event: HeardEvent) => void;
 }
 
 /** A record and the records of its children: what a behaviour gets, and what `update` changes. */
@@ -894,7 +868,7 @@ export type NewChild<K extends ChildTools = ChildTools> = {
 }[keyof K & string];
 
 /** The keys that name a port, one for each kind of what it carries. */
-type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger" | "meter";
+type PortKey = "port" | "notes" | "number" | "bang" | "meter";
 
 /** A port named under the key `K` and no other, so a connection joins two of one kind. */
 type Keyed<K extends PortKey, Name extends string = string> = Record<K, Name> & { [Other in Exclude<PortKey, K>]?: never };
@@ -902,33 +876,29 @@ type Keyed<K extends PortKey, Name extends string = string> = Record<K, Name> & 
  * The names a child of tool `T` has under the key `P`, as its entry says: any where it says
  * none. Any output (`Out`) of a tool of this project too, as its `sound` declares them.
  */
-type PortName<T, P extends PortKey, Out extends boolean> = [Out, T] extends [true, ProjectTool]
+type PortName<T, P extends PortKey | "input", Out extends boolean> = [Out, T] extends [true, ProjectTool]
   ? string
   : P extends keyof EntryOf<T>
     ? EntryOf<T>[P]
     : string;
 /** A port of a child under the key `P`, of a name its tool has as an input, or as an output with `Out`. */
-type PortOf<P extends PortKey, K extends ChildTools, Out extends boolean = false> = {
-  [Name in keyof K & string]: { child: ChildNamed<Name> } & Keyed<P, PortName<K[Name], P, Out> & string>;
+type PortOf<P extends PortKey, K extends ChildTools, Out extends boolean = false, Names extends PortKey | "input" = P> = {
+  [Name in keyof K & string]: { child: ChildNamed<Name> } & Keyed<P, PortName<K[Name], Names, Out> & string>;
 }[keyof K & string];
 /** A port of the parent itself under the key `K`: no `child`. */
 type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } & Keyed<K, Name>;
 
-/** A sound port of a child: `audio` when left out. An effect has an `audio` input and output. */
+/** A sound port of a child: `audio` when left out. A sound that reads `input` has an `audio` input; every sound an `audio` output. */
 export type ChildPort<K extends ChildTools = ChildTools> = Partial<Keyed<"port">> & { child: ChildName<K> };
-/** Notes of a child: its input `notes`, such as an instrument's, or with `Out` notes it sends out. */
+/** Notes of a child: its input `notes`, which plays its voices, or with `Out` notes it sends out. */
 export type ChildNotes<K extends ChildTools = ChildTools, Out extends boolean = false> = PortOf<"notes", K, Out>;
 /**
- * A number of a child: a knob it takes, such as the knob `cutoff_hz` of a `filter` or a knob of
- * a tool of the project, or with `Out` one it sends out with `output`.
+ * A number of a child: one it takes, such as the field `cutoff_hz` of a `filter`, a number field
+ * or a number input of a tool of the project, or with `Out` one it sends out with `output`.
  */
 export type ChildNumber<K extends ChildTools = ChildTools, Out extends boolean = false> = PortOf<"number", K, Out>;
-/** A bang a child sends out with `output`. */
-export type ChildBang<K extends ChildTools = ChildTools> = PortOf<"bang", K, true>;
-/** A live control of a child, or another number it plays from, such as `launch` of a `sequencer`. */
-export type ChildLive<K extends ChildTools = ChildTools> = PortOf<"live", K>;
-/** A trigger of a child. */
-export type ChildTrigger<K extends ChildTools = ChildTools> = PortOf<"trigger", K>;
+/** A bang of a child: a bang input it takes, or with `Out` one it sends out with `output`. */
+export type ChildBang<K extends ChildTools = ChildTools, Out extends boolean = false> = PortOf<"bang", K, Out>;
 
 /**
  * The parent's own sound port. From it, what reaches the parent's `audio` input; to it, what the
@@ -948,8 +918,8 @@ export type OwnMeter = OwnOf<"meter">;
 export type Connection<K extends ChildTools = ChildTools> =
   | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio | OwnMeter }
   | { from: ChildNotes<K, true> | OwnNotes; to: ChildNotes<K> | OwnOf<"notes"> }
-  | { from: ChildNumber<K, true>; to: ChildNumber<K> | ChildLive<K> | OwnOf<"number"> }
-  | { from: ChildBang<K>; to: ChildTrigger<K> | OwnOf<"bang"> };
+  | { from: ChildNumber<K, true>; to: ChildNumber<K> | OwnOf<"number"> }
+  | { from: ChildBang<K, true>; to: ChildBang<K> | OwnOf<"bang"> };
 
 /** What a behaviour declares. A JSON value: no functions, no classes. */
 export interface Declaration<K extends ChildTools = ChildTools> {
@@ -984,16 +954,18 @@ export type NoteEvent =
 /** A note event as `onNotes` hears it: `at` is the `time` it sounded at, to the sample. */
 export type HeardEvent = NoteEvent & { at: number };
 
-/** The names of the knobs in `S`, the numbers a cable turns. */
-type KnobNames<S extends Fields> = { [Name in keyof S]: S[Name] extends KnobField ? Name : never }[keyof S] & string;
+/** The names of the numbers in `S` a lane or a cable moves: those that are not whole numbers. */
+type MovedNames<S extends Fields> = { [Name in keyof S]: S[Name] extends { kind: "number"; integer: true } ? never : S[Name] extends NumberField ? Name : never }[keyof S] & string;
 
-/** The entry of a tool of the project with fields `S`, controls `C` and children `K`. */
-type ProjectEntry<S extends Fields, C extends Controls, K extends ChildTools> = {
+/** The entry of a tool of the project with fields `S`, inputs `I` and children `K`. */
+type ProjectEntry<S extends Fields, I extends Inputs, K extends ChildTools> = {
   state: StateOf<S>;
   filled: ValuesOf<S>;
-  number: KnobNames<S>;
-  live: ControlNames<C, "live">;
-  trigger: ControlNames<C, "trigger">;
+  /** What a number cable moves: a number field or a number input. */
+  number: MovedNames<S> | InputNames<I, "number">;
+  /** What `send` plays with a number. */
+  input: InputNames<I, "number">;
+  bang: InputNames<I, "bang">;
   notes: "notes";
   children: K;
 };
@@ -1002,38 +974,58 @@ type ProjectEntry<S extends Fields, C extends Controls, K extends ChildTools> = 
 export function tool<
   const Name extends string,
   const S extends Fields,
-  const C extends Controls = {},
+  const I extends Inputs = {},
   M = {},
   const K extends ChildTools = ChildTools,
->(spec: ToolSpec<S, C, M, K> & { name: Name }): ProjectTool<Name, ProjectEntry<S, C, K>> {
+>(spec: ToolSpec<S, I, M, K> & { name: Name }): ProjectTool<Name, ProjectEntry<S, I, K>> {
   if (host.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
-  host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls, unknown>);
+  host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Inputs, unknown>);
   host.stacks.set(spec.name, new Error().stack ?? "");
-  return spec.name as ProjectTool<Name, ProjectEntry<S, C, K>>;
+  return spec.name as ProjectTool<Name, ProjectEntry<S, I, K>>;
 }
 
+/** When what `send` plays happens: at `at`, a `time` of the control loop at most 10 s ahead, or at once. */
+export type At = { at?: number };
+
+/** An input `send` plays: one of the tool's own by name, its `notes`, or one of a child. */
+export type SendTo<I extends Inputs, K extends ChildTools = ChildTools> =
+  | InputNames<I, "number" | "bang">
+  | "notes"
+  | PortOf<"number", K, false, "input">
+  | ChildBang<K>
+  | ChildNotes<K>;
+
+/** What `send` takes after the input: a number for a number, a note event for notes, nothing for a bang. */
+type SendArgs<P, I extends Inputs> = P extends "notes" | { notes: string }
+  ? [event: NoteEvent, options?: At]
+  : P extends { bang: string }
+    ? [options?: At]
+    : P extends { number: string }
+      ? [value: number, options?: At]
+      : P extends keyof I
+        ? I[P] extends BangInput
+          ? [options?: At]
+          : [value: number, options?: At]
+        : never;
+
 /**
- * What plays an instance as a performer would: nothing saves it and no undo takes it back.
- * `at` is a `time` of the control loop, at most 10 s ahead: what has one happens on that
- * sample, or at once when it has passed. A parent plays a child the same way, by its name: `ChildLive`,
- * `ChildTrigger`, or `child` among the options of `play` and `send`.
+ * What plays an instance as a performer would: nothing saves it and no undo takes it back. What
+ * has an `at` happens on that sample, or at once when it has passed. A parent plays a child the
+ * same way, by its name.
  */
-export interface Performer<C extends Controls, K extends ChildTools = ChildTools> {
-  /** Moves a live control. */
-  set(control: ControlNames<C, "live"> | ChildLive<K>, value: number): void;
-  /** Fires a trigger. */
-  fire(control: ControlNames<C, "trigger"> | ChildTrigger<K>, options?: { at?: number }): void;
+export interface Performer<I extends Inputs, K extends ChildTools = ChildTools> {
   /**
-   * Sends a note event to the tool's own voices, or into the `notes` of `child`. An instrument
-   * plays each note on a voice of its own; a source follows the newest. At most 256 wait for
-   * their `at`: past that a `noteOn` is dropped, and anything else plays at once.
+   * Plays an input: `send("rate", 2)` moves the number input `rate`, `send("hit")` sends the bang
+   * `hit`, `send("notes", { type: "noteOn", pitch: 60, velocity: 0.8 })` plays the tool's voices,
+   * and `{ child, number }`, `{ child, bang }` or `{ child, notes }` plays a child's. At most 256
+   * wait for their `at`: past that a `noteOn` is dropped, and anything else plays at once.
    */
-  send(event: NoteEvent, options?: { at?: number; child?: ChildName<K> }): void;
+  send<P extends SendTo<I, K>>(input: P, ...value: SendArgs<P, I>): void;
   /**
-   * Sends a `noteOn` and its `noteOff` `seconds` later (0.25 when left out), or with `hold`
-   * only the `noteOn`. `velocity` is 0.8 when left out.
+   * Plays a note on its voices, or on `child`'s: a `noteOn` and its `noteOff` `seconds` later
+   * (0.25 when left out), or with `hold` only the `noteOn`. `velocity` is 0.8 when left out.
    */
   play(
     pitch: number,
@@ -1050,9 +1042,9 @@ export type Frozen<T> = T extends string | number | boolean | null | undefined
       ? { readonly [Key in keyof T]: Frozen<T[Key]> }
       : T;
 
-/** What all code of an instance gets: its card, its page, `tick`, `onKey` and `onNotes`. */
-export interface Context<State, C extends Controls = Controls, M = unknown, K extends ChildTools = ChildTools>
-  extends Performer<C, K> {
+/** What all code of an instance gets: its view, `tick`, `onKey` and `onNotes`. */
+export interface Context<State, I extends Inputs = Inputs, M = unknown, K extends ChildTools = ChildTools>
+  extends Performer<I, K> {
   /** The record as it is now, every field at its default where the record leaves it out. */
   state: Frozen<State>;
   /** The records of its children, as its behaviour gets them. */
@@ -1064,29 +1056,37 @@ export interface Context<State, C extends Controls = Controls, M = unknown, K ex
    * of one `label` in a row are one undo step.
    */
   update(label: string, change: (part: Part<State, K>) => void): void;
+  /**
+   * Opens a file the composer chooses and copies it into `assets/audio/`: its name there, for a
+   * `file` field, or `null` when they chose none.
+   */
+  openFile(options?: { title?: string }): Promise<string | null>;
   /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
   memory: Memory<M>;
-  /** The last value of each `watch` of the sound, by name. A binding that read one runs again as it moves. */
-  watches: Record<string, number>;
+  /**
+   * The last value of each number `output` of its sound, and of its children's as `<child>.<name>`.
+   * A binding that read one runs again as it moves.
+   */
+  outputs: Record<string, number>;
   /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
   time: number;
   /** Where the piece plays. A binding that read it runs again as it moves only when the tool sets `transport: true`. */
   transport: Transport;
-  /** The sources of live values: what a card shows moving without drawing again. */
-  now: Now<State, C>;
+  /** The sources of live values: what a view shows moving without drawing again. */
+  now: Now<State, I>;
 }
 
 /** What the control loop of an instance gets each time it runs. */
-export interface Tick<State, C extends Controls = Controls, M = unknown, K extends ChildTools = ChildTools>
-  extends Context<State, C, M, K> {
+export interface Tick<State, I extends Inputs = Inputs, M = unknown, K extends ChildTools = ChildTools>
+  extends Context<State, I, M, K> {
   /** Seconds since the last tick. */
   dt: number;
 }
 
 
 // ---------------------------------------------------------------------------------------------
-// Cards and pages: nodes the code makes once, which the window keeps. What moves on them (a
-// drag, a playhead, a meter, a knob turned) moves in the window, without running code: a live value.
+// Views: nodes the code makes once, which the window keeps. What moves on them (a drag, a
+// playhead, a meter, a knob turned) moves in the window, without running code: a live value.
 
 /** Where the project plays, as the window shows it. */
 export interface Transport {
@@ -1100,10 +1100,13 @@ export interface Transport {
   bpm: number;
 }
 
-/** What a page gets: what all code gets, and the room it has. */
-export interface Page<State, C extends Controls = Controls, M = unknown, K extends ChildTools = ChildTools>
-  extends Context<State, C, M, K> {
-  /** Its width and height in points, which change with the window: read them in a binding. */
+/** What a view gets: what all code gets, and the room the window gives it. */
+export interface View<State, I extends Inputs = Inputs, M = unknown, K extends ChildTools = ChildTools>
+  extends Context<State, I, M, K> {
+  /**
+   * Its room in points, which changes with the window: read it in a binding. A card in a rack is
+   * as tall as its room and as wide as it needs; at the top of a project it is the whole window.
+   */
   size: { width: number; height: number };
 }
 
@@ -1111,12 +1114,10 @@ export interface Page<State, C extends Controls = Controls, M = unknown, K exten
 
 /** What a live value is made of, as the window gets it. */
 type LiveNode =
-  | { op: "tick" | "time" }
-  | { op: "watch"; name: string }
-  | { op: "field"; name: string; fraction: boolean; child?: string }
-  | { op: "control" | "played"; name: string; fraction: boolean }
+  | { op: "tick" | "elapsed" }
+  | { op: "value"; name: string; child?: string; played: boolean; fraction: boolean }
   | { op: "peak"; name: string; channel?: Channel }
-  | { op: "output"; channel?: Channel }
+  | { op: "device_peak"; channel?: Channel }
   | { op: "drag"; id: string; part: keyof DragValues }
   | { op: "space"; key: string; part: keyof SpaceValues }
   | { op: "plus" | "minus" | "times" | "over" | "mod" | "pow" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
@@ -1140,7 +1141,7 @@ function liveKey(value: unknown): string {
 
 /**
  * A number the window works out again on every frame, without running code: where the
- * playhead is, a watch, a field as a drag turns it, how far a drag went. Combine them with the
+ * playhead is, a field as a drag turns it, an output of the sound, how far a drag went. Combine them with the
  * methods, which take a live value or a number. Code cannot read one: it is no number, so
  * `if (now.tick > 960)` is a type error.
  */
@@ -1170,7 +1171,7 @@ export class Live {
   /** Of an angle in radians. */
   sin(): Live { return new Live({ op: "sin", x: this }); }
   cos(): Live { return new Live({ op: "cos", x: this }); }
-  /** What is left over after whole `other`s, from 0 up: `now.time.mod(1)` goes 0 to 1 every second. */
+  /** What is left over after whole `other`s, from 0 up: `now.elapsed.mod(1)` goes 0 to 1 every second. */
   mod(other: Num): Live { return new Live({ op: "mod", a: this, b: other }); }
   pow(exponent: Num): Live { return new Live({ op: "pow", a: this, b: exponent }); }
   /** An amplitude in decibels: 1 is 0 dB; -120 at the lowest. */
@@ -1222,29 +1223,23 @@ export type WaveList =
   | { source: "scope"; name: string; channel?: Channel; frames?: number }
   | { source: "history"; of: Num; frames: number; key: string };
 
+/** The names a tool reads with `now.value`: its numbers, its number inputs, and any output, by any name. */
+type ValueNames<State, I extends Inputs> = NumberNames<State> | InputNames<I, "number"> | (string & {});
+
 /** The sources of live values, which all code gets as `now`. */
-export interface Now<State = Record<string, unknown>, C extends Controls = Controls> {
+export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs> {
   /** Where the piece plays, in ticks: it moves on every frame as it plays. */
   tick: Live;
-  /** Seconds on the clock of the window, on every frame: `now.time.mod(1).lt(0.5)` blinks once a second. */
-  time: Live;
-  /** The last value of a watch of the sound. */
-  watch(name: string): Live;
+  /** Seconds since the view opened, on every frame: `now.elapsed.mod(1).lt(0.5)` blinks once a second. */
+  elapsed: Live;
   /**
-   * A number of the record as it is now, also as a drag turns it. With `fraction`, how far
-   * along the travel of its knob it is, 0 to 1, on a log scale for `"hz"`.
+   * A number as it is now: a field of the record, also as a drag turns it; a number input,
+   * where it was put last; or a number output of the sound. A child's, or one deeper, as
+   * `"bass/synth.cutoff_hz"`: its field, or its output. With `played`, a field as it plays: what a
+   * lane or a cable plays into it, else the record, so a knob moves with its automation. With
+   * `fraction`, how far along its range it is, 0 to 1, on a log scale for `"hz"`.
    */
-  field(name: NumberNames<State>, options?: { fraction?: boolean }): Live;
-  /**
-   * A number of the record of a child, or of one deeper by its path (`"bass/synth"`), as it is
-   * now, also as a drag turns it: a fader's `gain_db`.
-   */
-  childField(child: string, name: string, options?: { fraction?: boolean }): Live;
-  /**
-   * A number as it plays now: what a lane or a cable plays into it, else its record. A knob
-   * that shows it moves with the automation. A child's as `"child.name"`, `"bass/synth.cutoff_hz"` deeper.
-   */
-  played(name: NumberNames<State> | `${string}.${string}`, options?: { fraction?: boolean }): Live;
+  value(name: ValueNames<State, I>, options?: { played?: boolean; fraction?: boolean }): Live;
   /**
    * The loudest sample since the last frame, 0 to 1 and above when it clips: of a meter the
    * behaviour declares, `{ from: { child: "bass" }, to: { meter: "bass" } }`, of a meter a
@@ -1252,13 +1247,11 @@ export interface Now<State = Record<string, unknown>, C extends Controls = Contr
    */
   peak(name: string, channel?: Channel): Live;
   /** The same, of what the device plays. */
-  output(channel?: Channel): Live;
+  devicePeak(channel?: Channel): Live;
   /** The last sound of a meter, as `peak` names it, for a `Wave`: -1 to 1, `frames` long (at most 8192). */
   scope(name: string, options?: { channel?: Channel; frames?: number }): WaveList;
   /** The last `frames` values of a live value, one a frame, for a `Wave`. */
   history(of: Num, frames: number): WaveList;
-  /** Where a live control was put last; with `fraction`, 0 to 1 over its range. */
-  control(name: ControlNames<C, "live">, options?: { fraction?: boolean }): Live;
   /** The drag of `id`, see `Drag`. */
   drag(id: string): DragValues;
   /** The space of `key`, see `Space`. */
@@ -1270,16 +1263,17 @@ function sources(): Now<Record<string, number>> {
     Object.fromEntries(parts.map((each) => [each, new Live(make(each))])) as Record<Part, Live>;
   return {
     tick: new Live({ op: "tick" }),
-    time: new Live({ op: "time" }),
-    watch: (name) => new Live({ op: "watch", name }),
-    field: (name, options) => new Live({ op: "field", name, fraction: options?.fraction ?? false }),
-    childField: (child, name, options) => new Live({ op: "field", name, child, fraction: options?.fraction ?? false }),
-    played: (name, options) => new Live({ op: "played", name, fraction: options?.fraction ?? false }),
+    elapsed: new Live({ op: "elapsed" }),
+    value: (path, options) => {
+      // `bass/synth.cutoff_hz` is the field `cutoff_hz` of the child at `bass/synth`.
+      const dot = path.lastIndexOf(".");
+      const [child, name] = dot < 0 ? [undefined, path] : [path.slice(0, dot), path.slice(dot + 1)];
+      return new Live({ op: "value", name, ...(child === undefined ? {} : { child }), played: options?.played ?? false, fraction: options?.fraction ?? false });
+    },
     peak: (name, channel) => new Live({ op: "peak", name, channel }),
-    output: (channel) => new Live({ op: "output", channel }),
+    devicePeak: (channel) => new Live({ op: "device_peak", channel }),
     scope: (name, options) => ({ source: "scope", name, ...options }),
     history: (of, frames) => ({ source: "history", of, frames, key: liveKey([of, frames]) }),
-    control: (name, options) => new Live({ op: "control", name, fraction: options?.fraction ?? false }),
     drag: (id) =>
       part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
     space: (key) =>
@@ -1287,7 +1281,7 @@ function sources(): Now<Record<string, number>> {
   };
 }
 
-/** The sources of live values, for the components of a card, which name fields by strings. */
+/** The sources of live values, for components of a view, which name fields by strings. */
 export const now: Now<Record<string, number>> = sources();
 
 
@@ -1320,11 +1314,12 @@ export interface DragResult extends Modifiers {
 }
 
 /**
- * A number a drag turns as it goes, in the window, with no code: a knob or a fader. The whole
- * drag is one undo step for a `field`, of the record or of a `child`'s (a path deeper); a
- * `control` is played, not saved. Without `min` and `max` it takes the field's or the control's.
+ * A number a drag turns as it goes, in the window, with no code: a knob or a fader. `value`
+ * names it as `now.value` does: a field of the record, or of a child's as
+ * `"bass/synth.gain_db"`, which the whole drag changes as one undo step; or a number input,
+ * which is played, not saved. Without `min` and `max` it takes the field's or the input's.
  */
-export type DragTurns = ({ field: string; child?: string } | { control: string }) & {
+export type DragTurns = { value: string } & {
   min?: number;
   max?: number;
   /** `"hz"` turns on a log scale. */
@@ -1368,9 +1363,9 @@ export interface Drag {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Reactivity. A card, a page and a component run once and make the nodes the window keeps. A
+// Reactivity. A view and a component run once and make the nodes the window keeps. A
 // function given as a prop or a child is a binding: it runs again when a record field, memory,
-// a watch or a signal it read changes, and only what it gives the window changes there.
+// an output or a signal it read changes, and only what it gives the window changes there.
 
 /** A function the window calls again when what it read changed. */
 export type Accessor<T> = () => T;
@@ -1423,7 +1418,7 @@ let queue: Computation[] = [];
 let order = 0;
 
 const READ_IN_SETUP =
-  "a card, a page and a component run once, so a value that changes is read inside a function the window calls again: " +
+  "a view and a component run once, so a value that changes is read inside a function the window calls again: " +
   "x={() => note.start}, not x={note.start}; {() => `${state.count} notes`} as a child; <For each={() => state.notes}>";
 
 function dep(): Dep {
@@ -1617,7 +1612,7 @@ export function selector<K>(keys: Accessor<ReadonlySet<K>>): (key: K) => boolean
   };
 }
 
-// Stores: the record, memory, watches and the transport, read field by field.
+// Stores: the record, memory, outputs and the transport, read field by field.
 
 const RAW = Symbol("raw");
 const ALL_KEYS = Symbol("keys");
@@ -1851,7 +1846,7 @@ interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "sample" | "space" | "shape" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
@@ -1864,7 +1859,6 @@ interface Made {
   /** Sent to the window: changes after this go as `set`. */
   sent: boolean;
   onPress?: (press: Press) => void;
-  onClick?: (press: Press) => void;
   drag?: Drag;
   children: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
@@ -1891,7 +1885,7 @@ const nodes = new Map<number, Made>();
 
 function currentCard(): CardRoot {
   const card = owner?.card;
-  if (!card) throw new Error("a node is made outside a card or a page");
+  if (!card) throw new Error("a node is made outside a view");
   return card;
 }
 
@@ -1944,7 +1938,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
-const HANDLERS = new Set(["onPress", "onClick"]);
+const HANDLERS = new Set(["onPress"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {
@@ -2319,7 +2313,8 @@ export interface Style {
 interface DivProps {
   key?: string;
   style?: Bind<Style>;
-  onClick?: (press: Press) => void;
+  /** A click on it. */
+  onPress?: (press: Press) => void;
   /**
    * The key of a space whose scroll its children move with, on an axis, cut off at its edges:
    * the heads of the rows of a timeline, which scroll with it. Rows as tall as the space's unit.
@@ -2327,9 +2322,6 @@ interface DivProps {
   follow?: { x?: string; y?: string };
   children?: Child;
 }
-
-/** The file of a sample field at `path`, and a button that opens a file to put there. */
-export const SampleChooser = (props: { path: string; label?: string }): UiNode => element("sample", props, []);
 
 type Component<Props> = (props: Props) => UiNode | Region;
 
@@ -2358,11 +2350,11 @@ export namespace h {
 // ---------------------------------------------------------------------------------------------
 // Components made of the blocks above.
 
-/** The card that draws now, for the components below, which read its record and fields. */
+/** The view that draws now, for the components below, which read its record and fields. */
 function drawing() {
   const drawing = host.drawing;
   if (!drawing) {
-    throw new Error("a component of a card is drawn outside a card");
+    throw new Error("a component of a view is drawn outside a view");
   }
   return drawing;
 }
@@ -2372,27 +2364,20 @@ const KNOB = { track: "#292c34", value: "#a9b1ff", face: "#1b1d23", pointer: "#e
 const SWEEP = 0.75;
 
 /**
- * A knob. With `path`, it turns that field of the record, such as `rate`: a drag is smooth and
- * one undo step. With `live`, it plays a live control instead, which nothing saves. A double
- * click puts it at `default`.
+ * A knob on a number: a field of the record such as `rate`, whose drag is smooth and one undo
+ * step, or a number input, which nothing saves. `value` names it as `now.value` does. With
+ * `played`, it shows the field as it plays, so it moves with a lane. A double click puts it at `default`.
  */
-export function Knob(props: { path?: string; live?: string; label: string; min: number; max: number; default: number; unit?: Unit }): UiNode {
-  const { path, live, label, min, max, unit } = props;
-  const value = path !== undefined ? now.field(path) : now.control(live ?? "");
-  const fraction = path !== undefined ? now.field(path, { fraction: true }) : now.control(live ?? "", { fraction: true });
-  const turns: DragTurns = {
-    ...(path !== undefined ? { field: path } : { control: live ?? "" }),
-    min,
-    max,
-    unit,
-    default: props.default,
-    label: `Change ${label.toLowerCase()}`,
-  };
+export function Knob(props: { value: string; label: string; min: number; max: number; default: number; unit?: Unit; played?: boolean }): UiNode {
+  const { value: name, label, min, max, unit, played } = props;
+  const value = now.value(name, { played });
+  const fraction = now.value(name, { played, fraction: true });
+  const turns: DragTurns = { value: name, min, max, unit, default: props.default, label: `Change ${label.toLowerCase()}` };
   const angle = fraction.times(SWEEP).minus(SWEEP / 2);
   const radians = angle.times(2 * Math.PI);
   const [centreX, centreY] = [28, 20];
   return Space({
-    key: `knob-${path ?? live}`,
+    key: `knob-${name}`,
     width: 56,
     height: 72,
     cursor: "ns-resize",
@@ -2416,15 +2401,17 @@ export function Knob(props: { path?: string; live?: string; label: string; min: 
 const STEP = { size: 14, gap: 3, on: "#a9b1ff", off: "#292c34", light: "#e9ebef" } as const;
 
 /**
- * A row of steps on a pattern of the record: a click turns a step on (to `max`, the pattern's
- * max when left out) or off (to its min). `playing` names a watch whose value is the step that
- * plays, which lights up.
+ * A row of steps on a list of numbers of the record, such as a `pattern`: a click turns a step
+ * on (to `max`, the item's max when left out) or off (to its min). `playing` names an output,
+ * as `now.value` does, whose value is the step that plays, which lights up.
  */
 export function Steps(props: { path: string; max?: number; playing?: string }): UiNode {
   const { state, fields, update } = drawing();
   const field = fields[props.path];
-  const [off, on, length] = field?.kind === "pattern" ? [field.min, props.max ?? field.max, field.length] : [0, props.max ?? 1, 0];
+  const item = field?.kind === "list" && field.item.kind === "number" ? field.item : undefined;
+  const [off, on] = [item?.min ?? 0, props.max ?? item?.max ?? 1];
   const list = () => (state[props.path] as number[] | undefined) ?? [];
+  const length = untrack(() => list().length);
   const isOn = (step: number) => (list()[step] ?? off) > off;
   const pitch = STEP.size + STEP.gap;
   return Space({
@@ -2440,7 +2427,7 @@ export function Steps(props: { path: string; max?: number; playing?: string }): 
         radius: 3,
         color: () => (isOn(step) ? STEP.on : STEP.off),
         border: STEP.light,
-        borderWidth: props.playing === undefined ? 0 : now.watch(props.playing).floor().eq(step).times(2),
+        borderWidth: props.playing === undefined ? 0 : now.value(props.playing).floor().eq(step).times(2),
         cursor: "pointer",
         onPress: () => {
           const wasOn = isOn(step);
@@ -2455,9 +2442,9 @@ export function Steps(props: { path: string; max?: number; playing?: string }): 
   });
 }
 
-/** A bar that shows a watch from 0 to 1, such as a level. */
-export function Meter(props: { watch: string; label?: string }): UiNode {
-  const level = now.watch(props.watch).clamp(0, 1).times(64);
+/** A bar that shows a number from 0 to 1, such as a level an output sends: `value` names it as `now.value` does. */
+export function Meter(props: { value: string; label?: string }): UiNode {
+  const level = now.value(props.value).clamp(0, 1).times(64);
   const bar = Space({
     width: 8,
     height: 64,
@@ -2469,7 +2456,7 @@ export function Meter(props: { watch: string; label?: string }): UiNode {
   return h("div", { style: { align: "center", gap: 4 } }, bar, props.label && h("div", { style: { color: KNOB.label, fontSize: 11 } }, props.label));
 }
 
-/** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
+/** A square to play with the pointer: across moves the number input `x`, up moves `y`. */
 export function Pad(props: { x: string; y: string; size?: number }): UiNode {
   const size = props.size ?? 120;
   return Space({
@@ -2479,41 +2466,15 @@ export function Pad(props: { x: string; y: string; size?: number }): UiNode {
     background: "#292c34",
     radius: 6,
     cursor: "crosshair",
-    drag: { x: { control: props.x, absolute: true }, y: { control: props.y, absolute: true } },
+    drag: { x: { value: props.x, absolute: true }, y: { value: props.y, absolute: true } },
     children: [
       Circle({
-        x: now.control(props.x, { fraction: true }).times(size),
-        y: now.control(props.y, { fraction: true }).negate().plus(1).times(size),
+        x: now.value(props.x, { fraction: true }).times(size),
+        y: now.value(props.y, { fraction: true }).negate().plus(1).times(size),
         radius: 5,
         color: "#a9b1ff",
       }),
     ],
-  });
-}
-
-/**
- * A surface to draw on and play: `shapes` are drawn in order, made again whole when what the
- * function reads changes. `onPress` and `onDrag` hear the pointer, at `x` across and `y` down,
- * from 0 to 1. A `Space` with a unit of a point.
- */
-export function Canvas(props: {
-  width: number;
-  height: number;
-  shapes: Bind<ShapeLiteral[]>;
-  background?: Color;
-  onPress?: (x: number, y: number) => void;
-  onDrag?: (x: number, y: number) => void;
-}): UiNode {
-  const { width, height, onPress, onDrag } = props;
-  const across = (x: number, y: number): [number, number] => [Math.min(Math.max(x / width, 0), 1), Math.min(Math.max(y / height, 0), 1)];
-  return Space({
-    width,
-    height,
-    background: props.background ?? "#1b1d23",
-    radius: 6,
-    onPress: onPress && ((press) => onPress(...across(press.x, press.y))),
-    drag: onDrag && { onMove: (drag) => onDrag(...across(drag.x, drag.y)) },
-    children: props.shapes,
   });
 }
 
@@ -2527,28 +2488,44 @@ const BUTTON: Style = { paddingX: 8, paddingY: 4, radius: 6, background: "#2a2f3
 const CHOSEN: Style = { ...BUTTON, background: "#7c3aed", color: "#ffffff" };
 
 /**
- * The card of a tool that has none: a knob per knob and per live control, a row of steps per
- * pattern, a button per option, toggle and trigger.
+ * The view of a tool that has none: a knob per number and per number input, a row of steps per
+ * list of numbers, a chooser per file, a button per option, boolean and bang.
  */
-export function defaultCard(fields: Fields, controls: Controls = {}) {
-  return ({ state, update, fire }: Context<Record<string, unknown>>): UiNode => {
+export function defaultView(fields: Fields, inputs: Inputs = {}) {
+  return ({ state, update, send, openFile }: Context<Record<string, unknown>>): UiNode => {
     const knobs: Child[] = [];
     const rows: Child[] = [];
-    // Toggles and triggers share one row, so a card fits its 144 points.
+    // Booleans and bangs share one row, so a card fits its room.
     const buttons: Child[] = [];
+    const knob = (name: string, field: NumberField) =>
+      Knob({ value: name, label: field.label ?? words(name), min: field.min, max: field.max, default: field.default ?? field.min, unit: field.unit });
     for (const [name, field] of Object.entries(fields)) {
       const label = field.label ?? words(name);
-      if (field.kind === "knob") {
-        knobs.push(Knob({ path: name, label, min: field.min, max: field.max, default: field.default, unit: field.unit }));
-      } else if (field.kind === "pattern") {
-        rows.push(Steps({ path: name, max: field.max }));
-      } else if (field.kind === "sample") {
-        rows.push(SampleChooser({ path: name, label }));
-      } else if (field.kind === "toggle") {
+      if (field.kind === "number") {
+        knobs.push(knob(name, field));
+      } else if (field.kind === "list" && field.item.kind === "number") {
+        rows.push(Steps({ path: name }));
+      } else if (field.kind === "file") {
+        rows.push(
+          h("div", { style: { direction: "row", gap: 8, align: "center" } },
+            label,
+            h("div", { style: { color: "#9ca3af" } }, () => (state[name] as string) || "No sound"),
+            h("div", {
+              style: BUTTON,
+              onPress: async () => {
+                const chosen = await openFile({ title: `Choose ${label.toLowerCase()}` });
+                if (chosen !== null) update(`Choose ${label.toLowerCase()}`, ({ state: next }) => {
+                  next[name] = chosen;
+                });
+              },
+            }, "Choose…"),
+          ),
+        );
+      } else if (field.kind === "boolean") {
         buttons.push(
           h("div", {
             style: () => (state[name] ? CHOSEN : BUTTON),
-            onClick: () => {
+            onPress: () => {
               const on = state[name] as boolean;
               update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
                 next[name] = !on;
@@ -2563,7 +2540,7 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
             field.options.map((option) =>
               h("div", {
                 style: () => (option === state[name] ? CHOSEN : BUTTON),
-                onClick: () => update(`Set ${label.toLowerCase()} to ${option}`, ({ state: next }) => {
+                onPress: () => update(`Set ${label.toLowerCase()} to ${option}`, ({ state: next }) => {
                   next[name] = option;
                 }),
               }, String(option)),
@@ -2572,18 +2549,17 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
         );
       }
     }
-    for (const [name, control] of Object.entries(controls)) {
-      const label = control.label ?? words(name);
-      if (control.kind === "live") {
-        knobs.push(Knob({ live: name, label, min: control.min, max: control.max, default: control.default }));
+    for (const [name, input] of Object.entries(inputs)) {
+      if (input.kind === "number") {
+        knobs.push(knob(name, input));
       } else {
-        buttons.push(h("div", { style: BUTTON, onClick: () => fire(name) }, label));
+        buttons.push(h("div", { style: BUTTON, onPress: () => (send as (input: string) => void)(name) }, input.label ?? words(name)));
       }
     }
     if (buttons.length > 0) {
       rows.push(h("div", { style: { direction: "row", gap: 4 } }, buttons));
     }
-    // The rest goes beside the knobs, not under them: a card is 144 points tall.
+    // The rest goes beside the knobs, not under them: a card is no taller than its room.
     return h(
       "div",
       { style: { direction: "row", gap: 16 } },
@@ -2643,20 +2619,20 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
   return { ops };
 }
 
-/** A press, a click or the end or a move of a drag on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "click" | "end" | "move", payload: never) {
+/** A press, or the end or a move of a drag, on the node `id`. */
+function nodeEvent(id: number, kind: "press" | "end" | "move", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
-  const handler = { press: made.onPress, click: made.onClick, end: made.drag?.onEnd, move: made.drag?.onMove }[kind];
+  const handler = { press: made.onPress, end: made.drag?.onEnd, move: made.drag?.onMove }[kind];
   return handler?.(payload);
 }
 
 /** What the host reads. Not for tools. */
 export const host = {
-  tools: new Map<string, ToolSpec<Fields, Controls, unknown>>(),
+  tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),
-  /** The card that draws now: its record, its fields and its `update`. */
+  /** The view that draws now: its record, its fields and its `update`. */
   drawing: undefined as Drawing | undefined,
   mount,
   takeOps,

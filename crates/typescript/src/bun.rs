@@ -56,21 +56,21 @@ pub(crate) enum Request<'a> {
         /// has the edits it sent after those.
         edits: u64,
     },
-    /// A card or a page opens: its code makes its nodes once.
+    /// A view opens: its code makes its nodes once.
     Mount {
         card: u64,
         instance: &'a InstanceId,
         /// The last value of each watch of the instance, by name.
         watches: &'a BTreeMap<String, f32>,
-        /// The size of the page, the whole window; `None` for a card.
-        page: Option<PageSize>,
+        /// The room the window gives the view: the whole window, or the body of a card.
+        size: PageSize,
         #[serde(flatten)]
         clock: Clock,
     },
-    /// The page has another size.
+    /// The view has another room.
     Resize {
         card: u64,
-        page: PageSize,
+        size: PageSize,
     },
     /// The watches of an instance moved, and a binding of its cards reads them.
     Watches {
@@ -121,6 +121,12 @@ pub(crate) enum Request<'a> {
     Drop {
         card: u64,
     },
+    /// The answer to an `openFile` of a tool: the name under `assets/audio/` of the file the
+    /// composer chose and the runtime copied there, or none.
+    FileOpened {
+        question: u64,
+        asset: Option<&'a str>,
+    },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {
@@ -135,7 +141,6 @@ pub(crate) enum Request<'a> {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EventKind {
     Press,
-    Click,
     End,
     Move,
 }
@@ -241,8 +246,8 @@ pub(crate) enum Event {
         label: String,
         changes: Vec<RecordEdit>,
     },
-    /// A card or a control loop moved a live control of an instance, or of its child `child`,
-    /// or fired a trigger when there is no value: at `at`, engine time in seconds, or at once.
+    /// Code moved a number input of an instance, or of its child `child`, or sent a bang when
+    /// there is no value: at `at`, engine time in seconds, or at once.
     Control {
         instance: InstanceId,
         child: Option<String>,
@@ -269,6 +274,8 @@ pub(crate) enum Event {
         event: NoteMessage,
         at: Option<f64>,
     },
+    /// Code asks the composer for a file, with `title`: the answer goes to its `question`.
+    OpenFile { question: u64, title: String },
     /// Bun hung or stopped, the last thing it says: `why`, and the tool and the code of it that
     /// it ran then, which are to blame. Nothing to blame when it ran no tool's code, such as
     /// code a timer of a tool ran.
@@ -319,10 +326,8 @@ pub(crate) struct LoadedTool {
     pub info: ToolInfo,
     /// The sound for every combination of its choices.
     pub sounds: Vec<(Map<String, Value>, Result<Graph, String>)>,
-    /// The ops of its card at its defaults, after one tick.
-    pub card: Result<Value, String>,
-    /// The same of its page, when it has one.
-    pub page: Option<Result<Value, String>>,
+    /// The ops of its view at its defaults, after one tick.
+    pub view: Result<Value, String>,
 }
 
 /// A load as `host.ts` sends it. Each tool is read on its own, so one that this side cannot
@@ -922,11 +927,11 @@ mod tests {
             serde_json::json!({
                 "info": {
                     "name": name, "file": format!("{name}.ts"), "title": name, "when": "w",
-                    "doc": "d", "kind": "effect", "tick": false, "page": false, "transport": false, "keys": false,
-                    "notes": false, "behaviour": false, "controls": {},
-                    "fields": { "rate": { "kind": "knob", "min": 0, "max": 1, "default": 0, "unit": unit } }
+                    "doc": "d", "voices": 1, "input": true, "tick": false, "view": false,
+                    "transport": false, "keys": false, "notes": false, "behaviour": false, "inputs": {},
+                    "fields": { "rate": { "kind": "number", "min": 0, "max": 1, "default": 0, "unit": unit } }
                 },
-                "sounds": [], "card": { "Err": "no card" }, "page": null
+                "sounds": [], "view": { "Err": "no view" }
             })
         };
         let line = serde_json::json!({

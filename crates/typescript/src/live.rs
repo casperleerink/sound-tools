@@ -7,7 +7,7 @@ use serde_json::Value;
 use sound_core::ValueRange;
 
 use crate::feeds::Feeds;
-use crate::tools::{Control, Field, ToolInfo, knob_range};
+use crate::tools::{Input, ToolInfo};
 use crate::tree::{DragPart, Live, Num, SpacePart};
 
 /// Where a drag is, in the units of its space, as `now.drag(id)` reads it.
@@ -113,13 +113,37 @@ impl Sources<'_> {
             .map(|value| value as f32)
     }
 
-    /// Where a live control was put last, else its default.
-    pub(crate) fn control(&self, name: &str) -> Option<f32> {
+    /// Where a number input was put last, else where it starts.
+    pub(crate) fn input(&self, name: &str) -> Option<f32> {
         let played = self.played.and_then(|played| played.get(name));
-        match self.info?.control(name)? {
-            (_, Control::Live { default, .. }) => Some(played.copied().unwrap_or(*default)),
-            (_, Control::Trigger { .. }) => None,
+        let (_, input) = self.info?.input(name)?;
+        played.copied().or(input.start())
+    }
+
+    /// The number `name` of the instance: a field, else a number input, else an output.
+    fn own(&self, name: &str, played: bool, fraction: bool) -> f64 {
+        let along = |value: f32, range: Option<ValueRange>| {
+            let range = range.filter(|_| fraction);
+            f64::from(range.map_or(value, |range| range.position(value)))
+        };
+        let field = self.info.map_or(self.state.get(name).is_some(), |info| {
+            info.field(name).is_some()
+        });
+        if field {
+            let playing = played.then(|| self.feeds.played.get(name)).flatten();
+            let record = || {
+                (
+                    self.field(name).unwrap_or(0.0),
+                    field_range(self.info, name),
+                )
+            };
+            let (value, range) = playing.copied().unwrap_or_else(record);
+            return along(value, range);
         }
+        if let Some(value) = self.input(name) {
+            return along(value, input_range(self.info, name));
+        }
+        self.watches.get(name).copied().map_or(0.0, f64::from)
     }
 
     fn live(&self, live: &Live) -> f64 {
@@ -138,27 +162,25 @@ impl Sources<'_> {
         };
         match live {
             Live::Tick => self.tick,
-            Live::Time => self.feeds.time,
-            Live::Watch { name } => self.watches.get(name).copied().map_or(0.0, f64::from),
-            Live::Field {
+            Live::Elapsed => self.feeds.time,
+            Live::Value {
                 name,
-                fraction,
                 child: None,
-            } => {
-                let value = self.field(name).unwrap_or(0.0);
-                along((value, field_range(self.info, name)), *fraction)
-            }
-            Live::Field {
-                name,
+                played,
                 fraction,
+            } => self.own(name, *played, *fraction),
+            Live::Value {
+                name,
                 child: Some(child),
+                played,
+                fraction,
             } => {
-                let field = self.feeds.inside.get(&format!("{child}.{name}"));
-                field.map_or(0.0, |field| along(*field, *fraction))
-            }
-            Live::Played { name, fraction } => {
-                let played = self.feeds.played.get(name);
-                played.map_or(0.0, |played| along(*played, *fraction))
+                let named = format!("{child}.{name}");
+                let playing = played.then(|| self.feeds.played.get(&named)).flatten();
+                match playing.or_else(|| self.feeds.inside.get(&named)) {
+                    Some(field) => along(*field, *fraction),
+                    None => self.watches.get(&named).copied().map_or(0.0, f64::from),
+                }
             }
             Live::Peak {
                 name,
@@ -167,12 +189,7 @@ impl Sources<'_> {
                 let peaks = self.feeds.peaks.get(name).copied().unwrap_or_default();
                 channel(peaks, *which)
             }
-            Live::Output { channel: which } => channel(self.feeds.output, *which),
-            Live::Control { name, fraction } => {
-                let value = self.control(name).unwrap_or(0.0);
-                let range = control_range(self.info, name).filter(|_| *fraction);
-                f64::from(range.map_or(value, |range| range.position(value)))
-            }
+            Live::DevicePeak { channel: which } => channel(self.feeds.output, *which),
             Live::Drag { id, part } => match self.drag {
                 Some((held, numbers)) if held == id => numbers.part(*part),
                 _ => DragNumbers::default().part(*part),
@@ -247,20 +264,18 @@ impl Sources<'_> {
     }
 }
 
-/// How a field turns on its knob: over its range, on a log scale for Hz.
+/// How a number field turns on its knob: over its range, on a log scale for Hz.
 pub(crate) fn field_range(info: Option<&ToolInfo>, name: &str) -> Option<ValueRange> {
-    match info?.field(name)? {
-        Field::Knob { min, max, unit, .. } => Some(knob_range(*min, *max, *unit)),
-        Field::Number { min, max, .. } => Some(ValueRange::linear(*min as f32, *max as f32)),
-        _ => None,
-    }
+    info?.field(name)?.range()
 }
 
-/// How a live control turns: over its range.
-pub(crate) fn control_range(info: Option<&ToolInfo>, name: &str) -> Option<ValueRange> {
-    match info?.control(name)? {
-        (_, Control::Live { min, max, .. }) => Some(ValueRange::linear(*min, *max)),
-        (_, Control::Trigger { .. }) => None,
+/// How a number input turns: over its range, on a log scale for Hz.
+pub(crate) fn input_range(info: Option<&ToolInfo>, name: &str) -> Option<ValueRange> {
+    match info?.input(name)? {
+        (_, Input::Number { min, max, unit, .. }) => {
+            Some(crate::tools::knob_range(*min, *max, *unit))
+        }
+        (_, Input::Bang { .. }) => None,
     }
 }
 
@@ -311,7 +326,7 @@ mod tests {
         assert_eq!(sources.number(&other), 0.0);
         let lit = live(serde_json::json!({
             "op": "eq",
-            "a": { "op": "floor", "x": { "op": "watch", "name": "step" } },
+            "a": { "op": "floor", "x": { "op": "value", "name": "step", "played": false, "fraction": false } },
             "b": 3,
         }));
         assert_eq!(sources.number(&lit), 1.0);

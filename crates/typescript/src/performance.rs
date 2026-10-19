@@ -18,7 +18,7 @@ const SIZES: [usize; 3] = [100, 1_000, 2_000];
 const ROUNDS: usize = 30;
 
 /// A page of `count` notes, all in a group the drag `move` moves, as the selected notes of a
-/// piano roll are, the first one at the watch `v`, so a round moves one note.
+/// piano roll are, the first one at the output `v`, so a round moves one note.
 const GRID: &str = r##"import { For, Group, h, number, Rect, Space, tool, type Drag } from "./sdk";
 
 tool({
@@ -26,17 +26,16 @@ tool({
   title: "Grid",
   when: "A measurement",
   doc: "Many notes.",
-  kind: "source",
   state: { count: number({ min: 0, max: 100000, default: 100 }) },
   sound: () => 0,
-  page: ({ state, watches, now }) => {
+  view: ({ state, outputs, now }) => {
     const notes = () => Array.from({ length: state.count }, (_, index) => ({ index, start: (index % 64) * 240, pitch: 36 + (index % 48) }));
     const move = now.drag("move");
     const drag: Drag = { id: "move", snap: { x: 240, y: 1 }, onEnd: () => {} };
     return h(Space, { key: "roll", grow: true, unit: { x: 0.1, y: 4 }, extent: { x: [0, 38400], y: [0, 128] }, zoom: { x: [0.1, 10] } },
       h(Group, { x: move.dx, y: move.dy },
         h(For<{ index: number; start: number; pitch: number }>, { each: notes }, (note) => h(Rect, {
-          x: note.index === 0 ? () => watches.v ?? 0 : note.start,
+          x: note.index === 0 ? () => outputs.v ?? 0 : note.start,
           y: note.pitch,
           width: 240,
           height: 1,
@@ -105,10 +104,10 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
     )
     .unwrap_or_else(|failure| panic!("{}", failure.why));
     let id = InstanceId::new("grid").unwrap();
-    let page = Some(PageSize {
+    let size = PageSize {
         width: 1400,
         height: 800,
-    });
+    };
     for (card, count) in SIZES.into_iter().enumerate() {
         let card = card as u64;
         let state = json!({ "count": count }).to_string();
@@ -121,7 +120,7 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
             card,
             instance: &id,
             watches: &watches,
-            page,
+            size,
             clock: clock(),
         });
         let (trip, ops) = next_ops(&bun, sent);

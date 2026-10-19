@@ -260,6 +260,16 @@ fn error<T>(message: impl Into<String>) -> Result<T, GraphError> {
 }
 
 impl Graph {
+    /// The names of the fields and inputs it reads.
+    pub fn params(&self) -> std::collections::BTreeSet<&str> {
+        (self.nodes.iter())
+            .filter_map(|node| match node {
+                Node::Param(Param { name }) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn compile(&self, declarations: &Declarations) -> Result<Code, GraphError> {
         // Each is read by an operation, so more of them than operations is no sound.
         if self.feedbacks.len() > MAX_OPERATIONS || self.buffers.len() > MAX_OPERATIONS {

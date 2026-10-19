@@ -17,7 +17,7 @@ mod program;
 mod stages;
 
 pub use cable::{Bang, Cable, Control, Number, Placed, Shown};
-pub use code::{ArraySpec, Code, ParameterSpec};
+pub use code::{ArraySpec, Code, MAX_ARRAY_LENGTH, ParameterSpec};
 pub use graph::{ControlSpec, Declarations, Graph, GraphError};
 pub use machine::{Machine, Values};
 pub use processor::{Kind, MAX_VOICES, Signals, SignalsUpdate};

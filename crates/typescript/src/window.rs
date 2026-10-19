@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext, Context, Entity, Global, Task, WeakEntity};
+use gpui::{App, AppContext, Context, Entity, Global, PathPromptOptions, Task, WeakEntity};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
@@ -22,6 +22,9 @@ use sound_core::{
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};
+use sound_ui::components::device_card::{
+    CARD_HEIGHT, CARD_PADDING, HEADER_HEIGHT, PLAIN_CARD_WIDTH,
+};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
 use crate::bun::{
@@ -31,13 +34,20 @@ use crate::bun::{
 use crate::card::{Page, TypeScriptCard};
 use crate::feeds::played_name;
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
-use crate::tools::{Control, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
+use crate::tools::{Input, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
 use crate::tree::{NodeTable, Uses};
 use crate::{Extensions, FOLDER, Launched, NoteMessage, OWNED};
 
 /// How often the cards look at their watches and the control loops run: often enough for a
 /// step light, a meter or a moving drawing.
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
+
+/// The room a card in a rack gives its view: the body of a card, under its header. It grows
+/// sideways as wide as its view needs.
+const CARD_ROOM: PageSize = PageSize {
+    width: (PLAIN_CARD_WIDTH - 2. * CARD_PADDING) as u32,
+    height: (CARD_HEIGHT - HEADER_HEIGHT - CARD_PADDING) as u32,
+};
 
 /// The tools and cards of the project in the window. One per window.
 pub(crate) struct Live {
@@ -151,7 +161,7 @@ pub fn page_shows_transport(project: &Project, id: &InstanceId, cx: &App) -> boo
     };
     let tools = live.0.read(cx).tools.borrow();
     (project.tool_of(id))
-        .is_some_and(|tool| find(&tools, tool).is_some_and(|info| info.page && info.transport))
+        .is_some_and(|tool| find(&tools, tool).is_some_and(|info| info.view && info.transport))
 }
 
 /// Starts the live part of `extensions` for the window of `session`: the cards of its tools in
@@ -181,7 +191,7 @@ pub fn start_window(
     views.set_other_views(
         {
             let tools = tools.clone();
-            move |tool| find(&tools.borrow(), tool).is_some_and(|info| info.page)
+            move |tool| find(&tools.borrow(), tool).is_some_and(|info| info.view)
         },
         move |session, id, window, cx| {
             let (live, session, id) = (live.clone(), session.clone(), id.clone());
@@ -408,23 +418,6 @@ pub(crate) fn state_of(project: &Project, id: &InstanceId) -> Option<serde_json:
     serde_json::from_str(&project.state_json(id)?).ok()
 }
 
-/// Changes the record of `id` as one undo step called `label`.
-pub(crate) fn edit_record(
-    session: &Entity<Session>,
-    id: &InstanceId,
-    label: &str,
-    change: impl FnOnce(&mut serde_json::Value),
-    cx: &mut App,
-) {
-    session.update(cx, |session, cx| {
-        session.edit(cx, |project| {
-            let mut edit = project.begin(label);
-            project.update_json(&mut edit, id, change)?;
-            project.finish(edit)
-        })
-    });
-}
-
 /// An instance as its code gets it, with its watches as they are now.
 fn played<'a>(project: &Project, id: &'a InstanceId) -> Played<'a> {
     Played {
@@ -499,7 +492,7 @@ fn transport_of(session: &Session, cx: &App) -> Transport {
 fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffer> {
     let tools = tools
         .iter()
-        .filter(|info| kind(info.kind) && !info.behaviour);
+        .filter(|info| kind(info.tool_kind()) && !info.behaviour);
     tools
         .map(|info| {
             let tool = info.name.clone();
@@ -581,9 +574,9 @@ impl Live {
         let Some(entry) = self.cards.get(&card) else {
             return;
         };
-        let page = match entry.surface {
-            Surface::Card => None,
-            Surface::Page(Some(size)) => Some(size),
+        let size = match entry.surface {
+            Surface::Card => CARD_ROOM,
+            Surface::Page(Some(size)) => size,
             // It is made once it is laid out and has a size.
             Surface::Page(None) => return,
         };
@@ -597,7 +590,7 @@ impl Live {
             card,
             instance: &entry.id,
             watches: &entry.watches,
-            page,
+            size,
             clock,
         };
         // One that did not go is asked again by the next Bun.
@@ -676,7 +669,7 @@ impl Live {
         }
         entry.surface = Surface::Page(Some(size));
         if entry.mounted {
-            self.host.send(&Request::Resize { card, page: size });
+            self.host.send(&Request::Resize { card, size });
         } else {
             self.mount(card, cx);
         }
@@ -781,8 +774,8 @@ impl Live {
         Ok(())
     }
 
-    /// Moves the live control `name` of instance `id` to `value`, or fires the trigger `name`
-    /// when `value` is `None`, or says why it does not. Not an edit: nothing is saved.
+    /// Moves the number input `name` of instance `id` to `value`, or sends the bang `name` when
+    /// `value` is `None`, or says why it does not. Not an edit: nothing is saved.
     pub(crate) fn control(
         &mut self,
         id: &InstanceId,
@@ -791,24 +784,22 @@ impl Live {
         at: Option<f64>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let update = |info: &ToolInfo, session: &Session| match (info.control(name), value) {
-            (Some((index, Control::Live { .. })), Some(value)) => {
+        let update = |info: &ToolInfo, session: &Session| match (info.input(name), value) {
+            (Some((index, Input::Number { .. })), Some(value)) => {
                 Ok(SignalsUpdate::Live { index, value })
             }
-            (Some((index, Control::Trigger { .. })), None) => Ok(SignalsUpdate::Trigger {
+            (Some((index, Input::Bang { .. })), None) => Ok(SignalsUpdate::Trigger {
                 index,
                 at: at.map(|at| frames_of(at, session)),
             }),
             _ => {
                 let kind = if value.is_some() {
-                    "live control"
+                    "number input"
                 } else {
-                    "trigger"
+                    "bang input"
                 };
-                let names: Vec<&str> = (info.controls.0.iter())
-                    .filter(|(_, control)| {
-                        matches!(control, Control::Live { .. }) == value.is_some()
-                    })
+                let names: Vec<&str> = (info.inputs.0.iter())
+                    .filter(|(_, input)| matches!(input, Input::Number { .. }) == value.is_some())
                     .map(|(name, _)| name.as_str())
                     .collect();
                 let names = match names.is_empty() {
@@ -1277,6 +1268,7 @@ impl Live {
                 };
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
+            Event::OpenFile { question, title } => self.open_file(question, title, cx),
             Event::Send {
                 instance,
                 child,
@@ -1300,6 +1292,49 @@ impl Live {
             }
         }
         cx.notify();
+    }
+
+    /// Opens a file the composer chooses, copies it into `assets/audio/`, and answers the
+    /// `openFile` `question` of Bun with its name there, or with none.
+    fn open_file(&mut self, question: u64, title: String, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(title.into()),
+        });
+        let assets = session.read(cx).project().assets().clone();
+        cx.spawn(async move |live, cx| {
+            let path = match picked.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                _ => None,
+            };
+            let imported = match path {
+                Some(path) => Some(
+                    cx.background_spawn(async move { sound_media::import(&assets, &path) })
+                        .await,
+                ),
+                None => None,
+            };
+            // Gone with the window: there is nothing left to answer.
+            live.update(cx, |live, cx| {
+                let asset = match imported {
+                    Some(Ok(file)) => Some(file.asset.to_string()),
+                    Some(Err(error)) => {
+                        session.update(cx, |session, cx| session.report(error, cx));
+                        None
+                    }
+                    None => None,
+                };
+                let asset = asset.as_deref();
+                live.host.send(&Request::FileOpened { question, asset });
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// What the code of `instance` changed, as one edit called `label`, on the records as they

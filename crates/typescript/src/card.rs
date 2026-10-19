@@ -22,7 +22,6 @@ use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
-use sound_ui::import::{choose_file, import_file};
 use sound_ui::{ActiveTheme, ControlEdit, Session, typography};
 
 use crate::bun::{EventKind, PageSize};
@@ -30,10 +29,10 @@ use crate::feeds::Feeds;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
-    self, Align, Axis, Cursor, DivProps, Drag, List, NodeTable, Paint, Props, Reach, SampleProps,
-    ShapeKind, SpaceProps, TextProps, Words,
+    self, Align, Axis, Cursor, DivProps, Drag, List, NodeTable, Paint, Props, Reach, ShapeKind,
+    SpaceProps, TextProps, Turned, Words,
 };
-use crate::window::{Live, Surface, edit_record, state_of};
+use crate::window::{Live, Surface, state_of};
 
 /// How long an ended drag keeps its values at most, when the answer to its end does not come,
 /// such as when Bun stopped.
@@ -409,19 +408,21 @@ impl TypeScriptCard {
         };
         let from = turns.map(|turns| {
             let turns = turns.as_ref()?;
-            match (&turns.field, &turns.child, &turns.control) {
-                (Some(field), Some(child), _) => {
+            match turns.target(info.as_ref()) {
+                Turned::Field {
+                    child: Some(child),
+                    name,
+                } => {
                     let child = self.id.child(child).ok()?;
                     let record = state_of(self.session.read(cx).project(), &child)?;
                     let value = record
-                        .get(field)
+                        .get(name)
                         .and_then(Value::as_f64)
                         .map(|value| value as f32);
                     value.or_else(|| self.child_range(turns, cx).map(|range| range.value(0.5)))
                 }
-                (Some(field), None, _) => sources.field(field),
-                (None, _, Some(control)) => sources.control(control),
-                (None, _, None) => None,
+                Turned::Field { child: None, name } => sources.field(name),
+                Turned::Input(name) => sources.input(name),
             }
         });
         let (across, down) = frame.view.scale();
@@ -497,10 +498,11 @@ impl TypeScriptCard {
             self.held = None;
             return;
         }
+        let info = self.live.read(cx).info(self.card);
         let fields = [&held.drag.x, &held.drag.y]
             .into_iter()
             .flatten()
-            .any(|turns| turns.field.is_some());
+            .any(|turns| matches!(turns.target(info.as_ref()), Turned::Field { .. }));
         if fields {
             self.edit.apply_json(
                 &self.session,
@@ -531,11 +533,13 @@ impl TypeScriptCard {
             return false;
         };
         let turns = [&held.drag.x, &held.drag.y];
+        let info = self.live.read(cx).info(self.card);
+        let target = |turns: &tree::Turns| turns.target(info.as_ref()).to_owned_input();
         if turns
             .iter()
             .copied()
             .flatten()
-            .any(|turns| turns.field.is_some())
+            .any(|turns| target(turns).is_none())
         {
             (self.edit).apply_json(
                 &self.session,
@@ -547,10 +551,8 @@ impl TypeScriptCard {
             );
         }
         for (turns, from) in turns.into_iter().zip(held.from) {
-            if let (Some(control), Some(from)) =
-                (turns.as_ref().and_then(|turns| turns.control.clone()), from)
-            {
-                self.control(&control, from, cx);
+            if let (Some(input), Some(from)) = (turns.as_ref().and_then(target), from) {
+                self.control(&input, from, cx);
             }
         }
         cx.notify();
@@ -596,19 +598,26 @@ impl TypeScriptCard {
     /// How the field of an instance inside it a drag turns spreads over its travel: as that
     /// instance's number.
     fn child_range(&self, turns: &tree::Turns, cx: &App) -> Option<ValueRange> {
-        let (field, child) = (turns.field.as_ref()?, turns.child.as_ref()?);
+        let Turned::Field {
+            child: Some(child),
+            name: field,
+        } = turns.target(None)
+        else {
+            return None;
+        };
         let child = self.id.child(child).ok()?;
         let number = self.session.read(cx).project().automation(&child, field)?;
         Some(number.range)
     }
 
     fn turn(&mut self, turns: &tree::Turns, change: ValueChange<f32>, cx: &mut Context<Self>) {
-        match (&turns.field, &turns.control) {
-            (Some(field), _) => {
+        let info = self.live.read(cx).info(self.card);
+        match turns.target(info.as_ref()) {
+            Turned::Field { child, name } => {
                 let label = (turns.label.clone())
-                    .unwrap_or_else(|| format!("Change {}", field.replace('_', " ")));
-                let field = field.clone();
-                let id = match &turns.child {
+                    .unwrap_or_else(|| format!("Change {}", name.replace('_', " ")));
+                let field = name.to_string();
+                let id = match child {
                     Some(child) => match self.id.child(child) {
                         Ok(child) => child,
                         Err(_) => return,
@@ -624,12 +633,12 @@ impl TypeScriptCard {
                     cx,
                 );
             }
-            (None, Some(control)) => {
+            Turned::Input(input) => {
                 if let ValueChange::Drag(value) | ValueChange::Set(value) = change {
-                    self.control(&control.clone(), value, cx);
+                    let input = input.to_string();
+                    self.control(&input, value, cx);
                 }
             }
-            (None, None) => {}
         }
     }
 
@@ -662,15 +671,15 @@ impl TypeScriptCard {
     }
 }
 
-/// How what a drag turns spreads over its travel: as it says, or as the field or the control.
+/// How what a drag turns spreads over its travel: as it says, or as the field or the input.
 fn range_of(info: Option<&ToolInfo>, turns: &tree::Turns) -> Option<ValueRange> {
     if let (Some(min), Some(max)) = (turns.min, turns.max) {
         return Some(crate::tools::knob_range(min, max, turns.unit));
     }
-    match (&turns.field, &turns.child, &turns.control) {
-        (Some(field), None, _) => live::field_range(info, field),
-        (None, _, Some(control)) => live::control_range(info, control),
-        _ => None,
+    match turns.target(info) {
+        Turned::Field { child: None, name } => live::field_range(info, name),
+        Turned::Input(name) => live::input_range(info, name),
+        Turned::Field { .. } => None,
     }
 }
 
@@ -1013,16 +1022,13 @@ impl Drawing<'_, '_> {
             Props::Text(TextProps { text }) => {
                 SharedString::from(text.clone().unwrap_or_default()).into_any_element()
             }
-            Props::Sample(SampleProps { path, label }) => {
-                self.sample(path.as_deref().unwrap_or_default(), label.as_deref())
-            }
             Props::Space(space) => self.space(id, space, &entry.children, index),
             // A shape outside a space, or a marker, draws nothing.
             Props::Shape(_) | Props::Marker => div().into_any_element(),
             Props::Div(DivProps {
                 key,
                 style,
-                on_click,
+                on_press,
                 follow,
             }) => {
                 let children: Vec<AnyElement> = (entry.children.iter())
@@ -1060,7 +1066,7 @@ impl Drawing<'_, '_> {
                     }
                     None => style.apply(div()).children(children),
                 };
-                if *on_click != Some(true) {
+                if *on_press != Some(true) {
                     return element.into_any_element();
                 }
                 element
@@ -1075,7 +1081,7 @@ impl Drawing<'_, '_> {
                                 "clicks": event.click_count(),
                             });
                             add_modifiers(&mut press, event.modifiers());
-                            view.event(id, EventKind::Click, press, cx);
+                            view.event(id, EventKind::Press, press, cx);
                         }),
                     )
                     .into_any_element()
@@ -1083,53 +1089,6 @@ impl Drawing<'_, '_> {
         }
     }
 
-    fn sample(&mut self, path: &str, label: Option<&str>) -> AnyElement {
-        let file = self.state.get(path).and_then(serde_json::Value::as_str);
-        let shown = match file {
-            Some(file) if !file.is_empty() => file.to_string(),
-            _ => "No sound".to_string(),
-        };
-        let theme = self.cx.theme();
-        let (quiet, button) = (theme.gray_700, theme.gray_300);
-        let path = path.to_string();
-        let choose = div()
-            .id(ElementId::Name(format!("{path}-choose").into()))
-            .px(px(8.))
-            .py(px(4.))
-            .rounded(px(6.))
-            .bg(button)
-            .cursor_pointer()
-            .child("Choose…")
-            .on_click(self.cx.listener(move |view, _, _, cx| {
-                let path = path.clone();
-                let session = view.session.clone();
-                choose_file(&session, "Choose a sound", cx, move |view, file, cx| {
-                    let session = view.session.clone();
-                    import_file(&session, file, cx, move |view, imported, cx| {
-                        let name = imported.asset.to_string();
-                        edit_record(
-                            &view.session,
-                            &view.id,
-                            "Choose a sound",
-                            |state| {
-                                tree::set_field(state, &path, name.into());
-                            },
-                            cx,
-                        );
-                    });
-                });
-            }));
-        let mut row = div().flex().flex_row().items_center().gap(px(8.));
-        if let Some(label) = label {
-            row = row.child(label.to_string());
-        }
-        row.child(div().text_color(quiet).child(shown))
-            .child(choose)
-            .into_any_element()
-    }
-
-    /// The shapes of a space with their numbers worked out, each in the colour it shows, those
-    /// of its groups among them, moved by the group.
     fn place(
         &self,
         children: &[usize],
@@ -1284,7 +1243,11 @@ impl Shown {
     }
 
     fn shows(&self, geometry: &Geometry) -> bool {
-        let Extent { across, down, reach } = Extent::of(geometry);
+        let Extent {
+            across,
+            down,
+            reach,
+        } = Extent::of(geometry);
         self.reaches(across, down, reach)
     }
 }
@@ -1328,9 +1291,7 @@ impl Extent {
             }
             // A line of text is as wide as its words: a long label far off to the left may
             // still reach in.
-            Geometry::Text { x, y, size, .. } => {
-                extent((x, x), (y, y), (size * 40.0, size * 2.0))
-            }
+            Geometry::Text { x, y, size, .. } => extent((x, x), (y, y), (size * 40.0, size * 2.0)),
         }
     }
 }
@@ -1537,7 +1498,8 @@ impl Placing<'_> {
                     }
                     let mut placed = (*offset, *clip);
                     for group in groups.iter() {
-                        if let Some(Props::Shape(group)) = table.get(*group).map(|entry| &entry.props)
+                        if let Some(Props::Shape(group)) =
+                            table.get(*group).map(|entry| &entry.props)
                         {
                             placed = self.group(group, placed);
                         }
@@ -1577,7 +1539,10 @@ impl Placing<'_> {
             return;
         };
         let extent = Extent::of(&geometry);
-        let hidden = self.shown.as_ref().is_some_and(|shown| !shown.shows(&geometry))
+        let hidden = self
+            .shown
+            .as_ref()
+            .is_some_and(|shown| !shown.shows(&geometry))
             || clip.is_some_and(|clip| !clip.meets(&extent));
         if hidden {
             return;
@@ -1790,7 +1755,8 @@ fn prepaint(
         let cursor = (frame.pointed.get(placed.index))
             .and_then(Option::as_ref)
             .and_then(|pointer| pointer.cursor);
-        let hitbox = cursor.map(|cursor| (window.insert_hitbox(shown, HitboxBehavior::Normal), cursor));
+        let hitbox =
+            cursor.map(|cursor| (window.insert_hitbox(shown, HitboxBehavior::Normal), cursor));
         painted.push(Painted {
             index: placed.index,
             shape,
@@ -2226,7 +2192,9 @@ impl Render for TypeScriptCard {
             element.when(hears_keys, |element| {
                 element
                     .track_focus(&self.focus)
-                    .when(blocks_plain_keys, |element| element.key_context(crate::KEY_CONTEXT))
+                    .when(blocks_plain_keys, |element| {
+                        element.key_context(crate::KEY_CONTEXT)
+                    })
                     .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
                         view.key(&event.keystroke, true, event.is_held, cx)
                     }))

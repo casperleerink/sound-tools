@@ -23,22 +23,29 @@ pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
         text.push_str(&Writer::new(schema).types());
     }
     text.push_str(
-        "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * and the live controls (`live`) and triggers (`trigger`) a parent plays.\n */\nexport interface Tools {\n",
+        "\n/**\n * Every built-in tool by its name: what its records hold, the numbers a cable moves (`number`),\n * the number inputs `send` plays (`input`), and its bang inputs (`bang`).\n */\nexport interface Tools {\n",
     );
     for schema in &tools {
         let names = |names: Vec<String>| match names.is_empty() {
             true => "never".to_string(),
             false => names.join(" | "),
         };
+        let inputs = schema.live.iter().map(|input| quoted(input));
         let number = names(
             (schema.numbers.iter())
                 .map(|(info, _)| quoted(&info.field))
+                .chain(inputs.clone())
                 .collect(),
         );
-        let live = names(schema.live.iter().map(|live| quoted(live)).collect());
-        let defaults = names(defaults_of(schema).keys().map(|field| quoted(field)).collect());
+        let input = names(inputs.collect());
+        let defaults = names(
+            defaults_of(schema)
+                .keys()
+                .map(|field| quoted(field))
+                .collect(),
+        );
         text.push_str(&format!(
-            "  {}: {{ state: {}; number: {number}; live: {live}; trigger: never; defaults: {defaults} }};\n",
+            "  {}: {{ state: {}; number: {number}; input: {input}; bang: never; defaults: {defaults} }};\n",
             property_name(schema.tool),
             type_name(schema.tool, "State"),
         ));
@@ -65,7 +72,7 @@ fn defaults_of(schema: &ToolSchema) -> serde_json::Map<String, Value> {
         .collect()
 }
 
-/// `devices` as the SDK offers them: a knob for each number a signal moves, in its units. The
+/// `devices` as the SDK offers them: a number for each number a signal moves, in its units. The
 /// docs of their settings are those of the record.
 fn sdk_devices(tools: &[&ToolSchema]) -> String {
     let mut text = String::from(
@@ -99,7 +106,7 @@ export const devices = {
                 .map_or(String::new(), |(unit, _)| format!(", unit: \"{unit}\""));
             let (min, max) = (number.range.min, number.range.max);
             text.push_str(&format!(
-                "    {field}: knob({{ min: {min}, max: {max}, default: {default}{unit} }}),\n",
+                "    {field}: number({{ min: {min}, max: {max}, default: {default}{unit} }}),\n",
             ));
         }
         text.push_str("  }),\n");

@@ -9,7 +9,7 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::{Error, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
-use crate::tools::Unit;
+use crate::tools::{ToolInfo, Unit};
 
 /// A value whose change may set it, unset it with `null`, or leave it out.
 fn changed<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
@@ -50,7 +50,7 @@ props! {
         key: String,
         style: Style,
         /// It hears a click.
-        on_click: bool,
+        on_press: bool,
         /// The spaces whose scroll its children move with, by their keys.
         follow: Follow,
     }
@@ -58,11 +58,6 @@ props! {
 
 props! {
     TextProps / TextChange { text: String }
-}
-
-props! {
-    /// The file of a sample field, and a button that chooses one.
-    SampleProps / SampleChange { path: String, label: String }
 }
 
 props! {
@@ -132,7 +127,6 @@ props! {
 pub(crate) enum Props {
     Div(DivProps),
     Text(TextProps),
-    Sample(SampleProps),
     Space(Box<SpaceProps>),
     Shape(Box<ShapeProps>),
     /// Where a list or a part that changes puts its nodes: draws nothing.
@@ -143,7 +137,6 @@ pub(crate) enum Props {
 pub(crate) enum Change {
     Div(DivChange),
     Text(TextChange),
-    Sample(SampleChange),
     Space(Box<SpaceChange>),
     Shape(Box<ShapeChange>),
     Marker,
@@ -200,7 +193,6 @@ impl<'de> Visitor<'de> for OpVisitor {
                     match family.as_str() {
                         "div" => Props::Div(next(&mut seq, "props")?),
                         "text" => Props::Text(next(&mut seq, "props")?),
-                        "sample" => Props::Sample(next(&mut seq, "props")?),
                         "space" => Props::Space(Box::new(next(&mut seq, "props")?)),
                         "shape" => Props::Shape(Box::new(next(&mut seq, "props")?)),
                         "marker" => {
@@ -218,7 +210,6 @@ impl<'de> Visitor<'de> for OpVisitor {
                     match family.as_str() {
                         "div" => Change::Div(next(&mut seq, "props")?),
                         "text" => Change::Text(next(&mut seq, "props")?),
-                        "sample" => Change::Sample(next(&mut seq, "props")?),
                         "space" => Change::Space(Box::new(next(&mut seq, "props")?)),
                         "shape" => Change::Shape(Box::new(next(&mut seq, "props")?)),
                         "marker" => {
@@ -247,7 +238,7 @@ impl<'de> Visitor<'de> for OpVisitor {
     }
 }
 
-const FAMILIES: &[&str] = &["div", "text", "sample", "space", "shape", "marker"];
+const FAMILIES: &[&str] = &["div", "text", "space", "shape", "marker"];
 
 /// What of the window the live values of a card move with, without its code, and what the
 /// window reads for them on every frame.
@@ -460,7 +451,6 @@ impl NodeTable {
                     match (&mut entry.props, change) {
                         (Props::Div(props), Change::Div(change)) => props.apply(change),
                         (Props::Text(props), Change::Text(change)) => props.apply(change),
-                        (Props::Sample(props), Change::Sample(change)) => props.apply(change),
                         (Props::Space(props), Change::Space(change)) => props.apply(*change),
                         (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
                         (Props::Marker, Change::Marker) => {}
@@ -638,7 +628,11 @@ impl ShapeProps {
 
     /// For a group: whether where it puts its shapes never moves, so they may stay too.
     pub(crate) fn group_stays(&self) -> bool {
-        let fixed = |number: &Option<Num>| number.as_ref().is_none_or(|number| number.fixed().is_some());
+        let fixed = |number: &Option<Num>| {
+            number
+                .as_ref()
+                .is_none_or(|number| number.fixed().is_some())
+        };
         let clip = (self.clip.as_ref())
             .is_none_or(|clip| clip.width.fixed().is_some() && clip.height.fixed().is_some());
         fixed(&self.x) && fixed(&self.y) && clip && self.moves.is_none() && self.grows.is_none()
@@ -877,19 +871,15 @@ impl Num {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Live {
     Tick,
-    /// Seconds on the clock of the window.
-    Time,
-    Watch {
+    /// Seconds since the view opened.
+    Elapsed,
+    /// A number by its name: a field of the record, a number input or a number output of the
+    /// sound; of the instance at the path `child` inside it, its field or its output.
+    Value {
         name: String,
-    },
-    Field {
-        name: String,
-        fraction: bool,
-        /// Of the record of this instance inside it, by its path, instead.
         child: Option<String>,
-    },
-    Control {
-        name: String,
+        /// A field as it plays: what a lane or a cable plays into it, else its record.
+        played: bool,
         fraction: bool,
     },
     /// The loudest sample since the last frame: of a meter its behaviour declares, or of peaks
@@ -900,14 +890,8 @@ pub(crate) enum Live {
         channel: Option<u8>,
     },
     /// The same, of what the device plays.
-    Output {
+    DevicePeak {
         channel: Option<u8>,
-    },
-    /// A number as it plays: what a lane or a cable plays into it, else its record. Of an
-    /// instance inside it as `path.name`.
-    Played {
-        name: String,
-        fraction: bool,
     },
     Drag {
         id: String,
@@ -1024,34 +1008,36 @@ impl Live {
     fn add_uses(&self, uses: &mut Uses) {
         match self {
             Self::Tick => uses.tick = true,
-            Self::Watch { .. } => uses.watches = true,
-            Self::Time => uses.animates = true,
+            Self::Elapsed => uses.animates = true,
             Self::Peak { name, .. } => {
                 uses.peaks.insert(name.clone());
                 uses.animates = true;
             }
-            Self::Output { .. } => {
+            Self::DevicePeak { .. } => {
                 uses.output = true;
                 uses.animates = true;
             }
-            Self::Played { name, .. } => {
-                uses.played.insert(name.clone());
-                if name.contains('.') {
-                    uses.inside.insert(name.clone());
-                }
-                uses.animates = true;
-            }
-            Self::Field {
-                child: Some(child),
+            Self::Value {
                 name,
+                child,
+                played,
                 ..
             } => {
-                uses.inside.insert(format!("{child}.{name}"));
+                let named = match child {
+                    Some(child) => format!("{child}.{name}"),
+                    None => name.clone(),
+                };
+                if child.is_some() {
+                    uses.inside.insert(named.clone());
+                }
+                if *played {
+                    uses.played.insert(named);
+                    uses.animates = true;
+                }
+                // It may be an output, which moves with the watches.
+                uses.watches = true;
             }
-            Self::Field { child: None, .. }
-            | Self::Control { .. }
-            | Self::Drag { .. }
-            | Self::Space { .. } => {}
+            Self::Drag { .. } | Self::Space { .. } => {}
             Self::Plus { a, b }
             | Self::Minus { a, b }
             | Self::Times { a, b }
@@ -1146,10 +1132,9 @@ pub(crate) enum Axis {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Turns {
-    pub field: Option<String>,
-    /// The instance inside it, by its path, whose `field` it turns, else its own record.
-    pub child: Option<String>,
-    pub control: Option<String>,
+    /// What it turns, as `now.value` names it: a field, of an instance inside it as
+    /// `path.field`, or a number input.
+    pub value: String,
     pub min: Option<f32>,
     pub max: Option<f32>,
     pub unit: Option<Unit>,
@@ -1159,6 +1144,46 @@ pub(crate) struct Turns {
     pub absolute: bool,
     pub default: Option<f32>,
     pub label: Option<String>,
+}
+
+/// What a drag turns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Turned<'a> {
+    /// A field of the record, or of the instance at the path `child` inside it.
+    Field {
+        child: Option<&'a str>,
+        name: &'a str,
+    },
+    Input(&'a str),
+}
+
+impl Turned<'_> {
+    /// The input it is, as an owned name, or `None` for a field.
+    pub(crate) fn to_owned_input(self) -> Option<String> {
+        match self {
+            Self::Input(name) => Some(name.to_string()),
+            Self::Field { .. } => None,
+        }
+    }
+}
+
+impl Turns {
+    /// What it turns, for the tool `info`: a number input of that name, else a field.
+    pub(crate) fn target(&self, info: Option<&ToolInfo>) -> Turned<'_> {
+        if let Some((child, name)) = self.value.rsplit_once('.') {
+            return Turned::Field {
+                child: Some(child),
+                name,
+            };
+        }
+        match info.and_then(|info| info.input(&self.value)) {
+            Some(_) => Turned::Input(&self.value),
+            None => Turned::Field {
+                child: None,
+                name: &self.value,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

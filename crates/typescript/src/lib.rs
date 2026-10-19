@@ -261,9 +261,9 @@ impl FirstLoad {
 }
 
 /// The tools of `loaded` by `bun` with their sounds compiled, and what is wrong: the errors of
-/// the files, the files Bun runs without, and every tool whose fields, sounds, card or page
-/// fail, such as a sound that plays a device of `schemas` with a setting it refuses. Takes as
-/// long as compiling every sound: not on the thread that draws.
+/// the files, the files Bun runs without, and every tool whose fields, sounds or view fail,
+/// such as a sound that plays a device of `schemas` with a setting it refuses. Takes as long as
+/// compiling every sound: not on the thread that draws.
 fn checked(
     loaded: Loaded,
     skipped: &Skipped,
@@ -279,10 +279,9 @@ fn checked(
         .collect();
     let mut kept = Vec::new();
     for tool in loaded.tools {
-        // Before anything is made from the fields, such as a pattern at its defaults.
-        let checked = (tool.info.declarations().check())
-            .map_err(|error| error.to_string())
-            .and_then(|()| tool.info.fields.check_defaults("state."));
+        // Before anything is made from the fields, such as a list at its defaults. Each sound
+        // checks the ranges of what it reads as it builds.
+        let checked = tool.info.fields.check_defaults("state.");
         match checked {
             Ok(()) => kept.push(tool),
             Err(error) => problems.push(tool.info.problem(error)),
@@ -294,12 +293,7 @@ fn checked(
     let infos: Arc<Tools> = Arc::new(infos.collect());
     let mut tools = Vec::new();
     for tool in kept {
-        let LoadedTool {
-            info,
-            sounds,
-            card,
-            page,
-        } = tool;
+        let LoadedTool { info, sounds, view } = tool;
         let sounds = Sounds::new(&info, sounds, (bun, &infos), schemas);
         // One problem a file: a list keeps one.
         let mut sounds_failed: Vec<&String> = sounds.failures().collect();
@@ -310,13 +304,9 @@ fn checked(
         let failed: Vec<String> = (sounds_failed.into_iter().take(shown).cloned())
             .chain(more)
             .chain(
-                drawn(card)
+                drawn(view)
                     .err()
-                    .map(|error| format!("its card does not draw: {error}")),
-            )
-            .chain(
-                page.and_then(|page| drawn(page).err())
-                    .map(|error| format!("its page does not draw: {error}")),
+                    .map(|error| format!("its view does not draw: {error}")),
             )
             .collect();
         if !failed.is_empty() {

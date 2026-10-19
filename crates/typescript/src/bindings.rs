@@ -17,10 +17,9 @@ tool({
   title: "Row",
   when: "A test",
   doc: "A row of steps.",
-  kind: "source",
   state: { steps: pattern({ length: 4, min: 0, max: 1, default: 0 }) },
   sound: () => 0,
-  card: () => h(Steps, { path: "steps" }),
+  view: () => h(Steps, { path: "steps" }),
 });
 "#;
 
@@ -68,7 +67,10 @@ fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
         card: 1,
         instance: &id,
         watches: &watches,
-        page: None,
+        size: crate::bun::PageSize {
+            width: 168,
+            height: 144,
+        },
         clock,
     });
     let steps: Vec<u64> = (next_ops(&bun).into_iter())
@@ -106,9 +108,9 @@ tool({
   state: {},
   children: { clip: "timeline" },
   behaviour: () => ({ connections: [] }),
-  card: ({ update }) =>
+  view: ({ update }) =>
     h("div", {
-      onClick: () =>
+      onPress: () =>
         update("Move it on", ({ children }) => {
           const clip = children[0];
           if (clip?.tool === "timeline") clip.state.start = clip.state.start + 960;
@@ -128,16 +130,27 @@ fn an_update_reads_a_childs_defaults_and_sets_only_what_it_changed() {
     write_sdk(folder.path(), &[]).unwrap();
     std::fs::write(folder.path().join("holder.ts"), HOLDER).unwrap();
     let host = host_script().unwrap();
-    let (bun, _) = Bun::start(&program, &host, (folder.path(), new_opening()), &["holder.ts"])
-        .unwrap_or_else(|failure| panic!("{}", failure.why));
+    let (bun, _) = Bun::start(
+        &program,
+        &host,
+        (folder.path(), new_opening()),
+        &["holder.ts"],
+    )
+    .unwrap_or_else(|failure| panic!("{}", failure.why));
     let (id, clip) = (
         InstanceId::new("holder").unwrap(),
         InstanceId::new("holder/clip").unwrap(),
     );
     let (own, empty) = ("{}".to_string(), "{}".to_string());
     assert!(bun.tell([
-        (&id, Some(("holder", record_key("holder", &own), own.as_str()))),
-        (&clip, Some(("timeline", record_key("timeline", &empty), empty.as_str()))),
+        (
+            &id,
+            Some(("holder", record_key("holder", &own), own.as_str()))
+        ),
+        (
+            &clip,
+            Some(("timeline", record_key("timeline", &empty), empty.as_str()))
+        ),
     ]));
     let clock = Clock {
         time: 0.0,
@@ -154,19 +167,22 @@ fn an_update_reads_a_childs_defaults_and_sets_only_what_it_changed() {
         card: 1,
         instance: &id,
         watches: &watches,
-        page: None,
+        size: crate::bun::PageSize {
+            width: 168,
+            height: 144,
+        },
         clock,
     });
     let button = (next_ops(&bun).into_iter())
         .find_map(|op| match op {
-            Op::Create(id, Props::Div(div)) if div.on_click == Some(true) => Some(id),
+            Op::Create(id, Props::Div(div)) if div.on_press == Some(true) => Some(id),
             _ => None,
         })
         .unwrap();
     bun.send(&Request::Event {
         card: 1,
         node: button,
-        kind: EventKind::Click,
+        kind: EventKind::Press,
         payload: json!({ "x": 0, "y": 0, "button": "left", "clicks": 1, "shift": false, "alt": false, "cmd": false, "ctrl": false }),
         time: 0.0,
     });
@@ -179,10 +195,20 @@ fn an_update_reads_a_childs_defaults_and_sets_only_what_it_changed() {
             Err(error) => panic!("{error}"),
         }
     };
-    let [crate::bun::RecordEdit::Fields { child, set, removed }] = changes.as_slice() else {
+    let [
+        crate::bun::RecordEdit::Fields {
+            child,
+            set,
+            removed,
+        },
+    ] = changes.as_slice()
+    else {
         panic!("one change of the clip: {changes:?}");
     };
     assert_eq!(child.as_deref(), Some("clip"));
-    assert_eq!(serde_json::Value::Object(set.clone()), json!({ "start": 960 }));
+    assert_eq!(
+        serde_json::Value::Object(set.clone()),
+        json!({ "start": 960 })
+    );
     assert!(removed.is_empty(), "{removed:?}");
 }

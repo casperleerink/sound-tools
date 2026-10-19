@@ -1,11 +1,11 @@
 //! A tool of the project, as `extensions/*.ts` defines it, made into a [`JsonTool`] of the core:
 //! the check of its records from its fields, its doc for agents, and a behaviour that plays
-//! the sound graph its code builds as an effect, an instrument or a source.
+//! the sound graph its code builds, with one voice or a voice per note.
 //!
 //! The check runs in Rust, from the fields Bun sent with its load, and so does the sound: Bun
 //! sent the graph of every combination of choices then. Nothing here waits for Bun. A choice
-//! picks another graph; a knob, a toggle or a pattern only moves a value of the sound that
-//! plays.
+//! picks another graph; a number, a boolean or a list of numbers only moves a value of the
+//! sound that plays.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -19,9 +19,7 @@ use sound_core::{
     InputEndpoint, InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo,
     Problem, RecordStamp, ToolSchema, ValueRange, Watch,
 };
-use sound_notes::{
-    AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, Note, NoteEvent, NoteFeed, NoteFeedUpdate,
-};
+use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate};
 use sound_signals::{
     ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, DeviceUse, Graph, Kind, LinkFrom,
     LinkTo, Machine, Number, ParameterSpec, Placed, Program, Shown, Signals, SignalsUpdate, Sound,
@@ -32,7 +30,7 @@ use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
 use crate::feeds::{meter_name, played_name};
 use crate::meter::Meter;
-use crate::{FOLDER, samples, tree};
+use crate::{FOLDER, samples};
 
 /// A tool as `host.ts` sends it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -44,17 +42,20 @@ pub(crate) struct ToolInfo {
     pub title: String,
     pub when: String,
     pub doc: String,
-    pub kind: ToolKind,
+    /// How many voices its sound plays at once: one that runs all the time, or one per note.
+    pub voices: u8,
+    /// Its sound reads `input`, so it has an audio input.
+    pub input: bool,
     /// The saved fields of its record, in the order the code gives them, which is the order
-    /// of the knobs on the card.
+    /// of the knobs of its default view.
     pub fields: Named<Field>,
-    /// What its interface plays and nothing saves.
-    pub controls: Named<Control>,
+    /// What plays it and nothing saves.
+    pub inputs: Named<Input>,
     /// It has a control loop, which runs while the window is open.
     pub tick: bool,
-    /// It has a page: a view of the whole window, for an instance at the top of the project.
-    pub page: bool,
-    /// Its page shows the transport, and its cards and page draw again as the transport moves.
+    /// It draws its own view; without one, its default view is a card, and it has no page.
+    pub view: bool,
+    /// Its view at the top shows the transport, and draws again as the transport moves.
     pub transport: bool,
     /// It hears the computer keyboard, `onKey`.
     pub keys: bool,
@@ -74,11 +75,15 @@ pub(crate) struct ToolInfo {
     pub staged: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// What a tool is to the engine and to a track, from its voices and whether its sound hears
+/// what comes in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolKind {
+    /// One voice that hears what comes in.
     Effect,
+    /// A voice per note.
     Instrument,
+    /// One voice that hears nothing coming in.
     Source,
 }
 
@@ -102,14 +107,18 @@ impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Named<T> {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Field {
-    Knob {
-        min: f32,
-        max: f32,
-        default: f32,
+    /// A sound that reads it hears it as a signal; a lane or a cable moves it unless `integer`.
+    Number {
+        min: f64,
+        max: f64,
+        #[serde(default)]
+        integer: bool,
+        /// `min` when left out.
+        default: Option<f64>,
         unit: Option<Unit>,
         label: Option<String>,
     },
-    Toggle {
+    Boolean {
         default: bool,
         label: Option<String>,
     },
@@ -118,35 +127,13 @@ pub(crate) enum Field {
         default: Choice,
         label: Option<String>,
     },
-    /// A sound under `assets/audio/`, by its file name, which the sound reads as a list.
-    Sample { label: Option<String> },
-    /// A list of numbers, such as the steps of a sequence.
-    Pattern {
-        length: usize,
-        min: f32,
-        max: f32,
-        default: f32,
-        label: Option<String>,
-    },
-    /// Notes in ticks. This and the kinds below are data a behaviour reads: no signal.
-    Notes {
-        /// `[]` when left out.
-        default: Option<Value>,
-        label: Option<String>,
-    },
     Text {
         default: Option<String>,
         label: Option<String>,
     },
-    Number {
-        min: f64,
-        max: f64,
-        #[serde(default)]
-        integer: bool,
-        /// `min` when left out.
-        default: Option<f64>,
-        label: Option<String>,
-    },
+    /// A sound under `assets/audio/`, by its file name, which the sound reads as a list.
+    File { label: Option<String> },
+    /// A sound reads a list of numbers as a table.
     List {
         item: Box<Field>,
         max: Option<usize>,
@@ -158,18 +145,32 @@ pub(crate) enum Field {
     Object { fields: Named<Field> },
 }
 
+/// What plays a tool and nothing saves.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum Control {
-    Live {
+pub(crate) enum Input {
+    /// A number that starts at its default and glides where it is put.
+    Number {
         min: f32,
         max: f32,
-        default: f32,
+        default: Option<f32>,
+        #[serde(default)]
+        integer: bool,
+        unit: Option<Unit>,
         label: Option<String>,
     },
-    Trigger {
-        label: Option<String>,
-    },
+    /// A signal that is 1 for one sample.
+    Bang { label: Option<String> },
+}
+
+impl Input {
+    /// Where a number input starts: its default, else its min.
+    pub(crate) fn start(&self) -> Option<f32> {
+        match self {
+            Self::Number { min, default, .. } => Some(default.unwrap_or(*min)),
+            Self::Bang { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -235,14 +236,9 @@ impl Field {
     /// The value a record that leaves the field out has.
     fn default_value(&self) -> Value {
         match self {
-            Self::Knob { default, .. } => tree::decimal(*default),
-            Self::Toggle { default, .. } => Value::from(*default),
+            Self::Boolean { default, .. } => Value::from(*default),
             Self::Choice { default, .. } => default.to_value(),
-            Self::Pattern {
-                length, default, ..
-            } => Value::from(vec![tree::decimal(*default); *length]),
-            Self::Sample { .. } => Value::from(""),
-            Self::Notes { default, .. } => default.clone().unwrap_or(Value::Array(Vec::new())),
+            Self::File { .. } => Value::from(""),
             Self::List { default, .. } => {
                 let items = default.clone().unwrap_or(Value::Array(Vec::new()));
                 self.filled(items)
@@ -258,33 +254,21 @@ impl Field {
         }
     }
 
-    /// Whether it is data a behaviour reads, which the sound does not get.
-    pub(crate) fn is_data(&self) -> bool {
-        matches!(
-            self,
-            Self::Notes { .. }
-                | Self::Text { .. }
-                | Self::Number { .. }
-                | Self::List { .. }
-                | Self::Object { .. }
-        )
+    /// How a number turns on a knob and a lane: over its range, on a log scale for Hz.
+    pub(crate) fn range(&self) -> Option<ValueRange> {
+        match self {
+            Self::Number { min, max, unit, .. } => {
+                Some(knob_range(*min as f32, *max as f32, *unit))
+            }
+            _ => None,
+        }
     }
 
     /// Whether `value` is one this field takes. `at` is its path, which the message starts
     /// with, such as `state.lanes[1].notes[3].pitch: ...`.
     fn check(&self, value: &Value, at: &str) -> Result<(), String> {
-        let in_range =
-            |number: f64, min: f32, max: f32| number >= f64::from(min) && number <= f64::from(max);
         match self {
-            Self::Knob { min, max, .. } => {
-                let Some(number) = value.as_f64() else {
-                    return Err(format!("{at}: must be a number from {min} to {max}"));
-                };
-                if !in_range(number, *min, *max) {
-                    return Err(format!("{at}: {number} is outside [{min}, {max}]"));
-                }
-            }
-            Self::Toggle { .. } => {
+            Self::Boolean { .. } => {
                 if !value.is_boolean() {
                     return Err(format!("{at}: must be true or false"));
                 }
@@ -295,7 +279,7 @@ impl Field {
                     return Err(format!("{at}: must be one of {}", options.join(", ")));
                 }
             }
-            Self::Sample { .. } => {
+            Self::File { .. } => {
                 let Some(file) = value.as_str() else {
                     return Err(format!(
                         "{at}: must be the name of a file under assets/audio/, such as \"voice.wav\", or \"\" for none"
@@ -303,48 +287,6 @@ impl Field {
                 };
                 if !file.is_empty() {
                     sound_media::AudioAsset::new(file).map_err(|error| format!("{at}: {error}"))?;
-                }
-            }
-            Self::Pattern {
-                length, min, max, ..
-            } => {
-                let numbers = value.as_array().map(|items| {
-                    items
-                        .iter()
-                        .map(Value::as_f64)
-                        .collect::<Option<Vec<f64>>>()
-                });
-                let Some(Some(numbers)) = numbers else {
-                    return Err(format!("{at}: must be a list of {length} numbers"));
-                };
-                if numbers.len() != *length {
-                    return Err(format!(
-                        "{at}: must be a list of {length} numbers, not {}",
-                        numbers.len()
-                    ));
-                }
-                if let Some((index, number)) =
-                    (numbers.iter().enumerate()).find(|(_, number)| !in_range(**number, *min, *max))
-                {
-                    return Err(format!("{at}[{index}]: {number} is outside [{min}, {max}]"));
-                }
-            }
-            Self::Notes { .. } => {
-                let Some(notes) = value.as_array() else {
-                    return Err(format!(
-                        "{at}: must be a list of notes such as {NOTE_EXAMPLE}"
-                    ));
-                };
-                for (index, note) in notes.iter().enumerate() {
-                    if let Err(error) = serde_path_to_error::deserialize::<_, Note>(note) {
-                        let path = error.path().to_string();
-                        let path = if path == "." {
-                            String::new()
-                        } else {
-                            format!(".{path}")
-                        };
-                        return Err(format!("{at}[{index}]{path}: {}", error.inner()));
-                    }
                 }
             }
             Self::Text { .. } => {
@@ -399,9 +341,6 @@ impl Field {
         }
     }
 }
-
-/// A note as a message shows it.
-const NOTE_EXAMPLE: &str = r#"{"start": 0, "length": 480, "pitch": 60, "velocity": 100}"#;
 
 /// A number as a record writes it: `4`, not `4.0`, for a whole number field. A default that is
 /// no whole number stays as it is, so its check refuses it.
@@ -483,19 +422,32 @@ impl Named<Field> {
 
 impl ToolInfo {
     /// What the `Signals` processor of this tool is.
+    /// What the tool is to the engine and to a track: a voice per note with more voices than
+    /// one; else an effect when its sound hears what comes in, as a parent's always does.
+    pub(crate) fn tool_kind(&self) -> ToolKind {
+        match (self.voices > 1, self.input || self.behaviour) {
+            (true, _) => ToolKind::Instrument,
+            (false, true) => ToolKind::Effect,
+            (false, false) => ToolKind::Source,
+        }
+    }
+
+    /// What the `Signals` processor of this tool is.
     pub(crate) fn kind(&self) -> Kind {
-        match self.kind {
+        match self.tool_kind() {
             ToolKind::Effect => Kind::Effect,
             ToolKind::Instrument => Kind::Instrument {
-                voices: sound_signals::MAX_VOICES,
+                voices: usize::from(self.voices).min(sound_signals::MAX_VOICES),
             },
             ToolKind::Source => Kind::Source,
         }
     }
 
-    /// What the record and the card give its sound: the knobs and toggles, the patterns and
-    /// samples, and the controls, each in the order the code gives them.
-    pub(crate) fn declarations(&self) -> Declarations {
+    /// What the record and the inputs give a sound of `graph`: the numbers and booleans it
+    /// reads, the files and lists of numbers, and the inputs, each in the order the code gives
+    /// them. Only the numbers it reads, so a tool may hold any number of numbers it does not.
+    pub(crate) fn declarations(&self, graph: &Graph) -> Declarations {
+        let read = graph.params();
         let mut declarations = Declarations::default();
         let number = |name: &str, default, min, max| ParameterSpec {
             name: name.to_string(),
@@ -512,39 +464,45 @@ impl ToolInfo {
         };
         for (name, field) in &self.fields.0 {
             match field {
-                Field::Knob {
+                Field::Number {
                     min, max, default, ..
-                } => (declarations.parameters).push(number(name, *default, *min, *max)),
-                Field::Toggle { default, .. } => {
+                } if read.contains(name.as_str()) => {
+                    let (min, max) = (*min as f32, *max as f32);
+                    let default = default.map_or(min, |default| default as f32);
+                    declarations
+                        .parameters
+                        .push(number(name, default, min, max));
+                }
+                Field::Boolean { default, .. } if read.contains(name.as_str()) => {
                     let default = f32::from(u8::from(*default));
                     declarations
                         .parameters
                         .push(number(name, default, 0.0, 1.0));
                 }
-                Field::Choice { .. } => {}
-                Field::Pattern {
-                    length,
-                    min,
-                    max,
-                    default,
-                    ..
-                } => (declarations.arrays).push(list(name, Some(*length), *default, *min, *max)),
-                Field::Sample { .. } => {
-                    (declarations.arrays).push(list(name, None, 0.0, -1.0, 1.0))
+                Field::List { item, max, .. } => {
+                    if let Field::Number {
+                        min,
+                        max: top,
+                        default,
+                        ..
+                    } = &**item
+                    {
+                        let (min, top) = (*min as f32, *top as f32);
+                        let default = default.map_or(min, |default| default as f32);
+                        (declarations.arrays).push(list(name, *max, default, min, top));
+                    }
                 }
-                Field::Notes { .. }
-                | Field::Text { .. }
-                | Field::Number { .. }
-                | Field::List { .. }
-                | Field::Object { .. } => {}
+                Field::File { .. } => (declarations.arrays).push(list(name, None, 0.0, -1.0, 1.0)),
+                _ => {}
             }
         }
-        for (name, control) in &self.controls.0 {
-            declarations.controls.push(match control {
-                Control::Live {
-                    min, max, default, ..
-                } => ControlSpec::Live(number(name, *default, *min, *max)),
-                Control::Trigger { .. } => ControlSpec::Trigger(name.clone()),
+        for (name, input) in &self.inputs.0 {
+            declarations.controls.push(match input {
+                Input::Number { min, max, .. } => {
+                    let start = input.start().unwrap_or(*min);
+                    ControlSpec::Live(number(name, start, *min, *max))
+                }
+                Input::Bang { .. } => ControlSpec::Trigger(name.clone()),
             });
         }
         declarations
@@ -561,7 +519,7 @@ impl ToolInfo {
     /// The name of its processor, the first stage of its sound. Another kind is another
     /// processor, with other ports, and so is a stage.
     pub(crate) fn processor(&self) -> &'static str {
-        match (self.kind, self.staged) {
+        match (self.tool_kind(), self.staged) {
             (ToolKind::Effect, false) => "signals-effect",
             (ToolKind::Effect, true) => "signals-effect-stage",
             (ToolKind::Instrument, _) => "signals-instrument",
@@ -570,18 +528,18 @@ impl ToolInfo {
         }
     }
 
-    /// The index of the live control or the trigger `name` among those of its kind, which is
-    /// its index in the sound the tool builds.
-    pub(crate) fn control(&self, name: &str) -> Option<(usize, &Control)> {
-        let same_kind = |control: &Control, other: &Control| {
-            std::mem::discriminant(control) == std::mem::discriminant(other)
+    /// The index of the input `name` among those of its kind, which is its index in the sound
+    /// the tool builds.
+    pub(crate) fn input(&self, name: &str) -> Option<(usize, &Input)> {
+        let same_kind = |input: &Input, other: &Input| {
+            std::mem::discriminant(input) == std::mem::discriminant(other)
         };
-        let (position, (_, control)) =
-            (self.controls.0.iter().enumerate()).find(|(_, (control, _))| control == name)?;
-        let index = (self.controls.0[..position].iter())
-            .filter(|(_, other)| same_kind(control, other))
+        let (position, (_, input)) =
+            (self.inputs.0.iter().enumerate()).find(|(_, (input, _))| input == name)?;
+        let index = (self.inputs.0[..position].iter())
+            .filter(|(_, other)| same_kind(input, other))
             .count();
-        Some((index, control))
+        Some((index, input))
     }
 
     /// Whether `state` is a record this tool takes. The message names the field.
@@ -642,7 +600,7 @@ impl ToolInfo {
         let defaults: Vec<String> = (self.fields.0.iter())
             .map(|(name, field)| format!("{name:?}: {}", field.default_value()))
             .collect();
-        let (place, example, path) = match (self.behaviour, self.kind) {
+        let (place, example, path) = match (self.behaviour, self.tool_kind()) {
             (true, _) => (
                 format!(
                     "a tool of this project that owns children. Its record is \
@@ -661,27 +619,22 @@ impl ToolInfo {
                 format!("state/{name}/instance.json"),
             ),
             (false, ToolKind::Effect) => (
-                "an effect of this project. It goes in a track's `effects` like any effect: the \
-                 record sits in the track's folder and its file name is in `effects` of the \
-                 track's `instance.json`"
+                "an effect of this project: one voice whose sound hears what comes in. It goes in \
+                 a track's `effects` like any effect: the record sits in the track's folder and \
+                 its file name is in `effects` of the track's `instance.json`"
                     .to_string(),
                 "a track `pad` with one, at its defaults",
                 format!("state/arrangement/pad/{name}.json"),
             ),
             (false, ToolKind::Instrument | ToolKind::Source) => (
-                "an instrument of this project. It is what a track plays, like any instrument: \
-                 its record is the track's `instrument.json`"
+                "an instrument of this project: its sound plays notes and hears nothing coming in. \
+                 It is what a track plays, like any instrument: its record is the track's \
+                 `instrument.json`"
                     .to_string(),
                 "a track `pad` with one, at its defaults",
                 "state/arrangement/pad/instrument.json".to_string(),
             ),
         };
-        let data = (self.fields.0.iter().any(|(_, field)| field.is_data()))
-            .then_some(
-                " A notes, text, number or list field is data for its behaviour, card and page, \
-                 not its sound: a change plays once Bun has run the behaviour again.",
-            )
-            .unwrap_or_default();
         format!(
             "# {title}\n\n{doc}\n\n\
              `{name}` is {place}. It is defined in `extensions/{file}`, and the `extensions` of \
@@ -689,9 +642,11 @@ impl ToolInfo {
              ```json {path}\n{{\n  \"tool\": \"{name}\",\n  \"state\": {{{}}}\n}}\n```\n\n\
              {rows}\n\
              A field left out is at its default, so `\"state\": {{}}` is the tool at its defaults. \
-             A knob, a toggle or a pattern changes the sound at once. A choice changes what the \
-             sound is made of: the new sound fades in over 10 ms. A knob can be automated by a \
-             lane of its track, as the numbers of any device (`agent-docs/arrangement.md`).{data}\n",
+             What reads a field follows it: its sound glides to a number or a boolean at once, \
+             and a choice changes what the sound is made of, the new sound fading in over 10 ms; \
+             its behaviour and view run again once Bun has heard of it. A number its sound reads \
+             that is not whole can be automated by a lane of its track, as the numbers of any \
+             device (`agent-docs/arrangement.md`).\n",
             defaults.join(", "),
         )
     }
@@ -738,42 +693,30 @@ fn field_rows(fields: &Named<Field>, prefix: &str, rows: &mut String) {
 /// The kind of a field and the values it takes, as the doc says them.
 fn described(field: &Field) -> (&'static str, String) {
     match field {
-        Field::Knob { min, max, unit, .. } => (
-            "knob",
-            format!("{min} to {max}{}", unit.map_or("", Unit::word)),
-        ),
-        Field::Toggle { .. } => ("toggle", "`true` or `false`".to_string()),
+        Field::Boolean { .. } => ("boolean", "`true` or `false`".to_string()),
         Field::Choice { options, .. } => {
             let options: Vec<String> = options.iter().map(|o| format!("`{o}`")).collect();
             ("choice", options.join(", "))
         }
-        Field::Pattern {
-            length, min, max, ..
-        } => (
-            "pattern",
-            format!("a list of {length} numbers from {min} to {max}"),
-        ),
-        Field::Sample { .. } => (
-            "sample",
+        Field::File { .. } => (
+            "file",
             "the name of a file under `assets/audio/`, such as `voice.wav`".to_string(),
-        ),
-        Field::Notes { .. } => (
-            "notes",
-            format!(
-                "a list of notes such as `{NOTE_EXAMPLE}`: `start` and `length` in ticks, 960 to a \
-                 quarter note, `pitch` 0 to 127, `velocity` 1 to 127"
-            ),
         ),
         Field::Text { .. } => ("text", "text in quotes".to_string()),
         Field::Number {
-            min, max, integer, ..
+            min,
+            max,
+            integer,
+            unit,
+            ..
         } => {
             let whole = if *integer {
                 "a whole number"
             } else {
                 "a number"
             };
-            ("number", format!("{whole} from {min} to {max}"))
+            let unit = unit.map_or("", Unit::word);
+            ("number", format!("{whole} from {min} to {max}{unit}"))
         }
         Field::List { item, max, .. } => {
             let items = match max {
@@ -793,7 +736,7 @@ type Read<'a> = (&'a Assets, u32, &'a InstanceId);
 /// The name in a parent's `children` that stands for any other name.
 const ANY_NAME: &str = "*";
 
-/// The tools of one load by name, so a parent finds the controls of a child.
+/// The tools of one load by name, so a parent finds the inputs of a child.
 pub(crate) type Tools = BTreeMap<String, ToolInfo>;
 
 /// The behaviour of a tool: its sound per combination of choices.
@@ -814,21 +757,21 @@ impl Sounds {
         (bun, tools): (&Arc<Bun>, &Arc<Tools>),
         schemas: &[ToolSchema],
     ) -> Self {
-        let declarations = info.declarations();
         let sounds: HashMap<String, Result<Arc<Program>, String>> = (graphs.into_iter())
             .map(|(choices, graph)| {
                 let key = info.sound_key(&Value::Object(choices));
                 let code = graph.and_then(|graph| {
+                    let declarations = info.declarations(&graph);
                     let program =
                         graph.program(&declarations).map_err(|error| error.to_string())?;
-                    let instrument = info.kind == ToolKind::Instrument;
+                    let voices = info.voices > 1;
                     let events = (program.stages.iter())
                         .any(|code| !code.bangs.is_empty() || !code.notes.is_empty());
-                    if events && instrument {
-                        return Err("an instrument sends no bangs or notes, as each of its voices would: make it a `source`, which follows the newest note".to_string());
+                    if events && voices {
+                        return Err("a sound of more voices than one sends no bangs or notes, as each of its voices would: give it one voice, which follows the newest note".to_string());
                     }
-                    if !program.devices.is_empty() && instrument {
-                        return Err("an instrument plays through no device, as each of its voices would play one: filter a voice with lowpass, highpass or bandpass, or put the device after the instrument, in the track's effects or in a parent".to_string());
+                    if !program.devices.is_empty() && voices {
+                        return Err("a sound of more voices than one plays through no device, as each of its voices would play one: filter a voice with lowpass, highpass or bandpass, or put the device after it, in the track's effects or in a parent".to_string());
                     }
                     for device in &program.devices {
                         check_device(device, schemas)?;
@@ -882,18 +825,24 @@ impl Sounds {
         }
     }
 
-    /// The knobs of the tool, in order, with the range a lane moves each one over and their
-    /// default.
-    fn knobs(&self) -> impl Iterator<Item = (&str, ValueRange, f32)> {
+    /// The numbers of the tool a lane moves, in order, with the range it moves each one over
+    /// and their default: those `code` reads that are not whole.
+    fn moved<'a>(&'a self, code: &'a Code) -> impl Iterator<Item = (&'a str, ValueRange, f32)> {
         let fields = self.info.fields.0.iter();
-        fields.filter_map(|(name, field)| match field {
-            Field::Knob {
+        fields.filter_map(move |(name, field)| match field {
+            Field::Number {
                 min,
-                max,
-                unit,
                 default,
+                integer: false,
                 ..
-            } => Some((name.as_str(), knob_range(*min, *max, *unit), *default)),
+            } if code
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == *name) =>
+            {
+                let default = default.unwrap_or(*min) as f32;
+                Some((name.as_str(), field.range()?, default))
+            }
             _ => None,
         })
     }
@@ -906,12 +855,12 @@ impl Sounds {
             .unwrap_or_else(|| Err(format!("Bun sent no sound for the choices {key}")))
     }
 
-    /// Where the params and lists of `code` stand in `state`: a knob or a toggle by the name of
-    /// its `param` line, a pattern by the name of its list.
+    /// Where the params and lists of `code` stand in `state`: a number or a boolean by the name
+    /// of its `param` line, a list by its name.
     fn values(&self, code: &Code, state: &Value) -> Values {
         let mut values = Values::default();
-        // The knobs, in the order of `automated`: each one's param.
-        values.automated = (self.knobs())
+        // The numbers a lane moves, in the order of `automated`: each one's param.
+        values.automated = (self.moved(code))
             .filter_map(|(name, ..)| code.parameters.iter().position(|p| p.name == name))
             .map(|index| index as u16)
             .collect();
@@ -925,11 +874,11 @@ impl Sounds {
         values
     }
 
-    /// The lists of `code` from `state`: a pattern as the record holds it, a sample as its
+    /// The lists of `code` from `state`: a list of numbers as the record holds it, a file as its
     /// sound, which is silence while it cannot be read.
     fn lists(&self, code: &Code, state: &Value, (assets, rate, id): Read<'_>) -> Vec<Vec<f32>> {
         let list = |array: &ArraySpec| {
-            let Some(length) = array.length else {
+            if let Some(Field::File { .. }) = self.info.field(&array.name) {
                 let file = state
                     .get(&array.name)
                     .and_then(Value::as_str)
@@ -942,18 +891,19 @@ impl Sounds {
                 return (sound.ok().flatten()).map_or_else(Vec::new, |sound| sound.to_vec());
             };
             let items = state.get(&array.name).and_then(Value::as_array);
-            let numbers = items.into_iter().flatten();
+            let numbers = items
+                .into_iter()
+                .flatten()
+                .take(sound_signals::MAX_ARRAY_LENGTH);
             let numbers = numbers.map(|item| item.as_f64().map_or(array.default, |n| n as f32));
-            let mut numbers: Vec<f32> = numbers.collect();
-            numbers.resize(length, array.default);
-            numbers
+            numbers.collect()
         };
         code.arrays.iter().map(list).collect()
     }
 
-    /// What the lists of `state` are made of: the patterns, and the files of the samples with
-    /// whether each could be read, so a sample that arrives after its record is sent then. With
-    /// a problem for each sample that cannot be read.
+    /// What the lists of `state` are made of: the lists of numbers, and the files with whether
+    /// each could be read, so a file that arrives after its record is sent then. With a problem
+    /// for each file that cannot be read.
     fn lists_key(
         &self,
         code: &Code,
@@ -966,7 +916,8 @@ impl Sounds {
             let value = state.get(&array.name);
             value.map(Value::to_string).hash(&mut hasher);
             let file = value.and_then(Value::as_str).unwrap_or_default();
-            if array.length.is_none() && !file.is_empty() {
+            let is_file = matches!(self.info.field(&array.name), Some(Field::File { .. }));
+            if is_file && !file.is_empty() {
                 let read = samples::sample(assets, file, rate, id);
                 // Which read it is, not its length: a file read again at the same length is a
                 // new sound too.
@@ -1084,13 +1035,13 @@ impl Sounds {
                 context.output(name, OutputEndpoint::new(*signals, Signals::notes(index)));
             }
         }
-        // A parent's cable reaches a live control or a trigger here; the place comes with it.
-        for (name, _) in &self.info.controls.0 {
+        // A parent's cable reaches an input here; the place comes with it.
+        for (name, _) in &self.info.inputs.0 {
             context.input(name, InputEndpoint::new(signals, Signals::CONTROLS));
         }
-        // Every knob can be automated, as a number of any device. A toggle or a pattern is no
-        // straight line, and a lane cannot move it.
-        let numbers: Vec<(ParameterInfo, f32)> = (self.knobs())
+        // Every number the sound reads can be automated, as a number of any device, but a whole
+        // number, a boolean or a list, which are no straight line.
+        let numbers: Vec<(ParameterInfo, f32)> = (self.moved(code))
             .map(|(name, range, default)| {
                 let record = state.get(name).and_then(Value::as_f64);
                 let info = ParameterInfo {
@@ -1156,8 +1107,12 @@ impl Sounds {
         let id = context.id().clone();
         let reads = behaviours::reads_of(context.assets(), &id);
         let child_fields = reads.as_ref().and_then(|reads| reads.children.as_deref());
-        let children = kept_children((context.assets(), &id), context.child_stamps(), child_fields)
-            .map_err(|error| BehaviourError::Other(error.to_string()))?;
+        let children = kept_children(
+            (context.assets(), &id),
+            context.child_stamps(),
+            child_fields,
+        )
+        .map_err(|error| BehaviourError::Other(error.to_string()))?;
         let read = reads.as_ref().map(|reads| {
             let own = match &reads.state {
                 Some(fields) => picked(state, fields),
@@ -1178,11 +1133,9 @@ impl Sounds {
         if let Some(problem) = declared.problem {
             context.problem(format!("{problem}. It plays what it declared last"));
         }
-        // Only the children a connection plays as a live control or a trigger.
+        // Only the children a connection plays a number or a bang into.
         let controlled = (declared.declaration.connections.iter())
-            .filter(|connection| {
-                matches!(connection.to.port(), Some((Key::Live | Key::Trigger, _)))
-            })
+            .filter(|connection| matches!(connection.to.port(), Some((Key::Number | Key::Bang, _))))
             .filter_map(|connection| connection.to.child.as_deref());
         let child_tools: BTreeMap<String, &ToolInfo> = controlled
             .filter_map(|name| {
@@ -1457,18 +1410,17 @@ impl Key {
         match self {
             Key::Port | Key::Meter => Carries::Sound,
             Key::Notes => Carries::Notes,
-            Key::Number | Key::Live => Carries::Number,
-            Key::Bang | Key::Trigger => Carries::Bang,
+            Key::Number => Carries::Number,
+            Key::Bang => Carries::Bang,
         }
     }
 
     /// Whether it may name an output, as a child's `from` and the owner's own `to` do, or an
-    /// input otherwise. A live control and a trigger are inputs; a bang is an output.
+    /// input otherwise. A meter is only the owner's own.
     fn fits(self, output: bool) -> bool {
         match self {
-            Key::Live | Key::Trigger => !output,
-            Key::Bang | Key::Meter => output,
-            Key::Port | Key::Notes | Key::Number => true,
+            Key::Meter => output,
+            Key::Port | Key::Notes | Key::Number | Key::Bang => true,
         }
     }
 }
@@ -1503,7 +1455,7 @@ fn own_ports(
 }
 
 /// What a connection may name, for a problem that says so.
-const ENDS: &str = "a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }";
+const ENDS: &str = "a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child?, number }, a bang from { child, bang } to { child?, bang }";
 
 /// Makes the connections of `declaration`, between the children and the `own` ports of the
 /// owner, with the tool of each child that is a tool of this project in `child_tools`. A
@@ -1597,6 +1549,12 @@ fn wire(
                 let meter = context.processor(&meter_name(to_name), || Meter::new(peaks, scope))?;
                 Some((InputEndpoint::new(meter, Meter::INPUT), None))
             }
+            // A number input plays the number; else a lane's input moves the field.
+            (Some(child), Key::Number) if takes_number(child, to_name, child_tools, context) => {
+                let number = (child, to_name, true);
+                (control::<Number>(name, number, child_tools, &mut cables, &at, context)?)
+                    .map(|input| (input, None))
+            }
             (Some(child), Key::Number) => match automation(child, to_name, &at, context) {
                 Some(into) => {
                     // What it plays, for a view that shows the number as it plays.
@@ -1606,18 +1564,13 @@ fn wire(
                 }
                 None => None,
             },
-            (Some(child), Key::Live) => {
-                let live = (child, to_name, true);
-                (control::<Number>(name, live, child_tools, &mut cables, &at, context)?)
-                    .map(|input| (input, None))
-            }
-            (Some(child), Key::Trigger) => {
-                let trigger = (child, to_name, false);
-                (control::<Bang>(name, trigger, child_tools, &mut cables, &at, context)?)
+            (Some(child), Key::Bang) => {
+                let bang = (child, to_name, false);
+                (control::<Bang>(name, bang, child_tools, &mut cables, &at, context)?)
                     .map(|input| (input, None))
             }
             // Refused by `fits`.
-            (None, Key::Live | Key::Trigger) | (Some(_), Key::Bang | Key::Meter) => None,
+            (Some(_), Key::Meter) => None,
         };
         let Some((input, feed)) = into else {
             continue;
@@ -1715,12 +1668,31 @@ fn automation(
     found
 }
 
-/// Where a connection `at` into the live control `name` of `child` goes, or into its trigger
-/// when not `live`. A tool of this project in `child_tools` takes all of them on one input, so a
+/// Whether `child` takes `name` as a number input, which a cable plays as a performer would,
+/// and not as a field a lane moves: an input of a tool of this project, or a number of another
+/// tool that a lane does not move, such as `launch` of a sequencer.
+fn takes_number(
+    child: &str,
+    name: &str,
+    child_tools: &BTreeMap<String, &ToolInfo>,
+    context: &BehaviourContext<'_>,
+) -> bool {
+    match child_tools.get(child) {
+        Some(info) => matches!(info.input(name), Some((_, Input::Number { .. }))),
+        None => {
+            let moved = (context.child_automation(child))
+                .is_some_and(|(_, numbers)| numbers.iter().any(|info| *info.field == *name));
+            !moved && context.child_input(child, name).is_some()
+        }
+    }
+}
+
+/// Where a connection `at` into the number input `name` of `child` goes, or into its bang when
+/// not `number`. A tool of this project in `child_tools` takes all of them on one input, so a
 /// cable says which; another, such as a sequencer, takes each on an input of its own.
 fn control<From: Event + Shown>(
     cable_name: String,
-    (child, name, live): (&str, &str, bool),
+    (child, name, number): (&str, &str, bool),
     child_tools: &BTreeMap<String, &ToolInfo>,
     made: &mut BTreeSet<String>,
     at: &str,
@@ -1737,19 +1709,17 @@ where
         }
         return Ok(input);
     };
-    match (info.control(name), input) {
-        (Some((index, control)), Some(input))
-            if matches!(control, Control::Live { .. }) == live =>
-        {
+    match (info.input(name), input) {
+        (Some((index, found)), Some(input)) if matches!(found, Input::Number { .. }) == number => {
             // At most `MAX_LIVES` of each kind, far under `u16::MAX`.
             let place = u16::try_from(index).unwrap_or(u16::MAX);
             let into = (input, place);
             cable::<From, sound_signals::Control>(cable_name, into, None, made, context)
         }
         _ => {
-            let kind = if live { "live control" } else { "trigger" };
-            let names: Vec<&str> = (info.controls.0.iter())
-                .filter(|(_, control)| matches!(control, Control::Live { .. }) == live)
+            let kind = if number { "number input" } else { "bang input" };
+            let names: Vec<&str> = (info.inputs.0.iter())
+                .filter(|(_, input)| matches!(input, Input::Number { .. }) == number)
                 .map(|(name, _)| name.as_str())
                 .collect();
             let names = match names.is_empty() {
@@ -1903,6 +1873,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A list of notes, as `notes()` of the SDK makes it.
+    fn notes() -> Value {
+        let number = |min: u32, max: u64, default: u32| json!({ "kind": "number", "min": min, "max": max, "default": default, "integer": true });
+        json!({ "kind": "list", "item": { "kind": "object", "fields": {
+            "start": number(0, 1 << 31, 0),
+            "length": number(1, 1 << 31, 1),
+            "pitch": number(0, 127, 60),
+            "velocity": number(1, 127, 100)
+        } } })
+    }
+
     fn wobble() -> ToolInfo {
         serde_json::from_value(json!({
             "name": "wobble",
@@ -1910,20 +1891,24 @@ mod tests {
             "title": "Wobble",
             "when": "You want the volume to move",
             "doc": "A tremolo.",
-            "kind": "effect",
+            "voices": 1,
+            "input": true,
             "fields": {
-                "rate": { "kind": "knob", "min": 0.1, "max": 20, "default": 4, "unit": "hz" },
+                "rate": { "kind": "number", "min": 0.1, "max": 20, "default": 4, "unit": "hz" },
                 "shape": { "kind": "choice", "options": ["sine", "square"], "default": "sine" },
-                "bypass": { "kind": "toggle", "default": false },
-                "accents": { "kind": "pattern", "length": 4, "min": 0, "max": 1, "default": 0 }
+                "bypass": { "kind": "boolean", "default": false },
+                "accents": {
+                    "kind": "list", "max": 4, "default": [0, 0, 0, 0],
+                    "item": { "kind": "number", "min": 0, "max": 1 }
+                }
             },
-            "controls": {
-                "x": { "kind": "live", "min": 0, "max": 1, "default": 0 },
-                "hit": { "kind": "trigger" },
-                "y": { "kind": "live", "min": 0, "max": 1, "default": 0 }
+            "inputs": {
+                "x": { "kind": "number", "min": 0, "max": 1, "default": 0 },
+                "hit": { "kind": "bang" },
+                "y": { "kind": "number", "min": 0, "max": 1, "default": 0 }
             },
             "tick": false,
-            "page": false,
+            "view": false,
             "transport": false,
             "keys": false,
             "notes": false,
@@ -1949,8 +1934,8 @@ mod tests {
                 "state.bypass: must be true or false",
             ),
             (
-                json!({ "accents": [1, 0] }),
-                "state.accents: must be a list of 4 numbers, not 2",
+                json!({ "accents": [1, 0, 1, 0, 1] }),
+                "state.accents: holds 5 items, at most 4",
             ),
             (
                 json!({ "accents": [1, 0, 2, 0] }),
@@ -1970,27 +1955,18 @@ mod tests {
     fn a_record_that_leaves_fields_out_plays_them_at_their_defaults() {
         let played = wobble().with_defaults(json!({ "rate": 6 }));
         let expected = json!({
-            "rate": 6, "shape": "sine", "bypass": false, "accents": [0.0, 0.0, 0.0, 0.0]
+            "rate": 6, "shape": "sine", "bypass": false, "accents": [0, 0, 0, 0]
         });
         assert_eq!(played, expected);
     }
 
     #[test]
-    fn a_control_is_found_by_its_place_among_those_of_its_kind() {
+    fn an_input_is_found_by_its_place_among_those_of_its_kind() {
         let wobble = wobble();
-        assert!(matches!(
-            wobble.control("x"),
-            Some((0, Control::Live { .. }))
-        ));
-        assert!(matches!(
-            wobble.control("hit"),
-            Some((0, Control::Trigger { .. }))
-        ));
-        assert!(matches!(
-            wobble.control("y"),
-            Some((1, Control::Live { .. }))
-        ));
-        assert!(wobble.control("z").is_none());
+        assert!(matches!(wobble.input("x"), Some((0, Input::Number { .. }))));
+        assert!(matches!(wobble.input("hit"), Some((0, Input::Bang { .. }))));
+        assert!(matches!(wobble.input("y"), Some((1, Input::Number { .. }))));
+        assert!(wobble.input("z").is_none());
     }
 
     #[test]
@@ -2006,7 +1982,7 @@ mod tests {
         assert_eq!(record["tool"], "wobble");
         assert_eq!(wobble.check(&record["state"]), Ok(()));
         assert!(
-            doc.contains("| `rate` | knob | 0.1 to 20 Hz | `4.0` |"),
+            doc.contains("| `rate` | number | a number from 0.1 to 20 Hz | `4.0` |"),
             "{doc}"
         );
     }
@@ -2019,7 +1995,8 @@ mod tests {
             "title": "Band",
             "when": "You want lanes of patterns",
             "doc": "Lanes of patterns.",
-            "kind": "effect",
+            "voices": 1,
+            "input": true,
             "fields": {
                 "lanes": {
                     "kind": "list",
@@ -2028,15 +2005,15 @@ mod tests {
                         "name": { "kind": "text" },
                         "patterns": { "kind": "list", "item": { "kind": "object", "fields": {
                             "bars": { "kind": "number", "min": 1, "max": 16, "integer": true },
-                            "notes": { "kind": "notes" }
+                            "notes": notes()
                         } } }
                     } }
                 },
                 "gain": { "kind": "number", "min": 0, "max": 1, "default": 0.5 }
             },
-            "controls": {},
+            "inputs": {},
             "tick": false,
-            "page": false,
+            "view": false,
             "transport": false,
             "keys": false,
             "notes": false,
@@ -2059,14 +2036,14 @@ mod tests {
         let refused = [
             (
                 lanes(json!([note(60), note(60), note(60), note(200)]), json!(1)),
-                "state.lanes[1].patterns[0].notes[3].pitch: pitch must be from 0 to 127, not 200",
+                "state.lanes[1].patterns[0].notes[3].pitch: 200 is outside [0, 127]",
             ),
             (
                 lanes(
-                    json!([{ "start": 0, "length": 240, "pitch": 60 }]),
+                    json!([{ "start": 0, "length": 0, "pitch": 60, "velocity": 100 }]),
                     json!(1),
                 ),
-                "state.lanes[1].patterns[0].notes[0]: missing field `velocity`",
+                "state.lanes[1].patterns[0].notes[0].length: 0 is outside [1, 2147483648]",
             ),
             (
                 lanes(json!([]), json!(1.5)),
@@ -2106,7 +2083,7 @@ mod tests {
             serde_json::from_value(json!({
                 "scenes": { "kind": "list", "default": default, "item": { "kind": "object", "fields": {
                     "bars": { "kind": "number", "min": 1, "max": 16, "integer": true },
-                    "notes": { "kind": "notes" }
+                    "notes": notes()
                 } } }
             }))
             .unwrap()
