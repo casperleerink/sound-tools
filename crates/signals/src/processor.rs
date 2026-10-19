@@ -70,8 +70,13 @@ pub enum SignalsUpdate {
         values: Box<Values>,
         watches: Vec<Watch>,
     },
-    /// From the interface: a `live` control moves. Not saved.
-    Live { index: usize, value: f32 },
+    /// From the interface: a `live` control moves, at the frame `at` of engine time, or now
+    /// when there is none or it has passed. Not saved.
+    Live {
+        index: usize,
+        value: f32,
+        at: Option<u64>,
+    },
     /// From the interface: a trigger fires at the frame `at` of engine time, or in the next
     /// frame when there is none or it has passed. Not saved.
     Trigger { index: usize, at: Option<u64> },
@@ -88,6 +93,7 @@ pub enum SignalsUpdate {
 enum Played {
     Note(NoteEvent),
     Trigger(usize),
+    Live(usize, f32),
 }
 
 impl From<NoteEvent> for Played {
@@ -100,7 +106,7 @@ impl Scheduled for Played {
     fn note(&self) -> Option<NoteEvent> {
         match self {
             Self::Note(event) => Some(*event),
-            Self::Trigger(_) => None,
+            Self::Trigger(_) | Self::Live(..) => None,
         }
     }
 }
@@ -707,10 +713,19 @@ impl Processor for Signals {
                 values,
                 watches,
             } => self.set(machines, values, watches),
-            SignalsUpdate::Live { index, value } => {
-                let ramp = RAMP_SECONDS * self.sample_rate;
-                if let Some(live) = self.lives.get_mut(*index) {
-                    live.set_target(*value, ramp);
+            SignalsUpdate::Live {
+                index,
+                value,
+                at: None,
+            } => self.move_live(*index, *value),
+            SignalsUpdate::Live {
+                index,
+                value,
+                at: Some(at),
+            } => {
+                // A full schedule moves it at once.
+                if !self.scheduled.add(Some(*at), Played::Live(*index, *value)) {
+                    self.move_live(*index, *value);
                 }
             }
             SignalsUpdate::Trigger { index, at } => {
@@ -840,6 +855,14 @@ impl Processor for Signals {
 }
 
 impl Signals {
+    /// Glides the `live` control `index` to `value`.
+    fn move_live(&mut self, index: usize, value: f32) {
+        let ramp = RAMP_SECONDS * self.sample_rate;
+        if let Some(live) = self.lives.get_mut(index) {
+            live.set_target(value, ramp);
+        }
+    }
+
     /// Whether its code passes its input as it comes, with nothing that glides and no old code
     /// fading out: the code of a tool with no sound, which a copy plays.
     fn copies(&self) -> bool {
@@ -903,6 +926,7 @@ impl Signals {
                 match what {
                     Played::Note(event) => self.follow(event),
                     Played::Trigger(index) => self.block.fire(index, start),
+                    Played::Live(index, value) => self.move_live(index, value),
                 }
             }
             let next_event = events.peek().map_or(frames, |timed| timed.offset);

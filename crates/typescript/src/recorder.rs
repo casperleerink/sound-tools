@@ -136,11 +136,13 @@ pub(crate) struct Recorder {
     taking: bool,
     /// The frame of the song after the last block of the take.
     played_to: u64,
+    /// What a performer sent for a frame of engine time still to come.
+    waiting: Option<(u64, bool)>,
 }
 
 pub(crate) enum RecorderUpdate {
-    /// A performer turned `record` on or off.
-    Record(bool),
+    /// A performer turned `record` on or off: from the frame of engine time it names, or now.
+    Record(bool, Option<u64>),
 }
 
 impl Recorder {
@@ -155,6 +157,7 @@ impl Recorder {
             cabled: None,
             taking: false,
             played_to: 0,
+            waiting: None,
         }
     }
 }
@@ -172,11 +175,16 @@ impl Processor for Recorder {
 
     fn update(&mut self, update: &mut RecorderUpdate) {
         match update {
-            RecorderUpdate::Record(on) => self.record = *on,
+            RecorderUpdate::Record(on, None) => self.record = *on,
+            RecorderUpdate::Record(on, Some(at)) => self.waiting = Some((*at, *on)),
         }
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let end = context.start_frame + context.frames as u64;
+        if let Some((_, on)) = self.waiting.take_if(|(at, _)| *at < end) {
+            self.record = on;
+        }
         if let Some(timed) = context.event_inputs.get(Self::RECORD).last() {
             let on = timed.event.0 > 0.0;
             if self.cabled != Some(on) {

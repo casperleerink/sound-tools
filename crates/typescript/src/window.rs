@@ -904,9 +904,11 @@ impl Live {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         let update = |info: &ToolInfo, session: &Session| match (info.input(name), value) {
-            (Some((index, Input::Number { .. })), Some(value)) => {
-                Ok(SignalsUpdate::Live { index, value })
-            }
+            (Some((index, Input::Number { .. })), Some(value)) => Ok(SignalsUpdate::Live {
+                index,
+                value,
+                at: at.map(|at| frames_of(at, session)),
+            }),
             (Some((index, Input::Bang { .. })), None) => Ok(SignalsUpdate::Trigger {
                 index,
                 at: at.map(|at| frames_of(at, session)),
@@ -994,10 +996,10 @@ impl Live {
         if let Some(session) = self.session.upgrade() {
             let tool = session.read(cx).project().tool_of(&played);
             if tool == Some(timeline::NAME) {
-                return self.launch_on(id, &played, (name, value), &session, cx);
+                return self.launch_on(id, &played, (name, value, at), &session, cx);
             }
             if tool == Some(recorder::RECORDER) {
-                return self.record_on(id, &played, (name, value), &session, cx);
+                return self.record_on(id, &played, (name, value, at), &session, cx);
             }
         }
         if let Err(error) = self.control(&played, name, value, at, cx) {
@@ -1012,7 +1014,7 @@ impl Live {
         &mut self,
         id: &InstanceId,
         played: &InstanceId,
-        (name, value): (&str, Option<f32>),
+        (name, value, at): (&str, Option<f32>, Option<f64>),
         session: &Entity<Session>,
         cx: &mut Context<Self>,
     ) {
@@ -1023,7 +1025,8 @@ impl Live {
             );
             return self.tool_problem(id, problem, cx);
         };
-        let update = TimelineUpdate::Launch(timeline::launched(value));
+        let at = at.map(|at| performed_frame(Some(at), session, cx));
+        let update = TimelineUpdate::Launch(timeline::launched(value), at);
         session.update(cx, |session, cx| {
             let sent = session.background(cx, |project| {
                 project.send::<Timeline>(played, timeline::PROCESSOR, update)
@@ -1040,7 +1043,7 @@ impl Live {
         &mut self,
         id: &InstanceId,
         played: &InstanceId,
-        (name, value): (&str, Option<f32>),
+        (name, value, at): (&str, Option<f32>, Option<f64>),
         session: &Entity<Session>,
         cx: &mut Context<Self>,
     ) {
@@ -1051,7 +1054,8 @@ impl Live {
             );
             return self.tool_problem(id, problem, cx);
         };
-        let update = RecorderUpdate::Record(value > 0.0);
+        let at = at.map(|at| performed_frame(Some(at), session, cx));
+        let update = RecorderUpdate::Record(value > 0.0, at);
         session.update(cx, |session, cx| {
             let sent = session.background(cx, |project| {
                 project.send::<Recorder>(played, recorder::PROCESSOR, update)

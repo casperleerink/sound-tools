@@ -461,6 +461,7 @@ fn a_live_control_glides_to_where_the_interface_puts_it() {
     let live = SignalsUpdate::Live {
         index: 0,
         value: 1.0,
+        at: None,
     };
     played.control.update(played.signals, live).unwrap();
     let output = played.render(1_920);
@@ -511,6 +512,7 @@ fn a_live_control_stays_where_it_is_when_the_code_is_new() {
     let moved = SignalsUpdate::Live {
         index: 0,
         value: 1.0,
+        at: None,
     };
     played.control.update(played.signals, moved).unwrap();
     played.render(1_920);
@@ -1091,4 +1093,22 @@ fn code_that_passes_its_input_plays_the_bytes_the_code_plays_and_leaves_the_same
         played.control.update(played.signals, update).unwrap();
     }
     render(&mut both, 1_920);
+}
+
+#[test]
+fn a_live_control_moves_at_the_frame_the_interface_says() {
+    let mut played = play(
+        Kind::One,
+        compile(|| live("x", 0.0, [0.0, 1.0])),
+        Vec::new(),
+    );
+    let later = SignalsUpdate::Live {
+        index: 0,
+        value: 1.0,
+        at: Some(4_800),
+    };
+    played.control.update(played.signals, later).unwrap();
+    let output = played.render(9_600);
+    assert_eq!(output[4_799], 0.0);
+    assert_eq!(output[9_599], 1.0);
 }

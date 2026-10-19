@@ -257,6 +257,8 @@ pub(crate) struct Timeline {
     looped: bool,
     /// What the input last launched: a number a cable sends every block launches once.
     heard: Option<bool>,
+    /// A launch a performer sends for a frame of engine time still to come.
+    waiting: Option<(u64, bool)>,
 }
 
 pub(crate) enum TimelineUpdate {
@@ -264,8 +266,9 @@ pub(crate) enum TimelineUpdate {
     Player(NotePlayerUpdate),
     /// Where a launch lands, and whether it loops.
     Launches((Quantize, bool)),
-    /// Starts at the next point of its quantize, or stops there with `false`.
-    Launch(bool),
+    /// Starts at the next point of its quantize, or stops there with `false`: from the frame
+    /// of engine time it names, or now.
+    Launch(bool, Option<u64>),
     /// What it shows from now on. The old watches ride back in here.
     Show(Option<TimelineWatches>),
 }
@@ -310,7 +313,8 @@ impl Processor for Timeline {
             TimelineUpdate::Launches((quantize, looped)) => {
                 (self.quantize, self.looped) = (*quantize, *looped);
             }
-            TimelineUpdate::Launch(start) => self.launch(*start),
+            TimelineUpdate::Launch(start, None) => self.launch(*start),
+            TimelineUpdate::Launch(start, Some(at)) => self.waiting = Some((*at, *start)),
             TimelineUpdate::Show(shown) => {
                 std::mem::swap(&mut self.shown, shown);
                 let inner = self.shown.as_ref().map(|_| self.inner.clone());
@@ -320,6 +324,10 @@ impl Processor for Timeline {
     }
 
     fn process(&mut self, context: &mut ProcessContext<'_>) {
+        let end = context.start_frame + context.frames as u64;
+        if let Some((_, start)) = self.waiting.take_if(|(at, _)| *at < end) {
+            self.launch(start);
+        }
         // The last of the block: two cables would launch each other again every block.
         if let Some(timed) = context.event_inputs.get(Self::LAUNCH).last() {
             let start = launched(timed.event.0);

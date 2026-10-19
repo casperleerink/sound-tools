@@ -1207,6 +1207,61 @@ fn a_page_that_reads_whether_a_loop_plays_hears_nothing_as_it_moves_on(cx: &mut 
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
 }
 
+#[gpui::test]
+fn a_launch_sent_for_later_waits_for_its_time(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project
+        .replace("\"keys\"", "\"launcher\"")
+        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+    let later = LAUNCHER.replace(
+        r#"send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 1 ? 0 : 1)"#,
+        r#"send({ child: "bass", number: "launch" }, 1, { at: time + 1 })"#,
+    );
+    let later = later.replace(
+        "view: ({ size, outputs, send })",
+        "view: ({ size, send, time })",
+    );
+    let files = [
+        ("project.json", project.as_str()),
+        (
+            "state/launcher/instance.json",
+            r#"{"tool": "launcher", "state": {}}"#,
+        ),
+        (
+            "state/launcher/synth.json",
+            r#"{"tool": "instrument.synth", "state": {}}"#,
+        ),
+        (
+            "state/launcher/bass.json",
+            r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [{"start": 0, "length": 3840, "pitch": 45, "velocity": 100}]}}"#,
+        ),
+        ("extensions/launcher.ts", later.as_str()),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let queued = |window: &mut Window| {
+        let session = window.session.clone();
+        let bass = id("launcher/bass");
+        let watches = (window.cx).read(|cx| session.read(cx).project().watches(&bass));
+        let queued = watches.iter().find(|(name, _)| name == "queued");
+        queued.map(|(_, watch)| watch.get())
+    };
+    window.start_playing();
+    window.until("the timeline", |window| queued(window).is_some());
+    let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
+    window
+        .cx
+        .simulate_click(point(middle.width, middle.height), Modifiers::default());
+    window.wait_for_bun();
+    window.poll();
+    assert_eq!(queued(&mut window), Some(0.0));
+    window.loudest(60_000);
+    window.poll();
+    assert_eq!(queued(&mut window), Some(1.0));
+    assert_eq!(window.problems(), []);
+}
+
 /// Frames in a bar of 4/4 at 120 bpm.
 const BAR_FRAMES: usize = 96_000;
 
