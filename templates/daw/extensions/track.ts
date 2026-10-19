@@ -1,14 +1,8 @@
-import { chain, chainPlays } from "./chain";
+import { chain } from "./chain";
 import { freeName } from "./tape";
 import { list, text, tool, type Connection, type Declaration } from "./sdk";
 
 const parts = { synth: "instrument.synth", fx: "filter", chain, mix: "fader", rec: "recorder", "send-*": "fader", "lane-*": "lane", "*": "timeline" } as const;
-
-/** The child of a track whose sound comes before its fader: the end of its chain when that plays, else its filter. */
-export function preFader(track: { readonly children: readonly { name: string; tool: string; state: unknown; children: readonly { name: string }[] }[] }): "chain" | "fx" {
-  const effects = track.children.find((child) => child.name === "chain");
-  return effects?.tool === "chain" && chainPlays(effects as Parameters<typeof chainPlays>[0]) ? "chain" : "fx";
-}
 
 /** `"fx.cutoff_hz"` or `"chain/verb.mix"`: the path of the child and the name of its number. */
 export function splitTarget(target: string): [child: string, number: string] {
@@ -27,10 +21,7 @@ export const track = tool({
     const clips: Connection<typeof parts>[] = children
       .filter((child) => child.tool === "timeline")
       .map((clip) => ({ from: { child: clip.name, notes: "notes" }, to: { child: "synth", notes: "notes" } }));
-    const through: Connection<typeof parts>[] =
-      preFader({ children }) === "chain"
-        ? [{ from: { child: "fx" }, to: { child: "chain" } }, { from: { child: "chain" }, to: { child: "mix" } }]
-        : [{ from: { child: "fx" }, to: { child: "mix" } }];
+    const through: Connection<typeof parts>[] = [{ from: { child: "fx" }, to: { child: "chain" } }, { from: { child: "chain" }, to: { child: "mix" } }];
     const lanes: Connection<typeof parts>[] = state.automation
       .filter(({ lane }) => children.some((child) => child.name === lane && child.tool === "lane"))
       .map(({ lane, target }) => {

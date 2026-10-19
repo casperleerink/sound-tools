@@ -3,7 +3,7 @@ import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, type EditorMemory, type Lane } from "./clip-editor";
 import { freeName, tape } from "./tape";
-import { preFader, splitTarget, track } from "./track";
+import { splitTarget, track } from "./track";
 
 // A song: tracks of clips in time, with their automation, a mixer strip per track, the devices
 // of the chosen track, and a note editor for one clip.
@@ -250,7 +250,7 @@ export const song = tool({
       if (each.tool !== "track") continue;
       for (const back of returns) {
         if (back.tool !== "bus" || !each.children.some((child) => child.name === `send-${back.name}`)) continue;
-        const from = back.state.pre_fader ? preFader(each) : "mix";
+        const from = back.state.pre_fader ? "chain" : "mix";
         const send = `${each.name}/send-${back.name}` as const;
         connections.push({ from: { child: `${each.name}/${from}` as const }, to: { child: send } });
         connections.push({ from: { child: send }, to: { child: back.name } });
