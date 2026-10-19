@@ -9,13 +9,12 @@ pub(crate) const BAR: u64 = 3840;
 pub(crate) fn daw() -> &'static runtime::Template {
     runtime::templates::named("DAW").unwrap()
 }
-/// The page's sizes, as `song.tsx` has them: a track's row and its header, points per tick, the
-/// points left of bar 1, and where the rows start under the title row and the ruler.
+/// The page's sizes, as `song.tsx` has them: a track's row and its header, points per tick, and
+/// the points left of bar 1.
 pub(crate) const ROW: f32 = 64.0;
 pub(crate) const HEADER: f32 = 176.0;
 pub(crate) const ACROSS: f32 = 0.025;
 pub(crate) const LEAD: f32 = 8.0;
-pub(crate) const TOP: f32 = 48.0 + 32.0 + 1.0;
 /// In a track's header, from its left and its top: the middle of its name, of its mute and solo,
 /// and of the arm of an audio track; the toggles are on one line.
 pub(crate) const NAME: (f32, f32) = (50.0, 18.0);

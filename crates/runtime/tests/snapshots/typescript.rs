@@ -167,7 +167,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     // ruler.
     let timeline = point(
         px(crate::song::HEADER + crate::song::LEAD),
-        px(crate::song::TOP),
+        px(TOP),
     );
     let lane = |tick: u64, row: f32| {
         timeline
@@ -215,7 +215,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(
         &opened,
         cx,
-        point(px(24.), px(crate::song::TOP + crate::song::TOGGLES)),
+        point(px(24.), px(TOP + crate::song::TOGGLES)),
         1,
     )?;
     play(&mut opened, cx)?;
@@ -228,6 +228,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     })?;
     save(cx, opened.window.into(), "typescript-daw")
 }
+
+/// Where a song's rows start: under the title row, the ruler and its line.
+const TOP: f32 = 48.0 + 32.0 + 1.0;
 
 /// Plays half a second in frames of the window, so meters and what eases move as they do.
 fn play(opened: &mut super::Opened, cx: &mut HeadlessAppContext) -> Result<()> {
