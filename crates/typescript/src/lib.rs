@@ -16,6 +16,7 @@
 mod behaviours;
 mod bun;
 mod card;
+mod live;
 mod records;
 mod samples;
 mod sequencer;

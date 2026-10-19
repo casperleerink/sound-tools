@@ -10,6 +10,8 @@ use crate::tools::Unit;
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Node {
     Div {
+        /// Keeps the state of the element when the tree is drawn again.
+        key: Option<String>,
         #[serde(default)]
         style: Style,
         /// The index of its click handler in the host.
@@ -20,98 +22,352 @@ pub(crate) enum Node {
     Text {
         text: String,
     },
-    Knob(KnobNode),
-    /// A row of steps on a pattern of the record.
-    Steps {
-        path: String,
-        /// What a step that is on holds. The pattern's max when left out.
-        max: Option<f32>,
-        /// The watch that says which step plays.
-        playing: Option<String>,
-    },
     /// The file of a sample field, and a button that chooses one.
     Sample {
         path: String,
         label: Option<String>,
     },
-    /// A bar from 0 to 1 that shows a watch.
-    Meter {
-        watch: String,
-        label: Option<String>,
-    },
-    /// A square that plays two live controls with the pointer.
-    Pad {
-        x: String,
-        y: String,
-        size: Option<f32>,
-    },
-    Canvas(CanvasNode),
+    Space(SpaceNode),
 }
 
-impl Node {
-    /// Whether it draws a watch here, as it is now, and not from the tree.
-    pub(crate) fn shows_watches(&self) -> bool {
-        match self {
-            Self::Meter { .. }
-            | Self::Steps {
-                playing: Some(_), ..
-            } => true,
-            Self::Div { children, .. } => children.iter().any(Self::shows_watches),
-            _ => false,
+/// What of the window a tree moves with, without asking for a new tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Uses {
+    pub watches: bool,
+    pub tick: bool,
+}
+
+impl Uses {
+    fn and(self, other: Self) -> Self {
+        Self {
+            watches: self.watches || other.watches,
+            tick: self.tick || other.tick,
         }
     }
 }
 
-/// A surface the code draws shapes on, which hears the pointer.
+impl Node {
+    pub(crate) fn uses(&self) -> Uses {
+        match self {
+            Self::Div { children, .. } => (children.iter())
+                .map(Self::uses)
+                .fold(Uses::default(), Uses::and),
+            Self::Space(space) => space.uses(),
+            Self::Text { .. } | Self::Sample { .. } => Uses::default(),
+        }
+    }
+}
+
+/// A surface that draws shapes in units of its own, scrolls and zooms, and hears the pointer.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub(crate) struct CanvasNode {
-    pub width: f32,
-    pub height: f32,
-    pub shapes: Vec<Shape>,
+pub(crate) struct SpaceNode {
+    pub key: Option<String>,
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+    #[serde(default)]
+    pub grow: bool,
+    /// Points per unit at zoom 1.
+    pub unit: Option<Axes>,
+    pub extent: Option<Ranges>,
+    pub zoom: Option<Ranges>,
     pub background: Option<Color>,
-    /// The index of the handler of a press, and of a drag.
+    pub radius: Option<f32>,
     pub on_press: Option<usize>,
-    pub on_drag: Option<usize>,
+    pub drag: Option<Drag>,
+    pub cursor: Option<Cursor>,
+    pub children: Vec<Shape>,
 }
 
-/// A shape of a canvas, in points from its top left.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum Shape {
-    Circle {
-        x: f32,
-        y: f32,
-        radius: f32,
-        color: Color,
-    },
-    Rect {
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        color: Color,
-        radius: Option<f32>,
-    },
-    Line {
-        from: [f32; 2],
-        to: [f32; 2],
-        color: Color,
-        width: Option<f32>,
-    },
+impl SpaceNode {
+    fn uses(&self) -> Uses {
+        (self.children.iter())
+            .flat_map(Shape::numbers)
+            .fold(Uses::default(), |uses, number| uses.and(number.uses()))
+    }
+
+    /// Points per unit at zoom 1, across and down.
+    pub(crate) fn unit(&self) -> (f64, f64) {
+        let unit = self.unit.unwrap_or_default();
+        (
+            f64::from(unit.x.unwrap_or(1.0)),
+            f64::from(unit.y.unwrap_or(1.0)),
+        )
+    }
 }
 
-/// A knob on the field `path` of the record, or on the live control `live`.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct KnobNode {
-    pub path: Option<String>,
-    pub live: Option<String>,
-    pub label: String,
-    pub min: f32,
-    pub max: f32,
-    pub default: f32,
+pub(crate) struct Axes {
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Ranges {
+    pub x: Option<[f32; 2]>,
+    pub y: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Cursor {
+    Pointer,
+    Grab,
+    Crosshair,
+    EwResize,
+    NsResize,
+}
+
+impl Cursor {
+    pub(crate) fn style(self) -> gpui::CursorStyle {
+        match self {
+            Self::Pointer => gpui::CursorStyle::PointingHand,
+            Self::Grab => gpui::CursorStyle::OpenHand,
+            Self::Crosshair => gpui::CursorStyle::Crosshair,
+            Self::EwResize => gpui::CursorStyle::ResizeLeftRight,
+            Self::NsResize => gpui::CursorStyle::ResizeUpDown,
+        }
+    }
+}
+
+/// A shape of a space. One struct for every kind, as the fields a kind does not have are left
+/// out by `sdk.ts`'s types; a field no kind has is still an error.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub(crate) struct Shape {
+    pub kind: ShapeKind,
+    pub key: Option<String>,
+    pub on_press: Option<usize>,
+    pub drag: Option<Drag>,
+    pub hover: Option<Color>,
+    pub cursor: Option<Cursor>,
+    pub opacity: Option<Num>,
+    pub x: Option<Num>,
+    pub y: Option<Num>,
+    pub width: Option<Num>,
+    pub height: Option<Num>,
+    pub radius: Option<Num>,
+    pub color: Option<Color>,
+    pub border: Option<Color>,
+    pub border_width: Option<Num>,
+    pub from: Option<Reach>,
+    pub to: Option<Reach>,
+    pub text: Option<Words>,
     pub unit: Option<Unit>,
+    pub size: Option<f32>,
+    pub align: Option<Align>,
+}
+
+impl Shape {
+    fn numbers(&self) -> impl Iterator<Item = &Num> {
+        let reaches = [&self.from, &self.to].into_iter().flatten().flat_map(|reach| match reach {
+            Reach::Point([x, y]) => vec![x, y],
+            Reach::Turn(turn) => vec![turn],
+        });
+        let words = match &self.text {
+            Some(Words::Live(live)) => Some(live),
+            _ => None,
+        };
+        [
+            &self.opacity,
+            &self.x,
+            &self.y,
+            &self.width,
+            &self.height,
+            &self.radius,
+            &self.border_width,
+        ]
+        .into_iter()
+        .flatten()
+        .chain(reaches)
+        .chain(words)
+    }
+
+    /// Whether the pointer can do something with it, so it is found under the pointer.
+    pub(crate) fn is_pointed(&self) -> bool {
+        self.on_press.is_some() || self.drag.is_some() || self.hover.is_some() || self.cursor.is_some()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ShapeKind {
+    Rect,
+    Circle,
+    Line,
+    Arc,
+    Text,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Align {
+    Left,
+    Center,
+    Right,
+}
+
+/// An end of a line, a point, or of an arc, a turn.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Reach {
+    Point([Num; 2]),
+    Turn(Num),
+}
+
+/// The text of a shape: as it is, or a live number as a readout.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Words {
+    Fixed(String),
+    Live(Num),
+}
+
+/// A number, or a live value the window works out on every frame.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Num {
+    Fixed(f32),
+    Live(Box<Live>),
+}
+
+impl Num {
+    fn uses(&self) -> Uses {
+        match self {
+            Self::Fixed(_) => Uses::default(),
+            Self::Live(live) => live.uses(),
+        }
+    }
+}
+
+/// A live value, as `sdk.ts`'s `Live` sends it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Live {
+    Tick,
+    Watch { name: String },
+    Field { name: String, fraction: bool },
+    Control { name: String, fraction: bool },
+    Drag { id: String, part: DragPart },
+    Space { key: String, part: SpacePart },
+    Plus { a: Num, b: Num },
+    Minus { a: Num, b: Num },
+    Times { a: Num, b: Num },
+    Over { a: Num, b: Num },
+    Min { a: Num, b: Num },
+    Max { a: Num, b: Num },
+    Lt { a: Num, b: Num },
+    Gt { a: Num, b: Num },
+    Le { a: Num, b: Num },
+    Ge { a: Num, b: Num },
+    Eq { a: Num, b: Num },
+    Ne { a: Num, b: Num },
+    Snap { a: Num, b: Num },
+    Negate { x: Num },
+    Abs { x: Num },
+    Floor { x: Num },
+    Round { x: Num },
+    Sin { x: Num },
+    Cos { x: Num },
+}
+
+impl Live {
+    fn uses(&self) -> Uses {
+        match self {
+            Self::Tick => Uses {
+                tick: true,
+                ..Uses::default()
+            },
+            Self::Watch { .. } => Uses {
+                watches: true,
+                ..Uses::default()
+            },
+            Self::Field { .. } | Self::Control { .. } | Self::Drag { .. } | Self::Space { .. } => {
+                Uses::default()
+            }
+            Self::Plus { a, b }
+            | Self::Minus { a, b }
+            | Self::Times { a, b }
+            | Self::Over { a, b }
+            | Self::Min { a, b }
+            | Self::Max { a, b }
+            | Self::Lt { a, b }
+            | Self::Gt { a, b }
+            | Self::Le { a, b }
+            | Self::Ge { a, b }
+            | Self::Eq { a, b }
+            | Self::Ne { a, b }
+            | Self::Snap { a, b } => a.uses().and(b.uses()),
+            Self::Negate { x }
+            | Self::Abs { x }
+            | Self::Floor { x }
+            | Self::Round { x }
+            | Self::Sin { x }
+            | Self::Cos { x } => x.uses(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum DragPart {
+    StartX,
+    StartY,
+    Dx,
+    Dy,
+    X,
+    Y,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum SpacePart {
+    Left,
+    Top,
+    Right,
+    Bottom,
+    PointX,
+    PointY,
+}
+
+/// The pointer pressing and dragging a shape or a space.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub(crate) struct Drag {
+    pub id: Option<String>,
+    pub snap: Option<Axes>,
+    pub axis: Option<Axis>,
+    pub x: Option<Turns>,
+    pub y: Option<Turns>,
+    pub on_end: Option<usize>,
+    pub on_move: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Axis {
+    X,
+    Y,
+}
+
+/// A number a drag turns as it goes: a field of the record, or a live control.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Turns {
+    pub field: Option<String>,
+    pub control: Option<String>,
+    pub min: Option<f32>,
+    pub max: Option<f32>,
+    pub unit: Option<Unit>,
+    /// Points of pointer travel for the whole range.
+    pub travel: Option<f32>,
+    #[serde(default)]
+    pub absolute: bool,
+    pub default: Option<f32>,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -275,8 +531,8 @@ mod tests {
                 "margin",
             ),
             (
-                serde_json::json!({ "type": "steps", "path": "steps", "length": 8 }),
-                "length",
+                serde_json::json!({ "type": "space", "children": [], "shapes": [] }),
+                "shapes",
             ),
         ];
         for (tree, field) in trees {

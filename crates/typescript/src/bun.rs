@@ -65,13 +65,13 @@ pub(crate) enum Request<'a> {
         #[serde(flatten)]
         clock: Clock,
     },
-    /// A click, or a press or a drag on a canvas `at` across and down, 0 to 1.
+    /// A press, or a drag that ended or moved: `payload` is what its handler hears.
     Event {
         card: u64,
-        /// The version of the tree that was clicked.
+        /// The version of the tree that was pressed.
         version: u64,
         handler: usize,
-        at: Option<(f32, f32)>,
+        payload: Value,
         time: f64,
     },
     /// One step of the control loop of every instance whose tool has one.
@@ -87,6 +87,10 @@ pub(crate) enum Request<'a> {
         instance: Played<'a>,
         key: &'a str,
         down: bool,
+        shift: bool,
+        alt: bool,
+        cmd: bool,
+        ctrl: bool,
         #[serde(flatten)]
         clock: Clock,
     },
@@ -195,9 +199,20 @@ pub(crate) enum Event {
     Tree {
         card: u64,
         tree: Result<(u64, Value), String>,
+        #[serde(default)]
+        reads: Reads,
+        /// Drawn after a press or a drag, which this tree answers.
+        #[serde(default)]
+        event: bool,
     },
     /// A card drew the tree it drew last.
-    Unchanged { card: u64 },
+    Unchanged {
+        card: u64,
+        #[serde(default)]
+        reads: Reads,
+        #[serde(default)]
+        event: bool,
+    },
     /// The code of an instance changed its record or those of its children, as one edit
     /// called `label`.
     Edit {
@@ -238,6 +253,28 @@ pub(crate) enum Event {
     /// code a timer of a tool ran.
     #[serde(skip_deserializing)]
     Ended { blame: Option<Runs>, why: String },
+}
+
+/// What the code of a card read as it drew, so the window asks for a tree again only when that
+/// changed. `state` names the fields it read, or is `None` for all of them.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub(crate) struct Reads {
+    pub state: Option<Vec<String>>,
+    pub children: bool,
+    pub watches: bool,
+    pub transport: bool,
+}
+
+/// Before the first tree says, a card reads everything.
+impl Default for Reads {
+    fn default() -> Self {
+        Self {
+            state: None,
+            children: true,
+            watches: true,
+            transport: true,
+        }
+    }
 }
 
 /// The code of a tool Bun runs: its tool, and which code, such as `tick`.

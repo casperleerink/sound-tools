@@ -897,8 +897,12 @@ export interface Declaration<K extends ChildTools = ChildTools> {
   connections: Connection<K>[];
 }
 
-/** A key of the computer keyboard: its name, such as `"a"`, `"1"`, `"space"` or `"left"`. */
-export interface Key {
+/**
+ * A key of the computer keyboard: its name, such as `"a"`, `"1"`, `"space"` or `"left"`, and the
+ * modifiers held. A key with cmd, ctrl or alt only goes down, such as cmd-c; one the window
+ * uses, such as cmd-z, stays the window's.
+ */
+export interface Key extends Modifiers {
   key: string;
   /** Pressed; `false` when it comes up. */
   down: boolean;
@@ -1007,6 +1011,8 @@ export interface Context<State, C extends Controls = Controls, M = unknown, K ex
   time: number;
   /** Where the piece plays. A card draws again as it moves only when the tool sets `transport: true`. */
   transport: Transport;
+  /** The sources of live values: what a card shows moving without drawing again. */
+  now: Now<State, C>;
 }
 
 /** What the control loop of an instance gets each time it runs. */
@@ -1018,7 +1024,8 @@ export interface Tick<State, C extends Controls = Controls, M = unknown, K exten
 
 
 // ---------------------------------------------------------------------------------------------
-// Cards
+// Cards and pages: a tree the code draws, which the window shows. What moves on it (a drag, a
+// playhead, a meter, a knob turned) moves in the window, without running code: a live value.
 
 /** A colour as `#rrggbb` or `#rrggbbaa`. */
 export type Color = `#${string}`;
@@ -1066,66 +1073,438 @@ export interface Page<State, C extends Controls = Controls, M = unknown, K exten
   size: { width: number; height: number };
 }
 
-/** A shape of a `Canvas`, in points from its top left. */
-export type Shape =
-  | { kind: "circle"; x: number; y: number; radius: number; color: Color }
-  | { kind: "rect"; x: number; y: number; width: number; height: number; color: Color; radius?: number }
-  | { kind: "line"; from: [number, number]; to: [number, number]; color: Color; width?: number };
+// Live values
 
-/** The props of each element of a card but `div`, by its type. */
-interface Elements {
-  knob: { path?: string; live?: string; label: string; min: number; max: number; default: number; unit?: Unit };
-  steps: { path: string; max?: number; playing?: string };
-  sample: { path: string; label?: string };
-  meter: { watch: string; label?: string };
-  pad: { x: string; y: string; size?: number };
-  canvas: {
-    width: number;
-    height: number;
-    shapes: Shape[];
-    background?: Color;
-    onPress?: (x: number, y: number) => void;
-    onDrag?: (x: number, y: number) => void;
+/** What a live value is made of, as the window gets it. */
+type LiveNode =
+  | { op: "tick" }
+  | { op: "watch"; name: string }
+  | { op: "field" | "control"; name: string; fraction: boolean }
+  | { op: "drag"; id: string; part: keyof DragValues }
+  | { op: "space"; key: string; part: keyof SpaceValues }
+  | { op: "plus" | "minus" | "times" | "over" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
+  | { op: "negate" | "abs" | "floor" | "round" | "sin" | "cos"; x: Num };
+
+/**
+ * A number the window works out again on every frame, without running code: where the
+ * playhead is, a watch, a field as a drag turns it, how far a drag went. Combine them with the
+ * methods, which take a live value or a number. Code cannot read one: it is no number, so
+ * `if (now.tick > 960)` is a type error. A card draws again only when what its code read changed.
+ */
+export class Live {
+  constructor(readonly node: LiveNode) {}
+  toJSON(): LiveNode { return this.node; }
+  plus(other: Num): Live { return new Live({ op: "plus", a: this, b: other }); }
+  minus(other: Num): Live { return new Live({ op: "minus", a: this, b: other }); }
+  times(other: Num): Live { return new Live({ op: "times", a: this, b: other }); }
+  over(other: Num): Live { return new Live({ op: "over", a: this, b: other }); }
+  min(other: Num): Live { return new Live({ op: "min", a: this, b: other }); }
+  max(other: Num): Live { return new Live({ op: "max", a: this, b: other }); }
+  clamp(low: Num, high: Num): Live { return this.max(low).min(high); }
+  /** 1 where the comparison holds, else 0. */
+  lt(other: Num): Live { return new Live({ op: "lt", a: this, b: other }); }
+  gt(other: Num): Live { return new Live({ op: "gt", a: this, b: other }); }
+  le(other: Num): Live { return new Live({ op: "le", a: this, b: other }); }
+  ge(other: Num): Live { return new Live({ op: "ge", a: this, b: other }); }
+  eq(other: Num): Live { return new Live({ op: "eq", a: this, b: other }); }
+  ne(other: Num): Live { return new Live({ op: "ne", a: this, b: other }); }
+  /** The nearest whole number of `step`s: `dx.snap(240)` moves by sixteenths. */
+  snap(step: Num): Live { return new Live({ op: "snap", a: this, b: step }); }
+  negate(): Live { return new Live({ op: "negate", x: this }); }
+  abs(): Live { return new Live({ op: "abs", x: this }); }
+  floor(): Live { return new Live({ op: "floor", x: this }); }
+  round(): Live { return new Live({ op: "round", x: this }); }
+  /** Of an angle in radians. */
+  sin(): Live { return new Live({ op: "sin", x: this }); }
+  cos(): Live { return new Live({ op: "cos", x: this }); }
+}
+
+/** A number, or a live value the window works out on every frame. */
+export type Num = number | Live;
+
+/** What a drag gives while the pointer holds it, in the units of its space. All 0 when no drag of its `id` is held. */
+export interface DragValues {
+  /** Where it was pressed. */
+  startX: Live;
+  startY: Live;
+  /** How far it moved, rounded to its `snap`. */
+  dx: Live;
+  dy: Live;
+  /** Where it is: the start and how far it moved. */
+  x: Live;
+  y: Live;
+  /** 1 while the pointer holds it. */
+  active: Live;
+}
+
+/** What the window shows of a space, in its units. */
+export interface SpaceValues {
+  /** The edges of what shows. */
+  left: Live;
+  top: Live;
+  right: Live;
+  bottom: Live;
+  /** How many units one point is: `width: space.pointX.times(6)` is 6 points wide at any zoom. */
+  pointX: Live;
+  pointY: Live;
+}
+
+/** The numbers of fields `State` holds. */
+type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? Name : never }[keyof State] & string;
+
+/** The sources of live values, which all code gets as `now`. */
+export interface Now<State = Record<string, unknown>, C extends Controls = Controls> {
+  /** Where the piece plays, in ticks: it moves on every frame as it plays. */
+  tick: Live;
+  /** The last value of a watch of the sound. */
+  watch(name: string): Live;
+  /**
+   * A number of the record as it is now, also as a drag turns it. With `fraction`, how far
+   * along the travel of its knob it is, 0 to 1, on a log scale for `"hz"`.
+   */
+  field(name: NumberNames<State>, options?: { fraction?: boolean }): Live;
+  /** Where a live control was put last; with `fraction`, 0 to 1 over its range. */
+  control(name: ControlNames<C, "live">, options?: { fraction?: boolean }): Live;
+  /** The drag of `id`, see `Drag`. */
+  drag(id: string): DragValues;
+  /** The space of `key`, see `Space`. */
+  space(key: string): SpaceValues;
+}
+
+function sources(): Now<Record<string, number>> {
+  const part = <Part extends string>(make: (part: Part) => LiveNode) => (parts: readonly Part[]) =>
+    Object.fromEntries(parts.map((each) => [each, new Live(make(each))])) as Record<Part, Live>;
+  return {
+    tick: new Live({ op: "tick" }),
+    watch: (name) => new Live({ op: "watch", name }),
+    field: (name, options) => new Live({ op: "field", name, fraction: options?.fraction ?? false }),
+    control: (name, options) => new Live({ op: "control", name, fraction: options?.fraction ?? false }),
+    drag: (id) =>
+      part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
+    space: (key) =>
+      part<keyof SpaceValues>((each) => ({ op: "space", key, part: each }))(["left", "top", "right", "bottom", "pointX", "pointY"]),
   };
+}
+
+/** The sources of live values, for the components of a card, which name fields by strings. */
+export const now: Now<Record<string, number>> = sources();
+
+// Pointer
+
+/** Which modifier keys were held. */
+export interface Modifiers {
+  shift: boolean;
+  alt: boolean;
+  cmd: boolean;
+  ctrl: boolean;
+}
+
+/** A press of the pointer: where in the units of its space (0 on a `div`), which button, and how many clicks in a row. */
+export interface Press extends Modifiers {
+  x: number;
+  y: number;
+  button: "left" | "right";
+  clicks: number;
+}
+
+/** A drag at its end, or at a move with `onMove`: as `DragValues` says, in numbers. */
+export interface DragResult extends Modifiers {
+  startX: number;
+  startY: number;
+  dx: number;
+  dy: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * A number a drag turns as it goes, in the window, with no code: a knob or a fader. The whole
+ * drag is one undo step for a `field`; a `control` is played, not saved. Without `min` and `max`
+ * it takes the field's or the control's.
+ */
+export type DragTurns = ({ field: string } | { control: string }) & {
+  min?: number;
+  max?: number;
+  /** `"hz"` turns on a log scale. */
+  unit?: Unit;
+  /** Points of pointer travel for the whole range, up or right; 200 when left out. With shift, ten times as far. */
+  travel?: number;
+  /** The value is where the pointer is across the space (or up it), from the press on, as on a pad. */
+  absolute?: boolean;
+  /** A double click puts it here. */
+  default?: number;
+  /** The undo step of a field. "Change <field>" when left out. */
+  label?: string;
+};
+
+/**
+ * The pointer pressing and dragging a shape or a space. The window moves what binds to
+ * `now.drag(id)` as the pointer goes, and turns `x` and `y`; code hears it once, at `onEnd`.
+ * Until its next tree after `onEnd` arrives, the drag's values stay, so what moved does not
+ * jump back while its code runs.
+ */
+export interface Drag {
+  /** Names its live values: `now.drag(id)`. */
+  id?: string;
+  /** Rounds `dx` and `dy` to whole steps, in units. */
+  snap?: { x?: number; y?: number };
+  /** Moves along one axis only. */
+  axis?: "x" | "y";
+  /** What the drag turns across and up. */
+  x?: DragTurns;
+  y?: DragTurns;
+  /** At the end of the drag, when the pointer moved. */
+  onEnd?: (drag: DragResult) => void;
+  /**
+   * At every move: runs code each time, so what it draws is a moment behind the pointer. For
+   * drawing with the pointer, as on paper; a move or a resize is `now.drag` and `onEnd`.
+   */
+  onMove?: (drag: DragResult) => void;
+}
+
+/** What a shape the pointer reaches can do. */
+interface Pointed {
+  /** Keeps its hover and its drag when the tree is drawn again. */
+  key?: string;
+  onPress?: (press: Press) => void;
+  drag?: Drag;
+  /** Its colour while the pointer is over it. */
+  hover?: Color;
+  cursor?: "pointer" | "grab" | "crosshair" | "ew-resize" | "ns-resize";
+  /** 0 to 1; 1 when left out. */
+  opacity?: Num;
+}
+
+/**
+ * Something a space draws. Positions and sizes are in the units of the space; `radius`, `width`
+ * of a line and `size` of text are in points.
+ */
+export type Shape = Pointed &
+  (
+    | { kind: "rect"; x: Num; y: Num; width: Num; height: Num; color: Color; radius?: number; border?: Color; borderWidth?: Num }
+    | { kind: "circle"; x: Num; y: Num; radius: Num; color: Color }
+    | { kind: "line"; from: [Num, Num]; to: [Num, Num]; color: Color; width?: number }
+    /** Along a circle from one angle to another, in turns clockwise from the top: a dial. */
+    | { kind: "arc"; x: Num; y: Num; radius: number; from: Num; to: Num; color: Color; width?: number }
+    /** Text at `x`, `y`, its top; a live number shows as a readout in `unit`. */
+    | { kind: "text"; x: Num; y: Num; text: string | Live; unit?: Unit; color?: Color; size?: number; align?: "left" | "center" | "right" }
+  );
+
+/**
+ * A surface that draws shapes in units of its own, such as ticks across and notes down. It
+ * scrolls over `extent` and zooms in `zoom` in the window, with no code, and draws only what
+ * shows. Without `unit`, a unit is a point.
+ */
+export interface SpaceProps {
+  /** Names it for `now.space(key)`, and keeps its scroll and zoom when the tree is drawn again. */
+  key?: string;
+  /** Its size in points; `grow` takes the room left in its parent. */
+  width?: number;
+  height?: number;
+  grow?: boolean;
+  /** Points per unit at zoom 1. */
+  unit?: { x?: number; y?: number };
+  /** What it scrolls over, in units; an axis without one does not scroll, and shows from 0. */
+  extent?: { x?: [number, number]; y?: [number, number] };
+  /** How far it zooms in and out, as a factor; an axis without one does not zoom. Cmd and scroll, or a pinch. */
+  zoom?: { x?: [number, number]; y?: [number, number] };
+  background?: Color;
+  radius?: number;
+  /** A press where no shape that hears the pointer is. */
+  onPress?: (press: Press) => void;
+  /** A drag from where no shape that hears the pointer is, such as a marquee. */
+  drag?: Drag;
+  cursor?: Pointed["cursor"];
+  children?: Child;
 }
 
 export type Child = Node | string | number | boolean | null | undefined | Child[];
 
+/** What a card draws. A `Shape` is one too, for JSX, but only a `Space` draws one. */
 export type Node =
-  | { type: "div"; style?: Style; onClick?: () => void; children: Child[] }
-  | { [Type in keyof Elements]: { type: Type } & Elements[Type] }[keyof Elements];
+  | Shape
+  | { type: "div"; key?: string; style?: Style; onClick?: (press: Press) => void; children: Child[] }
+  | { type: "sample"; path: string; label?: string }
+  | ({ type: "space" } & Omit<SpaceProps, "children"> & { children: Child[] });
 
-const element =
-  <Type extends keyof Elements>(type: Type) =>
-  (props: Elements[Type]) => ({ type, ...props });
+/** A space, see `SpaceProps`. */
+export const Space = ({ children, ...props }: SpaceProps): Node => ({ type: "space", ...props, children: [children] });
+
+type ShapeOf<Kind extends Shape["kind"]> = Omit<Extract<Shape, { kind: Kind }>, "kind">;
+const shape =
+  <Kind extends Shape["kind"]>(kind: Kind) =>
+  (props: ShapeOf<Kind>) =>
+    ({ kind, ...props }) as unknown as Shape;
+export const Rect = shape("rect");
+export const Circle = shape("circle");
+export const Line = shape("line");
+export const Arc = shape("arc");
+export const Label = shape("text");
+
+/** The file of a sample field at `path`, and a button that opens a file to put there. */
+export const SampleChooser = (props: { path: string; label?: string }): Node => ({ type: "sample", ...props });
+
+/** The card that draws now, for the components below, which read its record and fields. */
+function drawing() {
+  const drawing = host.drawing;
+  if (!drawing) {
+    throw new Error("a component of a card is drawn outside a card");
+  }
+  return drawing;
+}
+
+const KNOB = { track: "#292c34", value: "#a9b1ff", face: "#1b1d23", pointer: "#e9ebef", label: "#7c808c", text: "#e9ebef" } as const;
+/** The arc of a knob runs from -135 to +135 degrees, in turns. */
+const SWEEP = 0.75;
 
 /**
  * A knob. With `path`, it turns that field of the record, such as `rate`: a drag is smooth and
  * one undo step. With `live`, it plays a live control instead, which nothing saves. A double
  * click puts it at `default`.
  */
-export const Knob = element("knob");
+export function Knob(props: { path?: string; live?: string; label: string; min: number; max: number; default: number; unit?: Unit }): Node {
+  const { path, live, label, min, max, unit } = props;
+  const value = path !== undefined ? now.field(path) : now.control(live ?? "");
+  const fraction = path !== undefined ? now.field(path, { fraction: true }) : now.control(live ?? "", { fraction: true });
+  const turns: DragTurns = {
+    ...(path !== undefined ? { field: path } : { control: live ?? "" }),
+    min,
+    max,
+    unit,
+    default: props.default,
+    label: `Change ${label.toLowerCase()}`,
+  };
+  const angle = fraction.times(SWEEP).minus(SWEEP / 2);
+  const radians = angle.times(2 * Math.PI);
+  const [centreX, centreY] = [28, 20];
+  return Space({
+    key: `knob-${path ?? live}`,
+    width: 56,
+    height: 72,
+    cursor: "ns-resize",
+    drag: { y: turns },
+    children: [
+      Arc({ x: centreX, y: centreY, radius: 16, from: -SWEEP / 2, to: SWEEP / 2, color: KNOB.track, width: 2.5 }),
+      Arc({ x: centreX, y: centreY, radius: 16, from: -SWEEP / 2, to: angle, color: KNOB.value, width: 2.5 }),
+      Circle({ x: centreX, y: centreY, radius: 10.5, color: KNOB.face }),
+      Line({
+        from: [radians.sin().times(3).plus(centreX), radians.cos().times(-3).plus(centreY)],
+        to: [radians.sin().times(9).plus(centreX), radians.cos().times(-9).plus(centreY)],
+        color: KNOB.pointer,
+        width: 2,
+      }),
+      Label({ x: centreX, y: 40, text: label, color: KNOB.label, size: 11, align: "center" }),
+      Label({ x: centreX, y: 55, text: value, unit, color: KNOB.text, size: 11, align: "center" }),
+    ],
+  });
+}
+
+const STEP = { size: 14, gap: 3, on: "#a9b1ff", off: "#292c34", light: "#e9ebef" } as const;
+
 /**
  * A row of steps on a pattern of the record: a click turns a step on (to `max`, the pattern's
  * max when left out) or off (to its min). `playing` names a watch whose value is the step that
  * plays, which lights up.
  */
-export const Steps = element("steps");
-/** The file of a sample field at `path`, and a button that opens a file to put there. */
-export const SampleChooser = element("sample");
+export function Steps(props: { path: string; max?: number; playing?: string }): Node {
+  const { state, fields, update } = drawing();
+  const field = fields[props.path];
+  const [off, on] = field?.kind === "pattern" ? [field.min, props.max ?? field.max] : [0, props.max ?? 1];
+  const list = (state[props.path] as number[] | undefined) ?? [];
+  const pitch = STEP.size + STEP.gap;
+  return Space({
+    key: `steps-${props.path}`,
+    width: Math.max(list.length * pitch - STEP.gap, 0),
+    height: STEP.size,
+    children: list.map((value, step) => {
+      const isOn = value > off;
+      return Rect({
+        key: String(step),
+        x: step * pitch,
+        y: 0,
+        width: STEP.size,
+        height: STEP.size,
+        radius: 3,
+        color: isOn ? STEP.on : STEP.off,
+        border: STEP.light,
+        borderWidth: props.playing === undefined ? 0 : now.watch(props.playing).floor().eq(step).times(2),
+        cursor: "pointer",
+        onPress: () =>
+          update(isOn ? "Turn a step off" : "Turn a step on", ({ state: next }) => {
+            const changed = [...list];
+            changed[step] = isOn ? off : on;
+            next[props.path] = changed;
+          }),
+      });
+    }),
+  });
+}
+
 /** A bar that shows a watch from 0 to 1, such as a level. */
-export const Meter = element("meter");
+export function Meter(props: { watch: string; label?: string }): Node {
+  const level = now.watch(props.watch).clamp(0, 1).times(64);
+  const bar = Space({
+    width: 8,
+    height: 64,
+    children: [
+      Rect({ x: 0, y: 0, width: 8, height: 64, radius: 2, color: "#292c34" }),
+      Rect({ x: 0, y: level.negate().plus(64), width: 8, height: level, radius: 2, color: "#7ee0a0" }),
+    ],
+  });
+  return h("div", { style: { align: "center", gap: 4 } }, bar, props.label);
+}
+
+/** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
+export function Pad(props: { x: string; y: string; size?: number }): Node {
+  const size = props.size ?? 120;
+  return Space({
+    key: `pad-${props.x}-${props.y}`,
+    width: size,
+    height: size,
+    background: "#292c34",
+    radius: 6,
+    cursor: "crosshair",
+    drag: { x: { control: props.x, absolute: true }, y: { control: props.y, absolute: true } },
+    children: [
+      Circle({
+        x: now.control(props.x, { fraction: true }).times(size),
+        y: now.control(props.y, { fraction: true }).negate().plus(1).times(size),
+        radius: 5,
+        color: "#a9b1ff",
+      }),
+    ],
+  });
+}
+
 /**
  * A surface to draw on and play: `shapes` are drawn in order. `onPress` and `onDrag` hear the
- * pointer, at `x` across and `y` down, from 0 to 1.
+ * pointer, at `x` across and `y` down, from 0 to 1. A `Space` with a unit of a point.
  */
-export const Canvas = element("canvas");
-/** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
-export const Pad = element("pad");
+export function Canvas(props: {
+  width: number;
+  height: number;
+  shapes: Shape[];
+  background?: Color;
+  onPress?: (x: number, y: number) => void;
+  onDrag?: (x: number, y: number) => void;
+}): Node {
+  const { width, height, onPress, onDrag } = props;
+  const across = (x: number, y: number): [number, number] => [Math.min(Math.max(x / width, 0), 1), Math.min(Math.max(y / height, 0), 1)];
+  return Space({
+    width,
+    height,
+    background: props.background ?? "#1b1d23",
+    radius: 6,
+    onPress: onPress && ((press) => onPress(...across(press.x, press.y))),
+    drag: onDrag && { onMove: (drag) => onDrag(...across(drag.x, drag.y)) },
+    children: props.shapes,
+  });
+}
 
 interface DivProps {
+  key?: string;
   style?: Style;
-  onClick?: () => void;
+  onClick?: (press: Press) => void;
   children?: Child;
 }
 
@@ -1141,7 +1520,7 @@ export function h<Props>(
     // A component such as `Knob` takes no children: an empty list would be one more field.
     return type((children.length > 0 ? { ...props, children } : { ...props }) as Props);
   }
-  return { type, style: props?.style, onClick: props?.onClick, children };
+  return { type, key: props?.key, style: props?.style, onClick: props?.onClick, children };
 }
 
 export namespace h {
@@ -1235,4 +1614,8 @@ export const host = {
   tools: new Map<string, ToolSpec<Fields, Controls, unknown>>(),
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),
+  /** The card that draws now: its record, its fields and its `update`. */
+  drawing: undefined as
+    | { state: Record<string, unknown>; fields: Fields; update: Context<Record<string, unknown>>["update"] }
+    | undefined,
 };

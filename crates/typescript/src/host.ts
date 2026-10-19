@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Context, Controls, Drag, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -41,24 +41,22 @@ type Request =
   /** The records this Bun did not hold as they are, those that are gone, and how many of its edits the runtime heard. */
   | { type: "records"; records: Told[]; gone: string[]; edits: number }
   | Render
-  /** A click, or a press or a drag on a canvas `at` across and down. */
-  | { type: "event"; card: number; version: number; handler: number; at: [number, number] | null; time: number }
+  /** A press, or a drag that ended or moved, with what its handler hears. */
+  | { type: "event"; card: number; version: number; handler: number; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
-  | ({ type: "key"; instance: Played; key: string; down: boolean } & Clock)
+  | ({ type: "key"; instance: Played; key: string; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
   | { type: "drop"; card: number }
   | { type: "behaviour"; question: number; tool: string; instance: string };
 
-type Canvas = Extract<Node, { type: "canvas" }>;
-/** What the runtime gets of a node: a handler is its index. */
-type Sent =
-  | { type: "div"; style?: unknown; onClick?: number; children: Sent[] }
-  | { type: "text"; text: string }
-  | (Omit<Canvas, "onPress" | "onDrag"> & { onPress?: number; onDrag?: number })
-  | Exclude<Node, { type: "div" | "canvas" }>;
+/** What the runtime gets of a node or a shape: a handler is its index. */
+type Sent = { [key: string]: unknown };
 
-/** A click, which hears nothing, or a press or a drag on a canvas, which hears where. */
-type Handler = (x: number, y: number) => void;
+/** A press or a drag, which hears what the window says of it. */
+type Handler = (payload: never) => unknown;
+
+/** What the code of a card read as it drew: it draws again only when one of those changes. */
+type Reads = { state: Set<string>; all: boolean; children: boolean; watches: boolean; transport: boolean };
 
 /** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function say(message: object) {
@@ -338,16 +336,31 @@ function flatten(child: Child, handlers: Handler[], into: Sent[]) {
 /** A node as the runtime gets it, with its handlers kept for its card. */
 function serialize(node: Node, handlers: Handler[]): Sent {
   const keep = (handler: Handler | undefined) => handler && handlers.push(handler) - 1;
-  if (node.type === "canvas") {
-    const { onPress, onDrag, ...rest } = node;
-    return { ...rest, onPress: keep(onPress), onDrag: keep(onDrag) };
+  const drag = (drag: Drag | undefined) => drag && { ...drag, onEnd: keep(drag.onEnd), onMove: keep(drag.onMove) };
+  if ("kind" in node) {
+    throw new Error(`a ${node.kind} is a shape: put it in a Space`);
+  }
+  if (node.type === "space") {
+    const shapes: Sent[] = [];
+    const collect = (child: Child) => {
+      if (Array.isArray(child)) {
+        child.forEach(collect);
+      } else if (child !== null && typeof child === "object" && "kind" in child) {
+        const shape = child;
+        shapes.push({ ...shape, onPress: keep(shape.onPress), drag: drag(shape.drag) });
+      } else if (child !== null && child !== undefined && typeof child !== "boolean") {
+        throw new Error(`a Space draws shapes such as Rect and Label, not ${typeof child === "object" && "type" in child ? `a ${child.type}` : JSON.stringify(child)}`);
+      }
+    };
+    collect(node.children);
+    return { ...node, onPress: keep(node.onPress), drag: drag(node.drag), children: shapes };
   }
   if (node.type !== "div") {
     return node;
   }
   const children: Sent[] = [];
   flatten(node.children, handlers, children);
-  return { type: "div", style: node.style, onClick: keep(node.onClick), children };
+  return { type: "div", key: node.key, style: node.style, onClick: keep(node.onClick), children };
 }
 
 /** What draws the card of a tool, or its page. */
@@ -716,26 +729,65 @@ function contextOf<Extra extends object>(
   watches: Watches,
   { time, transport }: Clock,
   extra: Extra,
+  reads?: Reads,
 ) {
   const context = {
     ...extra,
-    state: filledState(spec, record),
-    watches,
     memory: memoryOf(instance, spec),
     time,
-    transport,
     update: updater(instance),
+    now: sdk.now as Context<State>["now"],
     ...performer(instance),
   };
+  const filled = filledState(spec, record);
+  const state = reads ? tracked(filled, reads) : filled;
   // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
   let children: OwnedChild[] | undefined;
-  return Object.defineProperty(context, "children", { enumerable: true, get: () => (children ??= childrenOf(instance)) }) as typeof context & {
-    children: OwnedChild[];
-  };
+  const read = <T>(what: "children" | "watches" | "transport", value: () => T) => ({
+    enumerable: true,
+    get: () => {
+      if (reads) {
+        reads[what] = true;
+      }
+      return value();
+    },
+  });
+  return Object.defineProperties(context, {
+    state: { enumerable: true, value: state },
+    watches: read("watches", () => watches),
+    transport: read("transport", () => transport),
+    children: read("children", () => (children ??= childrenOf(instance))),
+  }) as typeof context & { state: State; watches: Watches; transport: Transport; children: OwnedChild[] };
 }
 
-/** Draws a card and sends its tree, or why there is none: the window waits for one or the other. */
-function render(request: Render) {
+/** `state` that notes in `reads` each field code reads of it. */
+function tracked(state: State, reads: Reads): State {
+  return new Proxy(state, {
+    get(target, name, receiver) {
+      if (typeof name === "string") {
+        reads.state.add(name);
+      }
+      return Reflect.get(target, name, receiver);
+    },
+    has(target, name) {
+      if (typeof name === "string") {
+        reads.state.add(name);
+      }
+      return Reflect.has(target, name);
+    },
+    ownKeys(target) {
+      reads.all = true;
+      return Reflect.ownKeys(target);
+    },
+  });
+}
+
+/**
+ * Draws a card and sends its tree, or why there is none: the window waits for one or the other.
+ * With what its code read, so the window asks again only when that changed; and `event` after
+ * a press or a drag, whose preview the window drops with this tree.
+ */
+function render(request: Render, event = false) {
   const { card, instance, watches, page } = request;
   now = request.time;
   const record = recordOf(instance);
@@ -746,13 +798,14 @@ function render(request: Render) {
   const { tool } = record;
   drawn.set(card, { ...request, tool });
   let same = false;
+  const reads: Reads = { state: new Set(), all: false, children: false, watches: false, transport: false };
   const tree = made(() => {
     // Such as a tool whose file this Bun runs without.
     const spec = specOf(tool);
     const kept: Handler[] = [];
     runs(tool, page ? "page" : "card");
-    const node = drawerOf(spec, page !== null)(contextOf(instance, spec, record, watches, request, page ? { size: page } : {}));
-    const drawnTree = serialize(node, kept);
+    const context = contextOf(instance, spec, record, watches, request, page ? { size: page } : {}, reads);
+    const drawnTree = drawing(spec, context, () => serialize(drawerOf(spec, page !== null)(context), kept));
     const text = JSON.stringify(drawnTree);
     const trees = handlers.get(card) ?? new Map<number, Handler[]>();
     const last = lastTrees.get(card);
@@ -775,7 +828,18 @@ function render(request: Render) {
   if ("Err" in tree) {
     lastTrees.delete(card);
   }
-  say(same ? { type: "unchanged", card } : { type: "tree", card, tree });
+  const read = { state: reads.all ? null : [...reads.state], children: reads.children, watches: reads.watches, transport: reads.transport };
+  say(same ? { type: "unchanged", card, reads: read, event } : { type: "tree", card, tree, reads: read, event });
+}
+
+/** Runs `draw` as the card of `context` draws, for the components of the SDK that read it. */
+function drawing<T>(spec: Spec, context: { state: State; update: Context<State>["update"] }, draw: () => T): T {
+  sdk.host.drawing = { state: context.state, fields: spec.state, update: context.update };
+  try {
+    return draw();
+  } finally {
+    sdk.host.drawing = undefined;
+  }
 }
 
 /** `value` of `field` as the window gives it: at its default when left out, and so each item. */
@@ -825,14 +889,15 @@ function draw(spec: Spec, page: boolean): Sent {
     play() {},
     send() {},
     update() {},
+    now: sdk.now as Context<State>["now"],
   };
   try {
     spec.tick?.({ ...context, dt: 1 / 30 });
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
-  const node = drawerOf(spec, page)({ ...context, ...(page && { size: CHECKED_PAGE }) });
-  return serialize(node, []);
+  const drawn = { ...context, ...(page && { size: CHECKED_PAGE }) };
+  return drawing(spec, drawn, () => serialize(drawerOf(spec, page)(drawn), []));
 }
 
 /**
@@ -894,13 +959,14 @@ function handle(request: Request) {
         if (last) {
           runs(last.tool, "click handler");
         }
-        caught(handlers.get(request.card)?.get(request.version)?.[request.handler]?.(...(request.at ?? [0, 0])), failed);
+        const handler = handlers.get(request.card)?.get(request.version)?.[request.handler] as ((payload: unknown) => unknown) | undefined;
+        caught(handler?.(request.payload), failed);
       } catch (error) {
         failed(error);
       }
       // It may have changed the memory.
       if (last) {
-        render(last);
+        render(last, true);
       }
       break;
     }
@@ -909,7 +975,8 @@ function handle(request: Request) {
       say({ type: "framed" });
       break;
     case "key": {
-      const key = { key: request.key, down: request.down };
+      const { key: name, down, shift, alt, cmd, ctrl } = request;
+      const key = { key: name, down, shift, alt, cmd, ctrl };
       run(request, [request.instance], "onKey", {}, (spec, tool) => spec.onKey?.(tool, key));
       break;
     }

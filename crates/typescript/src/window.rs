@@ -25,13 +25,13 @@ use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
 use crate::bun::{
-    Bun, Clock, Event, Heard, PageSize, Played, RecordEdit, Request, Runs, Skipped, Telling,
+    Bun, Clock, Event, Heard, PageSize, Played, Reads, RecordEdit, Request, Runs, Skipped, Telling,
     Transport, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
 use crate::tools::{Control, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
-use crate::tree::Node;
+use crate::tree::{Node, Uses};
 use crate::{Extensions, FOLDER, Launched, NoteMessage, OWNED};
 
 /// How often the cards look at their watches and the control loops run: often enough for a
@@ -111,16 +111,41 @@ struct Card {
     /// The last tree with its version, which a click on it names, or why there is none. `None`
     /// until the first one arrives.
     tree: Option<Result<(u64, Rc<Node>), String>>,
-    /// The watches the last tree was drawn with, which native elements read too.
+    /// The watches the last tree was drawn with, which its live values read too.
     watches: BTreeMap<String, f32>,
-    /// The last tree has a meter or steps, which show the watches as they are.
-    shows_watches: bool,
+    /// What of the window the live values of the last tree move with.
+    uses: Uses,
+    /// What the code read as it drew the last tree, and the record it drew from: a change of
+    /// the record asks for a tree again only when what the code read changed.
+    reads: Reads,
+    drawn_record: Option<Value>,
+    /// The record told with the render out, which the next tree is drawn from.
+    asked_record: Option<Value>,
+    /// The presses and drags of the card told to its code, and how many of them its code
+    /// answered with a tree: a drag's preview stays until its answer.
+    events_sent: u64,
+    events_answered: u64,
     /// The transport the last tree was asked with.
     transport: Option<Transport>,
     /// A render was asked for and its tree has not come yet.
     asked: bool,
     /// The record or a watch changed while a render was out, so one more is due when it comes.
     stale: bool,
+}
+
+impl Card {
+    /// Its code drew again: after a render the window asked for, or after a press or a drag.
+    fn answered(&mut self, reads: Reads, event: bool) {
+        if event {
+            self.events_answered += 1;
+        } else {
+            self.asked = false;
+            if let Some(record) = self.asked_record.take() {
+                self.drawn_record = Some(record);
+            }
+        }
+        self.reads = reads;
+    }
 }
 
 /// What a tree is drawn on.
@@ -513,24 +538,6 @@ impl Live {
         find(&self.tools.borrow(), &self.cards.get(&card)?.tool).cloned()
     }
 
-    /// Where the live control `name` of the card's instance is, and its range: where it was
-    /// put last, or its default.
-    pub(crate) fn live_value(&self, card: u64, name: &str) -> Option<(f32, f32, f32)> {
-        let entry = self.cards.get(&card)?;
-        let tools = self.tools.borrow();
-        let Some((
-            _,
-            Control::Live {
-                min, max, default, ..
-            },
-        )) = find(&tools, &entry.tool)?.control(name)
-        else {
-            return None;
-        };
-        let played = (self.played.get(&entry.id)).and_then(|played| played.get(name));
-        Some((played.copied().unwrap_or(*default), *min, *max))
-    }
-
     /// A new card of the instance, which draws at once.
     pub(crate) fn add(
         &mut self,
@@ -547,7 +554,12 @@ impl Live {
             surface,
             tree: None,
             watches: BTreeMap::new(),
-            shows_watches: false,
+            uses: Uses::default(),
+            reads: Reads::default(),
+            drawn_record: None,
+            asked_record: None,
+            events_sent: 0,
+            events_answered: 0,
             transport: None,
             asked: false,
             stale: false,
@@ -598,6 +610,7 @@ impl Live {
         if self.host.send(&request) {
             entry.asked = true;
             entry.transport = Some(clock.transport);
+            entry.asked_record = session.read(cx).project().state_json(&entry.id).and_then(|text| serde_json::from_str(&text).ok());
         }
     }
 
@@ -651,22 +664,67 @@ impl Live {
         card: u64,
         version: u64,
         handler: usize,
-        at: Option<(f32, f32)>,
+        payload: serde_json::Value,
         cx: &mut App,
-    ) {
+    ) -> u64 {
         let Some(session) = self.session.upgrade() else {
+            return 0;
+        };
+        if !self.cards.contains_key(&card) {
+            return 0;
+        }
+        self.tell(cx);
+        let request = Request::Event {
+            card,
+            version,
+            handler,
+            payload,
+            time: engine_time(&session, cx),
+        };
+        let sent = self.host.send(&request);
+        let Some(entry) = self.cards.get_mut(&card) else {
+            return 0;
+        };
+        entry.events_sent += u64::from(sent);
+        entry.events_sent
+    }
+
+    /// How many presses and drags of the card its code answered with a tree.
+    pub(crate) fn events_answered(&self, card: u64) -> u64 {
+        self.cards.get(&card).map_or(0, |entry| entry.events_answered)
+    }
+
+    /// What the live values of the card's tree move with.
+    pub(crate) fn uses(&self, card: u64) -> Uses {
+        self.cards.get(&card).map_or(Uses::default(), |entry| entry.uses)
+    }
+
+    /// Where each live control of the instance was put last.
+    pub(crate) fn played_of(&self, id: &InstanceId) -> Option<&BTreeMap<String, f32>> {
+        self.played.get(id)
+    }
+
+    /// The record of the card, or of a child of it, changed: its tree is drawn again when its
+    /// code read what changed. Its live values follow by themselves.
+    pub(crate) fn record_changed(&mut self, card: u64, id: &InstanceId, cx: &mut Context<Self>) {
+        let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
             return;
         };
-        if self.cards.contains_key(&card) {
-            self.tell(cx);
-            let request = Request::Event {
-                card,
-                version,
-                handler,
-                at,
-                time: engine_time(&session, cx),
-            };
-            self.host.send(&request);
+        let read = if *id != entry.id {
+            entry.reads.children
+        } else {
+            match (&entry.reads.state, &entry.drawn_record) {
+                (Some(names), Some(drawn)) => {
+                    let now = (session.read(cx).project().state_json(id))
+                        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+                    let field = |record: Option<&Value>, name: &String| record.and_then(|record| record.get(name)).cloned();
+                    names.iter().any(|name| field(now.as_ref(), name) != field(Some(drawn), name))
+                }
+                _ => true,
+            }
+        };
+        if read {
+            self.render(card, cx);
         }
     }
 
@@ -899,7 +957,14 @@ impl Live {
     }
 
     /// A key of the computer keyboard went down or up on a card that has the keys.
-    pub(crate) fn key(&mut self, card: u64, key: &str, down: bool, cx: &mut Context<Self>) {
+    pub(crate) fn key(
+        &mut self,
+        card: u64,
+        key: &str,
+        down: bool,
+        modifiers: gpui::Modifiers,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
             return;
         };
@@ -910,6 +975,10 @@ impl Live {
             instance: played(session.read(cx).project(), &id),
             key,
             down,
+            shift: modifiers.shift,
+            alt: modifiers.alt,
+            cmd: modifiers.platform,
+            ctrl: modifiers.control,
             clock,
         };
         self.host.send(&request);
@@ -1033,8 +1102,9 @@ impl Live {
         }
     }
 
-    /// Reads the watches of every card; a card whose watches moved draws again, and so does a
-    /// card of a tool with the transport when it moved.
+    /// Reads the watches of every card. A card whose code read the watches draws again as they
+    /// move, and one of a tool with the transport whose code read it as that moves; the live
+    /// values of the others follow without a new tree.
     fn look_at_watches(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
@@ -1049,11 +1119,13 @@ impl Live {
             // The control loop draws the card of its tool after every step anyway, but with
             // the transport of its last draw.
             let watches_changed = watches != entry.watches;
-            let watches_moved = watches_changed && !info.is_some_and(|info| info.tick);
-            shown_watches_moved |= watches_changed && entry.shows_watches;
+            let watches_moved =
+                watches_changed && entry.reads.watches && !info.is_some_and(|info| info.tick);
+            shown_watches_moved |= watches_changed && entry.uses.watches;
             entry.watches = watches;
-            let transport_moved =
-                info.is_some_and(|info| info.transport) && entry.transport != Some(transport);
+            let transport_moved = info.is_some_and(|info| info.transport)
+                && entry.reads.transport
+                && entry.transport != Some(transport);
             if watches_moved || transport_moved {
                 moved.push(*card);
             }
@@ -1062,7 +1134,7 @@ impl Live {
         for card in &moved {
             self.render(*card, cx);
         }
-        // What else the watches and the transport move comes with a tree.
+        // What else the watches move comes with a tree.
         if shown_watches_moved {
             cx.notify();
         }
@@ -1084,28 +1156,39 @@ impl Live {
                     self.report(cx);
                 }
             }
-            Event::Tree { card, tree } => {
+            Event::Tree {
+                card,
+                tree,
+                reads,
+                event,
+            } => {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
-                entry.asked = false;
+                entry.answered(reads, event);
                 entry.tree = Some(tree.and_then(|(version, tree)| {
                     let node: Node =
                         serde_json::from_value(tree).map_err(|error| error.to_string())?;
                     Ok((version, Rc::new(node)))
                 }));
-                entry.shows_watches =
-                    matches!(&entry.tree, Some(Ok((_, node))) if node.shows_watches());
+                entry.uses = match &entry.tree {
+                    Some(Ok((_, node))) => node.uses(),
+                    _ => Uses::default(),
+                };
                 if std::mem::take(&mut entry.stale) {
                     self.render(card, cx);
                 }
             }
-            Event::Unchanged { card } => {
+            Event::Unchanged { card, reads, event } => {
                 if let Some(entry) = self.cards.get_mut(&card) {
-                    entry.asked = false;
+                    entry.answered(reads, event);
                     if std::mem::take(&mut entry.stale) {
                         self.render(card, cx);
                     }
+                }
+                // A drag's preview lets go with it.
+                if event {
+                    cx.notify();
                 }
                 return;
             }
