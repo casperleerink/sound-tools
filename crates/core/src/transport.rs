@@ -160,13 +160,15 @@ impl TransportState {
                 self.jump_to(self.clock.frame_of(*tick));
             }
             // A tick playback has already passed jumps at once.
-            TransportCommand::JumpAt { at, to } => match self.clock.frame_of(*at) <= self.position {
-                true => {
-                    self.jump_at = None;
-                    self.jump_to(self.clock.frame_of(*to));
+            TransportCommand::JumpAt { at, to } => {
+                match self.clock.frame_of(*at) <= self.position {
+                    true => {
+                        self.jump_at = None;
+                        self.jump_to(self.clock.frame_of(*to));
+                    }
+                    false => self.jump_at = Some((*at, *to)),
                 }
-                false => self.jump_at = Some((*at, *to)),
-            },
+            }
             TransportCommand::Loop(range) => {
                 self.looped = range.clone().filter(|range| !range.is_empty());
             }
@@ -319,7 +321,7 @@ impl TransportState {
             let end = self.clock.frame_of(tick);
             before <= end && self.position >= end && self.position > before
         };
-        if let Some((at, to)) = self.jump_at.filter(|(at, _)| reached(*at)) {
+        if let Some((_, to)) = self.jump_at.filter(|(at, _)| reached(*at)) {
             self.jump_at = None;
             self.jump_to(self.clock.frame_of(to));
         } else if let Some(looped) = self.looped.clone().filter(|looped| reached(looped.end)) {
