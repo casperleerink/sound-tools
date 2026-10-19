@@ -699,7 +699,10 @@ impl ToolInfo {
             return ". It has no children".to_string();
         }
         let children: Vec<String> = (children.0.iter())
-            .map(|(name, tool)| format!("`{name}.json`, a `{tool}`"))
+            .map(|(name, tool)| match name.as_str() {
+                ANY_NAME => format!("any number of `<name>.json` or `<name>/instance.json`, each a `{tool}`"),
+                _ => format!("`{name}.json`, a `{tool}`"),
+            })
             .collect();
         format!(". Its children are {}, and no others", children.join("; "))
     }
@@ -778,6 +781,9 @@ fn described(field: &Field) -> (&'static str, String) {
 /// Where the samples of an instance are read: its assets, the rate of the engine and itself,
 /// which waits for a sample read on its thread.
 type Read<'a> = (&'a Assets, u32, &'a InstanceId);
+
+/// The name in a parent's `children` that stands for any other name.
+const ANY_NAME: &str = "*";
 
 /// The tools of one load by name, so a parent finds the controls of a child.
 pub(crate) type Tools = BTreeMap<String, ToolInfo>;
@@ -1176,10 +1182,10 @@ impl Sounds {
         let Some(named) = &self.info.children else {
             return;
         };
+        // `*` stands for any name it does not name.
         let tool_of = |name: &str| {
-            (named.0.iter())
-                .find(|(named, _)| named == name)
-                .map(|(_, tool)| tool)
+            let find = |wanted: &str| named.0.iter().find(|(named, _)| named == wanted);
+            find(name).or_else(|| find(ANY_NAME)).map(|(_, tool)| tool)
         };
         for child in children {
             let name = child.id.name();
@@ -1199,7 +1205,7 @@ impl Sounds {
             }
         }
         for (name, tool) in &named.0 {
-            if !children.iter().any(|child| child.id.name() == name) {
+            if name != ANY_NAME && !children.iter().any(|child| child.id.name() == name) {
                 context.problem(format!(
                     "it has no child {name}, a {tool}, as its `children` say"
                 ));

@@ -195,14 +195,15 @@ pub(crate) struct Played<'a> {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum RecordEdit {
-    /// These fields of the record of the instance, or of its child `child`, are set and those
-    /// of `removed` left out, on the record as it is when the edit lands.
+    /// These fields of the record of the instance, or of the one at the path `child` inside it
+    /// (`track` or `track/clip`), are set and those of `removed` left out, on the record as it
+    /// is when the edit lands.
     Fields {
         child: Option<String>,
         set: Map<String, Value>,
         removed: Vec<String>,
     },
-    /// The child `child` is a new record, or one of another tool.
+    /// The record at the path `child` is new, or one of another tool.
     Record {
         child: String,
         tool: String,

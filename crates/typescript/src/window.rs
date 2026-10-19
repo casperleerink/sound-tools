@@ -437,21 +437,23 @@ fn every_instance(project: &Project) -> BTreeSet<InstanceId> {
     project.instances().map(|(id, _)| id.clone()).collect()
 }
 
-/// Whether Bun holds the record of `id`: one of a tool of the project, or of a child of one,
-/// which the code of its parent reads.
+/// Whether Bun holds the record of `id`: one of a tool of the project, or one inside one at
+/// any depth, which the code of that tool reads.
 fn told_to_bun(project: &Project, tools: &[ToolInfo], id: &InstanceId) -> bool {
     let ours =
         |id: &InstanceId| (project.tool_of(id)).is_some_and(|tool| find(tools, tool).is_some());
-    ours(id) || id.parent().is_some_and(|parent| ours(&parent))
+    ours(id) || id.ancestors().any(|owner| ours(&owner))
 }
 
-/// The watches of `id` as its code reads them: its own, and those of each child as
-/// `<child>.<watch>`, such as what a sequencer plays.
+/// The watches of `id` as its code reads them: its own, and those of each instance inside it
+/// by its path from `id`, as `<child>.<watch>` or `<child>/<grandchild>.<watch>`, such as what
+/// a sequencer plays.
 fn watches_of(project: &Project, id: &InstanceId) -> BTreeMap<String, f32> {
-    let children = (project.instances()).filter(|(child, _)| child.parent().as_ref() == Some(id));
-    let children = children.flat_map(|(child, _)| {
-        let watches = project.watches(child).into_iter();
-        watches.map(|(name, watch)| (format!("{}.{name}", child.name()), watch))
+    let inside = (project.instances()).filter(|(inner, _)| inner.is_inside(id));
+    let children = inside.flat_map(|(inner, _)| {
+        let path = &inner.as_str()[id.as_str().len() + 1..];
+        let watches = project.watches(inner).into_iter();
+        watches.map(move |(name, watch)| (format!("{path}.{name}"), watch))
     });
     let watches = project.watches(id).into_iter().chain(children);
     watches.map(|(name, watch)| (name, watch.get())).collect()
@@ -612,7 +614,8 @@ impl Live {
         .detach();
     }
 
-    /// Whether a binding of a card reads the record of `id`: of its instance, or of a child.
+    /// Whether a binding of a card reads the record of `id`: of its instance, or of one inside
+    /// it at any depth.
     fn is_read(&self, id: &InstanceId) -> bool {
         let reads = |instance: &InstanceId| {
             let shown = self.cards.values().any(|card| card.id == *instance);
@@ -620,9 +623,7 @@ impl Live {
         };
         let own = reads(id)
             .is_some_and(|reads| reads.state.as_ref().is_none_or(|fields| !fields.is_empty()));
-        own || (id.parent())
-            .and_then(|parent| reads(&parent))
-            .is_some_and(|reads| reads.children)
+        own || (id.ancestors()).any(|owner| reads(&owner).is_some_and(|reads| reads.children))
     }
 
     /// Tells Bun the records that changed since it was last told, before it runs code that
@@ -1508,12 +1509,8 @@ fn changes_of(
     instance: &InstanceId,
     edits: Vec<RecordEdit>,
 ) -> Result<(Changes, Vec<InstanceId>), String> {
-    let child = |name: &str| match instance.child(name) {
-        // A path would reach a grandchild.
-        Ok(_) if name.contains('/') => Err(format!("the child {name:?} is named with a `/`")),
-        Ok(id) => Ok(id),
-        Err(error) => Err(error.to_string()),
-    };
+    // A path from the instance: `track` or `track/clip`, at any depth.
+    let child = |path: &str| instance.child(path).map_err(|error| error.to_string());
     let mut changes = Changes::new();
     let mut touched = Vec::new();
     for edit in edits {
@@ -1550,6 +1547,7 @@ fn changes_of(
                         "it adds the child {name:?}, but only a tool with a behaviour has children"
                     ));
                 }
+                // The core refuses one whose parent owns no children.
                 let id = child(&name)?;
                 project
                     .set_json(&mut changes, id.clone(), &tool, state)

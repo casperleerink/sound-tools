@@ -429,6 +429,18 @@ function parentOf(id: string): [string, string] | undefined {
   return at < 0 ? undefined : [id.slice(0, at), id.slice(at + 1)];
 }
 
+/** `ids` and every instance they are inside: those whose children change with them. */
+function withOwners(ids: Iterable<string>): Set<string> {
+  const all = new Set<string>();
+  for (const id of ids) {
+    all.add(id);
+    for (let owner = parentOf(id); owner !== undefined; owner = parentOf(owner[0])) {
+      all.add(owner[0]);
+    }
+  }
+  return all;
+}
+
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
   for (const { id, tool, state } of records) {
     told.set(id, { tool, state });
@@ -447,11 +459,11 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
     }
   }
   unheard = unheard.filter(({ number }) => number > heard);
-  const touched = new Set<string>();
-  for (const id of [...records.map((record) => record.id), ...gone]) {
-    touched.add(id);
-    const [parent] = parentOf(id) ?? [];
-    if (parent !== undefined) touched.add(parent);
+  const touched = withOwners([...records.map((record) => record.id), ...gone]);
+  // The lists of children made before hold what changed, also those of an owner far up.
+  for (const id of touched) {
+    const known = kids.get(id);
+    if (known) known.told = undefined;
   }
   refresh(touched);
 }
@@ -497,8 +509,9 @@ function listed(id: string, told: Set<string>, latest: boolean): OwnedChild[] {
     }
   }
   return frozen([...names].sort().flatMap((name) => {
-    const entry = recordOf(`${id}/${name}`, latest);
-    return entry ? [{ name, ...entry }] : [];
+    const child = `${id}/${name}`;
+    const entry = recordOf(child, latest);
+    return entry ? [{ name, ...entry, children: childrenOf(child, latest) } as OwnedChild] : [];
   }));
 }
 
@@ -507,16 +520,18 @@ function filledState(spec: Spec, entry: Entry): State {
   return frozen(filledObject(spec.state, entry.state));
 }
 
-/** Whether a child a change got is a copy whose state it never read. */
-const untouched = new WeakMap<object, () => boolean>();
+/** What a change did with a child it got: whether it read its state, and its children as it left them. */
+type Drafted = { untouched: () => boolean; children: () => [OwnedChild[], unknown] | [] };
+const drafts = new WeakMap<object, Drafted>();
 
 /**
- * A copy of a child for a change to edit, whose state is copied when it is first read. Its name
- * stays: it is the id of the record, which never changes.
+ * A copy of a child for a change to edit, whose state, and children, are copied when first
+ * read. Its name stays: it is the id of the record, which never changes.
  */
 function draft(child: OwnedChild): OwnedChild {
   let state: unknown;
   let copied = false;
+  let children: [OwnedChild[], unknown] | [] = [];
   const copy = {} as OwnedChild;
   Object.defineProperties(copy, {
     name: {
@@ -541,8 +556,18 @@ function draft(child: OwnedChild): OwnedChild {
         copied = true;
       },
     },
+    children: {
+      enumerable: true,
+      get() {
+        if (children.length === 0) children = [child.children, child.children.map(draft)];
+        return children[1];
+      },
+      set(value) {
+        children = [child.children, value];
+      },
+    },
   });
-  untouched.set(copy, () => !copied);
+  drafts.set(copy, { untouched: () => !copied, children: () => children });
   return copy;
 }
 
@@ -571,7 +596,7 @@ function fieldsChanged(before: unknown, after: unknown, what: string) {
 
 /**
  * What a change made of the record of `instance`, `before` and now `state`, and of its children,
- * `edited` as they were `before` when it read them.
+ * `edited` as they were `before` when it read them, at any depth.
  */
 function changesOf(
   instance: string,
@@ -583,40 +608,79 @@ function changesOf(
   if (own) {
     changes.push({ type: "fields", id: instance, ...own });
   }
-  if (children === undefined) {
-    return changes;
+  if (children !== undefined) {
+    childChanges(instance, children, edited, changes);
   }
+  return changes;
+}
+
+/** A child of a list a change left, checked: its name, its tool and its state. */
+function childOf(child: unknown): OwnedChild {
+  if (!isObject(child) || typeof child.name !== "string" || typeof child.tool !== "string") {
+    throw new TypeError(`a child is { name, tool, state }, not ${JSON.stringify(child)}`);
+  }
+  if (child.name.includes("/")) {
+    throw new Error(`the child ${child.name} is named with a \`/\`: a grandchild goes in the \`children\` of its parent`);
+  }
+  return child as OwnedChild;
+}
+
+/** What `edited`, the children of `parent` a change left, changes of `children`, as they were. */
+function childChanges(parent: string, children: OwnedChild[], edited: unknown, changes: Change[]) {
   if (!Array.isArray(edited)) {
     throw new TypeError("children is a list of { name, tool, state }");
   }
   const old = new Map(children.map((child) => [child.name, child]));
   const kept = new Set<string>();
-  for (const child of edited as unknown[]) {
-    if (!isObject(child) || typeof child.name !== "string" || typeof child.tool !== "string") {
-      throw new TypeError(`a child is { name, tool, state }, not ${JSON.stringify(child)}`);
-    }
+  for (const each of edited as unknown[]) {
+    const child = childOf(each);
     const { name, tool } = child;
     if (kept.has(name)) {
       throw new Error(`two children are named ${name}`);
     }
     kept.add(name);
-    const id = `${instance}/${name}`;
+    const id = `${parent}/${name}`;
     const was = old.get(name);
     if (!was || was.tool !== tool) {
-      changes.push({ type: "record", id, tool, state: structuredClone(child.state ?? {}) });
-    } else if (!untouched.get(child)?.()) {
+      created(id, child, changes);
+      continue;
+    }
+    const drafted = drafts.get(child);
+    if (!drafted?.untouched()) {
       const fields = fieldsChanged(was.state, child.state, `the state of ${name}`);
       if (fields) {
         changes.push({ type: "fields", id, ...fields });
       }
     }
+    // A draft's children, when the change read them; the children of a plain object as they are.
+    const nested: [OwnedChild[], unknown] | [] = drafted ? drafted.children() : "children" in child ? [was.children, child.children] : [];
+    if (nested.length > 0) {
+      childChanges(id, nested[0], nested[1], changes);
+    }
   }
   for (const name of old.keys()) {
     if (!kept.has(name)) {
-      changes.push({ type: "delete", id: `${instance}/${name}` });
+      // What it owns goes with it.
+      changes.push({ type: "delete", id: `${parent}/${name}` });
     }
   }
-  return changes;
+}
+
+/** A new record at `id` and the children it comes with, parents first. */
+function created(id: string, child: OwnedChild, changes: Change[]) {
+  changes.push({ type: "record", id, tool: child.tool, state: structuredClone(child.state ?? {}) });
+  const inner: unknown = (child as { children?: unknown }).children;
+  if (inner === undefined) return;
+  if (!Array.isArray(inner)) {
+    throw new TypeError(`the children of ${id} are a list of { name, tool, state }`);
+  }
+  const names = new Set<string>();
+  for (const each of inner) {
+    const grandchild = childOf(each);
+    if (names.has(grandchild.name)) throw new Error(`two children of ${id} are named ${grandchild.name}`);
+    names.add(grandchild.name);
+    created(`${id}/${grandchild.name}`, grandchild, changes);
+  }
 }
 
 /**
@@ -663,7 +727,7 @@ function updater(instance: string) {
     unheard.push({ number: edits, changes });
     writeSync(1, line);
     // What its cards show follows at once, before the runtime answers.
-    refresh([instance, ...changes.map((change) => parentOf(change.id)?.[0] ?? change.id)], {
+    refresh(withOwners(changes.map((change) => change.id)), {
       instance,
       state: part.state,
       children: children.length > 0,

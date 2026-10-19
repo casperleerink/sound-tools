@@ -785,12 +785,12 @@ export interface ToolSpec<S extends Fields, C extends Controls, M, K extends Chi
 /** A record and the records of its children: what a behaviour gets, and what `update` changes. */
 export interface Part<State, K extends ChildTools = ChildTools> {
   state: State;
-  /** The records next to its own, in name order. */
-  children: OwnedChild<K>[];
+  /** The records next to its own, in name order, each with its own children. */
+  children: OwnedChild<K, true>[];
 }
 
 /** What a behaviour gets. */
-export type Parent<S extends Fields, K extends ChildTools = ChildTools> = Frozen<Part<ValuesOf<S>, K>>;
+export type Parent<S extends Fields, K extends ChildTools = ChildTools> = Frozen<{ state: ValuesOf<S>; children: OwnedChild<K>[] }>;
 
 /** The name of a tool: a built-in one, which `Tools` describes, or one of this project. */
 export type ToolName = keyof Tools | (string & {});
@@ -807,8 +807,17 @@ export type ProjectTool<Name extends string = string, Entry = unknown> = Name & 
 /** The entry of `T`: in `Tools`, or of a `ProjectTool`. */
 type EntryOf<T> = T extends keyof Tools ? Tools[T] : T extends ProjectTool<string, infer Entry> ? Entry : {};
 
-/** The tools of the children of a parent by their names, as its `children` names them. */
+/**
+ * The tools of the children of a parent by their names, as its `children` names them. The name
+ * `"*"` stands for any other name, so `{ "*": track }` is any number of tracks, named by their records.
+ */
 export type ChildTools = Record<string, ToolName>;
+
+/**
+ * The children a tool of `T` names: those of a tool of this project; none of a built-in one;
+ * any of a tool named by a string.
+ */
+type ChildrenOfTool<T> = string extends T ? ChildTools : EntryOf<T> extends { children: infer K extends ChildTools } ? K : {};
 
 /** The `state` of a record of `T` as the file holds it; any value for a tool named by a string. */
 export type StateOfTool<T> = EntryOf<T> extends { state: infer State } ? State : unknown;
@@ -818,23 +827,37 @@ type LiteralTools<K extends ChildTools> = {
   [Name in keyof K]: string extends K[Name] ? "the tool names were widened to string: write the children as `const children = { ... } as const` and give the behaviour the return type `Declaration<typeof children>`, or leave the return type out" : K[Name];
 };
 
+/** A name as a child has it: any for `"*"`. */
+type ChildNamed<Name extends string> = Name extends "*" ? string : Name;
+
 /** The names of its children. */
-type ChildName<K extends ChildTools> = keyof K & string;
+type ChildName<K extends ChildTools> = ChildNamed<keyof K & string>;
 
 /** A child of a parent: its record. */
-export type OwnedChild<K extends ChildTools = ChildTools> = {
-  [Name in ChildName<K>]: {
+export type OwnedChild<K extends ChildTools = ChildTools, Edit extends boolean = false> = {
+  [Name in keyof K & string]: {
     /**
      * Its file name without `.json`: lowercase letters, digits, `-` and `_`. It is the id of the
      * record, which never changes: keep a title in a field.
      */
-    readonly name: Name;
+    readonly name: ChildNamed<Name>;
     /** Its `tool`, such as `"instrument.synth"`. */
     tool: K[Name];
     /** Its `state` as the file holds it, such as a `SequencerState`. */
     state: StateOfTool<K[Name]>;
-  };
-}[ChildName<K>];
+  } & (Edit extends true
+    ? {
+        /** Its own children, to edit as these; a new child may leave them out. */
+        children?: OwnedChild<ChildrenOfTool<K[Name]>, true>[];
+      }
+    : {
+        /**
+         * Its own children, in name order, when it is a parent, such as the clips of a track.
+         * Typed as the `children` of its tool name them.
+         */
+        children: OwnedChild<ChildrenOfTool<K[Name]>>[];
+      });
+}[keyof K & string];
 
 /** The keys that name a port, one for each kind of what it carries. */
 type PortKey = "port" | "notes" | "number" | "bang" | "live" | "trigger";
@@ -852,8 +875,8 @@ type PortName<T, P extends PortKey, Out extends boolean> = [Out, T] extends [tru
     : string;
 /** A port of a child under the key `P`, of a name its tool has as an input, or as an output with `Out`. */
 type PortOf<P extends PortKey, K extends ChildTools, Out extends boolean = false> = {
-  [Name in ChildName<K>]: { child: Name } & Keyed<P, PortName<K[Name], P, Out> & string>;
-}[ChildName<K>];
+  [Name in keyof K & string]: { child: ChildNamed<Name> } & Keyed<P, PortName<K[Name], P, Out> & string>;
+}[keyof K & string];
 /** A port of the parent itself under the key `K`: no `child`. */
 type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } & Keyed<K, Name>;
 
@@ -928,13 +951,14 @@ export type HeardEvent = NoteEvent & { at: number };
 /** The names of the knobs in `S`, the numbers a cable turns. */
 type KnobNames<S extends Fields> = { [Name in keyof S]: S[Name] extends KnobField ? Name : never }[keyof S] & string;
 
-/** The entry of a tool of the project with fields `S` and controls `C`. */
-type ProjectEntry<S extends Fields, C extends Controls> = {
+/** The entry of a tool of the project with fields `S`, controls `C` and children `K`. */
+type ProjectEntry<S extends Fields, C extends Controls, K extends ChildTools> = {
   state: StateOf<S>;
   number: KnobNames<S>;
   live: ControlNames<C, "live">;
   trigger: ControlNames<C, "trigger">;
   notes: "notes";
+  children: K;
 };
 
 /** Makes a tool of the project. Export what it returns for a parent to name in its `children`. */
@@ -944,13 +968,13 @@ export function tool<
   const C extends Controls = {},
   M = {},
   const K extends ChildTools = ChildTools,
->(spec: ToolSpec<S, C, M, K> & { name: Name }): ProjectTool<Name, ProjectEntry<S, C>> {
+>(spec: ToolSpec<S, C, M, K> & { name: Name }): ProjectTool<Name, ProjectEntry<S, C, K>> {
   if (host.tools.has(spec.name)) {
     throw new Error(`a tool named ${spec.name} is already defined`);
   }
   host.tools.set(spec.name, spec as unknown as ToolSpec<Fields, Controls, unknown>);
   host.stacks.set(spec.name, new Error().stack ?? "");
-  return spec.name as ProjectTool<Name, ProjectEntry<S, C>>;
+  return spec.name as ProjectTool<Name, ProjectEntry<S, C, K>>;
 }
 
 /**

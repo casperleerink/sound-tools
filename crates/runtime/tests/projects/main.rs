@@ -41,6 +41,7 @@ mod saturator;
 mod scale;
 mod sequencer;
 mod solo;
+mod song;
 mod summary;
 mod support;
 mod typescript;
