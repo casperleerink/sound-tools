@@ -88,3 +88,16 @@ M1 Max, release-fast. Repeat with `projects/render_cost.rs` and the ignored test
 Docs cut to decisions and matched to the code. Words before → after: the spike doc 15,289 → 1,400; the TS agent doc 6,040 → 5,826; DESIGN 1,535 → 1,402; ARCHITECTURE 4,383 → 4,762 (it took the spike's decisions); README 2,438 → 2,422. Device docs place records where the DAW template keeps them. Nine unreferenced mockups and about 30 comments and fixtures naming the arrangement went.
 
 **Agent eval on the trimmed docs**, one run each, all passed: `daw-arp-builder` (33 turns, $2.19), `daw-return` (9 turns, $0.23), `ui-chords` (17 turns, $0.80).
+
+## Round 16: the song looks as the arrangement did
+
+Casper asked for the DAW template to look almost exactly like main's arrangement, transport in the title bar. Side by side with main's snapshots in `target/look-compare/` (main left).
+
+SDK additions, each generic, none a new concept (all are view elements or style):
+- `TitleBar`: a div of the main view that the window shows in its title row. The transport is project code, so the title row needs a slot for it; any page can use it.
+- `Button`, `Toggle`, `Icon`, `PeakMeter`: the app's own controls and meter, drawn by `crates/ui`. Shapes could imitate them, but not exactly, and every tool should look like the app.
+- Theme colours by name (`"gray-700"`, `"alpha/10"`), side paddings, `font: "tabular"`, `weight`, `hover`, `keep`, `truncate` on `Style`; `beats` and `note` readouts.
+- `clock.computerKeys` / `setComputerKeys`: the computer keys are a switch of the session, as the click is, so a tool's transport shows and turns them. The live input keeps no view of its own; cmd-K still turns them.
+- A page has no 24-point padding; its view decides.
+
+Still different: the master opens the TS mixer, not main's master panel; pan reads `0`, not `C`; the note editor keeps its own look; a card's title has no instrument menu, so the panel has an Instrument button.

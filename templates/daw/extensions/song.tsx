@@ -984,8 +984,9 @@ export const song = tool({
       };
       return (
         <Group x={() => region.state.start} y={row} moves={() => (chosen() ? ["region"] : undefined)}>
-          <Rect x={0} y={0.06} width={width} height={0.88} radius={3} color={() => (chosen() ? COLOR.chosen : colourOf(each))} drag={moveRegion} onPress={press} cursor="grab" />
-          <Wave x={0} y={0.12} width={width} height={0.76} list={sound} band low={-1} high={1} color={COLOR.note} />
+          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
+            drag={moveRegion} onPress={press} cursor="grab" />
+          <Wave x={0} y={8 / ROW} width={width} height={(ROW - 16) / ROW} list={sound} band low={-1} high={1} color={() => colourOf(each)} />
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={press} cursor="ew-resize"
             moves={() => (chosen() ? ["trim"] : undefined)} />
           <Rect x={() => handle.negate().plus(width())} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={press} cursor="ew-resize"
