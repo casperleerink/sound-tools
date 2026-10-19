@@ -50,10 +50,10 @@ impl Recording {
     }
 
     /// Arms an instance or disarms it: the input is open while one is armed.
-    pub fn set_armed(&mut self, track: InstanceId, armed: bool, cx: &mut Context<Self>) {
+    pub fn set_armed(&mut self, recorder: InstanceId, armed: bool, cx: &mut Context<Self>) {
         let changed = match armed {
-            true => self.armed.insert(track),
-            false => self.armed.remove(&track),
+            true => self.armed.insert(recorder),
+            false => self.armed.remove(&recorder),
         };
         if changed {
             cx.notify();
@@ -63,7 +63,7 @@ impl Recording {
     /// Keeps only the armed instances for which `keep` holds, such as the ones that still exist.
     pub fn retain_armed(&mut self, keep: impl Fn(&InstanceId) -> bool, cx: &mut Context<Self>) {
         let before = self.armed.len();
-        self.armed.retain(|track| keep(track));
+        self.armed.retain(|recorder| keep(recorder));
         if self.armed.len() != before {
             cx.notify();
         }

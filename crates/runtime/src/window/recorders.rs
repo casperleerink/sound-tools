@@ -325,7 +325,7 @@ impl Recorders {
         let id = self.next;
         self.next += 1;
         let request = TakeRequest {
-            track: recorder.clone(),
+            recorder: recorder.clone(),
             name: format!("{}-sound", recorder.name()),
             channels: *first..first + channels.len(),
         };
@@ -410,7 +410,7 @@ impl Recorders {
                 head.map(|head| take_seconds_at(head, clock.frame_of(start), clock));
             audio.started.iter().filter_map(move |started| {
                 Some(LiveTake {
-                    recorder: started.track.clone(),
+                    recorder: started.recorder.clone(),
                     start,
                     sound: LiveSound {
                         overview: started.overview.clone(),
@@ -443,8 +443,8 @@ impl Recorders {
                         audio.started = takes.clone();
                     }
                 }
-                RecorderReport::Failed { track, error, .. } => notices.push(format!(
-                    "The take of {track} stopped: {error}. What was recorded before is kept."
+                RecorderReport::Failed { recorder, error, .. } => notices.push(format!(
+                    "The take of {recorder} stopped: {error}. What was recorded before is kept."
                 )),
                 RecorderReport::Behind { frames } => notices.push(format!(
                     "Recording fell behind the input: the takes hold {frames} frames of silence where it could not keep up."

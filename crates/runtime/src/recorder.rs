@@ -1,9 +1,9 @@
-//! Recording audio: from the input to a take file per armed track, and from a take file to a
+//! Recording audio: from the input to a take file per armed recorder, and from a take file to a
 //! clip where the composer heard it.
 //!
 //! Three threads and no waiting, as for MIDI. The device thread puts what it captured into a
 //! ring, stamped with when it was captured ([`sound_core::capture`]). A [`Recorder`] takes it
-//! from there away from the thread that draws and writes one WAV file per armed track. The
+//! from there away from the thread that draws and writes one WAV file per armed recorder. The
 //! thread that draws then places each take as a clip: the moment a frame was captured is the
 //! moment the composer played it, the timing of the output device says which engine frame was
 //! sounding then, and the engine status says which project frame that engine frame was.
@@ -17,11 +17,11 @@ use sound_core::{
 };
 use sound_media::{AudioAsset, Imported, Info, MediaError, TakeFile, TakeOverview};
 
-/// One armed track of a recording: which channels of the input it records, and the name its
+/// One armed recorder of a recording: which channels of the input it records, and the name its
 /// file is made from, such as `voice-take`, which becomes `voice-take-1.wav`.
 #[derive(Clone, Debug)]
 pub struct TakeRequest {
-    pub track: InstanceId,
+    pub recorder: InstanceId,
     pub name: String,
     /// Channels of the input, counted from 0: one for a mono take, two for a stereo one.
     pub channels: Range<usize>,
@@ -46,7 +46,7 @@ pub enum RecorderCommand {
 /// A take file of a running recording, for its waveform while it grows.
 #[derive(Clone, Debug)]
 pub struct StartedTake {
-    pub track: InstanceId,
+    pub recorder: InstanceId,
     pub asset: AudioAsset,
     pub overview: TakeOverview,
 }
@@ -68,11 +68,11 @@ pub enum RecorderReport {
         first_nanos: Option<u64>,
         takes: Vec<(InstanceId, Imported)>,
     },
-    /// The take of a track has no file, or stopped being written: the error says why. What was
+    /// The take of a recorder has no file, or stopped being written: the error says why. What was
     /// written before it is kept and becomes its clip, and the rest of the recording goes on.
     Failed {
         id: u64,
-        track: InstanceId,
+        recorder: InstanceId,
         error: TakeError,
     },
     /// The recorder fell behind the input and frames were lost: the takes have silence
@@ -83,7 +83,7 @@ pub enum RecorderReport {
 }
 
 struct Take {
-    track: InstanceId,
+    recorder: InstanceId,
     channels: Range<usize>,
     /// `None` once it failed, which was reported: the first error ends the writing.
     file: Option<TakeFile>,
@@ -91,7 +91,7 @@ struct Take {
     kept: Option<Imported>,
 }
 
-/// Why the take of a track has no file, or stopped being written.
+/// Why the take of a recorder has no file, or stopped being written.
 #[derive(Debug, thiserror::Error)]
 pub enum TakeError {
     #[error("the input has {channels} channels and no channel {wanted}")]
@@ -191,12 +191,16 @@ impl Recorder {
             };
             let file = file
                 .map_err(|error| {
-                    let track = request.track.clone();
-                    failed.push(RecorderReport::Failed { id, track, error });
+                    let recorder = request.recorder.clone();
+                    failed.push(RecorderReport::Failed {
+                        id,
+                        recorder,
+                        error,
+                    });
                 })
                 .ok();
             takes.push(Take {
-                track: request.track,
+                recorder: request.recorder,
                 channels: request.channels,
                 file,
                 kept: None,
@@ -238,7 +242,7 @@ impl Recorder {
                 let growing = recording.takes.iter().filter_map(|take| {
                     let file = take.file.as_ref()?;
                     Some(StartedTake {
-                        track: take.track.clone(),
+                        recorder: take.recorder.clone(),
                         asset: file.asset().clone(),
                         overview: file.overview(),
                     })
@@ -270,10 +274,14 @@ impl Recorder {
                 if let Err(error) = file.write(&self.picked) {
                     // What was written is closed and kept, and becomes the clip of the take.
                     take.kept = take.file.take().and_then(|file| close(file, &self.assets));
-                    let track = take.track.clone();
+                    let recorder = take.recorder.clone();
                     let error = error.into();
                     let id = recording.id;
-                    reports.push(RecorderReport::Failed { id, track, error });
+                    reports.push(RecorderReport::Failed {
+                        id,
+                        recorder,
+                        error,
+                    });
                 }
             }
         }
@@ -295,9 +303,13 @@ impl Recorder {
                     match file.finish() {
                         Ok(file) => Some(file),
                         Err(error) => {
-                            let track = take.track.clone();
+                            let recorder = take.recorder.clone();
                             let error = error.into();
-                            reports.push(RecorderReport::Failed { id, track, error });
+                            reports.push(RecorderReport::Failed {
+                                id,
+                                recorder,
+                                error,
+                            });
                             reopen(&self.assets, asset)
                         }
                     }
@@ -305,7 +317,7 @@ impl Recorder {
                 None => take.kept,
             };
             if let Some(kept) = kept {
-                finished.push((take.track, kept));
+                finished.push((take.recorder, kept));
             }
         }
         reports.push(RecorderReport::Finished {
