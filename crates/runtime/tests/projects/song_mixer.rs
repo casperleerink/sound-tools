@@ -1,5 +1,4 @@
-//! The mixer of the TypeScript song of the DAW template (`templates/daw`), played as the Rust
-//! arrangement's mixer plays: a solo silences the other tracks and never a return, a send goes
+//! The mixer of the TypeScript song of the DAW template (`templates/daw`): a solo silences the other tracks and never a return, a send goes
 //! after the track's fader unless its return says before, the master's limiter holds the output
 //! under its ceiling, and an audio region counts toward the end of the song.
 

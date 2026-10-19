@@ -1,17 +1,10 @@
 # Wavetable
 
-`wavetable` is a synth that plays wavetables: tables of single-cycle waves, called frames, that it morphs between. As the `instrument.json` of a track it plays the notes of that track. Each note has two wavetable oscillators, a sine sub, two filters, an amp envelope, two more envelopes, two LFOs, and a modulation matrix that ties them together.
+`wavetable` is a synth that plays wavetables: tables of single-cycle waves, called frames, that it morphs between. It plays the notes that reach its input `notes`. Each note has two wavetable oscillators, a sine sub, two filters, an amp envelope, two more envelopes, two LFOs, and a modulation matrix that ties them together.
 
-Here a pad on a new track:
+Here a pad:
 
-```json state/arrangement/synth/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {"name": "Synth", "colour": "sapphire", "order": 8, "gain_db": 0.0, "pan": 0.0, "mute": false}
-}
-```
-
-```json state/arrangement/synth/instrument.json
+```json state/song/synth/instrument.json
 {
   "tool": "wavetable",
   "state": {
@@ -30,7 +23,7 @@ Here a pad on a new track:
 
 `"state": {}` is the default patch: two saws, the second 7 cents up, through a low pass that `env_2` opens at the start of each note, with `filter_2` off. Its `matrix` is the first four routes above: higher keys open the filter more, softer notes are quieter, and the mod wheel morphs the first saw into a square. Write only what you change. Inside an object you write, a field you leave out takes the default of the tables below. A `matrix` you write replaces the whole matrix, so this pad keeps the four routes and adds an LFO that slowly morphs the first saw.
 
-Every number here but `octave`, `semitone`, `voices`, `polyphony` and the matrix can move over time with an automation lane of the track, named by its path: `filter_1.cutoff_hz`. See `agent-docs/arrangement.md`.
+Every number here but `octave`, `semitone`, `voices`, `polyphony` and the matrix can move over time with a `lane` child of its parent (`agent-docs/lane.md`), named by its path: `filter_1.cutoff_hz`.
 
 An edit applies while notes sound, without a click: numbers and choices glide over 20 ms, and a new table or effect fades its oscillator out and in over 10 ms each way.
 

@@ -1,4 +1,4 @@
-//! The Drum pad on a real track of a new project: the default kit sounds with no sample file,
+//! The Drum pad as the instrument of a rack: the default kit sounds with no sample file,
 //! an outside agent changes a pad by file while the project plays and the change is heard, it
 //! comes back as it was after close and reopen, and a missing sample is a problem and nothing
 //! else.
@@ -9,8 +9,7 @@ use sound_media::AudioAsset;
 
 use crate::support::{BAR, Harness, difference};
 
-const FOLDER: &str = "state/arrangement/beat";
-const DRUMS_FILE: &str = "state/arrangement/beat/instrument.json";
+const DRUMS_FILE: &str = "state/rack/instrument.json";
 
 /// One bar at 120 bpm: kick on 1 and 3, snare on 2 and 4, a closed hat on every eighth.
 fn groove() -> String {
@@ -34,29 +33,25 @@ fn groove() -> String {
         })
         .collect();
     format!(
-        r#"{{"tool": "arrangement.clip", "state": {{"start": 0, "length": 3840, "notes": [{}]}}}}"#,
+        r#"{{"tool": "timeline", "state": {{"start": 0, "length": 3840, "notes": [{}]}}}}"#,
         notes.join(", ")
     )
 }
 
-/// The default project with a track `beat` that plays the groove, bar after bar, on a Drum
-/// pad written as `drums`.
+/// A rack that plays the groove, bar after bar, on a Drum pad written as `drums`.
 fn beat(drums: &str) -> Harness {
-    let mut harness = Harness::new();
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "Beat", "order": 1}}"#;
-    let mut paths = vec![
-        harness.write(&format!("{FOLDER}/instance.json"), track),
-        harness.write(DRUMS_FILE, drums),
-    ];
-    for bar in 0..4 {
-        let clip = groove().replace(
-            r#""start": 0, "length": 3840"#,
-            &format!(r#""start": {}, "length": 3840"#, bar * 3840),
-        );
-        paths.push(harness.write(&format!("{FOLDER}/bar-{}.json", bar + 1), &clip));
-    }
-    assert_eq!(harness.apply(&paths), 6);
-    harness
+    let bars: Vec<String> = (0..4)
+        .map(|bar| {
+            groove().replace(
+                r#""start": 0, "length": 3840"#,
+                &format!(r#""start": {}, "length": 3840"#, bar * 3840),
+            )
+        })
+        .collect();
+    let names = ["bar-1", "bar-2", "bar-3", "bar-4"];
+    let mut children = vec![("instrument", drums)];
+    children.extend(names.iter().copied().zip(bars.iter().map(String::as_str)));
+    Harness::rack(&children)
 }
 
 fn record(state: &str) -> String {
@@ -74,7 +69,7 @@ fn peak(samples: &[f32]) -> f32 {
 }
 
 #[test]
-fn the_default_kit_sounds_in_a_new_project_with_no_sample_files() {
+fn the_default_kit_sounds_with_no_sample_files() {
     let mut harness = beat(&record("{}"));
     assert_eq!(harness.project.problems(), []);
     assert!(!harness.path("assets/audio").exists());
@@ -155,7 +150,7 @@ fn an_outside_edit_of_a_pad_while_it_plays_is_heard_and_undone_in_one_step() {
 #[test]
 fn the_drum_pad_comes_back_after_close_and_reopen_and_renders_the_same() {
     let mut harness = beat(&record("{}"));
-    let id = InstanceId::new("arrangement/beat/instrument").unwrap();
+    let id = InstanceId::new("rack/instrument").unwrap();
     let drums = harness.project.resolve::<DrumPadState>(&id).unwrap();
     let mut kit = DrumPadState::default();
     kit.pads[0].pitch_semitones = -3.0;
@@ -218,7 +213,7 @@ fn a_missing_sample_is_in_problems_txt_and_the_rest_plays() {
     // The hat at -48 dB is under 0.0006.
     assert!(largest < 0.001, "{largest}");
     // The sample is named by a valid asset, and the record keeps it.
-    let id = InstanceId::new("arrangement/beat/instrument").unwrap();
+    let id = InstanceId::new("rack/instrument").unwrap();
     let drums = harness.project.resolve::<DrumPadState>(&id).unwrap();
     let state = harness.project.state(&drums).unwrap();
     assert_eq!(

@@ -6,18 +6,17 @@ use runtime::OFFLINE;
 use sound_core::{Engine, Project};
 
 use crate::plugin_hosts::{open_or_create, scanner, test_plugin_folders, test_plugin_host};
+use crate::rack::racks_files;
 
 /// Frames per bar at 120 bpm in 4/4 and 48 kHz.
 pub(crate) const BAR: usize = 96_000;
-
-pub(crate) const TRACK: &str =
-    r#"{"tool": "arrangement.track", "state": {"name": "NAME", "order": ORDER}}"#;
 
 pub(crate) fn synth(gain: f32) -> String {
     format!(r#"{{"tool": "instrument.synth", "state": {{"gain": {gain:?}}}}}"#)
 }
 
-/// A clip record with (start, length, pitch) notes at velocity 100.
+/// A timeline record with (start, length, pitch) notes at velocity 100, from `start` for
+/// `length` ticks.
 pub(crate) fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> String {
     let notes: Vec<String> = notes
         .iter()
@@ -28,10 +27,19 @@ pub(crate) fn clip(start: u64, length: u64, notes: &[(u64, u64, u8)]) -> String 
         })
         .collect();
     format!(
-        r#"{{"tool": "arrangement.clip", "state": {{"start": {start}, "length": {length}, "notes": [{}]}}}}"#,
+        r#"{{"tool": "timeline", "state": {{"start": {start}, "length": {length}, "notes": [{}]}}}}"#,
         notes.join(", ")
     )
 }
+
+/// The chords of the piano of [`Harness::piece`], a chord per bar over four bars.
+pub(crate) const CHORDS: [(u64, u64, u8); 5] = [
+    (0, 3800, 48),
+    (0, 3800, 64),
+    (3840, 3800, 53),
+    (7680, 3800, 55),
+    (11520, 3800, 48),
+];
 
 /// A live project on a temporary folder with the offline stereo engine.
 pub(crate) struct Harness {
@@ -95,15 +103,6 @@ impl Harness {
         Self::with_test_plugin(folder)
     }
 
-    /// A `project.json` with this tempo map and the extensions this project enables, as an
-    /// agent that changes the tempo map writes the file.
-    pub(crate) fn project_json(&self, tempo_map: &str) -> String {
-        let extensions = serde_json::to_string(&self.project.project_file().extensions).unwrap();
-        format!(
-            r#"{{"format": 1, "extensions": {extensions}, "tempo_map": {tempo_map}, "connections": []}}"#
-        )
-    }
-
     pub(crate) fn reopen(self) -> Self {
         let Self {
             project,
@@ -115,26 +114,49 @@ impl Harness {
         Self::open(folder)
     }
 
-    /// The default project plus a piano with a chord per bar over four bars and a pad with
-    /// one long note. Both sound all the time, so a disturbance would show.
-    pub(crate) fn piece() -> Self {
-        let mut harness = Self::new();
-        let chords = [
-            (0, 3800, 48),
-            (0, 3800, 64),
-            (3840, 3800, 53),
-            (7680, 3800, 55),
-            (11520, 3800, 48),
-        ];
-        harness.write_track("piano", 1, 0.15, &[("chords", clip(0, 15360, &chords))]);
-        harness.write_track(
-            "pad",
-            2,
-            0.1,
-            &[("long", clip(0, 15360, &[(0, 15360, 72)]))],
+    /// Racks of built-in devices, see `crate::rack`, each by its name with its children.
+    pub(crate) fn racks(racks: &[(&str, &[(&str, &str)])]) -> Self {
+        Self::racks_in(tempfile::tempdir().unwrap(), racks)
+    }
+
+    /// The same folder with these racks, opened again: for racks that need files, such as
+    /// samples, that a test writes into the folder first.
+    pub(crate) fn with_racks(self, racks: &[(&str, &[(&str, &str)])]) -> Self {
+        let Self {
+            project,
+            engine,
+            folder,
+            ..
+        } = self;
+        drop((project, engine));
+        Self::racks_in(folder, racks)
+    }
+
+    fn racks_in(folder: tempfile::TempDir, racks: &[(&str, &[(&str, &str)])]) -> Self {
+        assert!(
+            sound_typescript::has_bun(),
+            "a rack is a tool of the project, which runs in Bun: install it, see tooling/fetch-bun.sh"
         );
-        assert_eq!(harness.project.problems(), []);
-        harness
+        for (path, contents) in racks_files(racks) {
+            write(folder.path(), &path, &contents);
+        }
+        Self::open(folder)
+    }
+
+    /// One rack called `rack`.
+    pub(crate) fn rack(children: &[(&str, &str)]) -> Self {
+        Self::racks(&[("rack", children)])
+    }
+
+    /// A piano with a chord per bar over four bars and a pad with one long note, each a rack
+    /// of the synth. Both sound all the time, so a disturbance would show.
+    pub(crate) fn piece() -> Self {
+        let (piano, chords) = (synth(0.15), clip(0, 15360, &CHORDS));
+        let (pad, long) = (synth(0.1), clip(0, 15360, &[(0, 15360, 72)]));
+        Self::racks(&[
+            ("piano", &[("instrument", &piano), ("chords", &chords)]),
+            ("pad", &[("instrument", &pad), ("long", &long)]),
+        ])
     }
 
     pub(crate) fn path(&self, relative: &str) -> PathBuf {
@@ -143,39 +165,6 @@ impl Harness {
 
     pub(crate) fn write(&self, relative: &str, contents: &str) -> PathBuf {
         write(self.project.root(), relative, contents)
-    }
-
-    /// Writes a track folder the way an agent would and applies it as one group.
-    pub(crate) fn write_track(
-        &mut self,
-        name: &str,
-        order: u32,
-        gain: f32,
-        clips: &[(&str, String)],
-    ) {
-        let folder = format!("state/arrangement/{name}");
-        let track = TRACK
-            .replace("NAME", name)
-            .replace("ORDER", &order.to_string());
-        self.write(&format!("{folder}/instance.json"), &track);
-        self.write(&format!("{folder}/instrument.json"), &synth(gain));
-        for (clip, contents) in clips {
-            self.write(&format!("{folder}/{clip}.json"), contents);
-        }
-        let folder = self.path(&folder);
-        assert_eq!(self.apply(&[folder]), 2 + clips.len());
-    }
-
-    /// Turns the limiter of the master off, for a test whose render goes over full scale on
-    /// purpose, such as two test plugins at full level: the limiter would hold it at full
-    /// scale, which is its job and not what such a test is about.
-    pub(crate) fn bypass_limiter(&mut self) {
-        let record =
-            r#"{"tool": "arrangement", "state": {"master": {"limiter": {"bypass": true}}}}"#;
-        assert_eq!(
-            self.write_and_apply("state/arrangement/instance.json", record),
-            1
-        );
     }
 
     pub(crate) fn write_and_apply(&mut self, relative: &str, contents: &str) -> usize {

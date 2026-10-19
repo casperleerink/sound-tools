@@ -2,14 +2,7 @@
 
 Free sampled instruments for the Sampler: piano, keys, strings, brass, woodwinds, guitar, bass, drums, percussion and synths. They are free and sound basic: when the composer has a plugin that fits (`agent-docs/plugins.md`), use it instead. If the composer asks for a real instrument and no plugin fits, use one of these before a synth. A record names one by its id with `library`, instead of `sample` or `sfz`:
 
-```json state/arrangement/violins/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {"name": "Violins", "colour": "rosewater", "order": 9, "gain_db": 0.0, "pan": 0.0, "mute": false}
-}
-```
-
-```json state/arrangement/violins/instrument.json
+```json state/song/violins/instrument.json
 {
   "tool": "sampler",
   "state": {

@@ -1,17 +1,15 @@
 # Third-party plugins
 
-A track owns one child named `instrument`, and after it the effects its record lists. Either can
-be a third-party plugin, and so can a child of a tool of the project, which plays its `notes`.
-`agent-docs/arrangement.md` says how a track names its effects and in what order they play.
+A third-party plugin is a child like a built-in device: an instrument its parent plays `notes`
+into, or an effect its parent wires sound through.
 
 CLAP and VST 3 work, as instruments and as effects. AU does not.
 
 ## The record
 
-A plugin is the tool `plugin`. One record serves both places: put it where the instrument of
-the track belongs, so for a track `rhodes`:
+A plugin is the tool `plugin`. One record serves both places. Here the instrument of `rhodes`:
 
-```json state/arrangement/rhodes/instrument.json
+```json state/song/rhodes/instrument.json
 {
   "tool": "plugin",
   "state": {"format": "clap", "plugin_id": "com.example.piano", "state_asset": "rhodes"}
@@ -19,16 +17,9 @@ the track belongs, so for a track `rhodes`:
 ```
 
 A VST 3 plugin is the same record with another `format` and the class id as its `plugin_id`.
-This is a second track, `strings`, with its own track record and its own state file:
+This is a second one, `strings`, with its own state file:
 
-```json state/arrangement/strings/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {"name": "strings", "colour": "sky", "order": 2, "gain_db": 0.0, "pan": 0.0, "mute": false}
-}
-```
-
-```json state/arrangement/strings/instrument.json
+```json state/song/strings/instrument.json
 {
   "tool": "plugin",
   "state": {"format": "vst3", "plugin_id": "A1B2C3D4E5F60718293A4B5C6D7E8F90", "state_asset": "strings"}
@@ -41,27 +32,16 @@ This is a second track, `strings`, with its own track record and its own state f
 | `plugin_id` | For `clap`, the id the plugin's maker gave it, such as `com.u-he.diva`. For `vst3`, the plugin's class id as thirty-two hex digits, such as `A1B2C3D4E5F60718293A4B5C6D7E8F90`. Neither is the file name of the plugin, and neither is in any file of the project. Get them from `sound-tools --plugins`, or ask the composer. |
 | `state_asset` | A name you choose for the file that holds the plugin's own settings: `assets/plugin-state/<name>.bin`. Lowercase letters, digits, `-` and `_`. Give every plugin its own name: two records that name one file share it, and two different plugins that name one file cannot read each other's settings. |
 
-The track record itself says nothing about the plugin:
+Writing the plugin record over the record of a synth replaces the synth with the plugin, live,
+as one undo step. Writing a synth record back replaces the plugin again.
 
-```json state/arrangement/rhodes/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {"name": "rhodes", "colour": "peach", "order": 1, "gain_db": -3.0, "pan": 0.2, "mute": false}
-}
-```
+The same record is an effect where its parent wires sound through it. Nothing of the record
+changes: only how it is wired. A plugin that says it is an instrument can be an effect and the
+other way round; nothing checks. A plugin that takes no audio in, such as a synth, replaces the
+sound that reached it.
 
-Writing the plugin record over `instrument.json` replaces the synth with the plugin, live, as
-one undo step. Writing a synth record back replaces the plugin again. Clips, notes and the
-gain, pan and mute of the track are the same whichever instrument the track has.
-
-The same record under any other name in the track folder is an effect, once the track record
-names it in `effects`. Nothing of the record changes: only where the track wires it. A plugin
-that says it is an instrument can be an effect and the other way round; nothing checks. A
-plugin that takes no audio in, such as a synth, replaces the sound that reached it; as an
-effect it also plays the track's notes, which every effect hears.
-
-The composer can do the same in the app, by picking an instrument on the card of the track
-panel, so the record may change under you. Read it before you write it.
+The composer can do the same in the app, so the record may change under you. Read it before you
+write it.
 
 ## Never edit the state asset
 
@@ -131,7 +111,7 @@ plugin after the plugin's own settings load, and a value you write moves the plu
 plays, with no reload. Every parameter that is not pinned stays in the state file. This pins the
 `Cutoff` of the piano of `rhodes`:
 
-```json state/arrangement/rhodes/instrument.json
+```json state/song/rhodes/instrument.json
 {
   "tool": "plugin",
   "state": {
@@ -155,28 +135,16 @@ plays, with no reload. Every parameter that is not pinned stays in the state fil
 
 ## Automating a pin
 
-A lane in the track record moves a pin over time, as it moves a knob of a built-in device
-(`agent-docs/arrangement.md`). It names the plugin by its file name and the pin by its path in
-the record, `parameters.<id>.value`. This opens the `Cutoff` pinned above over bar 1 and closes
-it again over bar 2:
+A `lane` child of the plugin's parent moves a pin over time, as it moves a number of a built-in
+device (`agent-docs/lane.md`): the parent connects the lane's `value` to the number
+`parameters.<id>.value` of the plugin. This lane opens the `Cutoff` pinned above over bar 1 and
+closes it again over bar 2:
 
-```json state/arrangement/rhodes/instance.json
+```json state/song/rhodes/cutoff.json
 {
-  "tool": "arrangement.track",
+  "tool": "lane",
   "state": {
-    "name": "rhodes",
-    "colour": "peach",
-    "order": 1,
-    "gain_db": -3.0,
-    "pan": 0.2,
-    "mute": false,
-    "automation": [
-      {
-        "device": "instrument",
-        "parameter": "parameters.0.value",
-        "points": [{"tick": 0, "value": 400.0}, {"tick": 3840, "value": 4000.0}, {"tick": 7680, "value": 400.0}]
-      }
-    ]
+    "points": [{"tick": 0, "value": 400.0}, {"tick": 3840, "value": 4000.0}, {"tick": 7680, "value": 400.0}]
   }
 }
 ```
@@ -188,8 +156,6 @@ it again over bar 2:
   for `vst3`. Between two points the value moves in a straight line.
 - While the lane plays, the pin's `value` in the record does not, and the app never writes what
   the lane plays into it. Take the lane out and the pin's value plays again.
-- `--inspect` loads no plugin. It reports a lane on a parameter that is not pinned, but not one
-  on a pin the plugin cannot automate; a render or the open app does.
 
 ## When it does not play
 
@@ -197,15 +163,15 @@ it again over bar 2:
 
 - `this machine has no CLAP plugin with the id ...`, or `no VST 3 plugin`: the id is wrong, or
   the plugin is not installed here. The record stays as it is, while everything else plays.
-  A missing instrument leaves its track silent; a missing effect lets the sound through
+  A missing instrument is silent; a missing effect lets the sound through
   unchanged, so the rest of the chain still plays. Correct `plugin_id` and it plays at once,
   with no restart. While the app's window is open, a plugin installed meanwhile is found
   within seconds and the record plays then.
 - `a vst3 plugin_id is the class id as thirty-two hex digits`: the record itself is refused.
   You wrote something else, perhaps a CLAP-style id or the plugin's name.
 - `the plugins of this machine are still being looked at`: nothing is wrong. The app looks for
-  plugins on a thread of its own while it opens, so a project never waits for it. The track
-  plays as soon as the scan reaches its plugin, which needs nothing of you. Read
+  plugins on a thread of its own while it opens, so a project never waits for it. The plugin
+  plays as soon as the scan reaches it, which needs nothing of you. Read
   `problems.txt` again in a few seconds.
 - `the state of the plugin ... could not be read`: usually two records that name one
   `state_asset` for different plugins. Give each its own name.
@@ -220,11 +186,9 @@ it again over bar 2:
   That pin moves nothing and the rest plays. Correct the id, or take the pin out.
 - `` `parameters.<id>.value` is ..., outside the range ``: write a value inside the range the
   line names. Until then that pin moves nothing and the rest plays.
-- On the track record, `` automation[...].parameter is "parameters.<id>.value", and instrument
-  takes no automation of a number of that name ``: the lane names a parameter that is not
-  pinned, has steps, may not be automated, or whose pinned value is out of range. The line
-  lists the paths that take a lane. That lane moves nothing and the rest plays. While the
-  plugin is missing or did not load, a lane on it says `instrument.json takes no automation`.
+- On the parent, a connection to `parameters.<id>.value` that the plugin takes no number of
+  that name: the pin is missing, has steps, may not be automated, or its value is out of range.
+  The connection moves nothing and the rest plays.
 
 ## VST
 

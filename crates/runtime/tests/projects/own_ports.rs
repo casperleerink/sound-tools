@@ -8,7 +8,7 @@ use plugin_host::PluginFormat;
 use sound_core::live_input;
 use sound_notes::{Pedal, Pitch, Velocity};
 
-use crate::support::{Harness, clip, first_sound, test_plugin_of, write};
+use crate::support::{Harness, first_sound, test_plugin_of, write};
 
 fn has_bun() -> bool {
     let bun = sound_typescript::has_bun();
@@ -56,7 +56,7 @@ fn keyboard_into_the_top(mut harness: Harness) -> Vec<f32> {
     // Bun's answer, which wires the parent.
     let mut heard = harness.render(64);
     let mut keyboard = Keyboard::attach(harness.project.engine()).unwrap();
-    let notes = runtime::arrangement_wiring::recording::live_notes_inputs(&harness.project, None);
+    let notes = runtime::window::live_input::notes_inputs(&harness.project, None);
     keyboard
         .play_into(harness.project.engine(), &notes)
         .unwrap();
@@ -282,54 +282,6 @@ fn a_number_of_a_child_passes_out_of_a_parent_to_the_parent_of_that() {
     let played = harness.render(9_600);
     let last = played[played.len() - 1];
     assert!((last - 0.25).abs() < 1e-4, "{last}");
-}
-
-/// An effect that plays the note of its track and nothing else.
-const EARS: &str = r#"import { note, sine, tool } from "./sdk";
-
-tool({ name: "ears", title: "Ears", when: "Never", doc: "Plays its track's note.", state: {}, sound: () => sine(note.freq).times(note.gate).times(0.5) });
-"#;
-
-#[test]
-fn an_effect_hears_the_notes_of_its_track() {
-    if !has_bun() {
-        return;
-    }
-    let folder = tempfile::tempdir().unwrap();
-    let root = folder.path();
-    let project = project_json(r#""arrangement""#, "");
-    write(root, "project.json", &project);
-    write(root, "extensions/ears.ts", EARS);
-    write(
-        root,
-        "state/arrangement/instance.json",
-        r#"{"tool": "arrangement", "state": {}}"#,
-    );
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "Ears", "order": 1, "effects": ["ears"]}}"#;
-    write(root, "state/arrangement/ears/instance.json", track);
-    write(
-        root,
-        "state/arrangement/ears/ears.json",
-        r#"{"tool": "ears", "state": {}}"#,
-    );
-    // One note from tick 480, 12 000 frames at 120 bpm.
-    write(
-        root,
-        "state/arrangement/ears/part.json",
-        &clip(0, 3840, &[(480, 480, 69)]),
-    );
-    let mut harness = Harness::open(folder);
-    assert_eq!(harness.project.problems(), []);
-    let played = harness.play(18_000);
-    assert_eq!(first_sound(&played, 0), Some(12_000));
-
-    // Bypassed while the note sounds, and on again once it ended: it heard the end too.
-    let slot = |slot: &str| track.replace(r#"["ears"]"#, &format!("[{slot}]"));
-    let path = "state/arrangement/ears/instance.json";
-    harness.write_and_apply(path, &slot(r#"{"name": "ears", "bypass": true}"#));
-    harness.render(12_000);
-    harness.write_and_apply(path, &slot(r#""ears""#));
-    assert_eq!(first_sound(&harness.render(4_800), 0), None);
 }
 
 /// A parent whose behaviour names a child it finds by name, which is not there.

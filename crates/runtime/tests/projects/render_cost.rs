@@ -1,5 +1,4 @@
-//! What rendering a song costs, written as tools of the project and as the Rust arrangement, on
-//! the same content: twelve tracks of a synth and a filter whose cutoff a lane closes, each
+//! What rendering the song of the DAW template costs: twelve tracks of a synth and a filter whose cutoff a lane closes, each
 //! sending -12 dB into a return with a reverb, 150 clips of 30 to 150 notes, an audio track with
 //! one region, a second return that hears before the faders, and the master's limiter. A measurement,
 //! not a check. Run with `cargo nextest run -p runtime --test projects --cargo-profile
@@ -7,8 +6,6 @@
 
 use std::path::Path;
 use std::time::Instant;
-
-use serde_json::{Value, json};
 
 use crate::shared_song::song_files;
 use crate::support::{BAR, Harness, write};
@@ -48,82 +45,6 @@ fn typescript_song() -> Harness {
     Harness::open(folder)
 }
 
-/// The same tracks, clips, lane and region as the Rust arrangement's tracks and clips.
-fn rust_arrangement() -> Harness {
-    let folder = tempfile::tempdir().unwrap();
-    let root = folder.path();
-    let project = json!({
-        "format": 1,
-        "extensions": ["arrangement", "instrument", "filter", "utility", "reverb"],
-        "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
-        "connections": [],
-    });
-    write(root, "project.json", &project.to_string());
-    write(
-        root,
-        "state/arrangement/instance.json",
-        r#"{"tool": "arrangement", "state": {}}"#,
-    );
-    let files = song_files(TRACKS, CLIPS);
-    let lane = json!([{ "device": "fx", "parameter": "cutoff_hz", "points": [{ "tick": 0, "value": 6000 }, { "tick": 245_760, "value": 1500 }] }]);
-    for track in 0..TRACKS {
-        let folder = format!("state/arrangement/t{track:02}");
-        let record = json!({ "tool": "arrangement.track", "state": { "name": format!("t{track:02}"), "order": track, "effects": ["fx"], "automation": lane, "sends": { "ret-a": -12 } } });
-        write(
-            root,
-            &format!("{folder}/instance.json"),
-            &record.to_string(),
-        );
-        write(
-            root,
-            &format!("{folder}/instrument.json"),
-            r#"{"tool": "instrument.synth", "state": {}}"#,
-        );
-        write(
-            root,
-            &format!("{folder}/fx.json"),
-            r#"{"tool": "filter", "state": {}}"#,
-        );
-        let prefix = format!("state/song/t{track:02}/");
-        for (path, text) in files.iter().filter(|(path, _)| path.starts_with(&prefix)) {
-            let clip: Value = serde_json::from_str(text).unwrap();
-            if clip["tool"] != "timeline" {
-                continue;
-            }
-            let record = json!({ "tool": "arrangement.clip", "state": clip["state"] });
-            let name = path.rsplit('/').next().unwrap();
-            write(root, &format!("{folder}/{name}"), &record.to_string());
-        }
-    }
-    for (order, name, pre_fader, effects) in [
-        (TRACKS + 1, "ret-a", false, vec!["verb"]),
-        (TRACKS + 2, "ret-b", true, vec![]),
-    ] {
-        let record = json!({ "tool": "arrangement.track", "state": { "name": name, "kind": "return", "order": order, "pre_fader": pre_fader, "effects": effects } });
-        write(
-            root,
-            &format!("state/arrangement/{name}/instance.json"),
-            &record.to_string(),
-        );
-    }
-    write(
-        root,
-        "state/arrangement/ret-a/verb.json",
-        r#"{"tool": "reverb", "state": {"mix": 1}}"#,
-    );
-    let voice = json!({ "tool": "arrangement.track", "state": { "name": "voice", "kind": "audio", "order": TRACKS } });
-    write(
-        root,
-        "state/arrangement/voice/instance.json",
-        &voice.to_string(),
-    );
-    let clip =
-        r#"{"tool": "arrangement.audio_clip", "state": {"asset": "voice.wav", "start": 3840}}"#;
-    write(root, "state/arrangement/voice/take.json", clip);
-    write_voice(root);
-    Harness::open(folder)
-}
-
 /// Renders `BARS` bars from the start and gives how many times faster than real time.
 fn realtime(harness: &mut Harness) -> f64 {
     assert_eq!(harness.project.problems(), []);
@@ -142,16 +63,12 @@ fn render_cost() {
         eprintln!("skipped: Bun is not installed");
         return;
     }
-    let (mut typescript, mut rust) = (typescript_song(), rust_arrangement());
+    let mut song = typescript_song();
     // Once to warm the files and the code, then measured.
-    realtime(&mut typescript);
-    realtime(&mut rust);
-    let typescript = (0..3)
-        .map(|_| realtime(&mut typescript))
-        .fold(0.0, f64::max);
-    let rust = (0..3).map(|_| realtime(&mut rust)).fold(0.0, f64::max);
+    realtime(&mut song);
+    let song = (0..3).map(|_| realtime(&mut song)).fold(0.0, f64::max);
     println!(
-        "{TRACKS} tracks, {CLIPS} clips, a lane per track and a region, {BARS} bars: tools of the project {typescript:.0}x real time, the Rust arrangement {rust:.0}x"
+        "{TRACKS} tracks, {CLIPS} clips, a lane per track and a region, {BARS} bars: {song:.0}x real time"
     );
 }
 
@@ -164,13 +81,6 @@ fn render_cost_of_the_song_alone() {
         return;
     }
     keep_rendering(&mut typescript_song());
-}
-
-/// The same for the Rust arrangement, to compare the two profiles.
-#[test]
-#[ignore = "a measurement"]
-fn render_cost_of_the_arrangement_alone() {
-    keep_rendering(&mut rust_arrangement());
 }
 
 fn keep_rendering(harness: &mut Harness) {

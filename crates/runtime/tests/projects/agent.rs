@@ -1,4 +1,4 @@
-//! The real `claude` in a new project, with the request boundaries the sidebar sets. Ignored
+//! The real `claude` in a new project of the DAW template, with the request boundaries the sidebar sets. Ignored
 //! by default: it needs a signed-in `claude` on the login shell's `PATH`, and it costs a turn of
 //! the default model.
 //!
@@ -9,7 +9,6 @@
 use std::time::{Duration, Instant};
 
 use runtime::OFFLINE;
-use runtime::arrangement_wiring::main_arrangement;
 use smol::future;
 use sound_agent::{
     AgentEvent, ApprovalAnswer, ApprovalMode, Installed, Provider, Thread, ThreadOptions,
@@ -22,13 +21,11 @@ use crate::plugin_hosts::open_or_create;
 /// Long enough for the agent to read the docs and write one file.
 const LONGEST_TURN: Duration = Duration::from_secs(300);
 
-/// Every clip of the first track.
+/// Every clip of the first track of the song.
 fn clips(project: &sound_core::Project) -> Vec<String> {
     project
         .instances()
-        .filter(|(id, tool)| {
-            id.as_str().starts_with("arrangement/track-1/") && *tool == "arrangement.clip"
-        })
+        .filter(|(id, tool)| id.as_str().starts_with("song/t00/") && *tool == "timeline")
         .map(|(id, _)| id.to_string())
         .collect()
 }
@@ -37,12 +34,10 @@ fn clips(project: &sound_core::Project) -> Vec<String> {
 #[ignore]
 fn the_agent_adds_a_clip_as_one_undo_step() {
     let folder = tempfile::tempdir().unwrap();
+    let daw = runtime::templates::named("DAW").unwrap();
+    runtime::templates::write(folder.path(), daw).unwrap();
     let (control, _engine) = Engine::new(OFFLINE);
     let (mut project, _plugins) = open_or_create(folder.path(), control);
-    // The track the add track button makes. Its step is not the one the test undoes.
-    let arrangement = main_arrangement(&project).unwrap();
-    runtime::arrangement_wiring::add_track(&mut project, &arrangement).unwrap();
-    project.clear_history();
     project.watch().unwrap();
     // Writes the map and the docs the agent reads.
     project.poll().unwrap();

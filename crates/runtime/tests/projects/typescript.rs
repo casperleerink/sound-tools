@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use crate::automation::{gate, off_the_gate};
-use crate::support::{BAR, Harness, clip, synth};
+use crate::rack::racks_files;
+use crate::support::{BAR, Harness, clip, synth, write};
 
 /// The first TypeScript example of the doc for agents that write tools: a whole tool.
 fn doc_example() -> String {
@@ -43,40 +43,51 @@ tool({
 "#;
 
 /// A project whose `extensions/` holds the first example of the doc, `wobble`, `COMBS` and `LEVEL`,
-/// with a pad that plays a held chord through `effects` that are written next to it.
+/// with a rack `pad` that plays a held chord through `effects`.
 fn pad_through(effects: &[(&str, &str)]) -> Option<Harness> {
-    pad_through_with(effects, "")
+    pad_through_with(effects, &[])
 }
 
-/// [`pad_through`], with more fields of the track's record, such as automation lanes.
-fn pad_through_with(effects: &[(&str, &str)], track_fields: &str) -> Option<Harness> {
+/// [`pad_through`], with lanes of the rack: each its name, the number it moves, such as
+/// `wobble.depth`, and its points.
+fn pad_through_with(effects: &[(&str, &str)], lanes: &[(&str, &str, &str)]) -> Option<Harness> {
     if !sound_typescript::has_bun() {
         eprintln!("skipped: Bun is not installed");
         return None;
     }
     let folder = tempfile::tempdir().unwrap();
-    crate::support::write(folder.path(), "extensions/wobble.ts", &doc_example());
-    crate::support::write(folder.path(), "extensions/combs.ts", COMBS);
-    crate::support::write(folder.path(), "extensions/level.ts", LEVEL);
-    let mut harness = Harness::open(folder);
-    let names: Vec<String> = effects
-        .iter()
-        .map(|(name, _)| format!("{name:?}"))
-        .collect();
-    let track = format!(
-        r#"{{"tool": "arrangement.track", "state": {{"name": "Pad", "effects": [{}]{track_fields}}}}}"#,
-        names.join(", ")
+    write(folder.path(), "extensions/wobble.ts", &doc_example());
+    write(folder.path(), "extensions/combs.ts", COMBS);
+    write(folder.path(), "extensions/level.ts", LEVEL);
+    let (synth, chord) = (
+        synth(0.2),
+        clip(0, 15360, &[(0, 15360, 60), (0, 15360, 64), (0, 15360, 67)]),
     );
-    harness.write("state/arrangement/pad/instance.json", &track);
-    harness.write("state/arrangement/pad/instrument.json", &synth(0.2));
-    let chord = clip(0, 15360, &[(0, 15360, 60), (0, 15360, 64), (0, 15360, 67)]);
-    harness.write("state/arrangement/pad/chord.json", &chord);
-    for (name, state) in effects {
-        let record = format!(r#"{{"tool": "{name}", "state": {state}}}"#);
-        harness.write(&format!("state/arrangement/pad/{name}.json"), &record);
+    let records: Vec<(&str, String)> = (effects.iter())
+        .map(|(name, state)| (*name, format!(r#"{{"tool": "{name}", "state": {state}}}"#)))
+        .chain(lanes.iter().map(|(name, _, points)| {
+            (
+                *name,
+                format!(r#"{{"tool": "lane", "state": {{"points": {points}}}}}"#),
+            )
+        }))
+        .collect();
+    let mut children = vec![("instrument", synth.as_str()), ("chord", chord.as_str())];
+    children.extend(
+        records
+            .iter()
+            .map(|(name, record)| (*name, record.as_str())),
+    );
+    for (path, contents) in racks_files(&[("pad", &children)]) {
+        write(folder.path(), &path, &contents);
     }
-    let folder = harness.path("state/arrangement/pad");
-    harness.apply(&[folder]);
+    let order: Vec<&str> = effects.iter().map(|(name, _)| *name).collect();
+    let automation: Vec<_> = (lanes.iter())
+        .map(|(lane, target, _)| serde_json::json!({ "lane": lane, "target": target }))
+        .collect();
+    let rack = serde_json::json!({ "tool": "rack", "state": { "order": order, "automation": automation } });
+    write(folder.path(), "state/pad/instance.json", &rack.to_string());
+    let harness = Harness::open(folder);
     assert_eq!(harness.project.problems(), []);
     Some(harness)
 }
@@ -134,17 +145,18 @@ fn a_knob_the_record_leaves_out_is_automated_from_its_default() {
     let Some(harness) = pad_through(&[("wobble", r#"{"rate": 2}"#)]) else {
         return;
     };
-    let wobble = sound_core::InstanceId::new("arrangement/pad/wobble").unwrap();
+    let wobble = sound_core::InstanceId::new("pad/wobble").unwrap();
     let depth = harness.project.automation(&wobble, "depth").unwrap();
     // A lane added for it starts where it plays: at the default of the doc's `depth`.
     assert_eq!(depth.record, Some(0.5));
 }
 
 #[test]
-fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
+fn a_lane_moves_a_knob_of_the_tremolo() {
     // The record dips to silence; the lane holds the depth at 0 for the whole bar.
-    let lane = r#", "automation": [{"device": "wobble", "parameter": "depth", "points": [{"tick": 0, "value": 0.0}, {"tick": 15360, "value": 0.0}]}]"#;
-    let Some(mut harness) = pad_through_with(&[("wobble", r#"{"rate": 2, "depth": 1}"#)], lane)
+    let points = r#"[{"tick": 0, "value": 0.0}, {"tick": 15360, "value": 0.0}]"#;
+    let lane = [("depth", "wobble.depth", points)];
+    let Some(mut harness) = pad_through_with(&[("wobble", r#"{"rate": 2, "depth": 1}"#)], &lane)
     else {
         return;
     };
@@ -159,7 +171,7 @@ fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
     }
 }
 
-/// A gain the track's lanes can move.
+/// A gain a lane can move.
 const LEVEL: &str = r#"import { input, number, tool } from "./sdk";
 
 tool({
@@ -272,21 +284,6 @@ fn a_key_the_app_keeps_is_a_problem_of_the_tool_that_takes_it() {
     );
 }
 
-/// A lane of a tool of the project bends on its frame, as one of a built-in device does: the
-/// level opens from 0 to 1 in 50 frames, and is silent before and full after.
-#[test]
-fn a_fast_ramp_of_a_lane_starts_and_ends_on_its_frames() {
-    let gate = gate(Some("level"), "level", "0.0", "1.0");
-    let lanes = format!(r#", "automation": [{gate}]"#);
-    let Some(mut gated) = pad_through_with(&[("level", "{}")], &lanes) else {
-        return;
-    };
-    let gated = gated.play_from_the_start(2 * BAR);
-    let mut open = pad_through(&[("level", "{}")]).unwrap();
-    let open = open.play_from_the_start(2 * BAR);
-    assert_eq!(off_the_gate(&gated, &open), (0, 0));
-}
-
 /// Every function of the sound graph once, in mono and in stereo by its `out`, so a node the
 /// SDK sends and the runtime does not read fails a test.
 const EVERY_NODE: &str = r#"import * as s from "./sdk";
@@ -336,17 +333,20 @@ fn every_node_of_the_sdk_builds_in_mono_and_in_stereo() {
     }
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/every.ts", EVERY_NODE);
-    let mut harness = Harness::open(folder);
-    let track =
-        r#"{"tool": "arrangement.track", "state": {"name": "Pad", "effects": ["mono", "stereo"]}}"#;
-    harness.write("state/arrangement/pad/instance.json", track);
-    harness.write("state/arrangement/pad/instrument.json", &synth(0.2));
-    for out in ["mono", "stereo"] {
-        let record = format!(r#"{{"tool": "every", "state": {{"out": "{out}"}}}}"#);
-        harness.write(&format!("state/arrangement/pad/{out}.json"), &record);
+    let synth = synth(0.2);
+    let (mono, stereo) = (
+        r#"{"tool": "every", "state": {"out": "mono"}}"#,
+        r#"{"tool": "every", "state": {"out": "stereo"}}"#,
+    );
+    let children = [
+        ("instrument", synth.as_str()),
+        ("mono", mono),
+        ("stereo", stereo),
+    ];
+    for (path, contents) in racks_files(&[("pad", &children)]) {
+        write(folder.path(), &path, &contents);
     }
-    let folder = harness.path("state/arrangement/pad");
-    harness.apply(&[folder]);
+    let harness = Harness::open(folder);
     assert_eq!(harness.project.problems(), []);
 }
 
@@ -390,13 +390,11 @@ fn a_sample_plays_once_its_file_is_there() {
     }
     let folder = tempfile::tempdir().unwrap();
     crate::support::write(folder.path(), "extensions/player.ts", PLAYER);
-    let mut harness = Harness::open(folder);
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "Player"}}"#;
-    harness.write("state/arrangement/player/instance.json", track);
     let player = r#"{"tool": "player", "state": {"sound": "sine.wav"}}"#;
-    harness.write("state/arrangement/player/instrument.json", player);
-    let folder = harness.path("state/arrangement/player");
-    harness.apply(&[folder]);
+    for (path, contents) in racks_files(&[("player", &[("instrument", player)])]) {
+        write(folder.path(), &path, &contents);
+    }
+    let mut harness = Harness::open(folder);
     // The file is not there yet: a problem that names it, and silence.
     let problems = harness.project.problems();
     assert!(

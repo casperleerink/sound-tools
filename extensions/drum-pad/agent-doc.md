@@ -2,16 +2,9 @@
 
 `drum-pad` is an instrument with 16 pads. Each note from 36 to 51 plays one pad, on the General MIDI drum map, so a drum part written for any other drum machine plays the right sounds. Every pad is a drum sound made by synthesis, or a sample: an audio file under `assets/audio/`. A new Drum pad is the kit below and needs no files.
 
-A drum part is a track whose `instrument.json` is a Drum pad, and note clips on it, as in `agent-docs/arrangement.md`. Here a track named `beat`:
+A drum part is a Drum pad that its parent plays notes into, from `timeline` children (`agent-docs/timeline.md`). Here the one of `beat`:
 
-```json state/arrangement/beat/instance.json
-{
-  "tool": "arrangement.track",
-  "state": {"name": "Beat", "colour": "peach", "order": 3, "gain_db": 0.0, "pan": 0.0, "mute": false}
-}
-```
-
-```json state/arrangement/beat/instrument.json
+```json state/song/beat/instrument.json
 {
   "tool": "drum-pad",
   "state": {"pads": {}}
@@ -43,11 +36,11 @@ A drum part is a track whose `instrument.json` is a Drum pad, and note clips on 
 
 A note plays its pad once, as a hit: its `length` does not matter, write a sixteenth (240 ticks). `velocity` is how hard: 64 is a quarter as loud as 127, so ghost notes are 30 to 50 and accents 110 to 127. Another note of the same pad cuts the pad's last hit short, and so does a hit of a pad of the choke group for every other pad of it: a closed hat stops the open hat. Notes outside 36 to 51 play nothing.
 
-A beat is a note clip. A quarter note is 960 ticks, so an eighth is 480 and a sixteenth 240. This clip is two beats: the kick on 1 and the "and" of 2, the snare on 2, the hat on every eighth and the open hat on the last one:
+A beat is a `timeline`. A quarter note is 960 ticks, so an eighth is 480 and a sixteenth 240. This one is two beats: the kick on 1 and the "and" of 2, the snare on 2, the hat on every eighth and the open hat on the last one:
 
-```json state/arrangement/beat/groove.json
+```json state/song/beat/groove.json
 {
-  "tool": "arrangement.clip",
+  "tool": "timeline",
   "state": {
     "start": 0,
     "length": 1920,
@@ -64,13 +57,13 @@ A beat is a note clip. A quarter note is 960 ticks, so an eighth is 480 and a si
 }
 ```
 
-For a longer part write one clip of several bars, or one clip per bar or per pattern. Start from a steady kick, snare and hat, then add ghost notes, open hats and fills on the toms (41 low to 50 high) into a crash (49) on the next downbeat.
+For a longer part write one timeline of several bars, or one per bar or per pattern. Start from a steady kick, snare and hat, then add ghost notes, open hats and fills on the toms (41 low to 50 high) into a crash (49) on the next downbeat.
 
 ## Changing the pads
 
 Write only the pads you change, by note. A pad you leave out is the pad of the kit, and a field you leave out of a pad is that pad's value in the kit. The runtime writes every pad that differs from the kit with all its fields. Here the open hat rings longer and pad 48 plays a sample:
 
-```json state/arrangement/beat/instrument.json
+```json state/song/beat/instrument.json
 {
   "tool": "drum-pad",
   "state": {
@@ -100,6 +93,6 @@ Write only the pads you change, by note. A pad you leave out is the pad of the k
 
 Copy the file of a sample pad in first, see `agent-docs/audio.md`. Set a sample pad's `decay_ms` a little longer than its file, else its end is faded out; the window sets it to one and a half times the file. The last 2 ms of a sample always fade to silence, and a sample plays at most 10 s. A pad whose file is not there is silent and listed in `problems.txt`, and the other pads play; it plays once the file is in `assets/audio/`.
 
-The volume and the pan of a pad can move over time with an automation lane of the track, named by the note of the pad: `pads.42.volume_db` or `pads.42.pan`. See `agent-docs/arrangement.md`.
+The volume and the pan of a pad can move over time with a `lane` child of its parent (`agent-docs/lane.md`), named by the note of the pad: `pads.42.volume_db` or `pads.42.pan`.
 
 Starting points: a deeper, longer kick is `pitch_semitones` -2 to -4 with `decay_ms` 800 to 1200. A tight snare is `decay_ms` 150 to 200. Toms are one sound, tuned apart: keep them in steps of 2 to 3 semitones. Hats too loud in a busy part: bring the hat pads to -4 to -6 dB rather than lowering their velocities. An edit applies while the part plays. Volume and pan glide over 20 ms; sound, pitch and decay apply from the next hit once the new sound is made, a moment after the edit.

@@ -1,6 +1,6 @@
 //! A host for the built-in devices, written with the SDK as any tool of a project: a `rack` plays
-//! its timelines and what reaches its notes on its child `instrument`, then through the children
-//! its `order` names, and shows the card of each. Each of its `automation` moves a number of a
+//! its timelines and what reaches its notes on its child `instrument`, and on each plugin of its
+//! chain, then through the children its `order` names, and shows the card of each. Each of its `automation` moves a number of a
 //! child with a `lane` child, as a track of the DAW template does. The tests of a device's card
 //! and sound put the device in one.
 
@@ -16,12 +16,15 @@ tool({
   state: { order: list(text()), automation: list({ lane: text(), target: text() }) },
   behaviour: ({ state, children }): Declaration => {
     const has = (name: string) => children.some((child) => child.name === name);
-    const connections: Connection[] = children
-      .filter((child) => child.tool === "timeline")
-      .map((clip) => ({ from: { child: clip.name, notes: "notes" }, to: { child: "instrument", notes: "notes" } }));
     const chain = [...(has("instrument") ? ["instrument"] : []), ...state.order.filter(has)];
-    if (has("instrument")) connections.push({ from: { notes: "notes" }, to: { child: "instrument", notes: "notes" } });
-    else if (chain.length > 0) connections.push({ from: { port: "audio" }, to: { child: chain[0]! } });
+    // A plugin in the chain hears the notes too, as the test plugin, an instrument and an effect in one, wants.
+    const hearers = chain.filter((name) => name === "instrument" || children.some((child) => child.name === name && child.tool === "plugin"));
+    const connections: Connection[] = [];
+    for (const hearer of hearers) {
+      connections.push({ from: { notes: "notes" }, to: { child: hearer, notes: "notes" } });
+      for (const clip of children.filter((child) => child.tool === "timeline")) connections.push({ from: { child: clip.name, notes: "notes" }, to: { child: hearer, notes: "notes" } });
+    }
+    if (!has("instrument") && chain.length > 0) connections.push({ from: { port: "audio" }, to: { child: chain[0]! } });
     chain.slice(1).forEach((name, index) => connections.push({ from: { child: chain[index]! }, to: { child: name } }));
     if (chain.length > 0) connections.push({ from: { child: chain[chain.length - 1]! }, to: { port: "audio" } });
     for (const { lane, target } of state.automation.filter(({ lane }) => has(lane))) {
@@ -51,27 +54,37 @@ tool({
 /// the device. Its `order` is every child but `instrument`, the timelines and the lanes, as
 /// given.
 pub(crate) fn rack_files(children: &[(&str, &str)]) -> Vec<(String, String)> {
-    let project = json!({
+    racks_files(&[("rack", children)])
+}
+
+/// The same for several racks at the top, each by its name, all played into the device.
+pub(crate) fn racks_files(racks: &[(&str, &[(&str, &str)])]) -> Vec<(String, String)> {
+    let connections: Vec<_> = (racks.iter())
+        .map(|(rack, _)| json!({ "from": { "instance": rack, "port": "audio" }, "to": { "device_output": 0 } }))
+        .collect();
+    let mut project = json!({
         "format": 1,
         "extensions": runtime::bundled_extensions().unwrap(),
         "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
-        "connections": [{ "from": { "instance": "rack", "port": "audio" }, "to": { "device_output": 0 } }],
-        "main": "rack",
+        "connections": connections,
     });
-    let order: Vec<&str> = (children.iter())
-        .filter(|(name, record)| *name != "instrument" && !plays_no_sound(record))
-        .map(|(name, _)| *name)
-        .collect();
+    if let [(rack, _)] = racks {
+        project["main"] = json!(rack);
+    }
     let mut files = vec![
         ("project.json".to_string(), project.to_string()),
         ("extensions/rack.tsx".to_string(), RACK.to_string()),
-        (
-            "state/rack/instance.json".to_string(),
-            json!({ "tool": "rack", "state": { "order": order } }).to_string(),
-        ),
     ];
-    for (name, record) in children {
-        files.push((format!("state/rack/{name}.json"), record.to_string()));
+    for (rack, children) in racks {
+        let order: Vec<&str> = (children.iter())
+            .filter(|(name, record)| *name != "instrument" && !plays_no_sound(record))
+            .map(|(name, _)| *name)
+            .collect();
+        let record = json!({ "tool": "rack", "state": { "order": order } });
+        files.push((format!("state/{rack}/instance.json"), record.to_string()));
+        for (name, record) in *children {
+            files.push((format!("state/{rack}/{name}.json"), record.to_string()));
+        }
     }
     files
 }

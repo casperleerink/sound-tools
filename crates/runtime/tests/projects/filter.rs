@@ -1,24 +1,15 @@
-//! The built-in filter in the chain of a real track: an outside agent changes it by file while
+//! The built-in filter in a rack after the synth: an outside agent changes it by file while
 //! the project plays and the change is heard.
 
-use crate::support::{BAR, Harness, clip, difference};
+use crate::support::{BAR, Harness, clip, difference, synth};
 
-const FOLDER: &str = "state/arrangement/piano";
-const FILTER_FILE: &str = "state/arrangement/piano/tone.json";
+const FILTER_FILE: &str = "state/rack/tone.json";
 
-/// A track that holds a chord for four bars and plays it through a filter named `tone`.
+/// A rack that holds a chord for four bars and plays it through a filter named `tone`.
 fn piano_through(filter: &str) -> Harness {
-    let mut harness = Harness::new();
     let chord = [(0, 15360, 48), (0, 15360, 55), (0, 15360, 64)];
-    harness.write_track("piano", 1, 0.15, &[("chord", clip(0, 15360, &chord))]);
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["tone"]}}"#;
-    let paths = [
-        harness.write(&format!("{FOLDER}/instance.json"), track),
-        harness.write(FILTER_FILE, filter),
-    ];
-    assert_eq!(harness.apply(&paths), 2);
-    assert_eq!(harness.project.problems(), []);
-    harness
+    let (synth, chord) = (synth(0.15), clip(0, 15360, &chord));
+    Harness::rack(&[("instrument", &synth), ("chord", &chord), ("tone", filter)])
 }
 
 fn record(state: &str) -> String {

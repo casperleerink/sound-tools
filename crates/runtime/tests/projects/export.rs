@@ -3,30 +3,18 @@
 
 use sound_core::Ticks;
 
-use crate::support::{BAR, Harness, clip};
+use crate::support::{BAR, Harness, clip, synth};
 
 /// Ticks per bar in 4/4.
 const BAR_TICKS: u64 = 3840;
 
-/// A track with a chord on the last beat of a clip of two bars, through a reverb.
+/// A rack with a chord on the last beat of a timeline of two bars, through a reverb.
 fn chord_through_reverb() -> Harness {
-    let mut harness = Harness::new();
     let last_beat = 2 * BAR_TICKS - 960;
     let chord = [60, 64, 67].map(|pitch| (last_beat, 480, pitch));
-    harness.write_track(
-        "piano",
-        1,
-        0.3,
-        &[("chord", clip(0, 2 * BAR_TICKS, &chord))],
-    );
-    let folder = "state/arrangement/piano";
-    let track = r#"{"tool": "arrangement.track", "state": {"name": "piano", "order": 1, "effects": ["room"]}}"#;
+    let (synth, chord) = (synth(0.3), clip(0, 2 * BAR_TICKS, &chord));
     let reverb = r#"{"tool": "reverb", "state": {"decay_seconds": 2.0, "mix": 0.5}}"#;
-    let paths = [
-        harness.write(&format!("{folder}/instance.json"), track),
-        harness.write(&format!("{folder}/room.json"), reverb),
-    ];
-    assert_eq!(harness.apply(&paths), 2);
+    let harness = Harness::rack(&[("instrument", &synth), ("chord", &chord), ("room", reverb)]);
     assert_eq!(harness.project.problems(), []);
     harness
 }
@@ -56,7 +44,7 @@ fn peak(samples: &[f32]) -> f32 {
 }
 
 #[test]
-fn the_whole_project_renders_to_the_end_of_the_last_clip_and_its_tail() {
+fn the_whole_project_renders_to_the_end_of_the_last_timeline_and_its_tail() {
     let mut harness = chord_through_reverb();
     let end = harness.project.end().unwrap();
     assert_eq!(end, Ticks(2 * BAR_TICKS));
@@ -77,11 +65,11 @@ fn the_whole_project_renders_to_the_end_of_the_last_clip_and_its_tail() {
 
 #[test]
 fn a_range_renders_from_its_start_and_stops_the_notes_at_its_end() {
-    let mut harness = Harness::new();
     // A note held for two bars from bar 2: a range of one bar from there cuts it off, and
     // the synth's release is the tail.
     let long = [(BAR_TICKS, 2 * BAR_TICKS, 60)];
-    harness.write_track("lead", 1, 0.3, &[("long", clip(0, 4 * BAR_TICKS, &long))]);
+    let (synth, long) = (synth(0.3), clip(0, 4 * BAR_TICKS, &long));
+    let mut harness = Harness::rack(&[("instrument", &synth), ("long", &long)]);
 
     let rendered = export(&mut harness, Ticks(BAR_TICKS), Ticks(2 * BAR_TICKS));
     let frames = rendered.len() / 2;
@@ -94,7 +82,7 @@ fn a_range_renders_from_its_start_and_stops_the_notes_at_its_end() {
 }
 
 #[test]
-fn a_project_without_clips_has_no_end() {
+fn a_project_without_timelines_has_no_end() {
     let harness = Harness::new();
     assert_eq!(harness.project.end(), None);
 }
