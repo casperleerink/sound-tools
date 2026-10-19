@@ -57,34 +57,29 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 
 ## Using the app
 
+The DAW template follows these rules; its own gestures and keys are its code, in `templates/daw/extensions`.
+
 ### Gestures
 
-- Everything snaps to the grid of the timeline. Cmd during a drag ignores it. Arrow keys move things in time by one snap step, a sixteenth when snap is off.
 - Every drag and every key that changes the piece is one undo step. Undo waits while a drag is going on.
 - There is no save. Every finished edit is already in the folder.
+- Everything snaps to the grid of the timeline. Cmd during a drag ignores it. Arrow keys move things in time by one snap step.
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.
-- The timeline and the note editor select and edit the same way: click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes. They share one clipboard.
-- Double click on empty space makes what lives there: a clip, a note, a section. On a control it sets the default.
-- A right click in the ruler adds a tempo change, a time signature change or a section; the menu row under the pointer or the keys shows where it lands.
-- A right click on a clip opens its menu, which opens and is picked from the way the system's own menus are.
-- Alt-drag copies clips and notes, and across a lane erases its points.
-- Adding something never changes the sound. A new tempo or time signature change keeps what played there; a new automation lane holds the value its number plays now.
-- A drag shows what it will do before the drop: a lavender ring where it lands, and the automation a clip takes along.
-- A clip drag takes the automation under the clip along. Shift leaves it.
+- Click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes.
+- Double click on empty space makes what lives there: a clip, a note. On a control it sets the default.
+- Alt-drag copies.
+- Adding something never changes the sound: a new automation lane holds the value its number plays now.
+- A drag shows what it will do before the drop: a lavender ring where it lands.
+- Audio comes from files only. A dropped file is copied into the project.
+- Arming, the metronome and the computer keys are not saved and are no undo step.
 
 ### Keys
 
 - The keys follow macOS. On Windows and Linux ctrl takes the place of cmd.
-- Space plays from anywhere, unless something else owns the plain keys: a text field, or a tool of the project that hears keys. Keys with cmd and tab always stay the window's, so the focus can always move on.
+- A key plays or stops only where a tool takes it, and not while a text field has the keys. Keys with cmd and tab always stay the window's, so the focus can always move on.
 - A group of options is one tab stop, such as a segmented control or the drum pads. The arrows move inside it.
-- Enter or cmd-down opens what is selected. Escape lets go, closes the panel below, or gives the focus back.
+- Escape lets go, closes what is open, or gives the focus back.
 - The computer keys (cmd-K) play what is selected like a MIDI keyboard, and their letters then do nothing else. Both play it whether the project plays or not.
-
-### Tracks and panels
-
-- A click on a track shows its devices under the timeline.
-- Audio regions come from files only. A dropped file is copied into the project.
-- Arming a track, the metronome and the computer keys are not saved and are no undo step.
 
 ### The agent
 
