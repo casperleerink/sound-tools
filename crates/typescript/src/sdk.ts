@@ -95,7 +95,12 @@ export interface Note {
   velocity: number;
 }
 
-export const number = (field: Omit<NumberField, "kind">): NumberField => ({ kind: "number", ...field });
+/** A whole number keeps `integer: true` in its type, so no lane or cable is typed to move it. */
+export function number(field: Omit<NumberField, "kind"> & { integer: true }): NumberField & { integer: true };
+export function number(field: Omit<NumberField, "kind">): NumberField;
+export function number(field: Omit<NumberField, "kind">): NumberField {
+  return { kind: "number", ...field };
+}
 export const boolean = (field: Omit<BooleanField, "kind">): BooleanField => ({ kind: "boolean", ...field });
 /** `default` is one of `options`, which are at least one. */
 export const choice = <const Option extends string | number>(field: {

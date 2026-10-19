@@ -359,3 +359,28 @@ tool({
     });
   },
 });
+
+const counter = tool({
+  name: "counter",
+  title: "Counter",
+  when: "Never",
+  doc: "A whole number and a level.",
+  state: { count: number({ min: 1, max: 16, default: 4, integer: true }), level: number({ min: 0, max: 1, default: 0 }) },
+});
+const counted = { counter, drop: "rain" } as const;
+
+tool({
+  name: "counting",
+  title: "Counting",
+  when: "Never",
+  doc: "Moves the level of its counter.",
+  state: {},
+  children: counted,
+  behaviour: (): Declaration<typeof counted> => ({
+    connections: [
+      { from: { child: "drop", number: "level" }, to: { child: "counter", number: "level" } },
+      // @ts-expect-error: a whole number moves by no cable.
+      { from: { child: "drop", number: "level" }, to: { child: "counter", number: "count" } },
+    ],
+  }),
+});
