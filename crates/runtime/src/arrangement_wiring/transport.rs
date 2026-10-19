@@ -47,7 +47,7 @@ use sound_ui::{
 };
 
 use self::take::{AudioTake, Ended};
-use crate::window::live_input::LiveInput;
+use crate::window::live_input::{LiveInput, Recorded};
 
 /// A recording of the record control, from its start to its clips.
 struct Take {
@@ -161,6 +161,10 @@ impl TransportPill {
                     pill.finish_recording(tick, cx);
                 }
             }
+        })
+        .detach();
+        cx.subscribe(&live, |pill, _, Recorded(reports), cx| {
+            pill.on_reports(reports, cx)
         })
         .detach();
         cx.subscribe(&live, |pill, _, event, cx| pill.input_did(*event, cx))

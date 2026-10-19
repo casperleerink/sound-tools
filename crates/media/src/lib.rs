@@ -500,7 +500,8 @@ pub fn import(assets: &Assets, source: &Path) -> Result<Imported, MediaError> {
 
 /// A file copied into `assets/audio/`: the name a record gives it, and the file in memory.
 /// Hold it until the clip that names it is added, so the track that plays it reads nothing.
-#[derive(Debug)]
+/// Clones share the file.
+#[derive(Clone, Debug)]
 pub struct Imported {
     pub asset: AudioAsset,
     pub audio: Arc<Audio>,

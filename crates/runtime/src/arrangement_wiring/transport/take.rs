@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use arrangement::{TrackKind, TrackState};
-use gpui::{Context, prelude::*};
+use gpui::Context;
 use sound_core::{Changes, Clock, Instance, InstanceId, Ticks};
 use sound_media::Imported;
 use sound_ui::{LiveBody, LiveSound, LiveTake, Playhead};
@@ -362,8 +362,7 @@ impl TransportPill {
         }
     }
 
-    /// One poll of a take's audio: what ties it to the timeline, and a run of the recorder on
-    /// the background executor.
+    /// One poll of a take's audio: what ties it to the timeline, and its waveform.
     pub(super) fn poll_audio(&mut self, cx: &mut Context<Self>) {
         let status = self.session.read(cx).engine_status();
         let mut gave_up = false;
@@ -384,7 +383,6 @@ impl TransportPill {
             });
         }
         self.show_takes(cx);
-        self.run_recorder(cx);
     }
 
     /// Lines the waveforms of the takes up with the timeline, once the first frames came and
@@ -419,41 +417,23 @@ impl TransportPill {
             .update(cx, |recording, cx| recording.set_audio_takes(live, cx));
     }
 
-    /// Runs the recorder once on the background executor, when it is here: it takes what the
-    /// input captured, writes the takes and says what came of it.
-    fn run_recorder(&mut self, cx: &mut Context<Self>) {
-        let Some(run) = self.live.update(cx, |live, _| live.audio().start_run()) else {
+    /// What the recorder of the input reported: about a take of the pill, when one runs.
+    pub(super) fn on_reports(&mut self, reports: &[RecorderReport], cx: &mut Context<Self>) {
+        if self.take.as_ref().is_none_or(|take| take.audio.is_none()) {
             return;
-        };
-        let work = cx.background_spawn(async move { run.run() });
-        cx.spawn(async move |pill, cx| {
-            let (recorder, reports, generation) = work.await;
-            let ended = pill.update(cx, |pill, cx| {
-                (pill.live).update(cx, |live, _| live.audio().end_run(recorder, generation));
-                pill.on_reports(reports, cx);
-            });
-            match ended {
-                Ok(()) => {}
-                // A window that went away takes the recorder with it, and its files close.
-                Err(_) => {}
-            }
-        })
-        .detach();
-    }
-
-    fn on_reports(&mut self, reports: Vec<RecorderReport>, cx: &mut Context<Self>) {
+        }
         for report in reports {
             match report {
                 RecorderReport::Started { first_nanos, takes } => {
                     if let Some(audio) = self.take.as_mut().and_then(|take| take.audio.as_mut()) {
-                        audio.placement.first_nanos = Some(first_nanos);
-                        audio.started = takes;
+                        audio.placement.first_nanos = Some(*first_nanos);
+                        audio.started = takes.clone();
                     }
                 }
                 RecorderReport::Failed { track, error } => {
                     let project = self.session.read(cx).project();
                     let name = project
-                        .resolve::<TrackState>(&track)
+                        .resolve::<TrackState>(track)
                         .and_then(|track| Some(project.state(&track)?.name.clone()))
                         .unwrap_or_else(|| track.to_string());
                     let notice = format!(
@@ -473,9 +453,9 @@ impl TransportPill {
                     if let Some(audio) = self.take.as_mut().and_then(|take| take.audio.as_mut())
                         && first_nanos.is_some()
                     {
-                        audio.placement.first_nanos = first_nanos;
+                        audio.placement.first_nanos = *first_nanos;
                     }
-                    self.make_clips(takes, cx);
+                    self.make_clips(takes.clone(), cx);
                 }
             }
         }
