@@ -1634,6 +1634,9 @@ function store<T extends object>(target: T, writable: boolean): T {
       if (key === RAW) return object;
       const value = Reflect.get(object, key, receiver);
       if (typeof key === "symbol" || (typeof value === "function" && !Object.hasOwn(object, key))) return value;
+      // The name and the tool of a child never change: a rename is another record. So a
+      // component may read them as it is made, as the key of a row.
+      if ((key === "name" || key === "tool") && Object.hasOwn(object, "state")) return value;
       track(fieldSource(object, key));
       return isWrapped(value) ? store(value, writable) : value;
     },

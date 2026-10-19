@@ -1,5 +1,9 @@
 //! Pages of tools of the project, drawn by Bun:
 //!
+//! - `typescript-mixer.png`: the mixer of `tooling/agent-eval/examples` as five tones play:
+//!   meters, faders, a muted strip, the master's scope and the device output.
+//! - `typescript-song.png`: the song of `tooling/agent-eval/examples`, 12 tracks of 150 clips,
+//!   as it plays: a clip selected, another open in the note editor, the meters of the tracks.
 //! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, beside
 //!   a small piano roll whose notes and labels are shapes of a space.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the
@@ -15,7 +19,7 @@ use gpui::{
 };
 use runtime::window::{DeviceAccess, Shell};
 use runtime::{OFFLINE, views};
-use sound_core::Engine;
+use sound_core::{Engine, Ticks};
 use sound_ui::Session;
 
 use super::{WINDOW_HEIGHT, WINDOW_WIDTH};
@@ -63,6 +67,8 @@ tool({
 "##;
 
 const PIANO_ROLL: &str = include_str!("../../../../tooling/agent-eval/examples/piano-roll.tsx");
+const MIXER: &str = include_str!("../../../../tooling/agent-eval/examples/mixer.tsx");
+const SWAY: &str = include_str!("../../../../tooling/agent-eval/examples/sway.ts");
 
 pub(crate) fn snapshots(
     cx: &mut HeadlessAppContext,
@@ -128,7 +134,112 @@ pub(crate) fn snapshots(
     mouse(&opened, cx, down(note))?;
     let held = note + point(px(192.), px(-24.));
     mouse(&opened, cx, moved(held, Some(MouseButton::Left)))?;
-    save(cx, &opened, "typescript-piano-roll")
+    save(cx, &opened, "typescript-piano-roll")?;
+    drop(opened);
+
+    let mut opened = open_mixer(cx)?;
+    // Half a second of sound in frames of the window, as when it plays, so the meters, their
+    // peak lines and the level's history move as they do.
+    play(&mut opened, cx)?;
+    save(cx, &opened, "typescript-mixer")?;
+    drop(opened);
+
+    let files = crate::song::song_files(12, 150);
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let mut opened = open_files(cx, &files)?;
+    // The timeline's top left: the page's padding, the title bar and the ruler; the headers.
+    let timeline = point(px(24. + crate::song::HEADER), px(48. + 24. + 22.));
+    let lane = |tick: u64, row: f32| {
+        timeline
+            + point(
+                px(tick as f32 * crate::song::ACROSS),
+                px(row * crate::song::ROW),
+            )
+    };
+    let click = |opened: &super::Opened, cx: &mut HeadlessAppContext, at, clicks| {
+        for click_count in 1..=clicks {
+            let (modifiers, button) = (Modifiers::default(), MouseButton::Left);
+            mouse(opened, cx, moved(at, None))?;
+            let down = MouseDownEvent {
+                position: at,
+                modifiers,
+                button,
+                click_count,
+                first_mouse: false,
+            };
+            mouse(opened, cx, PlatformInput::MouseDown(down))?;
+            let up = MouseUpEvent {
+                position: at,
+                modifiers,
+                button,
+                click_count,
+            };
+            mouse(opened, cx, PlatformInput::MouseUp(up))?;
+        }
+        anyhow::Ok(())
+    };
+    // The first clip of the third track opens below; the second of the fifth is selected.
+    click(&opened, cx, lane(crate::song::BAR / 2, 2.5), 2)?;
+    click(&opened, cx, lane(3 * crate::song::BAR + 960, 4.5), 1)?;
+    play(&mut opened, cx)?;
+    save(cx, &opened, "typescript-song")
+}
+
+/// Plays half a second in frames of the window, so meters and what eases move as they do.
+fn play(opened: &mut super::Opened, cx: &mut HeadlessAppContext) -> Result<()> {
+    opened.play_from(Ticks(0), cx)?;
+    for _ in 0..30 {
+        opened.advance(800, cx);
+        cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
+        cx.run_until_parked();
+    }
+    Ok(())
+}
+
+/// The mixer of `tooling/agent-eval/examples` with five strips of tones, a quieter one muted and
+/// one turned down, and the pan of the first swinging.
+fn open_mixer(cx: &mut HeadlessAppContext) -> Result<super::Opened> {
+    let project = r#"{"format": 1, "extensions": ["tone", "utility"],
+        "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+        "connections": [{"from": {"instance": "mixer", "port": "audio"}, "to": {"device_output": 0}}]}"#;
+    let strips = [
+        ("bass", 55.0, 0.5, "{}"),
+        ("keys", 220.0, 0.2, r#"{"gain_db": -9}"#),
+        ("lead", 440.0, 0.15, r#"{"pan": 0.4}"#),
+        ("pad", 330.0, 0.08, r#"{"gain_db": 4.5}"#),
+        ("perc", 880.0, 0.1, r#"{"mute": true}"#),
+    ];
+    let mut files: Vec<(String, String)> = vec![
+        ("project.json".into(), project.into()),
+        (
+            "state/mixer/instance.json".into(),
+            r#"{"tool": "mixer", "state": {}}"#.into(),
+        ),
+        (
+            "state/mixer/master.json".into(),
+            r#"{"tool": "utility", "state": {}}"#.into(),
+        ),
+        (
+            "state/mixer/sway.json".into(),
+            r#"{"tool": "sway", "state": {"rate": 2}}"#.into(),
+        ),
+        ("extensions/mixer.tsx".into(), MIXER.into()),
+        ("extensions/sway.ts".into(), SWAY.into()),
+    ];
+    for (name, frequency, gain, mix) in strips {
+        let tone = serde_json::json!({ "tool": "tone", "state": { "frequency_hz": frequency, "gain": gain } });
+        files.push((format!("state/mixer/{name}.json"), tone.to_string()));
+        files.push((
+            format!("state/mixer/{name}-mix.json"),
+            format!(r#"{{"tool": "utility", "state": {mix}}}"#),
+        ));
+    }
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    open_files(cx, &files)
 }
 
 /// Two bars of melody over chords, on the sixteenths.
@@ -170,22 +281,29 @@ fn open_page(
     file: &str,
     code: &str,
 ) -> Result<super::Opened> {
+    let project = r#"{"format": 1, "extensions": [],
+        "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+        "connections": []}"#;
+    let record_path = format!("state/{name}.json");
+    open_files(
+        cx,
+        &[
+            ("project.json", project),
+            (&record_path, record),
+            (file, code),
+        ],
+    )
+}
+
+/// A window on a project of these files.
+fn open_files(cx: &mut HeadlessAppContext, files: &[(&str, &str)]) -> Result<super::Opened> {
     let folder = tempfile::tempdir()?;
     let root = folder.path().join("Night Study");
-    let write = |relative: &str, contents: &str| -> Result<()> {
+    for (relative, contents) in files {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().context("a parent folder")?)?;
         std::fs::write(path, contents)?;
-        Ok(())
-    };
-    write(
-        "project.json",
-        r#"{"format": 1, "extensions": [],
-        "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-        "connections": []}"#,
-    )?;
-    write(&format!("state/{name}.json"), record)?;
-    write(file, code)?;
+    }
     cx.allow_parking();
     let (control, engine) = Engine::new(OFFLINE);
     let plugins = test_plugin_host(&root);

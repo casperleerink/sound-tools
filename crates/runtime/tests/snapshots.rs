@@ -179,6 +179,9 @@ mod plugin_hosts;
 mod returns;
 #[path = "snapshots/sampler.rs"]
 mod sampler;
+#[path = "shared/song.rs"]
+#[allow(dead_code)]
+mod song;
 #[path = "snapshots/typescript.rs"]
 mod typescript;
 #[path = "snapshots/utility.rs"]

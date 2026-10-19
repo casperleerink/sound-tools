@@ -39,6 +39,8 @@ mod sampler;
 mod saturator;
 mod several_notes;
 mod shell;
+#[path = "../shared/song.rs"]
+mod song;
 mod support;
 mod tools;
 mod track_order;
