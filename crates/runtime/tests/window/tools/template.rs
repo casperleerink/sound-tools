@@ -70,3 +70,19 @@ fn a_new_daw_project_opens_its_song_with_no_arrangement_and_plays(cx: &mut TestA
     assert_eq!(window.problems(), []);
     assert!(no_arrangement(&mut window));
 }
+
+#[gpui::test]
+fn three_returns_added_have_three_names(cx: &mut TestAppContext) {
+    let folder = tempfile::tempdir().unwrap();
+    runtime::templates::write(folder.path(), crate::song::daw()).unwrap();
+    let Some(mut window) = open_folder(cx, folder) else {
+        return;
+    };
+    for name in ["song/ret-a", "song/ret-b", "song/ret-c"] {
+        let add = window.until_found("div-add-track");
+        window.click(add);
+        window.pick("menu-2");
+        window.until(name, |window| window.has(name));
+    }
+    assert_eq!(window.problems(), []);
+}

@@ -464,8 +464,8 @@ export const song = tool({
           part.children.push({ name, tool: tape, state: { colour }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "mix", tool: "fader", state: {} }] });
           part.state.order = [...rows().map((each) => each.name), name];
         } else {
-          const name = freeName(names, "ret-a").replace(/^ret-a-/, "ret-");
-          part.children.push({ name: name as `ret-${string}`, tool: bus, state: { title: `Return ${returns().length + 1}` }, children: [{ name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }] });
+          const name = [..."abcdefghijklmnopqrstuvwxyz"].map((letter) => `ret-${letter}` as const).find((each) => !names.includes(each)) ?? (freeName(names, "ret-z") as `ret-${string}`);
+          part.children.push({ name, tool: bus, state: { title: `Return ${returns().length + 1}` }, children: [{ name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }] });
           for (const each of part.children) {
             if (each.tool === "track") each.children.push({ name: `send-${name}` as const, tool: "fader", state: { gain_db: "-inf" } });
           }
