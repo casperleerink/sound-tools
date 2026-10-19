@@ -48,7 +48,7 @@ pub use bun::{
     bun_answered_everything, heard_batches, heard_bytes, last_batch, sent_bytes,
     sent_updates_and_events,
 };
-pub use card::{TitleBar, embedded_view, title_bar_of};
+pub use card::{TitleBar, embedded_view, run_frame, title_bar_of};
 #[cfg(feature = "test-support")]
 pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};

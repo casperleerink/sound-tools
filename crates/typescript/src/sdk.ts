@@ -1996,6 +1996,7 @@ interface Made {
   onCommit?: (text: string) => void;
   onPower?: () => void;
   onClose?: () => void;
+  onTitle?: () => void;
   drag?: Drag;
   children: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
@@ -2075,7 +2076,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
-const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onPower", "onClose"]);
+const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onPower", "onClose", "onTitle"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {
@@ -2459,6 +2460,8 @@ export interface DeviceCardProps {
   on?: Bind<boolean>;
   onPower?: () => void;
   onClose?: () => void;
+  /** Its title is a menu: a chevron after it, and a press calls this, such as to put another device in its place. */
+  onTitle?: () => void;
 }
 
 /** The card of an instance, see `DeviceCardProps`. */
@@ -3003,7 +3006,7 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
 }
 
 /** A press, the end of a drag, a drop, a field's text or a card's icon, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "end" | "commit" | "drop" | "power" | "close", payload: never) {
+function nodeEvent(id: number, kind: "press" | "end" | "commit" | "drop" | "power" | "close" | "title", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
   switch (kind) {
@@ -3013,6 +3016,8 @@ function nodeEvent(id: number, kind: "press" | "end" | "commit" | "drop" | "powe
       return made.onPower?.();
     case "close":
       return made.onClose?.();
+    case "title":
+      return made.onTitle?.();
     default: {
       const handler = { press: made.onPress, end: made.drag?.onEnd, drop: made.onDrop }[kind];
       return handler?.(payload);

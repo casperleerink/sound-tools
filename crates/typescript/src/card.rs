@@ -106,6 +106,15 @@ pub fn embedded_view(page: &AnyView, instance: &InstanceId, cx: &App) -> Option<
         .find_map(|card| card.view.clone())
 }
 
+/// One frame of the tools of the project of the page `page`, as its timer runs them every
+/// 33 ms: for snapshots, whose headless window runs no timer.
+pub fn run_frame(page: &AnyView, cx: &mut App) {
+    if let Ok(page) = page.clone().downcast::<Page>() {
+        let live = page.read(cx).0.read(cx).live.clone();
+        live.update(cx, |live, cx| live.frame(cx));
+    }
+}
+
 /// What the page `page` shows in the window's title bar, see [`TitleBar`]. `None` for a view that
 /// is no page of a tool of the project.
 pub fn title_bar_of(page: &AnyView, cx: &mut App) -> Option<Entity<TitleBar>> {
@@ -117,19 +126,52 @@ pub fn title_bar_of(page: &AnyView, cx: &mut App) -> Option<Entity<TitleBar>> {
 struct Embedded {
     instance: InstanceId,
     tool: String,
-    /// Whether its power icon and its close icon show.
-    icons: (bool, bool),
+    /// Whether its power icon and its close icon show, and whether its title is a menu.
+    icons: (bool, bool, bool),
     on: Rc<Cell<bool>>,
     frame: CardFrame,
     view: Option<AnyView>,
 }
 
 /// The title of an embedded card.
-struct CardTitle(SharedString);
+/// The title of an embedded card, as the window's cards have theirs: 14 pt medium, and with a
+/// menu, a chevron after it and the wash of the pointer over it.
+struct CardTitle {
+    name: SharedString,
+    /// For tests, which find it as `card-title-<instance>`.
+    instance: String,
+    on_press: Option<Rc<dyn Fn(&mut App)>>,
+}
 
 impl Render for CardTitle {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().px(px(8.)).child(self.0.clone())
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let (hover, muted) = (theme.alpha_at(0.08), theme.gray_700);
+        let title = div()
+            .id("card-title")
+            .debug_selector({
+                let instance = self.instance.clone();
+                move || format!("card-title-{instance}")
+            })
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .h(px(24.))
+            .pl(px(8.))
+            .pr(px(6.))
+            .rounded(px(6.))
+            .text_size(px(14.))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(theme.gray_950)
+            .child(div().min_w_0().truncate().child(self.name.clone()));
+        match self.on_press.clone() {
+            Some(on_press) => title
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .child(Icon::new("chevron-down").size(12.).color(muted))
+                .on_click(move |_, _, cx| on_press(cx)),
+            None => title,
+        }
     }
 }
 
@@ -477,7 +519,11 @@ impl TypeScriptCard {
             .tool_of(&instance)?
             .to_string();
         let on = props.on.unwrap_or(true);
-        let icons = (props.on_power == Some(true), props.on_close == Some(true));
+        let icons = (
+            props.on_power == Some(true),
+            props.on_close == Some(true),
+            props.on_title == Some(true),
+        );
         if let Some(old) = self.embedded.remove(&node)
             && old.instance == instance
             && old.tool == tool
@@ -488,7 +534,15 @@ impl TypeScriptCard {
         }
         let name = (Devices::label_of(&self.session, &instance, cx))
             .map_or_else(|| SharedString::from(tool.clone()), |label| label.name);
-        let title = cx.new(|_| CardTitle(name));
+        let on_press = icons.2.then(|| {
+            let card = cx.weak_entity();
+            Rc::new(move |cx: &mut App| {
+                card.update(cx, |view, cx| view.event(node, EventKind::Title, json!({}), cx))
+                    .ok();
+            }) as Rc<dyn Fn(&mut App)>
+        });
+        let instance_name = instance.as_str().to_string();
+        let title = cx.new(|_| CardTitle { name, instance: instance_name, on_press });
         let mut frame = CardFrame::new(format!("card-{}", instance.as_str()), title);
         let shown = Rc::new(Cell::new(on));
         if icons.0 {

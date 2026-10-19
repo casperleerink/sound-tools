@@ -85,6 +85,8 @@ props! {
         on: bool,
         on_power: bool,
         on_close: bool,
+        /// Whether its title is a menu: a chevron after it, and a press tells the view.
+        on_title: bool,
     }
 }
 

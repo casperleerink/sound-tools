@@ -1291,7 +1291,7 @@ impl Live {
 
     /// One frame of the window: the control loops run, a card whose watches moved draws again,
     /// and every instance whose sample was read on its thread runs again, so it plays it.
-    fn frame(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn frame(&mut self, cx: &mut Context<Self>) {
         self.hear_taps(cx);
         self.run_loops(cx);
         self.look_at_watches(cx);

@@ -684,12 +684,12 @@ export const song = tool({
         addOffer(offer.key, `${name}/chain/${effect}`, "Add an effect");
         editChain("Add an effect", (effects) => (effects.state.order = [...effects.state.order, effect]));
       };
-      // Another instrument in place of the one the track plays, from what takes notes.
-      const changeInstrument = async () => {
-        const offered = await offers("notes");
+      /** Another device in place of the one at `path`: an instrument from what takes notes, an effect from what takes sound. */
+      const replace = async (takes: "notes" | "audio", path: string, label: string) => {
+        const offered = await offers(takes);
         const picked = await openMenu(offered.map((offer) => ({ label: offer.name, disabled: offer.unavailable !== null })));
         const offer = picked === null ? undefined : offered[picked];
-        if (offer) addOffer(offer.key, `${name}/synth`, "Change the instrument");
+        if (offer) addOffer(offer.key, path, label);
       };
       const remove = (effect: string) =>
         editChain("Remove an effect", (effects) => {
@@ -719,14 +719,11 @@ export const song = tool({
             </div>
             <div style={{ direction: "row", paddingLeft: 8, gap: 8 }}>
               <div style={{ align: "center", gap: 6 }}>
-                <div style={{ direction: "row", gap: 2 }}>
-                  <Fader path={`${name}/mix`} height={PANEL_FADER} />
-                  <PeakMeter of={`${name}/mix`} length={PANEL_FADER} />
-                </div>
+                <Volume path={`${name}/mix`} height={PANEL_FADER} />
                 <GainText path={`${name}/mix`} />
               </div>
               <div style={{ align: "center", gap: 4 }}>
-                <Knob value={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} />
+                <Knob value={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
                 <div style={{ direction: "row", gap: 4 }}>
                   <Toggle key={`panel-mute-${name}`} label="M" on={() => (row() ? muted(row()!) : false)} color="peach" onPress={() => toggleMute(name)} />
                   <Toggle key={`panel-solo-${name}`} label="S" on={() => state.solo.includes(name)} color="yellow" onPress={() => toggleSolo(name)} />
@@ -736,23 +733,18 @@ export const song = tool({
           </div>
           <div style={{ width: 1, background: "alpha/5", keep: true }} />
         <div key="rack" style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 12, paddingRight: 16, align: "start", scroll: "x" }}>
-          <DeviceCard path={`${name}/synth`} />
+          <DeviceCard path={`${name}/synth`} onTitle={() => replace("notes", `${name}/synth`, "Change the instrument")} />
           <For each={order}>
             {(effect) => (
               <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && carried !== effect && moveBefore(carried, effect)}>
-                <DeviceCard path={`${name}/chain/${effect}`} on={() => !isOff(effect)} onPower={() => toggle(effect)} onClose={() => remove(effect)} />
+                <DeviceCard path={`${name}/chain/${effect}`} on={() => !isOff(effect)} onPower={() => toggle(effect)} onClose={() => remove(effect)}
+                  onTitle={() => replace("audio", `${name}/chain/${effect}`, "Change an effect")} />
               </div>
             )}
           </For>
-          <div key="rack-buttons" style={{ gap: 4, keep: true }}>
-            <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: "alpha/5" }} onPress={addEffect}>
-              <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
-              <Icon name="chevron-down" size={14} color="gray-700" />
-            </div>
-            <div key="change-instrument" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: "alpha/5" }} onPress={changeInstrument}>
-              <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Instrument</div>
-              <Icon name="chevron-down" size={14} color="gray-700" />
-            </div>
+          <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: "alpha/5", keep: true }} onPress={addEffect}>
+            <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
+            <Icon name="chevron-down" size={14} color="gray-700" />
           </div>
         </div>
         </div>
@@ -779,6 +771,30 @@ export const song = tool({
           drag={{ y: { value: `${path}.gain_db`, travel: height, default: 0, label: "Change the volume" } }}>
           <Rect x={13} y={0} width={2} height={height} radius={1} color="alpha/10" />
           <Rect x={0} y={at.times(-(height - 6)).plus(height - 6)} width={28} height={6} radius={3} color="gray-900" />
+        </Space>
+      );
+    };
+    /** A fader over its meter, as the window drew a strip's volume: two bars, green up to -6 dB and yellow above, with a peak line held 1.5 s, and the handle on them, which a drag up and down turns natively. With `device`, the meter is of what the device plays. */
+    const Volume = ({ path, height, device }: { path: string; height: number; device?: boolean }) => {
+      const place = (amplitude: Live) => amplitude.pow(CURVE).times(ZERO_DB).min(1);
+      const hot = Math.pow(Math.pow(10, -6 / 20), CURVE) * ZERO_DB;
+      const at = now.value(`${path}.gain_db`, { played: true, fraction: true });
+      return (
+        <Space key={`volume-${path}`} width={28} height={height} cursor="ns-resize"
+          drag={{ y: { value: `${path}.gain_db`, travel: height, default: 0, label: "Change the volume" } }}>
+          {([0, 1] as const).flatMap((channel) => {
+            const level = device ? now.devicePeak(channel) : now.peak(path, channel);
+            const bar = place(level).fall(0.5);
+            const peak = place(level).hold(1.5).fall(0.5);
+            const x = 8 + channel * 7;
+            return [
+              <Rect x={x} y={0} width={5} height={height} color="alpha/5" />,
+              <Rect x={x} y={bar.min(hot).times(-height).plus(height)} width={5} height={bar.min(hot).times(height)} color="green" />,
+              <Rect x={x} y={bar.times(-height).plus(height)} width={5} height={bar.minus(hot).max(0).times(height)} color="yellow" />,
+              <Rect x={x} y={peak.times(-height).plus(height)} width={5} height={1} color="gray-950" opacity={peak.gt(0.01)} />,
+            ];
+          })}
+          <Rect x={0} y={at.times(-height).plus(height - 3)} width={28} height={6} radius={3} color="gray-950" />
         </Space>
       );
     };
@@ -838,10 +854,7 @@ export const song = tool({
             <Button key="close-master" icon="x" variant="ghost" size="xs" onPress={() => (memory.master = false)} />
           </div>
           <div style={{ paddingLeft: 8, align: "start", gap: 6 }}>
-            <div style={{ direction: "row", gap: 2 }}>
-              <Fader path="master" height={PANEL_FADER} />
-              <PeakMeter of="master" length={PANEL_FADER} />
-            </div>
+            <Volume path="master" height={PANEL_FADER} device />
             <GainText path="master" />
           </div>
         </div>

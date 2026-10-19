@@ -117,12 +117,12 @@ fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
     assert_eq!(window.problems(), []);
 }
 
-/// "Instrument…" lists what takes notes, and the one picked takes the place of the synth, as one
-/// undo step that gives the synth back.
+/// The synth card's title lists what takes notes, and the one picked takes the place of the
+/// synth, as one undo step that gives the synth back.
 #[gpui::test]
 fn an_instrument_picked_from_the_offers_takes_the_place_of_the_synth(cx: &mut TestAppContext) {
     let mut window = open_rack(cx);
-    let change = window.until_found("div-change-instrument");
+    let change = window.until_found("card-title-song/t00/synth");
     window.click(change);
     let wavetable = window.cx.update(|_, cx| {
         (Devices::offered(Takes::Notes, cx).into_iter())

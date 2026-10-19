@@ -166,6 +166,8 @@ pub(crate) enum EventKind {
     Power,
     /// The close icon of an embedded card.
     Close,
+    /// The title of an embedded card, which is a menu.
+    Title,
 }
 
 /// A number a lane or a cable moves, as code gets it: its range, and how a knob travels it.

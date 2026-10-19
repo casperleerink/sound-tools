@@ -75,6 +75,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let mut opened = open(cx, &[])?;
     click(&opened, at(4 * BAR + 960, 1.), 1, cx)?;
     opened.play_from(Ticks(5 * BAR + 1000), cx)?;
+    settle(cx);
     save(cx, opened.window.into(), "look-piece")?;
     drop(opened);
 
@@ -121,8 +122,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let mut opened = open(cx, &[("limit.json", limiter)])?;
     opened.play_from(Ticks(0), cx)?;
     click(&opened, point(px(HEADER / 2.), px(super::WINDOW_HEIGHT - 20.)), 1, cx)?;
+    // The card reads the limiter's meters on a timer, which a headless window runs not.
+    let limiter = opened.card::<limiter::view::LimiterView>("song/limit", cx)?;
     for _ in 0..(3.7 * 60.) as usize {
         opened.advance(800, cx);
+        cx.update(|cx| limiter.update(cx, |card, cx| card.read_meters(cx)));
     }
     cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
     settle(cx);
