@@ -13,8 +13,7 @@ use super::piano_roll::{ROW, open_roll};
 use super::{ONLY_THE_TOOL, Window, open};
 
 /// `count` notes of a piano roll, all in a group the drag `move` moves, as selected notes are,
-/// with a colour of their own under the pointer; or with `canvas`, the same notes on a canvas
-/// whose drag moves the first one through the code, which makes every shape again.
+/// with a colour of their own under the pointer.
 const GRID: &str = r##"import { For, Group, h, number, Rect, Space, tool, type Drag } from "./sdk";
 
 tool({
@@ -22,26 +21,19 @@ tool({
   title: "Grid",
   when: "A measurement",
   doc: "Many notes.",
-  state: { count: number({ min: 0, max: 100000, default: 100 }), canvas: number({ min: 0, max: 1, default: 0 }) },
-  memory: () => ({ x: 0 }),
+  state: { count: number({ min: 0, max: 100000, default: 100 }) },
   sound: () => 0,
-  view: ({ state, memory, now }) => {
+  view: ({ state, now }) => {
     const notes = () => Array.from({ length: state.count }, (_, index) => ({ start: (index % 64) * 240, pitch: 36 + (index % 48) }));
-    const canvas = () => state.canvas === 1;
-    const shapes = (): ShapeLiteral[] => notes().map((note, index) => ({
-      kind: "rect", x: (index === 0 ? memory.x : note.start) / 10, y: note.pitch * 4, width: 24, height: 4, color: "#a9b1ff",
-    }));
     const move = now.drag("move");
     const drag: Drag = { id: "move", snap: { x: 240, y: 1 }, onEnd: () => {} };
-    return () => canvas()
-      ? h(Canvas, { width: 1200, height: 600, shapes, onDrag: (x) => { memory.x = x * 12000; } })
-      : h(Space, { key: "roll", width: 1200, height: 600, unit: { x: 0.1, y: 4 } },
-          h(Group, { x: move.dx, y: move.dy },
-            h(For<{ start: number; pitch: number }>, { each: notes }, (note) => h(Rect, {
-              x: note.start, y: note.pitch, width: 240, height: 1, color: "#a9b1ff", hover: "#e9ebef", drag,
-            })),
-          ),
-        );
+    return h(Space, { key: "roll", width: 1200, height: 600, unit: { x: 0.1, y: 4 } },
+      h(Group, { x: move.dx, y: move.dy },
+        h(For<{ start: number; pitch: number }>, { each: notes }, (note) => h(Rect, {
+          x: note.start, y: note.pitch, width: 240, height: 1, color: "#a9b1ff", hover: "#e9ebef", drag,
+        })),
+      ),
+    );
   },
 });
 "##;
@@ -95,11 +87,8 @@ impl Window<'_> {
     }
 }
 
-fn open_grid(cx: &mut TestAppContext, count: usize, canvas: bool) -> Option<Window<'_>> {
-    let record = format!(
-        r#"{{"tool": "grid", "state": {{"count": {count}, "canvas": {}}}}}"#,
-        u8::from(canvas)
-    );
+fn open_grid(cx: &mut TestAppContext, count: usize) -> Option<Window<'_>> {
+    let record = format!(r#"{{"tool": "grid", "state": {{"count": {count}}}}}"#);
     open(
         cx,
         &[
@@ -128,27 +117,9 @@ fn performance_of_a_page_of_many_shapes_2000(cx: &mut TestAppContext) {
     measure(cx, SIZES[2]);
 }
 
-#[gpui::test]
-#[ignore = "a measurement, not a check; run it locally and read the printed times"]
-fn performance_of_a_drag_through_bun_100(cx: &mut TestAppContext) {
-    measure_old(cx, SIZES[0]);
-}
-
-#[gpui::test]
-#[ignore = "a measurement, not a check; run it locally and read the printed times"]
-fn performance_of_a_drag_through_bun_1000(cx: &mut TestAppContext) {
-    measure_old(cx, SIZES[1]);
-}
-
-#[gpui::test]
-#[ignore = "a measurement, not a check; run it locally and read the printed times"]
-fn performance_of_a_drag_through_bun_2000(cx: &mut TestAppContext) {
-    measure_old(cx, SIZES[2]);
-}
-
 /// The new road: the window moves every note as the pointer goes, and Bun hears the end.
 fn measure(cx: &mut TestAppContext, count: usize) {
-    let Some(mut window) = open_grid(cx, count, false) else {
+    let Some(mut window) = open_grid(cx, count) else {
         return;
     };
     let roll = window.origin("space-roll");
@@ -195,51 +166,6 @@ fn measure(cx: &mut TestAppContext, count: usize) {
         events - asked.1
     );
     window.up(note + point(px(MOVES as f32 * 3.), px(MOVES as f32)));
-}
-
-/// The old road: every move runs the code, which makes the canvas again.
-fn measure_old(cx: &mut TestAppContext, count: usize) {
-    let Some(mut window) = open_grid(cx, count, true) else {
-        return;
-    };
-    let canvas = window.origin("space-space-0");
-    let at = canvas + point(px(100.), px(100.));
-    window.down(at);
-    let asked = sound_typescript::sent_updates_and_events();
-    let mut latencies = Vec::new();
-    for step in 1..=MOVES {
-        let heard = sound_typescript::heard_batches();
-        let started = Instant::now();
-        let to = at + point(px(step as f32 * 3.), px(0.));
-        window
-            .cx
-            .simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
-        // Until the ops of this move are drawn: Bun answers on a thread of its own.
-        while sound_typescript::heard_batches() == heard {
-            window.cx.run_until_parked();
-            if started.elapsed() > Duration::from_secs(5) {
-                let problems = window.problems();
-                panic!(
-                    "no ops came: {:?} {:?} {problems:?}",
-                    asked,
-                    sound_typescript::sent_updates_and_events()
-                );
-            }
-        }
-        window.cx.run_until_parked();
-        latencies.push(started.elapsed());
-    }
-    let (updates, events) = sound_typescript::sent_updates_and_events();
-    print(
-        &format!("{count} shapes, canvas: a move until its ops are drawn"),
-        latencies,
-    );
-    println!(
-        "{count} shapes, canvas: {} updates and {} events told Bun in {MOVES} moves",
-        updates - asked.0,
-        events - asked.1
-    );
-    window.up(at);
 }
 
 /// `count` notes of the piano roll of `tooling/agent-eval/examples`: `rows` pitches from 56 on

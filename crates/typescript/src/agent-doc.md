@@ -207,7 +207,7 @@ view: ({ state, memory, update, now }) => {
 - `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. Escape lets go of a drag, and its code hears nothing.
 - `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts. On a `div`, `follow: { y: "timeline" }` scrolls its children with it, cut off at its edges: the heads of the rows of a timeline.
 - `<>...</>` gives several children where one goes, such as a component that gives two shapes; import `Fragment` with `h`.
-- A drag can also turn a number as it goes, with no code, as a knob does: `{ y: { value: "cutoff" } }`, named as `now.value` names it; for a field the whole drag is one undo step. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
+- A drag can also turn a number as it goes, with no code, as a knob does: `{ y: { value: "cutoff" } }`, named as `now.value` names it; for a field the whole drag is one undo step.
 
 Levels, the clock and easing are live values too, so a meter or a light moves on every frame with no code. Paths such as `"bass/synth"` reach a record deeper down:
 

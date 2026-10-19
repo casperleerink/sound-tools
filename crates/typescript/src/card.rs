@@ -826,9 +826,6 @@ impl TypeScriptCard {
         held.moved = true;
         let held = held.clone();
         self.turn_held(&held, cx);
-        if held.drag.on_move {
-            self.event(held.node, EventKind::Move, held.result(), cx);
-        }
         cx.notify();
     }
 

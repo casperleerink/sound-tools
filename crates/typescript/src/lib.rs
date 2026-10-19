@@ -46,7 +46,8 @@ use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
 pub use card::embedded_view;
-pub use feeds::{live_frames, shown_by_live_values};
+#[cfg(feature = "test-support")]
+pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use window::start_window;
 

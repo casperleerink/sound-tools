@@ -50,7 +50,7 @@ type Request =
   | ({ type: "clock" } & Clock)
   | ({ type: "song" } & Song)
   /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
-  | { type: "event"; card: number; node: number; kind: "press" | "end" | "move" | "commit" | "drop" | "power" | "close"; payload: unknown; time: number }
+  | { type: "event"; card: number; node: number; kind: "press" | "end" | "commit" | "drop" | "power" | "close"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: string; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
@@ -102,14 +102,6 @@ const KEYS = {
   behaviour: true, children: true, memory: true, tick: true, view: true, onKey: true,
   keys: true, globalKeys: true, onNotes: true, onTake: true,
 } satisfies Record<keyof Spec, true>;
-/** The keys a tool had before, with what took their place. */
-const GONE: Record<string, string> = {
-  kind: "voices: a sound with one voice is what kind effect and source were, more voices what instrument was",
-  controls: "inputs: number(...) for a live control, bang() for a trigger",
-  card: "view, which draws a card in a rack and the whole window at the top",
-  page: "view, which draws a card in a rack and the whole window at the top",
-  transport: "clock, which every view gets; <Transport clock={clock} /> shows it, globalKeys: [\"space\"] plays it",
-};
 /** The keys the app keeps, on macOS and elsewhere: no tool takes them. */
 const APP_KEYS = ["z", "n", "o", "q", "l", "b", "k"].flatMap((key) => [`cmd-${key}`, `ctrl-${key}`]).concat(["tab"]);
 /** The most voices a sound plays at once. */
@@ -123,9 +115,7 @@ function problemsOf(spec: Spec): string[] {
   const problems: string[] = [];
   try {
     for (const key of Object.keys(spec)) {
-      if (key in GONE) {
-        problems.push(`${key}: a tool has no ${key} now; use ${GONE[key]}`);
-      } else if (!(key in KEYS)) {
+      if (!(key in KEYS)) {
         problems.push(`${key}: a tool has no ${key}; its keys are ${Object.keys(KEYS).join(", ")}`);
       }
     }

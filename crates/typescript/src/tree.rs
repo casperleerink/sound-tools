@@ -1181,11 +1181,9 @@ pub(crate) struct Drag {
     pub axis: Option<Axis>,
     pub x: Option<Turns>,
     pub y: Option<Turns>,
-    /// Its code hears its end, or every move.
+    /// Its code hears its end.
     #[serde(default)]
     pub on_end: bool,
-    #[serde(default)]
-    pub on_move: bool,
 }
 
 /// Whole steps of a drag, in units: of how far it went, or with `grid`, of where the anchor of

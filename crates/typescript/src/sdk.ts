@@ -1383,7 +1383,7 @@ export interface Dropped {
   y: number;
 }
 
-/** A drag at its end, or at a move with `onMove`: as `DragValues` says, in numbers. */
+/** A drag at its end: as `DragValues` says, in numbers. */
 export interface DragResult extends Modifiers {
   startX: number;
   startY: number;
@@ -1435,11 +1435,6 @@ export interface Drag {
   y?: DragTurns;
   /** At the end of the drag, when the pointer moved. */
   onEnd?: (drag: DragResult) => void;
-  /**
-   * At every move: runs code each time, so what it draws is a moment behind the pointer. For
-   * drawing with the pointer, as on paper; a move or a resize is `now.drag` and `onEnd`.
-   */
-  onMove?: (drag: DragResult) => void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2030,7 +2025,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   if (id === undefined) {
     id = nextNode++;
     card.drags.set(drag, id);
-    card.ops.push(["drag", id, { ...drag, onEnd: drag.onEnd !== undefined, onMove: drag.onMove !== undefined }]);
+    card.ops.push(["drag", id, { ...drag, onEnd: drag.onEnd !== undefined }]);
   }
   return id;
 }
@@ -2812,8 +2807,8 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
   return { ops };
 }
 
-/** A press, the end or a move of a drag, a drop, a field's text or a card's icon, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "end" | "move" | "commit" | "drop" | "power" | "close", payload: never) {
+/** A press, the end of a drag, a drop, a field's text or a card's icon, on the node `id`. */
+function nodeEvent(id: number, kind: "press" | "end" | "commit" | "drop" | "power" | "close", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
   switch (kind) {
@@ -2824,7 +2819,7 @@ function nodeEvent(id: number, kind: "press" | "end" | "move" | "commit" | "drop
     case "close":
       return made.onClose?.();
     default: {
-      const handler = { press: made.onPress, end: made.drag?.onEnd, move: made.drag?.onMove, drop: made.onDrop }[kind];
+      const handler = { press: made.onPress, end: made.drag?.onEnd, drop: made.onDrop }[kind];
       return handler?.(payload);
     }
   }

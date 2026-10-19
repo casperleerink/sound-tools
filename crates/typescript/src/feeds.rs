@@ -3,11 +3,9 @@
 //! cables play them, and what eases from frame to frame.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -26,19 +24,18 @@ pub(crate) fn played_name(child_number: &str) -> String {
 
 /// What live values last read, for tests: `peak:<name>`, the louder channel, and
 /// `played:<name>`.
-static SHOWN: Mutex<BTreeMap<String, f32>> = Mutex::new(BTreeMap::new());
-static FRAMES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "test-support")]
+static SHOWN: std::sync::Mutex<std::collections::BTreeMap<String, f32>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 /// What the live values of a card last read of the peaks `name` (`peak:<name>`, the louder
 /// channel) or of a number as it plays (`played:<name>`), for a test that a meter moves.
+#[cfg(feature = "test-support")]
 pub fn shown_by_live_values(name: &str) -> Option<f32> {
-    let shown = SHOWN.lock().unwrap_or_else(PoisonError::into_inner);
+    let shown = SHOWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     shown.get(name).copied()
-}
-
-/// How many frames the live values of every card worked out, for a measurement.
-pub fn live_frames() -> u64 {
-    FRAMES.load(Ordering::Relaxed)
 }
 
 /// How many stretches a waveform of a file holds: more than a wave draws columns, so each
@@ -146,6 +143,7 @@ impl Feeds {
             let over = frames.len().saturating_sub(Scope::FRAMES);
             frames.drain(..over);
         }
+        #[cfg(feature = "test-support")]
         self.tell_tests();
         // What no tree drew for a while starts again when it shows.
         let frame = self.frame;
@@ -178,9 +176,11 @@ impl Feeds {
         wave.clone()
     }
 
+    #[cfg(feature = "test-support")]
     fn tell_tests(&self) {
-        let mut shown = SHOWN.lock().unwrap_or_else(PoisonError::into_inner);
-        FRAMES.fetch_add(1, Ordering::Relaxed);
+        let mut shown = SHOWN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (name, [left, right]) in &self.peaks {
             shown.insert(format!("peak:{name}"), left.max(*right));
         }
