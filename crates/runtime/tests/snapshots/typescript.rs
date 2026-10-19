@@ -2,6 +2,7 @@
 //!
 //! - `typescript-mixer.png`: the mixer of `tooling/agent-eval/examples` as five tones play:
 //!   meters, faders, a muted strip, the master's scope and the device output.
+//! - `typescript-song-mixer.png`: the same song with its mixer open.
 //! - `typescript-song.png`: the song of `tooling/agent-eval/examples`, 12 tracks of 150 clips,
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
@@ -204,7 +205,11 @@ pub(crate) fn snapshots(
     click(&opened, cx, lane(crate::song::BAR / 2, 2.5), 2)?;
     click(&opened, cx, lane(3 * crate::song::BAR + 960, 4.5), 1)?;
     play(&mut opened, cx)?;
-    save(cx, &opened, "typescript-song")
+    save(cx, &opened, "typescript-song")?;
+    // The Mixer button, right of the record button: a strip per track and return, the master.
+    click(&opened, cx, point(px(537.), px(92.)), 1)?;
+    play(&mut opened, cx)?;
+    save(cx, &opened, "typescript-song-mixer")
 }
 
 /// Plays half a second in frames of the window, so meters and what eases move as they do.

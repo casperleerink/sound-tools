@@ -510,11 +510,15 @@ impl BehaviourContext<'_> {
         }
         let record = self.instances.get(self.id);
         let record = record.and_then(|record| record.state.as_any().downcast_ref::<S>());
-        let records = record.map(|state| parameters.clone().map(|number| (number.get)(state)));
+        // A tool whose state is JSON keeps no `S`: what its record leaves out is the default.
+        let records = match record {
+            Some(state) => parameters.clone().map(|number| (number.get)(state)).collect(),
+            None => parameters.clone().map(|number| number.default).collect(),
+        };
         self.next.automation = Some(Automatable {
             endpoint,
             parameters: parameters.map(|parameter| parameter.info()).collect(),
-            records: records.into_iter().flatten().collect(),
+            records,
         });
     }
 
