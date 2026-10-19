@@ -1661,8 +1661,8 @@ function onCleanup(cleanup: () => void) {
   owner?.cleanups.push(cleanup);
 }
 
-/** Reads without making what runs now depend on it, such as the record in a handler. */
-function untrack<T>(read: () => T): T {
+/** Reads once, without what runs now following it: what a component takes as it first draws, such as where an editor opens. */
+export function untrack<T>(read: () => T): T {
   const [lastListener, lastSetup] = [listener, settingUp];
   [listener, settingUp] = [null, 0];
   try {
@@ -2310,7 +2310,7 @@ export function Show(props: { when: Accessor<unknown>; children: () => Child; fa
 export type ThemeColor =
   | "gray-50" | "gray-100" | "gray-200" | "gray-300" | "gray-400" | "gray-500" | "gray-600" | "gray-700" | "gray-800" | "gray-900" | "gray-950"
   | "alpha" | "blue" | "sapphire" | "sky" | "teal" | "green" | "yellow" | "peach" | "red" | "maroon" | "mauve" | "pink" | "lavender" | "rosewater" | "flamingo";
-/** `#rrggbb`, `#rrggbbaa`, a colour of the theme, or one at an opacity in percent: `"alpha/10"`. */
+/** `#rrggbb`, `#rrggbbaa`, a colour of the theme, or one at an opacity in percent: `"alpha/10"`, `"#a9b1ff/70"`. */
 export type Color = `#${string}` | ThemeColor | `${ThemeColor}/${number}`;
 
 /** What a shape the pointer reaches can do. */
@@ -2357,7 +2357,7 @@ export type Shape =
          * Text at `x`, `y`, its top. A live number shows as a readout in `unit`, and a tick, such as
          * `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"` (the one there).
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live>; unit?: Unit | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live>; unit?: Unit | "pan" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
          * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
@@ -2411,6 +2411,8 @@ export interface SpaceProps {
   zoom?: { x?: readonly [number, number]; y?: readonly [number, number] };
   /** Where it is scrolled to when it first draws, in units; the window keeps where it is after. */
   scroll?: { x?: number; y?: number };
+  /** A range across that fills its width once it is laid out, from `before` points right of its left edge to `after` points left of its right one, as far as `zoom` goes: an editor that opens on what it shows. Once per `key`. */
+  fit?: { x: readonly [number, number]; before?: number; after?: number };
   /**
    * The key of a space whose scroll and zoom it shows on an axis, and moves as it scrolls: the
    * ruler and the keys of a piano roll. Give it the same `unit`, `extent` and `zoom` on that axis.
@@ -2626,23 +2628,25 @@ function drawing() {
   return drawing;
 }
 
-const KNOB = { track: "#292c34", value: "#a9b1ff", face: "#1b1d23", pointer: "#e9ebef", label: "#7c808c", text: "#e9ebef" } as const;
 /** The arc of a knob runs from -135 to +135 degrees, in turns. */
 const SWEEP = 0.75;
 
 /**
- * A knob on a number: a field of the record such as `rate`, whose drag is smooth and one undo
- * step, or a number input, which nothing saves. `value` names it as `now.value` does. With
- * `played`, it shows the field as it plays, so it moves with a lane. A double click puts it at `default`.
+ * A knob on a number, as the app's knobs look: a field of the record such as `rate`, whose drag
+ * is smooth and one undo step, or a number input, which nothing saves. `value` names it as
+ * `now.value` does. With `played`, it shows the field as it plays, so it moves with a lane. A
+ * double click puts it at `default`. A `bipolar` one, such as a pan, draws its arc from the top;
+ * `unit: "pan"` reads `C`, `25L`, `100R`.
  */
-export function Knob(props: { value: string; label: string; min: number; max: number; default: number; unit?: Unit; played?: boolean }): UiNode {
-  const { value: name, label, min, max, unit, played } = props;
+export function Knob(props: { value: string; label: string; min: number; max: number; default: number; unit?: Unit | "pan"; played?: boolean; bipolar?: boolean }): UiNode {
+  const { value: name, label, min, max, unit, played, bipolar } = props;
   const value = now.value(name, { played });
   const fraction = now.value(name, { played, fraction: true });
-  const turns: DragTurns = { value: name, min, max, unit, default: props.default, label: `Change ${label.toLowerCase()}` };
+  const turns: DragTurns = { value: name, min, max, unit: unit === "pan" ? undefined : unit, default: props.default, label: `Change ${label.toLowerCase()}` };
   const angle = fraction.times(SWEEP).minus(SWEEP / 2);
   const radians = angle.times(2 * Math.PI);
-  const [centreX, centreY] = [28, 20];
+  const [centreX, centreY, radius] = [28, 18, 16.75];
+  const along = (distance: number) => [radians.sin().times(distance).plus(centreX), radians.cos().times(-distance).plus(centreY)] as const;
   return Space({
     key: `knob-${name}`,
     width: 56,
@@ -2650,17 +2654,12 @@ export function Knob(props: { value: string; label: string; min: number; max: nu
     cursor: "ns-resize",
     drag: { y: turns },
     children: [
-      Arc({ x: centreX, y: centreY, radius: 16, from: -SWEEP / 2, to: SWEEP / 2, color: KNOB.track, width: 2.5 }),
-      Arc({ x: centreX, y: centreY, radius: 16, from: -SWEEP / 2, to: angle, color: KNOB.value, width: 2.5 }),
-      Circle({ x: centreX, y: centreY, radius: 10.5, color: KNOB.face }),
-      Line({
-        from: [radians.sin().times(3).plus(centreX), radians.cos().times(-3).plus(centreY)],
-        to: [radians.sin().times(9).plus(centreX), radians.cos().times(-9).plus(centreY)],
-        color: KNOB.pointer,
-        width: 2,
-      }),
-      Label({ x: centreX, y: 40, text: label, color: KNOB.label, size: 11, align: "center" }),
-      Label({ x: centreX, y: 55, text: value, unit, color: KNOB.text, size: 11, align: "center" }),
+      Arc({ x: centreX, y: centreY, radius, from: -SWEEP / 2, to: SWEEP / 2, color: "alpha/10", width: 2.5 }),
+      Arc({ x: centreX, y: centreY, radius, from: bipolar ? 0 : -SWEEP / 2, to: angle, color: "gray-950", width: 2.5 }),
+      Circle({ x: centreX, y: centreY, radius: 10.5, color: "gray-300" }),
+      Line({ from: along(3.5), to: along(8), color: "gray-950", width: 2 }),
+      Label({ x: centreX, y: 38, text: label, color: "gray-800", size: 12, align: "center" }),
+      Label({ x: centreX, y: 54, text: value, unit, color: "gray-950", size: 12, align: "center" }),
     ],
   });
 }
@@ -2720,7 +2719,7 @@ export function Meter(props: { value: string; label?: string }): UiNode {
       Rect({ x: 0, y: level.negate().plus(64), width: 8, height: level, radius: 2, color: "#7ee0a0" }),
     ],
   });
-  return h("div", { style: { align: "center", gap: 4 } }, bar, props.label && h("div", { style: { color: KNOB.label, fontSize: 11 } }, props.label));
+  return h("div", { style: { align: "center", gap: 4 } }, bar, props.label && h("div", { style: { color: "gray-800", fontSize: 11 } }, props.label));
 }
 
 /** A square to play with the pointer: across moves the number input `x`, up moves `y`. */

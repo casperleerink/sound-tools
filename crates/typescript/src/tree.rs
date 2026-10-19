@@ -165,6 +165,7 @@ props! {
         zoom: Ranges,
         /// Where it shows from when it first draws.
         scroll: Axes,
+        fit: Fit,
         follow: Follow,
         background: Color,
         radius: f32,
@@ -826,6 +827,18 @@ pub(crate) struct Axes {
     pub y: Option<f32>,
 }
 
+/// A range of units a space fits across its width once it is laid out: `x` from `before`
+/// points right of its left edge to `after` points left of its right one, as far as it zooms.
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Fit {
+    pub x: [f32; 2],
+    #[serde(default)]
+    pub before: f32,
+    #[serde(default)]
+    pub after: f32,
+}
+
 /// The spaces a space shows the scroll and zoom of, on an axis, by their keys.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1308,6 +1321,8 @@ pub(crate) enum Readout {
     Ms,
     Db,
     Percent,
+    /// A pan from -1 to 1: `C`, `25L`, `100R`.
+    Pan,
     Position,
     Time,
     Signature,
@@ -1456,7 +1471,7 @@ enum Justify {
 }
 
 /// `#rrggbb`, `#rrggbbaa`, or a colour of the app's theme by name, such as `gray-700`, with an
-/// opacity in percent after a slash: `alpha/10`.
+/// opacity in percent after a slash: `alpha/10`, `#a9b1ff/70`.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(try_from = "String")]
 pub(crate) struct Color(pub(crate) Hsla);
@@ -1468,27 +1483,27 @@ impl TryFrom<String> for Color {
         let wrong = || {
             format!("{text:?} is not a colour such as \"#ff8800\", \"gray-700\" or \"alpha/10\"")
         };
-        let Some(hex) = text.strip_prefix('#') else {
-            let (name, percent) = match text.split_once('/') {
-                Some((name, percent)) => (name, Some(percent)),
-                None => (text.as_str(), None),
-            };
-            let mut color = sound_ui::theme::Theme::dark()
-                .named(name)
-                .ok_or_else(wrong)?;
-            if let Some(percent) = percent {
-                let percent: f32 = percent.parse().map_err(|_| wrong())?;
-                color.a = (percent / 100.0).clamp(0.0, 1.0);
+        let (name, percent) = match text.split_once('/') {
+            Some((name, percent)) => (name, Some(percent)),
+            None => (text.as_str(), None),
+        };
+        let mut color: Hsla = match name.strip_prefix('#') {
+            Some(hex) => {
+                let value = u32::from_str_radix(hex, 16).map_err(|_| wrong())?;
+                let rgba = match hex.len() {
+                    6 => (value << 8) | 0xff,
+                    8 => value,
+                    _ => return Err(wrong()),
+                };
+                gpui::rgba(rgba).into()
             }
-            return Ok(Self(color));
+            None => (sound_ui::theme::Theme::dark().named(name)).ok_or_else(wrong)?,
         };
-        let value = u32::from_str_radix(hex, 16).map_err(|_| wrong())?;
-        let rgba = match hex.len() {
-            6 => (value << 8) | 0xff,
-            8 => value,
-            _ => return Err(wrong()),
-        };
-        Ok(Self(gpui::rgba(rgba).into()))
+        if let Some(percent) = percent {
+            let percent: f32 = percent.parse().map_err(|_| wrong())?;
+            color.a = (percent / 100.0).clamp(0.0, 1.0);
+        }
+        Ok(Self(color))
     }
 }
 
@@ -1659,6 +1674,14 @@ pub(crate) fn decimal(number: f32) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_colour_of_the_theme_or_of_a_track_takes_an_opacity() {
+        let alpha = |text: &str| Color::try_from(text.to_string()).map(|color| color.0.a);
+        assert_eq!(alpha("alpha/10"), Ok(0.1));
+        assert_eq!(alpha("#a9b1ff/70"), Ok(0.7));
+        assert!(alpha("#a9b1ff/x").is_err());
+    }
 
     #[test]
     fn a_number_is_written_as_the_decimal_it_shows() {

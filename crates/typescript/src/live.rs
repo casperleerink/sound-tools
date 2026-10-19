@@ -48,6 +48,8 @@ pub(crate) struct SpaceView {
     pub unit_y: f64,
     pub width: f64,
     pub height: f64,
+    /// Whether its `fit` was applied, once it was laid out.
+    pub fitted: bool,
 }
 
 impl Default for SpaceView {
@@ -61,6 +63,7 @@ impl Default for SpaceView {
             unit_y: 1.0,
             width: 0.0,
             height: 0.0,
+            fitted: false,
         }
     }
 }

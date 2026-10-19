@@ -27,7 +27,7 @@ use sound_ui::components::dropdown_menu::{
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::icon::Icon;
 use sound_ui::components::knob::{
-    decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
+    decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout, short,
 };
 use sound_ui::components::meter::Meter;
 use sound_ui::components::text_input::{self, TextInput};
@@ -1254,6 +1254,20 @@ fn followed(
 }
 
 /// `view` scrolled inside `extent`: an axis without one shows from 0.
+/// `view` zoomed and scrolled so `fit` spans its width, as far as `zoom` goes.
+fn fitted(mut view: SpaceView, fit: tree::Fit, zoom: Option<[f32; 2]>) -> SpaceView {
+    let [from, to] = fit.x.map(f64::from);
+    let room = (view.width - f64::from(fit.before + fit.after)).max(1.0);
+    let wanted = room / ((to - from).max(f64::EPSILON) * view.unit_x);
+    view.zoom_x = match zoom {
+        Some([low, high]) => wanted.clamp(f64::from(low), f64::from(high)),
+        None => wanted,
+    };
+    view.left = from - f64::from(fit.before) / view.scale().0;
+    view.fitted = true;
+    view
+}
+
 fn clamped(mut view: SpaceView, extent: &tree::Ranges) -> SpaceView {
     let (across, down) = view.scale();
     let hold = |edge: f64, range: Option<[f32; 2]>, shown: f64| match range {
@@ -1790,6 +1804,14 @@ impl Drawing<'_, '_> {
             ..SpaceView::default()
         });
         (view.unit_x, view.unit_y) = (unit_x, unit_y);
+        // Fitted once it has a width, which the paint of its first draw gives; the spaces that
+        // follow it see that in the draw after.
+        let fit = space.fit.filter(|_| !view.fitted);
+        if let Some(fit) = fit
+            && view.width > 0.0
+        {
+            view = fitted(view, fit, space.zoom.unwrap_or_default().x);
+        }
         let follow = space.follow.clone().unwrap_or_default();
         let view = followed(clamped(view, &extent), &follow, &self.spaces);
         self.spaces.insert(key.clone(), view);
@@ -1828,6 +1850,9 @@ impl Drawing<'_, '_> {
                       window: &mut Window,
                       cx: &mut App| {
                     painted_at.set(Some(bounds));
+                    if fit.is_some() {
+                        window.request_animation_frame();
+                    }
                     // The size it was laid out at, for live values of what shows and the next scroll.
                     if let Some(view) = spaces.borrow_mut().get_mut(&frame.key) {
                         view.width = f64::from(f32::from(bounds.size.width));
@@ -2381,6 +2406,7 @@ fn text_of(value: f64, shown: Option<Readout>, clock: Option<&sound_core::Clock>
         Some(Readout::Ms) => unit(Unit::Ms),
         Some(Readout::Db) => unit(Unit::Db),
         Some(Readout::Percent) => unit(Unit::Percent),
+        Some(Readout::Pan) => pan_readout(value as f32),
         Some(Readout::Position) => signatures.map_or_else(String::new, |signatures| {
             let position = signatures.bar_beat_of(tick);
             format!("{}.{}", position.bar, position.beat)
