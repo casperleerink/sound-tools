@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Context, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MovedNumber, NoteEvent, Offer, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Child, Clock as SdkClock, Take, Context, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MovedNumber, NoteEvent, Offer, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -54,6 +54,7 @@ type Request =
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: string; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
+  | ({ type: "take"; instance: Played } & Take & Clock)
   | { type: "drop"; card: number }
   | { type: "behaviour"; question: number; tool: string; instance: string }
   /** The file the composer chose for an `openFile`, as it is named under `assets/audio/` now, or `null`. */
@@ -99,7 +100,7 @@ const MAX_SOUNDS = 256;
 const KEYS = {
   name: true, title: true, when: true, doc: true, voices: true, state: true, inputs: true, sound: true,
   behaviour: true, children: true, memory: true, tick: true, view: true, onKey: true,
-  keys: true, globalKeys: true, onNotes: true,
+  keys: true, globalKeys: true, onNotes: true, onTake: true,
 } satisfies Record<keyof Spec, true>;
 /** The keys a tool had before, with what took their place. */
 const GONE: Record<string, string> = {
@@ -237,6 +238,7 @@ function described(spec: Spec, file: string) {
       takes: spec.keys ?? null,
       global_keys: spec.globalKeys ?? [],
       notes: spec.onNotes !== undefined,
+      on_take: spec.onTake !== undefined,
       behaviour: spec.behaviour !== undefined,
       children: spec.children,
     },
@@ -1320,6 +1322,11 @@ function handle(request: Request) {
       const { key: name, down, shift, alt, cmd, ctrl } = request;
       const key = { key: name, down, shift, alt, cmd, ctrl };
       run(request, [request.instance], "onKey", {}, (spec, tool) => spec.onKey?.(tool, key));
+      break;
+    }
+    case "take": {
+      const { recorder, name, tool: kind, state } = request;
+      run(request, [request.instance], "onTake", {}, (spec, tool) => spec.onTake?.(tool, { recorder, name, tool: kind, state } as Take));
       break;
     }
     case "notes":

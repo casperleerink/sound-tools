@@ -15,4 +15,17 @@ export const tape = tool({
       .map((region) => ({ from: { child: region.name }, to: { child: "mix" } }));
     return { connections: [...regions, { from: { child: "mix" }, to: { port: "audio" } }] };
   },
+  onTake: ({ update }, take) => {
+    if (take.tool !== "region") return;
+    update("Record", ({ children }) => {
+      children.push({ name: freeName(children.map((child) => child.name), take.name), tool: "region", state: take.state });
+    });
+  },
 });
+
+/** `wanted`, or `wanted-2` and on when that is taken. */
+export function freeName(names: readonly string[], wanted: string): string {
+  let name = wanted;
+  for (let number = 2; names.includes(name); number++) name = `${wanted}-${number}`;
+  return name;
+}

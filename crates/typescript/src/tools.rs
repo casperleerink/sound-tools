@@ -66,6 +66,8 @@ pub(crate) struct ToolInfo {
     pub global_keys: Vec<String>,
     /// It hears note events, `onNotes`: what reaches its `notes`.
     pub notes: bool,
+    /// It keeps what its `recorder` children take, `onTake`.
+    pub on_take: bool,
     /// It owns children and has a behaviour, which declares how they connect.
     pub behaviour: bool,
     /// The tools of its children by name, when it names them. An empty map allows none.

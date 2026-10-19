@@ -189,6 +189,11 @@ pub(crate) struct SimulatedInput {
 
 impl SimulatedInput {
     /// `executor` is what an input that closes asks whether it is on the thread that draws.
+    /// How many times it closed.
+    pub(crate) fn closings(&self) -> usize {
+        self.closed.lock().unwrap().len()
+    }
+
     pub(crate) fn opener(&self, executor: BackgroundExecutor) -> OpenInput {
         let input = self.clone();
         Arc::new(move || {

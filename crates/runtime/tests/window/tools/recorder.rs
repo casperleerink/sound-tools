@@ -36,6 +36,10 @@ tool({
       h("div", { key: "arm", onPress: () => send({ child: "rec", number: "record" }, 1) }, "Arm"),
       h("div", { key: "done", onPress: () => send({ child: "rec", number: "record" }, 0) }, "Done"),
     ),
+  onTake: ({ update }, take) =>
+    update("Record", ({ children }) => {
+      children.push({ name: take.name, tool: take.tool, state: take.state });
+    }),
 });
 "#;
 
@@ -146,6 +150,7 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut 
     assert!((900..1_400).contains(&note_start), "{note_start}");
 
     // One undo step for both, which takes both away.
+    window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Record"));
     assert_eq!(window.undo().as_deref(), Some("Record"));
     assert!(window.made("region").is_empty() && window.made("timeline").is_empty());
@@ -211,4 +216,59 @@ impl Window<'_> {
                 .count()
         })
     }
+}
+
+/// An input that cannot open ends the take that waited for it: its notes are kept, and nothing
+/// waits for ever.
+#[gpui::test]
+fn a_take_whose_input_cannot_open_keeps_its_notes(cx: &mut TestAppContext) {
+    let Some((mut window, input)) = open_studio(cx) else {
+        return;
+    };
+    input.fails.store(true, Ordering::Relaxed);
+    let arm = window.until_found("div-arm");
+    window.cx.simulate_click(arm, Modifiers::default());
+    window.start_playing();
+    window.record_for(&input, 24_000);
+    window.play_midi(60);
+    window.record_for(&input, 24_000);
+    let done = window.until_found("div-done");
+    window.cx.simulate_click(done, Modifiers::default());
+    window.until("the notes kept", |window| {
+        window.record_for(&input, 2_048);
+        !window.made("timeline").is_empty()
+    });
+    assert!(window.made("region").is_empty());
+}
+
+/// A recorder deleted while it takes ends its take there: its notes are kept, and the input it
+/// held is let go.
+#[gpui::test]
+fn a_recorder_deleted_while_it_takes_lets_go_of_the_input(cx: &mut TestAppContext) {
+    let Some((mut window, input)) = open_studio(cx) else {
+        return;
+    };
+    let arm = window.until_found("div-arm");
+    window.cx.simulate_click(arm, Modifiers::default());
+    window.until("the input opens", |_| {
+        input.openings.load(Ordering::Relaxed) == 1
+    });
+    window.start_playing();
+    window.record_for(&input, 24_000);
+    window.play_midi(60);
+    window.record_for(&input, 24_000);
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = sound_core::Changes::new();
+                changes.delete(&InstanceId::new("studio/rec").unwrap());
+                project.commit("Delete the recorder", changes)
+            })
+        })
+    });
+    window.until("the notes kept and the input let go", |window| {
+        window.record_for(&input, 2_048);
+        !window.made("timeline").is_empty() && input.closings() == 1
+    });
 }

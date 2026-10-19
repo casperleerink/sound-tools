@@ -370,6 +370,14 @@ impl LiveInput {
             Some(Err(error)) => {
                 self.session
                     .update(cx, |session, cx| session.report(error, cx));
+                // A take that waited for it ends with no sound: its notes are kept.
+                if self.hold.audio {
+                    let finished = RecorderReport::Finished {
+                        first_nanos: None,
+                        takes: Vec::new(),
+                    };
+                    cx.emit(Recorded(vec![finished].into()));
+                }
                 // Armed with no input would show a level that never moves.
                 self.recording.update(cx, |recording, cx| {
                     recording.retain_armed(|_| false, cx);

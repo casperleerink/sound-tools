@@ -27,8 +27,8 @@ use sound_ui::components::device_card::{
     CARD_HEIGHT, CARD_PADDING, HEADER_HEIGHT, PLAIN_CARD_WIDTH,
 };
 use sound_ui::{
-    DeviceLabel, DeviceOffer, Devices, GlobalKeys, Loop, OfferGroup, Playhead, Session, Takes,
-    Views,
+    DeviceLabel, DeviceOffer, Devices, FinishedTake, GlobalKeys, Loop, OfferGroup, Playhead,
+    Session, Takes, Views,
 };
 
 use crate::bun::{
@@ -369,6 +369,11 @@ impl Live {
                 Some(bun) => Live::running(bun, cx),
                 None => Host::Stopped,
             };
+            let recording = session.read(cx).recording().clone();
+            cx.subscribe(&recording, |live, _, take: &FinishedTake, cx| {
+                live.take(take, cx)
+            })
+            .detach();
             cx.subscribe(session, |live, _, event, cx| match event {
                 ProjectEvent::Created(id)
                 | ProjectEvent::Changed(id)
@@ -1191,6 +1196,37 @@ impl Live {
             self.hear(&id, &tool, &heard, &session, cx);
             self.taps.insert(id, (tap, tapped.next));
         }
+    }
+
+    /// Gives a take to the `onTake` of the parent of its recorder. One with none keeps nothing
+    /// but the files, and says so.
+    fn take(&mut self, take: &FinishedTake, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let parent = take.recorder.parent();
+        let project = session.read(cx).project();
+        let tool = parent.as_ref().and_then(|parent| project.tool_of(parent));
+        let keeps = tool
+            .is_some_and(|tool| find(&self.tools.borrow(), tool).is_some_and(|info| info.on_take));
+        let (Some(parent), true) = (parent, keeps) else {
+            let message = format!(
+                "The take of {} was not kept: its parent has no `onTake`. Its files are under assets/.",
+                take.recorder
+            );
+            return session.update(cx, |session, cx| session.report(message, cx));
+        };
+        let clock = clock_of(&session, cx);
+        self.tell(cx);
+        let instance = played(session.read(cx).project(), &parent);
+        self.host.send(&Request::Take {
+            instance,
+            recorder: take.recorder.name(),
+            name: &take.name,
+            tool: take.tool,
+            state: &take.state,
+            clock,
+        });
     }
 
     /// Gives `heard` to the `onNotes` of the instance `id` of `tool`, when it has one.

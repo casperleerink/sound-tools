@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use gpui::Context;
+use gpui::{Context, EventEmitter};
 use sound_core::{InstanceId, Ticks};
 use sound_media::TakeOverview;
 
@@ -24,6 +24,17 @@ pub struct LiveSound {
     pub overview: TakeOverview,
     /// The second of the file the composer heard at `start`: where its waveform lines up.
     pub start_seconds: f64,
+}
+
+/// A take that ended, for the code of the parent of its recorder to keep: the record of a child
+/// that would hold it, a `timeline` of notes or a `region` of sound, whose files are written.
+#[derive(Clone, Debug)]
+pub struct FinishedTake {
+    pub recorder: InstanceId,
+    /// A name of the files it wrote, for the child that keeps it.
+    pub name: String,
+    pub tool: &'static str,
+    pub state: serde_json::Value,
 }
 
 #[derive(Default)]
@@ -66,4 +77,11 @@ impl Recording {
         self.takes = takes;
         cx.notify();
     }
+
+    /// A take ended: the window gives it to the code of its recorder's parent.
+    pub fn finished(&mut self, take: FinishedTake, cx: &mut Context<Self>) {
+        cx.emit(take);
+    }
 }
+
+impl EventEmitter<FinishedTake> for Recording {}

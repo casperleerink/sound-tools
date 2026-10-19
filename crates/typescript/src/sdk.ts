@@ -695,7 +695,22 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
    */
   onNotes?: (tool: Context<ValuesOf<S>, I, M, K>, event: HeardEvent) => void;
+  /**
+   * Keeps what one of its `recorder` children took, with `update`: such as a new child
+   * `{ name: take.name, tool: take.tool, state: take.state }`. Its files are written already.
+   * With no `onTake` a take keeps only its files.
+   */
+  onTake?: (tool: Context<ValuesOf<S>, I, M, K>, take: Take) => void;
 }
+
+/**
+ * What a `recorder` took, as the record of a child that keeps it: notes as a `timeline`, sound as
+ * a `region`. `recorder` is the child that took it, `name` a name of its files.
+ */
+export type Take = { recorder: string; name: string } & (
+  | { tool: "timeline"; state: StateOfTool<"timeline"> }
+  | { tool: "region"; state: StateOfTool<"region"> }
+);
 
 /** A record and the records of its children: what a behaviour gets, and what `update` changes. */
 export interface Part<State, K extends ChildTools = ChildTools> {

@@ -2,7 +2,7 @@ import { Arc, DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, mem
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, type EditorMemory, type Lane } from "./clip-editor";
-import { tape } from "./tape";
+import { freeName, tape } from "./tape";
 import { preFader, splitTarget, track } from "./track";
 
 // A song: tracks of clips in time, with their automation, a mixer strip per track, the devices
@@ -138,12 +138,7 @@ function ticksAcross(changes: TempoChanges, from: number, seconds: number): numb
   return tick - from;
 }
 
-/** A name in `names` that is not taken, from `wanted`. */
-function freeName(names: readonly string[], wanted: string): string {
-  let name = wanted;
-  for (let number = 2; names.includes(name); number++) name = `${wanted}-${number}`;
-  return name;
-}
+
 /** A child's name from any text: lowercase letters, digits and `-`. */
 const nameFrom = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
 

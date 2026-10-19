@@ -1,30 +1,27 @@
-//! The takes of the `recorder`s of the project: what each heard becomes children of its
-//! parent, next to it, where it was heard. Notes become a `timeline`, with the performance kept
-//! under `assets/takes/`; the audio input a `region` of a new file, placed by when each frame
-//! was captured, as a take of the arrangement is.
+//! The takes of the `recorder`s of the project. Notes become the record of a `timeline`, with
+//! the performance kept under `assets/takes/`; the audio input the record of a `region` of a new
+//! file, placed by when each frame was captured. The code of the recorder's parent keeps them
+//! where it wants, as it hears them (`FinishedTake`).
 //!
 //! The recorder says on the audio thread where a take starts and ends and what notes it
-//! heard, to the frame of the song (`sound_typescript::Heard`). This follows those, holds the
-//! input open while a take records sound, and writes what came of it as one undo step.
+//! heard, to the frame of the song (`sound_typescript::Heard`). This follows those and holds the
+//! input open while a take records sound.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use gpui::{Context, Entity, Task};
 use serde_json::{Value, json};
-use sound_core::{Changes, Clock, EventTap, Frames, InstanceId, Project, Ticks};
+use sound_core::{Clock, EventTap, Frames, InstanceId, Project, Ticks};
 use sound_notes::{NoteEvent, RawEvent, RawTake};
 use sound_typescript::{ARMED, HEARD, Heard, RECORDER, RecorderState};
-use sound_ui::{LiveSound, LiveTake, Session, every_poll};
+use sound_ui::{FinishedTake, LiveSound, LiveTake, Session, every_poll};
 
 use super::live_input::{Hold, LiveInput, Recorded};
 use crate::recorder::{
     Placement, RecorderCommand, RecorderReport, StartedTake, TakeRequest, take_place,
     take_seconds_at,
 };
-
-/// The undo step of what a recording made.
-const LABEL: &str = "Record";
 
 /// Polls a finished recording waits for its audio files to hold what was heard up to its end,
 /// about two seconds, before it closes them with what they have.
@@ -35,6 +32,8 @@ pub struct Recorders {
     live: Entity<LiveInput>,
     followed: HashMap<InstanceId, Followed>,
     audio: Option<AudioTake>,
+    /// Takes of sound that start while another records: each starts once that one is done.
+    queued: Vec<(InstanceId, Vec<usize>, u64)>,
     _polling: Task<()>,
 }
 
@@ -81,6 +80,7 @@ impl Recorders {
             live,
             followed: HashMap::new(),
             audio: None,
+            queued: Vec::new(),
             _polling: polling,
         }
     }
@@ -106,9 +106,25 @@ impl Recorders {
             })
             .collect()
         };
-        self.followed
-            .retain(|id, _| recorders.iter().any(|(each, ..)| each == id));
         let clock = Arc::new(self.session.read(cx).project().clock().clone());
+        let playhead = self.session.read(cx).playhead().read(cx).tick;
+        // A recorder that is gone ends its take where the playhead is: what it heard is kept.
+        let gone: Vec<InstanceId> = (self.followed.keys())
+            .filter(|id| !recorders.iter().any(|(each, ..)| each == *id))
+            .cloned()
+            .collect();
+        for id in gone {
+            let recording = self.session.read(cx).recording().clone();
+            recording.update(cx, |recording, cx| {
+                recording.set_armed(id.clone(), false, cx)
+            });
+            if let Some(take) = self.followed.remove(&id).and_then(|followed| followed.take) {
+                let frame = take.clock.frame_of(playhead).0;
+                records.push((id.clone(), Finished::Notes(take, frame)));
+                ended.push((id, playhead));
+            }
+        }
+        let mut missed = Vec::new();
         for (id, heard, armed, channels) in recorders {
             let followed = self.followed.entry(id.clone()).or_insert(Followed {
                 heard: heard.clone(),
@@ -134,24 +150,30 @@ impl Recorders {
                 });
             }
             let mut read = Vec::new();
-            followed.next = followed.heard.read(followed.next, &mut read).next;
-            // A change of the tempo map ends a take, as it was heard under the old one. Its
-            // notes go on in a new one from the playhead.
+            let tapped = followed.heard.read(followed.next, &mut read);
+            followed.next = tapped.next;
+            if tapped.missed > 0 && followed.take.is_some() {
+                missed.push(id.clone());
+            }
+            // A change of the tempo map ends a take where the playhead is, as it was heard
+            // under the old one. It goes on in a new one from there, sound too.
             if let Some(take) = &followed.take
                 && take.clock.tempo_map() != clock.tempo_map()
             {
-                let frame = clock
-                    .frame_of(self.session.read(cx).playhead().read(cx).tick)
-                    .0;
                 if let Some(take) = followed.take.take() {
-                    records.push((id.clone(), Finished::Notes(take, frame)));
+                    let end = take.clock.frame_of(playhead).0;
+                    records.push((id.clone(), Finished::Notes(take, end)));
                 }
+                let frame = clock.frame_of(playhead).0;
                 followed.take = Some(NotesTake {
                     start: frame,
                     clock: clock.clone(),
                     notes: Vec::new(),
                 });
-                ended.push((id.clone(), clock.tick_at(Frames(frame))));
+                ended.push((id.clone(), playhead));
+                if !channels.is_empty() {
+                    starting.push((id.clone(), channels.clone(), frame));
+                }
             }
             for (frame, heard) in read {
                 match heard {
@@ -179,7 +201,13 @@ impl Recorders {
                 }
             }
         }
-        self.start_audio(starting, &clock, cx);
+        for id in missed {
+            let notice = format!(
+                "The recorder {id} heard more than it could keep: its take lacks some of what was played."
+            );
+            self.session
+                .update(cx, |session, cx| session.report(notice, cx));
+        }
         for (id, end) in ended {
             if let Some(audio) = &mut self.audio
                 && let Some(ended) = audio.recorders.get_mut(&id)
@@ -194,31 +222,29 @@ impl Recorders {
         if let Some(audio) = &mut self.audio {
             audio.notes.extend(waiting);
         }
+        // After the ends: a take that starts where another of the same recorder ends waits
+        // for it.
+        self.queued.extend(starting);
+        self.start_audio(&clock, cx);
         self.poll_audio(cx);
         self.write(records, cx);
     }
 
-    /// Starts one recording of the audio input for the recorders that started a take of sound
-    /// in this poll. One runs at a time: a recorder that starts while another records sound
-    /// records its notes alone, and says so.
-    fn start_audio(
-        &mut self,
-        starting: Vec<(InstanceId, Vec<usize>, u64)>,
-        clock: &Arc<Clock>,
-        cx: &mut Context<Self>,
-    ) {
+    /// Starts one recording of the audio input for the recorders whose take of sound waits.
+    /// One runs at a time: those that start while one records wait for it to be done, as at a
+    /// loop or a jump, where one take ends and the next starts.
+    fn start_audio(&mut self, clock: &Arc<Clock>, cx: &mut Context<Self>) {
+        if self.audio.is_some() {
+            return;
+        }
+        let starting = std::mem::take(&mut self.queued);
         let Some((_, _, frame)) = starting.first() else {
             return;
         };
-        if self.audio.is_some() || !self.live.read(cx).can_open_input() {
-            let notice = match self.audio.is_some() {
-                true => {
-                    "A recording of the audio input runs already: this recorder records its notes alone this time."
-                }
-                false => "There is no audio input to record from.",
-            };
-            self.session
-                .update(cx, |session, cx| session.report(notice, cx));
+        if !self.live.read(cx).can_open_input() {
+            self.session.update(cx, |session, cx| {
+                session.report("There is no audio input to record from.", cx)
+            });
             return;
         }
         let start = clock.tick_at(Frames(*frame));
@@ -388,46 +414,40 @@ impl Recorders {
             .update(cx, |live, cx| live.hold(Hold::default(), cx));
         let recording = self.session.read(cx).recording().clone();
         recording.update(cx, |recording, cx| recording.set_takes(Vec::new(), cx));
+        let clock = Arc::new(self.session.read(cx).project().clock().clone());
+        self.start_audio(&clock, cx);
     }
 
-    /// Writes what the takes made, next to their recorders, as one undo step.
+    /// Gives what the takes made to the code of the parents of their recorders, which keeps
+    /// them.
     fn write(&mut self, finished: Vec<(InstanceId, Finished)>, cx: &mut Context<Self>) {
-        if finished.is_empty() {
-            return;
-        }
-        let session = self.session.clone();
-        let mut notices = Vec::new();
-        session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                let mut changes = Changes::new();
-                let mut taken = Vec::new();
-                for (recorder, finished) in finished {
-                    let Some(parent) = recorder.parent() else {
-                        continue;
-                    };
-                    let (name, tool, state) = match finished {
-                        Finished::Notes(take, end) => {
-                            match notes_record(project, &recorder, take, end) {
-                                Ok(Some(made)) => made,
-                                Ok(None) => continue,
-                                Err(error) => {
-                                    notices.push(error);
-                                    continue;
-                                }
-                            }
+        let mut takes = Vec::new();
+        for (recorder, finished) in finished {
+            let (name, tool, state) = match finished {
+                Finished::Notes(take, end) => {
+                    match notes_record(self.session.read(cx).project(), &recorder, take, end) {
+                        Ok(Some(made)) => made,
+                        Ok(None) => continue,
+                        Err(error) => {
+                            self.session
+                                .update(cx, |session, cx| session.report(error, cx));
+                            continue;
                         }
-                        Finished::Sound(name, state) => (name, "region", state),
-                    };
-                    let Some(id) = free_child(project, &parent, &name, &taken) else {
-                        continue;
-                    };
-                    taken.push(id.clone());
-                    project.set_json(&mut changes, id, tool, state)?;
+                    }
                 }
-                project.commit(LABEL, changes)
+                Finished::Sound(name, state) => (name, "region", state),
+            };
+            takes.push(FinishedTake {
+                recorder,
+                name,
+                tool,
+                state,
             });
-            for notice in notices {
-                session.report(notice, cx);
+        }
+        let recording = self.session.read(cx).recording().clone();
+        recording.update(cx, |recording, cx| {
+            for take in takes {
+                recording.finished(take, cx);
             }
         });
     }
@@ -477,6 +497,10 @@ fn notes_record(
         "start": clip.start.0,
         "length": clip.length,
         "notes": clip.notes,
+        "pedal": clip.pedal,
+        "bend": clip.bend,
+        "mod_wheel": clip.mod_wheel,
+        "pressure": clip.pressure,
     });
     Ok(Some((
         format!("{}-{name}", recorder.name()),
@@ -524,24 +548,4 @@ fn raw(event: NoteEvent, at: u64) -> Option<RawEvent> {
         },
         NoteEvent::Control { .. } | NoteEvent::AllOff => return None,
     })
-}
-
-/// A child of `parent` named `name`, or `name-2` and on when that is taken, by a record or by
-/// one of this group.
-fn free_child(
-    project: &Project,
-    parent: &InstanceId,
-    name: &str,
-    taken: &[InstanceId],
-) -> Option<InstanceId> {
-    let free = |id: &InstanceId| project.tool_of(id).is_none() && !taken.contains(id);
-    (1..)
-        .map_while(|number| {
-            let name = match number {
-                1 => name.to_string(),
-                number => format!("{name}-{number}"),
-            };
-            parent.child(&name).ok()
-        })
-        .find(free)
 }

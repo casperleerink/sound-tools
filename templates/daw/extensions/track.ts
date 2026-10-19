@@ -1,4 +1,5 @@
 import { chain, chainPlays } from "./chain";
+import { freeName } from "./tape";
 import { list, text, tool, type Connection, type Declaration } from "./sdk";
 
 const parts = { synth: "instrument.synth", fx: "filter", chain, mix: "fader", rec: "recorder", "send-*": "fader", "lane-*": "lane", "*": "timeline" } as const;
@@ -49,5 +50,11 @@ export const track = tool({
         { from: { child: "mix" }, to: { port: "audio" } },
       ],
     };
+  },
+  onTake: ({ update }, take) => {
+    if (take.tool !== "timeline") return;
+    update("Record", ({ children }) => {
+      children.push({ name: freeName(children.map((child) => child.name), take.name), tool: "timeline", state: take.state });
+    });
   },
 });

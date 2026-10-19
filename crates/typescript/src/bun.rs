@@ -118,6 +118,16 @@ pub(crate) enum Request<'a> {
         #[serde(flatten)]
         clock: Clock,
     },
+    /// A take one of its `recorder` children made, for its `onTake` to keep.
+    Take {
+        instance: Played<'a>,
+        recorder: &'a str,
+        name: &'a str,
+        tool: &'a str,
+        state: &'a serde_json::Value,
+        #[serde(flatten)]
+        clock: Clock,
+    },
     /// What an instance whose tool hears notes heard since it last did.
     Notes {
         instance: Played<'a>,
