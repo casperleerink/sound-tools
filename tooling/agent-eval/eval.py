@@ -359,6 +359,60 @@ def check_keys_composer(folder: Path) -> dict:
             "no project tool": not project_tools(folder), "no problems": no_problems(folder)}
 
 
+
+# The DAW template: a song of tracks written with the SDK, as "New DAW project" makes it.
+DAW = HERE.parents[1] / "templates" / "daw"
+TEMPLATE_TOOLS = {"song", "track", "tape", "chain", "bus"}
+
+
+def setup_daw(folder: Path) -> None:
+    """The folder as a new DAW project: the arrangement the runtime made is replaced."""
+    (folder / "project.json").unlink()
+    shutil.rmtree(folder / "state")
+    shutil.copytree(DAW, folder, dirs_exist_ok=True)
+
+
+def setup_daw_chords(folder: Path) -> None:
+    """A new DAW project whose first track holds four chords of a bar each."""
+    setup_daw(folder)
+    chords = [[48, 55, 64], [45, 52, 60], [41, 48, 57], [43, 50, 59]]
+    notes = [{"start": i * 3840, "length": 3800, "pitch": p, "velocity": 90}
+             for i, chord in enumerate(chords) for p in chord]
+    write(folder, "state/song/t00/chords.json",
+          {"tool": "timeline", "state": {"start": 0, "length": 15360, "notes": notes}})
+
+
+def tools_under(folder: Path, owner: str) -> list:
+    """The tool of every record inside `state/<owner>/`."""
+    return [record(folder, str(path.relative_to(folder))).get("tool")
+            for path in (folder / "state" / owner).rglob("*.json")]
+
+
+def true_peak(folder: Path, seconds: int) -> float:
+    """The true peak in dBTP of the first `seconds`, as `--analyze` prints it; -inf for silence."""
+    found = re.search(r"true peak (-?[0-9.]+) dBTP", runtime(folder, "--analyze", "--seconds", str(seconds)))
+    return float(found.group(1)) if found else float("-inf")
+
+
+def check_daw_arp(folder: Path) -> dict:
+    tools = {name: text for name, text in project_tools(folder).items() if name not in TEMPLATE_TOOLS}
+    on_track = [tool for tool in tools_under(folder, "song/t00") if tool in tools]
+    return {"a new tool on track 1": bool(on_track),
+            "it sends notes": any("output(" in text for text in tools.values()),
+            "it plays": true_peak(folder, 4) > -40,
+            "no problems": no_problems(folder)}
+
+
+def check_daw_return(folder: Path) -> dict:
+    returns = [path.parent.name for path in (folder / "state/song").glob("*/instance.json")
+               if record(folder, str(path.relative_to(folder))).get("tool") == "bus"]
+    reverb = any("reverb" in tools_under(folder, f"song/{name}") for name in returns)
+    sends = [record(folder, f"state/song/t00/send-{name}.json").get("state", {}) for name in returns]
+    quiet = any(-40 < send.get("gain_db", 0) < 0 for send in sends if send)
+    return {"a return with a reverb": reverb, "track 1 sends quietly": quiet,
+            "no problems": no_problems(folder)}
+
+
 def check_untouched(folder: Path) -> dict:
     # A question the app answers by itself: the agent says how, and builds nothing.
     return {"no project tool": not project_tools(folder),
@@ -443,6 +497,13 @@ SCENARIOS = {
     "ui-scope": (setup_tape_builder, check_card("lead"),
                  "Put an effect on the lead that shows its sound as a moving waveform on its "
                  "card."),
+    "daw-arp-builder": (setup_daw_chords, check_daw_arp,
+                        "On Track 1, put an arpeggiator before its synth: it turns the chords I "
+                        "hold into notes going up one at a time with the tempo, with a choice of "
+                        "eighths or sixteenths and a knob for how many octaves it climbs."),
+    "daw-return": (setup_daw, check_daw_return,
+                   "Add a return track with a long reverb, and send Track 1 into it, fairly "
+                   "quietly."),
     "ui-chords": (setup_tape_builder, check_card("pad"),
                   "Make the pad a chord player: I pick a progression on its card, and it shows "
                   "the chord it is on."),
