@@ -540,7 +540,7 @@ impl Opened<'_> {
 
     pub(crate) fn click_is_on(&mut self) -> bool {
         let transport = self.transport();
-        self.cx.read(|cx| transport.read(cx).click_is_on())
+        self.cx.read(|cx| transport.read(cx).click_is_on(cx))
     }
 
     /// Where a MIDI keyboard would put what it plays.

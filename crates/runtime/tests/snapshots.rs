@@ -1115,7 +1115,7 @@ fn main() -> Result<()> {
     cx.update(|cx| transport.update(cx, |pill, cx| pill.toggle_click(cx)));
     cx.run_until_parked();
     anyhow::ensure!(
-        cx.update(|cx| transport.read(cx).click_is_on()),
+        cx.update(|cx| transport.read(cx).click_is_on(cx)),
         "the click did not come on"
     );
     save(&mut cx, &opened, "transport-click-on")?;

@@ -14,8 +14,8 @@ use gpui::{Context, Entity, EventEmitter, SharedString, Task, prelude::*};
 use crate::metering::{PeaksReader, SharedPeaks};
 use crate::recording::Recording;
 use sound_core::{
-    EngineControl, EngineStatus, InstanceId, Project, ProjectEdit, ProjectError, ProjectEvent,
-    Ticks,
+    EngineControl, EngineStatus, GraphError, InstanceId, Project, ProjectEdit, ProjectError,
+    ProjectEvent, Ticks,
 };
 
 /// How often the session polls. About one display frame, so the playhead moves smoothly.
@@ -41,6 +41,10 @@ pub struct Loop {
     pub range: Range<Ticks>,
     pub on: bool,
 }
+
+/// Turns the click in the engine on or off. The window attaches it; the session holds it, so
+/// every view that shows the click shows the same one.
+pub type ClickSwitch = Box<dyn FnMut(&mut EngineControl, bool) -> Result<(), GraphError>>;
 
 /// Where a notice came from decides what clears it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -74,6 +78,10 @@ pub struct Session {
     looped: Entity<Loop>,
     /// What the device plays, for every view that shows its level.
     output: SharedPeaks,
+    /// The click, once the window attached it, and whether it sounds. Interface state, like the
+    /// loop: nothing is saved and there is no undo step.
+    click: Option<ClickSwitch>,
+    click_on: bool,
     _polling: Task<()>,
 }
 
@@ -114,6 +122,8 @@ impl Session {
             engine_stopped: false,
             history_moves: 0,
             output,
+            click: None,
+            click_on: false,
             _polling: polling,
         }
     }
@@ -206,6 +216,35 @@ impl Session {
                 cx.notify();
             });
         }
+    }
+
+    /// Gives the session the click of the window. It starts off.
+    pub fn attach_click(&mut self, click: ClickSwitch) {
+        self.click = Some(click);
+    }
+
+    /// Whether there is a click to turn on.
+    pub fn has_click(&self) -> bool {
+        self.click.is_some()
+    }
+
+    pub fn click_on(&self) -> bool {
+        self.click_on
+    }
+
+    /// Turns the click on or off. Nothing without a click attached.
+    pub fn set_click(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(click) = self.click.as_mut() else {
+            return;
+        };
+        if on == self.click_on {
+            return;
+        }
+        match click(self.project.engine(), on) {
+            Ok(()) => self.click_on = on,
+            Err(error) => self.report(error, cx),
+        }
+        cx.notify();
     }
 
     pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {

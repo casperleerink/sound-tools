@@ -7,6 +7,7 @@ pub mod control_edit;
 pub mod device_edit;
 pub mod devices;
 pub mod focus;
+pub mod global_keys;
 pub mod import;
 pub mod lanes;
 pub mod metering;
@@ -26,10 +27,11 @@ pub use devices::{
     extension_is_enabled,
 };
 pub use focus::KeyboardFocus;
+pub use global_keys::{GlobalKey, GlobalKeys};
 pub use lanes::Lanes;
 pub use metering::{Metering, PeaksReader, SharedPeaks, every_poll};
 pub use recording::{InputLevels, LiveBody, LiveNotes, LiveSound, LiveTake, Recording};
-pub use session::{Loop, POLL_INTERVAL, Playhead, Session};
+pub use session::{ClickSwitch, Loop, POLL_INTERVAL, Playhead, Session};
 pub use spare_keys::{SpareKey, SpareKeys};
 pub use theme::{ActiveTheme, Theme};
 pub use views::Views;

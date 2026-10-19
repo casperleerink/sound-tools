@@ -5,7 +5,9 @@
 //! The window is the project runtime. It names no extension type: the main area shows whatever
 //! view the installed [`Views`] has for the first instance at the top of the project, and the
 //! transport is the arrangement's, see [`crate::arrangement_wiring`]. Nor does it name the
-//! agent: the left panel is whatever the installed [`LeftPanelSlot`] makes.
+//! agent: the left panel is whatever the installed [`LeftPanelSlot`] makes. Its own keys are the
+//! app's: undo, the panel, opening and quitting. Musical keys, such as space to play, are the
+//! project's, through [`GlobalKeys`].
 
 pub mod audio_input;
 pub mod other_apps;
@@ -35,7 +37,9 @@ use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
 use sound_ui::components::text_input;
-use sound_ui::{ActiveTheme, Assets, Devices, Session, SpareKey, SpareKeys, Views, typography};
+use sound_ui::{
+    ActiveTheme, Assets, Devices, GlobalKeys, Session, SpareKey, SpareKeys, Views, typography,
+};
 
 use audio_input::OpenInput;
 use other_apps::{AppSounds, OtherApps};
@@ -50,8 +54,6 @@ use crate::{open_with_loaded, update, views};
 actions!(
     sound_tools,
     [
-        TogglePlayback,
-        ToggleRecording,
         ToggleComputerKeys,
         Undo,
         Redo,
@@ -222,6 +224,16 @@ impl Shell {
         let (views, devices) = registries;
         views.install(cx);
         devices.install(cx);
+        // The click is a processor in the engine, not project state: attaching it writes
+        // nothing and adds no undo step. It starts off and silent.
+        session.update(cx, |session, cx| {
+            match metronome::Click::attach(session.engine()) {
+                Ok(mut click) => {
+                    session.attach_click(Box::new(move |engine, on| click.set_on(engine, on)))
+                }
+                Err(error) => session.report(error, cx),
+            }
+        });
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&session, window, |shell, _, event, window, cx| {
             let at_top = |id: &InstanceId| id.parent().is_none();
@@ -246,6 +258,7 @@ impl Shell {
                 shell
                     .transport
                     .update(cx, TransportPill::let_go_of_computer_keys);
+                GlobalKeys::let_go(cx);
             }
         })
         .detach();
@@ -639,12 +652,6 @@ impl Render for Shell {
             .id("shell")
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|shell, _: &TogglePlayback, _, cx| {
-                shell.session.update(cx, Session::toggle_playback)
-            }))
-            .on_action(cx.listener(|shell, _: &ToggleRecording, _, cx| {
-                shell.transport.update(cx, TransportPill::toggle_recording)
-            }))
             .on_action(cx.listener(|shell, _: &ToggleComputerKeys, _, cx| {
                 shell
                     .transport
@@ -664,16 +671,28 @@ impl Render for Shell {
                 if shell
                     .transport
                     .update(cx, |pill, _| pill.computer_key_up(key))
+                    || GlobalKeys::key_up(&event.keystroke, cx)
                 {
                     cx.stop_propagation();
                 }
             }))
+            // After the focused view, which may take the key itself, and only where the plain
+            // keys are free: the keys of the project, such as space to play.
+            .on_key_down(|event: &KeyDownEvent, window, cx| {
+                if !event.is_held
+                    && keys_are_free(window)
+                    && GlobalKeys::key_down(&event.keystroke, cx)
+                {
+                    cx.stop_propagation();
+                }
+            })
             // macOS sends no key up while cmd is held.
             .on_modifiers_changed(cx.listener(|shell, event: &ModifiersChangedEvent, _, cx| {
                 if event.modifiers.platform {
                     shell
                         .transport
                         .update(cx, TransportPill::let_go_of_computer_keys);
+                    GlobalKeys::let_go(cx);
                 }
             }))
             .on_action(
@@ -744,29 +763,27 @@ fn outside_text() -> String {
     format!("{KEY_CONTEXT} && !{}", text_input::KEY_CONTEXT)
 }
 
-/// Where the plain keys are the window's: outside a text field, and outside a tool of the
-/// project that has the keys, which plays them.
+/// Where the plain keys are free: outside a text field, and outside a tool of the project that
+/// has the keys, which plays them.
 fn plain_keys() -> String {
     format!("{} && !{}", outside_text(), sound_typescript::KEY_CONTEXT)
 }
 
-/// Whether the plain keys are the window's where the focus is, as the bindings of space and
-/// `r` match them.
+/// Whether the plain keys are free where the focus is: the computer keys and the keys of the
+/// project may take them.
 fn keys_are_free(window: &Window) -> bool {
     KeyBindingContextPredicate::parse(&plain_keys())
         .is_ok_and(|plain| plain.depth_of(&window.context_stack()).is_some())
 }
 
-/// The keys of the window. Space and record are [`plain_keys`], undo works outside a text
-/// field. Tab moves the focus everywhere. The computer keys are no bindings: they need the key
-/// going up as well, see the key listeners of [`Shell`]. `secondary` is cmd on macOS and ctrl
-/// on Windows and Linux.
+/// The keys of the app. Undo works outside a text field. Tab moves the focus everywhere. The
+/// computer keys and the keys of the project are no bindings: they need the key going up as
+/// well, see the key listeners of [`Shell`]. `secondary` is cmd on macOS and ctrl on Windows
+/// and Linux.
 pub fn bind_keys(cx: &mut App) {
-    let (outside_text, plain) = (outside_text(), plain_keys());
-    let (outside_text, plain) = (Some(outside_text.as_str()), Some(plain.as_str()));
+    let outside_text = outside_text();
+    let outside_text = Some(outside_text.as_str());
     cx.bind_keys([
-        KeyBinding::new("space", TogglePlayback, plain),
-        KeyBinding::new("r", ToggleRecording, plain),
         KeyBinding::new("secondary-k", ToggleComputerKeys, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-z", Undo, outside_text),
         KeyBinding::new("shift-secondary-z", Redo, outside_text),

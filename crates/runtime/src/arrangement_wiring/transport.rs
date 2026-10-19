@@ -9,13 +9,15 @@
 //!
 //! The tempo is a controlled readout: it reads the tempo map when it renders and keeps no copy,
 //! so a `project.json` written from outside shows at once, also during a drag. A drag is one
-//! gesture of the session and one undo step. The click is not project state at all: it is a
-//! processor in the engine with a switch, see [`metronome`]. Neither is the MIDI input, see
-//! [`midi`]: a finished recording is an edit, and nothing before it is. The computer keys play
-//! into that input as one more keyboard.
+//! gesture of the session and one undo step. The click is not project state at all: the session
+//! holds its switch. Neither is the MIDI input, see [`midi`]: a finished recording is an edit,
+//! and nothing before it is. The computer keys play into that input as one more keyboard.
 //!
-//! This file holds the pill itself: its fields, the MIDI input and the computer keys, the click,
-//! the tempo and the steadiness, and the render. The rest is in `transport/`, as more
+//! Space plays and `r` records while the arrangement is the main view: its keys, which it takes
+//! as any project takes its own, see [`GlobalKeys`].
+//!
+//! This file holds the pill itself: its fields, the MIDI input and the computer keys, the tempo
+//! and the steadiness, and the render. The rest is in `transport/`, as more
 //! `impl TransportPill`:
 //! - `take`: the record control, a take from its start to its clips, and the audio input.
 //! - `strip`: the seek strip.
@@ -35,7 +37,6 @@ use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseUpEvent, Task, Window, div, prelude::*, px,
 };
-use metronome::Click;
 use midi::{ComputerKeys, Input, Keyboard, Latency, Lost};
 use sound_core::{
     Changes, Clock, Instance, InstanceId, ProjectEvent, StreamTiming, Tempo, TempoChange, Ticks,
@@ -45,8 +46,8 @@ use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::meter::Meter;
 use sound_ui::{
-    ActiveTheme, DragEdit, Metering, PeaksReader, Playhead, Recording, Session, Views, every_poll,
-    typography, weak_action, weak_callback,
+    ActiveTheme, DragEdit, GlobalKeys, Metering, PeaksReader, Playhead, Recording, Session, Views,
+    every_poll, typography, weak_action, weak_callback,
 };
 
 use self::take::{AudioTake, Ended};
@@ -77,11 +78,8 @@ const HEIGHT: f32 = 36.;
 enum Shown {
     /// The arrangement: everything.
     Arrangement,
-    /// A page that asks for the transport: no record, seek strip, duration or steadiness,
-    /// which belong to the arrangement.
-    Transport,
-    /// The computer keys, while something takes notes, and the master meter: a tool that needs
-    /// more draws it in its own page.
+    /// The computer keys, while something takes notes, and the master meter: a project that
+    /// needs a transport draws its own.
     KeysAndMeter,
 }
 
@@ -112,8 +110,6 @@ pub struct TransportPill {
     takes_notes: bool,
     end_is_stale: bool,
     scrubbing: bool,
-    /// The click in the engine. `None` only when the engine refused it, which is reported.
-    click: Option<Click>,
     /// The MIDI input in the engine. `None` only when the engine refused it, which is reported.
     keyboard: Option<Keyboard>,
     /// The computer keys while they play as a MIDI keyboard. Not project state, like the click.
@@ -237,15 +233,37 @@ impl TransportPill {
             }
         })
         .detach();
-        // The click is a processor in the engine, not project state: attaching it writes
-        // nothing and adds no undo step. It starts off and silent.
-        let click = session.update(cx, |session, cx| match Click::attach(session.engine()) {
-            Ok(click) => Some(click),
-            Err(error) => {
-                session.report(error, cx);
-                None
-            }
-        });
+        // Space plays and `r` records while the arrangement is the main view.
+        let pill = cx.weak_entity();
+        let keys = GlobalKeys::add(
+            move |key, cx| {
+                let shown = pill.read_with(cx, |pill, _| pill.shown).ok();
+                if shown != Some(Shown::Arrangement) {
+                    return false;
+                }
+                match key.name.as_str() {
+                    "space" => {
+                        if key.down {
+                            (pill.update(cx, |pill, cx| {
+                                pill.session.update(cx, Session::toggle_playback)
+                            }))
+                            .ok();
+                        }
+                        true
+                    }
+                    "r" => {
+                        if key.down {
+                            pill.update(cx, Self::toggle_recording).ok();
+                        }
+                        true
+                    }
+                    _ => false,
+                }
+            },
+            cx,
+        );
+        cx.on_release(move |_, cx| GlobalKeys::remove(keys, cx))
+            .detach();
         // The MIDI input is a processor in the engine too. It plays nowhere until the first
         // poll wires it to the instrument of the selected track.
         let keyboard = session.update(cx, |session, cx| match Keyboard::attach(session.engine()) {
@@ -282,7 +300,6 @@ impl TransportPill {
             session,
             playhead,
             scrubbing: false,
-            click,
             keyboard,
             computer_keys: None,
             timing,
@@ -380,20 +397,15 @@ impl TransportPill {
     }
 
     /// Whether the click sounds. For tests and for the button.
-    pub fn click_is_on(&self) -> bool {
-        self.click.as_ref().is_some_and(Click::is_on)
+    pub fn click_is_on(&self, cx: &App) -> bool {
+        self.session.read(cx).click_on()
     }
 
     /// Turns the click on or off. Not an edit: nothing is saved and there is no undo step.
     pub fn toggle_click(&mut self, cx: &mut Context<Self>) {
-        let Some(click) = &mut self.click else {
-            return;
-        };
-        let on = !click.is_on();
         self.session.update(cx, |session, cx| {
-            if let Err(error) = click.set_on(session.engine(), on) {
-                session.report(error, cx);
-            }
+            let on = !session.click_on();
+            session.set_click(on, cx);
         });
         cx.notify();
     }
@@ -703,9 +715,6 @@ fn shown(session: &Entity<Session>, cx: &App) -> Shown {
     let project = session.read(cx).project();
     match Views::main_instance(session, cx) {
         Some(main) if project.resolve::<ArrangementState>(&main).is_some() => Shown::Arrangement,
-        Some(main) if sound_typescript::page_shows_transport(project, &main, cx) => {
-            Shown::Transport
-        }
         _ => Shown::KeysAndMeter,
     }
 }
@@ -770,11 +779,9 @@ impl TransportPill {
 impl Render for TransportPill {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh(cx);
-        let arrangement = match self.shown {
-            Shown::Arrangement => true,
-            Shown::Transport => false,
-            Shown::KeysAndMeter => return self.keys_and_meter(cx),
-        };
+        if self.shown == Shown::KeysAndMeter {
+            return self.keys_and_meter(cx);
+        }
         let theme = cx.theme();
         let (fill, border, muted, green, red) = (
             theme.gray_200.blend(theme.alpha_at(0.06)),
@@ -786,14 +793,14 @@ impl Render for TransportPill {
         let Playhead { playing, tick, .. } = *self.playhead.read(cx);
         let project = self.session.read(cx).project();
         let (bar_beat, time) = position_texts(project, tick);
-        let end = self.end.filter(|_| arrangement);
+        let end = self.end;
         let duration = end.map(|end| clock_time(project.clock().seconds_of(end)));
         let tempo = self.tempo(cx);
         let time_signature = self.time_signature(cx);
-        let steadiness = arrangement.then(|| self.steadiness(cx)).flatten();
+        let steadiness = self.steadiness(cx);
         let strip = end.map(|end| self.strip(end, cx));
-        let click_on = self.click_is_on();
-        let has_click = self.click.is_some();
+        let click_on = self.click_is_on(cx);
+        let has_click = self.session.read(cx).has_click();
         let recording = self.is_recording();
         let can_record = self.keyboard.is_some() || self.audio.can_open();
         let session = self.session.clone();
@@ -849,7 +856,7 @@ impl Render for TransportPill {
                     )
                     // Red, like every record control anywhere: a red ring while it is off, and
                     // solid red while it records, which a laptop screen shows from afar.
-                    .children(arrangement.then(|| {
+                    .child(
                         Button::icon_only("record", "circle")
                             .variant(match recording {
                                 true => ButtonVariant::Solid(red),
@@ -860,8 +867,8 @@ impl Render for TransportPill {
                             .disabled(!can_record)
                             .debug_selector(|| "record".to_string())
                             .focus_handle(&self.record_focus)
-                            .on_click(cx.listener(|pill, _, _, cx| pill.toggle_recording(cx)))
-                    })),
+                            .on_click(cx.listener(|pill, _, _, cx| pill.toggle_recording(cx))),
+                    ),
             )
             // No fixed widths: tabular numbers keep the pill still, and it grows by one digit
             // at bar 100 or at ten minutes.
