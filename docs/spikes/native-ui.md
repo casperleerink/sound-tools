@@ -180,7 +180,7 @@ Goal: realistic DAW-shaped examples. A song is many small records (tracks of cli
 | Click that selects a note | 16 ms, 0.7 KB / 12 ms, 0.3 KB | 106 / 40 ms |
 | Marquee of 512, released | 23 ms, 457 KB / 15 ms, 141 KB | 78 / 36 ms |
 | Release that moves 512 | 23 ms, 314 KB / 20 ms, 101 KB | 152 / 129 ms |
-| Open | 97 / ~100 ms | 564 / ~570 ms |
+| Open | 97 / 104–118 ms | 564 / 517–579 ms |
 
 **Open time, not fixed.** The Bun mount is the cost: 34 ms at 2,000 notes, 260 ms at 20,000, about 0.8 µs per binding across ~40,000 bindings, plus 5 ms to write the ops. Phase 2 called one function per shape. Fixing it means a cheaper reactive core (no computation for a binding that read nothing, lighter dependency sets), not a quick change. At 20,000 notes a release is still 41 ms in Bun, mostly the whole `notes` field crossing both ways: realistic songs keep fields small, so list-item edits stay unbuilt.
 
