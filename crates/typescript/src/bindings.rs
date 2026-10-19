@@ -91,7 +91,7 @@ fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
     };
     assert_eq!(*node, steps[2]);
     assert!(
-        format!("{change:?}").contains("color: Some(Some(Color("),
+        format!("{change:?}").contains("color: Some(Some(Fixed(Color("),
         "{change:?}"
     );
 }

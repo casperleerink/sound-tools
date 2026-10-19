@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use sound_core::InstanceId;
 
 use crate::bun::{Bun, Clock, Event, PageSize, Request, Transport, new_opening, record_key};
+use crate::feeds::Feeds;
 use crate::live::{DragNumbers, Sources};
 use crate::tree::{NodeTable, Num, Op};
 use crate::{bun_program, host_script, write_sdk};
@@ -183,6 +184,7 @@ fn live_values() {
         played: None,
         drag: Some(("move", numbers)),
         spaces: &spaces,
+        feeds: &Feeds::default(),
     };
     for count in SIZES {
         // Two bound numbers a shape, as a moved note's x and y.

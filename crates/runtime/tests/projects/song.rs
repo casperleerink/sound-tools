@@ -44,7 +44,9 @@ tool({
 /// A clip, a `timeline` at `start`, with one note `at` ticks into it.
 fn clip(start: u64, at: u64) -> String {
     let note = format!(r#"{{"start": {at}, "length": 240, "pitch": 60, "velocity": 100}}"#);
-    format!(r#"{{"tool": "timeline", "state": {{"start": {start}, "length": 3840, "notes": [{note}]}}}}"#)
+    format!(
+        r#"{{"tool": "timeline", "state": {{"start": {start}, "length": 3840, "notes": [{note}]}}}}"#
+    )
 }
 
 /// A song with the track `piano`, whose clip `verse` starts on the second bar with its note on
@@ -61,8 +63,16 @@ fn song() -> Option<Harness> {
   "connections": [{"from": {"instance": "song", "port": "audio"}, "to": {"device_output": 0}}]}"#;
     write(root, "project.json", project);
     write(root, "extensions/song.ts", TOOLS);
-    write(root, "state/song/instance.json", r#"{"tool": "song", "state": {}}"#);
-    write(root, "state/song/piano/instance.json", r#"{"tool": "track", "state": {}}"#);
+    write(
+        root,
+        "state/song/instance.json",
+        r#"{"tool": "song", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/song/piano/instance.json",
+        r#"{"tool": "track", "state": {}}"#,
+    );
     let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
     write(root, "state/song/piano/synth.json", synth);
     write(root, "state/song/piano/verse.json", &clip(3840, 960));
@@ -93,14 +103,20 @@ fn a_clip_moves_alone_a_second_track_plays_and_a_note_outside_its_clip_is_a_prob
     assert_eq!(first_sound(&played, 0).map(|frame| frame / 48), Some(500));
 
     // A second track, whose clip plays on the third beat; the first still plays on the second.
-    harness.write_and_apply("state/song/bass/instance.json", r#"{"tool": "track", "state": {}}"#);
+    harness.write_and_apply(
+        "state/song/bass/instance.json",
+        r#"{"tool": "track", "state": {}}"#,
+    );
     let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
     harness.write_and_apply("state/song/bass/synth.json", synth);
     harness.write_and_apply("state/song/bass/line.json", &clip(0, 1920));
     let played = harness.play_from_the_start(BAR);
     let first = first_sound(&played, 0).unwrap();
     assert_eq!(first / 48, 500);
-    assert_eq!(first_sound(&played, first + 12_000).map(|frame| frame / 48), Some(1000));
+    assert_eq!(
+        first_sound(&played, first + 12_000).map(|frame| frame / 48),
+        Some(1000)
+    );
     assert_eq!(harness.project.problems(), []);
 
     // A timeline with no start and no length plays from the start of the song.
@@ -108,7 +124,10 @@ fn a_clip_moves_alone_a_second_track_plays_and_a_note_outside_its_clip_is_a_prob
     harness.write_and_apply("state/song/bass/line.json", free);
     let played = harness.play_from_the_start(BAR);
     let first = first_sound(&played, 0).unwrap();
-    assert_eq!(first_sound(&played, first + 12_000).map(|frame| frame / 48), Some(1500));
+    assert_eq!(
+        first_sound(&played, first + 12_000).map(|frame| frame / 48),
+        Some(1500)
+    );
 
     // 4000 ticks is after the end of a clip of 3840.
     harness.write_and_apply("state/song/piano/verse.json", &clip(0, 4000));
@@ -118,7 +137,9 @@ fn a_clip_moves_alone_a_second_track_plays_and_a_note_outside_its_clip_is_a_prob
     };
     assert_eq!(problem.path, "state/song/piano/verse.json");
     assert!(
-        problem.message.contains("notes[0].start must be less than the length 3840"),
+        problem
+            .message
+            .contains("notes[0].start must be less than the length 3840"),
         "{problem:?}"
     );
 }

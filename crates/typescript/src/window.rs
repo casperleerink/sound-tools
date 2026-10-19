@@ -29,6 +29,7 @@ use crate::bun::{
     Skipped, Telling, Transport, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
+use crate::feeds::played_name;
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
 use crate::tools::{Control, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
 use crate::tree::{NodeTable, Uses};
@@ -456,6 +457,9 @@ fn watches_of(project: &Project, id: &InstanceId) -> BTreeMap<String, f32> {
         watches.map(move |(name, watch)| (format!("{path}.{name}"), watch))
     });
     let watches = project.watches(id).into_iter().chain(children);
+    // What a cable plays is read as it plays, by live values, and tells Bun nothing.
+    let (played, inside) = (played_name(""), format!(".{}", played_name("")));
+    let watches = watches.filter(|(name, _)| !name.starts_with(&played) && !name.contains(&inside));
     watches.map(|(name, watch)| (name, watch.get())).collect()
 }
 
@@ -737,7 +741,7 @@ impl Live {
     /// What the live values of the card's nodes move with.
     pub(crate) fn uses(&self, card: u64) -> Uses {
         match self.cards.get(&card).and_then(|entry| entry.tree.as_ref()) {
-            Some(Ok(table)) => table.uses(),
+            Some(Ok(table)) => table.uses().clone(),
             _ => Uses::default(),
         }
     }

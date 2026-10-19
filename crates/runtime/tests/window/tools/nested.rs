@@ -82,9 +82,18 @@ fn open_song(cx: &mut TestAppContext) -> Option<Window<'_>> {
     let files = [
         ("project.json", PROJECT),
         ("extensions/song.ts", SONG),
-        ("state/song/instance.json", r#"{"tool": "song", "state": {}}"#),
-        ("state/song/piano/instance.json", r#"{"tool": "track", "state": {}}"#),
-        ("state/song/piano/synth.json", r#"{"tool": "instrument.synth", "state": {}}"#),
+        (
+            "state/song/instance.json",
+            r#"{"tool": "song", "state": {}}"#,
+        ),
+        (
+            "state/song/piano/instance.json",
+            r#"{"tool": "track", "state": {}}"#,
+        ),
+        (
+            "state/song/piano/synth.json",
+            r#"{"tool": "instrument.synth", "state": {}}"#,
+        ),
         (
             "state/song/piano/verse.json",
             r#"{"tool": "timeline", "state": {"start": 3840, "length": 3840, "notes": []}}"#,
@@ -139,14 +148,19 @@ fn a_track_taken_out_goes_with_what_it_holds_and_one_added_comes_with_its_clips(
     window.until("the piano gone", |window| window.probe() == 1.0);
     window.after_the_runs();
     for path in ["instance.json", "synth.json", "verse.json"] {
-        assert!(!window.exists(&format!("state/song/piano/{path}")), "{path}");
+        assert!(
+            !window.exists(&format!("state/song/piano/{path}")),
+            "{path}"
+        );
     }
     assert!(window.undo().is_some());
     window.until("the piano back", |window| window.probe() == 384.0);
     assert!(window.exists("state/song/piano/verse.json"));
 
     window.cx.simulate_keystrokes("a");
-    window.until("the bass", |window| window.exists("state/song/bass/line.json"));
+    window.until("the bass", |window| {
+        window.exists("state/song/bass/line.json")
+    });
     window.after_the_runs();
     assert!(window.exists("state/song/bass/synth.json"));
     assert_eq!(window.undo_label().as_deref(), Some("Add a bass"));

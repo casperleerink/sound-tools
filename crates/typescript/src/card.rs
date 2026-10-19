@@ -26,11 +26,12 @@ use sound_ui::import::{choose_file, import_file};
 use sound_ui::{ActiveTheme, ControlEdit, Session, typography};
 
 use crate::bun::{EventKind, PageSize};
+use crate::feeds::Feeds;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
-    self, Align, Axis, Cursor, DivProps, Drag, NodeTable, Props, Reach, SampleProps, ShapeKind,
-    SpaceProps, TextProps, Words,
+    self, Align, Axis, Cursor, DivProps, Drag, List, NodeTable, Paint, Props, Reach, SampleProps,
+    ShapeKind, SpaceProps, TextProps, Words,
 };
 use crate::window::{Live, Surface, edit_record, state_of};
 
@@ -67,6 +68,8 @@ pub(crate) struct TypeScriptCard {
     /// The keys that went down and not up yet. They go up when it loses the keys, when cmd
     /// goes down and when it closes, so a note a key holds is not held for ever.
     keys_down: BTreeSet<String>,
+    /// What its live values read from the engine and the clock, once a frame.
+    feeds: Feeds,
 }
 
 /// A page, which draws again only when it changed, while the window draws every frame as it
@@ -246,6 +249,7 @@ impl TypeScriptCard {
             hovered: None,
             focus,
             keys_down: BTreeSet::new(),
+            feeds: Feeds::default(),
         }
     }
 
@@ -389,13 +393,23 @@ impl TypeScriptCard {
             played: played.as_ref(),
             drag: None,
             spaces: &HashMap::new(),
+            feeds: &self.feeds,
         };
         let from = turns.map(|turns| {
             let turns = turns.as_ref()?;
-            match (&turns.field, &turns.control) {
-                (Some(field), _) => sources.field(field),
-                (None, Some(control)) => sources.control(control),
-                (None, None) => None,
+            match (&turns.field, &turns.child, &turns.control) {
+                (Some(field), Some(child), _) => {
+                    let child = self.id.child(child).ok()?;
+                    let record = state_of(self.session.read(cx).project(), &child)?;
+                    let value = record
+                        .get(field)
+                        .and_then(Value::as_f64)
+                        .map(|value| value as f32);
+                    value.or_else(|| self.child_range(turns, cx).map(|range| range.value(0.5)))
+                }
+                (Some(field), None, _) => sources.field(field),
+                (None, _, Some(control)) => sources.control(control),
+                (None, _, None) => None,
             }
         });
         let (across, down) = frame.view.scale();
@@ -539,7 +553,9 @@ impl TypeScriptCard {
             let Some(turns) = turns else {
                 continue;
             };
-            let Some(range) = range_of(info.as_ref(), turns) else {
+            let Some(range) =
+                range_of(info.as_ref(), turns).or_else(|| self.child_range(turns, cx))
+            else {
                 continue;
             };
             let position = if turns.absolute {
@@ -565,15 +581,31 @@ impl TypeScriptCard {
         }
     }
 
+    /// How the field of an instance inside it a drag turns spreads over its travel: as that
+    /// instance's number.
+    fn child_range(&self, turns: &tree::Turns, cx: &App) -> Option<ValueRange> {
+        let (field, child) = (turns.field.as_ref()?, turns.child.as_ref()?);
+        let child = self.id.child(child).ok()?;
+        let number = self.session.read(cx).project().automation(&child, field)?;
+        Some(number.range)
+    }
+
     fn turn(&mut self, turns: &tree::Turns, change: ValueChange<f32>, cx: &mut Context<Self>) {
         match (&turns.field, &turns.control) {
             (Some(field), _) => {
                 let label = (turns.label.clone())
                     .unwrap_or_else(|| format!("Change {}", field.replace('_', " ")));
                 let field = field.clone();
+                let id = match &turns.child {
+                    Some(child) => match self.id.child(child) {
+                        Ok(child) => child,
+                        Err(_) => return,
+                    },
+                    None => self.id.clone(),
+                };
                 self.edit.apply_json(
                     &self.session,
-                    &self.id,
+                    &id,
                     &label,
                     change,
                     |state, value| tree::set_field(state, &field, tree::decimal(value)),
@@ -623,10 +655,10 @@ fn range_of(info: Option<&ToolInfo>, turns: &tree::Turns) -> Option<ValueRange> 
     if let (Some(min), Some(max)) = (turns.min, turns.max) {
         return Some(crate::tools::knob_range(min, max, turns.unit));
     }
-    match (&turns.field, &turns.control) {
-        (Some(field), _) => live::field_range(info, field),
-        (None, Some(control)) => live::control_range(info, control),
-        (None, None) => None,
+    match (&turns.field, &turns.child, &turns.control) {
+        (Some(field), None, _) => live::field_range(info, field),
+        (None, _, Some(control)) => live::control_range(info, control),
+        _ => None,
     }
 }
 
@@ -681,6 +713,22 @@ enum Geometry {
         size: f32,
         align: Align,
     },
+    Wave {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        wave: Rc<Wave>,
+    },
+}
+
+/// The values a wave draws, oldest first, between `low` at its bottom and `high` at its top.
+struct Wave {
+    values: Vec<f32>,
+    low: f32,
+    high: f32,
+    band: bool,
+    line: f32,
 }
 
 /// Everything a space paints and hears the pointer with, for one draw.
@@ -805,6 +853,7 @@ enum PaintedShape {
     Line(Point<Pixels>, Point<Pixels>, f32),
     Arc(Point<Pixels>, f32, (f32, f32), f32),
     Text(Point<Pixels>, SharedString, f32, Align),
+    Wave(Bounds<Pixels>, Rc<Wave>),
 }
 
 impl PaintedShape {
@@ -816,7 +865,7 @@ impl PaintedShape {
             )
         };
         match self {
-            Self::Rect(bounds, ..) => *bounds,
+            Self::Rect(bounds, ..) | Self::Wave(bounds, _) => *bounds,
             Self::Circle(centre, radius) => square(*centre, *radius),
             Self::Arc(centre, radius, _, width) => square(*centre, radius + width / 2.),
             Self::Line(from, to, width) => {
@@ -869,6 +918,7 @@ struct Drawing<'a, 'b> {
     drag: Option<(String, DragNumbers)>,
     hovered: Option<(String, u64)>,
     table: &'a NodeTable,
+    feeds: &'a Feeds,
     cx: &'a mut Context<'b, TypeScriptCard>,
 }
 
@@ -882,6 +932,7 @@ impl Drawing<'_, '_> {
             played: self.played.as_ref(),
             drag: (self.drag.as_ref()).map(|(id, numbers)| (id.as_str(), *numbers)),
             spaces: &self.spaces,
+            feeds: self.feeds,
         }
     }
 
@@ -1120,7 +1171,12 @@ impl Shown {
 
     /// Whether what spans `left..right` and `top..bottom`, and `reach` points further each way,
     /// may show.
-    fn reaches(&self, (left, right): (f64, f64), (top, bottom): (f64, f64), reach: (f32, f32)) -> bool {
+    fn reaches(
+        &self,
+        (left, right): (f64, f64),
+        (top, bottom): (f64, f64),
+        reach: (f32, f32),
+    ) -> bool {
         let (x, y) = (
             f64::from(reach.0) * self.per_point.0,
             f64::from(reach.1) * self.per_point.1,
@@ -1134,6 +1190,13 @@ impl Shown {
     fn shows(&self, geometry: &Geometry) -> bool {
         match *geometry {
             Geometry::Rect {
+                x,
+                y,
+                width,
+                height,
+                ..
+            }
+            | Geometry::Wave {
                 x,
                 y,
                 width,
@@ -1169,6 +1232,52 @@ struct Placing<'a> {
 }
 
 impl Placing<'_> {
+    fn paint(&self, paint: &Paint) -> Hsla {
+        match paint {
+            Paint::Fixed(color) => color.0,
+            Paint::Mix { from, to, by } => {
+                let by = self.sources.number(by).clamp(0.0, 1.0) as f32;
+                let (from, to) = (from.0.to_rgb(), to.0.to_rgb());
+                let mix = |from: f32, to: f32| from + (to - from) * by;
+                gpui::Rgba {
+                    r: mix(from.r, to.r),
+                    g: mix(from.g, to.g),
+                    b: mix(from.b, to.b),
+                    a: mix(from.a, to.a),
+                }
+                .into()
+            }
+        }
+    }
+
+    /// The values of a wave, oldest first.
+    fn list(&self, list: Option<&List>) -> Vec<f32> {
+        let feeds = self.sources.feeds;
+        match list {
+            Some(List::Scope {
+                name,
+                channel,
+                frames,
+            }) => {
+                let Some((kept, _)) = feeds.scopes.get(name) else {
+                    return Vec::new();
+                };
+                let count = frames.map_or(kept.len(), |frames| frames as usize);
+                let skip = kept.len().saturating_sub(count);
+                let pick = |frame: &[f32; 2]| match channel {
+                    Some(0) => frame[0],
+                    Some(_) => frame[1],
+                    None => (frame[0] + frame[1]) / 2.0,
+                };
+                kept.iter().skip(skip).map(pick).collect()
+            }
+            Some(List::History { of, frames, key }) => {
+                feeds.history(key, *frames, self.sources.number(of))
+            }
+            None => Vec::new(),
+        }
+    }
+
     fn number(&self, number: &Option<tree::Num>) -> f64 {
         number
             .as_ref()
@@ -1264,9 +1373,26 @@ impl Placing<'_> {
                 size: shape.size.unwrap_or(12.0),
                 align: shape.align.unwrap_or(Align::Left),
             },
+            ShapeKind::Wave => Geometry::Wave {
+                x,
+                y,
+                width: self.number(&shape.width),
+                height: self.number(&shape.height),
+                wave: Rc::new(Wave {
+                    values: self.list(shape.list.as_ref()),
+                    low: shape.low.unwrap_or(-1.0),
+                    high: shape.high.unwrap_or(1.0),
+                    band: shape.band == Some(true),
+                    line: shape.size.unwrap_or(1.0),
+                }),
+            },
             ShapeKind::Group => return,
         };
-        if self.shown.as_ref().is_some_and(|shown| !shown.shows(&geometry)) {
+        if self
+            .shown
+            .as_ref()
+            .is_some_and(|shown| !shown.shows(&geometry))
+        {
             return;
         }
         let origin = match &geometry {
@@ -1290,12 +1416,11 @@ impl Placing<'_> {
         if opacity <= 0.0 {
             return;
         }
-        let shown = if hovered {
-            shape.hover.or(shape.color)
-        } else {
-            shape.color
+        let mut color = match (hovered.then_some(shape.hover).flatten(), &shape.color) {
+            (Some(hover), _) => hover.0,
+            (None, Some(paint)) => self.paint(paint),
+            (None, None) => gpui::white(),
         };
-        let mut color = shown.map_or(gpui::white(), |color| color.0);
         color.a *= opacity;
         self.placed.push(Placed {
             index,
@@ -1370,6 +1495,16 @@ fn prepaint(
                 size,
                 align,
             } => PaintedShape::Text(at((*x, *y)), text.clone(), *size, *align),
+            Geometry::Wave {
+                x,
+                y,
+                width,
+                height,
+                wave,
+            } => {
+                let size = size(px((width * across) as f32), px((height * down) as f32));
+                PaintedShape::Wave(Bounds::new(at((*x, *y)), size), wave.clone())
+            }
         };
         // What does not show is not painted and not found.
         if !shape.bounds().intersects(&bounds) {
@@ -1469,6 +1604,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 window.paint_path(path, color);
             }
         }
+        PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
         PaintedShape::Text(origin, text, font_size, align) => {
             let run = TextRun {
                 len: text.len(),
@@ -1499,6 +1635,65 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 eprintln!("error: a label of a card: {error}");
             }
         }
+    }
+}
+
+/// Paints a wave across `bounds`: a line through one value per point, or a band from the lowest
+/// to the highest value under each point.
+fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Window) {
+    let values = &wave.values;
+    let columns = (f32::from(bounds.size.width).round() as usize).clamp(2, 4096);
+    if values.len() < 2 {
+        return;
+    }
+    let span = wave.high - wave.low;
+    let height = f32::from(bounds.size.height);
+    let y_of = |value: f32| {
+        let along = if span == 0.0 {
+            0.5
+        } else {
+            (value - wave.low) / span
+        };
+        bounds.origin.y + px(height * (1.0 - along.clamp(0.0, 1.0)))
+    };
+    let x_of = |column: usize, of: usize| {
+        bounds.origin.x + bounds.size.width * (column as f32 / (of - 1).max(1) as f32)
+    };
+    let columns = columns.min(values.len());
+    // The values under each column.
+    let under = |column: usize| {
+        let start = column * values.len() / columns;
+        let end = ((column + 1) * values.len() / columns).max(start + 1);
+        values.get(start..end.min(values.len())).unwrap_or_default()
+    };
+    if wave.band {
+        // A quad a column: GPUI draws quads in a batch, where a filled path is tessellated.
+        let width = (bounds.size.width / columns as f32).max(px(1.0));
+        for column in 0..columns {
+            let under = under(column);
+            let low = under.iter().copied().fold(f32::INFINITY, f32::min);
+            let high = under.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let top = y_of(high);
+            // At least a point thick, so silence shows as a line.
+            let bottom = y_of(low).max(top + px(1.0));
+            let left = bounds.origin.x + bounds.size.width * (column as f32 / columns as f32);
+            let column = Bounds::new(point(left, top), size(width, bottom - top));
+            window.paint_quad(fill(column, color));
+        }
+        return;
+    }
+    let mut path = gpui::PathBuilder::stroke(px(wave.line));
+    for column in 0..columns {
+        let value = under(column).first().copied().unwrap_or_default();
+        let at = point(x_of(column, columns), y_of(value));
+        if column == 0 {
+            path.move_to(at);
+        } else {
+            path.line_to(at);
+        }
+    }
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
     }
 }
 
@@ -1669,9 +1864,11 @@ impl Render for TypeScriptCard {
         let watches = live.watches(self.card).cloned().unwrap_or_default();
         let played = live.played_of(&self.id).cloned();
         let playhead = *self.session.read(cx).playhead().read(cx);
-        if uses.tick && playhead.playing {
+        if (uses.tick && playhead.playing) || uses.animates {
             window.request_animation_frame();
         }
+        let session = self.session.read(cx);
+        (self.feeds).read(session, &self.id, &state, &uses, playhead.tick);
         let body = match tree {
             Some(Ok(table)) => {
                 let drag = (self.held.as_ref())
@@ -1687,6 +1884,7 @@ impl Render for TypeScriptCard {
                     drag,
                     hovered: self.hovered.clone(),
                     table: &table,
+                    feeds: &self.feeds,
                     cx,
                 };
                 let body = match table.root() {

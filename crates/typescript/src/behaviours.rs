@@ -48,6 +48,8 @@ pub(crate) struct End {
     pub bang: Option<String>,
     pub live: Option<String>,
     pub trigger: Option<String>,
+    /// A meter of the owner, which keeps the level and the sound of what reaches it.
+    pub meter: Option<String>,
 }
 
 /// The key an [`End`] names its port under.
@@ -59,10 +61,11 @@ pub(crate) enum Key {
     Bang,
     Live,
     Trigger,
+    Meter,
 }
 
 impl End {
-    fn keys(&self) -> [(Key, &Option<String>); 6] {
+    fn keys(&self) -> [(Key, &Option<String>); 7] {
         [
             (Key::Port, &self.port),
             (Key::Notes, &self.notes),
@@ -70,6 +73,7 @@ impl End {
             (Key::Bang, &self.bang),
             (Key::Live, &self.live),
             (Key::Trigger, &self.trigger),
+            (Key::Meter, &self.meter),
         ]
     }
 
@@ -109,6 +113,7 @@ impl Key {
             Key::Bang => "bang",
             Key::Live => "live",
             Key::Trigger => "trigger",
+            Key::Meter => "meter",
         }
     }
 }

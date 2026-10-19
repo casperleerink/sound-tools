@@ -18,13 +18,15 @@ mod behaviours;
 mod bindings;
 mod bun;
 mod card;
-mod timeline;
+mod feeds;
 mod live;
+mod meter;
 #[cfg(test)]
 mod performance;
 mod records;
 mod samples;
 mod sequencer;
+mod timeline;
 mod tools;
 mod tree;
 mod window;
@@ -39,6 +41,7 @@ use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
+pub use feeds::{live_frames, shown_by_live_values};
 pub use window::{page_shows_transport, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};

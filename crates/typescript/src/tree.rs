@@ -2,7 +2,7 @@
 //! of a prop crosses as that prop. The types are the contract with `sdk.ts`: a prop this side
 //! does not know is an error on the card, not something left out.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use gpui::{Div, Hsla, prelude::*, px};
 use serde::de::value::MapAccessDeserializer;
@@ -105,7 +105,7 @@ props! {
         width: Num,
         height: Num,
         radius: Num,
-        color: Color,
+        color: Paint,
         border: Color,
         border_width: Num,
         from: Reach,
@@ -114,6 +114,12 @@ props! {
         unit: Unit,
         size: f32,
         align: Align,
+        /// The values a wave draws, oldest first, and the values at its bottom and its top.
+        list: List,
+        low: f32,
+        high: f32,
+        /// A wave as a band from the lowest to the highest value under each point, else a line.
+        band: bool,
     }
 }
 
@@ -239,18 +245,93 @@ impl<'de> Visitor<'de> for OpVisitor {
 
 const FAMILIES: &[&str] = &["div", "text", "sample", "space", "shape", "marker"];
 
-/// What of the window the live values of a card move with, without its code.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// What of the window the live values of a card move with, without its code, and what the
+/// window reads for them on every frame.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Uses {
     pub watches: bool,
     pub tick: bool,
+    /// It moves on every frame by itself: with the clock, the engine's levels or what a lane
+    /// or a cable plays, or as it eases.
+    pub animates: bool,
+    /// The peaks it reads, by name, and whether it reads the device output.
+    pub peaks: BTreeSet<String>,
+    pub output: bool,
+    /// The numbers it reads as they play.
+    pub played: BTreeSet<String>,
+    /// The scopes it draws.
+    pub scopes: BTreeSet<String>,
+    /// The fields of instances inside it it reads, as `path.field`.
+    pub inside: BTreeSet<String>,
 }
 
-impl Uses {
-    fn and(self, other: Self) -> Self {
-        Self {
-            watches: self.watches || other.watches,
-            tick: self.tick || other.tick,
+/// How many nodes of a table use each thing, so a node that goes takes its use with it.
+#[derive(Clone, Debug, Default)]
+struct UseCounts {
+    watches: usize,
+    tick: usize,
+    animates: usize,
+    output: usize,
+    named: HashMap<(Named, String), usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Named {
+    Peak,
+    Played,
+    Scope,
+    Inside,
+}
+
+impl UseCounts {
+    fn count(&mut self, uses: &Uses, add: bool) {
+        let step = |count: &mut usize, used: bool| {
+            if used {
+                *count = if add {
+                    *count + 1
+                } else {
+                    count.saturating_sub(1)
+                };
+            }
+        };
+        step(&mut self.watches, uses.watches);
+        step(&mut self.tick, uses.tick);
+        step(&mut self.animates, uses.animates);
+        step(&mut self.output, uses.output);
+        let named = [
+            (Named::Peak, &uses.peaks),
+            (Named::Played, &uses.played),
+            (Named::Scope, &uses.scopes),
+            (Named::Inside, &uses.inside),
+        ];
+        for (kind, names) in named {
+            for name in names {
+                let key = (kind, name.clone());
+                let count = self.named.entry(key.clone()).or_default();
+                step(count, true);
+                if *count == 0 {
+                    self.named.remove(&key);
+                }
+            }
+        }
+    }
+
+    fn uses(&self) -> Uses {
+        let names = |kind: Named| -> BTreeSet<String> {
+            (self.named.keys())
+                .filter(|(each, _)| *each == kind)
+                .map(|(_, name)| name.clone())
+                .collect()
+        };
+        Uses {
+            watches: self.watches > 0,
+            tick: self.tick > 0,
+            animates: self.animates > 0,
+            output: self.output > 0,
+            peaks: names(Named::Peak),
+            played: names(Named::Played),
+            scopes: names(Named::Scope),
+            inside: names(Named::Inside),
         }
     }
 }
@@ -277,9 +358,9 @@ pub(crate) struct NodeTable {
     ids: HashMap<u64, usize>,
     root: Option<usize>,
     drags: HashMap<u64, Drag>,
-    /// How many nodes read the playhead and the watches.
-    tick: usize,
-    watches: usize,
+    counts: UseCounts,
+    /// What the nodes use together, worked out again after a batch that changed it.
+    uses: Uses,
 }
 
 impl NodeTable {
@@ -313,11 +394,8 @@ impl NodeTable {
         &self.get(self.ids[&id]).unwrap().props
     }
 
-    pub(crate) fn uses(&self) -> Uses {
-        Uses {
-            watches: self.watches > 0,
-            tick: self.tick > 0,
-        }
+    pub(crate) fn uses(&self) -> &Uses {
+        &self.uses
     }
 
     fn slot(&self, id: u64) -> Result<usize, String> {
@@ -343,7 +421,7 @@ impl NodeTable {
                         return Err(format!("the shape {id} has no kind"));
                     }
                     let uses = uses_of(&props);
-                    self.count(uses, true);
+                    self.counts.count(&uses, true);
                     let entry = Entry {
                         id,
                         props,
@@ -354,7 +432,7 @@ impl NodeTable {
                     match self.ids.get(&id) {
                         Some(&slot) => {
                             if let Some(old) = self.slots[slot].replace(entry) {
-                                self.count(old.uses, false);
+                                self.counts.count(&old.uses, false);
                             }
                         }
                         None => {
@@ -377,10 +455,12 @@ impl NodeTable {
                         (Props::Marker, Change::Marker) => {}
                         _ => return Err(format!("a change of another kind of node for {id}")),
                     }
-                    let (before, after) = (entry.uses, uses_of(&entry.props));
-                    entry.uses = after;
-                    self.count(before, false);
-                    self.count(after, true);
+                    let after = uses_of(&entry.props);
+                    if after != entry.uses {
+                        let before = std::mem::replace(&mut entry.uses, after.clone());
+                        self.counts.count(&before, false);
+                        self.counts.count(&after, true);
+                    }
                 }
                 Op::Insert {
                     parent,
@@ -434,6 +514,7 @@ impl NodeTable {
         for parent in emptied {
             self.tidy(parent);
         }
+        self.uses = self.counts.uses();
         Ok(())
     }
 
@@ -455,24 +536,10 @@ impl NodeTable {
             return;
         };
         self.ids.remove(&entry.id);
-        self.count(entry.uses, false);
+        self.counts.count(&entry.uses, false);
         for child in entry.children {
             self.remove(child);
         }
-    }
-
-    fn count(&mut self, uses: Uses, add: bool) {
-        let step = |count: &mut usize, used: bool| {
-            if used {
-                *count = if add {
-                    *count + 1
-                } else {
-                    count.saturating_sub(1)
-                };
-            }
-        };
-        step(&mut self.tick, uses.tick);
-        step(&mut self.watches, uses.watches);
     }
 }
 
@@ -485,8 +552,23 @@ fn uses_of(props: &Props) -> Uses {
 
 impl ShapeProps {
     fn uses(&self) -> Uses {
-        self.numbers()
-            .fold(Uses::default(), |uses, number| uses.and(number.uses()))
+        let mut uses = Uses::default();
+        self.numbers().for_each(|number| number.add_uses(&mut uses));
+        if let Some(Paint::Mix { by, .. }) = &self.color {
+            by.add_uses(&mut uses);
+        }
+        match &self.list {
+            Some(List::Scope { name, .. }) => {
+                uses.scopes.insert(name.clone());
+                uses.animates = true;
+            }
+            Some(List::History { of, .. }) => {
+                of.add_uses(&mut uses);
+                uses.animates = true;
+            }
+            None => {}
+        }
+        uses
     }
 
     fn numbers(&self) -> impl Iterator<Item = &Num> {
@@ -589,6 +671,7 @@ pub(crate) enum ShapeKind {
     Line,
     Arc,
     Text,
+    Wave,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -597,6 +680,68 @@ pub(crate) enum Align {
     Left,
     Center,
     Right,
+}
+
+/// The colour of a shape: as it is, or between two by a live value, 0 the first and 1 the second.
+#[derive(Debug, Clone)]
+pub(crate) enum Paint {
+    Fixed(Color),
+    Mix { from: Color, to: Color, by: Num },
+}
+
+impl<'de> Deserialize<'de> for Paint {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(PaintVisitor)
+    }
+}
+
+struct PaintVisitor;
+
+impl<'de> Visitor<'de> for PaintVisitor {
+    type Value = Paint;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a colour, or a mix of two")
+    }
+
+    fn visit_str<E: Error>(self, text: &str) -> Result<Paint, E> {
+        Color::try_from(text.to_string())
+            .map(Paint::Fixed)
+            .map_err(E::custom)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Paint, A::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Mix {
+            mix: [Color; 2],
+            by: Num,
+        }
+        let Mix {
+            mix: [from, to],
+            by,
+        } = Mix::deserialize(MapAccessDeserializer::new(map))?;
+        Ok(Paint::Mix { from, to, by })
+    }
+}
+
+/// What a wave draws: the last sound of a meter, or the last values of a live value, one a frame.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum List {
+    Scope {
+        name: String,
+        /// 0 left, 1 right; their mean when left out.
+        channel: Option<u8>,
+        /// How many of the last frames, at most [`sound_core::Scope::FRAMES`].
+        frames: Option<u32>,
+    },
+    History {
+        of: Num,
+        frames: u32,
+        /// The same history wherever it is drawn: its live value, as `sdk.ts` writes it.
+        key: String,
+    },
 }
 
 /// An end of a line, a point, or of an arc, a turn.
@@ -658,10 +803,9 @@ impl<'de> Visitor<'de> for NumVisitor {
 }
 
 impl Num {
-    fn uses(&self) -> Uses {
-        match self {
-            Self::Fixed(_) => Uses::default(),
-            Self::Live(live) => live.uses(),
+    fn add_uses(&self, uses: &mut Uses) {
+        if let Self::Live(live) = self {
+            live.add_uses(uses);
         }
     }
 }
@@ -671,50 +815,187 @@ impl Num {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Live {
     Tick,
-    Watch { name: String },
-    Field { name: String, fraction: bool },
-    Control { name: String, fraction: bool },
-    Drag { id: String, part: DragPart },
-    Space { key: String, part: SpacePart },
-    Plus { a: Num, b: Num },
-    Minus { a: Num, b: Num },
-    Times { a: Num, b: Num },
-    Over { a: Num, b: Num },
-    Min { a: Num, b: Num },
-    Max { a: Num, b: Num },
-    Lt { a: Num, b: Num },
-    Gt { a: Num, b: Num },
-    Le { a: Num, b: Num },
-    Ge { a: Num, b: Num },
-    Eq { a: Num, b: Num },
-    Ne { a: Num, b: Num },
-    Snap { a: Num, b: Num },
-    Negate { x: Num },
-    Abs { x: Num },
-    Floor { x: Num },
-    Round { x: Num },
-    Sin { x: Num },
-    Cos { x: Num },
+    /// Seconds on the clock of the window.
+    Time,
+    Watch {
+        name: String,
+    },
+    Field {
+        name: String,
+        fraction: bool,
+        /// Of the record of this instance inside it, by its path, instead.
+        child: Option<String>,
+    },
+    Control {
+        name: String,
+        fraction: bool,
+    },
+    /// The loudest sample since the last frame: of a meter its behaviour declares, or of peaks
+    /// an instance inside it keeps, as `path.name`.
+    Peak {
+        name: String,
+        /// 0 left, 1 right; the louder when left out.
+        channel: Option<u8>,
+    },
+    /// The same, of what the device plays.
+    Output {
+        channel: Option<u8>,
+    },
+    /// A number as it plays: what a lane or a cable plays into it, else its record. Of an
+    /// instance inside it as `path.name`.
+    Played {
+        name: String,
+        fraction: bool,
+    },
+    Drag {
+        id: String,
+        part: DragPart,
+    },
+    Space {
+        key: String,
+        part: SpacePart,
+    },
+    Plus {
+        a: Num,
+        b: Num,
+    },
+    Minus {
+        a: Num,
+        b: Num,
+    },
+    Times {
+        a: Num,
+        b: Num,
+    },
+    Over {
+        a: Num,
+        b: Num,
+    },
+    Mod {
+        a: Num,
+        b: Num,
+    },
+    Pow {
+        a: Num,
+        b: Num,
+    },
+    Min {
+        a: Num,
+        b: Num,
+    },
+    Max {
+        a: Num,
+        b: Num,
+    },
+    Lt {
+        a: Num,
+        b: Num,
+    },
+    Gt {
+        a: Num,
+        b: Num,
+    },
+    Le {
+        a: Num,
+        b: Num,
+    },
+    Ge {
+        a: Num,
+        b: Num,
+    },
+    Eq {
+        a: Num,
+        b: Num,
+    },
+    Ne {
+        a: Num,
+        b: Num,
+    },
+    Snap {
+        a: Num,
+        b: Num,
+    },
+    Negate {
+        x: Num,
+    },
+    Abs {
+        x: Num,
+    },
+    Floor {
+        x: Num,
+    },
+    Round {
+        x: Num,
+    },
+    Sin {
+        x: Num,
+    },
+    Cos {
+        x: Num,
+    },
+    /// An amplitude in decibels, -120 at most down.
+    Decibels {
+        x: Num,
+    },
+    /// What moves from frame to frame: `key` is its live value as `sdk.ts` writes it, so the
+    /// same one drawn twice is one, as a signal used twice is.
+    Ease {
+        x: Num,
+        ease: Ease,
+        key: String,
+    },
+}
+
+/// How a live value follows another over time.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Ease {
+    /// Glides toward it, about two thirds of the way in `ms`.
+    Smooth { ms: f32 },
+    /// Rises with it at once and falls at most `per_second`.
+    Fall { per_second: f32 },
+    /// Rises with it at once and stays for `seconds`, then follows it.
+    Hold { seconds: f32 },
 }
 
 impl Live {
-    fn uses(&self) -> Uses {
+    fn add_uses(&self, uses: &mut Uses) {
         match self {
-            Self::Tick => Uses {
-                tick: true,
-                ..Uses::default()
-            },
-            Self::Watch { .. } => Uses {
-                watches: true,
-                ..Uses::default()
-            },
-            Self::Field { .. } | Self::Control { .. } | Self::Drag { .. } | Self::Space { .. } => {
-                Uses::default()
+            Self::Tick => uses.tick = true,
+            Self::Watch { .. } => uses.watches = true,
+            Self::Time => uses.animates = true,
+            Self::Peak { name, .. } => {
+                uses.peaks.insert(name.clone());
+                uses.animates = true;
             }
+            Self::Output { .. } => {
+                uses.output = true;
+                uses.animates = true;
+            }
+            Self::Played { name, .. } => {
+                uses.played.insert(name.clone());
+                if name.contains('.') {
+                    uses.inside.insert(name.clone());
+                }
+                uses.animates = true;
+            }
+            Self::Field {
+                child: Some(child),
+                name,
+                ..
+            } => {
+                uses.inside.insert(format!("{child}.{name}"));
+            }
+            Self::Field { child: None, .. }
+            | Self::Control { .. }
+            | Self::Drag { .. }
+            | Self::Space { .. } => {}
             Self::Plus { a, b }
             | Self::Minus { a, b }
             | Self::Times { a, b }
             | Self::Over { a, b }
+            | Self::Mod { a, b }
+            | Self::Pow { a, b }
             | Self::Min { a, b }
             | Self::Max { a, b }
             | Self::Lt { a, b }
@@ -723,13 +1004,21 @@ impl Live {
             | Self::Ge { a, b }
             | Self::Eq { a, b }
             | Self::Ne { a, b }
-            | Self::Snap { a, b } => a.uses().and(b.uses()),
+            | Self::Snap { a, b } => {
+                a.add_uses(uses);
+                b.add_uses(uses);
+            }
             Self::Negate { x }
             | Self::Abs { x }
             | Self::Floor { x }
             | Self::Round { x }
             | Self::Sin { x }
-            | Self::Cos { x } => x.uses(),
+            | Self::Cos { x }
+            | Self::Decibels { x } => x.add_uses(uses),
+            Self::Ease { x, .. } => {
+                x.add_uses(uses);
+                uses.animates = true;
+            }
         }
     }
 }
@@ -796,6 +1085,8 @@ pub(crate) enum Axis {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Turns {
     pub field: Option<String>,
+    /// The instance inside it, by its path, whose `field` it turns, else its own record.
+    pub child: Option<String>,
     pub control: Option<String>,
     pub min: Option<f32>,
     pub max: Option<f32>,

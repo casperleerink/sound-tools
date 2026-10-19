@@ -8,7 +8,7 @@ use gpui::{
 use super::{ONLY_THE_TOOL, Window, open};
 
 impl Window<'_> {
-    fn press(&mut self, position: Point<Pixels>) {
+    pub(super) fn press(&mut self, position: Point<Pixels>) {
         self.cx
             .simulate_mouse_move(position, None, Modifiers::default());
         self.cx.simulate_event(MouseDownEvent {
@@ -21,13 +21,13 @@ impl Window<'_> {
         self.cx.run_until_parked();
     }
 
-    fn drag_to(&mut self, position: Point<Pixels>) {
+    pub(super) fn drag_to(&mut self, position: Point<Pixels>) {
         self.cx
             .simulate_mouse_move(position, MouseButton::Left, Modifiers::default());
         self.cx.run_until_parked();
     }
 
-    fn release(&mut self, position: Point<Pixels>) {
+    pub(super) fn release(&mut self, position: Point<Pixels>) {
         self.cx.simulate_event(MouseUpEvent {
             position,
             modifiers: Modifiers::default(),
