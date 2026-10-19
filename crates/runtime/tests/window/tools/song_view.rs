@@ -650,3 +650,161 @@ fn a_region_after_a_tempo_change_is_as_long_as_its_file_at_that_tempo(cx: &mut T
     assert!((trimmed - 0.5).abs() < 1e-3, "{trimmed}");
     assert_eq!(window.record("song/voice/region")["start"], 2 * BAR);
 }
+
+/// The files of `song_files(tracks, clips)` with `change` made to the record at `path`.
+fn files_with(
+    tracks: usize,
+    clips: usize,
+    path: &str,
+    change: impl FnOnce(&mut serde_json::Value),
+) -> Vec<(String, String)> {
+    let mut files = crate::song::song_files(tracks, clips);
+    let mut change = Some(change);
+    for (each, text) in &mut files {
+        if each == path
+            && let Some(change) = change.take()
+        {
+            let mut record: serde_json::Value = serde_json::from_str(text).unwrap();
+            change(&mut record);
+            *text = record.to_string();
+        }
+    }
+    files
+}
+
+fn open_files<'a>(cx: &'a mut TestAppContext, files: &[(String, String)]) -> Opened<'a> {
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    super::open(cx, &files)
+}
+
+/// Copy in a clip's menu copies it as cmd-c does: cmd-v pastes it.
+#[gpui::test]
+fn a_clip_copied_from_its_menu_is_pasted(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR / 2, 1);
+    window.click_with(clip, MouseButton::Right);
+    window.pick("menu-2");
+    window.wait_for_bun();
+    window.click(clip);
+    window.cx.simulate_keystrokes("cmd-v");
+    window.until("the clip pasted", |window| window.has("song/t01/clip"));
+    assert_eq!(window.problems(), []);
+}
+
+/// Notes pasted into a clip with no `length`, which plays to its last note, are kept.
+#[gpui::test]
+fn notes_pasted_into_a_clip_with_no_length_are_kept(cx: &mut TestAppContext) {
+    let files = files_with(1, 1, "state/song/t00/c00.json", |record| {
+        record["state"].as_object_mut().unwrap().remove("length");
+    });
+    let mut window = open_files(cx, &files);
+    let notes = |window: &mut Opened| {
+        window.record("song/t00/c00")["notes"]
+            .as_array()
+            .map_or(0, Vec::len)
+    };
+    let count = notes(&mut window);
+    window.wait_for_bun();
+    let at = window.on_lane(BAR / 4, 0);
+    window.double_click(at);
+    window.space_at("editor");
+    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window.until("the notes pasted", |window| notes(window) == 2 * count);
+}
+
+/// The timeline reaches past its last clip, wherever that is: a clip at bar 88 scrolled to the
+/// left edge is chosen and deleted there.
+#[gpui::test]
+fn the_timeline_scrolls_to_its_last_clip(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 1, 30);
+    let last = window.record("song/t00/c29")["start"].as_u64().unwrap();
+    assert!(last > 64 * BAR);
+    let timeline = window.space_at("timeline");
+    window.wait_for_bun();
+    window.cx.simulate_event(gpui::ScrollWheelEvent {
+        position: timeline + point(px(200.), px(10.)),
+        delta: gpui::ScrollDelta::Pixels(point(px(-(last as f32) * ACROSS), px(0.))),
+        modifiers: Modifiers::default(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    window.cx.run_until_parked();
+    let at = window.on_lane(BAR / 2, 0);
+    window.click(at);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("backspace");
+    window.until("the last clip deleted", |window| !window.has("song/t00/c29"));
+    assert!(window.has("song/t00/c28"));
+}
+
+/// The end of a region that plays its whole file drags no further out: its file has no more.
+#[gpui::test]
+fn a_region_that_plays_its_whole_file_trims_no_further_out(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.drop_sine();
+    let end = window.on_lane(2 * BAR + 1920, 2) - point(px(2.), px(0.));
+    window.until_found("div-mixer-toggle");
+    window.press(end);
+    window.drag_to(end + point(px(5.), px(0.)));
+    window.drag_to(end + point(px(960. * ACROSS), px(0.)));
+    window.release(end + point(px(960. * ACROSS), px(0.)));
+    window.after_the_runs();
+    window.wait_for_bun();
+    assert_eq!(window.record("song/voice/region")["file_end_seconds"], serde_json::Value::Null);
+    assert_eq!(window.problems(), []);
+}
+
+/// A chosen note stays chosen by what it is when another tool puts a note before it in the
+/// list: delete removes it, not the note now in its place.
+#[gpui::test]
+fn a_chosen_note_stays_chosen_when_the_notes_move_in_the_list(cx: &mut TestAppContext) {
+    let note = |start: u64, pitch: u64| serde_json::json!({ "start": start, "length": 960, "pitch": pitch, "velocity": 100 });
+    let files = files_with(1, 1, "state/song/t00/c00.json", |record| {
+        record["state"] = serde_json::json!({ "start": 0, "length": BAR, "notes": [note(0, 60)] });
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    let at = window.on_lane(BAR / 2, 0);
+    window.double_click(at);
+    // The note of pitch 60: the editor shows pitch 84 at its top, a row of 8 points each.
+    let editor = window.space_at("editor");
+    window.click(editor + point(px(30.), px((84. - 60.) * 8. + 4.)));
+    window.wait_for_bun();
+    let session = window.session.clone();
+    let notes = serde_json::json!({ "start": 0, "length": BAR, "notes": [note(1920, 62), note(0, 60)] });
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut edit = project.begin("Another tool");
+                let mut changes = sound_core::Changes::new();
+                project.set_json(&mut changes, crate::support::id("song/t00/c00"), "timeline", notes)?;
+                project.publish(&mut edit, changes)?;
+                project.finish(edit)
+            })
+        })
+    });
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("backspace");
+    window.until("the note deleted", |window| {
+        window.record("song/t00/c00")["notes"].as_array().map_or(0, Vec::len) == 1
+    });
+    assert_eq!(window.record("song/t00/c00")["notes"][0]["pitch"], 62);
+}
+
+/// In 3/4, a double-click in the second bar adds a clip from its start, a bar of 3/4 long.
+#[gpui::test]
+fn a_clip_added_in_three_four_fills_its_bar(cx: &mut TestAppContext) {
+    let files = files_with(1, 0, "project.json", |project| {
+        project["tempo_map"]["time_signature"] = "3/4".into();
+    });
+    let mut window = open_files(cx, &files);
+    window.wait_for_bun();
+    let at = window.on_lane(3 * 960 + 480, 0);
+    window.double_click(at);
+    window.until("the clip added", |window| window.has("song/t00/clip"));
+    let clip = window.record("song/t00/clip");
+    assert_eq!((clip["start"].as_u64(), clip["length"].as_u64()), (Some(2880), Some(2880)));
+}

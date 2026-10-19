@@ -1,16 +1,16 @@
-import { Arc, DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
+import { Arc, DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
-import { ClipEditor, editorKey, type EditorMemory, type Lane } from "./clip-editor";
+import { ClipEditor, editorKey, lengthOf, type EditorMemory, type Lane } from "./clip-editor";
 import { freeName, tape } from "./tape";
 import { splitTarget, track } from "./track";
 
 // A song: tracks of clips in time, with their automation, a mixer strip per track, the devices
 // of the chosen track, and a note editor for one clip.
 const BEAT = 960;
-const BAR = 4 * BEAT;
-const BARS = 64;
-const END = BARS * BAR;
+// The song shows at least 64 bars of 4/4, and 32 more after what it holds.
+const SHOWN = 64 * 4 * BEAT;
+const AFTER = 32 * 4 * BEAT;
 const ROW = 40;
 const HEADER = 200;
 const RULER = 22;
@@ -40,8 +40,8 @@ const FADER = 160;
 type Clipboard = { from: number; clips: { track: string; state: FilledStateOfTool<"timeline"> }[] };
 /** A track of the song as code reads it. */
 type TrackRow = Extract<Frozen<OwnedChild<typeof parts>>, { tool: typeof track }>;
-/** A copy of a clip's state to change. */
-const copyOf = (state: Frozen<FilledStateOfTool<"timeline">>) => structuredClone(state) as FilledStateOfTool<"timeline">;
+/** A copy of a clip's state to change, from a view's record or a key's. */
+const copyOf = (state: Frozen<FilledStateOfTool<"timeline">>) => JSON.parse(JSON.stringify(state)) as FilledStateOfTool<"timeline">;
 type Editing = { kind: "tempo" | "signature" | "section"; bar: number } | null;
 
 type Memory = {
@@ -64,8 +64,9 @@ type Memory = {
 } & EditorMemory;
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
-// Where a level sits on a meter, 0 to 1: 0 dB at 0.8.
-const place = (amplitude: Live) => amplitude.pow(20 / 61.94).times(0.8).min(1);
+// Where a level sits on a meter or a fader, 0 to 1: its amplitude to this power, 0 dB at 0.8.
+const [CURVE, ZERO_DB] = [20 / 61.94, 0.8];
+const place = (amplitude: Live) => amplitude.pow(CURVE).times(ZERO_DB).min(1);
 
 // Bars: the time signatures are runs of bars, and the last run goes on.
 type Runs = readonly { readonly signature: string; readonly bars: number }[];
@@ -92,14 +93,19 @@ function runsOf(signatures: string[]): { signature: string; bars: number }[] {
   }
   return runs;
 }
-/** The tick each of `count` bars starts at. */
-function barStarts(runs: Runs, count: number): number[] {
-  let tick = 0;
-  return signaturesOf(runs, count).map((signature) => {
-    const start = tick;
-    tick += ticksOfBar(signature);
-    return start;
+/** The tick each bar starts at, up to the first at or past `end`. */
+function barStarts(runs: Runs, end: number): number[] {
+  const starts = [0];
+  let at = 0;
+  const all = runs.length > 0 ? runs : [{ signature: "4/4", bars: 1 }];
+  all.forEach((run, index) => {
+    const goesOn = index === all.length - 1;
+    for (let bar = 0; goesOn ? at < end : bar < run.bars; bar++) {
+      at += ticksOfBar(run.signature);
+      starts.push(at);
+    }
   });
+  return starts;
 }
 
 /** Ticks as seconds of a file at `bpm`. */
@@ -145,13 +151,13 @@ const nameFrom = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-"
 /** Where a value sits on a lane, 0 to 1, as its knob travels its range, and back. */
 function upOf(range: MovedNumber, value: number): number {
   if (range.scale === "log") return Math.log(value / range.min) / Math.log(range.max / range.min);
-  if (range.scale === "fader") return value <= -100 ? 0 : clamp(Math.pow(Math.pow(10, value / 20), 20 / 61.94) * 0.8, 0, 1);
+  if (range.scale === "fader") return value <= -100 ? 0 : clamp(Math.pow(Math.pow(10, value / 20), CURVE) * ZERO_DB, 0, 1);
   return (value - range.min) / (range.max - range.min);
 }
 function valueAt(range: MovedNumber, up: number): number {
   const at = clamp(up, 0, 1);
   if (range.scale === "log") return range.min * Math.pow(range.max / range.min, at);
-  if (range.scale === "fader") return at <= 0 ? -100 : Math.min(20 * Math.log10(Math.pow(at / 0.8, 61.94 / 20)), range.max);
+  if (range.scale === "fader") return at <= 0 ? -100 : Math.min(20 * Math.log10(Math.pow(at / ZERO_DB, 1 / CURVE)), range.max);
   return range.min + at * (range.max - range.min);
 }
 
@@ -192,7 +198,8 @@ export const song = tool({
   }),
   keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "escape"],
   globalKeys: ["space"],
-  onKey: ({ state, memory, update, clock, select, children }, key) => {
+  onKey: (tool, key) => {
+    const { state, memory, update, clock, children } = tool;
     const order = (name: string) => (state.order.includes(name) ? state.order.indexOf(name) : state.order.length);
     if (key.key === "space") {
       if (key.down) (clock.playing ? clock.pause() : clock.play());
@@ -228,7 +235,7 @@ export const song = tool({
       .filter((child): child is TrackRow => child.tool === "track")
       .slice()
       .sort((a, b) => order(a.name) - order(b.name) || (a.name < b.name ? -1 : 1));
-    clipKey(key, { memory, update, clock, select, tracks });
+    clipKey(key, tracks, tool);
   },
   behaviour: ({ state, children }): Declaration<typeof parts> => {
     const tracks = children.filter((child) => child.tool === "track" || child.tool === "tape");
@@ -277,8 +284,8 @@ export const song = tool({
     const returns = () => children.filter((child) => child.tool === "bus");
     const lanesOf = (each: Child) =>
       each.tool === "track"
-        ? (each.state.automation ?? []).flatMap(({ lane, target }) =>
-            lane && target && each.children.some((child) => child.name === lane && child.tool === "lane") ? [{ lane, target }] : [],
+        ? each.state.automation.flatMap(({ lane, target }) =>
+            each.children.some((child) => child.name === lane && child.tool === "lane") ? [{ lane, target }] : [],
           )
         : [];
     type Row = { each: Child; lane: { lane: string; target: string } | null };
@@ -290,7 +297,15 @@ export const song = tool({
     const clipsOf = (each: Child) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);
     const recordable = (each: Child) => (each.tool === "track" || each.tool === "tape") && each.children.some((child) => child.name === "rec");
     const runs = () => clock.tempo_map.time_signatures;
-    const starts = memo(() => barStarts(runs(), BARS + 1));
+    // As far as the song shows: past what it holds, and past where it repeats.
+    const end = memo(() => {
+      const clips = rows().flatMap((each) => clipsOf(each).map((clip) => clip.state.start + lengthOf(clip.state)));
+      const regions = rows().flatMap((each) => regionsOf(each).map((region) => region.state.start));
+      const lanes = rows().flatMap((each) => (each.tool === "track" ? each.children : []).flatMap((child) => (child.tool === "lane" ? child.state.points.map((point) => point.tick) : [])));
+      return Math.max(SHOWN, ...clips, ...regions, ...lanes, clock.repeat?.to ?? 0) + AFTER;
+    });
+    const starts = memo(() => barStarts(runs(), end()));
+    /** The bar `tick` is in, from 1. */
     const barOf = (tick: number) => Math.max(starts().findIndex((start) => start > tick), 1);
 
     /** Turns the recorders of the armed tracks on or off. */
@@ -307,11 +322,13 @@ export const song = tool({
         memory.recording = null;
       }
     };
+    // An armed track's input is open: its level shows, and a take has its sound from the first frame.
     const toggleArm = (name: string) => {
       const armed = new Set(memory.armed);
       const on = !armed.delete(name);
       if (on) armed.add(name);
       memory.armed = armed;
+      send({ child: `${name}/rec` as const, number: "arm" }, on ? 1 : 0);
       if (memory.recording !== null) send({ child: `${name}/rec` as const, number: "record" }, on ? 1 : 0);
     };
     const isPicked = selector(() => memory.selected);
@@ -327,8 +344,8 @@ export const song = tool({
       memory.region = null;
       memory.track = ([...keys][0] ?? track)?.split("/")[0] ?? memory.track;
       const clips = [...keys].flatMap((key) => clipAt(key) ?? []);
-      const starts = clips.map((clip) => clip.state.start ?? 0);
-      const ends = clips.map((clip) => (clip.state.start ?? 0) + (clip.state.length ?? BAR));
+      const starts = clips.map((clip) => clip.state.start);
+      const ends = clips.map((clip) => clip.state.start + lengthOf(clip.state));
       const span = clips.length === 0 ? undefined : { from: Math.min(...starts), to: Math.max(...ends) };
       select([...keys][0] ?? track, { span });
     };
@@ -363,7 +380,7 @@ export const song = tool({
           lane || row + 1 <= top || row >= bottom
             ? []
             : clipsOf(each)
-                .filter(({ state }) => (state.start ?? 0) < right && (state.start ?? 0) + (state.length ?? BAR) > left)
+                .filter(({ state }) => state.start < right && state.start + lengthOf(state) > left)
                 .map((clip) => `${each.name}/${clip.name}`),
         );
         choose(new Set([...(shift ? memory.selected : []), ...inside]));
@@ -375,7 +392,7 @@ export const song = tool({
       snap: { x: BEAT, grid: true },
       onEnd: ({ dx }) =>
         editClips("Resize clips", memory.selected, (clip) => {
-          const length = Math.max((clip.length ?? BAR) + dx, BEAT);
+          const length = Math.max(lengthOf(clip) + dx, BEAT);
           // What starts at or past its new end is cut: a timeline plays nothing there.
           clip.length = length;
           clip.notes = clip.notes.filter((note) => note.start < length);
@@ -421,13 +438,15 @@ export const song = tool({
         choose(new Set());
         return;
       }
-      const start = Math.floor(x / BAR) * BAR;
+      const bar = barOf(x);
+      const start = starts()[bar - 1] ?? 0;
+      const length = (starts()[bar] ?? start + 4 * BEAT) - start;
       let added: string | undefined;
       update("Add a clip", ({ children }) => {
         const owner = children.find((child) => child.name === row.each.name);
         if (owner?.tool !== "track") return;
         const name = freeName(owner.children.map((child) => child.name), "clip");
-        owner.children = [...owner.children, { name, tool: "timeline", state: { start, length: BAR, notes: [] } }];
+        owner.children = [...owner.children, { name, tool: "timeline", state: { start, length, notes: [] } }];
         added = `${owner.name}/${name}`;
       });
       if (added) choose(new Set([added]));
@@ -564,12 +583,12 @@ export const song = tool({
     /** The devices of a track whose numbers a lane can move: its synth, its filter, its fader and its chain's effects. */
     const devicesOf = (each: Child) => {
       const effects = each.tool === "track" ? each.children.find((child) => child.name === "chain") : undefined;
-      const order = effects?.tool === "chain" ? (effects.state.order ?? []) : [];
+      const order = effects?.tool === "chain" ? effects.state.order : [];
       return [["synth", "Synth"], ["fx", "Filter"], ["mix", "Fader"], ...order.map((effect) => [`chain/${effect}`, effect])] as [string, string][];
     };
     const addLane = async (each: Child) => {
       if (each.tool !== "track") return;
-      const taken = new Set((each.state.automation ?? []).map(({ target }) => target));
+      const taken = new Set(each.state.automation.map(({ target }) => target));
       const found = (await Promise.all(devicesOf(each).map(async ([path, label]) => (await numbers(`${each.name}/${path}`)).map((number) => ({ path, label, number })))))
         .flat()
         .filter(({ path, number }) => !taken.has(`${path}.${number.name}`));
@@ -595,7 +614,6 @@ export const song = tool({
         owner.state.automation = owner.state.automation.filter((each) => each.lane !== lane);
         owner.children = owner.children.filter((child) => child.name !== lane);
       });
-    type LanePoint = { tick: number; value: number };
     /** Changes the points of the lane `lane` of `track`, sorted, one a tick, at least one. */
     const editPoints = (label: string, track: string, lane: string, change: (points: LanePoint[]) => LanePoint[]) =>
       update(label, ({ children }) => {
@@ -627,7 +645,7 @@ export const song = tool({
         return effects?.tool === "chain" ? effects : undefined;
       };
       const order = () => chainOf()?.state.order ?? [];
-      const isOff = (effect: string) => (chainOf()?.state.off ?? []).includes(effect);
+      const isOff = (effect: string) => chainOf()?.state.off.includes(effect) ?? false;
       /** Changes the chain of the track as one undo step `label`. */
       const editChain = (label: string, change: (effects: { state: { order: string[]; off: string[] }; children: { name: string }[] }) => void) =>
         update(label, ({ children }) => {
@@ -824,12 +842,12 @@ export const song = tool({
       };
       return (
         <>
-          <Rect x={0} y={row} width={END} height={1} color={COLOR.head} />
+          <Rect x={0} y={row} width={end} height={1} color={COLOR.head} />
           <For each={points}>
             {(point, index) => {
               const next = () => points()[index() + 1];
               return [
-                <Line from={() => [index() === 0 ? 0 : point.tick, yOf(point.value)] as const} to={() => [next()?.tick ?? END, yOf(next()?.value ?? point.value)] as const}
+                <Line from={() => [index() === 0 ? 0 : point.tick, yOf(point.value)] as const} to={() => [next()?.tick ?? end(), yOf(next()?.value ?? point.value)] as const}
                   color={COLOR.automation} width={2} />,
                 <Rect x={() => timeline.pointX.times(-4).plus(point.tick)} y={() => timeline.pointY.times(-4).plus(yOf(point.value))}
                   width={timeline.pointX.times(8)} height={timeline.pointY.times(8)} radius={4} color={COLOR.chosen} cursor="grab"
@@ -846,16 +864,16 @@ export const song = tool({
     const ClipShapes = ({ each, clip, row }: { each: Child; clip: ReturnType<typeof clipsOf>[number]; row: Accessor<number> }) => {
       const key = `${each.name}/${clip.name}`;
       const picked = () => isPicked(key);
-      const length = () => clip.state.length ?? BAR;
+      const length = () => lengthOf(clip.state);
       const resizes = () => (picked() ? RESIZES : undefined);
       // The clip and its notes move together, and its notes end at its end.
       return (
-        <Group x={() => clip.state.start ?? 0} y={row} clip={() => ({ width: length(), height: 1 })}
+        <Group x={() => clip.state.start} y={row} clip={() => ({ width: length(), height: 1 })}
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
           <Rect x={0} y={0.06} width={length} height={0.88} radius={3} anchor={{ x: 0, y: 0 }}
             color={() => (picked() ? COLOR.chosen : colourOf(each))}
             grows={resizes} drag={moveDrag} onPress={pressClip(key)} cursor="grab" />
-          <For each={() => clip.state.notes ?? []}>
+          <For each={() => clip.state.notes}>
             {(note) => (
               <Rect x={() => note.start} y={() => 0.24 + (1 - (clamp(note.pitch, LOW, HIGH) - LOW) / (HIGH - LOW)) * 0.62}
                 width={() => note.length} height={0.05} color={COLOR.note} />
@@ -904,7 +922,7 @@ export const song = tool({
           editRegion("Trim a region", (state) => {
             const plays = outputs[`${key}.seconds`] ?? 0;
             // Its whole file plays already: there is nothing after its end.
-            if (plays <= 0 || (state.file_end_seconds === undefined && dx >= 0)) return;
+            if (plays <= 0 || (state.file_end_seconds === null && dx >= 0)) return;
             const changes = clock.tempo_map.tempo_changes;
             const end = state.start + ticksAcross(changes, state.start, plays);
             state.file_end_seconds = state.file_start_seconds + Math.max(plays + secondsBetween(changes, end, end + dx), 0.05);
@@ -916,7 +934,7 @@ export const song = tool({
         if (button === "right") openMenu([{ label: "Delete" }]).then((picked) => picked === 0 && removeRegion(each.name, region.name));
       };
       return (
-        <Group x={() => region.state.start ?? 0} y={row} moves={() => (chosen() ? ["region"] : undefined)}>
+        <Group x={() => region.state.start} y={row} moves={() => (chosen() ? ["region"] : undefined)}>
           <Rect x={0} y={0.06} width={width} height={0.88} radius={3} color={() => (chosen() ? COLOR.chosen : colourOf(each))} drag={moveRegion} onPress={press} cursor="grab" />
           <Wave x={0} y={0.12} width={width} height={0.76} list={sound} band low={-1} high={1} color={COLOR.note} />
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={press} cursor="ew-resize"
@@ -1010,6 +1028,7 @@ export const song = tool({
       return (
         <ClipEditor
           clip={() => open()?.state}
+          bars={() => starts().map((tick) => tick - (open()?.state.start ?? 0))}
           title={() => {
             const shown = open();
             return shown ? `${trackName} · ${shown.state.title || shown.name}` : "";
@@ -1085,8 +1104,8 @@ export const song = tool({
             </div>
           </div>
           <div style={{ grow: true }}>
-            <Space key="ruler" height={RULER} unit={{ x: ACROSS }} extent={{ x: [0, END] }} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }} onPress={pressRuler}>
-              <For each={() => starts().slice(0, BARS)}>
+            <Space key="ruler" height={RULER} unit={{ x: ACROSS }} extent={() => ({ x: [0, end()] })} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }} onPress={pressRuler}>
+              <For each={starts}>
                 {(tick, bar) => <Label x={tick + 60} y={5} text={() => String(bar() + 1)} size={10} color={COLOR.text} />}
               </For>
               <For each={() => clock.sections}>
@@ -1097,7 +1116,7 @@ export const song = tool({
               </For>
               <Line from={[now.tick, 0]} to={[now.tick, RULER]} color={COLOR.playhead} width={2} />
             </Space>
-            <Space key="loop" height={LOOP} unit={{ x: ACROSS }} extent={{ x: [0, END] }} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }} background={COLOR.lane}
+            <Space key="loop" height={LOOP} unit={{ x: ACROSS }} extent={() => ({ x: [0, end()] })} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }} background={COLOR.lane}
               drag={loopDrag} onPress={({ button }) => button === "right" && clock.setRepeat(null)}>
               {() => {
                 const repeat = clock.repeat;
@@ -1105,9 +1124,9 @@ export const song = tool({
               }}
               <Rect x={loop.startX.min(loop.x)} y={1} width={loop.dx.abs()} height={8} radius={2} color={COLOR.edit} opacity={loop.active} />
             </Space>
-            <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [0, END], y: [0, Math.max(layout().length, 1)] })} zoom={{ x: [0.1, 8] }}
+            <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [0, end()], y: [0, Math.max(layout().length, 1)] })} zoom={{ x: [0.1, 8] }}
               background={COLOR.lane} drag={marqueeDrag} onPress={pressTimeline} onDrop={dropOnTimeline}>
-              <For each={() => starts().slice(0, BARS)}>{(tick) => <Line from={[tick, 0]} to={[tick, 1000]} color={COLOR.bar} width={1} />}</For>
+              <For each={starts}>{(tick) => <Line from={[tick, 0]} to={[tick, 1000]} color={COLOR.bar} width={1} />}</For>
               <For each={layout}>
                 {({ each, lane }, row) =>
                   lane ? (
@@ -1156,7 +1175,7 @@ function removeOrCopy({ children }: Part<unknown, typeof parts>, chosen: Readonl
     }
     const copies = mine.flatMap((clip) => {
       if (clip.tool !== "timeline") return [];
-      const length = clip.state.length ?? BAR;
+      const length = lengthOf(clip.state);
       const name = freeName(row.children.map((each) => each.name), clip.name);
       return [{ name, tool: "timeline" as const, state: { ...clip.state, start: clip.state.start + length } }];
     });
@@ -1172,7 +1191,7 @@ function copied(tracks: readonly TrackRow[], chosen: ReadonlySet<string>): Clipb
     return clip?.tool === "timeline" ? [{ track: trackName!, state: copyOf(clip.state) }] : [];
   });
   if (clips.length === 0) return null;
-  return { from: Math.min(...clips.map((clip) => clip.state.start ?? 0)), clips };
+  return { from: Math.min(...clips.map((clip) => clip.state.start)), clips };
 }
 
 type Rows = readonly { each: { name: string; tool: string } }[];
@@ -1197,7 +1216,7 @@ function moveClips(update: (label: string, change: (part: Part<unknown, typeof p
       const start = Math.max(clip.state.start + dx, 0);
       // The automation under it goes along, on its own track: another track may have no such device.
       if (to === source && start !== clip.state.start) {
-        const range = { start: clip.state.start, end: clip.state.start + (clip.state.length ?? BAR) };
+        const range = { start: clip.state.start, end: clip.state.start + lengthOf(clip.state) };
         for (const { lane } of source.state.automation) {
           const points = source.children.find((child) => child.name === lane);
           if (points?.tool !== "lane") continue;
@@ -1258,16 +1277,7 @@ function carried(points: readonly LanePoint[], log: boolean, range: { start: num
 }
 
 /** What a key does to the chosen clips: copy, cut, paste, duplicate, delete, nudge. `tracks` are in their order. */
-function clipKey(
-  key: Key,
-  { memory, update, clock, select, tracks }: {
-    memory: { selected: ReadonlySet<string>; clipboard: Clipboard | null; track: string | null };
-    update: (label: string, change: (part: Part<unknown, typeof parts>) => void) => void;
-    clock: { tick: number };
-    select: (path: string | null) => void;
-    tracks: readonly TrackRow[];
-  },
-) {
+function clipKey(key: Key, tracks: readonly TrackRow[], { memory, update, clock, select }: Context<unknown, Inputs, Memory, typeof parts>) {
   const chosen = new Set(memory.selected);
   if (key.key === "escape") {
     memory.selected = new Set();

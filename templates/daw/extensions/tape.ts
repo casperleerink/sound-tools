@@ -16,7 +16,7 @@ export const tape = tool({
     return { connections: [...regions, { from: { child: "mix" }, to: { port: "audio" } }] };
   },
   onTake: ({ update }, take) => {
-    if (take.tool !== "region") return;
+    if (take.tool !== "region") throw new Error(`the take ${take.name} is a timeline, and an audio track keeps sound: record notes on a track`);
     update("Record", ({ children }) => {
       children.push({ name: freeName(children.map((child) => child.name), take.name), tool: "region", state: take.state });
     });

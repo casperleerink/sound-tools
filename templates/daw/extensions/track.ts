@@ -43,7 +43,7 @@ export const track = tool({
     };
   },
   onTake: ({ update }, take) => {
-    if (take.tool !== "timeline") return;
+    if (take.tool !== "timeline") throw new Error(`the take ${take.name} is a region, and a track keeps notes: give its recorder rec no channels, and record sound on an audio track`);
     update("Record", ({ children }) => {
       children.push({ name: freeName(children.map((child) => child.name), take.name), tool: "timeline", state: take.state });
     });
