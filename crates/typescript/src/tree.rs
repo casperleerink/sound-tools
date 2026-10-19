@@ -1294,6 +1294,15 @@ pub(crate) struct Style {
     radius: Option<f32>,
     border_color: Option<Color>,
     border_width: Option<f32>,
+    /// Its children scroll along this axis where they do not fit its size.
+    scroll: Option<ScrollAxis>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ScrollAxis {
+    X,
+    Y,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1355,6 +1364,26 @@ impl Style {
         lines.apply(element)
     }
 
+    /// The axis its children scroll along, if any.
+    pub(crate) fn scroll(&self) -> Option<ScrollAxis> {
+        self.scroll
+    }
+
+    /// Its size and how it grows, for the box its children scroll in.
+    pub(crate) fn sized(&self, mut element: Div) -> Div {
+        element = element.flex();
+        if let Some(width) = self.width {
+            element = element.w(px(width));
+        }
+        if let Some(height) = self.height {
+            element = element.h(px(height));
+        }
+        if self.grow {
+            element = element.flex_grow(1.);
+        }
+        element
+    }
+
     /// The height its style fixes, if any.
     pub(crate) fn fixed_height(&self) -> Option<f32> {
         self.height
@@ -1386,14 +1415,21 @@ impl Style {
         if let Some(padding) = self.padding_y {
             element = element.py(px(padding));
         }
-        if let Some(width) = self.width {
-            element = element.w(px(width));
-        }
-        if let Some(height) = self.height {
-            element = element.h(px(height));
-        }
-        if self.grow {
-            element = element.flex_grow(1.);
+        match self.scroll {
+            // As large as its children along the axis, and as its box across it.
+            Some(ScrollAxis::X) => element = element.flex_none().h_full(),
+            Some(ScrollAxis::Y) => element = element.flex_none().w_full(),
+            None => {
+                if let Some(width) = self.width {
+                    element = element.w(px(width));
+                }
+                if let Some(height) = self.height {
+                    element = element.h(px(height));
+                }
+                if self.grow {
+                    element = element.flex_grow(1.);
+                }
+            }
         }
         element = match self.align {
             Some(Place::Start) => element.items_start(),

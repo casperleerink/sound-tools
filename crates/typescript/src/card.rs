@@ -1477,13 +1477,46 @@ impl Drawing<'_, '_> {
                     None => element,
                 };
                 let hears = *on_press == Some(true) || *on_drop == Some(true) || carry.is_some();
+                if let Some(axis) = style.scroll() {
+                    // The box it scrolls in has its size; it is as large as its children.
+                    let name = element_name("scroll", key.as_deref(), index);
+                    let inner = match hears {
+                        true => self.heard_div(element, id, key.as_deref(), index, on_press, carry, on_drop),
+                        false => element.into_any_element(),
+                    };
+                    let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
+                    let scrolling = match axis {
+                        tree::ScrollAxis::X => scrolling.overflow_x_scroll(),
+                        tree::ScrollAxis::Y => scrolling.overflow_y_scroll(),
+                    };
+                    return scrolling.child(inner).into_any_element();
+                }
                 if !hears {
                     return element.into_any_element();
                 }
+                self.heard_div(element, id, key.as_deref(), index, on_press, carry, on_drop)
+            }
+        }
+    }
+
+    /// A div that hears presses, drops or carries something when dragged.
+    #[allow(clippy::too_many_arguments)]
+    fn heard_div(
+        &mut self,
+        element: Div,
+        id: u64,
+        key: Option<&str>,
+        index: &[usize],
+        on_press: &Option<bool>,
+        carry: &Option<String>,
+        on_drop: &Option<bool>,
+    ) -> AnyElement {
+        {
+            {
                 let lavender = self.cx.theme().lavender;
                 let element = element
                     .id(ElementId::Name(
-                        element_name("div", key.as_deref(), index).into(),
+                        element_name("div", key, index).into(),
                     ))
                     .when(*on_press == Some(true), |element| {
                         element

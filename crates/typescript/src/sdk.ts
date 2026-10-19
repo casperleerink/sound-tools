@@ -1097,6 +1097,8 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
   openMenu(items: readonly MenuItem[]): Promise<number | null>;
   /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. */
   offers(takes: "notes" | "audio"): Promise<Offer[]>;
+  /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */
+  numbers(path: string): Promise<MovedNumber[]>;
   /** Puts the device of the offer `key` at the child `path`, at its defaults, as one undo step `label`. */
   addOffer(key: string, path: string, label: string): void;
   /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
@@ -1395,6 +1397,15 @@ export interface Offer {
   group: string;
   /** Why it cannot be added here, or `null` when it can. */
   unavailable: string | null;
+}
+
+/** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */
+export interface MovedNumber {
+  name: string;
+  min: number;
+  max: number;
+  /** `"log"` for a frequency or a time, `"fader"` for a volume in dB (`-inf` at the bottom). */
+  scale: "linear" | "log" | "fader";
 }
 
 // Pointer
@@ -2472,6 +2483,8 @@ export interface Style {
   radius?: number;
   borderColor?: Color;
   borderWidth?: number;
+  /** Its children scroll along this axis where they do not fit its size, as a long rack does. */
+  scroll?: "x" | "y";
 }
 
 interface DivProps {

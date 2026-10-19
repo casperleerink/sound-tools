@@ -144,6 +144,11 @@ pub(crate) enum Request<'a> {
         question: u64,
         offers: Vec<Offered>,
     },
+    /// The answer to a `numbers`: what a lane or a cable can move of the child asked about.
+    Numbered {
+        question: u64,
+        numbers: Vec<Moved>,
+    },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {
@@ -168,6 +173,16 @@ pub(crate) enum EventKind {
     Power,
     /// The close icon of an embedded card.
     Close,
+}
+
+/// A number a lane or a cable moves, as code gets it: its range, and how a knob travels it.
+#[derive(Debug, Serialize)]
+pub(crate) struct Moved {
+    pub name: String,
+    pub min: f32,
+    pub max: f32,
+    /// `"linear"`, `"log"` or `"fader"`, as the knob of the number travels.
+    pub scale: &'static str,
 }
 
 /// A device the window offers, as code gets it: what `addOffer` names it by.
@@ -376,6 +391,12 @@ pub(crate) enum Event {
     },
     /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
     Offers { question: u64, takes: String },
+    /// Code asks what a lane or a cable can move of the child of `instance` at `path`.
+    Numbers {
+        question: u64,
+        instance: InstanceId,
+        path: String,
+    },
     /// The code of `instance` puts the offer `key` at its child `path`, as one edit `label`.
     AddOffer {
         instance: InstanceId,

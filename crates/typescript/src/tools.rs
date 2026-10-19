@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 use sound_core::{
     Assets, AudioThru, Automation, BehaviourContext, BehaviourError, Event, EventThru, GraphError,
     InputEndpoint, InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo,
-    Problem, RecordStamp, ToolSchema, ValueRange, Watch,
+    PlayedLanes, Problem, RecordStamp, Ticks, ToolSchema, ValueRange, Watch,
 };
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate};
 use sound_signals::{
@@ -1519,6 +1519,7 @@ fn wire(
     // By its processor too, so a sender made again is another sender; not by its port, which
     // new code of the same sender may move.
     let mut fed: BTreeMap<&str, BTreeSet<(&End, NodeId)>> = BTreeMap::new();
+    let mut played: BTreeMap<&str, Vec<(Arc<str>, Watch)>> = BTreeMap::new();
     for (index, connection) in declaration.connections.iter().enumerate() {
         let at = format!("connections[{index}]");
         let (Some((from_key, from_name)), Some((to_key, to_name))) =
@@ -1592,6 +1593,7 @@ fn wire(
                     Some(into) => {
                         // What it plays, for a view that shows the number as it plays.
                         let shown = context.watch(&played_name(&format!("{child}.{to_name}")));
+                        played.entry(child).or_default().push((to_name.into(), shown.clone()));
                         (cable::<Number, Automation>(
                             name,
                             into,
@@ -1630,6 +1632,10 @@ fn wire(
     if own.sound.is_none() {
         passed_sound(&passed, context)?;
     }
+    // A card's knob of a number a cable moves shows what the cable plays, as a lane's does.
+    for (child, numbers) in played {
+        context.show_lanes(Some(child), Arc::new(Played(numbers)));
+    }
     for (child, feed) in &feeds {
         let senders = fed.get(child.as_str());
         if context.changed(&format!("feed:{child}.senders"), key(&senders)) {
@@ -1637,6 +1643,21 @@ fn wire(
         }
     }
     Ok(())
+}
+
+/// What cables play into the numbers of one child, by the name of each number: what a card's
+/// knob shows. A cable plays a value, not a line in time, so every tick shows the last one.
+struct Played(Vec<(Arc<str>, Watch)>);
+
+impl PlayedLanes for Played {
+    fn values_at(&self, _: Ticks, values: &mut Vec<(Arc<str>, f32)>) {
+        for (name, watch) in &self.0 {
+            let value = watch.get();
+            if !value.is_nan() {
+                values.push((name.clone(), value));
+            }
+        }
+    }
 }
 
 /// Where a connection `at` of events `E` goes out of the owner as its own output `name`, which

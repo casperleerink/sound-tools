@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Context, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, NoteEvent, Offer, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Child, Clock as SdkClock, Context, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MovedNumber, NoteEvent, Offer, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -61,7 +61,9 @@ type Request =
   /** The place of the item the composer picked in an `openMenu`, or `null`. */
   | { type: "menu_picked"; question: number; item: number | null }
   /** What the window offers, the answer to `offers`. */
-  | { type: "offered"; question: number; offers: Offer[] };
+  | { type: "offered"; question: number; offers: Offer[] }
+  /** What a lane or a cable can move of a child, the answer to `numbers`. */
+  | { type: "numbered"; question: number; numbers: MovedNumber[] };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
 type Reads = { state: string[] | null; children: boolean; watches: boolean };
@@ -877,6 +879,7 @@ function contextOf<Extra extends object>(
     select: selector(instance),
     openMenu: menuOpener(),
     offers: offerAsker(),
+    numbers: numbersAsker(instance),
     addOffer: offerAdder(instance),
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
@@ -917,6 +920,17 @@ function offerAsker() {
     const question = ++offerQuestions;
     say({ type: "offers", question, takes });
     return new Promise((resolve) => offersAsked.set(question, resolve));
+  };
+}
+
+/** `numbers`: the window lists what a lane or a cable can move of a child. */
+const numbersAsked = new Map<number, (numbers: MovedNumber[]) => void>();
+let numberQuestions = 0;
+function numbersAsker(instance: string) {
+  return (path: string): Promise<MovedNumber[]> => {
+    const question = ++numberQuestions;
+    say({ type: "numbers", question, instance, path });
+    return new Promise((resolve) => numbersAsked.set(question, resolve));
   };
 }
 
@@ -1147,6 +1161,7 @@ function cardContext<Extra extends object>(instance: string, spec: Spec, known: 
     select: selector(instance),
     openMenu: menuOpener(),
     offers: offerAsker(),
+    numbers: numbersAsker(instance),
     addOffer: offerAdder(instance),
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
@@ -1187,7 +1202,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, openMenu: async () => null, offers: async () => [], addOffer() {} };
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, openMenu: async () => null, offers: async () => [], numbers: async () => [], addOffer() {} };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, update() {} };
@@ -1317,6 +1332,10 @@ function handle(request: Request) {
     case "offered":
       offersAsked.get(request.question)?.(request.offers);
       offersAsked.delete(request.question);
+      break;
+    case "numbered":
+      numbersAsked.get(request.question)?.(request.numbers);
+      numbersAsked.delete(request.question);
       break;
   }
 }

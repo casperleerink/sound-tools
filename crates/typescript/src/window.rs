@@ -18,7 +18,7 @@ use gpui::{App, AppContext, Context, Entity, PathPromptOptions, Task, WeakEntity
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
-    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, Sections,
+    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, Scale, Sections,
     TempoMap, Ticks, ToolSchema,
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
@@ -32,7 +32,7 @@ use sound_ui::{
 };
 
 use crate::bun::{
-    Bun, Clock, Event, EventKind, Heard, MenuItemSpec, Offered, PageSize, Played, Reads,
+    Bun, Clock, Event, EventKind, Heard, MenuItemSpec, Moved, Offered, PageSize, Played, Reads,
     RecordEdit, Request, Runs, Skipped, Telling, Transport, TransportOp, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
@@ -1418,6 +1418,16 @@ impl Live {
                 key,
                 label,
             } => self.add_offer(&instance, &path, &key, &label, cx),
+            Event::Numbers {
+                question,
+                instance,
+                path,
+            } => {
+                let numbers = (self.session.upgrade())
+                    .map(|session| moved_numbers(session.read(cx).project(), &instance, &path))
+                    .unwrap_or_default();
+                self.host.send(&Request::Numbered { question, numbers });
+            }
             Event::Transport { op } => self.transport(op, cx),
             Event::Select {
                 instance,
@@ -1909,6 +1919,34 @@ fn performed_frame(at: Option<f64>, session: &Entity<Session>, cx: &mut App) -> 
 fn frames_of(seconds: f64, session: &Session) -> u64 {
     let rate = f64::from(session.project().clock().sample_rate());
     (seconds.max(0.0) * rate).round() as u64
+}
+
+/// What a lane or a cable can move of the child of `instance` at `path`, in the order its
+/// behaviour names them: none for a path that is no instance.
+fn moved_numbers(project: &Project, instance: &InstanceId, path: &str) -> Vec<Moved> {
+    let child = path
+        .split('/')
+        .filter(|name| !name.is_empty())
+        .try_fold(instance.clone(), |id, name| id.child(name));
+    let Ok(child) = child else {
+        return Vec::new();
+    };
+    (project.automatable(&child))
+        .filter_map(|name| {
+            let range = project.automation(&child, name)?.range;
+            let scale = match range.scale {
+                Scale::Linear => "linear",
+                Scale::Logarithmic => "log",
+                _ => "fader",
+            };
+            Some(Moved {
+                name: name.to_string(),
+                min: range.min,
+                max: range.max,
+                scale,
+            })
+        })
+        .collect()
 }
 
 /// What a view of the project asks offers for: `"notes"` takes notes, anything else sound.

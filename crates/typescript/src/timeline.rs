@@ -65,6 +65,9 @@ struct Record {
     /// The key pressure, 0 to 127, as `bend`.
     #[serde(default)]
     pressure: Vec<Point<Amount>>,
+    /// What a view calls it. Nothing plays it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    title: String,
 }
 
 fn plays() -> bool {

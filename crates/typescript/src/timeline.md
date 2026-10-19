@@ -23,6 +23,7 @@ Plays notes in time, to the sample, out of its output `notes`: a child of a pare
 | `quantize` | where a launch lands while the piece plays: `"bar"`, `"beat"` or `"now"`. While it is stopped, at once | `"bar"` |
 | `pedal` | the sustain pedal: `{"start": 0, "value": 127}` moves in ticks from `start`, down from 64. It goes up where the timeline ends | `[]` |
 | `bend`, `mod_wheel`, `pressure` | expression lanes: `{"tick": 0, "value": 8191}` points in ticks from `start`, a straight line between them, held to the end. Bend is -8192 to 8191 (a full bend is two semitones on a sound of this project), the others 0 to 127. Only a timeline that plays once, at its place in the song | `[]` |
+| `title` | what a view calls it; nothing plays it | `""` |
 
 The piece ends where the last timeline that plays once stops: a render and an export play to there, and the transport shows that length. A loop and one with `"plays": false` add nothing.
 
