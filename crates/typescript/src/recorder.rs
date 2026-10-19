@@ -190,7 +190,9 @@ impl Processor for Recorder {
         let playing = transport.playing && range.start < range.end;
         // Where the song is at an offset in the block: right after a play in a project with
         // latency the song starts later than the block.
-        let first = context.frames.saturating_sub((range.end - range.start) as usize);
+        let first = context
+            .frames
+            .saturating_sub((range.end - range.start) as usize);
         let frame_at = |offset: usize| range.start + offset.saturating_sub(first) as u64;
         if self.taking && (!playing || transport.jumped || !self.record) {
             // It ends where the song last played to, which a stop or a jump left behind.
@@ -200,13 +202,13 @@ impl Processor for Recorder {
         }
         if !self.taking && self.record && playing {
             self.taking = true;
-            self.heard.write(std::iter::once((range.start, Heard::Started)));
+            self.heard
+                .write(std::iter::once((range.start, Heard::Started)));
         }
         if self.taking {
             let notes = context.event_inputs.get(Self::NOTES).iter();
-            self.heard.write(
-                notes.map(|timed| (frame_at(timed.offset), Heard::Note(timed.event))),
-            );
+            self.heard
+                .write(notes.map(|timed| (frame_at(timed.offset), Heard::Note(timed.event))));
             self.played_to = range.end;
         }
     }

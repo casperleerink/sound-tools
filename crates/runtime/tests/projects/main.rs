@@ -31,9 +31,6 @@ mod modulation;
 mod own_ports;
 mod owners;
 // The sizes of its page are for the window tests.
-#[allow(dead_code)]
-#[path = "../shared/song.rs"]
-mod shared_song;
 #[path = "../shared/plugin_hosts.rs"]
 mod plugin_hosts;
 mod plugin_lanes;
@@ -46,6 +43,9 @@ mod reverb;
 mod sampler;
 mod saturator;
 mod scale;
+#[allow(dead_code)]
+#[path = "../shared/song.rs"]
+mod shared_song;
 mod solo;
 mod song;
 mod summary;

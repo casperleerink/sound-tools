@@ -68,7 +68,11 @@ fn rust_arrangement() -> Harness {
     for track in 0..TRACKS {
         let folder = format!("state/arrangement/t{track:02}");
         let record = json!({ "tool": "arrangement.track", "state": { "name": format!("t{track:02}"), "order": track, "effects": ["fx", "mix"], "automation": lane } });
-        write(root, &format!("{folder}/instance.json"), &record.to_string());
+        write(
+            root,
+            &format!("{folder}/instance.json"),
+            &record.to_string(),
+        );
         write(
             root,
             &format!("{folder}/instrument.json"),
@@ -101,7 +105,8 @@ fn rust_arrangement() -> Harness {
         "state/arrangement/voice/instance.json",
         &voice.to_string(),
     );
-    let clip = r#"{"tool": "arrangement.audio_clip", "state": {"asset": "voice.wav", "start": 3840}}"#;
+    let clip =
+        r#"{"tool": "arrangement.audio_clip", "state": {"asset": "voice.wav", "start": 3840}}"#;
     write(root, "state/arrangement/voice/take.json", clip);
     write_voice(root);
     Harness::open(folder)
@@ -129,7 +134,9 @@ fn render_cost() {
     // Once to warm the files and the code, then measured.
     realtime(&mut typescript);
     realtime(&mut rust);
-    let typescript = (0..3).map(|_| realtime(&mut typescript)).fold(0.0, f64::max);
+    let typescript = (0..3)
+        .map(|_| realtime(&mut typescript))
+        .fold(0.0, f64::max);
     let rust = (0..3).map(|_| realtime(&mut rust)).fold(0.0, f64::max);
     println!(
         "{TRACKS} tracks, {CLIPS} clips, a lane per track and a region, {BARS} bars: tools of the project {typescript:.0}x real time, the Rust arrangement {rust:.0}x"

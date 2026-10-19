@@ -795,8 +795,10 @@ export type ProjectTool<Name extends string = string, Entry = unknown> = Name & 
 type EntryOf<T> = T extends keyof Tools ? Tools[T] : T extends ProjectTool<string, infer Entry> ? Entry : {};
 
 /**
- * The tools of the children of a parent by their names, as its `children` names them. The name
- * `"*"` stands for any other name, so `{ "*": track }` is any number of tracks, named by their records.
+ * The tools of the children of a parent by their names, as its `children` names them. A name that
+ * ends in `*` stands for every other name that starts as it does: `{ "*": track }` is any number of
+ * tracks, named by their records, and `{ "ret-*": bus, "*": track }` buses whose names start with
+ * `ret-` and tracks of every other name.
  */
 export type ChildTools = Record<string, ToolName>;
 
@@ -822,8 +824,8 @@ type LiteralTools<K extends ChildTools> = {
   [Name in keyof K]: string extends K[Name] ? "the tool names were widened to string: write the children as `const children = { ... } as const` and give the behaviour the return type `Declaration<typeof children>`, or leave the return type out" : K[Name];
 };
 
-/** A name as a child has it: any for `"*"`. */
-type ChildNamed<Name extends string> = Name extends "*" ? string : Name;
+/** A name as a child has it: any that starts as a pattern such as `"ret-*"` does. */
+type ChildNamed<Name extends string> = Name extends `${infer Prefix}*` ? `${Prefix}${string}` : Name;
 
 /** The names of its children. */
 type ChildName<K extends ChildTools> = ChildNamed<keyof K & string>;
@@ -889,15 +891,24 @@ type PortName<T, P extends PortKey | "input", Out extends boolean> = [Out, T] ex
     : P extends keyof EntryOf<T>
       ? EntryOf<T>[P]
       : string;
-/** A port of a child under the key `P`, of a name its tool has as an input, or as an output with `Out`. */
-type PortOf<P extends PortKey, K extends ChildTools, Out extends boolean = false, Names extends PortKey | "input" = P> = {
-  [Name in keyof K & string]: { child: ChildNamed<Name> } & Keyed<P, PortName<K[Name], Names, Out> & string>;
-}[keyof K & string];
+/**
+ * A port of a child under the key `P`, of a name its tool has as an input, or as an output with
+ * `Out`. A port deeper down, such as `{ child: "bass/mix", number: "gain_db" }`, is a port of a
+ * child of a child: its name is not checked.
+ */
+type PortOf<P extends PortKey, K extends ChildTools, Out extends boolean = false, Names extends PortKey | "input" = P> =
+  | {
+      [Name in keyof K & string]: { child: ChildNamed<Name> } & Keyed<P, PortName<K[Name], Names, Out> & string>;
+    }[keyof K & string]
+  | ({ child: DeepName<K> } & Keyed<P>);
+
+/** The path of a child of one of its children, at any depth. */
+type DeepName<K extends ChildTools> = `${ChildName<K>}/${string}`;
 /** A port of the parent itself under the key `K`: no `child`. */
 type OwnOf<K extends PortKey, Name extends string = string> = { child?: never } & Keyed<K, Name>;
 
-/** A sound port of a child: `audio` when left out. A sound that reads `input` has an `audio` input; every sound an `audio` output. */
-export type ChildPort<K extends ChildTools = ChildTools> = Partial<Keyed<"port">> & { child: ChildName<K> };
+/** A sound port of a child, or of a child of a child as `"bass/mix"`: `audio` when left out. A sound that reads `input` has an `audio` input; every sound an `audio` output. */
+export type ChildPort<K extends ChildTools = ChildTools> = Partial<Keyed<"port">> & { child: ChildName<K> | DeepName<K> };
 /** Notes of a child: its input `notes`, which plays its voices, or with `Out` notes it sends out. */
 export type ChildNotes<K extends ChildTools = ChildTools, Out extends boolean = false> = PortOf<"notes", K, Out>;
 /**

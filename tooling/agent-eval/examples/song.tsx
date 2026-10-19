@@ -1,6 +1,7 @@
-import { DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, now, Rect, selector, Show, Space, text, tool, Transport, Wave, type Accessor, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Live, type Part, type Press } from "./sdk";
+import { Arc, DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, now, Rect, selector, Show, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Live, type Part, type Press } from "./sdk";
+import { bus } from "./bus";
 import { tape } from "./tape";
-import { track } from "./track";
+import { preFader, track } from "./track";
 
 // A song: tracks of clips in time, with a mixer strip per track and a note editor for one clip.
 const BEAT = 960;
@@ -25,7 +26,9 @@ const COLOR = {
 } as const;
 
 const [MOVES, RESIZES, NOTE] = [["move"], ["resize"], ["note"]];
-const parts = { master: "utility", voice: tape, "*": track } as const;
+const parts = { master: "fader", limit: "limiter", quiet: "lane", voice: tape, "ret-*": bus, "*": track } as const;
+const STRIP = 64;
+const FADER = 160;
 
 type Memory = {
   selected: Set<string>;
@@ -36,6 +39,7 @@ type Memory = {
   /** The track whose devices show under the timeline, and the one whose name is typed. */
   track: string | null;
   renaming: string | null;
+  mixer: boolean;
 };
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
@@ -84,7 +88,7 @@ export const song = tool({
     "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child, and the audio track `voice` when there is one, plays into the utility `master`; `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of `voice`. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. A click on a track's name or a clip selects it: the keyboard plays that track, and Export selection exports the chosen clips. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
   state: { solo: list(text(), { max: 64 }) },
   children: parts,
-  memory: (): Memory => ({ selected: new Set(), open: null, note: null, armed: new Set(), recording: null, track: null, renaming: null }),
+  memory: (): Memory => ({ selected: new Set(), open: null, note: null, armed: new Set(), recording: null, track: null, renaming: null, mixer: false }),
   keys: ["delete", "backspace", "cmd-d"],
   globalKeys: ["space"],
   onKey: ({ memory, update, clock, select }, { key, down }) => {
@@ -99,16 +103,32 @@ export const song = tool({
     select(null);
   },
   behaviour: ({ state, children }): Declaration<typeof parts> => {
-    const tracks = children.filter((child) => child.tool === "track" || child.tool === "tape").map((child) => child.name);
-    const soloed = state.solo.filter((name) => tracks.includes(name));
-    return {
-      connections: [
-        ...tracks
-          .filter((name) => soloed.length === 0 || soloed.includes(name))
-          .map((name) => ({ from: { child: name }, to: { child: "master" } })),
-        { from: { child: "master" }, to: { port: "audio" } },
-      ],
-    };
+    const tracks = children.filter((child) => child.tool === "track" || child.tool === "tape");
+    const returns = children.filter((child) => child.tool === "bus");
+    const soloed = state.solo.filter((name) => tracks.some((each) => each.name === name));
+    const connections: Connection<typeof parts>[] = [
+      ...[...tracks, ...returns].map((each) => ({ from: { child: each.name }, to: { child: "master" } })),
+      { from: { child: "master" }, to: { child: "limit" } },
+      { from: { child: "limit" }, to: { port: "audio" } },
+    ];
+    // A solo turns every other track's fader down to silence, gliding; a return always plays.
+    for (const each of tracks) {
+      if (soloed.length > 0 && !soloed.includes(each.name)) {
+        connections.push({ from: { child: "quiet", number: "value" }, to: { child: `${each.name}/mix` as const, number: "gain_db" } });
+      }
+    }
+    // A send of a track plays into its return: after the track's fader, or before it for a return that says so.
+    for (const each of tracks) {
+      if (each.tool !== "track") continue;
+      for (const back of returns) {
+        if (back.tool !== "bus" || !each.children.some((child) => child.name === `send-${back.name}`)) continue;
+        const from = back.state.pre_fader ? preFader(each) : "mix";
+        const send = `${each.name}/send-${back.name}` as const;
+        connections.push({ from: { child: `${each.name}/${from}` as const }, to: { child: send } });
+        connections.push({ from: { child: send }, to: { child: back.name } });
+      }
+    }
+    return { connections };
   },
   view: ({ state, children, memory, update, clock, select, send, openMenu, offers, addOffer }) => {
     const tracks = () => children.filter((child) => child.tool === "track");
@@ -280,7 +300,7 @@ export const song = tool({
         }
       });
     };
-    const titleOf = (each: (typeof children)[number]) => (each.tool === "track" && each.state.title) || each.name;
+    const titleOf = (each: (typeof children)[number]) => ((each.tool === "track" || each.tool === "bus") && each.state.title) || each.name;
     const rename = (name: string, title: string) => {
       memory.renaming = null;
       update("Rename a track", ({ children }) => {
@@ -291,16 +311,16 @@ export const song = tool({
     const toggleMute = (name: string) =>
       update("Mute a track", ({ children }) => {
         const owner = children.find((child) => child.name === name);
-        const mix = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.find((child) => child.name === "mix") : undefined;
-        if (mix?.tool === "utility") mix.state.mute = !mix.state.mute;
+        const mix = owner?.tool === "track" || owner?.tool === "tape" || owner?.tool === "bus" ? owner.children.find((child) => child.name === "mix") : undefined;
+        if (mix?.tool === "fader") mix.state.mute = !mix.state.mute;
       });
     const toggleSolo = (name: string) =>
       update("Solo a track", ({ state }) => {
         state.solo = state.solo.includes(name) ? state.solo.filter((each) => each !== name) : [...state.solo, name];
       });
     const muted = (each: (typeof children)[number]) => {
-      const mix = each.tool === "track" || each.tool === "tape" ? each.children.find((child) => child.name === "mix") : undefined;
-      return mix?.tool === "utility" && mix.state.mute === true;
+      const mix = each.tool === "track" || each.tool === "tape" || each.tool === "bus" ? each.children.find((child) => child.name === "mix") : undefined;
+      return mix?.tool === "fader" && mix.state.mute === true;
     };
 
     // A text field holds any text: the colour is checked here.
@@ -372,6 +392,71 @@ export const song = tool({
       );
     };
 
+    const returns = () => children.filter((child) => child.tool === "bus");
+    const sendsOf = (each: (typeof children)[number]) =>
+      each.tool === "track" ? each.children.filter((child) => child.name.startsWith("send-")).map((child) => child.name) : [];
+    const up = (fraction: Live) => fraction.times(-FADER).plus(FADER);
+    /** Two bars of the level of the fader `path`, falling after the sound, with a peak line held 1.5 s. */
+    const StripMeter = ({ path }: { path: string }) => (
+      <Group>
+        {([0, 1] as const).flatMap((channel) => {
+          const bar = place(now.peak(path, channel)).fall(0.5);
+          const peak = place(now.peak(path, channel)).hold(1.5).fall(0.5);
+          const left = 4 + channel * 7;
+          return [
+            <Rect x={left} y={0} width={5} height={FADER} color={COLOR.lane} />,
+            <Rect x={left} y={up(bar)} width={5} height={bar.times(FADER)} color={COLOR.meter} />,
+            <Rect x={left} y={up(peak)} width={5} height={1} color={COLOR.chosen} opacity={peak.gt(0.01)} />,
+          ];
+        })}
+      </Group>
+    );
+    /** A fader over a meter: a drag up and down turns `gain_db` of the fader `path`, natively. */
+    const Fader = ({ path }: { path: string }) => {
+      const at = now.value(`${path}.gain_db`, { fraction: true });
+      return (
+        <Space key={`fader-${path}`} width={40} height={FADER} cursor="ns-resize"
+          drag={{ y: { value: `${path}.gain_db`, travel: FADER, default: 0, label: "Change the volume" } }}>
+          <StripMeter path={path} />
+          <Rect x={22} y={0} width={2} height={FADER} color={COLOR.lane} />
+          <Rect x={16} y={up(at).minus(4)} width={16} height={8} radius={2} color={COLOR.edit} />
+        </Space>
+      );
+    };
+    /** A knob on a number of the fader `path`: its pan, or the gain of a send. */
+    const Turn = ({ path, field, label }: { path: string; field: "pan" | "gain_db"; label: string }) => {
+      const angle = now.value(`${path}.${field}`, { played: true, fraction: true }).minus(0.5).times(0.75);
+      return (
+        <Space key={`${field}-${path}`} width={28} height={28} cursor="ns-resize" drag={{ y: { value: `${path}.${field}`, default: 0, label } }}>
+          <Arc x={14} y={14} radius={10} from={-0.375} to={0.375} color={COLOR.lane} width={3} />
+          <Arc x={14} y={14} radius={10} from={field === "pan" ? 0 : -0.375} to={angle} color={COLOR.edit} width={3} />
+        </Space>
+      );
+    };
+    const Strip = ({ each }: { each: (typeof children)[number] }) => (
+      <div style={{ width: STRIP, gap: 6, align: "center" }}>
+        <For each={() => sendsOf(each)}>{(send) => <Turn path={`${each.name}/${send}`} field="gain_db" label="Change a send" />}</For>
+        <Turn path={`${each.name}/mix`} field="pan" label="Change the pan" />
+        <Fader path={`${each.name}/mix`} />
+        <div style={{ direction: "row", gap: 4 }}>
+          <Button label="M" on={() => muted(each)} color={COLOR.mute} onPress={() => toggleMute(each.name)} />
+          {each.tool === "bus" ? null : <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onPress={() => toggleSolo(each.name)} />}
+        </div>
+        <div style={{ fontSize: 11, color: COLOR.text }}>{() => titleOf(each)}</div>
+      </div>
+    );
+    /** A strip per track and return, the master's fader and its limiter. */
+    const Mixer = () => (
+      <div key="mixer" style={{ height: 320, direction: "row", gap: 4, padding: 8, align: "end" }}>
+        <For each={() => [...rows(), ...returns()]}>{(each) => <Strip each={each} />}</For>
+        <div style={{ width: STRIP, gap: 6, align: "center" }}>
+          <Fader path="master" />
+          <div style={{ fontSize: 11, color: COLOR.text }}>master</div>
+        </div>
+        <DeviceCard path="limit" />
+      </div>
+    );
+
     const TrackHead = ({ each }: { each: (typeof children)[number] }) => (
       <>
         {() =>
@@ -390,7 +475,7 @@ export const song = tool({
           {() => <Button label="R" on={() => memory.armed.has(each.name)} color={COLOR.record} onPress={() => toggleArm(each.name)} />}
         </Show>
         <Space key={`meter-${each.name}`} width={40} height={6} background={COLOR.lane} radius={2}>
-          <Rect x={0} y={0} width={place(now.peak(`${each.name}/level`)).fall(0.6).times(40)} height={6} radius={2} color={COLOR.meter} />
+          <Rect x={0} y={0} width={place(now.peak(`${each.name}/mix`)).fall(0.6).times(40)} height={6} radius={2} color={COLOR.meter} />
         </Space>
       </>
     );
@@ -402,6 +487,10 @@ export const song = tool({
             <Transport clock={clock} />
             <div key="record" style={() => ({ width: 22, height: 22, radius: 11, background: memory.recording === null ? COLOR.off : COLOR.record })}
               onPress={toggleRecording} />
+            <div key="mixer-toggle" style={() => ({ paddingX: 8, paddingY: 4, radius: 6, fontSize: 11, background: memory.mixer ? COLOR.edit : COLOR.off })}
+              onPress={() => (memory.mixer = !memory.mixer)}>
+              Mixer
+            </div>
           </div>
         </div>
         <div style={{ direction: "row", grow: true }}>
@@ -484,6 +573,7 @@ export const song = tool({
           </div>
         </div>
         {() => {
+          if (memory.mixer) return <Mixer />;
           const shown = memory.track;
           return shown !== null && tracks().some((each) => each.name === shown) ? <Rack name={shown} /> : null;
         }}

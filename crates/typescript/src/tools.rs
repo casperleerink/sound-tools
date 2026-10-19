@@ -653,11 +653,11 @@ impl ToolInfo {
             return ". It has no children".to_string();
         }
         let children: Vec<String> = (children.0.iter())
-            .map(|(name, tool)| match name.as_str() {
-                ANY_NAME => format!(
-                    "any number of `<name>.json` or `<name>/instance.json`, each a `{tool}`"
+            .map(|(name, tool)| match name.strip_suffix(ANY_NAME) {
+                Some(prefix) => format!(
+                    "any number of `{prefix}<name>.json` or `{prefix}<name>/instance.json`, each a `{tool}`"
                 ),
-                _ => format!("`{name}.json`, a `{tool}`"),
+                None => format!("`{name}.json`, a `{tool}`"),
             })
             .collect();
         format!(". Its children are {}, and no others", children.join("; "))
@@ -726,8 +726,24 @@ fn described(field: &Field) -> (&'static str, String) {
 /// which waits for a sample read on its thread.
 type Read<'a> = (&'a Assets, u32, &'a InstanceId);
 
-/// The name in a parent's `children` that stands for any other name.
+/// What ends a name in a parent's `children` that stands for every other name that starts as it
+/// does: `"*"` any name, `"ret-*"` any that starts with `ret-`.
 const ANY_NAME: &str = "*";
+
+/// The tool `named` gives the child `name`: the one of its name, else of the longest pattern it
+/// fits.
+pub(crate) fn named_tool<'a>(named: &'a Named<String>, name: &str) -> Option<&'a String> {
+    let exact = named.0.iter().find(|(named, _)| named == name);
+    let pattern = || {
+        (named.0.iter())
+            .filter_map(|(named, tool)| Some((named.strip_suffix(ANY_NAME)?, tool)))
+            .filter(|(prefix, _)| name.starts_with(prefix))
+            .max_by_key(|(prefix, _)| prefix.len())
+    };
+    exact
+        .map(|(_, tool)| tool)
+        .or_else(|| pattern().map(|(_, tool)| tool))
+}
 
 /// The tools of one load by name, so a parent finds the inputs of a child.
 pub(crate) type Tools = BTreeMap<String, ToolInfo>;
@@ -1147,14 +1163,9 @@ impl Sounds {
         let Some(named) = &self.info.children else {
             return;
         };
-        // `*` stands for any name it does not name.
-        let tool_of = |name: &str| {
-            let find = |wanted: &str| named.0.iter().find(|(named, _)| named == wanted);
-            find(name).or_else(|| find(ANY_NAME)).map(|(_, tool)| tool)
-        };
         for child in children {
             let name = child.id.name();
-            match tool_of(name) {
+            match named_tool(named, name) {
                 Some(tool) if tool == child.tool => {}
                 Some(tool) => context.problem(format!(
                     "its child {name} is a {}, and its `children` say {tool}",
@@ -1170,7 +1181,7 @@ impl Sounds {
             }
         }
         for (name, tool) in &named.0 {
-            if name != ANY_NAME && !children.iter().any(|child| child.id.name() == name) {
+            if !name.ends_with(ANY_NAME) && !children.iter().any(|child| child.id.name() == name) {
                 context.problem(format!(
                     "it has no child {name}, a {tool}, as its `children` say"
                 ));

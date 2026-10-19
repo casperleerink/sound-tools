@@ -7,6 +7,7 @@ const SONG: &str = include_str!("../../../../tooling/agent-eval/examples/song.ts
 const TRACK: &str = include_str!("../../../../tooling/agent-eval/examples/track.ts");
 const TAPE: &str = include_str!("../../../../tooling/agent-eval/examples/tape.ts");
 const CHAIN: &str = include_str!("../../../../tooling/agent-eval/examples/chain.ts");
+const BUS: &str = include_str!("../../../../tooling/agent-eval/examples/bus.ts");
 
 pub(crate) const BAR: u64 = 3840;
 /// The page's sizes, as `song.tsx` has them: a track's row and its header, and points per tick.
@@ -23,12 +24,13 @@ fn noise(seed: &mut u64) -> u64 {
 }
 
 /// The files of a song of `tracks` tracks with `clips` clips in all, each of 30 to 150 notes: a
-/// synth, a filter whose cutoff a lane closes, a utility, a meter and a recorder of notes per
-/// track, a utility `master`, and an audio track
-/// `voice` with a recorder of the first channel of the input and no region yet.
+/// synth, a filter whose cutoff a lane closes, a fader and a recorder of notes per track, each
+/// sending -12 dB into the return `ret-a`, a reverb; a return `ret-b` that hears before the
+/// faders; a fader `master` into a limiter `limit`, and an audio track `voice` with a recorder
+/// of the first channel of the input and no region yet.
 pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
     let mut seed = 7;
-    song_with(tracks, |track| {
+    song_with(tracks, true, |track| {
         let mine = clips / tracks + usize::from(track < clips % tracks);
         (0..mine)
             .map(|clip| {
@@ -52,7 +54,7 @@ pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
 /// The scale project of the Rust arrangement's measurement as a song: 100 tracks of 100 clips of
 /// one bar and four notes, clip `c` of track `t` at bar `8c + t mod 8`.
 pub(crate) fn scale_files() -> Vec<(String, String)> {
-    song_with(100, |track| {
+    song_with(100, false, |track| {
         let pitch = 36 + (track % 40) as u64;
         let notes: Vec<Value> = (0..4)
             .map(|beat| json!({ "start": beat * 960, "length": 900, "pitch": pitch + beat * 3, "velocity": 100 }))
@@ -70,14 +72,15 @@ pub(crate) fn scale_files() -> Vec<(String, String)> {
 }
 
 /// The files of a song of `tracks` tracks, each with the clips `clips` gives it: the state of each
-/// by its number.
+/// by its number. With `returns`, the two returns and the sends into the first.
 fn song_with(
     tracks: usize,
+    returns: bool,
     mut clips: impl FnMut(usize) -> Vec<(usize, Value)>,
 ) -> Vec<(String, String)> {
     let project = json!({
         "format": 1,
-        "extensions": ["instrument", "filter", "utility", "reverb"],
+        "extensions": ["instrument", "filter", "utility", "reverb", "limiter"],
         "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
         "connections": [{ "from": { "instance": "song", "port": "audio" }, "to": { "device_output": 0 } }],
     });
@@ -90,13 +93,24 @@ fn song_with(
         ("extensions/track.ts".to_string(), TRACK.to_string()),
         ("extensions/tape.ts".to_string(), TAPE.to_string()),
         ("extensions/chain.ts".to_string(), CHAIN.to_string()),
+        ("extensions/bus.ts".to_string(), BUS.to_string()),
         (
             "state/song/instance.json".to_string(),
             r#"{"tool": "song", "state": {}}"#.to_string(),
         ),
         (
             "state/song/master.json".to_string(),
-            r#"{"tool": "utility", "state": {}}"#.to_string(),
+            r#"{"tool": "fader", "state": {}}"#.to_string(),
+        ),
+        // The limiter of the arrangement's master: full scale, no lookahead.
+        (
+            "state/song/limit.json".to_string(),
+            r#"{"tool": "limiter", "state": {"ceiling_db": 0, "lookahead_ms": 0}}"#.to_string(),
+        ),
+        // What a solo turns the other tracks down to.
+        (
+            "state/song/quiet.json".to_string(),
+            r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": -1000}]}}"#.to_string(),
         ),
         (
             "state/song/voice/instance.json".to_string(),
@@ -108,13 +122,37 @@ fn song_with(
         ),
         (
             "state/song/voice/mix.json".to_string(),
-            r#"{"tool": "utility", "state": {}}"#.to_string(),
-        ),
-        (
-            "state/song/voice/level.json".to_string(),
-            r#"{"tool": "meter", "state": {}}"#.to_string(),
+            r#"{"tool": "fader", "state": {}}"#.to_string(),
         ),
     ];
+    if returns {
+        for (path, record) in [
+            (
+                "ret-a/instance.json",
+                r#"{"tool": "bus", "state": {"title": "Room"}}"#,
+            ),
+            ("ret-a/mix.json", r#"{"tool": "fader", "state": {}}"#),
+            (
+                "ret-a/chain/instance.json",
+                r#"{"tool": "chain", "state": {"order": ["verb"]}}"#,
+            ),
+            (
+                "ret-a/chain/verb.json",
+                r#"{"tool": "reverb", "state": {"mix": 1}}"#,
+            ),
+            (
+                "ret-b/instance.json",
+                r#"{"tool": "bus", "state": {"title": "Pre", "pre_fader": true}}"#,
+            ),
+            ("ret-b/mix.json", r#"{"tool": "fader", "state": {}}"#),
+            (
+                "ret-b/chain/instance.json",
+                r#"{"tool": "chain", "state": {}}"#,
+            ),
+        ] {
+            files.push((format!("state/song/{path}"), record.to_string()));
+        }
+    }
     for track in 0..tracks {
         let folder = format!("state/song/t{track:02}");
         let colour = colours[track % colours.len()];
@@ -132,15 +170,17 @@ fn song_with(
         ));
         files.push((
             format!("{folder}/mix.json"),
-            r#"{"tool": "utility", "state": {}}"#.to_string(),
+            r#"{"tool": "fader", "state": {}}"#.to_string(),
         ));
+        if returns {
+            files.push((
+                format!("{folder}/send-ret-a.json"),
+                r#"{"tool": "fader", "state": {"gain_db": -12}}"#.to_string(),
+            ));
+        }
         files.push((
             format!("{folder}/chain/instance.json"),
             r#"{"tool": "chain", "state": {}}"#.to_string(),
-        ));
-        files.push((
-            format!("{folder}/level.json"),
-            r#"{"tool": "meter", "state": {}}"#.to_string(),
         ));
         // The cutoff closes from 6 kHz to 1.5 kHz over 64 bars.
         let cutoff = r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": 6000}, {"tick": 245760, "value": 1500}], "scale": "log"}}"#;

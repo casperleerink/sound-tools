@@ -19,15 +19,16 @@ mod behaviours;
 mod bindings;
 mod bun;
 mod card;
+mod fader;
 mod feeds;
-mod live;
 mod lane;
+mod live;
 mod meter;
-mod recorder;
-mod region;
 #[cfg(test)]
 mod performance;
+mod recorder;
 mod records;
+mod region;
 mod samples;
 mod timeline;
 mod tools;
@@ -347,10 +348,11 @@ fn define(
 }
 
 /// The built-in children a parent of the project plays with.
-fn built_in() -> [JsonTool; 5] {
+fn built_in() -> [JsonTool; 6] {
     [
         timeline::json_tool(),
         meter::json_tool(),
+        fader::json_tool(),
         lane::json_tool(),
         region::json_tool(),
         recorder::json_tool(),
@@ -358,10 +360,11 @@ fn built_in() -> [JsonTool; 5] {
 }
 
 /// The records of the built-in children, for `sdk.ts`.
-pub(crate) fn built_in_schemas() -> [ToolSchema; 5] {
+pub(crate) fn built_in_schemas() -> [ToolSchema; 6] {
     [
         timeline::schema(),
         meter::schema(),
+        fader::schema(),
         lane::schema(),
         region::schema(),
         recorder::schema(),

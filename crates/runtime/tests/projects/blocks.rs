@@ -73,9 +73,18 @@ fn project(name: &str, records: &[(&str, String)]) -> Option<Harness> {
 fn keys(points: &str) -> Option<Harness> {
     let chord = r#"{"tool": "timeline", "state": {"length": 7680, "notes": [{"start": 0, "length": 7680, "pitch": 48, "velocity": 100}, {"start": 0, "length": 7680, "pitch": 64, "velocity": 100}]}}"#;
     let records = [
-        ("synth.json", r#"{"tool": "instrument.synth", "state": {}}"#.to_string()),
-        ("gain.json", r#"{"tool": "utility", "state": {}}"#.to_string()),
-        ("filter.json", r#"{"tool": "filter", "state": {"cutoff_hz": 2000}}"#.to_string()),
+        (
+            "synth.json",
+            r#"{"tool": "instrument.synth", "state": {}}"#.to_string(),
+        ),
+        (
+            "gain.json",
+            r#"{"tool": "utility", "state": {}}"#.to_string(),
+        ),
+        (
+            "filter.json",
+            r#"{"tool": "filter", "state": {"cutoff_hz": 2000}}"#.to_string(),
+        ),
         ("chord.json", chord.to_string()),
         (
             "level.json",
@@ -157,9 +166,11 @@ fn a_region_plays_its_file_at_its_place_with_its_fade_gain_and_trim() {
         return;
     };
     // Half a second of 0.5, then half a second of 0.25.
-    write_samples(&harness, "steady.wav", 48_000, 1.0, |seconds| match seconds < 0.5 {
-        true => 0.5,
-        false => 0.25,
+    write_samples(&harness, "steady.wav", 48_000, 1.0, |seconds| {
+        match seconds < 0.5 {
+            true => 0.5,
+            false => 0.25,
+        }
     });
     let file = harness.path("assets/audio/steady.wav");
     harness.apply(&[file]);
@@ -169,8 +180,16 @@ fn a_region_plays_its_file_at_its_place_with_its_fade_gain_and_trim() {
     assert!((0..BAR).all(|frame| left(frame) == 0.0));
     // Halfway through the fade in, half the level; after it, the file as it is.
     assert!((left(BAR + 240) - 0.25).abs() < 0.01, "{}", left(BAR + 240));
-    assert!((left(BAR + 1_000) - 0.5).abs() < 1e-4, "{}", left(BAR + 1_000));
-    assert!((left(BAR + 30_000) - 0.25).abs() < 1e-4, "{}", left(BAR + 30_000));
+    assert!(
+        (left(BAR + 1_000) - 0.5).abs() < 1e-4,
+        "{}",
+        left(BAR + 1_000)
+    );
+    assert!(
+        (left(BAR + 30_000) - 0.25).abs() < 1e-4,
+        "{}",
+        left(BAR + 30_000)
+    );
     // Its end ramps down in 2 ms; after that, nothing.
     assert!((BAR + 48_000 + 200..2 * BAR).all(|frame| left(frame) == 0.0));
 
@@ -189,9 +208,8 @@ fn a_region_plays_its_file_at_its_place_with_its_fade_gain_and_trim() {
 /// arrives, without a change of its record.
 #[test]
 fn a_region_waits_for_its_file_and_plays_once_it_arrives() {
-    let region = format!(
-        r#"{{"tool": "region", "state": {{"asset": "later.wav", "start": {BAR_TICKS}}}}}"#
-    );
+    let region =
+        format!(r#"{{"tool": "region", "state": {{"asset": "later.wav", "start": {BAR_TICKS}}}}}"#);
     let Some(mut harness) = project("tape", &[("take.json", region)]) else {
         return;
     };
