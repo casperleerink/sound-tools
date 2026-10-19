@@ -413,7 +413,7 @@ impl Registry {
 
     /// The extensions of the runtime, which `project.json` enables. A tool of the project has
     /// none.
-    pub(crate) fn extensions(&self) -> BTreeSet<&'static str> {
+    pub fn extensions(&self) -> BTreeSet<&'static str> {
         self.tools
             .values()
             .filter_map(|definition| definition.extension)

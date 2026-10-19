@@ -1593,7 +1593,10 @@ fn wire(
                     Some(into) => {
                         // What it plays, for a view that shows the number as it plays.
                         let shown = context.watch(&played_name(&format!("{child}.{to_name}")));
-                        played.entry(child).or_default().push((to_name.into(), shown.clone()));
+                        played
+                            .entry(child)
+                            .or_default()
+                            .push((to_name.into(), shown.clone()));
                         (cable::<Number, Automation>(
                             name,
                             into,

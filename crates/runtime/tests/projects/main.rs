@@ -51,5 +51,6 @@ mod song;
 mod song_mixer;
 mod summary;
 mod support;
+mod templates;
 mod typescript;
 mod utility;

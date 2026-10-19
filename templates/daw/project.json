@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "extensions": [
+    "analyzer",
+    "compressor",
+    "delay",
+    "drum-pad",
+    "eq",
+    "filter",
+    "gate",
+    "instrument",
+    "limiter",
+    "modulation",
+    "plugin-host",
+    "reverb",
+    "sampler",
+    "saturator",
+    "tone",
+    "utility",
+    "wavetable"
+  ],
+  "tempo_map": {
+    "time_signature": "4/4",
+    "tempo_changes": [
+      {
+        "tick": 0,
+        "bpm": 120.0
+      }
+    ]
+  },
+  "connections": [
+    {
+      "from": {
+        "instance": "song",
+        "port": "audio"
+      },
+      "to": {
+        "device_output": 0
+      }
+    }
+  ],
+  "main": "song"
+}

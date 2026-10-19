@@ -8,6 +8,7 @@ pub mod arrangement_wiring;
 pub mod log_file;
 pub mod recorder;
 pub mod report;
+pub mod templates;
 pub mod update;
 pub mod window;
 
@@ -28,7 +29,9 @@ use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use window::{LeftPanel, LeftPanelSlot};
 
-const PROJECT_FILE: &str = "project.json";
+pub use templates::{BARE, DAW, TEMPLATES, Template};
+
+pub const PROJECT_FILE: &str = "project.json";
 
 /// Offline renders have no device to ask. `offline` is what every processor is told, and what a
 /// hosted plugin passes on to the plugin in the way its format intends.
@@ -172,6 +175,15 @@ fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Res
     utility::register(registry)?;
     wavetable::register(registry)?;
     Ok(())
+}
+
+/// The name of every bundled extension, which a new `project.json` enables.
+pub fn bundled_extensions() -> Result<Vec<&'static str>> {
+    let mut registry = Registry::new();
+    register_extensions(&mut registry, None)?;
+    let mut names = registry.extensions();
+    names.insert(plugin_host::EXTENSION);
+    Ok(names.into_iter().collect())
 }
 
 /// The built-in tools as the tools of a project see them, for their SDK.
@@ -348,20 +360,6 @@ fn plugin_offers(
 /// The key of the `Scan again` row of a picker, see [`plugin_offers`].
 pub const SCAN_AGAIN: &str = "plugins:scan-again";
 
-/// What an empty folder becomes when it opens: its first records. Not an edit to undo, so a
-/// new project has no history.
-#[derive(Clone, Copy)]
-pub struct Template {
-    pub name: &'static str,
-    pub create: fn(&mut Project) -> Result<(), ProjectError>,
-}
-
-/// Nothing in `state/`: the tools the composer and the agent write.
-pub const BARE: Template = Template {
-    name: "Bare",
-    create: |_| Ok(()),
-};
-
 /// What a new folder becomes unless it is asked to be another [`Template`].
 pub const NEW_PROJECT: Template = arrangement_wiring::TEMPLATE;
 
@@ -394,6 +392,7 @@ pub fn open_or_create_from(
     plugins: Plugins,
     template: Template,
 ) -> Result<Project> {
+    templates::write(folder, &template)?;
     let extensions = Extensions::load(folder, &tool_schemas()?);
     let mut project = open_with_loaded(folder, control, plugins, extensions, template)?.0;
     first(settle_behaviours(&mut project))?;

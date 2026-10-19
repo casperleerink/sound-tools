@@ -37,6 +37,7 @@ pub(crate) const CHROME: Chrome = Chrome {
 /// A new project with one arrangement and no track, see [`crate::Template`].
 pub(crate) const TEMPLATE: crate::Template = crate::Template {
     name: "Arrangement",
+    files: &[],
     create: arrangement::create_default_project,
 };
 

@@ -1481,7 +1481,15 @@ impl Drawing<'_, '_> {
                     // The box it scrolls in has its size; it is as large as its children.
                     let name = element_name("scroll", key.as_deref(), index);
                     let inner = match hears {
-                        true => self.heard_div(element, id, key.as_deref(), index, on_press, carry, on_drop),
+                        true => self.heard_div(
+                            element,
+                            id,
+                            key.as_deref(),
+                            index,
+                            on_press,
+                            carry,
+                            on_drop,
+                        ),
                         false => element.into_any_element(),
                     };
                     let scrolling = style.sized(div()).id(ElementId::Name(name.into()));
@@ -1515,9 +1523,7 @@ impl Drawing<'_, '_> {
             {
                 let lavender = self.cx.theme().lavender;
                 let element = element
-                    .id(ElementId::Name(
-                        element_name("div", key, index).into(),
-                    ))
+                    .id(ElementId::Name(element_name("div", key, index).into()))
                     .when(*on_press == Some(true), |element| {
                         element
                             .cursor_pointer()

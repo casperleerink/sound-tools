@@ -1,14 +1,7 @@
-//! A song of the TypeScript example in `tooling/agent-eval/examples`: tracks of clips, as an
-//! agent writes them, the same on every machine.
+//! A song of the DAW template's tools (`templates/daw`): tracks of clips, as an agent writes
+//! them, the same on every machine.
 
 use serde_json::{Value, json};
-
-const SONG: &str = include_str!("../../../../tooling/agent-eval/examples/song.tsx");
-const TRACK: &str = include_str!("../../../../tooling/agent-eval/examples/track.ts");
-const TAPE: &str = include_str!("../../../../tooling/agent-eval/examples/tape.ts");
-const CHAIN: &str = include_str!("../../../../tooling/agent-eval/examples/chain.ts");
-const BUS: &str = include_str!("../../../../tooling/agent-eval/examples/bus.ts");
-const CLIP_EDITOR: &str = include_str!("../../../../tooling/agent-eval/examples/clip-editor.tsx");
 
 pub(crate) const BAR: u64 = 3840;
 /// The page's sizes, as `song.tsx` has them: a track's row and its header, and points per tick.
@@ -90,12 +83,6 @@ fn song_with(
     ];
     let mut files = vec![
         ("project.json".to_string(), project.to_string()),
-        ("extensions/song.tsx".to_string(), SONG.to_string()),
-        ("extensions/track.ts".to_string(), TRACK.to_string()),
-        ("extensions/tape.ts".to_string(), TAPE.to_string()),
-        ("extensions/chain.ts".to_string(), CHAIN.to_string()),
-        ("extensions/bus.ts".to_string(), BUS.to_string()),
-        ("extensions/clip-editor.tsx".to_string(), CLIP_EDITOR.to_string()),
         (
             "state/song/instance.json".to_string(),
             r#"{"tool": "song", "state": {}}"#.to_string(),
@@ -127,6 +114,12 @@ fn song_with(
             r#"{"tool": "fader", "state": {}}"#.to_string(),
         ),
     ];
+    // The template's tools, without its records.
+    files.extend(
+        (runtime::DAW.files.iter())
+            .filter(|(path, _)| path.starts_with("extensions/"))
+            .map(|(path, contents)| (path.to_string(), contents.to_string())),
+    );
     if returns {
         for (path, record) in [
             (

@@ -32,6 +32,7 @@ mod rack;
 mod recorder;
 mod song;
 mod song_view;
+mod template;
 mod transport;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and

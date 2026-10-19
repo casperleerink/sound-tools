@@ -18,8 +18,8 @@ use gpui::{App, AppContext, Context, Entity, PathPromptOptions, Task, WeakEntity
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use serde_json::Value;
 use sound_core::{
-    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, Scale, Sections,
-    TempoMap, Ticks, ToolSchema,
+    Changes, EventTap, GROUPING_WINDOW, InstanceId, Problem, Project, ProjectEvent, Scale,
+    Sections, TempoMap, Ticks, ToolSchema,
 };
 use sound_notes::{NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate, Performed, Pitch, Velocity};
 use sound_signals::{Signals, SignalsUpdate};

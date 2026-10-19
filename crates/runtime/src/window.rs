@@ -745,9 +745,9 @@ impl Render for Shell {
                 shell.open_or_close_left_panel(window, cx)
             }))
             .on_action(cx.listener(|shell, _: &NewProject, _, cx| {
-                shell
-                    .session
-                    .update(cx, |session, cx| new_project(session, cx))
+                shell.session.update(cx, |session, cx| {
+                    new_project(session, crate::NEW_PROJECT, cx)
+                })
             }))
             .on_action(cx.listener(|shell, _: &OpenProject, _, cx| {
                 shell.session.update(cx, |_, cx| open_another_project(cx))

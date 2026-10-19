@@ -40,6 +40,8 @@ const INPUT_DEVICE: &str = "input-device";
 const OUTPUT_CHOICE: &str = "output-device:";
 const INPUT_CHOICE: &str = "input-device:";
 const NEW_PROJECT: &str = "new-project";
+/// Followed by the index of a template in [`crate::TEMPLATES`] after the first.
+const NEW_FROM: &str = "new-project:";
 const OPEN_PROJECT: &str = "open-project";
 const OPEN_RECENT: &str = "open-recent";
 /// Followed by the index in the recent projects.
@@ -232,6 +234,15 @@ impl ProjectMenu {
         if let Some(chosen) = self.chosen(&picked.0) {
             return self.session.update(cx, |_, cx| switch_devices(chosen, cx));
         }
+        let from = picked.0.strip_prefix(NEW_FROM);
+        if let Some(template) =
+            from.and_then(|index| crate::TEMPLATES.get(index.parse::<usize>().ok()?))
+        {
+            let template = *template;
+            return self
+                .session
+                .update(cx, |session, cx| new_project(session, template, cx));
+        }
         let recent = picked.0.strip_prefix(RECENT_PROJECT);
         if let Some(folder) = recent.and_then(|index| self.recent.get(index.parse::<usize>().ok()?))
         {
@@ -245,7 +256,7 @@ impl ProjectMenu {
             .update(cx, |session, cx| match picked.0.as_ref() {
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
-                NEW_PROJECT => new_project(session, cx),
+                NEW_PROJECT => new_project(session, crate::NEW_PROJECT, cx),
                 OPEN_PROJECT => open_another_project(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
                 LOG => {
@@ -535,7 +546,7 @@ fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
 /// Asks for the name and place of a new project in the save panel, next to the open project,
 /// and opens it as [`open_another_project`] does. The panel itself asks before it reuses a
 /// folder that is there, and a folder with other files in it is refused as when opened.
-pub(super) fn new_project(session: &Session, cx: &mut Context<Session>) {
+pub(super) fn new_project(session: &Session, template: crate::Template, cx: &mut Context<Session>) {
     let root = session.project().root();
     let picked = cx.prompt_for_new_path(root.parent().unwrap_or(root), Some("New project"));
     cx.spawn(async move |session, cx| {
@@ -552,7 +563,7 @@ pub(super) fn new_project(session: &Session, cx: &mut Context<Session>) {
                 return;
             }
         };
-        start_on(folder, &session, cx).await;
+        start_on(folder, Some(template), &session, cx).await;
     })
     .detach();
 }
@@ -564,7 +575,7 @@ pub(super) fn open_another_project(cx: &mut Context<Session>) {
     let picked = cx.prompt_for_paths(super::start::folder_prompt());
     cx.spawn(
         async move |session, cx| match super::start::picked_folder(picked.await.ok()) {
-            Ok(Some(folder)) => start_on(folder, &session, cx).await,
+            Ok(Some(folder)) => start_on(folder, None, &session, cx).await,
             Ok(None) => {}
             Err(error) => report(&session, error, cx),
         },
@@ -574,12 +585,20 @@ pub(super) fn open_another_project(cx: &mut Context<Session>) {
 
 /// Makes `folder` when it is new and remembers it as the last project, off the UI thread, then
 /// starts the app again on it.
-async fn start_on(folder: PathBuf, session: &WeakEntity<Session>, cx: &mut AsyncApp) {
+async fn start_on(
+    folder: PathBuf,
+    template: Option<crate::Template>,
+    session: &WeakEntity<Session>,
+    cx: &mut AsyncApp,
+) {
     let remembered = cx
         .background_spawn(async move {
             app::check_project_folder(&folder)?;
             std::fs::create_dir_all(&folder)
                 .with_context(|| format!("could not make {}", folder.display()))?;
+            if let Some(template) = template {
+                crate::templates::write(&folder, &template)?;
+            }
             app::remember_project(&folder)
         })
         .await;
@@ -787,33 +806,47 @@ fn recent_items(recent: &[PathBuf]) -> impl Iterator<Item = MenuItem> {
 /// to send us. Windows has no command line tool, see `app::Installed`. A dev build or one
 /// started from a terminal writes no log, see `log_file`.
 fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
-    [
-        (NEW_PROJECT, "New project…"),
+    let mut items = vec![
+        MenuItem::new(NEW_PROJECT, "New project…")
+            .selectable(false)
+            .shortcut("mod+n"),
+    ];
+    // The default template is the plain "New project…".
+    for (index, template) in crate::TEMPLATES.iter().enumerate().skip(1) {
+        items.push(
+            MenuItem::new(
+                format!("{NEW_FROM}{index}"),
+                format!("New {} project…", template.name),
+            )
+            .selectable(false),
+        );
+    }
+    let rest = [
         (OPEN_PROJECT, "Open project…"),
         (OPEN_RECENT, "Open recent"),
         (REVEAL, "Reveal project folder"),
         (TERMINAL, "Open terminal in project folder"),
         (INSTALL_TOOL, "Install command line tool"),
         (LOG, "Reveal log file"),
-    ]
-    .into_iter()
-    .filter(|(value, _)| match *value {
-        INSTALL_TOOL => cfg!(unix),
-        LOG => log_file::path().is_some(),
-        _ => true,
-    })
-    .map(|(value, label)| {
-        let item = MenuItem::new(value, label).selectable(false);
-        match value {
-            NEW_PROJECT => item.shortcut("mod+n"),
-            OPEN_PROJECT => item.shortcut("mod+o"),
-            OPEN_RECENT => item
-                .submenu(recent_items(recent))
-                .disabled(recent.is_empty()),
-            _ => item,
-        }
-    })
-    .collect()
+    ];
+    let rest = (rest.into_iter())
+        .filter(|(value, _)| match *value {
+            INSTALL_TOOL => cfg!(unix),
+            LOG => log_file::path().is_some(),
+            _ => true,
+        })
+        .map(|(value, label)| {
+            let item = MenuItem::new(value, label).selectable(false);
+            match value {
+                OPEN_PROJECT => item.shortcut("mod+o"),
+                OPEN_RECENT => item
+                    .submenu(recent_items(recent))
+                    .disabled(recent.is_empty()),
+                _ => item,
+            }
+        });
+    items.extend(rest);
+    items
 }
 
 #[cfg(test)]
@@ -938,6 +971,8 @@ mod tests {
             .collect();
         let mut expected: Vec<(SharedString, SharedString)> = vec![
             (NEW_PROJECT.into(), "New project…".into()),
+            (format!("{NEW_FROM}1").into(), "New DAW project…".into()),
+            (format!("{NEW_FROM}2").into(), "New Bare project…".into()),
             (OPEN_PROJECT.into(), "Open project…".into()),
             (OPEN_RECENT.into(), "Open recent".into()),
             (REVEAL.into(), "Reveal project folder".into()),
