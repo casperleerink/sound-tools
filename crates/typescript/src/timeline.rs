@@ -116,7 +116,7 @@ fn end(state: &Value) -> Option<Ticks> {
             .filter_map(|note| Some(ticks(note, "start")? + ticks(note, "length")?));
         ends.max()
     })?;
-    Some(Ticks(start + length))
+    start.checked_add(length).map(Ticks)
 }
 
 /// The record of the timeline, for the SDK.
@@ -144,10 +144,14 @@ fn round(record: &Record) -> Result<Pattern, String> {
         Some(length) => length,
         None if record.looped => return Err("a timeline that loops needs a `length`".to_string()),
         None => {
-            let end = (record.notes.iter()).map(|note| note.start + note.length.ticks());
-            Length::at_least_one(end.max().unwrap_or(Ticks(0)))
+            let end = (record.notes.iter())
+                .map(|note| note.start.0.saturating_add(note.length.ticks().0));
+            Length::at_least_one(Ticks(end.max().unwrap_or(0)))
         }
     };
+    if record.start.0.checked_add(length.ticks().0).is_none() {
+        return Err("`start` plus the length ends past the last tick".to_string());
+    }
     Pattern::new(length, &record.notes).map_err(|error| {
         let error = error.to_string();
         error.replace("the pattern length", "the length")

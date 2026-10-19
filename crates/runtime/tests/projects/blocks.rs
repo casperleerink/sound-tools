@@ -224,6 +224,22 @@ fn a_lane_whose_points_are_out_of_order_or_below_zero_on_a_log_scale_is_a_proble
     );
 }
 
+#[test]
+fn a_timeline_that_ends_past_the_last_tick_is_a_problem() {
+    let Some(mut harness) = keys(r#"[{"tick": 0, "value": 0}]"#) else {
+        return;
+    };
+    let far = format!(r#"{{"tool": "timeline", "state": {{"start": {}, "length": 1}}}}"#, u64::MAX);
+    harness.write_and_apply("state/keys/chord.json", &far);
+    let problems = harness.project.problems();
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.message.contains("past the last tick")),
+        "{problems:?}"
+    );
+}
+
 /// A region plays its file from its start in the song, fading in over its fade, and is silent
 /// before and after it. Its gain and its trim play as the record says.
 #[test]
