@@ -200,3 +200,122 @@ fn an_update_reads_a_childs_defaults_and_sets_only_what_it_changed() {
     );
     assert!(removed.is_empty(), "{removed:?}");
 }
+
+const TEMPO: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "tempo",
+  title: "Tempo",
+  when: "A test",
+  doc: "Shows the tempo and makes it faster.",
+  state: {},
+  sound: () => 0,
+  view: ({ clock }) =>
+    h("div", {
+      onPress: () => clock.update("Faster", ({ tempo_map }) => { tempo_map.tempo_changes[0].bpm += 10; }),
+    }, () => `${clock.tempo_map.tempo_changes[0]?.bpm} bpm`),
+});
+"#;
+
+const PLAYHEAD: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "playhead",
+  title: "Playhead",
+  when: "A test",
+  doc: "Follows the playhead, which no binding may.",
+  state: {},
+  sound: () => 0,
+  view: ({ clock }) => h("div", {}, () => String(clock.tick)),
+});
+"#;
+
+/// Starts Bun with one tool and mounts its view, which reads no record.
+fn mounted(file: &str, code: &str, name: &str) -> Option<Bun> {
+    let program = bun_program()?;
+    let folder = tempfile::tempdir().unwrap();
+    write_sdk(folder.path(), &[]).unwrap();
+    std::fs::write(folder.path().join(file), code).unwrap();
+    let host = host_script().unwrap();
+    let (bun, _) = Bun::start(&program, &host, (folder.path(), new_opening()), &[file])
+        .unwrap_or_else(|failure| panic!("{}", failure.why));
+    // Bun reads its files at the start; the folder may go.
+    drop(folder);
+    let id = InstanceId::new(name).unwrap();
+    let state = "{}".to_string();
+    assert!(bun.tell([(&id, Some((name, record_key(name, &state), state.as_str())))]));
+    let clock = Clock {
+        time: 0.0,
+        transport: Transport::default(),
+    };
+    bun.send(&Request::Mount {
+        card: 1,
+        instance: &id,
+        watches: &BTreeMap::new(),
+        size: crate::bun::PageSize {
+            width: 168,
+            height: 144,
+        },
+        clock,
+    });
+    Some(bun)
+}
+
+/// The tempo map of the window reaches a binding that reads it, and an edit of it in code goes
+/// out as one song edit.
+#[test]
+fn a_binding_follows_the_tempo_map_and_code_edits_it() {
+    let Some(bun) = mounted("tempo.ts", TEMPO, "tempo") else {
+        return eprintln!("skipped: Bun is not installed");
+    };
+    let button = (next_ops(&bun).into_iter())
+        .find_map(|op| match op {
+            Op::Create(id, Props::Div(div)) if div.on_press == Some(true) => Some(id),
+            _ => None,
+        })
+        .unwrap();
+    let tempo_map = sound_core::TempoMap::constant(
+        sound_core::TimeSignature::default(),
+        sound_core::Tempo::from_bpm(90.0).unwrap(),
+    );
+    bun.send(&Request::Song {
+        tempo_map: &tempo_map,
+        sections: &sound_core::Sections::default(),
+    });
+    let ops = format!("{:?}", next_ops(&bun));
+    assert!(ops.contains("90 bpm"), "{ops}");
+    bun.send(&Request::Event {
+        card: 1,
+        node: button,
+        kind: EventKind::Press,
+        payload: json!({ "x": 0, "y": 0, "button": "left", "clicks": 1, "shift": false, "alt": false, "cmd": false, "ctrl": false }),
+        time: 0.0,
+    });
+    let edited = loop {
+        match smol::block_on(bun.events().recv()) {
+            Ok(Event::SongEdit { tempo_map, .. }) => break tempo_map,
+            Ok(Event::Ended { why, .. }) => panic!("Bun ended: {why}"),
+            Ok(Event::Failed { message, .. }) => panic!("{message}"),
+            Ok(_) => {}
+            Err(error) => panic!("{error}"),
+        }
+    };
+    assert_eq!(edited["tempo_changes"][0]["bpm"], 100.0, "{edited}");
+}
+
+/// The playhead moves on every frame: a binding that reads it fails with what to do instead.
+#[test]
+fn a_binding_that_reads_the_playhead_fails_with_what_to_do() {
+    let Some(bun) = mounted("playhead.ts", PLAYHEAD, "playhead") else {
+        return eprintln!("skipped: Bun is not installed");
+    };
+    let error = loop {
+        match smol::block_on(bun.events().recv()) {
+            Ok(Event::Ops { ops, .. }) => break ops.unwrap_err(),
+            Ok(Event::Ended { why, .. }) => panic!("Bun ended: {why}"),
+            Ok(_) => {}
+            Err(error) => panic!("{error}"),
+        }
+    };
+    assert!(error.contains("show it with now.tick"), "{error}");
+}
