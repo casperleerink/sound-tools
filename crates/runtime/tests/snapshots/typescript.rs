@@ -3,7 +3,8 @@
 //! - `typescript-mixer.png`: the mixer of `tooling/agent-eval/examples` as five tones play:
 //!   meters, faders, a muted strip, the master's scope and the device output.
 //! - `typescript-song.png`: the song of `tooling/agent-eval/examples`, 12 tracks of 150 clips,
-//!   as it plays: a clip selected, another open in the note editor, the meters of the tracks.
+//!   as it plays: the SDK's transport on top, a clip selected, another open in the note editor,
+//!   the meters of the tracks.
 //! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, beside
 //!   a small piano roll whose notes and labels are shapes of a space.
 //! - `typescript-piano-roll.png`: the piano roll of `tooling/agent-eval/examples`, with the

@@ -183,11 +183,11 @@ tool({
 | `<Meter value label?>` | A bar that shows a number from 0 to 1, such as an output. |
 | `<Pad x y size?>` | A square for the pointer: across moves the number input `x`, up moves `y`. |
 
-All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `outputs`, the last value of each number output of its sound and of its children's; `time` and `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`); `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; `openFile()`, which asks the composer for a file, copies it into `assets/audio/` and gives its name for a `file` field; and `send` and `play`, which play its inputs and voices as a performer would.
+All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `outputs`, the last value of each number output of its sound and of its children's; `time`; `clock`, see "The clock"; `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; `openFile()`, which asks the composer for a file, copies it into `assets/audio/` and gives its name for a `file` field; and `send` and `play`, which play its inputs and voices as a performer would.
 
 ### Values that change
 
-A view and a component run once. A value that changes (a field, a child, an output, `transport`, `memory`, `size`) goes in a function, which the window runs again when what it read changes, and only what it gives changes on screen: `style={() => (state.on ? lit : plain)}`, and `{() => `${state.notes.length} notes`}` as a child. Read such a value in the body itself and the view fails with an error that says how: `x={note.start}` is `x={() => note.start}`. A handler reads values as it runs, so it needs no function around them.
+A view and a component run once. A value that changes (a field, a child, an output, `clock.playing`, `memory`, `size`) goes in a function, which the window runs again when what it read changes, and only what it gives changes on screen: `style={() => (state.on ? lit : plain)}`, and `{() => `${state.notes.length} notes`}` as a child. Read such a value in the body itself and the view fails with an error that says how: `x={note.start}` is `x={() => note.start}`. A handler reads values as it runs, so it needs no function around them.
 
 - `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. `index()` follows its place. Its body runs once too: `x={() => note.start}`.
 - `<Show when={() => memory.open}>{() => ...}</Show>` makes its part each time it shows.
@@ -259,7 +259,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
   ```
 
 - `send("notes", event, { at })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`.
-- `onKey: (tool, { key, down, shift, cmd, alt, ctrl }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its view, or at once on a view at the top that opens with the window: those `keys: ["delete", "cmd-d"]` names, the rest staying the window's, so space still plays; without `keys`, every plain key. A key with cmd, ctrl or alt only goes down, and one the window uses, such as cmd-z, stays the window's. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; its sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The MIDI keyboard plays `notes`, and in a track its clips too.
+- `onKey: (tool, { key, down, shift, cmd, alt, ctrl }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its view, or at once on a view at the top that opens with the window: those `keys: ["delete", "cmd-d"]` names, else every plain key. A view at the top also hears its `globalKeys: ["space"]` wherever the focus is, outside a text field. A key with cmd, ctrl or alt only goes down; undo, opening, quitting and the panel stay the app's. Nothing else plays a key: space plays only where a tool takes it. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; its sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The MIDI keyboard plays `notes`, and in a track its clips too.
 
 ## Changing records
 
@@ -283,7 +283,7 @@ To make the project one tool:
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 4. Connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`.
 
-The window shows its view, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and what reads `transport` follows it. `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well plays the microphone live into its audio input: its sound hears it as `input`, a parent's from `{ port: "audio" }`. Tell the composer to use headphones. `{"app": "Music"}` in place of `{"device_input": 0}` plays another app, and `{"app": "all"}` every app.
+The window shows its view; for play, stop and the rest, see "The clock". `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well plays the microphone live into its audio input: its sound hears it as `input`, a parent's from `{ port: "audio" }`. Tell the composer to use headphones. `{"app": "Music"}` in place of `{"device_input": 0}` plays another app, and `{"app": "all"}` every app.
 
 ```tsx
 import { bang, Circle, feedback, h, lowpass, max, noise, number, Space, tool } from "./sdk";
@@ -385,7 +385,6 @@ tool({
       { from: { child: "fx" }, to: { port: "audio" } },
     ],
   }),
-  transport: true,
   view: ({ outputs, send }) => {
     const launch = (chosen?: string) => {
       for (const loop of loops) send({ child: loop, number: "launch" }, loop === chosen ? 1 : 0);
@@ -405,6 +404,10 @@ tool({
 ```
 
 Its timelines, `state/loops/low.json` and `state/loops/high.json`, loop a bar each, such as `{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [...]}}`: `"plays": false` waits for a launch.
+
+## The clock
+
+One clock plays the project: `clock` in all code. `clock.play()`, `pause()`, `stop()`, `jump(tick, { at? })` (at a tick, on its frame), `setRepeat({ from, to } | null)` and `setClick(on)` move it; none is saved. `clock.playing`, `repeat`, `click`, `tempo_map` and `sections` follow in a function; `clock.tick`, `bar`, `beat` and `bpm` move on every frame, so read them in a handler and show them with `now.tick`, `now.bpm` and a `Label` of `now.tick` with `unit: "position"`, `"time"` or `"signature"`. `clock.update(label, ({ tempo_map, sections }) => ...)` edits them as `project.json` holds them, one undo step. `<Transport clock={clock} />` is a bar of all of it; with `globalKeys: ["space"]` and `onKey: ({ clock }, { key, down }) => { if (key === "space" && down) (clock.playing ? clock.pause() : clock.play()); }` space plays.
 
 ## Check your work
 
