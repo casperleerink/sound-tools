@@ -562,3 +562,41 @@ fn a_record_of_another_tool_shows_as_that_tool(cx: &mut TestAppContext) {
     let narrow = window.find("div-box").unwrap();
     assert_eq!(wide.x - narrow.x, gpui::px(50.));
 }
+
+/// A row 20 high for each number of its memory, `[7, 7, 1]`, over a box `end`; a click makes it `[7, 1]`.
+const REPEATS: &str = r#"import { For, h, tool } from "./sdk";
+
+tool({
+  name: "repeats",
+  title: "Repeats",
+  when: "Never",
+  doc: "A row per number.",
+  state: {},
+  memory: () => ({ list: [7, 7, 1] }),
+  view: ({ memory }) =>
+    h("div", { style: { width: 300 } },
+      h("div", { key: "top", style: { width: 100, height: 20 }, onPress: () => (memory.list = [7, 1]) }, "Top"),
+      h(For, { each: () => memory.list }, (value: number) => h("div", { style: { width: 100, height: 20 } }, String(value))),
+      h("div", { key: "end", style: { width: 100, height: 20 } }, "End"),
+    ),
+});
+"#;
+
+#[gpui::test]
+fn a_value_in_a_list_twice_has_a_row_each_time(cx: &mut TestAppContext) {
+    let project = at_the_top("repeats", "");
+    let files = [
+        ("project.json", project.as_str()),
+        ("state/repeats.json", r#"{"tool": "repeats", "state": {}}"#),
+        ("extensions/repeats.tsx", REPEATS),
+    ];
+    let mut window = open(cx, &files);
+    let top = window.until_found("div-top");
+    let rows = |window: &mut Opened<'_>| {
+        let below = f32::from(window.until_found("div-end").y - top.y);
+        (below / 20.).round() as i32 - 1
+    };
+    assert_eq!(rows(&mut window), 3);
+    window.click(top);
+    window.until("two rows", |window| rows(window) == 2);
+}

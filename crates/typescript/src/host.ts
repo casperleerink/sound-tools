@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Take, Context, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MovedNumber, NoteEvent, Offer, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MovedNumber, NoteEvent, Offer, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -52,7 +52,7 @@ type Request =
   /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
   | { type: "event"; card: number; node: number; kind: "press" | "end" | "commit" | "drop" | "power" | "close"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
-  | ({ type: "key"; instance: Played; key: string; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
+  | ({ type: "key"; instance: Played; key: PlainKey; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
   | ({ type: "take"; instance: Played } & Take & Clock)
   | { type: "drop"; card: number }
@@ -1014,7 +1014,7 @@ function clockFor(instance: string): SdkClock {
     play: () => op({ op: "play" }),
     pause: () => op({ op: "pause" }),
     stop: () => op({ op: "stop" }),
-    jump: (to, { at } = {}) => op({ op: "jump", to: wholeTick(to, "jump to"), at: at === undefined ? null : wholeTick(at, "jump at") }),
+    jump: (to, { atTick } = {}) => op({ op: "jump", to: wholeTick(to, "jump to"), at: atTick === undefined ? null : wholeTick(atTick, "jump atTick") }),
     setRepeat: (range) => op({ op: "repeat", range: range && [wholeTick(range.from, "repeat from"), wholeTick(range.to, "repeat to")] }),
     setClick: (on) => op({ op: "click", on }),
     update: (label, change) => {

@@ -43,7 +43,7 @@ Settled during rounds 1–14; the round-by-round log is in git history. The last
 - **What a performer sends for later waits in a bounded queue of its block** (signals, recorder, timeline alike) and lands at its frame; a send for now drops what waits.
 - **The window names no musical key:** the computer keys leave a focused tool the keys it names.
 - **One road to a built-in effect: a child.** `devices.reverb(...)` inside a `sound` was removed: a second road with its own types, checks and engine ports.
-- **Clock in the core, everything musical outside it.** `clock.play/pause/stop/jump(to, { at })/setRepeat/setClick/update`; the transport bar is ~50 lines of SDK; space plays only where a tool's `globalKeys` takes it.
+- **Clock in the core, everything musical outside it.** `clock.play/pause/stop/jump(to, { atTick })/setRepeat/setClick/update`; the transport bar is ~50 lines of SDK; space plays only where a tool's `globalKeys` takes it.
 - **Device in and out stay `project.json` connection ends.** An `audio-out` child would need the parent's own sound as a source, which ARCHITECTURE rejects (`ownSound`).
 - **`--only <path>`** plays one instance's sound by rerouting `project.json` in memory; `--solo` named tracks.
 - **Solo is a cable:** a `lane` holding -1000 dB into every other track's fader gain. Pre-fader sends are the return's choice.

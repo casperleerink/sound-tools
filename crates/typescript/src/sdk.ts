@@ -689,7 +689,7 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    * whole window: `["space"]` to play and stop. The app keeps undo, opening, quitting and its
    * panel; nothing else plays a key by itself.
    */
-  globalKeys?: readonly KeyName[];
+  globalKeys?: readonly Exclude<KeyName, AppKey>[];
   /**
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
    * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
@@ -919,7 +919,7 @@ export interface Declaration<K extends ChildTools = ChildTools> {
  * uses, such as cmd-z, stays the window's.
  */
 export interface Key extends Modifiers {
-  key: string;
+  key: PlainKey;
   /** Pressed; `false` when it comes up. */
   down: boolean;
 }
@@ -1125,8 +1125,8 @@ export interface Clock {
   pause(): void;
   /** Pauses and goes back to the start. */
   stop(): void;
-  /** Playback goes on from `to`: at once, or with `at` once it reaches that tick, on its frame. */
-  jump(to: number, options?: { at?: number }): void;
+  /** Playback goes on from `to`: at once, or with `atTick` once it reaches that tick, on its frame. */
+  jump(to: number, options?: { atTick?: number }): void;
   /** Playback goes back from `to` to `from` while it is set; `null` plays on. Not saved. */
   setRepeat(range: { from: number; to: number } | null): void;
   setClick(on: boolean): void;
@@ -1357,8 +1357,12 @@ const PLAIN_KEYS = [
   "tab", "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "f1", "f2", "f3",
   "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"
 ] as const;
+/** A key of the computer keyboard by its name. */
+export type PlainKey = (typeof PLAIN_KEYS)[number];
 /** A key by name, with cmd, ctrl and alt held first and in that order: `"space"`, `"cmd-c"`, `"cmd-alt-left"`. */
-export type KeyName = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${(typeof PLAIN_KEYS)[number]}`;
+export type KeyName = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${PlainKey}`;
+/** The keys the app keeps: undo, new, open, quit, the panel, the computer keys, and tab. */
+type AppKey = `${"cmd" | "ctrl"}-${"z" | "n" | "o" | "q" | "l" | "b" | "k"}` | "tab";
 
 /** An item of `openMenu`. */
 export interface MenuItem {
@@ -1650,12 +1654,12 @@ function root<T>(make: (dispose: () => void) => T, card: CardRoot | null = owner
 }
 
 /** Runs `cleanup` when what runs now runs again or goes. */
-export function onCleanup(cleanup: () => void) {
+function onCleanup(cleanup: () => void) {
   owner?.cleanups.push(cleanup);
 }
 
 /** Reads without making what runs now depend on it, such as the record in a handler. */
-export function untrack<T>(read: () => T): T {
+function untrack<T>(read: () => T): T {
   const [lastListener, lastSetup] = [listener, settingUp];
   [listener, settingUp] = [null, 0];
   try {
@@ -2184,19 +2188,21 @@ function dynamic(show: Accessor<Child>, into: UiNode[], family: Family) {
 
 /**
  * A list of `each`, one row per item, kept by its item: a row is made once, moves when its item
- * moves and goes when its item goes. Its body runs once, as a component's; `index` follows its
- * place. `<For each={() => state.notes}>{(note, index) => <Rect x={() => note.start} ... />}</For>`
+ * moves and goes when its item goes; an item that is in the list twice has two rows. Its body
+ * runs once, as a component's; `index` follows its place.
+ * `<For each={() => state.notes}>{(note, index) => <Rect x={() => note.start} ... />}</For>`
  */
 export function For<T>(props: { each: Accessor<readonly T[]>; children: (item: T, index: Accessor<number>) => Child }): Region {
   return {
     mount(into, family) {
       const end = marker();
       type Row = { nodes: Made[]; index: (next: number) => void; dispose: () => void };
-      let rows = new Map<T, Row>();
-      let order: T[] = [];
+      // The rows of each item, in the order it comes in the list.
+      let rows = new Map<T, Row[]>();
+      let order: Row[] = [];
       let first: UiNode[] | null = into;
       onCleanup(() => {
-        for (const row of rows.values()) row.dispose();
+        for (const row of order) row.dispose();
       });
       effect(() => {
         const list = props.each();
@@ -2205,56 +2211,52 @@ export function For<T>(props: { each: Accessor<readonly T[]>; children: (item: T
         untrack(() => {
           const parent = end.region?.parent;
           const parentNode = parent === null || parent === undefined ? undefined : nodes.get(parent);
-          const next = new Map<T, Row>();
-          const keep = new Set(items);
-          for (const [item, row] of rows) {
-            if (!keep.has(item)) {
-              for (const made of row.nodes) {
-                parentNode?.children.delete(made);
-                remove(made);
-              }
-              row.dispose();
+          const left = new Map([...rows].map(([item, each]) => [item, [...each]]));
+          const kept = items.map((item) => left.get(item)?.shift());
+          for (const row of [...left.values()].flat()) {
+            for (const made of row.nodes) {
+              parentNode?.children.delete(made);
+              remove(made);
             }
+            row.dispose();
           }
-          const fresh = new Set<T>();
-          items.forEach((item, index) => {
-            const known = rows.get(item);
-            if (known && !next.has(item)) {
-              known.index(index);
-              next.set(item, known);
-              return;
+          const fresh = new Set<Row>();
+          const next = new Map<T, Row[]>();
+          const nextOrder = items.map((item, index) => {
+            let row = kept[index];
+            if (row) {
+              row.index(index);
+            } else {
+              row = root((dispose) => {
+                const [readIndex, setIndex] = signal(index);
+                const made: UiNode[] = [];
+                materialize(setup(() => props.children(item, readIndex)), made, family);
+                return { nodes: made as Made[], index: setIndex, dispose };
+              });
+              fresh.add(row);
             }
-            const row = root((dispose) => {
-              const [readIndex, setIndex] = signal(index);
-              const made: UiNode[] = [];
-              materialize(setup(() => props.children(item, readIndex)), made, family);
-              return { nodes: made as Made[], index: setIndex, dispose };
-            });
-            next.set(item, row);
-            fresh.add(item);
+            next.set(item, [...(next.get(item) ?? []), row]);
+            return row;
           });
           if (first) {
-            for (const item of items) place(end, next.get(item)?.nodes ?? [], end, first);
+            for (const row of nextOrder) place(end, row.nodes, end, first);
             first = null;
           } else {
             // The rows that stay in the order they had stay put; the others move before the row after them.
-            const kept = items.filter((item) => !fresh.has(item));
-            const before = new Map(order.map((item, index) => [item, index]));
-            const places = kept.map((item) => before.get(item) ?? 0);
+            const stayed = nextOrder.filter((row) => !fresh.has(row));
+            const before = new Map(order.map((row, index) => [row, index]));
+            const places = stayed.map((row) => before.get(row) ?? 0);
             const inOrder = places.every((place, index) => index === 0 || place > (places[index - 1] as number));
-            const staying = new Set(inOrder ? kept : longestRising(places).map((index) => kept[index]));
+            const staying = new Set(inOrder ? stayed : longestRising(places).map((index) => stayed[index]));
             let anchor: Made = end;
-            for (let index = items.length - 1; index >= 0; index--) {
-              const item = items[index] as T;
-              const row = next.get(item) as Row;
-              if (!staying.has(item)) {
-                place(end, row.nodes, anchor, null);
-              }
+            for (let index = nextOrder.length - 1; index >= 0; index--) {
+              const row = nextOrder[index] as Row;
+              if (!staying.has(row)) place(end, row.nodes, anchor, null);
               anchor = row.nodes[0] ?? anchor;
             }
           }
           rows = next;
-          order = items;
+          order = nextOrder;
         });
       });
       into.push(end);
