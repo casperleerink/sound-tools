@@ -139,7 +139,10 @@ pub(crate) enum Request<'a> {
         card: u64,
     },
     /// The answer to a question of a tool: `openFile`, `openMenu`, `offers` or `numbers`.
-    Answer { question: u64, answer: Answer<'a> },
+    Answer {
+        question: u64,
+        answer: Answer<'a>,
+    },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {

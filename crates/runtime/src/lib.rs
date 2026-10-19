@@ -714,6 +714,7 @@ pub fn tick(
     // A tool of the project that owns children, whose behaviour Bun answered.
     let declared = sound_typescript::take_declared(project.assets());
     errors.extend(rebind(project, &declared));
+    sound_typescript::forget_gone(project);
     // The main-thread callbacks the plugins ask for, and the state they say changed.
     let mut problems = plugins.poll(project);
     // A plugin that is started again is handed to the engine. After the poll, which is what

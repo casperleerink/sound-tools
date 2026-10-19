@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
+use crate::mixer::{self, MAX_GAIN_DB, Mix, Mixer};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::mixer::{self, MAX_GAIN_DB, Mix, Mixer};
 use sound_core::{
     BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint, State,
     ToolSchema, decibels,

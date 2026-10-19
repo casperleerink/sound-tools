@@ -53,6 +53,7 @@ pub use card::embedded_view;
 #[cfg(feature = "test-support")]
 pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
+pub use tools::forget_gone;
 pub use window::start_window;
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};

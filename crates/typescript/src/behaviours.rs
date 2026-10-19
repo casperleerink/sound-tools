@@ -334,6 +334,12 @@ pub(crate) fn ended(number: u64, why: &str) {
 
 /// The instances of the project of `assets` whose behaviour Bun answered since the last call,
 /// to run again: they find the answer.
+/// Lets go of what is kept for the owners of `project` that are gone.
+pub(crate) fn forget_gone(project: &sound_core::Project) {
+    let assets = project.assets();
+    (store().owners).retain(|(of, id), _| of != assets || project.tool_of(id).is_some());
+}
+
 pub fn take_declared(assets: &Assets) -> Vec<InstanceId> {
     let mut store = store();
     let (ours, others): (BTreeSet<_>, BTreeSet<_>) = std::mem::take(&mut store.ready)

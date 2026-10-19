@@ -1189,6 +1189,16 @@ fn read_key(
 /// as fast as one of none.
 static KEPT: Mutex<BTreeMap<(Assets, InstanceId), Arc<Kept>>> = Mutex::new(BTreeMap::new());
 
+/// Lets go of what every map of the process keeps for the instances of `project` that are gone,
+/// once per poll.
+pub fn forget_gone(project: &sound_core::Project) {
+    let assets = project.assets();
+    let live = |(of, id): &(Assets, InstanceId)| of != assets || project.tool_of(id).is_some();
+    (KEPT.lock().unwrap_or_else(PoisonError::into_inner)).retain(|key, _| live(key));
+    (FED.lock().unwrap_or_else(PoisonError::into_inner)).retain(live);
+    crate::behaviours::forget_gone(project);
+}
+
 /// The children of `owner` from their `stamps`, each read again only when its state changed
 /// since the last time.
 fn kept_children<'a>(
