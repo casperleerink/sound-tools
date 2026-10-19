@@ -43,6 +43,17 @@ function copied(notes: readonly Note[], chosen: Set<number>): Note[] {
   return picked.map((note) => ({ ...note, start: note.start - first }));
 }
 
+/** A key for each note from what it is, which a delete does not shift: start, pitch, and which of the same. */
+function keysOf(notes: readonly Note[]): string[] {
+  const seen = new Map<string, number>();
+  return notes.map((note) => {
+    const at = `${note.start}-${note.pitch}`;
+    const count = seen.get(at) ?? 0;
+    seen.set(at, count + 1);
+    return `${at}-${count}`;
+  });
+}
+
 const span = (picked: readonly Note[]) => Math.ceil(Math.max(...picked.map((note) => note.start + note.length)) / STEP) * STEP;
 
 export const pianoRoll = tool({
@@ -168,20 +179,21 @@ export const pianoRoll = tool({
       }
     };
 
+    const keys = keysOf(all);
     const noteShapes = (index: number, note: Note, picked: boolean) => {
       const row = rowOf(note.pitch);
       const end = note.start + note.length;
       const handle = Math.min(HANDLE, note.length / 3);
       const onPress = press(index);
       return [
-        <Rect key={`n${index}`} x={note.start} y={row} width={picked ? resize.dx.plus(note.length).max(STEP / 4) : note.length} height={1} radius={2}
+        <Rect key={`n${keys[index]}`} x={note.start} y={row} width={picked ? resize.dx.plus(note.length).max(STEP / 4) : note.length} height={1} radius={2}
           color={picked ? COLOR.chosen : COLOR.note} hover={picked ? undefined : COLOR.hover} cursor="grab" drag={moveDrag} onPress={onPress} />,
-        <Rect key={`r${index}`} x={picked ? resize.dx.plus(end - handle) : end - handle} y={row} width={handle} height={1}
+        <Rect key={`r${keys[index]}`} x={picked ? resize.dx.plus(end - handle) : end - handle} y={row} width={handle} height={1}
           color={COLOR.clear} cursor="ew-resize" drag={resizeDrag} onPress={onPress} anchor={{ x: end }} />,
       ];
     };
     const bar = (index: number, note: Note, picked: boolean) => (
-      <Rect key={`v${index}`} x={note.start} y={LANE - barHeight(note.velocity)} width={Math.min(note.length, 120)} height={LANE}
+      <Rect key={`v${keys[index]}`} x={note.start} y={LANE - barHeight(note.velocity)} width={now.pt(6)} height={LANE}
         color={picked ? COLOR.chosen : COLOR.note} cursor="ns-resize" drag={velocityDrag} onPress={press(index)} />
     );
     const across = { unit: { x: ACROSS, y: 1 }, extent: { x: [0, END] as const }, zoom: { x: [0.05, 8] as const } };
