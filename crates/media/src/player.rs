@@ -1,7 +1,6 @@
 //! Plays stretches of audio files at places in the song: one immutable snapshot of them on the
 //! control side, one processor that reads them from the transport's frame range on the audio
-//! thread. A track of the arrangement plays its clips through one; a region of a parent of the
-//! project plays itself through one.
+//! thread. A `region` plays itself through one.
 //!
 //! The rules that shape this file:
 //!

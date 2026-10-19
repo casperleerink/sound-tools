@@ -1,10 +1,10 @@
-//! A mixer stage: gain on a fader's scale, pan and silence, with the peaks of what it sends on.
-//! The track mixer of the arrangement and the `fader` of the SDK both play one.
+//! The processor of a `fader`: gain on a fader's scale, pan and silence, with the peaks of what
+//! it sends on.
 //!
 //! The volume and the pan are automatable like the numbers of a device. The processor works out
 //! one gain per channel when something moves and ramps to the new pair, so no change clicks.
 
-use crate::{
+use sound_core::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Parameter, Peaks, Ports,
     PrepareConfig, ProcessContext, Processor, Scale, Smoothed, Targets, all_positive_zero,
     amplitude, pan_gains,
@@ -12,20 +12,20 @@ use crate::{
 
 /// The highest gain of a mixer stage, in decibels. Anything under it is a gain too, down to
 /// `-inf`.
-pub const MAX_GAIN_DB: f32 = 6.0;
+pub(crate) const MAX_GAIN_DB: f32 = 6.0;
 
 /// How long a change of gain, pan or mute takes to arrive. A jump would click.
-pub const RAMP_SECONDS: f32 = 0.02;
+pub(crate) const RAMP_SECONDS: f32 = 0.02;
 
 /// The gain of each channel, left first.
-pub type ChannelGains = [f32; CHANNELS];
+pub(crate) type ChannelGains = [f32; CHANNELS];
 
 /// What a mixer stage plays.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Mix {
+pub(crate) struct Mix {
     pub gain_db: f32,
     pub pan: f32,
-    /// Muted, or left out by a solo.
+    /// Muted.
     pub silent: bool,
 }
 
@@ -34,7 +34,7 @@ impl Mix {
     ///
     /// The pan law is the equal power law of the SDK, [`pan_gains`]: a sound keeps its
     /// loudness wherever it is panned, and in the middle it is untouched.
-    pub fn gains(&self) -> ChannelGains {
+    pub(crate) fn gains(&self) -> ChannelGains {
         pan_gains(f64::from(self.level()), self.pan)
     }
 
@@ -48,7 +48,7 @@ impl Mix {
 }
 
 /// The volume, as a lane moves it: on the scale of a fader.
-pub const GAIN: Parameter<Mix> = Parameter {
+pub(crate) const GAIN: Parameter<Mix> = Parameter {
     field: "gain_db",
     min: f32::NEG_INFINITY,
     max: MAX_GAIN_DB,
@@ -57,7 +57,7 @@ pub const GAIN: Parameter<Mix> = Parameter {
     get: |mix| mix.gain_db,
     set: |mix, value| mix.gain_db = value,
 };
-pub const PAN: Parameter<Mix> = Parameter {
+pub(crate) const PAN: Parameter<Mix> = Parameter {
     field: "pan",
     min: -1.0,
     max: 1.0,
@@ -72,7 +72,7 @@ pub const PAN: Parameter<Mix> = Parameter {
 /// The volume and the pan glide apart, each with its own ramp, and the gains of the channels
 /// are worked out from where both are at the end of each block. So a pan lane that moves does
 /// not cut short the glide of a volume lane that just took over.
-pub struct Mixer {
+pub(crate) struct Mixer {
     /// The record, with the values of its lanes.
     mix: Automated<Mix, 2>,
     /// The factor of the volume, 0 when silent.
@@ -87,13 +87,13 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    pub const INPUT: AudioInput = AudioInput::new(0);
-    pub const OUTPUT: AudioOutput = AudioOutput::new(0);
+    pub(crate) const INPUT: AudioInput = AudioInput::new(0);
+    pub(crate) const OUTPUT: AudioOutput = AudioOutput::new(0);
     /// What a lane moves.
-    pub const AUTOMATION: AutomationInput<Mix, 2> = AutomationInput::new(0, [&GAIN, &PAN]);
+    pub(crate) const AUTOMATION: AutomationInput<Mix, 2> = AutomationInput::new(0, [&GAIN, &PAN]);
 
     /// Starts at this mix, so a stage that opens or is added is not faded in.
-    pub fn new(mix: Mix, peaks: Peaks) -> Self {
+    pub(crate) fn new(mix: Mix, peaks: Peaks) -> Self {
         Self {
             mix: Automated::new(Self::AUTOMATION, mix),
             level: Smoothed::new(mix.level()),

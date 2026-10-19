@@ -22,7 +22,6 @@ mod graph;
 mod input;
 mod lfo;
 mod limiter;
-pub mod mixer;
 mod oversampling;
 mod parameter;
 mod peaks;
