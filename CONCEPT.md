@@ -4,7 +4,7 @@
 
 Create a music production and composition environment with an integrated AI agent. The v0 is a small, calm DAW with an agent sidebar. The agent has the project's full context and tools to assist with production and composition: adding parts, shaping sounds, arranging, mixing and rendering.
 
-The DAW parts are extensions that ship with the product. Composers can later ask the agent to create or adapt extensions for the needs of a piece, but that is not the v0 headline.
+The DAW is a template a new project starts from, written as tools of the project with the TypeScript SDK, so a composer can ask the agent to change any of it. A Bare project starts empty.
 
 ## Composer experience
 
@@ -18,7 +18,7 @@ Users need enough musical intent to guide the agent. Programming knowledge is no
 
 The core provides reliable audio execution, timing including a musical clock, project storage, shared editing behaviour, a UI SDK, the agent integration, and running the tools a project defines itself.
 
-Extensions provide instruments, effects, editors and complete workflows. The bundled instruments and effects are extensions built on the same SDK available to user extensions, and the DAW template is tools of a project, written with the TypeScript SDK an agent writes with. They give the agent working examples to adapt.
+Extensions provide building blocks in Rust: instruments, effects, the plugin host, clips in time, faders and meters. Tools of the project compose them into workflows. The DAW template is such tools, written with the SDK an agent writes with, so it is a working example to adapt.
 
 Musical conventions beyond tempo and time are extension choices. The bundled extensions use Western notes and bars; other extensions may use frequency ratios, additive rhythms or free timing, and they can coexist in one project.
 

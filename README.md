@@ -56,7 +56,7 @@ Windows 10 or later, x86_64. CI builds and tests it on Windows, but nobody has t
 cargo run -p runtime -- ~/Music/my-piece
 ```
 
-The folder is the project. When it is empty or missing, the app makes the default project in it: 120 bpm, 4/4 and no tracks yet. There is no save. The app writes every finished edit to the folder.
+The folder is the project. When it is empty or missing, the app makes a Bare project in it: 120 bpm, 4/4 and nothing else. There is no save. The app writes every finished edit to the folder.
 
 ### Install the app
 
@@ -91,10 +91,10 @@ To make a release, run `/release` in Claude Code. With no argument it decides fr
 4. Press space to play. Click the ruler to play from there.
 5. Click a track name for its devices: the synth, the filter and the effects of its chain. **+ Effect** adds one.
 6. Drag a WAV or AIFF file from the Finder onto the timeline for an audio region.
-7. Plug in a MIDI keyboard and play. R arms a track; the record button records it.
+7. Plug in a MIDI keyboard and play. The R of a track arms it; the record button records it.
 8. cmd-z undoes, shift-cmd-z redoes. cmd-q quits. There is no save; every edit is written to the folder.
 
-Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".
+The DAW's own gestures and keys are its code, in `templates/daw/extensions`. Their rules are in [DESIGN.md](DESIGN.md).
 
 ## Work with an agent
 
@@ -110,7 +110,6 @@ The agent sidebar runs Claude Code in the project folder, with no terminal.
    - `Put the reverb before the delay on the piano track`
    - `Add a drum track with a four-bar beat that ends in a fill`
    - `Put the file in assets/audio on a new audio track, so it starts at bar 3`
-   - `The grid runs twice as fast as the music. Fix the fit`
 4. The part shows up and plays while the agent still writes. One cmd-z in the app takes the whole request back.
 
 The terminal works too, with any coding agent that can edit files. Click the project name top-left, pick **Open terminal in project folder**, and start Claude Code or Codex there (`claude` or `codex`). The app must be running on the project, else the edits are saved but nobody checks or plays them.
@@ -119,7 +118,7 @@ What the agent uses:
 
 - `AGENTS.md`. The app writes it into the project, with a `CLAUDE.md` that imports it. It is a short map: the folder layout, the bar math of this project, how to check the work, and a list of docs in `agent-docs/` with one line each saying when to open it. The record formats live in those docs, one per extension. Agents read the map by themselves and open only the doc their task needs.
 - `problems.txt`. The app keeps it current while it runs. It lists every file that did not load, and why. `No problems. Every file is live.` means all of it plays. The agent reads it to check its work.
-- `sound-tools . --inspect`. It prints the tempo, every track and every clip with its bar range, and the problems. It works next to the running app and loads no plugin. Install `sound-tools` once with **Install command line tool** in the project menu. From a checkout, `cargo run -p runtime -- . --inspect` is the same.
+- `sound-tools . --inspect`. It prints the tempo, every instance with its record, the connections and the problems. It works next to the running app and loads no plugin. Install `sound-tools` once with **Install command line tool** in the project menu. From a checkout, `cargo run -p runtime -- . --inspect` is the same.
 
 ## Without the window
 
@@ -154,7 +153,7 @@ cargo deny check
 
 CI runs the same on macOS with the realtime sanitizer on, and the tests on Linux and Windows, see [ENGINEERING.md](ENGINEERING.md). The tools come from `cargo install cargo-nextest cargo-shear cargo-deny typos-cli`.
 
-The two snapshot tests render the UI components and the window to PNGs without opening a window: `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`. They print the folder they write to. CI does not run them; run them after a UI change and look at the PNGs. `cargo run -p runtime --example screenshot -- <project> <out-folder>` does the same for a project folder, its TypeScript cards and pages included: `window.png` as it opens and `track-<name>.png` for each track with its cards. It works on a copy and plays nothing. `cargo run -p gallery` opens the component gallery in a window.
+The two snapshot tests render the UI components and the window to PNGs without opening a window: `cargo test -p gallery --test snapshots` and `cargo test -p runtime --test snapshots`. They print the folder they write to. CI does not run them; run them after a UI change and look at the PNGs. `cargo run -p runtime --example screenshot -- <project> <out-folder>` does the same for a project folder, its TypeScript cards and pages included: `window.png` as it opens. It works on a copy and plays nothing. `cargo run -p gallery` opens the component gallery in a window.
 
 ## Docs
 

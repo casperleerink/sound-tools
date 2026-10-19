@@ -10,6 +10,8 @@ The technical decisions, why we made them, and what we rejected. How something w
 | Plugin | A third-party audio plugin (CLAP, VST 3). Never our own extensions. |
 | Tool | A composer-facing capability an extension defines. In code, a tool is its saved state type. |
 | Tool of the project | A tool a project defines in TypeScript under `extensions/`, with no build. |
+| Block | A tool written in Rust that tools of the project use as a child: `timeline`, `fader`, a reverb, the plugin host. |
+| Template | The files a new project starts from, a folder of `templates/`. |
 | Instance | One use of a tool in a project, with its own record. |
 | Record | The saved JSON state of one instance, one file in `state/`. |
 | Behaviour | A function from the state of an instance to what it needs in the engine: processors, updates, connections, ports. |
@@ -33,9 +35,10 @@ This is the main rule of the codebase.
 
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no bundled crate. `tooling/workspace-rules` checks this.
 - Three layers: the core knows no music; extensions reach it only through core hooks; a project's own tools compose them. The app knows no extension but where it registers them.
+- Rust builds blocks, TypeScript owns structure. A block composes through ports and names no DAW idea. Tracks, clips, a mixer layout, a transport bar and what play or record mean are tools of the project, so a project can change them.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate, such as `sound-notes` and `sound-media`.
 - Tools find each other by port names, not by type: an instrument has an input `notes` and an output `audio`, an effect an input and an output `audio`. So a parent depends on no instrument, effect or plugin.
-- The core does own the musical clock. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in a tool.
+- The core does own the musical clock, and nothing more musical: position, tempo map, play, pause, jump and a repeat range. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in a tool. Which key plays is a tool's choice; the app keeps only app and file shortcuts.
 
 ## Tools, instances and behaviours
 
@@ -63,7 +66,7 @@ my-piece/
       instance.json
       piano/
         instance.json
-        instrument.json     a tool that owns no children is one file
+        synth.json          a tool that owns no children is one file
         verse-a.json
   assets/                   opaque files: audio/, takes/, plugin-state/
   AGENTS.md  CLAUDE.md  agent-docs/  problems.txt    written by the runtime
@@ -152,6 +155,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Live input and the sound of other apps are `project.json` connections. Input and output keep their own clocks: the engine drops old frames or plays silence instead of resampling, so the delay stays bounded. The window opens an input only while something needs it, so a project without one never asks for the microphone. Rejected for app sound: a virtual device of our own, which needs a driver install.
 - The audio devices are chosen per machine, never in a project. Picking one restarts the app, because the engine runs at the rate of its output device.
 - A tempo change ends a take, because the take was heard under the old tempo.
+- A `recorder` writes a take's files and hands its record to the parent's `onTake`: what a take becomes, and where, is structure, which the project owns. Rejected: the recorder writing children itself.
 
 ## Built-in instruments and effects
 
@@ -188,7 +192,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 - Views read state when they render and keep no copy of saved state, so an outside edit shows at once, also mid-drag.
 - Views and device offers are registered per tool, so a rack knows no instrument or plugin.
 - The playhead is its own entity, because GPUI redraws a notified view and everything above it.
-- `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to an extension.
+- `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to a project's tools.
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.
 - The app updates itself from the latest GitHub release, with the system's curl and a checked sha256, at the next start: GPUI gives a quit too little time to copy an app. A failed update is not downloaded again.
 - Windows installs per user with an Inno Setup program the update runs silently. It moves a running program aside, so no window closes. Rejected: MSIX, whose sandbox breaks the update, the `PATH` entry and Bun; WiX/MSI, more work.
@@ -218,9 +222,12 @@ A tool an agent writes plays at once, in the installed app, with no build. `crat
 - **The sound is a graph of signals** built with typed SDK functions. Rejected: a text language in between: nobody wrote it, and an eval found it no better.
 - **Every record the SDK reaches is described once, by its Rust type** (`schemars`), for `sdk.ts` and the agent docs. A parent may name its children's tools for TypeScript to check; a tool of the project by what `tool` returns. Rejected: hand-written types, which drift; generating types for a tool of the project, which needs a second load.
 - **A built-in device is a child, never part of a sound.** One road to a reverb. Rejected: devices called inside a sound, which cut it into stages: a second road that needed its own types, checks and engine ports.
-- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front.
+- **Fast things never cross to Bun.** Knobs, choices, live controls and triggers change the sound without Bun, which sends a graph for every combination of choices up front. On screen, live values (`now`: the clock, levels, numbers as they play, drags with their snap, scroll and zoom) are worked out natively every frame; code hears a drag once, at its end. Rejected: `onMove`, every pointer move through Bun.
+- **Few concepts:** a tool (record, memory, tick), children, typed ports and connections, signal, view, update, clock. What can be a child or a helper is one: mixing is a `fader`, automation a `lane`, an audio clip a `region`, the transport bar a component. A new concept needs a reason a child cannot give.
+- **No compiled code in a project.** Rejected: Rust a project adds (rebuilding the app, wasm, dylibs), which needs the Xcode tools or MSVC and a build when a project opens. A TS tool runs unchanged on any OS.
 - **One signals processor**, made fast by working out once what does not change over a span. Speed-ups keep renders bit for bit the same. Rejected: compiling to machine code, fast but a compiler to own.
-- **Cards and pages** are trees Bun draws and `crates/ui` shows. `set` moves no knob: knobs are the composition.
+- **A view runs once, as in Solid.** What changes is a function the window runs again when what it read changes; only the ops of what changed cross, onto a node table the window keeps by id. Our own runtime in `sdk.ts`, so misuse is an error that says the fix. Rejected: a whole tree per change, as React (1 MB a click at 20,000 notes); Solid itself, a Babel transform in every project and DOM only.
+- **Children reach all code filled with their defaults**, as one shape. A slot names a tool, or `takes(port)`: any tool with that port, so a project's own instruments and plugins fit. Rejected: a list of tools, which grows with every block.
 - **A tool's code edits its record and its children's** by the fields it changed, on the records as they are: a late edit takes nothing back.
 - **A cable carries sound or events: notes, a number or a bang**, all fixed-size. Each end names its kind, so a wrong pair is a type error. A parent's sound is the last stage of its audio output, so a chain is one connection. Rejected: `ownSound`, an end on both sides. A number drives a knob as a lane does, so built-in devices need nothing new. An instrument sends no notes or bangs: voices come and go.
 - **Notes in time are a `timeline` child**: once at a song position, or looping, with launches quantized on the audio thread. Its record says where it plays, so a render sounds. Rejected: players a parent declares, a second road for notes; `tick` with `at`, a block late and window-only.
