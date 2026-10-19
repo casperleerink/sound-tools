@@ -446,3 +446,42 @@ fn a_page_follows_its_room_when_the_window_resizes(cx: &mut TestAppContext) {
     });
     assert_eq!(window.problems(), []);
 }
+
+/// A box that a click makes wide by an edit the runtime refuses: past the range of `level`.
+const REFUSED: &str = r#"import { h, number, tool } from "./sdk";
+
+tool({
+  name: "refused",
+  title: "Refused",
+  when: "Never",
+  doc: "A click sets its level past its range.",
+  state: { level: number({ min: 0, max: 1, default: 0 }) },
+  view: ({ state, update }) =>
+    h("div", {
+      key: "box",
+      style: () => ({ width: state.level > 1 ? 200 : 100, height: 40 }),
+      onPress: () => update("Too far", ({ state }) => {
+        state.level = 5;
+      }),
+    }, "Box"),
+});
+"#;
+
+#[gpui::test]
+fn an_edit_the_runtime_refuses_shows_no_more_once_it_is_heard(cx: &mut TestAppContext) {
+    let project = at_the_top("refused", "");
+    let files = [
+        ("project.json", project.as_str()),
+        ("state/refused.json", r#"{"tool": "refused", "state": {}}"#),
+        ("extensions/refused.ts", REFUSED),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let narrow = window.until_found("div-box");
+    window.click(narrow);
+    window.until("the refusal", |window| !window.problems().is_empty());
+    window.wait_for_bun();
+    assert_eq!(window.find("div-box"), Some(narrow));
+    assert_eq!(window.record("refused"), serde_json::json!({}));
+}

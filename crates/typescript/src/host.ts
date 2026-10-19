@@ -564,8 +564,10 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
       kids.set(parent, { names: known.names });
     }
   }
+  // An edit the runtime refused changed nothing: what it showed goes back to what was told.
+  const refused = unheard.filter(({ number }) => number <= heard).flatMap(({ changes }) => changes.map((change) => change.id));
   unheard = unheard.filter(({ number }) => number > heard);
-  const touched = withOwners([...records.map((record) => record.id), ...gone]);
+  const touched = withOwners([...records.map((record) => record.id), ...gone, ...refused]);
   // The lists of children made before hold what changed, also those of an owner far up.
   for (const id of touched) {
     const known = kids.get(id);

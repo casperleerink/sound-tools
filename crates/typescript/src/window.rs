@@ -1669,13 +1669,18 @@ impl Live {
                 published.err().map(|error| error.to_string())
             }
         };
+        if let Host::Running { bun, .. } = &self.host {
+            bun.heard_edit();
+            // No record changes to tell: Bun hears that the edit is done with, and shows the
+            // records as they are again.
+            if refused.is_some() {
+                bun.tell([]);
+            }
+        }
         if let Some(refused) = refused {
             let problem =
                 format!("its update {label:?} was refused, and none of it applied: {refused}");
             self.tool_problem(instance, problem, cx);
-        }
-        if let Host::Running { bun, .. } = &self.host {
-            bun.heard_edit();
         }
     }
 
