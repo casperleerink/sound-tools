@@ -87,6 +87,16 @@ pub(crate) struct TypeScriptCard {
     embedded: HashMap<u64, Embedded>,
 }
 
+/// The view of the card of `instance` that the page `page` shows, for tests that read what a
+/// device's card holds.
+pub fn embedded_view(page: &AnyView, instance: &InstanceId, cx: &App) -> Option<AnyView> {
+    let page = page.clone().downcast::<Page>().ok()?;
+    let embedded = page.read(cx).0.read(cx).embedded.values();
+    embedded
+        .filter(|card| card.instance == *instance)
+        .find_map(|card| card.view.clone())
+}
+
 /// The card of another instance, as a node shows it.
 struct Embedded {
     instance: InstanceId,

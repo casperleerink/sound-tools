@@ -1,36 +1,20 @@
-//! The card of the built-in filter in the track rack, with a simulated mouse: it is added from
-//! the control at the end of the rack, and every edit of it is one undo step written once. A
-//! number a lane of the track moves shows the lane and does not drag.
+//! The card of the built-in filter in a rack, with a simulated mouse: every edit of it is one
+//! undo step written once. A number a lane moves shows the lane and does not drag.
 
-use arrangement::{AutomationLane, AutomationValue, TrackState};
 use filter::view::FilterView;
 use filter::{FilterState, FilterType};
 use gpui::{TestAppContext, point, px};
 use sound_core::Ticks;
 
-use crate::support::{self, Opened, id};
+use crate::rack::record;
+use crate::support::{self, Opened, id, write_outside};
 
-const FILTER: &str = "arrangement/track-1/filter";
-const FILTER_FILE: &str = "state/arrangement/track-1/filter.json";
+const FILTER: &str = "rack/filter";
+const FILTER_FILE: &str = "state/rack/filter.json";
 
-/// One track with no instrument, so the only card with knobs is the filter, and its panel
-/// open. The filter is added the way a composer adds it: `Add effect`, then `Filter`.
+/// A rack of the filter alone, so its card is the only one with knobs.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        changes.delete(&id("arrangement/track-1/instrument"));
-        project.commit("Remove synth", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-filter");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Filter"));
-    opened.project(|project| assert_eq!(project.problems(), []));
-    opened
+    support::open_rack(cx, &[("filter", &record("filter", "{}"))])
 }
 
 fn state(opened: &mut Opened<'_>) -> FilterState {
@@ -81,9 +65,9 @@ fn the_type_is_one_click_and_one_step(cx: &mut TestAppContext) {
 #[gpui::test]
 fn expand_shows_the_slope_and_the_lfo(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    let expand = opened.control("card-filter-expand");
+    let expand = opened.control("card-rack/filter-expand");
     opened.click(expand);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add Filter"));
+    assert_eq!(opened.undo_label(), None);
     for hidden in ["knob-lfo_rate_hz", "knob-lfo_depth_octaves", "segment-24"] {
         assert!(opened.find(hidden).is_some(), "{hidden}");
     }
@@ -97,49 +81,40 @@ fn expand_shows_the_slope_and_the_lfo(cx: &mut TestAppContext) {
     assert!(state(&mut opened).lfo_depth_octaves > 0.0);
     assert_eq!(opened.undo_label().as_deref(), Some("Change LFO depth"));
 
-    let expand = opened.control("card-filter-expand");
+    let expand = opened.control("card-rack/filter-expand");
     opened.click(expand);
     assert_eq!(opened.find("knob-lfo_rate_hz"), None);
 }
 
-const TRACK: &str = "arrangement/track-1";
-
-/// Puts these lanes of the cutoff of the filter in the record of the track, or takes them out
-/// with none: an edit of the track, as an agent writes it.
+/// A lane of the cutoff of the filter with these points, or none moving it, as an agent writes
+/// it.
 fn automate(opened: &mut Opened<'_>, points: &[(u64, f32)]) {
-    let lanes = match points {
-        [] => Vec::new(),
-        points => vec![AutomationLane {
-            device: Some("filter".into()),
-            parameter: "cutoff_hz".into(),
-            points: points
-                .iter()
-                .map(|&(tick, value)| sound_notes::Point {
-                    tick: Ticks(tick),
-                    value: AutomationValue(value),
-                })
-                .collect(),
-        }],
+    let points: Vec<_> = (points.iter())
+        .map(|(tick, value)| serde_json::json!({ "tick": tick, "value": value }))
+        .collect();
+    let automation = match points.is_empty() {
+        true => serde_json::json!([]),
+        false => serde_json::json!([{ "lane": "cutoff", "target": "filter.cutoff_hz" }]),
     };
-    opened.edit(|project| {
-        let track = project.resolve::<TrackState>(&id(TRACK)).unwrap();
-        let mut state = project.state(&track).unwrap().clone();
-        state.automation = lanes;
-        let mut changes = sound_core::Changes::new();
-        changes.set(&track, state);
-        project.commit("Automate", changes)
-    });
+    if !points.is_empty() {
+        let lane = serde_json::json!({ "tool": "lane", "state": { "points": points } });
+        write_outside(opened, "state/rack/cutoff.json", &lane.to_string());
+    }
+    let rack = serde_json::json!({ "tool": "rack", "state": { "order": ["filter"], "automation": automation } });
+    write_outside(opened, "state/rack/instance.json", &rack.to_string());
     opened.project(|project| assert_eq!(project.problems(), []));
+    let lanes = !points.is_empty();
+    opened.until("the lane", |opened| {
+        opened.find("automated-cutoff_hz").is_some() == lanes
+    });
 }
 
 /// The cutoff as the card shows it.
 fn shown_cutoff(opened: &mut Opened<'_>) -> f32 {
-    let panel = opened.track_panel().unwrap();
-    opened.cx.read(|cx| {
-        let view = panel.read(cx).device_views().nth(1).unwrap().cloned();
-        let view = view.unwrap().downcast::<FilterView>().unwrap();
-        view.read(cx).shown(cx).unwrap().cutoff_hz
-    })
+    let view = opened.card::<FilterView>(FILTER);
+    opened
+        .cx
+        .read(|cx| view.read(cx).shown(cx).unwrap().cutoff_hz)
 }
 
 fn seek(opened: &mut Opened<'_>, tick: u64) {
@@ -150,18 +125,21 @@ fn seek(opened: &mut Opened<'_>, tick: u64) {
     opened.settle();
 }
 
-/// A lane of the cutoff in the track: the knob shows the value the lane plays at the playhead,
-/// with a mark, and follows a seek. A drag of the knob or of the handle, a key and a reset
-/// change nothing. Taking the lane out of the track gives the knob back the record.
+/// A lane of the cutoff: the knob shows the value the lane plays at the playhead, with a mark,
+/// and follows a seek. A drag of the knob or of the
+/// handle, a key and a reset change nothing. Taking the lane out gives the knob back the record.
 #[gpui::test]
 fn an_automated_cutoff_shows_its_lane_and_does_not_drag(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     automate(&mut opened, &[(0, 300.), (support::BAR, 3_000.)]);
-    assert!(opened.find("automated-cutoff_hz").is_some());
     assert!(opened.find("automated-resonance").is_none());
-    assert!((shown_cutoff(&mut opened) - 300.).abs() < 0.01);
+    // A cable plays a number once per block, so it shows within a few hertz.
+    let shown = shown_cutoff(&mut opened);
+    assert!((shown - 300.).abs() < 3., "{shown}");
     seek(&mut opened, support::BAR);
-    assert!((shown_cutoff(&mut opened) - 3_000.).abs() < 0.1);
+    let shown = shown_cutoff(&mut opened);
+    assert!((shown - 3_000.).abs() < 30., "{shown}");
+    let automated = opened.undo_label();
 
     let knob = opened.control("knob-cutoff_hz");
     opened.drag(knob, point(knob.x, knob.y - px(40.)));
@@ -169,10 +147,9 @@ fn an_automated_cutoff_shows_its_lane_and_does_not_drag(cx: &mut TestAppContext)
     let handle = opened.control("handle-cutoff-resonance");
     opened.drag(handle, point(handle.x - px(30.), handle.y - px(10.)));
     assert_eq!(state(&mut opened), FilterState::default());
-    assert_eq!(opened.undo_label().as_deref(), Some("Automate"));
+    assert_eq!(opened.undo_label(), automated);
 
     automate(&mut opened, &[]);
-    assert!(opened.find("automated-cutoff_hz").is_none());
     let record = FilterState::default().cutoff_hz;
     assert_eq!(shown_cutoff(&mut opened), record);
     let knob = opened.control("knob-cutoff_hz");
@@ -193,7 +170,7 @@ fn a_lane_that_arrives_during_a_knob_drag_ends_the_gesture(cx: &mut TestAppConte
     automate(&mut opened, &[(0, 300.)]);
     opened.drag_to(point(knob.x, knob.y - px(40.)));
     assert!(!opened.gesture_open());
-    assert!((shown_cutoff(&mut opened) - 300.).abs() < 0.01);
+    assert!((shown_cutoff(&mut opened) - 300.).abs() < 3.);
     let label = opened.undo_label();
     opened.keys("secondary-z");
     assert_ne!(opened.undo_label(), label);

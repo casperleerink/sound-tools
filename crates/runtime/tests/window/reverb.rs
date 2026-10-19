@@ -64,7 +64,7 @@ fn the_handles_drag_the_pre_delay_and_the_decay(cx: &mut TestAppContext) {
 #[gpui::test]
 fn expand_shows_the_hidden_controls_and_freeze_is_one_click(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    let expand = opened.control("card-reverb-expand");
+    let expand = opened.control("card-rack/reverb-expand");
     opened.click(expand);
     assert_eq!(opened.undo_label(), None);
     for hidden in [
@@ -88,7 +88,7 @@ fn expand_shows_the_hidden_controls_and_freeze_is_one_click(cx: &mut TestAppCont
     assert!(state(&mut opened).decay_seconds > ReverbState::default().decay_seconds);
     assert_eq!(opened.undo_label().as_deref(), Some("Change decay"));
 
-    let expand = opened.control("card-reverb-expand");
+    let expand = opened.control("card-rack/reverb-expand");
     opened.click(expand);
     assert_eq!(opened.find("toggle-freeze"), None);
 }

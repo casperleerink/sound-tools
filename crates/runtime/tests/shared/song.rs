@@ -4,6 +4,11 @@
 use serde_json::{Value, json};
 
 pub(crate) const BAR: u64 = 3840;
+
+/// The DAW template.
+pub(crate) fn daw() -> &'static runtime::Template {
+    runtime::templates::named("DAW").unwrap()
+}
 /// The page's sizes, as `song.tsx` has them: a track's row and its header, and points per tick.
 pub(crate) const ROW: f32 = 40.0;
 pub(crate) const HEADER: f32 = 200.0;
@@ -116,7 +121,7 @@ fn song_with(
     ];
     // The template's tools, without its records.
     files.extend(
-        (runtime::DAW.files.iter())
+        (daw().files.iter())
             .filter(|(path, _)| path.starts_with("extensions/"))
             .map(|(path, contents)| (path.to_string(), contents.to_string())),
     );

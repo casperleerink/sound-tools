@@ -7,16 +7,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{AppContext, Entity, Focusable, TestAppContext};
-use runtime::OFFLINE;
 use runtime::window::{LeftPanel, LeftPanelSlot};
 use sound_agent::{
     Account, AgentEvent, AgentSettings, ApprovalId, ApprovalMode, Command, Entry, ExitReason,
     Installed, Model, Sidebar, StepId, StepOutcome, Thread, TurnOutcome,
 };
-use sound_core::Engine;
 use tempfile::TempDir;
 
-use crate::plugin_hosts::open_or_create;
 use crate::support::{self, Opened, mark, one_undo_step, write_outside};
 
 /// The sidebar with a `claude` that cannot start, so no test ever runs the real one: a test
@@ -58,9 +55,7 @@ fn install_sidebar_with(
 
 /// The same project folder in a new window, as quitting and starting the app gives.
 fn open_again(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_> {
-    let (control, engine) = Engine::new(OFFLINE);
-    let (project, plugins) = open_or_create(folder.path(), control);
-    let opened = support::open_project(cx, folder, project, engine, plugins.downgrade());
+    let opened = support::open_folder(cx, folder);
     // The sidebar reads the saved thread in the background.
     opened.cx.run_until_parked();
     opened
@@ -106,12 +101,11 @@ fn step(id: &str) -> StepId {
 const MESSAGE: &str = "Add a bass line in bars 5 to 8 that follows the piano";
 const LABEL: &str = "Add a bass line in bars 5 to 8 that…";
 
-/// A clip in the form the runtime writes, so a redo gives the same bytes back.
-const BASS_CLIP: &str = "{\n  \"tool\": \"arrangement.clip\",\n  \"state\": {\n    \"start\": 15360,\n    \"length\": 15360,\n    \"notes\": [{\"start\": 0, \"length\": 960, \"pitch\": 36, \"velocity\": 100}]\n  }\n}\n";
+/// A record the agent writes during its turn, whole, as the project writes it again on a redo.
+const BASS_CLIP: &str = r#"{"tool": "reverb", "state": {"pre_delay_ms": 20.0, "decay_seconds": 2.0, "size": 0.5, "damping": 0.5, "diffusion": 0.7, "low_cut_hz": 100.0, "high_cut_hz": 8000.0, "width": 1.0, "mix": 0.5, "freeze": false}}"#;
 
-/// An empty clip in bar 1, written after the request.
-const LATER_CLIP: &str =
-    r#"{"tool": "arrangement.clip", "state": {"start": 0, "length": 3840, "notes": []}}"#;
+/// A record written after the request.
+const LATER_CLIP: &str = r#"{"tool": "reverb", "state": {}}"#;
 
 /// Longer than the grouping window after the end of a request, so a write after it is no part
 /// of the request.
@@ -123,7 +117,7 @@ fn after_the_request() {
 fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let before = mark(&mut opened);
 
     opened.begin(MESSAGE);
@@ -131,17 +125,17 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
         AgentEvent::TurnStarted,
         AgentEvent::StepStarted {
             id: step("write"),
-            title: "Wrote state/arrangement/track-1/bass.json".to_string(),
-            request_title: "Write state/arrangement/track-1/bass.json".to_string(),
-            running_title: "Writing state/arrangement/track-1/bass.json".to_string(),
+            title: "Wrote state/bass.json".to_string(),
+            request_title: "Write state/bass.json".to_string(),
+            running_title: "Writing state/bass.json".to_string(),
         },
     ]);
     assert!(opened.panel_open());
     // The writes of one request, seconds apart as an agent makes them: the watcher hears each.
     write_outside(
         &mut opened,
-        "state/arrangement/track-1/bass.json",
-        r#"{"tool": "arrangement.clip", "state": {"start": 15360, "length": 15360, "notes": []}}"#,
+        "state/bass.json",
+        r#"{"tool": "reverb", "state": {}}"#,
     );
     opened.receive([
         AgentEvent::StepDone {
@@ -150,16 +144,12 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
         },
         AgentEvent::StepStarted {
             id: step("edit"),
-            title: "Edited state/arrangement/track-1/bass.json".to_string(),
-            request_title: "Edit state/arrangement/track-1/bass.json".to_string(),
-            running_title: "Editing state/arrangement/track-1/bass.json".to_string(),
+            title: "Edited state/bass.json".to_string(),
+            request_title: "Edit state/bass.json".to_string(),
+            running_title: "Editing state/bass.json".to_string(),
         },
     ]);
-    write_outside(
-        &mut opened,
-        "state/arrangement/track-1/bass.json",
-        BASS_CLIP,
-    );
+    write_outside(&mut opened, "state/bass.json", BASS_CLIP);
     opened.receive([
         AgentEvent::StepDone {
             id: step("edit"),
@@ -189,13 +179,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
         assert_eq!(message, MESSAGE);
         assert_eq!(turn.blocks, ["Added a bass line."]);
         let steps: Vec<_> = turn.steps.iter().map(|step| step.title.as_str()).collect();
-        assert_eq!(
-            steps,
-            [
-                "Wrote state/arrangement/track-1/bass.json",
-                "Edited state/arrangement/track-1/bass.json"
-            ]
-        );
+        assert_eq!(steps, ["Wrote state/bass.json", "Edited state/bass.json"]);
         let outcome = turn.end.as_ref().map(|end| &end.outcome);
         assert_eq!(outcome, Some(&TurnOutcome::Completed));
     });
@@ -206,7 +190,7 @@ fn a_request_of_the_agent_is_one_undo_step_named_after_the_message(cx: &mut Test
 fn the_approval_row_answers_and_goes_when_the_turn_ends(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let sidebar = opened.sidebar();
     let approval = |opened: &mut Opened<'_>| {
         opened.cx.read(|cx| {
@@ -243,7 +227,7 @@ fn the_approval_row_answers_and_goes_when_the_turn_ends(cx: &mut TestAppContext)
 fn a_claude_that_does_not_start_is_a_quiet_line_and_no_request(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let undo_label = opened.undo_label();
     opened.keys("secondary-l");
     assert!(opened.composer_focused());
@@ -265,13 +249,13 @@ fn a_claude_that_does_not_start_is_a_quiet_line_and_no_request(cx: &mut TestAppC
 fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     // Open at the first start.
     assert!(opened.panel_open());
-    let timeline = opened.timeline.clone();
+    let shell = opened.shell.clone();
     opened
         .cx
-        .update(|window, cx| window.focus(&timeline.focus_handle(cx), cx));
+        .update(|window, cx| window.focus(&shell.focus_handle(cx), cx));
 
     // cmd-L focuses the composer of the open panel, escape gives the focus back.
     opened.keys("secondary-l");
@@ -281,7 +265,7 @@ fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mu
     assert!(
         opened
             .cx
-            .update(|window, cx| timeline.focus_handle(cx).is_focused(window))
+            .update(|window, cx| shell.focus_handle(cx).is_focused(window))
     );
 
     // cmd-L again in the composer closes it, and the focus goes back.
@@ -289,11 +273,11 @@ fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mu
     opened.keys("secondary-l");
     assert!(!opened.panel_open());
     assert!(!opened.composer_focused());
-    drop(timeline);
+    drop(shell);
     drop(opened.close());
 
     // Another window, on another project: closed, as the machine remembers it.
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     assert!(!opened.panel_open());
     opened.keys("secondary-l");
     assert!(opened.panel_open());
@@ -304,30 +288,30 @@ fn the_panel_stays_closed_once_closed_and_cmd_l_opens_it_on_the_composer(cx: &mu
 fn cmd_b_opens_and_closes_the_panel_and_leaves_the_focus(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     assert!(opened.panel_open());
-    let timeline = opened.timeline.clone();
+    let shell = opened.shell.clone();
     opened
         .cx
-        .update(|window, cx| window.focus(&timeline.focus_handle(cx), cx));
-    let timeline_focused = |opened: &mut support::Opened<'_>| {
+        .update(|window, cx| window.focus(&shell.focus_handle(cx), cx));
+    let shell_focused = |opened: &mut support::Opened<'_>| {
         opened
             .cx
-            .update(|window, cx| timeline.focus_handle(cx).is_focused(window))
+            .update(|window, cx| shell.focus_handle(cx).is_focused(window))
     };
 
     opened.keys("secondary-b");
     assert!(!opened.panel_open());
-    assert!(timeline_focused(&mut opened));
+    assert!(shell_focused(&mut opened));
     opened.keys("secondary-b");
     assert!(opened.panel_open());
-    assert!(timeline_focused(&mut opened));
+    assert!(shell_focused(&mut opened));
 
     // From the composer, closing gives the focus back.
     opened.keys("secondary-l");
     opened.keys("secondary-b");
     assert!(!opened.panel_open());
-    assert!(timeline_focused(&mut opened));
+    assert!(shell_focused(&mut opened));
 }
 
 /// The account menu sits in the composer and offers **Sign out**.
@@ -335,7 +319,7 @@ fn cmd_b_opens_and_closes_the_panel_and_leaves_the_focus(cx: &mut TestAppContext
 fn the_account_menu_in_the_composer_offers_sign_out(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     assert!(opened.find("menu-sign-out").is_none());
     let menu = opened.control("model-menu");
     opened.click(menu);
@@ -348,15 +332,11 @@ fn the_account_menu_in_the_composer_offers_sign_out(cx: &mut TestAppContext) {
 fn signing_out_mid_turn_stops_the_turn_and_its_request(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let before = mark(&mut opened);
     opened.begin(MESSAGE);
     opened.receive([AgentEvent::TurnStarted]);
-    write_outside(
-        &mut opened,
-        "state/arrangement/track-1/bass.json",
-        BASS_CLIP,
-    );
+    write_outside(&mut opened, "state/bass.json", BASS_CLIP);
 
     let menu = opened.control("model-menu");
     opened.click(menu);
@@ -382,7 +362,7 @@ fn signing_out_mid_turn_stops_the_turn_and_its_request(cx: &mut TestAppContext) 
 fn a_closed_panel_shows_the_agent_working_on_its_icon(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let icon = opened.control("left-panel-icon");
     opened.click(icon);
     assert!(!opened.panel_open());
@@ -400,7 +380,7 @@ fn a_closed_panel_shows_the_agent_working_on_its_icon(cx: &mut TestAppContext) {
 fn with_no_claude_cmd_l_focuses_the_sidebar_and_closes_it_again(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar_with(cx, machine.path(), None);
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     assert!(opened.panel_open());
     opened.keys("secondary-l");
     assert!(opened.composer_focused());
@@ -414,15 +394,11 @@ fn with_no_claude_cmd_l_focuses_the_sidebar_and_closes_it_again(cx: &mut TestApp
 fn an_exit_mid_turn_ends_the_turn_and_its_request(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let before = mark(&mut opened);
     opened.begin(MESSAGE);
     opened.receive([AgentEvent::TurnStarted]);
-    write_outside(
-        &mut opened,
-        "state/arrangement/track-1/bass.json",
-        BASS_CLIP,
-    );
+    write_outside(&mut opened, "state/bass.json", BASS_CLIP);
     let message = "Claude Code stopped: Killed".to_string();
     opened.receive([AgentEvent::Exited {
         reason: ExitReason::Failed {
@@ -443,11 +419,7 @@ fn an_exit_mid_turn_ends_the_turn_and_its_request(cx: &mut TestAppContext) {
     one_undo_step(&mut opened, LABEL, &before);
 
     after_the_request();
-    write_outside(
-        &mut opened,
-        "state/arrangement/track-1/later.json",
-        LATER_CLIP,
-    );
+    write_outside(&mut opened, "state/later.json", LATER_CLIP);
     assert_eq!(opened.undo_label().as_deref(), Some("File change"));
 }
 
@@ -456,14 +428,10 @@ fn an_exit_mid_turn_ends_the_turn_and_its_request(cx: &mut TestAppContext) {
 fn a_new_thread_mid_turn_ends_the_request(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     opened.begin(MESSAGE);
     opened.receive([AgentEvent::TurnStarted]);
-    write_outside(
-        &mut opened,
-        "state/arrangement/track-1/bass.json",
-        BASS_CLIP,
-    );
+    write_outside(&mut opened, "state/bass.json", BASS_CLIP);
     let new_thread = opened.control("agent-new-thread");
     opened.click(new_thread);
 
@@ -474,11 +442,7 @@ fn a_new_thread_mid_turn_ends_the_request(cx: &mut TestAppContext) {
         assert!(!conversation.is_working());
     });
     after_the_request();
-    write_outside(
-        &mut opened,
-        "state/arrangement/track-1/later.json",
-        LATER_CLIP,
-    );
+    write_outside(&mut opened, "state/later.json", LATER_CLIP);
     assert_eq!(opened.undo_label().as_deref(), Some("File change"));
     // The composer has the focus, where cmd-z belongs to the text.
     opened.edit(|project| project.undo());
@@ -490,7 +454,7 @@ fn a_new_thread_mid_turn_ends_the_request(cx: &mut TestAppContext) {
 fn cmd_period_and_the_stop_button_send_the_interrupt(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let (thread, commands) = Thread::without_agent(None);
     let sidebar = opened.sidebar();
     opened
@@ -534,7 +498,7 @@ fn resume(opened: &mut Opened<'_>) -> Option<String> {
 fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     assert_eq!(resume(&mut opened), None);
     // The agent's session is known as it starts, before it says anything.
     let (thread, _commands) = Thread::without_agent(None);
@@ -548,9 +512,9 @@ fn a_thread_opens_again_as_it_was_and_resumes_its_session(cx: &mut TestAppContex
         AgentEvent::TurnStarted,
         AgentEvent::StepStarted {
             id: step("write"),
-            title: "Wrote state/arrangement/track-1/bass.json".to_string(),
-            request_title: "Write state/arrangement/track-1/bass.json".to_string(),
-            running_title: "Writing state/arrangement/track-1/bass.json".to_string(),
+            title: "Wrote state/bass.json".to_string(),
+            request_title: "Write state/bass.json".to_string(),
+            running_title: "Writing state/bass.json".to_string(),
         },
     ]);
     opened.receive([
@@ -619,7 +583,7 @@ fn current_thread(machine: &Path) -> String {
 fn a_thread_left_with_new_opens_again_from_open_recent(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     opened.begin(MESSAGE);
     opened.receive([
         AgentEvent::TurnStarted,
@@ -655,7 +619,7 @@ fn a_thread_left_with_new_opens_again_from_open_recent(cx: &mut TestAppContext) 
 fn instructions_typed_in_the_sidebar_are_saved_in_the_project(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let file = opened.folder.path().join("instructions.md");
     let open_instructions = |opened: &mut Opened<'_>| {
         for control in ["agent-new-thread-menu", "menu-instructions-project"] {
@@ -694,7 +658,7 @@ fn instructions_typed_in_the_sidebar_are_saved_in_the_project(cx: &mut TestAppCo
 fn a_lost_session_ends_the_thread_until_plus(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     opened.begin("Hello");
     opened.receive([
         AgentEvent::TurnStarted,
@@ -749,7 +713,7 @@ fn the_real_agent_resumes_a_thread_after_the_window_closed(cx: &mut TestAppConte
     };
     install_sidebar_with(cx, machine.path(), Some(installed));
 
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     ask(&mut opened, "Remember the word lantern. Reply only: ok.");
     let folder = opened.close();
 
@@ -798,8 +762,8 @@ fn ask(opened: &mut Opened<'_>, message: &str) -> String {
 fn a_turn_shows_the_problems_it_left(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
-    let file = "state/arrangement/track-1/bass.json";
+    let mut opened = support::open_new(cx);
+    let file = "state/bass.json";
 
     opened.begin("Add a bass line");
     opened.receive([AgentEvent::TurnStarted]);
@@ -829,7 +793,7 @@ fn a_turn_shows_the_problems_it_left(cx: &mut TestAppContext) {
 fn a_write_heard_just_after_the_turn_is_the_turns(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
 
     opened.begin("Add a bass line");
     opened.receive([
@@ -839,13 +803,13 @@ fn a_write_heard_just_after_the_turn_is_the_turns(cx: &mut TestAppContext) {
         },
     ]);
     assert!(opened.find("agent-problems-1").is_none());
-    write_outside(&mut opened, "state/arrangement/track-1/bass.json", "{");
+    write_outside(&mut opened, "state/bass.json", "{");
     let line = opened.control("agent-problems-1");
     opened.click(line);
     assert!(opened.find("agent-problem-1-0").is_some());
 
     after_the_request();
-    write_outside(&mut opened, "state/arrangement/track-1/drums.json", "{");
+    write_outside(&mut opened, "state/drums.json", "{");
     assert!(opened.find("agent-problem-1-1").is_none());
 }
 
@@ -855,7 +819,7 @@ fn a_write_heard_just_after_the_turn_is_the_turns(cx: &mut TestAppContext) {
 fn up_in_the_composer_recalls_earlier_messages(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     for message in ["Add a bass line", "Make it louder"] {
         opened.begin(message);
         opened.receive([AgentEvent::TurnEnded {
@@ -883,7 +847,7 @@ fn press(opened: &mut Opened<'_>, key: &str) -> String {
 fn up_recalls_the_messages_of_a_thread_opened_again(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     opened.begin(MESSAGE);
     opened.receive([AgentEvent::TurnEnded {
         outcome: TurnOutcome::Completed,
@@ -923,7 +887,7 @@ fn pick(opened: &mut Opened<'_>, row: &str) {
 fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let (thread, commands) = Thread::without_agent(None);
     let sidebar = opened.sidebar();
     opened
@@ -970,7 +934,7 @@ fn the_menu_settings_go_to_the_agent_at_once(cx: &mut TestAppContext) {
 fn two_sidebars_share_one_setting(cx: &mut TestAppContext) {
     let machine = tempfile::tempdir().unwrap();
     let settings = install_sidebar(cx, machine.path());
-    let mut opened = support::open_with(cx, |_| {});
+    let mut opened = support::open_new(cx);
     let (thread, commands) = Thread::without_agent(None);
     let (other_thread, other_commands) = Thread::without_agent(None);
     let sidebar = opened.sidebar();

@@ -10,7 +10,7 @@ use crate::song::BAR;
 #[gpui::test]
 fn a_new_daw_project_opens_its_song_with_no_arrangement_and_plays(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
-    runtime::templates::write(folder.path(), &runtime::DAW).unwrap();
+    runtime::templates::write(folder.path(), crate::song::daw()).unwrap();
     let file = std::fs::read_to_string(folder.path().join("project.json")).unwrap();
     let file: serde_json::Value = serde_json::from_str(&file).unwrap();
     let enabled: Vec<&str> = (file["extensions"].as_array().unwrap().iter())

@@ -222,38 +222,16 @@ tool({
 });
 "#;
 
-/// Two tracks with a synth and a `listener` each.
-const TWO_TRACKS: [(&str, &str); 8] = [
+/// Two `listener`s at the top, `one` and `two`.
+const TWO_LISTENERS: [(&str, &str); 4] = [
     (
         "project.json",
-        r#"{"format": 1, "extensions": ["arrangement", "instrument"],
+        r#"{"format": 1, "extensions": [],
   "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
   "connections": []}"#,
     ),
-    (
-        "state/arrangement/instance.json",
-        r#"{"tool": "arrangement", "state": {}}"#,
-    ),
-    (
-        "state/arrangement/one/instance.json",
-        r#"{"tool": "arrangement.track", "state": {"name": "One", "order": 0, "effects": ["listener"]}}"#,
-    ),
-    (
-        "state/arrangement/one/instrument.json",
-        r#"{"tool": "instrument.synth", "state": {}}"#,
-    ),
-    (
-        "state/arrangement/one/listener.json",
-        r#"{"tool": "listener", "state": {}}"#,
-    ),
-    (
-        "state/arrangement/two/instance.json",
-        r#"{"tool": "arrangement.track", "state": {"name": "Two", "order": 1, "effects": ["listener"]}}"#,
-    ),
-    (
-        "state/arrangement/two/listener.json",
-        r#"{"tool": "listener", "state": {}}"#,
-    ),
+    ("state/one.json", r#"{"tool": "listener", "state": {}}"#),
+    ("state/two.json", r#"{"tool": "listener", "state": {}}"#),
     ("extensions/listener.ts", LISTENER),
 ];
 
@@ -736,62 +714,61 @@ fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &m
     assert!(window.loudest(480) > 0.1);
 }
 
+impl Window<'_> {
+    fn select(&mut self, instance: &str) {
+        let session = self.session.clone();
+        let instance = id(instance);
+        self.cx
+            .update(|_, cx| session.update(cx, |session, cx| session.select(Some(instance), cx)));
+    }
+}
+
 #[gpui::test]
-fn a_tool_on_the_track_the_keyboard_plays_hears_it_and_one_on_another_does_not(
-    cx: &mut TestAppContext,
-) {
-    let Some(mut window) = open(cx, &TWO_TRACKS) else {
+fn the_selected_tool_hears_the_keyboard_and_another_does_not(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &TWO_LISTENERS) else {
         return;
     };
-    // Nothing is selected, so the keyboard plays the first track.
+    window.select("one");
     window.play_midi(60);
-    window.until("the note on the first track", |window| {
-        window.record("arrangement/one/listener")["last"] == 60
+    window.until("the note in the first", |window| {
+        window.record("one")["last"] == 60
     });
-    // Bun would have answered for both tracks at once.
+    // Bun would have answered for both at once.
     for _ in 0..10 {
         window.poll();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(
-        window.record("arrangement/two/listener")["last"],
-        serde_json::Value::Null
-    );
+    assert_eq!(window.record("two")["last"], serde_json::Value::Null);
 }
 
 #[gpui::test]
-fn a_tool_on_the_track_hears_the_computer_keys(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &TWO_TRACKS) else {
+fn the_selected_tool_hears_the_computer_keys(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &TWO_LISTENERS) else {
         return;
     };
+    window.select("one");
     window.cx.simulate_keystrokes("secondary-k");
     window.poll();
     window.poll();
     window.cx.simulate_keystrokes("a");
-    window.until("the note on the first track", |window| {
-        window.record("arrangement/one/listener")["last"] == 60
+    window.until("the note in the first", |window| {
+        window.record("one")["last"] == 60
     });
 }
 
 #[gpui::test]
-fn a_tool_on_the_track_the_keyboard_leaves_hears_the_end_of_the_note_it_held(
-    cx: &mut TestAppContext,
-) {
-    let Some(mut window) = open(cx, &TWO_TRACKS) else {
+fn a_tool_the_keyboard_leaves_hears_the_end_of_the_note_it_held(cx: &mut TestAppContext) {
+    let Some(mut window) = open(cx, &TWO_LISTENERS) else {
         return;
     };
+    window.select("one");
     window.play_midi(60);
-    window.until("the note held on the first track", |window| {
-        window.record("arrangement/one/listener")["held"] == 1
+    window.until("the note held in the first", |window| {
+        window.record("one")["held"] == 1
     });
-    let session = window.session.clone();
-    window.cx.update(|_, cx| {
-        session.update(cx, |session, cx| {
-            session.select(Some(id("arrangement/two")), cx)
-        })
-    });
-    window.until("the end of the note on the first track", |window| {
-        window.record("arrangement/one/listener")["held"] == 0
+    window.select("two");
+    window.until("the end of the note in the first", |window| {
+        window.record("one")["held"] == 0
     });
 }
 
@@ -900,22 +877,11 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
     cx: &mut TestAppContext,
 ) {
     let (heard, stuck) = (noted("heard", false), noted("stuck", true));
-    // Both on one track, which plays its notes into each.
+    // Both at the top, where the keyboard plays with nothing selected.
     let files = [
-        TWO_TRACKS[0],
-        TWO_TRACKS[1],
-        (
-            "state/arrangement/one/instance.json",
-            r#"{"tool": "arrangement.track", "state": {"name": "One", "order": 0, "effects": ["heard", "stuck"]}}"#,
-        ),
-        (
-            "state/arrangement/one/heard.json",
-            r#"{"tool": "heard", "state": {}}"#,
-        ),
-        (
-            "state/arrangement/one/stuck.json",
-            r#"{"tool": "stuck", "state": {}}"#,
-        ),
+        TWO_LISTENERS[0],
+        ("state/heard.json", r#"{"tool": "heard", "state": {}}"#),
+        ("state/stuck.json", r#"{"tool": "stuck", "state": {}}"#),
         ("extensions/heard.ts", heard.as_str()),
         ("extensions/stuck.ts", stuck.as_str()),
     ];
@@ -934,7 +900,7 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut edit = project.begin("Half");
-                project.update_json(&mut edit, &id("arrangement/one/heard"), mode)?;
+                project.update_json(&mut edit, &id("heard"), mode)?;
                 project.finish(edit)
             })
         })
@@ -951,14 +917,14 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
     // A new Bun runs the other tools.
     window.play_midi(64);
     window.until("the note in the other tool", |window| {
-        window.record("arrangement/one/heard")["last"] == 64
+        window.record("heard")["last"] == 64
     });
 
     write(&root, "extensions/stuck.ts", &noted("stuck", false));
     window.until("the fix", |window| window.problems().is_empty());
     window.play_midi(65);
     window.until("the note in the fixed tool", |window| {
-        window.record("arrangement/one/stuck")["last"] == 65
+        window.record("stuck")["last"] == 65
     });
 }
 
@@ -1420,24 +1386,20 @@ fn frame_of(seconds: f64) -> u64 {
 }
 
 #[gpui::test]
-fn an_instrument_hears_the_clip_of_its_track_at_the_samples_it_sounds(cx: &mut TestAppContext) {
-    let clip = r#"{"tool": "arrangement.clip", "state": {"start": 0, "length": 3840,
+fn an_instrument_hears_the_timeline_of_its_parent_at_the_samples_it_sounds(
+    cx: &mut TestAppContext,
+) {
+    let clip = r#"{"tool": "timeline", "state": {"start": 0, "length": 3840,
   "notes": [{"start": 1000, "length": 500, "pitch": 60, "velocity": 100}, {"start": 2000, "length": 100, "pitch": 62, "velocity": 100}],
   "pedal": [{"start": 1500, "value": 127}]}}"#;
-    let files = [
-        TWO_TRACKS[0],
-        TWO_TRACKS[1],
-        (
-            "state/arrangement/one/instance.json",
-            r#"{"tool": "arrangement.track", "state": {"name": "One", "order": 0}}"#,
-        ),
-        (
-            "state/arrangement/one/instrument.json",
-            r#"{"tool": "hearer", "state": {}}"#,
-        ),
-        ("state/arrangement/one/take.json", clip),
-        ("extensions/hearer.ts", HEARER),
-    ];
+    let mut files = crate::rack::rack_files(&[
+        ("instrument", r#"{"tool": "hearer", "state": {}}"#),
+        ("take", clip),
+    ]);
+    files.push(("extensions/hearer.ts".into(), HEARER.into()));
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
     let Some(mut window) = open(cx, &files) else {
         return;
     };
@@ -1447,13 +1409,15 @@ fn an_instrument_hears_the_clip_of_its_track_at_the_samples_it_sounds(cx: &mut T
     (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
     // Past the last note: 2100 ticks, 25 frames each at 120 bpm.
     window.loudest(54_000);
-    let heard = |window: &mut Window| window.record("arrangement/one/instrument")["heard"].clone();
+    let heard = |window: &mut Window| window.record("rack/instrument")["heard"].clone();
     window.until("every event of the clip", |window| {
         heard(window)
             .as_array()
-            .is_some_and(|heard| heard.len() >= 5)
+            .is_some_and(|heard| heard.len() >= 6)
     });
     let heard: Vec<(String, u64)> = (heard(&mut window).as_array().unwrap().iter())
+        // A timeline lets go of everything as it starts, as every sender of notes may.
+        .filter(|event| event["type"] != "allOff")
         .map(|event| {
             let at = frame_of(event["at"].as_f64().unwrap());
             (event["type"].as_str().unwrap().to_string(), at - start)

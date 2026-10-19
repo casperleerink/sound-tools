@@ -263,26 +263,25 @@ fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selectio
     assert_eq!(window.problems(), []);
 }
 
-/// `main` in `project.json` picks what the window shows: the song, though the arrangement
-/// comes first by name, and with it the window's live input in place of the arrangement's
-/// transport.
+/// `main` in `project.json` picks what the window shows: the song, though a rack with a view
+/// comes first by name.
 #[gpui::test]
-fn main_in_the_project_file_shows_the_song_and_not_the_arrangement(cx: &mut TestAppContext) {
+fn main_in_the_project_file_shows_the_song_and_not_another_page(cx: &mut TestAppContext) {
     let mut files = song_files(2, 2);
     for (path, text) in &mut files {
         if path == "project.json" {
             let mut project: serde_json::Value = serde_json::from_str(text).unwrap();
             project["main"] = "song".into();
-            project["extensions"]
-                .as_array_mut()
-                .unwrap()
-                .push("arrangement".into());
             *text = project.to_string();
         }
     }
     files.push((
-        "state/arrangement/instance.json".to_string(),
-        r#"{"tool": "arrangement", "state": {}}"#.to_string(),
+        "extensions/rack.tsx".to_string(),
+        crate::rack::RACK.to_string(),
+    ));
+    files.push((
+        "state/a-rack/instance.json".to_string(),
+        r#"{"tool": "rack", "state": {}}"#.to_string(),
     ));
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
@@ -296,8 +295,6 @@ fn main_in_the_project_file_shows_the_song_and_not_the_arrangement(cx: &mut Test
         .read(|cx| sound_ui::Views::main_instance(&session, cx).map(|id| id.to_string()));
     assert_eq!(main.as_deref(), Some("song"));
     window.space_at("timeline");
-    assert_eq!(window.find("record"), None);
-    assert!(window.find("computer-keys").is_some());
 }
 
 /// The Mixer button shows a strip per track and return: a drag on a track's fader turns the

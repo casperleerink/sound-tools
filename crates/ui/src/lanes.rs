@@ -3,18 +3,19 @@
 //! The knob of an automated number shows the value that plays, with a mark, and does not drag: the
 //! lane decides that value, not the composer. The view keeps a [`Lanes`] of its instance, with the
 //! numbers the device takes automation for. It works the values out at the playhead from the lanes
-//! the owner of the instance shows ([`Project::lanes`]), with the math of the player, and tells the
-//! view only when one of them changed: while the project plays, when the playhead moves while it
-//! stands, and when the lanes change. So a device with no lanes costs one look per frame while the
-//! project plays, and nothing while it stands, and a look allocates nothing.
+//! the owner of the instance shows ([`Project::lanes`]), with the math of the player, once per
+//! poll and when the lanes change, and tells the view only when one of them changed. A value a
+//! cable plays comes from the engine, so it is looked at also while the project stands. A look
+//! allocates nothing.
 //!
 //! [`Project::lanes`]: sound_core::Project::lanes
 
 use std::sync::Arc;
 
-use gpui::{App, Context, Entity, prelude::*};
+use gpui::{App, Context, Entity, Task, prelude::*};
 use sound_core::{AutomationInput, InstanceId, Parameter, State};
 
+use crate::metering::every_poll;
 use crate::session::Session;
 
 pub struct Lanes<S: 'static> {
@@ -27,6 +28,7 @@ pub struct Lanes<S: 'static> {
     values: Vec<(Arc<str>, f32)>,
     /// Where the next look puts the values, so that it allocates nothing.
     next: Vec<(Arc<str>, f32)>,
+    _polling: Task<()>,
 }
 
 impl<S: 'static> Lanes<S> {
@@ -59,9 +61,6 @@ impl<S: 'static> Lanes<S> {
         cx: &mut Context<V>,
     ) -> Entity<Self> {
         let lanes = cx.new(|cx: &mut Context<Self>| {
-            let playhead = session.read(cx).playhead().clone();
-            cx.observe(&playhead, |lanes, _, cx| lanes.refresh(cx))
-                .detach();
             // The session notifies once per group of edits, which may change the lanes.
             cx.observe(session, |lanes, _, cx| lanes.refresh(cx))
                 .detach();
@@ -71,21 +70,13 @@ impl<S: 'static> Lanes<S> {
                 parameters,
                 values: Vec::new(),
                 next: Vec::new(),
+                _polling: every_poll(cx, Self::refresh),
             };
             lanes.refresh(cx);
             lanes
         });
         cx.observe(&lanes, |_, _, cx| cx.notify()).detach();
         lanes
-    }
-
-    /// Follows the lanes of another instance, for a view that shows another one now, such as
-    /// the panel of another track.
-    pub fn set_instance(&mut self, instance: &InstanceId, cx: &mut Context<Self>) {
-        if self.instance != *instance {
-            self.instance = instance.clone();
-            self.refresh(cx);
-        }
     }
 
     /// The value the lane of the number `field` plays now, `None` when no lane moves it.

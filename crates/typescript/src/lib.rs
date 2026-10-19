@@ -43,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry, ToolSchema};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
+pub use card::embedded_view;
 pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
 pub use feeds::{live_frames, shown_by_live_values};

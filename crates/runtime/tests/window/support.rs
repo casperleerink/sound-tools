@@ -7,18 +7,16 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AppContext, BackgroundExecutor, Bounds, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TestAppContext, VisualTestContext, point, px,
+    AppContext, BackgroundExecutor, Bounds, Entity, Modifiers, MouseButton, MouseDownEvent,
+    MouseUpEvent, Pixels, Point, TestAppContext, VisualTestContext, point,
 };
 use plugin_host::{Plugins, ScanCache, WeakPlugins};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
-use runtime::window::live_input::LiveInput;
 use runtime::window::other_apps::AppSounds;
 use runtime::window::{DeviceAccess, ListDevices, Shell, bind_keys};
 use runtime::{OFFLINE, views};
 use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project};
-use sound_ui::{POLL_INTERVAL, Playhead, Session};
+use sound_ui::{POLL_INTERVAL, Session};
 use tempfile::TempDir;
 
 use crate::plugin_hosts::{scanner, test_plugin_host};
@@ -60,6 +58,19 @@ pub(crate) fn open_rack<'a>(cx: &'a mut TestAppContext, children: &[(&str, &str)
     open_rack_with(cx, children, no_plugins)
 }
 
+/// [`open_rack`], after `prepare` adds to its folder, such as the audio file of a sampler.
+pub(crate) fn open_rack_after<'a>(
+    cx: &'a mut TestAppContext,
+    children: &[(&str, &str)],
+    prepare: impl FnOnce(&Path),
+) -> Opened<'a> {
+    let host = |folder: &Path| {
+        prepare(folder);
+        no_plugins(folder)
+    };
+    open_rack_with(cx, children, host)
+}
+
 /// The same, with a plugin host that looks only in `plugins/` inside the project folder, where
 /// the repository's own test plugin is put. No plugin of this machine is ever used, so these
 /// tests run the same everywhere.
@@ -77,7 +88,7 @@ fn open_rack_with<'a>(
 ) -> Opened<'a> {
     let mut opened = open_with(cx, &rack_files(children), host, DeviceAccess::default());
     for (name, record) in children {
-        if !record.contains(r#""timeline""#) {
+        if !crate::rack::plays_no_sound(record) {
             opened.control(&format!("div-card-{name}"));
         }
     }
@@ -96,23 +107,36 @@ pub(crate) fn open_with<'a>(
     host: impl FnOnce(&Path) -> Plugins,
     device: DeviceAccess,
 ) -> Opened<'a> {
-    assert!(
-        sound_typescript::has_bun(),
-        "these tests run the tools of a project in Bun: install it, see tooling/fetch-bun.sh"
-    );
     let folder = tempfile::tempdir().unwrap();
     for (path, contents) in files {
         let path = folder.path().join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, contents).unwrap();
     }
+    open_folder_with(cx, folder, host, device)
+}
+
+/// Opens the window on the project in `folder` again, as quitting and starting the app does.
+pub(crate) fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_> {
+    open_folder_with(cx, folder, no_plugins, DeviceAccess::default())
+}
+
+fn open_folder_with<'a>(
+    cx: &'a mut TestAppContext,
+    folder: TempDir,
+    host: impl FnOnce(&Path) -> Plugins,
+    device: DeviceAccess,
+) -> Opened<'a> {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run the tools of a project in Bun: install it, see tooling/fetch-bun.sh"
+    );
     // Bun's answers wake the window's tasks from a thread of their own.
     cx.executor().allow_parking();
     let (control, engine) = Engine::new(OFFLINE);
     let plugins = host(folder.path());
     let (project, extensions) =
         runtime::open_with_extensions(folder.path(), control, plugins.clone()).unwrap();
-    assert_eq!(project.problems(), []);
     cx.update(sound_ui::init);
     let session = cx.new(|cx| Session::new(project, cx));
     cx.update(bind_keys);
@@ -195,19 +219,6 @@ impl SimulatedInput {
         })
     }
 
-    /// Each time it closed, whether it closed on the thread that draws.
-    pub(crate) fn closed_on_ui_thread(&self) -> Vec<bool> {
-        self.closed.lock().unwrap().clone()
-    }
-
-    pub(crate) fn openings(&self) -> u32 {
-        self.openings.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn attempts(&self) -> u32 {
-        self.attempts.load(Ordering::Relaxed)
-    }
-
     /// Writes the input up to engine frame `until`: each frame from `sample(frame)`, left and
     /// right, captured at the moment that engine frame sounds.
     pub(crate) fn write_until(&self, until: u64, sample: impl Fn(u64) -> [f32; 2]) {
@@ -227,22 +238,6 @@ impl SimulatedInput {
         }
         self.written.store(until, Ordering::Relaxed);
     }
-
-    /// The device goes away, as an interface that is unplugged.
-    pub(crate) fn unplug(&self) {
-        self.writer.lock().unwrap().take();
-        self.live.lock().unwrap().take();
-    }
-}
-
-/// A new, empty project in a window whose default input is a simulated one.
-pub(crate) fn open_with_input(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedInput) {
-    let input = SimulatedInput::default();
-    let device = DeviceAccess {
-        open_input: Some(input.opener(cx.executor())),
-        ..DeviceAccess::default()
-    };
-    (open_with(cx, &[], no_plugins, device), input)
 }
 
 /// The sound of one app that runs or not, with no tap: two channels at 48 kHz, into which the
@@ -380,40 +375,35 @@ impl Opened<'_> {
         output
     }
 
-    /// The window's MIDI keyboard, computer keys, audio input and meter.
-    pub(crate) fn live_input(&mut self) -> Entity<LiveInput> {
-        let shell = self.shell.clone();
-        self.cx.read(|cx| shell.read(cx).live_input().clone())
-    }
-
-    /// Where a MIDI keyboard would put what it plays.
-    pub(crate) fn midi_input(&mut self) -> midi::Input {
-        let live = self.live_input();
-        self.cx.read(|cx| live.read(cx).midi_input()).unwrap()
-    }
-
-    /// One key of a keyboard, and the blocks that carry it to the instrument and back.
-    pub(crate) fn play_midi(&mut self, played: midi::Played) {
-        assert!(self.midi_input().send(played));
+    /// Puts `state` in place of the record of `instance`, as the project writes it, with no undo
+    /// step: so an undo later gives back the same file.
+    pub(crate) fn replace<S: sound_core::State>(&mut self, instance: &str, state: S) {
+        let instance = id(instance);
+        self.edit(|project| {
+            let mut changes = sound_core::Changes::new();
+            changes.delete(&instance);
+            project.commit("Remove", changes)?;
+            let mut changes = sound_core::Changes::new();
+            changes.create(instance.clone(), state);
+            project.commit("Add", changes)?;
+            project.clear_history();
+            Ok(())
+        });
         self.settle();
     }
 
-    pub(crate) fn playhead(&mut self) -> Playhead {
-        let session = self.session.clone();
-        self.cx.read(|cx| *session.read(cx).playhead().read(cx))
+    /// The view of the card of `instance` that the main page shows.
+    pub(crate) fn card<V: 'static>(&mut self, instance: &str) -> Entity<V> {
+        let (shell, instance) = (self.shell.clone(), id(instance));
+        self.cx.read(|cx| {
+            let page = shell.read(cx).main_view().unwrap();
+            let view = sound_typescript::embedded_view(page, &instance, cx).unwrap();
+            view.downcast::<V>().ok().unwrap()
+        })
     }
 
     pub(crate) fn keys(&mut self, keystrokes: &str) {
         self.cx.simulate_keystrokes(keystrokes);
-        self.cx.run_until_parked();
-    }
-
-    /// A whole key press. GPUI clicks the focused control when enter comes up again, and
-    /// `simulate_keystrokes` only sends the key down.
-    pub(crate) fn press_enter(&mut self) {
-        self.cx.simulate_keystrokes("enter");
-        let keystroke = Keystroke::parse("enter").unwrap();
-        self.cx.simulate_event(KeyUpEvent { keystroke });
         self.cx.run_until_parked();
     }
 
@@ -437,10 +427,6 @@ impl Opened<'_> {
 
     pub(crate) fn undo_label(&mut self) -> Option<String> {
         self.project(|project| project.undo_label().map(str::to_string))
-    }
-
-    pub(crate) fn redo_label(&mut self) -> Option<String> {
-        self.project(|project| project.redo_label().map(str::to_string))
     }
 
     pub(crate) fn gesture_open(&mut self) -> bool {
@@ -520,111 +506,10 @@ impl Opened<'_> {
         self.cx.run_until_parked();
     }
 
-    /// A press and a release of the right button. The menu of a clip opens at the press on
-    /// macOS and Linux and at the release on Windows.
-    pub(crate) fn right_click(&mut self, position: Point<Pixels>) {
-        self.right_press(position);
-        self.right_release(position);
-    }
-
-    pub(crate) fn right_press(&mut self, position: Point<Pixels>) {
-        let modifiers = Modifiers::default();
-        self.cx.simulate_mouse_move(position, None, modifiers);
-        self.cx.simulate_event(MouseDownEvent {
-            position,
-            modifiers,
-            button: MouseButton::Right,
-            click_count: 1,
-            first_mouse: false,
-        });
-        self.cx.run_until_parked();
-    }
-
-    /// The release of a right press, moved to `position` first.
-    pub(crate) fn right_release(&mut self, position: Point<Pixels>) {
-        let modifiers = Modifiers::default();
-        self.cx
-            .simulate_mouse_move(position, MouseButton::Right, modifiers);
-        self.cx.simulate_event(MouseUpEvent {
-            position,
-            modifiers,
-            button: MouseButton::Right,
-            click_count: 1,
-        });
-        self.cx.run_until_parked();
-    }
-
-    /// A click with keys held, such as shift or cmd.
-    pub(crate) fn click_with(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
-        self.press_with(position, 1, modifiers);
-        self.release(position);
-    }
-
-    /// Press, move in two steps, release, with keys held all the way, such as shift.
-    pub(crate) fn drag_with(
-        &mut self,
-        from: Point<Pixels>,
-        to: Point<Pixels>,
-        modifiers: Modifiers,
-    ) {
-        self.press_with(from, 1, modifiers);
-        let half = point((from.x + to.x) / 2., (from.y + to.y) / 2.);
-        self.drag_to_with(half, modifiers);
-        self.drag_to_with(to, modifiers);
-        self.release(to);
-    }
-
-    /// A move of a drag with keys held, such as cmd.
-    pub(crate) fn drag_to_with(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
-        self.cx
-            .simulate_mouse_move(position, MouseButton::Left, modifiers);
-        self.cx.run_until_parked();
-    }
-
-    /// The button goes down where the pointer is, with no move before it: what arrives when
-    /// the mouse up of a drag was lost and the next press comes.
-    pub(crate) fn mouse_down(&mut self, position: Point<Pixels>) {
-        self.cx.simulate_event(MouseDownEvent {
-            position,
-            modifiers: Modifiers::default(),
-            button: MouseButton::Left,
-            click_count: 1,
-            first_mouse: false,
-        });
-        self.cx.run_until_parked();
-    }
-
-    /// Several moves with the left button held, with no frame between them, as a fast mouse
-    /// sends them between two frames of the screen.
-    pub(crate) fn drag_through(&mut self, positions: &[Point<Pixels>]) {
-        self.cx.update(|window, cx| {
-            for position in positions {
-                let event = MouseMoveEvent {
-                    position: *position,
-                    pressed_button: Some(MouseButton::Left),
-                    modifiers: Modifiers::default(),
-                };
-                window.dispatch_event(PlatformInput::MouseMove(event), cx);
-            }
-        });
-        self.cx.run_until_parked();
-    }
-
     /// A move with the left button held.
     pub(crate) fn drag_to(&mut self, position: Point<Pixels>) {
         self.cx
             .simulate_mouse_move(position, MouseButton::Left, Modifiers::default());
-        self.cx.run_until_parked();
-    }
-
-    /// A move of a drag with shift held.
-    pub(crate) fn drag_to_fine(&mut self, position: Point<Pixels>) {
-        let shift = Modifiers {
-            shift: true,
-            ..Modifiers::default()
-        };
-        self.cx
-            .simulate_mouse_move(position, MouseButton::Left, shift);
         self.cx.run_until_parked();
     }
 
@@ -649,18 +534,6 @@ impl Opened<'_> {
         self.drag_to(half);
         self.drag_to(to);
         self.release(to);
-    }
-
-    /// A scroll of the wheel or the trackpad at a place. A negative `dy` goes down.
-    pub(crate) fn scroll(&mut self, position: Point<Pixels>, dx: f32, dy: f32) {
-        self.cx
-            .simulate_mouse_move(position, None, Modifiers::default());
-        self.cx.simulate_event(ScrollWheelEvent {
-            position,
-            delta: ScrollDelta::Pixels(point(px(dx), px(dy))),
-            ..Default::default()
-        });
-        self.cx.run_until_parked();
     }
 
     /// Closes the window and the project, and gives the folder back for a second opening.
@@ -707,7 +580,18 @@ impl Opened<'_> {
         self.click(position);
         self.press_times(position, 2);
     }
+}
 
+/// The record of a plugin instrument that names the repository's test plugin.
+pub(crate) fn test_plugin_record(format: plugin_host::PluginFormat, state_asset: &str) -> String {
+    let id = match format {
+        plugin_host::PluginFormat::Clap => test_clap_plugin::PLUGIN_ID,
+        plugin_host::PluginFormat::Vst3 => test_vst3_plugin::PLUGIN_ID,
+    };
+    format!(
+        r#"{{"tool": "plugin", "state": {{"format": "{}", "plugin_id": "{id}", "state_asset": "{state_asset}"}}}}"#,
+        format.as_str()
+    )
 }
 
 /// The loudest sample.
@@ -717,9 +601,17 @@ pub(crate) fn peak(samples: &[f32]) -> f32 {
         .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
-/// Every record file under `state/` and `project.json`, by relative path, with its bytes.
-pub(crate) fn files(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
-    fn walk(folder: &Path, root: &Path, found: &mut Vec<(PathBuf, Vec<u8>)>) {
+/// Every record file under `state/` and `project.json`, by relative path, with what it holds. A
+/// record written by hand comes back from an undo as the project writes it, so the files are
+/// compared as JSON.
+pub(crate) fn files(root: &Path) -> Vec<(PathBuf, serde_json::Value)> {
+    let read = |path: &Path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    fn walk(
+        folder: &Path,
+        root: &Path,
+        found: &mut Vec<(PathBuf, serde_json::Value)>,
+        read: &dyn Fn(&Path) -> serde_json::Value,
+    ) {
         let mut entries: Vec<_> = std::fs::read_dir(folder)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -727,28 +619,28 @@ pub(crate) fn files(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         entries.sort();
         for path in entries {
             if path.is_dir() {
-                walk(&path, root, found);
+                walk(&path, root, found, read);
             } else {
                 let relative = path.strip_prefix(root).unwrap().to_path_buf();
-                found.push((relative, std::fs::read(&path).unwrap()));
+                found.push((relative, read(&path)));
             }
         }
     }
     let mut found = vec![(
         PathBuf::from("project.json"),
-        std::fs::read(root.join("project.json")).unwrap(),
+        read(&root.join("project.json")),
     )];
-    walk(&root.join("state"), root, &mut found);
+    walk(&root.join("state"), root, &mut found, &read);
     found
 }
 
 /// The files and the last undo step before an action.
 pub(crate) struct Before {
-    pub files: Vec<(PathBuf, Vec<u8>)>,
+    pub files: Vec<(PathBuf, serde_json::Value)>,
     pub undo_label: Option<String>,
 }
 
-/// Every record file and `project.json` with their bytes, and the undo step on top.
+/// Every record file and `project.json`, and the undo step on top.
 pub(crate) fn mark(opened: &mut Opened<'_>) -> Before {
     Before {
         files: files(opened.folder.path()),
@@ -757,7 +649,7 @@ pub(crate) fn mark(opened: &mut Opened<'_>) -> Before {
 }
 
 /// The action was exactly one undo step with this label: one cmd-z gives the files of before
-/// back byte for byte and the step before on top, and shift-cmd-z does it again.
+/// back and the step before on top, and shift-cmd-z does it again.
 pub(crate) fn one_undo_step(opened: &mut Opened<'_>, label: &str, before: &Before) {
     assert_eq!(opened.undo_label().as_deref(), Some(label));
     let after = files(opened.folder.path());

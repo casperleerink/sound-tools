@@ -387,9 +387,7 @@ impl Recorders {
         self.live
             .update(cx, |live, cx| live.hold(Hold::default(), cx));
         let recording = self.session.read(cx).recording().clone();
-        recording.update(cx, |recording, cx| {
-            recording.set_takes(Vec::new(), cx)
-        });
+        recording.update(cx, |recording, cx| recording.set_takes(Vec::new(), cx));
     }
 
     /// Writes what the takes made, next to their recorders, as one undo step.

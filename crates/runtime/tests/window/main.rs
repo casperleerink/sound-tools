@@ -15,6 +15,7 @@ mod limiter;
 mod modulation;
 mod other_apps;
 mod plugin_card;
+#[allow(dead_code)]
 #[path = "../shared/plugin_hosts.rs"]
 mod plugin_hosts;
 #[path = "../shared/rack.rs"]

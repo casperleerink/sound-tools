@@ -1,4 +1,5 @@
-//! The keys of the window, the focus, the transport and the timeline without edits.
+//! The keys of the window, the focus, the notices and the project menu, on a project with no
+//! view of its own.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -6,101 +7,61 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use arrangement::view::layout::{
-    ADD_ROW_HEIGHT, HEADER_WIDTH, LEAD_IN, RULER_HEIGHT, TRACK_HEIGHT, Viewport,
-};
-use arrangement::{ArrangementState, TrackKind};
 use gpui::{
-    AppContext, Context, Entity, Focusable, IntoElement, Modifiers, PlatformInput, Render,
-    ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext, Window, div, point,
-    prelude::*, px,
+    AppContext, Context, Entity, Focusable, IntoElement, Modifiers, Render, TestAppContext,
+    VisualTestContext, Window, div, prelude::*, px,
 };
+use reverb::ReverbState;
 use runtime::OFFLINE;
-use runtime::arrangement_wiring::main_arrangement;
+use runtime::window::new_project::TemplatePicker;
 use runtime::window::{DeviceMenu, ListDevices, Shell, bind_keys};
-use sound_core::{Changes, DeviceChoice, Engine, Instance, InstanceId, Ticks};
-use sound_notes::Clip;
+use sound_core::{Changes, DeviceChoice, Engine, Instance, InstanceId, Project};
 use sound_ui::components::text_input::TextInput;
-use sound_ui::{Devices, POLL_INTERVAL, Session, Views};
+use sound_ui::{Devices, Session, Views};
 
 use crate::plugin_hosts::open_or_create;
-use crate::support::{self, BAR, Opened, TOP_ROW};
+use crate::support::{self, Opened};
 
-impl Opened<'_> {
-    fn click_timeline(&mut self, bar: f32, track: f32) {
-        let x = HEADER_WIDTH + LEAD_IN + bar * 96.;
-        let y = TOP_ROW + RULER_HEIGHT + track * TRACK_HEIGHT;
-        self.cx
-            .simulate_click(point(px(x), px(y)), Modifiers::default());
-        self.cx.run_until_parked();
-    }
+/// The height of the row with the project menu, above the main area.
+const TOP_ROW: f32 = 48.;
+
+fn reverb_id() -> InstanceId {
+    InstanceId::new("room").unwrap()
 }
 
-/// `Track 1` with one clip of two bars at bar 2.
+/// Adds a reverb at the top, as one undo step.
+fn add_reverb(project: &mut Project) {
+    let mut changes = Changes::new();
+    changes.create(reverb_id(), ReverbState::default());
+    project.commit("Add reverb", changes).unwrap();
+}
+
+/// A new project with a reverb added, as one undo step.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
-    support::open_with(cx, |project| {
-        let mut changes = Changes::new();
-        changes.create(clip_id(), support::clip(BAR, 2 * BAR, Vec::new()));
-        project.commit("Add clip", changes).unwrap();
+    let mut opened = support::open_new(cx);
+    opened.edit(|project| {
+        add_reverb(project);
+        Ok(())
+    });
+    opened
+}
+
+fn has_reverb(session: &Entity<Session>, cx: &mut VisualTestContext) -> bool {
+    cx.read(|cx| {
+        let project = session.read(cx).project();
+        project.resolve::<ReverbState>(&reverb_id()).is_some()
     })
-}
-
-fn clip_id() -> InstanceId {
-    InstanceId::new("arrangement/track-1/part").unwrap()
-}
-
-#[gpui::test]
-fn space_plays_and_pauses(cx: &mut TestAppContext) {
-    let mut opened = open(cx);
-    assert!(!opened.playhead().playing);
-    opened.cx.simulate_keystrokes("space");
-    opened.settle();
-    assert!(opened.playhead().playing);
-    opened.cx.simulate_keystrokes("space");
-    opened.settle();
-    assert!(!opened.playhead().playing);
-}
-
-#[gpui::test]
-fn tab_reaches_the_menu_and_the_transport_and_enter_activates(cx: &mut TestAppContext) {
-    let mut opened = open(cx);
-    // The title row in reading order: the project menu, then play, then stop.
-    opened.cx.simulate_keystrokes("tab tab");
-    opened.press_enter();
-    opened.settle();
-    assert!(opened.playhead().playing);
-    for _ in 0..10 {
-        opened.settle();
-    }
-    assert!(opened.playhead().tick > Ticks(0));
-    opened.cx.simulate_keystrokes("tab");
-    opened.press_enter();
-    opened.settle();
-    let playhead = opened.playhead();
-    assert!(!playhead.playing);
-    assert_eq!(playhead.tick, Ticks(0));
-    // The stop is a jump, which the arrangement view uses to follow the playhead.
-    assert_eq!(playhead.jumps, 1);
 }
 
 #[gpui::test]
 fn the_standard_keys_undo_and_redo(cx: &mut TestAppContext) {
     let opened = open(cx);
     let session = opened.session.clone();
-    let has_clip = |cx: &mut VisualTestContext| {
-        cx.read(|cx| {
-            session
-                .read(cx)
-                .project()
-                .resolve::<Clip>(&clip_id())
-                .is_some()
-        })
-    };
-    assert!(has_clip(opened.cx));
+    assert!(has_reverb(&session, opened.cx));
     opened.cx.simulate_keystrokes("secondary-z");
-    assert!(!has_clip(opened.cx));
+    assert!(!has_reverb(&session, opened.cx));
     opened.cx.simulate_keystrokes("shift-secondary-z");
-    assert!(has_clip(opened.cx));
+    assert!(has_reverb(&session, opened.cx));
 
     // Nothing left to redo is not an error.
     opened.cx.simulate_keystrokes("shift-secondary-z");
@@ -109,129 +70,7 @@ fn the_standard_keys_undo_and_redo(cx: &mut TestAppContext) {
         .read(|cx| assert_eq!(session.read(cx).notice(), None));
 }
 
-#[gpui::test]
-fn a_click_on_the_ruler_seeks_to_the_nearest_sixteenth(cx: &mut TestAppContext) {
-    let mut opened = open(cx);
-    // A little past bar 3 and a sixteenth, in the ruler above the tracks.
-    opened.click_timeline(2.0 + 0.0625 + 0.01, -0.25);
-    opened.settle();
-    assert_eq!(opened.playhead().tick, Ticks(2 * BAR + 240));
-    assert!(!opened.playhead().playing);
-}
-
-#[gpui::test]
-fn a_click_selects_the_clip_under_it_and_a_click_beside_it_clears(cx: &mut TestAppContext) {
-    let mut opened = open(cx);
-    let timeline = opened.timeline.clone();
-    let selected =
-        |cx: &mut VisualTestContext| cx.read(|cx| timeline.read(cx).selected_clip().cloned());
-
-    opened.click_timeline(1.5, 0.5);
-    assert_eq!(selected(opened.cx), Some(clip_id()));
-    opened.click_timeline(3.5, 0.5);
-    assert_eq!(selected(opened.cx), None);
-
-    // A selected clip that goes away is no longer selected.
-    opened.click_timeline(1.5, 0.5);
-    opened.cx.simulate_keystrokes("secondary-z");
-    assert_eq!(selected(opened.cx), None);
-}
-
-#[gpui::test]
-fn the_timeline_is_notified_for_its_arrangement_and_not_for_the_playhead(cx: &mut TestAppContext) {
-    let mut opened = open(cx);
-    let notified = Rc::new(RefCell::new(0));
-    let (timeline, session) = (opened.timeline.clone(), opened.session.clone());
-    opened.cx.update(|_, cx| {
-        let notified = notified.clone();
-        cx.observe(&timeline, move |_, _| *notified.borrow_mut() += 1)
-            .detach();
-    });
-
-    // A track written from outside, as an agent does.
-    let arrangement = opened
-        .cx
-        .read(|cx| main_arrangement(session.read(cx).project()))
-        .unwrap();
-    opened.cx.update(|_, cx| {
-        session.update(cx, |session, cx| {
-            session.edit(cx, |project| {
-                runtime::arrangement_wiring::add_track(project, &arrangement)
-            });
-        })
-    });
-    opened.cx.run_until_parked();
-    assert_eq!(*notified.borrow(), 1);
-
-    opened.cx.simulate_keystrokes("space");
-    for _ in 0..10 {
-        opened.settle();
-    }
-    assert!(opened.playhead().tick > Ticks(0));
-    assert_eq!(*notified.borrow(), 1);
-}
-
-fn track_kinds(opened: &mut Opened<'_>) -> Vec<TrackKind> {
-    opened.project(|project| {
-        let arrangement = main_arrangement(project).unwrap();
-        let tracks = arrangement::tracks(project, arrangement.id());
-        tracks.iter().map(|(_, state)| state.kind).collect()
-    })
-}
-
-#[gpui::test]
-fn the_add_track_button_under_the_last_track_adds_an_instrument_track(cx: &mut TestAppContext) {
-    let mut opened = open(cx);
-    // Right under the header of the only track.
-    let first = opened.bounds("add-track").unwrap();
-    let under_first = TOP_ROW + RULER_HEIGHT + TRACK_HEIGHT;
-    assert!(first.top() > px(under_first) && first.bottom() < px(under_first + ADD_ROW_HEIGHT));
-    assert!(first.right() < px(HEADER_WIDTH));
-
-    opened.click(first.center());
-    assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument; 2]);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add track"));
-    assert!(opened.project(|project| project.problems().is_empty()));
-    // It moved down with the new track, in the frame that shows the track.
-    let second = opened.cx.debug_bounds("add-track").unwrap();
-    assert_eq!(second.top() - first.top(), px(TRACK_HEIGHT));
-
-    // The keys reach it: tab from the timeline past the snap setting, and enter.
-    opened.click_timeline(3.5, 0.5);
-    opened.keys("tab tab");
-    opened.press_enter();
-    assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument; 3]);
-
-    // One undo step each.
-    opened.keys("secondary-z secondary-z");
-    assert_eq!(track_kinds(&mut opened), [TrackKind::Instrument]);
-}
-
-#[gpui::test]
-fn tab_scrolls_the_add_track_button_into_view_under_many_tracks(cx: &mut TestAppContext) {
-    let mut opened = support::open_with(cx, |project| {
-        let arrangement = main_arrangement(project).unwrap();
-        for _ in 0..40 {
-            runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
-        }
-    });
-    let master = opened.bounds("master-row").unwrap();
-    let below_the_view = |opened: &mut Opened<'_>| {
-        let button = opened.bounds("add-track").unwrap();
-        button.bottom() > master.top()
-    };
-    assert!(below_the_view(&mut opened));
-
-    // GPUI tells of a focus change only in an active window, which a test window is not.
-    opened.cx.update(|window, _| window.activate_window());
-    opened.click_timeline(3.5, 0.5);
-    opened.keys("tab tab");
-    assert!(!below_the_view(&mut opened));
-    opened.press_enter();
-    assert_eq!(track_kinds(&mut opened).len(), 42);
-}
-
-/// Stands in for a view with a text field, such as a rename or the agent composer later.
+/// Stands in for a view with a text field, such as a rename or the agent composer.
 struct FieldView {
     field: Entity<TextInput>,
 }
@@ -243,12 +82,11 @@ impl Render for FieldView {
 }
 
 #[gpui::test]
-fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppContext) {
+fn a_focused_text_field_gets_cmd_z_before_the_window(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
-    let (control, mut engine) = Engine::new(OFFLINE);
+    let (control, _engine) = Engine::new(OFFLINE);
     let (mut project, _plugins) = open_or_create(folder.path(), control);
-    let arrangement = main_arrangement(&project).unwrap();
-    runtime::arrangement_wiring::add_track(&mut project, &arrangement).unwrap();
+    add_reverb(&mut project);
     cx.update(sound_ui::init);
     cx.update(bind_keys);
     let session = cx.new(|cx| Session::new(project, cx));
@@ -257,7 +95,7 @@ fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppC
     let mut views = Views::new();
     views.register({
         let field = field.clone();
-        move |_, _: Instance<ArrangementState>, _, cx: &mut Context<FieldView>| {
+        move |_, _: Instance<ReverbState>, _, cx: &mut Context<FieldView>| {
             let input = cx.new(TextInput::new);
             *field.borrow_mut() = Some(input.clone());
             FieldView { field: input }
@@ -277,14 +115,6 @@ fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppC
     });
     cx.run_until_parked();
     let field = field.borrow().clone().unwrap();
-    let mut settle = |cx: &mut VisualTestContext| {
-        let mut buffer = [0.0_f32; 64 * OFFLINE.channels];
-        engine.process_block(&mut buffer);
-        cx.executor().advance_clock(POLL_INTERVAL);
-        cx.run_until_parked();
-    };
-    let playing =
-        |cx: &mut VisualTestContext| cx.read(|cx| session.read(cx).playhead().read(cx).playing);
     let undo_label = |cx: &mut VisualTestContext| {
         cx.read(|cx| session.read(cx).project().undo_label().map(str::to_string))
     };
@@ -294,85 +124,17 @@ fn a_focused_text_field_gets_space_and_cmd_z_before_the_window(cx: &mut TestAppC
     });
     cx.run_until_parked();
     cx.simulate_keystrokes("a space b secondary-z");
-    settle(cx);
+    cx.run_until_parked();
     assert_eq!(
         field.read_with(cx, |field, _| field.text().to_string()),
         "a b"
     );
-    assert!(!playing(cx));
-    assert_eq!(undo_label(cx).as_deref(), Some("Add track"));
+    assert_eq!(undo_label(cx).as_deref(), Some("Add reverb"));
 
     // Tab leaves the field, and then the keys are the window's again.
-    cx.simulate_keystrokes("tab space");
-    settle(cx);
-    assert!(playing(cx));
-    cx.simulate_keystrokes("secondary-z");
+    cx.simulate_keystrokes("tab secondary-z");
+    cx.run_until_parked();
     assert_eq!(undo_label(cx), None);
-}
-
-#[gpui::test]
-fn two_scrolls_before_a_frame_both_count(cx: &mut TestAppContext) {
-    let opened = open(cx);
-    let timeline = opened.timeline.clone();
-    // Zoomed in, so that three bars and the room after them are wider than any window.
-    let zoomed_in = timeline.read_with(opened.cx, |timeline, _| Viewport {
-        pixels_per_quarter: 384.0,
-        ..timeline.viewport()
-    });
-    timeline.update(opened.cx, |timeline, cx| {
-        timeline.set_viewport(zoomed_in, cx)
-    });
-    opened.cx.run_until_parked();
-
-    let scroll = ScrollWheelEvent {
-        position: point(px(HEADER_WIDTH + 200.), px(TOP_ROW + RULER_HEIGHT + 20.)),
-        delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
-        ..Default::default()
-    };
-    // Both in one update: no frame is drawn between them.
-    opened.cx.update(|window, cx| {
-        window.dispatch_event(PlatformInput::ScrollWheel(scroll.clone()), cx);
-        window.dispatch_event(PlatformInput::ScrollWheel(scroll.clone()), cx);
-    });
-    opened.cx.run_until_parked();
-    let viewport = timeline.read_with(opened.cx, |timeline, _| timeline.viewport());
-    assert_eq!(viewport.scroll_x, 200.0);
-
-    // The scroll stops at the start, also for a viewport that is set from code.
-    let before_start = viewport.scrolled(10_000.0, 10_000.0);
-    timeline.update(opened.cx, |timeline, cx| {
-        timeline.set_viewport(before_start, cx)
-    });
-    let viewport = timeline.read_with(opened.cx, |timeline, _| timeline.viewport());
-    assert_eq!((viewport.scroll_x, viewport.scroll_y), (0.0, 0.0));
-}
-
-#[gpui::test]
-fn tab_reaches_the_dismiss_button_and_the_keys_still_work_after_it_is_gone(
-    cx: &mut TestAppContext,
-) {
-    let mut opened = open(cx);
-    let session = opened.session.clone();
-    opened
-        .cx
-        .update(|_, cx| session.update(cx, |session, cx| session.report("the device is gone", cx)));
-    opened.cx.run_until_parked();
-
-    // The menu, play, stop, record, the seek strip, the tempo, the two numbers of the time
-    // signature, the computer keys, the click, the arrangement, the snap setting, the two
-    // halves of the add track button, the master row, then the notice.
-    opened
-        .cx
-        .simulate_keystrokes("tab tab tab tab tab tab tab tab tab tab tab tab tab tab tab tab");
-    opened.press_enter();
-    opened
-        .cx
-        .read(|cx| assert_eq!(session.read(cx).notice(), None));
-
-    // The button went away with the focus on it. Space must still reach the window.
-    opened.cx.simulate_keystrokes("space");
-    opened.settle();
-    assert!(opened.playhead().playing);
 }
 
 #[gpui::test]
@@ -385,8 +147,7 @@ fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
         .update(|_, cx| session.update(cx, |session, cx| session.report(long, cx)));
     let notice = opened.bounds("notice-error").unwrap();
     let window = opened.cx.update(|window, _| window.viewport_size());
-    // 24 pt in from the right and under the title row, so it never covers the transport, and
-    // 400 pt wide at most.
+    // 24 pt in from the right and under the title row, and 400 pt wide at most.
     assert_eq!(notice.right(), window.width - px(24.), "{notice:?}");
     assert_eq!(notice.top(), px(TOP_ROW + 24.));
     assert!(notice.size.width <= px(400.), "{notice:?}");
@@ -395,12 +156,6 @@ fn a_long_error_fits_top_right_in_three_lines_at_most(cx: &mut TestAppContext) {
         (px(60.)..=px(74.)).contains(&notice.size.height),
         "{notice:?}"
     );
-
-    // It stays where it is while the track panel opens below.
-    let header = opened.track_header(0);
-    opened.click(header);
-    assert!(opened.bounds("track-panel").is_some());
-    assert_eq!(opened.bounds("notice-error"), Some(notice));
 
     // A short one is as wide as its text.
     opened.cx.update(|_, cx| {
@@ -463,44 +218,51 @@ fn the_project_menu_lists_the_devices_each_time_it_opens(cx: &mut TestAppContext
     assert!(offers(&mut opened, "coreaudio:interface"));
 }
 
-/// The transport is in the middle of the room right of the project menu, and a narrow window
-/// takes the air around it first: it never covers the menu, and play stays on screen. The
-/// narrow width is below the smallest window and still holds the window buttons of Windows.
-#[gpui::test]
-fn in_a_narrow_window_the_transport_stays_beside_the_project_menu(cx: &mut TestAppContext) {
-    let mut opened = open(cx);
-    for width in [1470., 1000.] {
-        opened.cx.simulate_resize(gpui::size(px(width), px(800.)));
-        opened.cx.run_until_parked();
-        let menu = opened.bounds("project-menu").unwrap();
-        let pill = opened.bounds("transport").unwrap();
-        assert!(menu.right() < pill.left(), "{width}: {menu:?} and {pill:?}");
-        let play = opened.control("play");
-        assert!(play.x < px(width), "{width}: play is at {play:?}");
-    }
-}
-
 #[gpui::test]
 fn cmd_z_waits_for_an_open_gesture(cx: &mut TestAppContext) {
     let opened = open(cx);
     let session = opened.session.clone();
-    let has_clip = |cx: &mut VisualTestContext| {
-        cx.read(|cx| {
-            session
-                .read(cx)
-                .project()
-                .resolve::<Clip>(&clip_id())
-                .is_some()
-        })
-    };
     opened
         .cx
         .update(|_, cx| session.update(cx, |session, cx| session.begin_gesture("Drag", cx)));
     opened.cx.simulate_keystrokes("secondary-z");
-    assert!(has_clip(opened.cx));
+    assert!(has_reverb(&session, opened.cx));
     opened
         .cx
         .update(|_, cx| session.update(cx, |session, cx| session.cancel_gesture(cx)));
     opened.cx.simulate_keystrokes("secondary-z");
-    assert!(!has_clip(opened.cx));
+    assert!(!has_reverb(&session, opened.cx));
+}
+
+/// "New project…" opens the templates, one row each; picking one closes them and asks where the
+/// project goes. A cancel there makes nothing.
+#[gpui::test]
+fn new_project_shows_the_templates_and_a_pick_asks_where_it_goes(cx: &mut TestAppContext) {
+    let mut opened = open(cx);
+    opened.keys("secondary-n");
+    let picker = opened.cx.update(|_, cx| {
+        (cx.windows().into_iter()).find_map(|window| window.downcast::<TemplatePicker>())
+    });
+    let picker = picker.expect("the templates did not open");
+    let mut picker = VisualTestContext::from_window(picker.into(), &opened.cx.cx);
+    picker.update(|window, _| window.refresh());
+    picker.run_until_parked();
+    let rows: Vec<&str> = (runtime::TEMPLATES.iter())
+        .filter(|template| {
+            let selector: &'static str = format!("template-{}", template.name).leak();
+            picker.debug_bounds(selector).is_some()
+        })
+        .map(|template| template.name)
+        .collect();
+    assert_eq!(rows, ["Bare", "DAW"]);
+
+    let daw = picker.debug_bounds("template-DAW").unwrap().center();
+    picker.simulate_click(daw, Modifiers::default());
+    opened.cx.run_until_parked();
+    assert!(opened.cx.did_prompt_for_new_path());
+    let windows = opened.cx.update(|_, cx| cx.windows().len());
+    assert_eq!(windows, 1, "the templates are still open");
+    opened.cx.simulate_new_path_selection(|_| None);
+    opened.cx.run_until_parked();
+    assert_eq!(opened.notice(), None);
 }

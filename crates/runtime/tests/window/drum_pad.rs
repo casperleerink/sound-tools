@@ -1,5 +1,4 @@
-//! The card of the Drum pad in the track panel, with a simulated mouse and keys: picked as the
-//! instrument of a track, a press on a pad selects it and plays it, the grid is one tab stop
+//! The card of the Drum pad in a rack, with a simulated mouse and keys: a press on a pad selects it and plays it, the grid is one tab stop
 //! whose arrows move the selection, every edit is one undo step, and a file dropped on a pad or
 //! chosen in the file panel makes it a sample pad.
 
@@ -9,23 +8,18 @@ use drum_pad::view::DrumPadView;
 use drum_pad::{DrumPadState, Sound, Source};
 use gpui::{ExternalPaths, FileDropEvent, Pixels, Point, TestAppContext, point, px};
 
+use crate::rack::record;
 use crate::support::{self, Opened, id, mark, one_undo_step};
 
-const SLOT: &str = "arrangement/track-1/instrument";
-const SLOT_FILE: &str = "state/arrangement/track-1/instrument.json";
+const SLOT: &str = "rack/instrument";
+const SLOT_FILE: &str = "state/rack/instrument.json";
 
-/// The default project with the panel of its track open, and the Drum pad picked as its
-/// instrument the way a composer picks it.
+/// A rack whose instrument is a default Drum pad.
 fn open_drums(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| project.clear_history());
-    let header = opened.track_header(0);
-    opened.click(header);
-    let picker = opened.control("instrument-picker");
-    opened.click(picker);
-    let row = opened.control("menu-drum-pad");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Choose Drum pad"));
-    opened.project(|project| assert_eq!(project.problems(), []));
+    let synth = record("instrument.synth", "{}");
+    let mut opened = support::open_rack(cx, &[("instrument", &synth)]);
+    opened.replace(SLOT, DrumPadState::default());
+    opened.control("pad-36");
     opened
 }
 
@@ -41,12 +35,7 @@ fn file(opened: &mut Opened<'_>) -> String {
 }
 
 fn view(opened: &mut Opened<'_>) -> gpui::Entity<DrumPadView> {
-    let panel = opened.track_panel().unwrap();
-    let view = opened.cx.read(|cx| {
-        let mut views = panel.read(cx).device_views();
-        views.next().unwrap().cloned()
-    });
-    view.unwrap().downcast::<DrumPadView>().ok().unwrap()
+    opened.card::<DrumPadView>(SLOT)
 }
 
 fn selected(opened: &mut Opened<'_>) -> usize {
@@ -64,13 +53,9 @@ fn heard(opened: &mut Opened<'_>) -> f32 {
 }
 
 #[gpui::test]
-fn the_drum_pad_is_picked_as_an_instrument_and_shows_its_pads_and_knobs(cx: &mut TestAppContext) {
+fn the_drum_pad_shows_its_pads_and_knobs(cx: &mut TestAppContext) {
     let mut opened = open_drums(cx);
     assert_eq!(state(&mut opened), DrumPadState::default());
-    assert_eq!(
-        file(&mut opened),
-        "{\n  \"tool\": \"drum-pad\",\n  \"state\": {\"pads\": {}}\n}\n"
-    );
     for note in 36..=51 {
         assert!(opened.find(&format!("pad-{note}")).is_some(), "{note}");
     }
@@ -97,15 +82,15 @@ fn the_drum_pad_is_picked_as_an_instrument_and_shows_its_pads_and_knobs(cx: &mut
     assert_eq!(opened.find("sound"), None);
     // The card is 452 pt, and 581 pt expanded, with Sound and Choke. Its header is inside
     // its border of 1 pt.
-    let card = opened.bounds("card-instrument-header").unwrap();
+    let card = opened.bounds("card-rack/instrument-header").unwrap();
     assert_eq!(card.size.width, px(452. - 2.));
-    let expand = opened.control("card-instrument-expand");
+    let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
     assert!(opened.find("sound").is_some());
     assert!(opened.find("toggle-choke").is_some());
-    let card = opened.bounds("card-instrument-header").unwrap();
+    let card = opened.bounds("card-rack/instrument-header").unwrap();
     assert_eq!(card.size.width, px(581. - 2.));
-    assert_eq!(opened.undo_label().as_deref(), Some("Choose Drum pad"));
+    assert_eq!(opened.undo_label(), None);
 }
 
 #[gpui::test]
@@ -122,7 +107,7 @@ fn a_press_on_a_pad_selects_it_and_plays_it_and_is_no_edit(cx: &mut TestAppConte
     // The knobs are the hat's.
     let decay = opened.bounds("knob-decay_ms").unwrap();
     assert!(decay.size.width > px(0.));
-    assert_eq!(opened.undo_label().as_deref(), Some("Choose Drum pad"));
+    assert_eq!(opened.undo_label(), None);
     // The pad is green while it sounds, and not once it has rung out.
     let hit = pad(&mut opened, 36);
     opened.click(hit);
@@ -177,7 +162,7 @@ fn the_grid_is_one_tab_stop_whose_arrows_move_the_selection_and_enter_plays(
     opened.keys("shift-tab");
     opened.keys("left");
     assert_eq!(selected(&mut opened), 2);
-    assert_eq!(opened.undo_label().as_deref(), Some("Choose Drum pad"));
+    assert_eq!(opened.undo_label(), None);
 }
 
 #[gpui::test]
@@ -208,7 +193,7 @@ fn the_sound_list_and_the_choke_toggle_change_the_selected_pad(cx: &mut TestAppC
     let mut opened = open_drums(cx);
     let tom = pad(&mut opened, 45);
     opened.click(tom);
-    let expand = opened.control("card-instrument-expand");
+    let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
     let before = mark(&mut opened);
     let select = opened.control("sound");
@@ -306,7 +291,7 @@ fn a_file_dropped_on_a_pad_makes_it_a_sample_pad_as_one_undo_step(cx: &mut TestA
     assert!((played - 0.219).abs() < 0.002, "{played}");
 
     // The list of its sound has the file now.
-    let expand = opened.control("card-instrument-expand");
+    let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
     let select = opened.control("sound");
     opened.click(select);
@@ -320,7 +305,7 @@ fn choose_file_in_the_sound_list_opens_the_file_panel_and_loads_the_file(cx: &mu
     let path = sample_file(outside.path(), "Shaker.wav");
     let kick = pad(&mut opened, 36);
     opened.click(kick);
-    let expand = opened.control("card-instrument-expand");
+    let expand = opened.control("card-rack/instrument-expand");
     opened.click(expand);
     let before = mark(&mut opened);
     let select = opened.control("sound");
