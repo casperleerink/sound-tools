@@ -116,7 +116,7 @@ impl Feeds {
         if self.taken.is_none_or(|taken| now - taken >= SAME_FRAME) {
             self.taken = Some(now);
             self.peaks = (uses.peaks.iter())
-                .map(|name| (name.clone(), peaks_of(project, id, name)))
+                .map(|name| (name.clone(), peaks_of(project, id, name, now)))
                 .collect();
             match (uses.output, &self.output_reader) {
                 (true, Some(reader)) => self.output = reader.take(),
@@ -246,12 +246,33 @@ impl Feeds {
 
 /// The peaks the tree reads as `name`: of the `meter` at that path inside the instance, or
 /// `path.name`, peaks an instance inside it keeps, such as a built-in device.
-fn peaks_of(project: &Project, id: &InstanceId, name: &str) -> [f32; 2] {
-    let peaks = match name.rsplit_once('.') {
-        Some((path, peaks)) => (id.child(path).ok()).and_then(|inner| project.peaks(&inner, peaks)),
-        None => (id.child(name).ok()).and_then(|meter| project.peaks(&meter, meter::LEVEL)),
+fn peaks_of(project: &Project, id: &InstanceId, name: &str, now: Instant) -> [f32; 2] {
+    let (path, peaks) = name.rsplit_once('.').unwrap_or((name, meter::LEVEL));
+    let Some(inner) = id.child(path).ok() else {
+        return [0.0; 2];
     };
-    peaks.map_or([0.0; 2], |peaks| peaks.take())
+    match project.peaks(&inner, peaks) {
+        Some(taken) => take_shared(format!("{inner}.{peaks}"), &taken, now),
+        None => [0.0; 2],
+    }
+}
+
+thread_local! {
+    /// The peaks each card took last, by instance and name, and when.
+    static TAKEN: RefCell<HashMap<String, (Instant, [f32; 2])>> = RefCell::default();
+}
+
+/// Takes `peaks` once a frame for every card that shows them: a take empties them, so a second
+/// card in the same frame gets what the first took.
+fn take_shared(key: String, peaks: &sound_core::Peaks, now: Instant) -> [f32; 2] {
+    TAKEN.with_borrow_mut(|taken| {
+        taken.retain(|_, (when, _)| now.duration_since(*when) < Duration::from_secs(1));
+        let (when, value) = taken.entry(key).or_insert_with(|| (now, peaks.take()));
+        if now.duration_since(*when) >= SAME_FRAME {
+            (*when, *value) = (now, peaks.take());
+        }
+        *value
+    })
 }
 
 /// The last sound of the `meter` at the path `name` inside the instance.
@@ -316,4 +337,25 @@ fn played(
         cable.or_else(|| lane(&inner, number)).unwrap_or(record),
         range,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_cards_that_show_one_meter_in_a_frame_both_see_its_peak() {
+        let peaks = sound_core::Peaks::new();
+        peaks.record_block([&[0.5], &[0.25]]);
+        let now = Instant::now();
+        let first = take_shared("song/meter.level".to_string(), &peaks, now);
+        let second = take_shared("song/meter.level".to_string(), &peaks, now);
+        assert_eq!((first, second), ([0.5, 0.25], [0.5, 0.25]));
+        // What plays after the frame waits for the next one.
+        peaks.record_block([&[0.75], &[0.75]]);
+        let later = take_shared("song/meter.level".to_string(), &peaks, now);
+        assert_eq!(later, [0.5, 0.25]);
+        let next = take_shared("song/meter.level".to_string(), &peaks, now + SAME_FRAME);
+        assert_eq!(next, [0.75, 0.75]);
+    }
 }
