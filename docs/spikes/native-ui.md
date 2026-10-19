@@ -7,7 +7,7 @@ Sound Tools becomes a small core plus a TypeScript SDK with few concepts and man
 ## Decided constraints
 
 - **Few concepts.** The current cut: tool (record, memory, tick), children, typed ports and connections (signal, number, bang, note), signal, view (elements, live values, gestures), update, clock. Anything that can be a child or a helper is one. Change the cut when the work shows a better one; every new concept needs a reason.
-- **Rust only for what must be sample-exact, heavy or tied to the machine:** engine, clock, devices, timeline, recorder, audio and MIDI in and out, meters, plugins, the renderer. Each is a child that composes through ports and knows no DAW idea.
+- **Rust builds blocks, TS owns structure.** Rust is welcome for building blocks the SDK uses as children: a good reverb, a synth, a sampler, the plugin host, timeline, recorder, audio and MIDI in and out, meters. A block composes through ports and knows no DAW idea. Rust never owns how a tool or project is organised: no tracks, clips, mixer layout, transport bar or views that decide a workflow, as the arrangement does today.
 - **The core knows no music beyond the clock:** position, tempo map, start, stop, jump, a repeat range. What play or record means, the transport bar and every musical key are SDK or project code. The app keeps only app and file shortcuts and machine settings.
 - **Motion never crosses to Bun; structure updates are fine-grained.** The mechanism is open: change it when a measurement says so.
 - **TS tools run unchanged on any OS, with no build.** Compiled Rust extensions were rejected: they need the Xcode tools or MSVC, and a build when a project opens.
