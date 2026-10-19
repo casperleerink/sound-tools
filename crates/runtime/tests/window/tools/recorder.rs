@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 
 use super::{Opened, write};
 use crate::plugin_hosts::scanner;
-use crate::song::{HEADER, song_files};
+use crate::song::{ARM, HEADER, LEAD, ROW, TOGGLES, song_files};
 use crate::support::SimulatedInput;
 use crate::support::open_folder_with;
 
@@ -197,7 +197,10 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
     window.wait_for_bun();
     // The R of the voice, the fifth row: after its name, M and S in the header.
     let row = window.on_lane(0, 4);
-    let arm = gpui::point(row.x - gpui::px(HEADER) + gpui::px(132.), row.y);
+    let arm = gpui::point(
+        row.x - gpui::px(LEAD + HEADER) + gpui::px(ARM),
+        row.y - gpui::px(ROW / 2.) + gpui::px(TOGGLES),
+    );
     window.press(arm);
     window.release(arm);
     // Armed, its input opens before it records.
@@ -213,7 +216,7 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
         window.record_for(&input, 2_048);
         window.song_regions() > 0
     });
-    let state = window.record("song/voice/rec-sound-1");
+    let state = window.record("song/audio-voice/rec-sound-1");
     assert_eq!(state["asset"], "rec-sound-1.wav");
     assert_eq!(window.problems(), []);
 }
@@ -241,7 +244,10 @@ fn a_take_of_sound_on_a_track_is_a_problem(cx: &mut TestAppContext) {
     window.wait_for_bun();
     // The R of the track, on the first row.
     let row = window.on_lane(0, 0);
-    let arm = gpui::point(row.x - gpui::px(HEADER) + gpui::px(132.), row.y);
+    let arm = gpui::point(
+        row.x - gpui::px(LEAD + HEADER) + gpui::px(ARM),
+        row.y - gpui::px(ROW / 2.) + gpui::px(TOGGLES),
+    );
     window.press(arm);
     window.release(arm);
     let record = window.until_found("button-record");
@@ -266,7 +272,7 @@ impl Opened<'_> {
         let session = self.session.clone();
         self.cx.read(|cx| {
             let project = session.read(cx).project();
-            let voice = InstanceId::new("song/voice").unwrap();
+            let voice = InstanceId::new("song/audio-voice").unwrap();
             (project.instances())
                 .filter(|(id, tool)| id.parent().as_ref() == Some(&voice) && *tool == "region")
                 .count()

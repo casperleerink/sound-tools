@@ -66,9 +66,11 @@ impl Opened<'_> {
         }
         self.cx
             .simulate_event(FileDropEvent::Submit { position: to });
-        self.until("the region added", |window| window.has("song/voice/region"));
+        self.until("the region added", |window| {
+            window.has("song/audio-voice/region")
+        });
         // Its width is what it says it plays, once its file is read.
-        let region = crate::support::id("song/voice/region");
+        let region = crate::support::id("song/audio-voice/region");
         self.until("the region's length", |window| {
             window.project(|project| {
                 (project.watches(&region).iter())
@@ -402,7 +404,7 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     window.drop_sine();
-    let region = window.record("song/voice/region");
+    let region = window.record("song/audio-voice/region");
     assert_eq!(region["asset"], "sine.wav");
     assert_eq!(region["start"], 2 * BAR);
     // Its waveform shows once its length is known: a click on it chooses it.
@@ -412,7 +414,7 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     window.until_found("div-region-panel");
     window.cx.simulate_keystrokes("backspace");
     window.until("the region deleted", |window| {
-        !window.has("song/voice/region")
+        !window.has("song/audio-voice/region")
     });
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Remove a region"));
@@ -468,11 +470,11 @@ fn a_region_trims_from_its_end(cx: &mut TestAppContext) {
     window.drag_to(end - point(px(960. * ACROSS), px(0.)));
     window.release(end - point(px(960. * ACROSS), px(0.)));
     window.until("the end trimmed", |window| {
-        window.record("song/voice/region")["file_end_seconds"]
+        window.record("song/audio-voice/region")["file_end_seconds"]
             .as_f64()
             .is_some()
     });
-    let trimmed = window.record("song/voice/region")["file_end_seconds"]
+    let trimmed = window.record("song/audio-voice/region")["file_end_seconds"]
         .as_f64()
         .unwrap();
     assert!((trimmed - 0.5).abs() < 1e-3, "{trimmed}");
@@ -640,15 +642,15 @@ fn a_region_after_a_tempo_change_is_as_long_as_its_file_at_that_tempo(cx: &mut T
     window.drag_to(end - point(px(480. * ACROSS), px(0.)));
     window.release(end - point(px(480. * ACROSS), px(0.)));
     window.until("the end trimmed", |window| {
-        window.record("song/voice/region")["file_end_seconds"]
+        window.record("song/audio-voice/region")["file_end_seconds"]
             .as_f64()
             .is_some()
     });
-    let trimmed = window.record("song/voice/region")["file_end_seconds"]
+    let trimmed = window.record("song/audio-voice/region")["file_end_seconds"]
         .as_f64()
         .unwrap();
     assert!((trimmed - 0.5).abs() < 1e-3, "{trimmed}");
-    assert_eq!(window.record("song/voice/region")["start"], 2 * BAR);
+    assert_eq!(window.record("song/audio-voice/region")["start"], 2 * BAR);
 }
 
 /// The files of `song_files(tracks, clips)` with `change` made to the record at `path`.
@@ -756,7 +758,7 @@ fn a_region_that_plays_its_whole_file_trims_no_further_out(cx: &mut TestAppConte
     window.after_the_runs();
     window.wait_for_bun();
     assert_eq!(
-        window.record("song/voice/region")["file_end_seconds"],
+        window.record("song/audio-voice/region")["file_end_seconds"],
         serde_json::Value::Null
     );
     assert_eq!(window.problems(), []);

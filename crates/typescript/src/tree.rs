@@ -116,6 +116,21 @@ props! {
 }
 
 props! {
+    /// A switch of the app: a letter, an icon with a count, or a dot, coloured while `on`.
+    ToggleProps / ToggleChange {
+        key: String,
+        label: String,
+        icon: String,
+        count: f32,
+        dot: bool,
+        on: bool,
+        color: Color,
+        disabled: bool,
+        on_press: bool,
+    }
+}
+
+props! {
     /// An icon of the app, by its name.
     IconProps / IconChange { name: String, size: f32, color: Color }
 }
@@ -212,6 +227,7 @@ pub(crate) enum Props {
     Button(ButtonProps),
     Icon(IconProps),
     Meter(MeterProps),
+    Toggle(ToggleProps),
     /// Where a list or a part that changes puts its nodes: draws nothing.
     Marker,
 }
@@ -227,6 +243,7 @@ pub(crate) enum Change {
     Button(ButtonChange),
     Icon(IconChange),
     Meter(MeterChange),
+    Toggle(ToggleChange),
     Marker,
 }
 
@@ -288,6 +305,7 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "button" => Props::Button(next(&mut seq, "props")?),
                         "icon" => Props::Icon(next(&mut seq, "props")?),
                         "meter" => Props::Meter(next(&mut seq, "props")?),
+                        "toggle" => Props::Toggle(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Props::Marker
@@ -310,6 +328,7 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "button" => Change::Button(next(&mut seq, "props")?),
                         "icon" => Change::Icon(next(&mut seq, "props")?),
                         "meter" => Change::Meter(next(&mut seq, "props")?),
+                        "toggle" => Change::Toggle(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Change::Marker
@@ -337,7 +356,7 @@ impl<'de> Visitor<'de> for OpVisitor {
 }
 
 const FAMILIES: &[&str] = &[
-    "div", "text", "space", "shape", "input", "card", "button", "icon", "meter", "marker",
+    "div", "text", "space", "shape", "input", "card", "button", "icon", "meter", "toggle", "marker",
 ];
 
 /// What of the window the live values of a card move with, without its code, and what the
@@ -565,6 +584,7 @@ impl NodeTable {
                         (Props::Button(props), Change::Button(change)) => props.apply(change),
                         (Props::Icon(props), Change::Icon(change)) => props.apply(change),
                         (Props::Meter(props), Change::Meter(change)) => props.apply(change),
+                        (Props::Toggle(props), Change::Toggle(change)) => props.apply(change),
                         (Props::Card(props), Change::Card(change)) => props.apply(change),
                         (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
                         (Props::Marker, Change::Marker) => {}

@@ -31,6 +31,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::meter::Meter;
 use sound_ui::components::text_input::{self, TextInput};
+use sound_ui::components::toggle::Toggle;
 use sound_ui::{
     ActiveTheme, ControlEdit, Devices, Metering, Session, Views, Waveforms, typography,
 };
@@ -42,7 +43,7 @@ use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
     self, Align, Axis, ButtonLook, ButtonProps, ButtonSized, CardProps, Cursor, DivProps, Drag,
     IconProps, InputProps, List, MeterProps, NodeTable, Paint, Props, Reach, Readout, ShapeKind,
-    SpaceProps, TextProps, Turned, Words,
+    SpaceProps, TextProps, ToggleProps, Turned, Words,
 };
 use crate::window::{Live, Surface, state_of};
 
@@ -1409,6 +1410,7 @@ impl Drawing<'_, '_> {
                 None => div().into_any_element(),
             },
             Props::Button(props) => self.button(id, props, index),
+            Props::Toggle(props) => self.toggle(id, props, index),
             Props::Meter(MeterProps {
                 of,
                 horizontal,
@@ -1586,6 +1588,39 @@ impl Drawing<'_, '_> {
 
     /// A div that hears presses, drops or carries something when dragged.
     #[allow(clippy::too_many_arguments)]
+    /// A switch of the app, which tells a press as a pressed div does: its code turns it.
+    fn toggle(&mut self, id: u64, props: &ToggleProps, index: &[usize]) -> AnyElement {
+        let name: SharedString = element_name("toggle", props.key.as_deref(), index).into();
+        let on = props.on == Some(true);
+        let toggle = match (&props.icon, props.dot == Some(true)) {
+            (Some(icon), _) => Toggle::icon(
+                name,
+                icon.clone(),
+                props.label.clone().unwrap_or_default(),
+                on,
+            )
+            .count(props.count.unwrap_or_default().max(0.0) as usize),
+            (None, true) => Toggle::dot(name, on),
+            (None, false) => Toggle::new(name, props.label.clone().unwrap_or_default(), on),
+        };
+        let selector = format!("toggle-{}", props.key.as_deref().unwrap_or_default());
+        let toggle = toggle
+            .when_some(props.color, |toggle, color| toggle.color(color.0))
+            .disabled(props.disabled == Some(true))
+            .tab_stop(false)
+            .when(props.on_press == Some(true), |toggle| {
+                let card = self.cx.entity().downgrade();
+                toggle.on_change(move |_, _, cx| {
+                    let press = json!({ "x": 0, "y": 0, "button": "left", "clicks": 1 });
+                    (card.update(cx, |view, cx| view.event(id, EventKind::Press, press, cx))).ok();
+                })
+            });
+        // A click on it is its own, not the row's under it.
+        (div().flex_none().occlude().debug_selector(move || selector))
+            .child(toggle)
+            .into_any_element()
+    }
+
     /// A button of the app, which tells a press as a pressed div does.
     fn button(&mut self, id: u64, props: &ButtonProps, index: &[usize]) -> AnyElement {
         let name = element_name("button", props.key.as_deref(), index);

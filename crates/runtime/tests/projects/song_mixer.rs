@@ -116,12 +116,12 @@ fn overlapping_regions_sum_and_the_last_one_ends_the_song() {
     for track in ["t00", "t01"] {
         harness.write_and_apply(&format!("state/song/{track}/mix.json"), &fader(r#""-inf""#));
     }
-    harness.write_and_apply("state/song/voice/low.json", &region("low.wav", 0));
+    harness.write_and_apply("state/song/audio-voice/low.json", &region("low.wav", 0));
     let low = play(&mut harness, BAR);
-    harness.write_and_apply("state/song/voice/high.json", &region("high.wav", 0));
+    harness.write_and_apply("state/song/audio-voice/high.json", &region("high.wav", 0));
     let both = play(&mut harness, BAR);
-    std::fs::remove_file(harness.path("state/song/voice/low.json")).unwrap();
-    harness.apply(&[harness.path("state/song/voice/low.json")]);
+    std::fs::remove_file(harness.path("state/song/audio-voice/low.json")).unwrap();
+    harness.apply(&[harness.path("state/song/audio-voice/low.json")]);
     let high = play(&mut harness, BAR);
     let summed = (low.iter().zip(&high)).map(|(low, high)| low + high);
     let most =
@@ -129,7 +129,10 @@ fn overlapping_regions_sum_and_the_last_one_ends_the_song() {
     assert!(most < 1e-6, "{most}");
     // Two seconds are a bar at 120 bpm: from bar 21 the region ends at bar 22.
     let start = 20 * 3840;
-    harness.write_and_apply("state/song/voice/high.json", &region("high.wav", start));
+    harness.write_and_apply(
+        "state/song/audio-voice/high.json",
+        &region("high.wav", start),
+    );
     assert_eq!(harness.project.end(), Some(Ticks(start + 3840)));
 }
 

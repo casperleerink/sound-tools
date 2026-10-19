@@ -3,7 +3,7 @@
 //! mutes, and its meter follows the engine with nothing from Bun.
 
 use super::{Opened, open};
-use crate::song::{ACROSS, BAR, HEADER, ROW, song_files};
+use crate::song::{ACROSS, BAR, HEADER, LEAD, MUTE, NAME, ROW, TOGGLES, song_files};
 use gpui::{
     Modifiers, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
 };
@@ -20,7 +20,11 @@ impl Opened<'_> {
     /// Where `tick` is on the row of track `row` of the timeline, as it opens.
     pub(super) fn on_lane(&mut self, tick: u64, row: usize) -> Point<Pixels> {
         let timeline = self.space_at("timeline");
-        timeline + point(px(tick as f32 * ACROSS), px(row as f32 * ROW + ROW / 2.))
+        timeline
+            + point(
+                px(LEAD + tick as f32 * ACROSS),
+                px(row as f32 * ROW + ROW / 2.),
+            )
     }
 
     /// Every record of the song's clips, by id.
@@ -95,7 +99,10 @@ fn the_mute_of_a_track_mutes_its_mix_as_one_undo_step(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 4, 12);
     let lane = window.on_lane(0, 2);
     // The M of the third track: after its name, in the header left of the timeline.
-    let mute = point(lane.x - px(HEADER) + px(80.), lane.y);
+    let mute = point(
+        lane.x - px(LEAD + HEADER) + px(MUTE),
+        lane.y - px(ROW / 2.) + px(TOGGLES),
+    );
     window.wait_for_bun();
     window.press(mute);
     window.release(mute);
@@ -126,7 +133,7 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
     assert!(window.find("div-name-t00").is_none());
     assert!(window.find("div-name-t10").is_some());
     // The M on the top row is the eleventh track's now.
-    let mute = timeline + point(px(80.) - px(HEADER), px(ROW / 2.));
+    let mute = timeline + point(px(MUTE) - px(HEADER), px(TOGGLES));
     window.press(mute);
     window.release(mute);
     window.until("the track muted", |window| {
@@ -194,7 +201,10 @@ fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selectio
     assert_eq!(window.loudest(4_800), 0.0);
 
     let lane = window.on_lane(0, 1);
-    let name = point(lane.x - px(HEADER) + px(20.), lane.y);
+    let name = point(
+        lane.x - px(LEAD + HEADER) + px(NAME.0),
+        lane.y - px(ROW / 2.) + px(NAME.1),
+    );
     window.press(name);
     window.release(name);
     let session = window.session.clone();

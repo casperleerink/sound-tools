@@ -1979,7 +1979,7 @@ interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "toggle" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
@@ -2487,6 +2487,25 @@ export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<
  */
 export const PeakMeter = (props: { key?: string; of?: string; horizontal?: boolean; length?: number }): UiNode =>
   element("meter", { ...props }, []);
+
+/**
+ * A switch of the app: a letter (`label`), an `icon` with `label` as its tooltip and a `count`
+ * after it, or a `dot`. Coloured while `on`, `color` when given; its code turns it in `onPress`.
+ */
+export interface ToggleProps {
+  key?: string;
+  label?: Bind<string>;
+  icon?: Bind<IconName>;
+  count?: Bind<number>;
+  dot?: boolean;
+  on: Bind<boolean>;
+  color?: Bind<Color>;
+  disabled?: Bind<boolean>;
+  onPress?: (press: Press) => void;
+}
+
+/** A switch, see `ToggleProps`. */
+export const Toggle = (props: ToggleProps): UiNode => element("toggle", { ...props }, []);
 
 /** A button of the app: a `label`, an `icon` or both, as the window's own buttons look. */
 export interface ButtonProps {

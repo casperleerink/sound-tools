@@ -40,7 +40,7 @@ fn typescript_song() -> Harness {
         write(folder.path(), &path, &text);
     }
     let region = r#"{"tool": "region", "state": {"asset": "voice.wav", "start": 3840}}"#;
-    write(folder.path(), "state/song/voice/take.json", region);
+    write(folder.path(), "state/song/audio-voice/take.json", region);
     write_voice(folder.path());
     Harness::open(folder)
 }

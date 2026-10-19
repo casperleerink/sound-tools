@@ -7,7 +7,7 @@ export const tape = tool({
   title: "Tape",
   when: "You change what an audio track of the song is made of or how it is wired",
   doc: "An audio track of a `song`: its `region` children play through its fader `mix`, whose `gain_db`, `pan` and `mute` are the track's, and whose level its meter shows. Its recorder `rec` records the audio input into new regions next to it while the song records. `colour` is how the song draws its regions.",
-  state: { colour: text({ default: "#7cc7ff" }) },
+  state: { colour: text({ default: "teal" }) },
   children: parts,
   behaviour: ({ children }): Declaration<typeof parts> => {
     const regions: Connection<typeof parts>[] = children

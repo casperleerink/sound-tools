@@ -89,7 +89,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         PIANO_ROLL,
     )?;
     // The roll's top left: the page's padding, the title bar and the ruler; the keys.
-    let roll = point(px(24. + 44.), px(48. + 24. + 22. + 1.));
+    let roll = point(px(44.), px(48. + 22. + 1.));
     let at = |tick: f32, row: f32| roll + point(px(tick * 0.1), px((row - 40.) * 12.));
     let mouse = |opened: &super::Opened, cx: &mut HeadlessAppContext, event| {
         opened.event(event, cx).map(|_| wait_for_bun(cx))
@@ -156,16 +156,19 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     }
     // A take of the voice, a region on its row from the second bar.
     files.push((
-        "state/song/voice/take.json".to_string(),
+        "state/song/audio-voice/take.json".to_string(),
         r#"{"tool": "region", "state": {"asset": "voice.wav", "start": 3840}}"#.to_string(),
     ));
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
     let mut opened = open_files_with(cx, &files, write_voice)?;
-    // The timeline's top left: the page's padding, the title bar, the ruler and the repeat
-    // strip under it; the headers.
-    let timeline = point(px(24. + crate::song::HEADER), px(48. + 24. + 22. + 10.));
+    // Where bar 1 starts on the first row: right of the headers, under the title row and the
+    // ruler.
+    let timeline = point(
+        px(crate::song::HEADER + crate::song::LEAD),
+        px(crate::song::TOP),
+    );
     let lane = |tick: u64, row: f32| {
         timeline
             + point(
@@ -201,14 +204,20 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, cx, lane(3 * crate::song::BAR + 960, 4.5), 1)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song")?;
-    // The Mixer button, right of the record button: a strip per track and return, the master.
-    click(&opened, cx, point(px(537.), px(92.)), 1)?;
+    // A strip per track and return, and the master.
+    // Master, between the rows and the devices of the track and the editor under them.
+    click(&opened, cx, point(px(60.), px(380.)), 1)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-mixer")?;
-    // The mixer closed again, and the A of the first track's head: its lane of the cutoff
-    // shows under it, closing over the song.
-    click(&opened, cx, point(px(537.), px(92.)), 1)?;
-    click(&opened, cx, point(px(171.), lane(0, 1.5).y), 1)?;
+    // The mixer closed again, and the automation of the first track's head: its lane of the
+    // cutoff shows under it, closing over the song.
+    click(&opened, cx, point(px(60.), px(280.)), 1)?;
+    click(
+        &opened,
+        cx,
+        point(px(24.), px(crate::song::TOP + crate::song::TOGGLES)),
+        1,
+    )?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-lanes")?;
     drop(opened);

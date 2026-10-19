@@ -8,7 +8,7 @@ const KEYS = 36;
 const LANE = 64;
 const ACROSS = 0.1;
 /** The grids a note snaps to: a bar is as long as the bar the clip starts in. */
-const snapsOf = (bar: number) => [
+export const snapsOf = (bar: number) => [
   { label: "Bar", ticks: bar },
   { label: "1/4", ticks: BEAT },
   { label: "1/8", ticks: BEAT / 2 },

@@ -9,10 +9,19 @@ pub(crate) const BAR: u64 = 3840;
 pub(crate) fn daw() -> &'static runtime::Template {
     runtime::templates::named("DAW").unwrap()
 }
-/// The page's sizes, as `song.tsx` has them: a track's row and its header, and points per tick.
-pub(crate) const ROW: f32 = 40.0;
-pub(crate) const HEADER: f32 = 200.0;
+/// The page's sizes, as `song.tsx` has them: a track's row and its header, points per tick, the
+/// points left of bar 1, and where the rows start under the title row and the ruler.
+pub(crate) const ROW: f32 = 64.0;
+pub(crate) const HEADER: f32 = 176.0;
 pub(crate) const ACROSS: f32 = 0.025;
+pub(crate) const LEAD: f32 = 8.0;
+pub(crate) const TOP: f32 = 48.0 + 32.0 + 1.0;
+/// In a track's header, from its left and its top: the middle of its name, of its mute and solo,
+/// and of the arm of an audio track; the toggles are on one line.
+pub(crate) const NAME: (f32, f32) = (50.0, 18.0);
+pub(crate) const MUTE: f32 = 118.0;
+pub(crate) const ARM: f32 = 88.0;
+pub(crate) const TOGGLES: f32 = 41.0;
 
 /// A number from `seed`, the same on every machine.
 fn noise(seed: &mut u64) -> u64 {
@@ -25,7 +34,7 @@ fn noise(seed: &mut u64) -> u64 {
 /// The files of a song of `tracks` tracks with `clips` clips in all, each of 30 to 150 notes: a
 /// synth, a filter whose cutoff a lane closes, a fader and a recorder of notes per track, each
 /// sending -12 dB into the return `ret-a`, a reverb; a return `ret-b` that hears before the
-/// faders; a fader `master` into a limiter `limit`, and an audio track `voice` with a recorder
+/// faders; a fader `master` into a limiter `limit`, and an audio track `audio-voice` with a recorder
 /// of the first channel of the input and no region yet.
 pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
     let mut seed = 7;
@@ -88,9 +97,10 @@ fn song_with(
     ];
     let mut files = vec![
         ("project.json".to_string(), project.to_string()),
+        // The audio track after the tracks, as the song lists tracks in `order`.
         (
             "state/song/instance.json".to_string(),
-            r#"{"tool": "song", "state": {}}"#.to_string(),
+            json!({ "tool": "song", "state": { "order": (0..tracks).map(|track| format!("t{track:02}")).chain(["audio-voice".to_string()]).collect::<Vec<_>>() } }).to_string(),
         ),
         (
             "state/song/master.json".to_string(),
@@ -107,15 +117,15 @@ fn song_with(
             r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": -1000}]}}"#.to_string(),
         ),
         (
-            "state/song/voice/instance.json".to_string(),
+            "state/song/audio-voice/instance.json".to_string(),
             r#"{"tool": "tape", "state": {}}"#.to_string(),
         ),
         (
-            "state/song/voice/rec.json".to_string(),
+            "state/song/audio-voice/rec.json".to_string(),
             r#"{"tool": "recorder", "state": {"channels": [0]}}"#.to_string(),
         ),
         (
-            "state/song/voice/mix.json".to_string(),
+            "state/song/audio-voice/mix.json".to_string(),
             r#"{"tool": "fader", "state": {}}"#.to_string(),
         ),
     ];
