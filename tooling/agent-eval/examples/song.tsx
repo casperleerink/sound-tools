@@ -1,4 +1,4 @@
-import { For, Fragment, Group, h, Label, Line, list, now, Rect, selector, Show, Space, text, tool, Transport, Wave, type Accessor, type Declaration, type Drag, type FilledStateOfTool, type Live, type Press } from "./sdk";
+import { DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, now, Rect, selector, Show, Space, text, tool, Transport, Wave, type Accessor, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Live, type Part, type Press } from "./sdk";
 import { tape } from "./tape";
 import { track } from "./track";
 
@@ -11,6 +11,7 @@ const ROW = 40;
 const HEADER = 200;
 const RULER = 22;
 const EDITOR = 240;
+const RACK = 220;
 const NOTE_ROW = 8;
 // Points per tick at zoom 1: a bar is 96 points.
 const ACROSS = 0.025;
@@ -26,11 +27,39 @@ const COLOR = {
 const [MOVES, RESIZES, NOTE] = [["move"], ["resize"], ["note"]];
 const parts = { master: "utility", voice: tape, "*": track } as const;
 
-type Memory = { selected: Set<string>; open: string | null; note: number | null; armed: Set<string>; recording: number | null };
+type Memory = {
+  selected: Set<string>;
+  open: string | null;
+  note: number | null;
+  armed: Set<string>;
+  recording: number | null;
+  /** The track whose devices show under the timeline, and the one whose name is typed. */
+  track: string | null;
+  renaming: string | null;
+};
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 // Where a level sits on a meter, 0 to 1: 0 dB at 0.8.
 const place = (amplitude: Live) => amplitude.pow(20 / 61.94).times(0.8).min(1);
+
+/** Removes the clips `chosen` names, `track/clip`, or copies each on after itself. */
+function removeOrCopy({ children }: Part<unknown, typeof parts>, chosen: Set<string>, copy: boolean) {
+  for (const row of children) {
+    if (row.tool !== "track") continue;
+    const mine = row.children.filter((clip) => clip.tool === "timeline" && chosen.has(`${row.name}/${clip.name}`));
+    if (!copy) {
+      row.children = row.children.filter((clip) => !mine.includes(clip));
+      continue;
+    }
+    const copies = mine.flatMap((clip) => {
+      if (clip.tool !== "timeline") return [];
+      const length = clip.state.length ?? BAR;
+      const name = freeName(row.children.map((each) => each.name), clip.name);
+      return [{ name, tool: "timeline" as const, state: { ...clip.state, start: clip.state.start + length } }];
+    });
+    row.children = [...row.children, ...copies];
+  }
+}
 
 /** A name for a clip in `names` that is not taken. */
 function freeName(names: string[], wanted: string): string {
@@ -52,10 +81,10 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, mixer strips or note editor",
   doc:
-    "Tracks of clips in time. Each `track` child, and the audio track `voice` when there is one, plays into the utility `master`; `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of `voice`. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. A click on a track's name or a clip selects it: the keyboard plays that track, and Export selection exports the chosen clips. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child, and the audio track `voice` when there is one, plays into the utility `master`; `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of `voice`. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. A click on a track's name or a clip selects it: the keyboard plays that track, and Export selection exports the chosen clips. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it. Space plays and pauses, wherever the focus is.",
   state: { solo: list(text(), { max: 64 }) },
   children: parts,
-  memory: (): Memory => ({ selected: new Set(), open: null, note: null, armed: new Set(), recording: null }),
+  memory: (): Memory => ({ selected: new Set(), open: null, note: null, armed: new Set(), recording: null, track: null, renaming: null }),
   keys: ["delete", "backspace", "cmd-d"],
   globalKeys: ["space"],
   onKey: ({ memory, update, clock, select }, { key, down }) => {
@@ -65,23 +94,7 @@ export const song = tool({
     }
     if (!down || memory.selected.size === 0) return;
     const chosen = new Set(memory.selected);
-    update(key === "d" ? "Copy clips on" : "Remove clips", ({ children }) => {
-      for (const row of children) {
-        if (row.tool !== "track") continue;
-        const mine = row.children.filter((clip) => clip.tool === "timeline" && chosen.has(`${row.name}/${clip.name}`));
-        if (key !== "d") {
-          row.children = row.children.filter((clip) => !mine.includes(clip));
-          continue;
-        }
-        const copies = mine.flatMap((clip) => {
-          if (clip.tool !== "timeline") return [];
-          const length = clip.state.length ?? BAR;
-          const name = freeName(row.children.map((each) => each.name), clip.name);
-          return [{ name, tool: "timeline" as const, state: { ...clip.state, start: clip.state.start + length } }];
-        });
-        row.children = [...row.children, ...copies];
-      }
-    });
+    update(key === "d" ? "Copy clips on" : "Remove clips", (part) => removeOrCopy(part, chosen, key === "d"));
     memory.selected = new Set();
     select(null);
   },
@@ -97,7 +110,7 @@ export const song = tool({
       ],
     };
   },
-  view: ({ state, children, memory, update, clock, select, send }) => {
+  view: ({ state, children, memory, update, clock, select, send, openMenu, offers, addOffer }) => {
     const tracks = () => children.filter((child) => child.tool === "track");
     // The rows of the timeline: the tracks, then the audio track.
     const rows = () => children.filter((child) => child.tool === "track" || child.tool === "tape");
@@ -141,6 +154,7 @@ export const song = tool({
     /** Chooses the clips `keys` names, `track/clip`: the keyboard plays the track of the first, or `track`, and Export selection exports their bars. */
     const choose = (keys: Set<string>, track: string | null = null) => {
       memory.selected = keys;
+      memory.track = ([...keys][0] ?? track)?.split("/")[0] ?? memory.track;
       const clips = [...keys].flatMap((key) => clipAt(key) ?? []);
       const starts = clips.map((clip) => clip.state.start ?? 0);
       const ends = clips.map((clip) => (clip.state.start ?? 0) + (clip.state.length ?? BAR));
@@ -209,8 +223,22 @@ export const song = tool({
       },
     };
 
-    const pressClip = (key: string) => ({ clicks, shift }: Press) => {
-      if (clicks === 2) {
+    const clipMenu = async (key: string) => {
+      if (!memory.selected.has(key)) choose(new Set([key]));
+      const chosen = new Set(memory.selected);
+      const picked = await openMenu([{ label: "Edit notes" }, { label: "Copy on" }, { label: "Delete" }]);
+      if (picked === 0) {
+        memory.open = key;
+        memory.note = null;
+      } else if (picked !== null) {
+        update(picked === 1 ? "Copy clips on" : "Remove clips", (part) => removeOrCopy(part, chosen, picked === 1));
+        if (picked === 2) choose(new Set());
+      }
+    };
+    const pressClip = (key: string) => ({ clicks, shift, button }: Press) => {
+      if (button === "right") {
+        clipMenu(key);
+      } else if (clicks === 2) {
         memory.open = key;
         memory.note = null;
       } else if (shift) {
@@ -238,6 +266,28 @@ export const song = tool({
       });
       if (added) choose(new Set([added]));
     };
+    const dropOnTimeline = ({ files, x, y }: Dropped) => {
+      const row = rows()[Math.floor(y)];
+      const owner = row?.tool === "tape" ? row : rows().find((each) => each.tool === "tape");
+      if (!owner || files.length === 0) return;
+      const start = Math.max(Math.floor(x / BEAT) * BEAT, 0);
+      update("Add audio", ({ children }) => {
+        const tape = children.find((child) => child.name === owner.name);
+        if (tape?.tool !== "tape") return;
+        for (const file of files) {
+          const name = freeName(tape.children.map((child) => child.name), "region");
+          tape.children = [...tape.children, { name, tool: "region", state: { asset: file, start } }];
+        }
+      });
+    };
+    const titleOf = (each: (typeof children)[number]) => (each.tool === "track" && each.state.title) || each.name;
+    const rename = (name: string, title: string) => {
+      memory.renaming = null;
+      update("Rename a track", ({ children }) => {
+        const owner = children.find((child) => child.name === name);
+        if (owner?.tool === "track") owner.state.title = title;
+      });
+    };
     const toggleMute = (name: string) =>
       update("Mute a track", ({ children }) => {
         const owner = children.find((child) => child.name === name);
@@ -261,9 +311,79 @@ export const song = tool({
     const timeline = now.space("timeline");
     const handle = timeline.pointX.times(6);
 
+    /** The devices of the track `name`: its synth, its filter and the effects of its chain, which can be added, turned off, removed and dragged into another order. */
+    const Rack = ({ name }: { name: string }) => {
+      const chainOf = () => {
+        const row = tracks().find((each) => each.name === name);
+        const effects = row?.tool === "track" ? row.children.find((child) => child.name === "chain") : undefined;
+        return effects?.tool === "chain" ? effects : undefined;
+      };
+      const order = () => chainOf()?.state.order ?? [];
+      const isOff = (effect: string) => (chainOf()?.state.off ?? []).includes(effect);
+      /** Changes the chain of the track as one undo step `label`. */
+      const editChain = (label: string, change: (effects: { state: { order: string[]; off: string[] }; children: { name: string }[] }) => void) =>
+        update(label, ({ children }) => {
+          const row = children.find((child) => child.name === name);
+          const effects = row?.tool === "track" ? row.children.find((child) => child.name === "chain") : undefined;
+          if (effects?.tool === "chain") change(effects);
+        });
+      const addEffect = async () => {
+        const offered = await offers("audio");
+        const picked = await openMenu(offered.map((offer) => ({ label: offer.name, disabled: offer.unavailable !== null })));
+        const offer = picked === null ? undefined : offered[picked];
+        if (!offer) return;
+        const taken = chainOf()?.children.map((child) => child.name) ?? [];
+        const effect = freeName(taken, offer.key.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "effect");
+        addOffer(offer.key, `${name}/chain/${effect}`, "Add an effect");
+        editChain("Add an effect", (effects) => (effects.state.order = [...effects.state.order, effect]));
+      };
+      const remove = (effect: string) =>
+        editChain("Remove an effect", (effects) => {
+          effects.state.order = effects.state.order.filter((each) => each !== effect);
+          effects.state.off = effects.state.off.filter((each) => each !== effect);
+          effects.children = effects.children.filter((child) => child.name !== effect);
+        });
+      const toggle = (effect: string) =>
+        editChain(isOff(effect) ? "Turn an effect on" : "Turn an effect off", (effects) => {
+          effects.state.off = effects.state.off.includes(effect) ? effects.state.off.filter((each) => each !== effect) : [...effects.state.off, effect];
+        });
+      // An effect dragged onto another goes before it.
+      const moveBefore = (moved: string, before: string) =>
+        editChain("Move an effect", (effects) => {
+          const rest = effects.state.order.filter((each) => each !== moved);
+          rest.splice(rest.indexOf(before), 0, moved);
+          effects.state.order = rest;
+        });
+      return (
+        <div key="rack" style={{ height: RACK, direction: "row", gap: 8, padding: 8, align: "start" }}>
+          <DeviceCard path={`${name}/synth`} />
+          <DeviceCard path={`${name}/fx`} />
+          <For each={order}>
+            {(effect) => (
+              <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && carried !== effect && moveBefore(carried, effect)}>
+                <DeviceCard path={`${name}/chain/${effect}`} on={() => !isOff(effect)} onPower={() => toggle(effect)} onClose={() => remove(effect)} />
+              </div>
+            )}
+          </For>
+          <div key="add-effect" style={{ paddingX: 8, paddingY: 4, radius: 6, background: COLOR.off, fontSize: 11 }} onPress={addEffect}>
+            + Effect
+          </div>
+        </div>
+      );
+    };
+
     const TrackHead = ({ each }: { each: (typeof children)[number] }) => (
       <>
-        <div style={{ width: 56, fontSize: 11, color: COLOR.text }} onPress={() => choose(new Set(), each.name)}>{each.name}</div>
+        {() =>
+          memory.renaming === each.name ? (
+            <Input value={() => titleOf(each)} width={56} focus onCommit={(title) => rename(each.name, title)} />
+          ) : (
+            <div key={`name-${each.name}`} style={{ width: 56, fontSize: 11, color: COLOR.text }}
+              onPress={({ clicks }) => (clicks === 2 && each.tool === "track" ? (memory.renaming = each.name) : choose(new Set(), each.name))}>
+              {() => titleOf(each)}
+            </div>
+          )
+        }
         <Button label="M" on={() => muted(each)} color={COLOR.mute} onPress={() => toggleMute(each.name)} />
         <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onPress={() => toggleSolo(each.name)} />
         <Show when={() => recordable(each)}>
@@ -304,7 +424,7 @@ export const song = tool({
               ))}
             </Space>
             <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [0, END], y: [0, Math.max(rows().length, 1)] })} zoom={{ x: [0.1, 8] }}
-              background={COLOR.lane} onPress={pressLane}>
+              background={COLOR.lane} onPress={pressLane} onDrop={dropOnTimeline}>
               {Array.from({ length: BARS }, (_, bar) => (
                 <Line from={[bar * BAR, 0]} to={[bar * BAR, 1000]} color={COLOR.bar} width={1} />
               ))}
@@ -363,6 +483,10 @@ export const song = tool({
             </Space>
           </div>
         </div>
+        {() => {
+          const shown = memory.track;
+          return shown !== null && tracks().some((each) => each.name === shown) ? <Rack name={shown} /> : null;
+        }}
         <Show when={open}>
           {() => (
             <div style={{ height: EDITOR, gap: 4, padding: 8 }}>

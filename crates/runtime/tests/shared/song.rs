@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 const SONG: &str = include_str!("../../../../tooling/agent-eval/examples/song.tsx");
 const TRACK: &str = include_str!("../../../../tooling/agent-eval/examples/track.ts");
 const TAPE: &str = include_str!("../../../../tooling/agent-eval/examples/tape.ts");
+const CHAIN: &str = include_str!("../../../../tooling/agent-eval/examples/chain.ts");
 
 pub(crate) const BAR: u64 = 3840;
 /// The page's sizes, as `song.tsx` has them: a track's row and its header, and points per tick.
@@ -76,7 +77,7 @@ fn song_with(
 ) -> Vec<(String, String)> {
     let project = json!({
         "format": 1,
-        "extensions": ["instrument", "filter", "utility"],
+        "extensions": ["instrument", "filter", "utility", "reverb"],
         "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
         "connections": [{ "from": { "instance": "song", "port": "audio" }, "to": { "device_output": 0 } }],
     });
@@ -88,6 +89,7 @@ fn song_with(
         ("extensions/song.tsx".to_string(), SONG.to_string()),
         ("extensions/track.ts".to_string(), TRACK.to_string()),
         ("extensions/tape.ts".to_string(), TAPE.to_string()),
+        ("extensions/chain.ts".to_string(), CHAIN.to_string()),
         (
             "state/song/instance.json".to_string(),
             r#"{"tool": "song", "state": {}}"#.to_string(),
@@ -131,6 +133,10 @@ fn song_with(
         files.push((
             format!("{folder}/mix.json"),
             r#"{"tool": "utility", "state": {}}"#.to_string(),
+        ));
+        files.push((
+            format!("{folder}/chain/instance.json"),
+            r#"{"tool": "chain", "state": {}}"#.to_string(),
         ));
         files.push((
             format!("{folder}/level.json"),
