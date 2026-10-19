@@ -17,6 +17,8 @@ const ROW = 64;
 const HEADER = 176;
 const RULER = 32;
 const MASTER_ROW = 40;
+// The row under a track's lanes that adds one.
+const ADD_LANE = 40;
 const EDITOR = 352;
 // The panel of the chosen track, as tall as a card and the room around it.
 const RACK = 192 + 24;
@@ -30,7 +32,7 @@ const [LOW, HIGH] = [36, 96];
 const COLOR = {
   back: "#121317", lane: "#17191e", bar: "#2a2d35", text: "#7c808c", chosen: "#e9ebef", playhead: "#7ee0a0",
   note: "#00000080", marquee: "#a9b1ff33", off: "#2a2d35", mute: "#f0b44c", solo: "#7ee0a0", meter: "#7ee0a0", clear: "#00000000",
-  edit: "#a9b1ff", record: "#ff6b6b", head: "#1c1e24", repeat: "#a9b1ff55", section: "#f0b44c", automation: "#7cc7ff",
+  edit: "#a9b1ff", record: "#ff6b6b", repeat: "#a9b1ff55", section: "#f0b44c",
 } as const;
 const PALETTE = [
   { name: "Blue", colour: "blue" }, { name: "Peach", colour: "peach" }, { name: "Mauve", colour: "mauve" }, { name: "Teal", colour: "teal" },
@@ -292,11 +294,21 @@ export const song = tool({
             each.children.some((child) => child.name === lane && child.tool === "lane") ? [{ lane, target }] : [],
           )
         : [];
-    type Row = { each: Child; lane: { lane: string; target: string } | null };
-    // A row of the timeline for each track, and one for each lane of a track that shows them.
+    type Row = { each: Child; lane: { lane: string; target: string } | null; add?: true };
+    // A row of the timeline for each track, and for a track that shows its lanes, one for each
+    // lane and one, shorter, to add a lane.
     const layout = memo((): Row[] =>
-      rows().flatMap((each) => [{ each, lane: null }, ...(memory.lanes.has(each.name) ? lanesOf(each).map((lane) => ({ each, lane })) : [])]),
+      rows().flatMap((each) => [
+        { each, lane: null },
+        ...(memory.lanes.has(each.name) ? [...lanesOf(each).map((lane) => ({ each, lane })), { each, lane: null, add: true as const }] : []),
+      ]),
     );
+    // Where each row starts, in rows of a track, and where they all end.
+    const heightOf = (row: Row) => (row.add ? ADD_LANE / ROW : 1);
+    const tops = memo(() => layout().reduce<number[]>((all, row, index) => [...all, (all[index] ?? 0) + heightOf(row)], [0]));
+    const topOf = (index: number) => tops()[index] ?? 0;
+    /** The row at `y`, as its place in the layout. */
+    const rowAt = (y: number) => Math.max(tops().findIndex((top) => top > y) - 1, 0);
     const regionsOf = (each: Child) => (each.tool === "tape" ? each.children.filter((child) => child.tool === "region") : []);
     const clipsOf = (each: Child) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);
     const recordable = (each: Child) => (each.tool === "track" || each.tool === "tape") && each.children.some((child) => child.name === "rec");
@@ -394,8 +406,8 @@ export const song = tool({
       onEnd: ({ startX, startY, x, y, shift }) => {
         const [left, right] = [Math.min(startX, x), Math.max(startX, x)];
         const [top, bottom] = [Math.min(startY, y), Math.max(startY, y)];
-        const inside = layout().flatMap(({ each, lane }, row) =>
-          lane || row + 1 <= top || row >= bottom
+        const inside = layout().flatMap(({ each, lane, add }, row) =>
+          lane || add || topOf(row) + 1 <= top || topOf(row) >= bottom
             ? []
             : clipsOf(each)
                 .filter(({ state }) => state.start < right && state.start + lengthOf(state) > left)
@@ -447,12 +459,13 @@ export const song = tool({
       }
     };
     const pressTimeline = ({ clicks, x, y }: Press) => {
-      const row = layout()[Math.floor(y)];
+      const index = rowAt(y);
+      const row = layout()[index];
       if (row?.lane) {
-        if (clicks === 2) addPoint(row.each.name, row.lane, x, 1 - (y - Math.floor(y) - 0.1) / 0.8);
+        if (clicks === 2) addPoint(row.each.name, row.lane, x, 1 - (y - topOf(index) - 0.1) / 0.8);
         return;
       }
-      if (clicks !== 2 || row?.each.tool !== "track") {
+      if (clicks !== 2 || row?.add || row?.each.tool !== "track") {
         choose(new Set());
         return;
       }
@@ -470,7 +483,7 @@ export const song = tool({
       if (added) choose(new Set([added]));
     };
     const dropOnTimeline = ({ files, x, y }: Dropped) => {
-      const row = layout()[Math.floor(y)]?.each;
+      const row = layout()[rowAt(y)]?.each;
       const owner = row?.tool === "tape" ? row : rows().find((each) => each.tool === "tape");
       if (!owner || files.length === 0) return;
       const start = Math.max(Math.round(x / BEAT) * BEAT, 0);
@@ -899,23 +912,30 @@ export const song = tool({
         </div>
       </div>
     );
+    /** What a lane moves, as a person reads it: `Volume`, `Pan`, or the device and its number, `Filter · Cutoff`. */
+    const laneName = (target: string) => {
+      const [path, number] = splitTarget(target);
+      const words = (text: string) => text.replace(/_(hz|db|ms|seconds)$/, "").replace(/[_-]+/g, " ").replace(/^./, (first) => first.toUpperCase());
+      if (path === "mix") return number === "gain_db" ? "Volume" : words(number);
+      return `${words(path.split("/").at(-1) ?? path)} · ${words(number)}`;
+    };
+    /** A lane's name; right-click it to remove the lane. */
     const LaneHead = ({ track, lane }: { track: string; lane: { lane: string; target: string } }) => (
-      <>
-        <div style={{ width: 8 }} />
-        <div style={{ grow: true, fontSize: 10, color: COLOR.automation }}>{lane.target.replace(".", " · ")}</div>
-        <div key={`remove-${track}-${lane.lane}`} style={{ paddingX: 6, fontSize: 11, color: COLOR.text }} onPress={() => removeLane(track, lane.lane)}>×</div>
-      </>
+      <div key={`lane-name-${track}-${lane.lane}`} style={{ grow: true, fontSize: 12, color: "gray-800", truncate: true }}
+        onPress={({ button }) => button === "right" && openMenu([{ label: "Remove lane" }]).then((picked) => picked === 0 && removeLane(track, lane.lane))}>
+        {laneName(lane.target)}
+      </div>
     );
 
     /** The points of a lane on row `row`: lines between them, and a handle per point. */
-    const LaneRow = ({ track, lane, row }: { track: string; lane: { lane: string; target: string }; row: Accessor<number> }) => {
+    const LaneRow = ({ track, lane, row, colour }: { track: string; lane: { lane: string; target: string }; row: Accessor<number>; colour: Accessor<Color> }) => {
       const points = () => {
         const owner = tracks().find((each) => each.name === track);
         const child = owner?.tool === "track" ? owner.children.find((each) => each.name === lane.lane) : undefined;
         return child?.tool === "lane" ? child.state.points : [];
       };
       const range = () => rangeOf(track, lane.target, points());
-      const yOf = (value: number) => row() + 0.1 + (1 - upOf(range(), value)) * 0.8;
+      const yOf = (value: number) => topOf(row()) + 0.1 + (1 - upOf(range(), value)) * 0.8;
       const [pressed, press] = signal<number | null>(null);
       const pointDrag: Drag = {
         id: "point",
@@ -929,15 +949,17 @@ export const song = tool({
       };
       return (
         <>
-          <Rect x={0} y={row} width={end} height={1} color={COLOR.head} />
+          <Rect x={-1e6} y={() => topOf(row())} width={2e6} height={timeline.pointY} color="alpha/5" />
           <For each={points}>
             {(point, index) => {
               const next = () => points()[index() + 1];
               return [
-                <Line from={() => [index() === 0 ? 0 : point.tick, yOf(point.value)] as const} to={() => [next()?.tick ?? end(), yOf(next()?.value ?? point.value)] as const}
-                  color={COLOR.automation} width={2} />,
-                <Rect x={() => timeline.pointX.times(-4).plus(point.tick)} y={() => timeline.pointY.times(-4).plus(yOf(point.value))}
-                  width={timeline.pointX.times(8)} height={timeline.pointY.times(8)} radius={4} color={COLOR.chosen} cursor="grab"
+                // Flat before the first point and after the last.
+                <Line from={() => [index() === 0 ? 0 : point.tick, yOf(point.value)] as const} to={() => [point.tick, yOf(point.value)] as const} color={colour} width={1.5} />,
+                <Line from={() => [point.tick, yOf(point.value)] as const} to={() => [next()?.tick ?? end(), yOf(next()?.value ?? point.value)] as const}
+                  color={colour} width={1.5} />,
+                <Rect x={() => timeline.pointX.times(-3.5).plus(point.tick)} y={() => timeline.pointY.times(-3.5).plus(yOf(point.value))}
+                  width={timeline.pointX.times(7)} height={timeline.pointY.times(7)} radius={3.5} color={colour} cursor="grab"
                   drag={pointDrag} moves={() => (pressed() === index() ? ["point"] : undefined)}
                   onPress={({ alt }) => (alt ? points().length > 1 && editPoints("Remove a point", track, lane.lane, (all) => all.filter((_, each) => each !== index())) : press(index()))} />,
               ];
@@ -967,7 +989,7 @@ export const song = tool({
       const dim = () => (muted(each) ? 0.4 : 1);
       // The clip and its notes move together, and its notes end at its end.
       return (
-        <Group x={() => clip.state.start} y={row} clip={() => ({ width: length(), height: 1 })}
+        <Group x={() => clip.state.start} y={() => topOf(row())} clip={() => ({ width: length(), height: 1 })}
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
           <Rect x={0} y={4 / ROW} width={() => timeline.pointX.negate().plus(length())} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
             color="alpha/5" border={() => (picked() ? "gray-950" : "alpha/10")} borderWidth={1} opacity={dim}
@@ -1032,7 +1054,7 @@ export const song = tool({
         if (button === "right") openMenu([{ label: "Delete" }]).then((picked) => picked === 0 && removeRegion(each.name, region.name));
       };
       return (
-        <Group x={() => region.state.start} y={row} moves={() => (chosen() ? ["region"] : undefined)}>
+        <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? ["region"] : undefined)}>
           <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
             drag={moveRegion} onPress={press} cursor="grab" />
           <Wave x={0} y={8 / ROW} width={width} height={(ROW - 16) / ROW} list={sound} band low={-1} high={1} color={() => colourOf(each)} />
@@ -1204,10 +1226,21 @@ export const song = tool({
             </div>
             <div style={{ grow: true }} follow={{ y: "timeline" }}>
               <For each={layout}>
-                {({ each, lane }) =>
-                  lane ? (
-                    <div style={{ height: ROW, direction: "row", gap: 6, align: "center", paddingLeft: 36, paddingRight: 8 }}>
-                      <LaneHead track={each.name} lane={lane} />
+                {({ each, lane, add }) =>
+                  add ? (
+                    <div style={{ height: ADD_LANE, paddingX: 8, paddingY: 4 }}>
+                      <div key={`add-lane-${each.name}`} style={{ grow: true, direction: "row", align: "center", paddingLeft: 12, paddingRight: 10, radius: 6, background: "alpha/5", hover: "alpha/8" }}
+                        onPress={() => addLane(each)}>
+                        <div style={{ grow: true, fontSize: 13, weight: "medium", color: "gray-950" }}>Add lane</div>
+                        <Icon name="chevron-down" size={14} color="gray-700" />
+                      </div>
+                    </div>
+                  ) : lane ? (
+                    <div style={{ height: ROW }}>
+                      <div style={{ height: 1, background: "alpha/5", keep: true }} />
+                      <div style={{ grow: true, direction: "row", align: "center", paddingLeft: 36, paddingRight: 8 }}>
+                        <LaneHead track={each.name} lane={lane} />
+                      </div>
                     </div>
                   ) : (
                     <div key={`head-${each.name}`} carry={`track:${each.name}`} onDrop={({ carried }) => carried?.startsWith("track:") && carried.slice(6) !== each.name && moveTrack(carried.slice(6), each.name)}
@@ -1255,18 +1288,18 @@ export const song = tool({
               <Circle x={now.tick} y={RULER / 2} radius={3.5} color="gray-950" />
             </Space>
             <div style={{ height: 1, background: "alpha/5", keep: true }} />
-            <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-LEAD, end()], y: [0, Math.max(layout().length, 1)] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }}
+            <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-LEAD, end()], y: [0, Math.max(tops().at(-1) ?? 0, 1)] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }}
               drag={marqueeDrag} onPress={pressTimeline} onDrop={dropOnTimeline}>
               <For each={layout}>
-                {({ each, lane }, row) =>
-                  lane ? (
-                    <LaneRow track={each.name} lane={lane} row={row} />
+                {({ each, lane, add }, row) =>
+                  add ? null : lane ? (
+                    <LaneRow track={each.name} lane={lane} row={row} colour={() => colourOf(each)} />
                   ) : (
                     <>
                       <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} />}</For>
                       <Show when={() => memory.recording !== null && memory.armed.has(each.name) && each.tool === "tape"}>
                         {() => (
-                          <Wave x={() => memory.recording ?? 0} y={() => row() + 0.12} width={() => now.tick.minus(memory.recording ?? 0).max(1)}
+                          <Wave x={() => memory.recording ?? 0} y={() => topOf(row()) + 0.12} width={() => now.tick.minus(memory.recording ?? 0).max(1)}
                             height={0.76} list={now.take(`${each.name}/rec`)} band low={-1} high={1} color="red" />
                         )}
                       </Show>

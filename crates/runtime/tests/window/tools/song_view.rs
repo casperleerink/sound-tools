@@ -298,7 +298,7 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     // The lanes show under the track: the cutoff's, then the new one. A double click adds a
     // point to the cutoff's, and an alt click on it takes it away again.
     let at = window.on_lane(2 * BAR, 1);
-    window.until_found("div-remove-t00-lane-cutoff");
+    window.until_found("div-lane-name-t00-lane-cutoff");
     window.double_click(at);
     let points = |window: &mut Opened<'_>| {
         window.record("song/t00/lane-cutoff")["points"]

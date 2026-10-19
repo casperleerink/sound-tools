@@ -175,7 +175,7 @@ fn space_plays_the_song_with_nothing_from_bun(cx: &mut TestAppContext) {
     // The first track chosen: its panel shows its meter.
     let name = window.until_found("div-name-t00");
     window.click(name);
-    window.space_at("fader-t00/mix");
+    window.space_at("volume-t00/mix");
     window.wait_for_bun();
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
