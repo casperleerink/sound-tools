@@ -1451,7 +1451,7 @@ export function Meter(props: { watch: string; label?: string }): Node {
       Rect({ x: 0, y: level.negate().plus(64), width: 8, height: level, radius: 2, color: "#7ee0a0" }),
     ],
   });
-  return h("div", { style: { align: "center", gap: 4 } }, bar, props.label);
+  return h("div", { style: { align: "center", gap: 4 } }, bar, props.label && h("div", { style: { color: KNOB.label, fontSize: 11 } }, props.label));
 }
 
 /** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
