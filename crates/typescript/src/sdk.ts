@@ -1729,9 +1729,17 @@ function reconcileField(target: Record<PropertyKey, unknown>, key: PropertyKey, 
   }
 }
 
-/** A value of `next` as a store keeps it: its own copy, which a later reconcile changes in place. */
+/**
+ * A value of `next` as a store keeps it: its own copy, which a later reconcile changes in place.
+ * Each copy of a frozen value remembers it, so the next reconcile skips what did not change
+ * instead of walking all of it once.
+ */
 function adopted<T>(value: T): T {
-  return isWrapped(value) ? structuredClone(value) : value;
+  if (!isWrapped(value)) return value;
+  const copy: Record<PropertyKey, unknown> = Array.isArray(value) ? ([] as never) : {};
+  for (const [key, each] of Object.entries(value)) copy[key] = adopted(each);
+  if (Object.isFrozen(value)) madeFrom.set(copy, value);
+  return copy as T;
 }
 
 function reconcileList(target: unknown[], next: unknown[]) {
@@ -2606,6 +2614,7 @@ export const host = {
   nodeEvent,
   store,
   reconcile,
+  adopted,
   readFields,
   isRead,
   batch,

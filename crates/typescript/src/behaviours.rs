@@ -121,6 +121,17 @@ impl Key {
 /// What Bun answered: the declaration, or why there is none, as a sentence.
 pub(crate) type Answer = Result<Declaration, String>;
 
+/// What a behaviour read when it answered: the fields of its own state, and the fields of any
+/// child's state; `None` when it read them all. The names and tools of the children always
+/// count. Its answer holds for any record and children that agree on these, as a behaviour is a
+/// pure function of what it reads.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Reads {
+    pub state: Option<Vec<String>>,
+    pub children: Option<Vec<String>>,
+}
+
 /// What an instance plays, and what is wrong when it is not what its record says.
 pub(crate) struct Declared {
     pub declaration: Declaration,
@@ -168,6 +179,8 @@ struct Owner {
     asking: Option<u64>,
     /// The key of its record and children as they are now.
     wanted: u64,
+    /// What its last answer read, which the next keys are made of.
+    reads: Option<Reads>,
 }
 
 struct Asked {
@@ -180,14 +193,23 @@ fn store() -> MutexGuard<'static, Store> {
     STORE.0.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// What the behaviour of `instance` of `tool` declares for its record and its children, which
-/// hash to `key`: the answer of `bun` when it has one, else the last declaration while `bun`
-/// works it out. Before it asks, `tell` tells `bun` those records. Never waits.
+/// What the last answer of the behaviour of `instance` read, if it has one.
+pub(crate) fn reads_of(assets: &Assets, instance: &InstanceId) -> Option<Reads> {
+    let store = store();
+    let owner = store.owners.get(&(assets.clone(), instance.clone()))?;
+    owner.reads.clone()
+}
+
+/// What the behaviour of `instance` of `tool` declares for its record and its children: the
+/// answer of `bun` when it has one, else the last declaration while `bun` works it out. `key`
+/// is of all of them, and `read` of what its last answer read (see [`reads_of`]), which an
+/// answer is kept under: a change of a field it does not read asks nothing. Before it asks,
+/// `tell` tells `bun` those records. Never waits.
 pub(crate) fn declared(
     bun: &Bun,
     (assets, instance): (&Assets, &InstanceId),
     tool: &str,
-    key: u64,
+    (key, read): (u64, Option<u64>),
     tell: impl FnOnce() -> bool,
 ) -> Declared {
     let mut store = store();
@@ -206,6 +228,7 @@ pub(crate) fn declared(
         last: Declaration::default(),
         asking: None,
         wanted: key,
+        reads: None,
     };
     let owner = owners.entry(owner_key.clone()).or_insert_with(new);
     if owner.opening != bun.opening() {
@@ -219,6 +242,20 @@ pub(crate) fn declared(
         declaration: owner.last.clone(),
         problem: Some(problem),
     };
+    owner.wanted = key;
+    // An answer asked before it was known what it reads is kept under the key of all: it holds
+    // under the key of what it read too.
+    if let Some(read) = read
+        && !owner.known.iter().any(|(known, _)| *known == read)
+        && let Some((_, answer)) = owner.known.iter().find(|(known, _)| *known == key)
+    {
+        let answer = answer.clone();
+        owner.known.push_back((read, answer));
+        if owner.known.len() > KEPT {
+            owner.known.pop_front();
+        }
+    }
+    let key = read.unwrap_or(key);
     owner.wanted = key;
     match owner.known.iter().find(|(known, _)| *known == key) {
         Some((_, Ok(declaration))) => {
@@ -258,14 +295,14 @@ pub(crate) fn declared(
     }
 }
 
-/// Bun answered `question`.
-pub(crate) fn answered(question: u64, answer: Answer) {
+/// Bun answered `question`, having read `reads`.
+pub(crate) fn answered(question: u64, answer: Answer, reads: Option<Reads>) {
     let mut store = store();
-    answer_in(&mut store, question, answer);
+    answer_in(&mut store, question, answer, reads);
     STORE.1.notify_all();
 }
 
-fn answer_in(store: &mut Store, question: u64, answer: Answer) {
+fn answer_in(store: &mut Store, question: u64, answer: Answer, reads: Option<Reads>) {
     let Some(Asked { owner, key, bun }) = store.asked.remove(&question) else {
         return;
     };
@@ -275,6 +312,9 @@ fn answer_in(store: &mut Store, question: u64, answer: Answer) {
         // It plays this already: no need to run its behaviour again.
         let playing =
             kept.wanted == key && matches!(&answer, Ok(declared) if *declared == kept.last);
+        if reads.is_some() {
+            kept.reads = reads;
+        }
         kept.known.retain(|(known, _)| *known != key);
         kept.known.push_back((key, answer));
         if kept.known.len() > KEPT {
@@ -300,7 +340,7 @@ pub(crate) fn ended(number: u64, why: &str) {
         .collect();
     for question in questions {
         let problem = format!("its behaviour did not run: the TypeScript host {why}");
-        answer_in(&mut store, question, Err(problem));
+        answer_in(&mut store, question, Err(problem), None);
     }
     STORE.1.notify_all();
 }
@@ -314,6 +354,11 @@ pub fn take_declared(assets: &Assets) -> Vec<InstanceId> {
         .partition(|(project, _)| project == assets);
     store.ready = others;
     ours.into_iter().map(|(_, instance)| instance).collect()
+}
+
+/// How many questions the behaviours of this process asked Bun, for tests and measurements.
+pub fn asked_behaviours() -> u64 {
+    store().next_question
 }
 
 /// Waits until Bun answered everything it was asked, or stopped. For a render, which plays what

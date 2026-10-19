@@ -103,6 +103,7 @@ fn a_fader_turns_the_volume_of_its_strip_as_one_undo_step_and_changes_no_node(
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let batches = sound_typescript::heard_batches();
+    let questions = sound_typescript::asked_behaviours();
     window.press(fader);
     for step in 1..=11 {
         window.drag_to(fader - point(px(0.), px(step as f32 * 5.)));
@@ -113,9 +114,11 @@ fn a_fader_turns_the_volume_of_its_strip_as_one_undo_step_and_changes_no_node(
     window.wait_for_bun();
     assert_eq!(window.undo_label().as_deref(), Some("Change the volume"));
     // Its page read the mute of the strip, not its volume: no change of a node, and no press.
-    // Bun still hears each move, as the behaviour of a parent runs again when a child changes.
+    // Its behaviour reads the names and tools of its children, not their volumes: no question.
+    // Bun still hears the record, which a binding reads.
     assert_eq!(sound_typescript::heard_batches(), batches);
     assert_eq!(sound_typescript::sent_updates_and_events().1, asked.1);
+    assert_eq!(sound_typescript::asked_behaviours(), questions);
     let session = window.session.clone();
     window
         .cx

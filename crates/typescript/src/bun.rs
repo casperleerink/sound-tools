@@ -379,6 +379,8 @@ enum Line {
     Declared {
         question: u64,
         declaration: Result<Value, String>,
+        #[serde(default)]
+        reads: Option<behaviours::Reads>,
     },
     #[serde(untagged)]
     Event(Event),
@@ -845,6 +847,7 @@ fn hear(
             Ok(Line::Declared {
                 question,
                 declaration,
+                reads,
             }) => {
                 let answer = declaration.map_err(|error| format!("its behaviour failed: {error}"));
                 let answer = answer.and_then(|declaration| {
@@ -856,7 +859,7 @@ fn hear(
                         )
                     })
                 });
-                behaviours::answered(question, answer);
+                behaviours::answered(question, answer, reads);
             }
             // Bun loads once.
             Ok(Line::Loading { .. } | Line::Loaded(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}

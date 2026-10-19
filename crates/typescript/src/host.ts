@@ -259,7 +259,56 @@ function sound(spec: Spec, choices: Choices): Graph {
  * Answers what the behaviour of a parent declares for its record and its children as the
  * runtime told them, which its question is for: not with the edits this Bun sent since.
  */
+/**
+ * What a behaviour read of its record and its children: the fields of its own state, and the
+ * fields of any child's state, each `null` when it read them all, as `Object.keys` does. The
+ * names and tools of its children always count. The runtime asks again only when one of these
+ * changed, so a fader dragged on a child does not ask a behaviour that reads only names.
+ */
+type Reads = { state: string[] | null; children: string[] | null };
+
+/** `source` as a behaviour reads it, which notes each field it reads in `into`. */
+function noting<T extends object>(source: T, into: { fields: Set<string> | null }): T {
+  const note = (key: PropertyKey) => {
+    if (typeof key === "string") into.fields?.add(key);
+  };
+  const all = () => {
+    into.fields = null;
+  };
+  return new Proxy({} as T, {
+    get: (_, key) => (note(key), Reflect.get(source, key)),
+    has: (_, key) => (note(key), Reflect.has(source, key)),
+    ownKeys: () => (all(), Reflect.ownKeys(source)),
+    getOwnPropertyDescriptor: (_, key) => {
+      note(key);
+      const descriptor = Reflect.getOwnPropertyDescriptor(source, key);
+      return descriptor && { ...descriptor, configurable: true };
+    },
+  });
+}
+
+/** The children as a behaviour reads them: every child's state notes the fields it reads. */
+function notingChildren(children: OwnedChild[], into: { fields: Set<string> | null }): OwnedChild[] {
+  return children.map((child) => {
+    let state: unknown;
+    return Object.freeze({
+      name: child.name,
+      tool: child.tool,
+      get state() {
+        return (state ??= isObject(child.state) ? noting(child.state, into) : child.state);
+      },
+      get children() {
+        // What is inside a child is not in what the runtime compares: any change asks again.
+        into.fields = null;
+        return child.children;
+      },
+    }) as OwnedChild;
+  });
+}
+
 function declare({ question, tool, instance }: Extract<Request, { type: "behaviour" }>) {
+  const own = { fields: new Set<string>() as Set<string> | null };
+  const inside = { fields: new Set<string>() as Set<string> | null };
   const declaration = made(() => {
     const spec = specOf(tool);
     if (!spec.behaviour) {
@@ -270,7 +319,10 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
       throw new Error(`the runtime told no record of ${instance}`);
     }
     runs(tool, "behaviour");
-    const answer = spec.behaviour({ state: filledState(spec, record), children: childrenOf(instance, false) });
+    const answer = spec.behaviour({
+      state: noting(filledState(spec, record), own),
+      children: notingChildren(childrenOf(instance, false), inside),
+    });
     // JSON leaves out a `child` that is undefined, which would make the end a port of the parent.
     const connections: unknown[] = Array.isArray(answer?.connections) ? answer.connections : [];
     connections.forEach((connection, index) => {
@@ -293,7 +345,9 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
     }
     return declared;
   });
-  say({ type: "declared", question, declaration });
+  const list = (read: { fields: Set<string> | null }) => (read.fields ? [...read.fields].sort() : null);
+  const reads: Reads = { state: list(own), children: list(inside) };
+  say({ type: "declared", question, declaration, reads });
 }
 
 /** What draws the card of a tool, or its page. */
@@ -491,11 +545,18 @@ function recordOf(id: string, latest = true): Entry | undefined {
 /** The children of `id` in name order, as a behaviour gets them. */
 function childrenOf(id: string, latest = true): OwnedChild[] {
   const known = kids.get(id);
-  // As told: kept until a child changes, so a parent of a thousand takes asks for none of them again.
-  if (known && (!latest || unheard.length === 0)) {
+  // As told: kept until a child changes, so a parent of a thousand takes asks for none of them
+  // again, and an edit of one clip makes again only the lists it is in.
+  if (known && (!latest || !editedBelow(id))) {
     return (known.told ??= listed(id, known.names, false));
   }
   return listed(id, known?.names ?? new Set(), latest);
+}
+
+/** Whether an edit the runtime has not said it heard changes a record inside `id`. */
+function editedBelow(id: string): boolean {
+  const inside = `${id}/`;
+  return unheard.some(({ changes }) => changes.some((change) => change.id.startsWith(inside)));
 }
 
 function listed(id: string, told: Set<string>, latest: boolean): OwnedChild[] {
@@ -794,8 +855,8 @@ function storesOf(instance: string, spec: Spec, record: Entry): Stores {
   if (!known) {
     known = {
       tool: spec.name,
-      state: structuredClone(filledObject(spec.state, record.state)) as Record<string, unknown>,
-      children: structuredClone(childrenOf(instance)) as OwnedChild[],
+      state: sdk.host.adopted(filledState(spec, record)) as Record<string, unknown>,
+      children: sdk.host.adopted(childrenOf(instance)) as OwnedChild[],
       watches: {},
       transport: { ...transport },
     };

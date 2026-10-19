@@ -1151,10 +1151,19 @@ impl Sounds {
         context: &mut BehaviourContext<'_>,
     ) -> Result<(), BehaviourError> {
         let id = context.id().clone();
-        let children = kept_children((context.assets(), &id), context.child_stamps())
+        let reads = behaviours::reads_of(context.assets(), &id);
+        let child_fields = reads.as_ref().and_then(|reads| reads.children.as_deref());
+        let children = kept_children((context.assets(), &id), context.child_stamps(), child_fields)
             .map_err(|error| BehaviourError::Other(error.to_string()))?;
+        let read = reads.as_ref().map(|reads| {
+            let own = match &reads.state {
+                Some(fields) => picked(state, fields),
+                None => state.to_string(),
+            };
+            key(&(&self.info.name, &own, children.read_key))
+        });
         let state = state.to_string();
-        let key = key(&(&self.info.name, &state, children.key));
+        let key = (key(&(&self.info.name, &state, children.key)), read);
         let tell = || {
             let told = (children.children.iter())
                 .map(|child| (&child.id, child.tool, child.key, &*child.json));
@@ -1308,6 +1317,10 @@ fn devices(
 struct Kept {
     children: Vec<KeptChild>,
     key: u64,
+    /// Of the children's names and tools, and the fields of their states in `fields`.
+    read_key: u64,
+    /// The fields of a child's state the behaviour read; `None` for all.
+    fields: Option<Vec<String>>,
 }
 
 struct KeptChild {
@@ -1317,6 +1330,30 @@ struct KeptChild {
     json: Arc<str>,
     /// Of its tool and its state.
     key: u64,
+    /// Of its tool and the fields of its state the behaviour read.
+    read_key: u64,
+}
+
+/// The fields `fields` of `state`, as text to make a key of: a missing one is `null`.
+fn picked(state: &Value, fields: &[String]) -> String {
+    let values: Vec<(&str, Option<&Value>)> = (fields.iter())
+        .map(|field| (field.as_str(), state.get(field)))
+        .collect();
+    serde_json::to_string(&values).unwrap_or_default()
+}
+
+/// The key of the fields `fields` of a child's state, `json`; of all of it with no `fields`.
+fn read_key(
+    tool: &str,
+    json: &str,
+    full: u64,
+    fields: Option<&[String]>,
+) -> Result<u64, serde_json::Error> {
+    let Some(fields) = fields else {
+        return Ok(full);
+    };
+    let state: Value = serde_json::from_str(json)?;
+    Ok(key(&(tool, picked(&state, fields))))
 }
 
 /// What each owner of every project made of the state of each child, so its behaviour reads a
@@ -1329,6 +1366,7 @@ static KEPT: Mutex<BTreeMap<(Assets, InstanceId), Arc<Kept>>> = Mutex::new(BTree
 fn kept_children<'a>(
     (assets, owner): (&Assets, &InstanceId),
     stamps: impl Iterator<Item = (&'a str, &'static str, RecordStamp)>,
+    fields: Option<&[String]>,
 ) -> Result<Arc<Kept>, Box<dyn std::error::Error>> {
     let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
     let entry = (assets.clone(), owner.clone());
@@ -1337,7 +1375,9 @@ fn kept_children<'a>(
     let is_known = |(name, tool, stamp): &(&str, &str, RecordStamp), child: &KeptChild| {
         child.id.name() == *name && child.tool == *tool && child.stamp == *stamp
     };
-    let unchanged = stamps.len() == last.children.len()
+    let same_fields = last.fields.as_deref() == fields;
+    let unchanged = same_fields
+        && stamps.len() == last.children.len()
         && (stamps.iter().zip(&last.children)).all(|(stamp, child)| is_known(stamp, child));
     if unchanged {
         return Ok(last);
@@ -1354,6 +1394,10 @@ fn kept_children<'a>(
                 stamp,
                 json: child.json.clone(),
                 key: child.key,
+                read_key: match same_fields {
+                    true => child.read_key,
+                    false => read_key(tool, &child.json, child.key, fields)?,
+                },
             },
             None => {
                 let json: Arc<str> = stamp.state_json()?.into();
@@ -1363,6 +1407,7 @@ fn kept_children<'a>(
                     id,
                     tool,
                     stamp,
+                    read_key: read_key(tool, &json, key, fields)?,
                     json,
                     key,
                 }
@@ -1373,8 +1418,13 @@ fn kept_children<'a>(
     let keys: Vec<(&str, u64)> = (children.iter())
         .map(|child| (child.id.name(), child.key))
         .collect();
+    let read_keys: Vec<(&str, u64)> = (children.iter())
+        .map(|child| (child.id.name(), child.read_key))
+        .collect();
     let fresh = Arc::new(Kept {
         key: key(&keys),
+        read_key: key(&read_keys),
+        fields: fields.map(<[String]>::to_vec),
         children,
     });
     kept.insert(entry, fresh.clone());
