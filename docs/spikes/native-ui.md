@@ -116,3 +116,33 @@ The 22 ms release splits into: Bun runs `onEnd` and sends the 2,000-note edit (a
 5. A built-in device's own card inside a page, for the rack.
 6. Drag reorder of boxes, for effect chains and tracks.
 7. A pressed shape moving with its own drag before Bun answers, and sizes in points inside unit spaces.
+
+### Round 3a
+
+**Works.** Everything that moves on its own goes through live values, with no new element but `Wave`. `tooling/agent-eval/examples/mixer.tsx` is a mixer page: a strip per `tone` child with a fader that turns its utility's `gain_db` natively, a pan knob that shows what a cable plays into it, mute and solo, stereo meters with fall-off and peak hold, a master meter, the device output, a scope, the level's history and a blinking light. `crates/runtime/tests/window/tools/mixer.rs` checks that the meters follow the sound, the fader is one undo step and the pan follows the cable, each with zero Bun requests; `typescript-mixer.png` shows five tones playing.
+
+**What it took:**
+- *Engine sources.* `now.peak` reads peaks; `now.output` reads the device output through `SharedPeaks` (`sound_ui`), because `Peaks` have one reader and the transport reads the output too. A meter is the end of a connection, `{ to: { meter } }`: one small processor that records peaks and a scope. `now.played` reads lanes, or a watch a number cable now writes, else the record.
+- *State across frames.* `.smooth`, `.fall` and `.hold` keep state under a key `sdk.ts` hashes from the expression, so the same expression drawn twice is one, as a signal used twice is. No identity from the tree was needed.
+- *Per-child-field read tracking.* Without it, a fader drag on a child asked Bun for a tree on every move, because the page reads `children`. Same fix as phase 1, one level down.
+
+**Lists, the design choice.** A list is not a live value. A `Wave` shape takes a list source: `scope` (the frames a meter keeps) or `history` (any live value, one sample a frame, keyed like the easings). The window copies the values each frame and draws one point per column: a line, or a band of quads from min to max. Rejected: live lists with ops (map, FFT); nothing needed them yet. A spectrum would be a third source worked out natively from the scope.
+
+**Awkward:**
+- Strip order is name order: the first strip `sway` moves is `bass`, not the first one written.
+- A child's field range comes from its automation entry; a field that is not automatable has no fraction.
+- `now.childField` names are strings, not typed by the children.
+- Bands cost: 16 waves of 8192 frames as bands are 4.3 ms a frame (10 ms as filled paths). Lines are 1.3 ms.
+- The page asks for a frame at display rate while anything animates, even when silent. Stopping once easings settle would cost nothing to add.
+- Keyed tree patches: not built. Nothing here needed them; every tree in round 3a came only from clicks.
+
+**Numbers.** M1 Max, release-fast, CPU only. Run with `cargo nextest run -p runtime --test window --cargo-profile release-fast --run-ignored only --no-capture -E 'test(/performance_of_the_mixer|performance_of_waves/)'`.
+
+| | Frame | Bun requests |
+| --- | --- | --- |
+| Mixer, 8 strips, playing | 0.60 ms | 0 in 120 frames |
+| Mixer, 32 strips, playing | 1.84 ms | 0 in 120 frames |
+| 1 wave of 8192 frames, line | 0.13 ms | 0 |
+| 16 waves, lines / bands | 1.3 / 4.3 ms | 0 |
+
+**Verdict.** The model covers real-time UI beyond drags with the same mechanism: engine levels, cables, the clock, easing and lists are sources of live values, worked out natively once a frame. A playing mixer of 32 strips costs under 2 ms a frame and asks Bun for nothing.
