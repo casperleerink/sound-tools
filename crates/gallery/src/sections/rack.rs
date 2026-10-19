@@ -1,5 +1,5 @@
 //! Rack section: every control of a device card and the mixer strip, in each of its states, as
-//! in `docs/mockups/components.png`: knob, volume, meter and gain
+//! in `docs/mockups/components.png`: knob, meter and gain
 //! reduction, the display of a limiter, toggle, segmented control, select, slider and drag number, and device cards with their header and a
 //! display, and a card with sections behind expand. The focus section beside it shows the focus ring of each, which one window can
 //! show only one at a time.
@@ -17,7 +17,6 @@ use sound_ui::components::cell::{Cell, ROW_HEIGHT};
 use sound_ui::components::curves::{Adsr, envelope_display, lfo_line};
 use sound_ui::components::device_card::{Column, DeviceCard, Section};
 use sound_ui::components::display::{Axis, Display, Handle};
-use sound_ui::components::drag_number::DragNumber;
 use sound_ui::components::dropdown_menu::{DropdownMenu, MenuEntry, MenuGroup, MenuItem, Trigger};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange, short};
@@ -28,9 +27,8 @@ use sound_ui::components::select::Select;
 use sound_ui::components::slider::Slider;
 use sound_ui::components::split_button::SplitButton;
 use sound_ui::components::toggle::Toggle;
-use sound_ui::components::volume::Volume;
 
-use super::overlays::add_track_button;
+use super::overlays::split_button;
 
 /// A value of a sample, and where it was at the press of a drag, for escape.
 #[derive(Clone, Copy)]
@@ -69,7 +67,6 @@ impl<V: Copy> Live<V> {
 /// The values of the samples. Built once, kept in element state.
 pub(crate) struct RackState {
     knobs: [Live<f32>; 5],
-    volumes: [Live<f32>; 5],
     levels: [Level; 5],
     toggles: [bool; 6],
     segment: SharedString,
@@ -80,7 +77,6 @@ pub(crate) struct RackState {
     envelope: [Live<f32>; 4],
     reverb: [Live<f32>; 2],
     reverb_expanded: bool,
-    tempo: Live<f64>,
     /// The value of the controlled select, and of the slider.
     table: SharedString,
     amount: Live<f32>,
@@ -158,7 +154,6 @@ impl RackState {
         let select = select(cx);
         Self {
             knobs: [480., -0.3, 0., 1., 480.].map(Live::new),
-            volumes: [-3.5, 0., 0., 2., -3.5].map(Live::new),
             levels: [
                 level(-24., false),
                 level(-10., false),
@@ -181,7 +176,6 @@ impl RackState {
             envelope: [0.005, 0.35, 0.25, 0.12].map(Live::new),
             reverb: [0.02, 2.4].map(Live::new),
             reverb_expanded: true,
-            tempo: Live::new(93.5),
             table: "vowels".into(),
             amount: Live::new(0.4),
         }
@@ -260,12 +254,6 @@ pub(crate) fn sample(state: &'static str, cx: &App, element: impl IntoElement) -
         .child(element)
         .child(div().text_size(px(12.)).text_color(muted).child(state))
         .into_any_element()
-}
-
-/// A tempo to a tenth, with no zero at the end: `93.5`, `120`.
-fn tempo_text(bpm: f64) -> String {
-    let text = format!("{bpm:.1}");
-    text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 fn hertz(value: f32) -> String {
@@ -369,48 +357,6 @@ fn knobs(state: &Entity<RackState>, cx: &App) -> AnyElement {
     )
 }
 
-fn volumes(state: &Entity<RackState>, cx: &App) -> AnyElement {
-    let rack = state.read(cx);
-    let (values, levels) = (rack.volumes.map(|live| live.value), rack.levels);
-    let volume = |index: usize| {
-        Volume::new(("volume", index), values[index])
-            .level(levels[index])
-            .on_change(update(state, move |s, change| {
-                s.volumes[index].follow(change)
-            }))
-            .on_clear_clip({
-                let state = state.clone();
-                move |_, cx| {
-                    state.update(cx, |s, cx| {
-                        s.levels[index].clipped = false;
-                        cx.notify();
-                    })
-                }
-            })
-    };
-    block(
-        "Volume: the fader thumb on the meter",
-        cx,
-        [
-            sample("quiet", cx, volume(0)),
-            sample("normal", cx, volume(1)),
-            sample("hot", cx, volume(2)),
-            sample("clipped", cx, volume(3)),
-            sample("silent", cx, volume(4)),
-            sample(
-                "disabled",
-                cx,
-                Volume::new("volume-off", -6.).disabled(true),
-            ),
-            sample(
-                "automated",
-                cx,
-                Volume::new("volume-automated", -9.).automated(true),
-            ),
-        ],
-    )
-}
-
 /// The master meter of the transport pill: the same colours, lying down.
 fn master_meter(state: &Entity<RackState>, cx: &App) -> AnyElement {
     let levels = state.read(cx).levels;
@@ -492,9 +438,7 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
     let (peach, yellow) = (theme.peach, theme.yellow);
     let rack = state.read(cx);
     let (toggles, segment, select) = (rack.toggles, rack.segment.clone(), rack.select.clone());
-    let tempo = rack.tempo.value;
     let (table, amount) = (rack.table.clone(), rack.amount.value);
-    let muted = theme.gray_700;
     let toggle = |index: usize, label: &'static str| {
         Toggle::new(("toggle", index), label, toggles[index])
             .on_change(update(state, move |s, on| s.toggles[index] = on))
@@ -576,15 +520,6 @@ fn choices(state: &Entity<RackState>, cx: &App) -> AnyElement {
                     .value(amount)
                     .default_value(0.)
                     .on_change(update(state, |s, change| s.amount.follow(change))),
-            ),
-            sample(
-                "drag number",
-                cx,
-                DragNumber::new("tempo", tempo, 10., 1000.)
-                    .drag(0.5, 1.)
-                    .on_change(update(state, |s, change| s.tempo.follow(change)))
-                    .child(div().child(tempo_text(tempo)))
-                    .child(div().text_size(px(12.)).text_color(muted).child("bpm")),
             ),
         ],
     )
@@ -973,7 +908,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         .flex_col()
         .gap(px(48.))
         .child(knobs(&state, cx))
-        .child(volumes(&state, cx))
         .child(master_meter(&state, cx))
         .child(gain_reduction(cx))
         .child(limiter_display(cx))
@@ -984,7 +918,6 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
 /// The values of the focus section.
 struct FocusState {
     cutoff: Live<f32>,
-    volume: Live<f32>,
     mute: bool,
     segment: SharedString,
     select: Entity<DropdownMenu>,
@@ -997,12 +930,11 @@ struct FocusState {
 pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let focus = window.use_keyed_state("focus-state", cx, |_, cx| FocusState {
         cutoff: Live::new(480.),
-        volume: Live::new(-3.5),
         mute: false,
         segment: "low".into(),
         select: select(cx),
         on: true,
-        split: add_track_button("focus-split", cx),
+        split: split_button("focus-split", cx),
     });
     let change = |f: fn(&mut FocusState, ValueChange)| {
         let focus = focus.clone();
@@ -1014,7 +946,7 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         }
     };
     let state = focus.read(cx);
-    let (cutoff, volume, mute) = (state.cutoff.value, state.volume.value, state.mute);
+    let (cutoff, mute) = (state.cutoff.value, state.mute);
     let (segment, select, on) = (state.segment.clone(), state.select.clone(), state.on);
     let split = state.split.clone();
     let peach = cx.theme().peach;
@@ -1058,12 +990,6 @@ pub fn focus_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     .label("Cutoff")
                     .readout(hertz(cutoff))
                     .on_change(change(|state, change| state.cutoff.follow(change))),
-            ),
-            sample(
-                "volume",
-                cx,
-                Volume::new("focus-volume", volume)
-                    .on_change(change(|state, change| state.volume.follow(change))),
             ),
             sample(
                 "toggle",

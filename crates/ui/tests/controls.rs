@@ -1,5 +1,5 @@
-//! The volume, a display handle, two device cards and an automated knob and volume, driven with
-//! a simulated mouse and keys.
+//! A display handle, two device cards and an automated knob, driven with a simulated mouse and
+//! keys.
 
 // Clippy allows unwrap inside `#[test]` functions only, and it does not know `#[gpui::test]`.
 #![allow(clippy::unwrap_used)]
@@ -12,15 +12,8 @@ use sound_ui::components::device_card::{Column, DeviceCard};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{Knob, KnobRange};
-use sound_ui::components::meter;
-use sound_ui::components::volume::Volume;
 
 const UNIT: KnobRange = KnobRange::linear(0., 1.);
-/// The height of the volume, and of its scale under the clip light.
-const HEIGHT: f32 = 118.;
-const SCALE: f32 = HEIGHT - meter::SCALE_TOP;
-const START_DB: f32 = -6.;
-
 /// A value that follows the changes of its control, as an owner of saved state does.
 struct Followed<V> {
     value: V,
@@ -56,7 +49,6 @@ impl<V: Copy> Followed<V> {
 }
 
 struct Controls {
-    volume: Followed<f32>,
     handle: Followed<Point<f32>>,
     /// A handle whose second axis does not move.
     sideways: Followed<Point<f32>>,
@@ -109,28 +101,18 @@ impl Render for Controls {
             fixed,
         )
         .on_change(follow(cx, |view| &mut view.sideways));
-        div()
-            .flex()
-            .gap(px(40.))
-            .p(px(40.))
-            .child(
-                Volume::new("volume", self.volume.value)
-                    .height(HEIGHT)
-                    .on_change(follow(cx, |view| &mut view.volume)),
-            )
-            .child(
-                Display::new("display", 200.)
-                    .handle(handle)
-                    .handle(sideways)
-                    .handle(still),
-            )
+        div().flex().gap(px(40.)).p(px(40.)).child(
+            Display::new("display", 200.)
+                .handle(handle)
+                .handle(sideways)
+                .handle(still),
+        )
     }
 }
 
 fn open(cx: &mut TestAppContext) -> (gpui::Entity<Controls>, &mut VisualTestContext) {
     cx.update(sound_ui::init);
     cx.add_window_view(|_, _| Controls {
-        volume: Followed::new(START_DB),
         handle: Followed::new(point(0.5, 0.5)),
         sideways: Followed::new(point(0.5, 0.3)),
         presses: [0; 2],
@@ -174,54 +156,6 @@ fn release(cx: &mut VisualTestContext, at: Point<Pixels>, click_count: usize) {
         click_count,
     });
     cx.run_until_parked();
-}
-
-/// The level at `start` plus a part of the scale, in tenths as a drag gives it.
-fn moved_db(start: f32, part: f32) -> f32 {
-    let db = meter::db_at(meter::position_of(start) + part);
-    (db * 10.).round() / 10.
-}
-
-#[gpui::test]
-fn the_volume_moves_from_where_it_is_and_shift_escape_and_backspace_work(cx: &mut TestAppContext) {
-    let (view, cx) = open(cx);
-    let fader = bounds(cx, "volume-volume");
-    // Far under the thumb, where the level would be about -60 dB if a press jumped.
-    let low = point(fader.center().x, fader.bottom() - px(10.));
-    press(cx, low, 1);
-    assert!(view.read_with(cx, |view, _| view.volume.changes.is_empty()));
-
-    // A tenth of the scale up: a tenth of the scale from -6 dB, not the level under the pointer.
-    let tenth = px(SCALE / 10.);
-    drag_to(cx, low - point(px(0.), tenth), false);
-    let coarse = moved_db(START_DB, 0.1);
-    assert_eq!(view.read_with(cx, |view, _| view.volume.value), coarse);
-
-    // Shift goes on from there, ten times finer.
-    drag_to(cx, low - point(px(0.), tenth), true);
-    assert_eq!(view.read_with(cx, |view, _| view.volume.value), coarse);
-    drag_to(cx, low - point(px(0.), tenth * 2.), true);
-    let fine = moved_db(START_DB, 0.11);
-    assert_eq!(view.read_with(cx, |view, _| view.volume.value), fine);
-
-    // Escape puts it back.
-    cx.simulate_keystrokes("escape");
-    cx.run_until_parked();
-    assert_eq!(
-        view.read_with(cx, |view, _| view.volume.changes.last().copied()),
-        Some(ValueChange::DragCancel)
-    );
-    assert_eq!(view.read_with(cx, |view, _| view.volume.value), START_DB);
-    release(cx, low, 1);
-
-    // Backspace on the focused volume is 0 dB.
-    cx.simulate_keystrokes("backspace");
-    cx.run_until_parked();
-    assert_eq!(
-        view.read_with(cx, |view, _| view.volume.changes.last().copied()),
-        Some(ValueChange::Set(0.))
-    );
-    assert_eq!(view.read_with(cx, |view, _| view.volume.value), 0.);
 }
 
 #[gpui::test]
@@ -276,10 +210,10 @@ fn a_double_click_resets_only_what_a_handle_moves(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_next_press_ends_a_drag_whose_mouse_up_was_lost(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
-    let fader = bounds(cx, "volume-volume").center();
-    press(cx, fader, 1);
-    drag_to(cx, fader - point(px(0.), px(20.)), false);
-    assert!(view.read_with(cx, |view, _| view.volume.origin.is_some()));
+    let sideways = bounds(cx, "handle-sideways").center();
+    press(cx, sideways, 1);
+    drag_to(cx, sideways + point(px(20.), px(0.)), false);
+    assert!(view.read_with(cx, |view, _| view.sideways.origin.is_some()));
 
     // No mouse up. The button goes down on the handle.
     let handle = bounds(cx, "handle-handle").center();
@@ -292,13 +226,13 @@ fn the_next_press_ends_a_drag_whose_mouse_up_was_lost(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(
-        view.read_with(cx, |view, _| view.volume.changes.last().copied()),
+        view.read_with(cx, |view, _| view.sideways.changes.last().copied()),
         Some(ValueChange::DragEnd)
     );
     // Only the handle moves now.
-    let before = view.read_with(cx, |view, _| view.volume.value);
+    let before = view.read_with(cx, |view, _| view.sideways.value);
     drag_to(cx, handle + point(px(20.), px(0.)), false);
-    assert_eq!(view.read_with(cx, |view, _| view.volume.value), before);
+    assert_eq!(view.read_with(cx, |view, _| view.sideways.value), before);
     assert!(view.read_with(cx, |view, _| view.handle.value.x > 0.5));
 }
 
@@ -397,7 +331,7 @@ fn a_press_on_a_handle_is_heard_whether_or_not_it_drags(cx: &mut TestAppContext)
     assert!(view.read_with(cx, |view, _| view.handle.changes.is_empty()));
 }
 
-/// A knob and a volume that an automation lane moves, or not, with a callback that keeps what
+/// A knob that an automation lane moves, or not, with a callback that keeps what
 /// they send.
 struct Automated {
     automated: bool,
@@ -413,23 +347,13 @@ impl Render for Automated {
                     .unwrap();
             }
         };
-        div()
-            .flex()
-            .gap(px(40.))
-            .p(px(40.))
-            .child(
-                Knob::new("cutoff")
-                    .value(0.5)
-                    .default_value(0.2)
-                    .automated(self.automated)
-                    .on_change(heard(cx)),
-            )
-            .child(
-                Volume::new("volume", START_DB)
-                    .height(HEIGHT)
-                    .automated(self.automated)
-                    .on_change(heard(cx)),
-            )
+        div().flex().gap(px(40.)).p(px(40.)).child(
+            Knob::new("cutoff")
+                .value(0.5)
+                .default_value(0.2)
+                .automated(self.automated)
+                .on_change(heard(cx)),
+        )
     }
 }
 
@@ -455,23 +379,19 @@ fn set_automated(view: &gpui::Entity<Automated>, cx: &mut VisualTestContext) {
 /// An automated control shows its value and changes nothing: a drag, a double click and the
 /// keys send nothing. Tab still stops on it, so the keys reach it and its tooltip.
 #[gpui::test]
-fn an_automated_knob_or_volume_does_not_drag_step_or_reset(cx: &mut TestAppContext) {
+fn an_automated_knob_does_not_drag_step_or_reset(cx: &mut TestAppContext) {
     let (view, cx) = open_automated(cx, true);
-    for selector in ["knob-cutoff", "volume-volume"] {
-        let at = bounds(cx, selector).center();
-        press(cx, at, 1);
-        drag_to(cx, at - point(px(0.), px(40.)), false);
-        release(cx, at - point(px(0.), px(40.)), 1);
-        press(cx, at, 2);
-        release(cx, at, 2);
-    }
-    for _ in 0..2 {
-        cx.update(|window, cx| window.focus_next(cx));
-        cx.run_until_parked();
-        assert!(cx.update(|window, cx| window.focused(cx).is_some()));
-        cx.simulate_keystrokes("up backspace");
-        cx.run_until_parked();
-    }
+    let at = bounds(cx, "knob-cutoff").center();
+    press(cx, at, 1);
+    drag_to(cx, at - point(px(0.), px(40.)), false);
+    release(cx, at - point(px(0.), px(40.)), 1);
+    press(cx, at, 2);
+    release(cx, at, 2);
+    cx.update(|window, cx| window.focus_next(cx));
+    cx.run_until_parked();
+    assert!(cx.update(|window, cx| window.focused(cx).is_some()));
+    cx.simulate_keystrokes("up backspace");
+    cx.run_until_parked();
     assert_eq!(view.read_with(cx, |view, _| view.changes.clone()), []);
 }
 
@@ -480,9 +400,9 @@ fn an_automated_knob_or_volume_does_not_drag_step_or_reset(cx: &mut TestAppConte
 /// the focus where it is.
 #[gpui::test]
 fn a_lane_that_arrives_during_a_drag_ends_it(cx: &mut TestAppContext) {
-    for selector in ["knob-cutoff", "volume-volume"] {
+    {
         let (view, cx) = open_automated(cx, false);
-        let at = bounds(cx, selector).center();
+        let at = bounds(cx, "knob-cutoff").center();
         press(cx, at, 1);
         drag_to(cx, at - point(px(0.), px(20.)), false);
         set_automated(&view, cx);
@@ -490,11 +410,8 @@ fn a_lane_that_arrives_during_a_drag_ends_it(cx: &mut TestAppContext) {
         drag_to(cx, at - point(px(0.), px(60.)), false);
         release(cx, at - point(px(0.), px(60.)), 1);
         let changes = view.read_with(cx, |view, _| view.changes.clone());
-        assert!(
-            matches!(changes[0], ValueChange::Drag(_)),
-            "{selector}: {changes:?}"
-        );
-        assert_eq!(changes[1..], [ValueChange::DragEnd], "{selector}");
+        assert!(matches!(changes[0], ValueChange::Drag(_)), "{changes:?}");
+        assert_eq!(changes[1..], [ValueChange::DragEnd]);
     }
     let (view, cx) = open_automated(cx, false);
     cx.update(|window, cx| window.focus_next(cx));

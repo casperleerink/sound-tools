@@ -1,16 +1,10 @@
-//! Audio section: the clip waveform of an audio clip on the timeline in each of its states, and
-//! the waveform display of the Clip card and the Sampler, as in
-//! `docs/mockups/audio-clip.png` and `sampler.png`. The samples show states, so they hold
-//! still: the arrangement is where they are dragged.
+//! Audio section: the waveform display of the Clip card and the Sampler, as in `sampler.png`.
 
 use std::sync::Arc;
 
-use gpui::{
-    AnyElement, App, Bounds, Pixels, SharedString, Window, canvas, div, point, prelude::*, px,
-};
+use gpui::{AnyElement, App, Window, div, point, prelude::*, px};
 use sound_media::{Audio, Overview};
 use sound_ui::ActiveTheme;
-use sound_ui::components::audio_clip::{AudioClipLook, ClipHandle, Columns, paint_audio_clip};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{Column, DeviceCard, NARROW_CARD_WIDTH};
 use sound_ui::components::display::{Axis, Handle};
@@ -19,10 +13,6 @@ use sound_ui::components::waveform_display::{FileDrop, NoFile, WaveformDisplay, 
 
 use super::rack::{block, sample};
 
-/// A clip as wide as in the mockup, in the row height of the timeline less its gaps.
-const CLIP_WIDTH: f32 = 392.;
-const CLIP_HEIGHT: f32 = 56.;
-
 /// Something like a voice: syllables in phrases, loud to quiet, as a peak from 0 to 1.
 fn voice(time: f32) -> f32 {
     let phrase = (time * 0.5).fract();
@@ -30,86 +20,6 @@ fn voice(time: f32) -> f32 {
     let syllable = (time * std::f32::consts::PI * 4.3).sin().abs().powf(1.5);
     let swell = 0.35 + 0.65 * (time * 1.3).sin().abs();
     (syllable * swell * open).max(0.02)
-}
-
-/// The peaks of `columns` columns over `seconds` of the voice, from `from` on.
-fn peaks(from: f32, seconds: f32, columns: usize) -> Vec<f32> {
-    let step = seconds / columns as f32;
-    (0..columns)
-        .map(|column| voice(from + column as f32 * step))
-        .collect()
-}
-
-/// The look of a clip in the voice's colour, with its waveform over its width.
-fn at_rest(bounds: Bounds<Pixels>, cx: &App) -> AudioClipLook {
-    let mut look = AudioClipLook::new(bounds, cx.theme().mauve);
-    look.waveform = Columns {
-        left: bounds.left(),
-        peaks: peaks(0., 4., CLIP_WIDTH as usize),
-    };
-    look
-}
-
-fn clips(cx: &App) -> AnyElement {
-    let states: [(&'static str, fn(&mut AudioClipLook)); 9] = [
-        ("at rest: the waveform in the track colour", |_| {}),
-        ("pointer on it: two fade handles and the gain", |look| {
-            look.handles = true
-        }),
-        ("selected, with fades and gain", |look| {
-            look.selected = true;
-            look.handles = true;
-            look.fade_in = 40.;
-            look.fade_out = 70.;
-            look.gain = 0.8;
-        }),
-        ("trim: the hidden part of the file, faint", |look| {
-            look.selected = true;
-            look.handles = true;
-            let width = 64.;
-            look.hidden = Some(Columns {
-                left: look.bounds.left() - px(width),
-                peaks: peaks(4., 0.65, width as usize),
-            });
-        }),
-        ("fade: its time on a label", |look| {
-            look.selected = true;
-            look.handles = true;
-            look.fade_in = 110.;
-            look.label = Some(("Fade in 420 ms".into(), ClipHandle::FadeIn));
-        }),
-        ("gain: its value on a label", |look| {
-            look.selected = true;
-            look.handles = true;
-            look.gain = 0.5;
-            look.label = Some(("-6 dB".into(), ClipHandle::Gain));
-        }),
-        ("a file that is not there", |look| {
-            look.waveform = Columns::default();
-            look.missing = Some(SharedString::from("voice-take-2.wav is missing"));
-        }),
-        ("on a muted track: at 40 %", |look| look.muted = true),
-        ("a take while it records: a red border", |look| {
-            look.recording = true
-        }),
-    ];
-    let samples = states.map(|(name, state)| sample(name, cx, themed_clip(state)));
-    block("Clip waveform", cx, samples)
-}
-
-/// A clip in the voice's colour in one of its states, painted as the timeline paints it.
-fn themed_clip(state: fn(&mut AudioClipLook)) -> AnyElement {
-    canvas(
-        |_, _, _| {},
-        move |bounds, (), window, cx| {
-            let mut look = at_rest(bounds, cx);
-            state(&mut look);
-            paint_audio_clip(&look, window, cx);
-        },
-    )
-    .w(px(CLIP_WIDTH))
-    .h(px(CLIP_HEIGHT))
-    .into_any_element()
 }
 
 /// Fourteen and a half seconds of the voice as a WAV file, and its overview.
@@ -354,7 +264,6 @@ pub fn section(_: &mut Window, cx: &mut App) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap(px(48.))
-        .child(clips(cx))
         .child(displays(cx))
         .child(sampler(cx))
 }

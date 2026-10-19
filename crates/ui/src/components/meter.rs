@@ -5,8 +5,7 @@
 //! -6 dBFS, yellow above, a red clip light over the bars until it is clicked, and a 1 pt peak
 //! line. Nothing shows at rest.
 //!
-//! The scale is that of the fader of [`Volume`](super::volume::Volume), which is drawn over a
-//! meter: -inf at the bottom, 0 dB at 80 % of the height and +6 dB at the top.
+//! The scale: -inf at the bottom, 0 dB at 80 % of the height and +6 dB at the top.
 
 use std::rc::Rc;
 
