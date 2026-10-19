@@ -48,6 +48,7 @@ mod scale;
 mod shared_song;
 mod solo;
 mod song;
+mod song_mixer;
 mod summary;
 mod support;
 mod typescript;

@@ -12,8 +12,8 @@
 pub mod audio_input;
 pub mod live_input;
 pub mod other_apps;
-pub mod recorders;
 mod project_menu;
+pub mod recorders;
 mod start;
 
 use std::path::{Path, PathBuf};
@@ -45,10 +45,10 @@ use sound_ui::{
 
 use audio_input::OpenInput;
 use live_input::LiveInput;
-use recorders::Recorders;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
 use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
+use recorders::Recorders;
 
 use crate::app::ChosenDevices;
 use crate::{open_with_loaded, update, views};

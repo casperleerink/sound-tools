@@ -7,8 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
-    BehaviourContext, BehaviourError, JsonTool, JsonToolDoc, OutputEndpoint, State, Ticks,
-    ToolSchema,
+    BehaviourContext, BehaviourError, Frames, JsonTool, JsonToolDoc, OutputEndpoint, Project,
+    State, Ticks, ToolSchema,
 };
 use sound_media::{AUDIO_FOLDER, AudioAsset, AudioPlayer, AudioUpdate, Region};
 
@@ -65,7 +65,7 @@ pub(crate) fn json_tool() -> JsonTool {
         // A file that arrives plays a region that waited for it.
         asset_folders: vec![AUDIO_FOLDER],
         owns_children: false,
-        end: None,
+        end: Some(Box::new(end)),
     }
 }
 
@@ -118,23 +118,37 @@ fn record(state: &Value) -> Result<Record, String> {
     Ok(record)
 }
 
-/// One player of one region. A file that is not there is a problem: the region keeps its place
-/// and is silent until the file arrives.
-fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
-    let record = record(state).map_err(BehaviourError::Other)?;
+/// Where it stops playing in the song: its start, then its stretch of the file at the file's
+/// speed. `None` while the file is not there.
+fn end(project: &Project, state: &Value) -> Option<Ticks> {
+    let region = region(&record(state).ok()?);
+    let clock = project.clock();
+    let file = sound_media::info(project.assets(), &region.asset).ok()?;
+    let length = region.length(&file, clock.sample_rate());
+    Some(clock.tick_at(Frames(clock.frame_of(region.start).0 + length)))
+}
+
+/// The region a record plays.
+fn region(record: &Record) -> Region {
     let gain = match record.gain_db <= SILENT_DB {
         true => 0.0,
         false => 10_f32.powf(record.gain_db / 20.0),
     };
-    let region = Region {
-        asset: record.asset,
+    Region {
+        asset: record.asset.clone(),
         start: record.start,
         file_start_seconds: record.file_start_seconds,
         file_end_seconds: record.file_end_seconds,
         gain,
         fade_in_ms: record.fade_in_ms,
         fade_out_ms: record.fade_out_ms,
-    };
+    }
+}
+
+/// One player of one region. A file that is not there is a problem: the region keeps its place
+/// and is silent until the file arrives.
+fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
+    let region = region(&record(state).map_err(BehaviourError::Other)?);
     let rate = context.prepare_config().sample_rate;
     // How long it plays, for a view to draw it: seconds of its file, so no tempo moves them.
     let seconds = sound_media::info(context.assets(), &region.asset)

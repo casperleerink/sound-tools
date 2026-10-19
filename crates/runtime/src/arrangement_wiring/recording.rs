@@ -9,8 +9,7 @@ use anyhow::Result;
 use arrangement::{AudioClip, TrackKind, TrackState};
 use midi::Take;
 use sound_core::{
-    Changes, Clock, InputEndpoint, Instance, InstanceId, Project, ProjectError,
-    StreamTiming, Ticks,
+    Changes, Clock, InputEndpoint, Instance, InstanceId, Project, ProjectError, StreamTiming, Ticks,
 };
 use sound_media::{AudioAsset, Imported, Info};
 use sound_notes::NOTES_INPUT;

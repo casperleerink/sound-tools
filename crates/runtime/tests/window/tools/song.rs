@@ -294,3 +294,34 @@ fn main_in_the_project_file_shows_the_song_and_not_the_arrangement(cx: &mut Test
     assert_eq!(window.find("record"), None);
     assert!(window.find("computer-keys").is_some());
 }
+
+/// The Mixer button shows a strip per track and return: a drag on a track's fader turns the
+/// volume of its fader `mix` natively, as one undo step, and asks Bun nothing while it moves.
+#[gpui::test]
+fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
+    cx: &mut TestAppContext,
+) {
+    let Some(mut window) = open_song(cx, 4, 12) else {
+        return;
+    };
+    window.wait_for_bun();
+    let toggle = window.until_found("div-mixer-toggle");
+    window.press(toggle);
+    window.release(toggle);
+    let fader = window.space_at("fader-t01/mix") + point(px(20.), px(80.));
+    window.wait_for_bun();
+    let asked = sound_typescript::sent_updates_and_events();
+    let questions = sound_typescript::asked_behaviours();
+    window.press(fader);
+    for step in 1..=8 {
+        window.drag_to(fader + point(px(0.), px(step as f32 * 5.)));
+    }
+    let turned = window.record("song/t01/mix")["gain_db"].as_f64();
+    assert!(turned.is_some_and(|gain| gain < -1.0), "{turned:?}");
+    assert_eq!(sound_typescript::sent_updates_and_events().1, asked.1);
+    assert_eq!(sound_typescript::asked_behaviours(), questions);
+    window.release(fader + point(px(0.), px(40.)));
+    window.wait_for_bun();
+    assert_eq!(window.undo_label().as_deref(), Some("Change the volume"));
+    assert_eq!(window.record("song/t00/mix")["gain_db"], serde_json::Value::Null);
+}

@@ -129,7 +129,9 @@ impl Recorders {
             if followed.armed != arms {
                 followed.armed = arms;
                 let recording = self.session.read(cx).recording().clone();
-                recording.update(cx, |recording, cx| recording.set_armed(id.clone(), arms, cx));
+                recording.update(cx, |recording, cx| {
+                    recording.set_armed(id.clone(), arms, cx)
+                });
             }
             let mut read = Vec::new();
             followed.next = followed.heard.read(followed.next, &mut read).next;
@@ -138,7 +140,9 @@ impl Recorders {
             if let Some(take) = &followed.take
                 && take.clock.tempo_map() != clock.tempo_map()
             {
-                let frame = clock.frame_of(self.session.read(cx).playhead().read(cx).tick).0;
+                let frame = clock
+                    .frame_of(self.session.read(cx).playhead().read(cx).tick)
+                    .0;
                 if let Some(take) = followed.take.take() {
                     records.push((id.clone(), Finished::Notes(take, frame)));
                 }
@@ -208,7 +212,9 @@ impl Recorders {
         };
         if self.audio.is_some() || !self.live.read(cx).can_open_input() {
             let notice = match self.audio.is_some() {
-                true => "A recording of the audio input runs already: this recorder records its notes alone this time.",
+                true => {
+                    "A recording of the audio input runs already: this recorder records its notes alone this time."
+                }
                 false => "There is no audio input to record from.",
             };
             self.session
@@ -378,11 +384,12 @@ impl Recorders {
         });
         let records: Vec<_> = audio.notes.into_iter().chain(records).collect();
         self.write(records, cx);
-        self.live.update(cx, |live, cx| {
-            live.hold_for_recorders(Hold::default(), cx)
-        });
+        self.live
+            .update(cx, |live, cx| live.hold_for_recorders(Hold::default(), cx));
         let recording = self.session.read(cx).recording().clone();
-        recording.update(cx, |recording, cx| recording.set_audio_takes(Vec::new(), cx));
+        recording.update(cx, |recording, cx| {
+            recording.set_audio_takes(Vec::new(), cx)
+        });
     }
 
     /// Writes what the takes made, next to their recorders, as one undo step.
@@ -473,7 +480,11 @@ fn notes_record(
         "length": clip.length,
         "notes": clip.notes,
     });
-    Ok(Some((format!("{}-{name}", recorder.name()), "timeline", state)))
+    Ok(Some((
+        format!("{}-{name}", recorder.name()),
+        "timeline",
+        state,
+    )))
 }
 
 /// A note event as a raw take keeps it, `at` microseconds into the take. Heard notes have no
@@ -526,12 +537,13 @@ fn free_child(
     taken: &[InstanceId],
 ) -> Option<InstanceId> {
     let free = |id: &InstanceId| project.tool_of(id).is_none() && !taken.contains(id);
-    (1..).map_while(|number| {
-        let name = match number {
-            1 => name.to_string(),
-            number => format!("{name}-{number}"),
-        };
-        parent.child(&name).ok()
-    })
-    .find(free)
+    (1..)
+        .map_while(|number| {
+            let name = match number {
+                1 => name.to_string(),
+                number => format!("{name}-{number}"),
+            };
+            parent.child(&name).ok()
+        })
+        .find(free)
 }
