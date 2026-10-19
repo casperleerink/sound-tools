@@ -83,6 +83,8 @@ pub struct Session {
     /// loop: nothing is saved and there is no undo step.
     click: Option<ClickSwitch>,
     click_on: bool,
+    /// Whether the computer keys play notes, which the window's live input follows.
+    computer_keys_on: bool,
     _polling: Task<()>,
 }
 
@@ -124,6 +126,7 @@ impl Session {
             output,
             click: None,
             click_on: false,
+            computer_keys_on: false,
             _polling: polling,
         }
     }
@@ -216,6 +219,18 @@ impl Session {
 
     pub fn click_on(&self) -> bool {
         self.click_on
+    }
+
+    pub fn computer_keys_on(&self) -> bool {
+        self.computer_keys_on
+    }
+
+    /// Turns the computer keys on or off. Not an edit, like the click.
+    pub fn set_computer_keys(&mut self, on: bool, cx: &mut Context<Self>) {
+        if on != self.computer_keys_on {
+            self.computer_keys_on = on;
+            cx.notify();
+        }
     }
 
     /// Turns the click on or off. Nothing without a click attached.

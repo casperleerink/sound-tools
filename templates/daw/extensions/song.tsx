@@ -1,4 +1,4 @@
-import { Arc, DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
+import { Arc, DeviceCard, For, TitleBar, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -303,6 +303,12 @@ export const song = tool({
       const regions = rows().flatMap((each) => regionsOf(each).map((region) => region.state.start));
       const lanes = rows().flatMap((each) => (each.tool === "track" ? each.children : []).flatMap((child) => (child.tool === "lane" ? child.state.points.map((point) => point.tick) : [])));
       return Math.max(SHOWN, ...clips, ...regions, ...lanes, clock.repeat?.to ?? 0) + AFTER;
+    });
+    // Where what the song holds ends: the strip of the transport goes this far.
+    const held = memo(() => {
+      const clips = rows().flatMap((each) => clipsOf(each).map((clip) => clip.state.start + lengthOf(clip.state)));
+      const regions = rows().flatMap((each) => regionsOf(each).map((region) => region.state.start));
+      return Math.max(0, ...clips, ...regions);
     });
     const starts = memo(() => barStarts(runs(), end()));
     /** The bar `tick` is in, from 1. */
@@ -1045,11 +1051,11 @@ export const song = tool({
 
     return (
       <div style={{ grow: true, background: COLOR.back }}>
-        <div style={{ paddingX: 8, paddingY: 6 }}>
+        <TitleBar>
+          <Transport clock={clock} record={{ on: () => memory.recording !== null, press: toggleRecording }} end={held} />
+        </TitleBar>
+        <div>
           <div style={{ direction: "row", gap: 8, align: "center" }}>
-            <Transport clock={clock} />
-            <div key="record" style={() => ({ width: 22, height: 22, radius: 11, background: memory.recording === null ? COLOR.off : COLOR.record })}
-              onPress={toggleRecording} />
             <div key="mixer-toggle" style={() => ({ paddingX: 8, paddingY: 4, radius: 6, fontSize: 11, background: memory.mixer ? COLOR.edit : COLOR.off })}
               onPress={() => (memory.mixer = !memory.mixer)}>
               Mixer

@@ -57,6 +57,8 @@ props! {
         carry: String,
         /// It hears a drop: files from the system, or what a drag of a node carries.
         on_drop: bool,
+        /// It shows in the window's title bar instead, when the tool's view is the window's.
+        title_bar: bool,
     }
 }
 
@@ -88,6 +90,51 @@ props! {
 
 props! {
     TextProps / TextChange { text: String }
+}
+
+props! {
+    /// A button of the app: a label, an icon or both, in one of the app's looks.
+    ButtonProps / ButtonChange {
+        key: String,
+        label: String,
+        icon: String,
+        variant: ButtonLook,
+        /// The accent of a `solid`, `subtle` or `ghost` look.
+        color: Color,
+        size: ButtonSized,
+        /// A pill, round at its ends.
+        rounded: bool,
+        disabled: bool,
+        on_press: bool,
+    }
+}
+
+props! {
+    /// A stereo meter of the app: the peaks of `of` as `now.peak` names them, or of what the
+    /// device plays.
+    MeterProps / MeterChange { key: String, of: String, horizontal: bool, length: f32 }
+}
+
+props! {
+    /// An icon of the app, by its name.
+    IconProps / IconChange { name: String, size: f32, color: Color }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ButtonLook {
+    Primary,
+    Subtle,
+    Ghost,
+    Solid,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ButtonSized {
+    Xs,
+    Sm,
+    Md,
 }
 
 props! {
@@ -162,6 +209,9 @@ pub(crate) enum Props {
     Shape(Box<ShapeProps>),
     Input(InputProps),
     Card(CardProps),
+    Button(ButtonProps),
+    Icon(IconProps),
+    Meter(MeterProps),
     /// Where a list or a part that changes puts its nodes: draws nothing.
     Marker,
 }
@@ -174,6 +224,9 @@ pub(crate) enum Change {
     Shape(Box<ShapeChange>),
     Input(InputChange),
     Card(CardChange),
+    Button(ButtonChange),
+    Icon(IconChange),
+    Meter(MeterChange),
     Marker,
 }
 
@@ -232,6 +285,9 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "shape" => Props::Shape(Box::new(next(&mut seq, "props")?)),
                         "input" => Props::Input(next(&mut seq, "props")?),
                         "card" => Props::Card(next(&mut seq, "props")?),
+                        "button" => Props::Button(next(&mut seq, "props")?),
+                        "icon" => Props::Icon(next(&mut seq, "props")?),
+                        "meter" => Props::Meter(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Props::Marker
@@ -251,6 +307,9 @@ impl<'de> Visitor<'de> for OpVisitor {
                         "shape" => Change::Shape(Box::new(next(&mut seq, "props")?)),
                         "input" => Change::Input(next(&mut seq, "props")?),
                         "card" => Change::Card(next(&mut seq, "props")?),
+                        "button" => Change::Button(next(&mut seq, "props")?),
+                        "icon" => Change::Icon(next(&mut seq, "props")?),
+                        "meter" => Change::Meter(next(&mut seq, "props")?),
                         "marker" => {
                             next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
                             Change::Marker
@@ -277,7 +336,9 @@ impl<'de> Visitor<'de> for OpVisitor {
     }
 }
 
-const FAMILIES: &[&str] = &["div", "text", "space", "shape", "input", "card", "marker"];
+const FAMILIES: &[&str] = &[
+    "div", "text", "space", "shape", "input", "card", "button", "icon", "meter", "marker",
+];
 
 /// What of the window the live values of a card move with, without its code, and what the
 /// window reads for them on every frame.
@@ -501,6 +562,9 @@ impl NodeTable {
                         (Props::Text(props), Change::Text(change)) => props.apply(change),
                         (Props::Space(props), Change::Space(change)) => props.apply(*change),
                         (Props::Input(props), Change::Input(change)) => props.apply(change),
+                        (Props::Button(props), Change::Button(change)) => props.apply(change),
+                        (Props::Icon(props), Change::Icon(change)) => props.apply(change),
+                        (Props::Meter(props), Change::Meter(change)) => props.apply(change),
                         (Props::Card(props), Change::Card(change)) => props.apply(change),
                         (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
                         (Props::Marker, Change::Marker) => {}
@@ -606,6 +670,17 @@ impl NodeTable {
 fn uses_of(props: &Props) -> Uses {
     match props {
         Props::Shape(shape) => shape.uses(),
+        Props::Meter(MeterProps { of, .. }) => {
+            let mut uses = Uses {
+                animates: true,
+                ..Uses::default()
+            };
+            match of {
+                Some(name) => _ = uses.peaks.insert(name.clone()),
+                None => uses.output = true,
+            }
+            uses
+        }
         _ => Uses::default(),
     }
 }
@@ -1216,6 +1291,9 @@ pub(crate) enum Readout {
     Position,
     Time,
     Signature,
+    /// The beats of a bar, and the note value of a beat, of the time signature there.
+    Beats,
+    Note,
 }
 
 /// A number a drag turns as it goes: a field of the record, or a live control.
@@ -1284,6 +1362,10 @@ pub(crate) struct Style {
     padding: Option<f32>,
     padding_x: Option<f32>,
     padding_y: Option<f32>,
+    padding_left: Option<f32>,
+    padding_right: Option<f32>,
+    padding_top: Option<f32>,
+    padding_bottom: Option<f32>,
     width: Option<f32>,
     height: Option<f32>,
     grow: bool,
@@ -1297,6 +1379,29 @@ pub(crate) struct Style {
     border_width: Option<f32>,
     /// Its children scroll along this axis where they do not fit its size.
     scroll: Option<ScrollAxis>,
+    /// `tabular`: digits of one width, so a number that changes does not move what follows.
+    font: Option<FontKind>,
+    weight: Option<Weight>,
+    /// Its background while the pointer is over it.
+    hover: Option<Color>,
+    /// It takes no more room than it needs, nor less: it does not shrink in a row too narrow.
+    keep: bool,
+    /// A line of text cut with an ellipsis where it does not fit.
+    truncate: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FontKind {
+    Tabular,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Weight {
+    Normal,
+    Medium,
+    Semibold,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -1330,7 +1435,8 @@ enum Justify {
     Between,
 }
 
-/// `#rrggbb` or `#rrggbbaa`.
+/// `#rrggbb`, `#rrggbbaa`, or a colour of the app's theme by name, such as `gray-700`, with an
+/// opacity in percent after a slash: `alpha/10`.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(try_from = "String")]
 pub(crate) struct Color(pub(crate) Hsla);
@@ -1339,8 +1445,23 @@ impl TryFrom<String> for Color {
     type Error = String;
 
     fn try_from(text: String) -> Result<Self, String> {
-        let wrong = || format!("{text:?} is not a colour such as \"#ff8800\"");
-        let hex = text.strip_prefix('#').ok_or_else(wrong)?;
+        let wrong = || {
+            format!("{text:?} is not a colour such as \"#ff8800\", \"gray-700\" or \"alpha/10\"")
+        };
+        let Some(hex) = text.strip_prefix('#') else {
+            let (name, percent) = match text.split_once('/') {
+                Some((name, percent)) => (name, Some(percent)),
+                None => (text.as_str(), None),
+            };
+            let mut color = sound_ui::theme::Theme::dark()
+                .named(name)
+                .ok_or_else(wrong)?;
+            if let Some(percent) = percent {
+                let percent: f32 = percent.parse().map_err(|_| wrong())?;
+                color.a = (percent / 100.0).clamp(0.0, 1.0);
+            }
+            return Ok(Self(color));
+        };
         let value = u32::from_str_radix(hex, 16).map_err(|_| wrong())?;
         let rgba = match hex.len() {
             6 => (value << 8) | 0xff,
@@ -1416,6 +1537,18 @@ impl Style {
         if let Some(padding) = self.padding_y {
             element = element.py(px(padding));
         }
+        if let Some(padding) = self.padding_left {
+            element = element.pl(px(padding));
+        }
+        if let Some(padding) = self.padding_right {
+            element = element.pr(px(padding));
+        }
+        if let Some(padding) = self.padding_top {
+            element = element.pt(px(padding));
+        }
+        if let Some(padding) = self.padding_bottom {
+            element = element.pb(px(padding));
+        }
         match self.scroll {
             // As large as its children along the axis, and as its box across it.
             Some(ScrollAxis::X) => element = element.flex_none().h_full(),
@@ -1462,6 +1595,28 @@ impl Style {
         }
         if let Some(width) = self.border_width {
             element = element.border(px(width));
+        }
+        if let Some(FontKind::Tabular) = self.font {
+            element = element.font(sound_ui::typography::tabular());
+        }
+        element = match self.weight {
+            Some(Weight::Normal) => element.font_weight(gpui::FontWeight::NORMAL),
+            Some(Weight::Medium) => element.font_weight(gpui::FontWeight::MEDIUM),
+            Some(Weight::Semibold) => element.font_weight(gpui::FontWeight::SEMIBOLD),
+            None => element,
+        };
+        if let Some(Color(color)) = self.hover {
+            element = element.hover(move |style| style.bg(color));
+        }
+        if self.keep {
+            element = element.flex_none();
+        }
+        if self.truncate {
+            element = element
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis();
         }
         element
     }

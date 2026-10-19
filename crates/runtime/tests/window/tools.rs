@@ -366,7 +366,7 @@ fn the_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
     cx: &mut TestAppContext,
 ) {
     let mut window = open(cx, &BEAT);
-    let play = window.until_found("div-transport-play");
+    let play = window.until_found("button-play");
     window.wait_for_bun();
 
     // Played from elsewhere, its button says so: Bun hears the clock and sends what changed.

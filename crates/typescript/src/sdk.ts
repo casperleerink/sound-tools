@@ -1117,6 +1117,8 @@ export interface Clock {
   readonly repeat: { readonly from: number; readonly to: number } | null;
   /** Whether the click sounds the beats. Not saved. */
   readonly click: boolean;
+  /** Whether the computer keys play notes, as a MIDI keyboard does. A switch of this machine, not saved; cmd-K turns it too. */
+  readonly computerKeys: boolean;
   /** As `project.json` holds them: the time signatures and the tempo changes. */
   readonly tempo_map: Frozen<TempoMap>;
   /** As `project.json` holds them: the named parts of the piece, sorted by bar. */
@@ -1130,6 +1132,7 @@ export interface Clock {
   /** Playback goes back from `to` to `from` while it is set; `null` plays on. Not saved. */
   setRepeat(range: { from: number; to: number } | null): void;
   setClick(on: boolean): void;
+  setComputerKeys(on: boolean): void;
   /**
    * Changes the tempo map and the sections: `change` gets a copy to edit, and what `project.json`
    * does not accept is refused whole. Updates of one `label` in a row are one undo step.
@@ -1976,7 +1979,7 @@ interface Region {
 /** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
 export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
 
-type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "marker";
+type Family = "div" | "text" | "space" | "shape" | "input" | "card" | "button" | "icon" | "meter" | "marker";
 /** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
 type Wired = Record<string, unknown>;
 
@@ -2303,7 +2306,12 @@ export function Show(props: { when: Accessor<unknown>; children: () => Child; fa
 // What a card draws.
 
 /** A colour as `#rrggbb` or `#rrggbbaa`. */
-export type Color = `#${string}`;
+/** A colour of the app's theme, as the window draws its own controls. */
+export type ThemeColor =
+  | "gray-50" | "gray-100" | "gray-200" | "gray-300" | "gray-400" | "gray-500" | "gray-600" | "gray-700" | "gray-800" | "gray-900" | "gray-950"
+  | "alpha" | "blue" | "sapphire" | "sky" | "teal" | "green" | "yellow" | "peach" | "red" | "maroon" | "mauve" | "pink" | "lavender" | "rosewater" | "flamingo";
+/** `#rrggbb`, `#rrggbbaa`, a colour of the theme, or one at an opacity in percent: `"alpha/10"`. */
+export type Color = `#${string}` | ThemeColor | `${ThemeColor}/${number}`;
 
 /** What a shape the pointer reaches can do. */
 interface Pointed {
@@ -2349,7 +2357,7 @@ export type Shape =
          * Text at `x`, `y`, its top. A live number shows as a readout in `unit`, and a tick, such as
          * `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"` (the one there).
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live>; unit?: Unit | "position" | "time" | "signature"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live>; unit?: Unit | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
          * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
@@ -2454,6 +2462,59 @@ export interface DeviceCardProps {
 /** The card of an instance, see `DeviceCardProps`. */
 export const DeviceCard = ({ path, ...props }: DeviceCardProps): UiNode => element("card", { instance: path, ...props }, []);
 
+/** An icon of the app, by its name. */
+export type IconName =
+  | "arrow-left" | "arrow-right" | "arrow-up" | "audio-lines" | "automation" | "bot" | "check"
+  | "chevron-down" | "chevron-left" | "chevron-right" | "chevron-up" | "circle" | "circle-alert"
+  | "circle-check" | "claude" | "copy" | "device-analyzer" | "device-compressor" | "device-delay"
+  | "device-drum-pad" | "device-eq" | "device-filter" | "device-gate" | "device-limiter"
+  | "device-modulation" | "device-plugin" | "device-reverb" | "device-sampler" | "device-saturator"
+  | "device-synth" | "device-utility" | "device-wavetable" | "ellipsis" | "eq-bell" | "eq-high-cut"
+  | "eq-high-shelf" | "eq-low-cut" | "eq-low-shelf" | "eq-notch" | "eye" | "eye-off" | "folder" | "info"
+  | "keyboard-music" | "loader-circle" | "lock" | "lock-open" | "metronome" | "mic" | "minus" | "music"
+  | "panel-left" | "pause" | "pencil" | "piano" | "play" | "plus" | "power" | "redo-2" | "search" | "section"
+  | "send" | "settings" | "shield" | "skip-back" | "skip-forward" | "sliders-horizontal" | "sparkles"
+  | "square" | "tempo-change" | "time-signature" | "trash-2" | "triangle-alert" | "undo-2" | "volume-2"
+  | "volume-x" | "x" | "zap";
+
+/** An icon of the app, 16 points when `size` is left out, in the text's colour unless `color` says. */
+export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<Color> }): UiNode => element("icon", { ...props }, []);
+
+/**
+ * A stereo meter as the window draws its own: bars that fall, a peak line that holds, a clip light
+ * a click clears. Of the peaks `of` names as `now.peak` does, or of what the device plays. Up the
+ * side unless `horizontal`; `length` along its bars, in points.
+ */
+export const PeakMeter = (props: { key?: string; of?: string; horizontal?: boolean; length?: number }): UiNode =>
+  element("meter", { ...props }, []);
+
+/** A button of the app: a `label`, an `icon` or both, as the window's own buttons look. */
+export interface ButtonProps {
+  key?: string;
+  label?: Bind<string>;
+  icon?: Bind<IconName>;
+  /** `primary` when left out. `solid`, `subtle` and `ghost` take `color` as their accent. */
+  variant?: Bind<"primary" | "subtle" | "ghost" | "solid">;
+  color?: Bind<Color>;
+  /** 24, 28 or 32 points tall; `md` when left out. */
+  size?: "xs" | "sm" | "md";
+  /** A pill, round at its ends. */
+  rounded?: boolean;
+  disabled?: Bind<boolean>;
+  onPress?: (press: Press) => void;
+}
+
+/** A button, see `ButtonProps`. */
+export const Button = (props: ButtonProps): UiNode => element("button", { ...props }, []);
+
+/**
+ * Shows its children in the window's title bar, in the middle of the room right of the project
+ * menu, when this tool's view is the window's: the transport of a song. Anywhere else it shows
+ * nothing.
+ */
+export const TitleBar = ({ children, style }: { children?: Child; style?: Bind<Style> }): UiNode =>
+  element("div", { titleBar: true, style }, [children]);
+
 /** How a `div` lays out and looks. Numbers are points. */
 export interface Style {
   /** How children line up. A div is a column unless this says `row`. */
@@ -2462,6 +2523,10 @@ export interface Style {
   padding?: number;
   paddingX?: number;
   paddingY?: number;
+  paddingLeft?: number;
+  paddingRight?: number;
+  paddingTop?: number;
+  paddingBottom?: number;
   width?: number;
   height?: number;
   /** Takes the room left in its parent. */
@@ -2478,6 +2543,15 @@ export interface Style {
   borderWidth?: number;
   /** Its children scroll along this axis where they do not fit its size, as a long rack does. */
   scroll?: "x" | "y";
+  /** `tabular`: digits of one width, so a number that changes does not move what follows. */
+  font?: "tabular";
+  weight?: "normal" | "medium" | "semibold";
+  /** Its background while the pointer is over it. */
+  hover?: Color;
+  /** It never shrinks below what it needs, in a row too narrow. */
+  keep?: boolean;
+  /** One line, cut with an ellipsis where it does not fit. */
+  truncate?: boolean;
 }
 
 interface DivProps {
@@ -2652,34 +2726,74 @@ export function Pad(props: { x: string; y: string; size?: number }): UiNode {
   });
 }
 
-const TRANSPORT = { text: "#e9ebef", muted: "#7c808c", play: "#7ee0a0", button: "#2a2f3a", on: "#7c3aed" } as const;
 /** Points of a drag up for one beat per minute more. */
 const TEMPO_DRAG = 2;
+/** The width of the position strip, and of its knob. */
+const STRIP = { width: 200, knob: 8 } as const;
 
-/** A readout of a tick of the clock as it moves: a place in the piece, a time or a signature. */
-function clockText(key: string, width: number, text: Live, unit?: "position" | "time" | "signature", color: Color = TRANSPORT.text): UiNode {
-  return Space({ key, width, height: 16, children: [Label({ x: 0, y: 1, text, unit, color, size: 13 })] });
+/** A readout of a tick of the clock as it moves, in the pill's text. */
+function clockText(key: string, width: number, unit: "position" | "time" | "beats" | "note", color: Color = "gray-950", text: Live = now.tick): UiNode {
+  return Space({ key, width, height: 18, children: [Label({ x: 0, y: 0, text, unit, color, size: 14 })] });
+}
+
+/** What `Transport` records with: whether it records, what a press does, and whether it can. */
+export interface TransportRecord {
+  on: Accessor<boolean>;
+  press: () => void;
+  disabled?: Accessor<boolean>;
 }
 
 /**
- * Play and pause, stop, where the piece plays as a bar and a beat and as a time, the tempo, which
- * a drag up or down changes as one undo step, the time signature, the repeat and the click.
- * Everything that moves moves without code.
+ * The window's transport, a pill: play and pause, stop, `record` when given, where the piece
+ * plays as a bar and a beat and as a time, a strip to move through the piece up to `end` when
+ * given, the tempo, which a drag up or down changes as one undo step, the time signature, the
+ * computer keys, the click and the meter of what the device plays. Put it in a `TitleBar` to
+ * show it where the window's own was. Everything that moves moves without code.
  */
-export function Transport(props: { clock: Clock }): UiNode {
-  const { clock } = props;
-  const button = (key: string, label: Bind<string>, lit: Accessor<boolean>, press: () => void) =>
-    h("div", { key: `transport-${key}`, style: () => ({ ...BUTTON, ...(lit() ? { background: TRANSPORT.on, color: "#ffffff" } : {}) }), onPress: press }, label);
+export function Transport(props: { clock: Clock; record?: TransportRecord; end?: Accessor<number | null> }): UiNode {
+  const { clock, record } = props;
   const tempo = now.drag("transport-tempo");
-  return h("div", { style: { direction: "row", gap: 12, align: "center" } },
-    button("play", () => (clock.playing ? "Pause" : "Play"), () => clock.playing, () => (clock.playing ? clock.pause() : clock.play())),
-    button("stop", "Stop", () => false, () => clock.stop()),
-    clockText("transport-position", 44, now.tick, "position"),
-    clockText("transport-time", 40, now.tick, "time", TRANSPORT.muted),
+  const end = () => props.end?.() ?? null;
+  const pill: Style = {
+    direction: "row", align: "center", gap: 12, height: 36, paddingLeft: 4, paddingRight: 16,
+    radius: 18, background: "#292b30", borderColor: "alpha/10", borderWidth: 1, keep: true,
+  };
+  return h("div", { key: "transport", style: pill },
+    h("div", { style: { direction: "row", align: "center", gap: 4 } },
+      Button({
+        key: "play", icon: () => (clock.playing ? "pause" : "play"), variant: () => (clock.playing ? "subtle" : "ghost"),
+        color: "green", size: "sm", rounded: true, onPress: () => (clock.playing ? clock.pause() : clock.play()),
+      }),
+      Button({ key: "stop", icon: "square", variant: "ghost", size: "sm", rounded: true, onPress: () => clock.stop() }),
+      record && Button({
+        key: "record", icon: "circle", variant: () => (record.on() ? "solid" : "ghost"), color: "red", size: "sm", rounded: true,
+        disabled: () => record.disabled?.() ?? false, onPress: record.press,
+      }),
+    ),
+    clockText("transport-position", 28, "position"),
+    clockText("transport-time", 34, "time", "gray-700"),
+    () => {
+      const last = end();
+      if (last === null || last <= 0) return null;
+      const seconds = secondsOf(clock.tempo_map, last);
+      const knob = now.tick.over(last).clamp(0, 1).times(STRIP.width - STRIP.knob);
+      return [
+        Space({
+          key: "transport-strip", width: STRIP.width, height: 16, cursor: "pointer",
+          onPress: ({ x }) => clock.jump(Math.round((Math.min(Math.max(x, 0), STRIP.width) / STRIP.width) * last)),
+          children: [
+            Rect({ x: 0, y: 7.5, width: STRIP.width, height: 1, color: "alpha/10" }),
+            Rect({ x: 0, y: 7.5, width: knob.plus(STRIP.knob / 2), height: 1, color: "gray-950" }),
+            Rect({ x: knob, y: 4, width: STRIP.knob, height: STRIP.knob, radius: STRIP.knob / 2, color: "gray-950" }),
+          ],
+        }),
+        h("div", { style: { font: "tabular", color: "gray-700" } }, `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`),
+      ];
+    },
     Space({
       key: "transport-tempo",
       width: 64,
-      height: 16,
+      height: 18,
       cursor: "ns-resize",
       drag: {
         id: "transport-tempo",
@@ -2693,17 +2807,40 @@ export function Transport(props: { clock: Clock }): UiNode {
           });
         },
       },
-      children: [Label({ x: 0, y: 1, text: now.bpm.minus(tempo.dy.over(TEMPO_DRAG)).round(), color: TRANSPORT.text, size: 13 }), Label({ x: 34, y: 2, text: "bpm", color: TRANSPORT.muted, size: 11 })],
+      children: [
+        Label({ x: 0, y: 0, text: now.bpm.minus(tempo.dy.over(TEMPO_DRAG)).round(), color: "gray-950", size: 14 }),
+        Label({ x: 32, y: 2, text: "bpm", color: "gray-700", size: 12 }),
+      ],
     }),
-    clockText("transport-signature", 36, now.tick, "signature"),
-    button("repeat", "Repeat", () => clock.repeat !== null, () => {
-      if (clock.repeat) return clock.setRepeat(null);
-      // Four bars of the first time signature, from the start.
-      const [beats, unit] = (clock.tempo_map.time_signatures[0]?.signature ?? "4/4").split("/").map(Number);
-      clock.setRepeat({ from: 0, to: (4 * beats * 3840) / unit });
+    h("div", { style: { direction: "row", align: "center" } },
+      clockText("transport-beats", 14, "beats"),
+      Space({ key: "transport-slash", width: 14, height: 18, children: [Label({ x: 3, y: 2, text: "/", color: "gray-700", size: 12 })] }),
+      clockText("transport-note", 14, "note"),
+    ),
+    Button({
+      key: "computer-keys", icon: "keyboard-music", variant: () => (clock.computerKeys ? "primary" : "ghost"),
+      color: () => (clock.computerKeys ? undefined : "gray-700") as Color, size: "sm", rounded: true,
+      onPress: () => clock.setComputerKeys(!clock.computerKeys),
     }),
-    button("click", "Click", () => clock.click, () => clock.setClick(!clock.click)),
+    Button({
+      key: "click", icon: "metronome", variant: () => (clock.click ? "primary" : "ghost"),
+      color: () => (clock.click ? undefined : "gray-700") as Color, size: "sm", rounded: true,
+      onPress: () => clock.setClick(!clock.click),
+    }),
+    PeakMeter({ key: "transport-meter", horizontal: true }),
   );
+}
+
+/** The seconds from the start to `tick` through the tempo changes of `map`. */
+export function secondsOf(map: Frozen<TempoMap>, tick: number): number {
+  const changes = [...map.tempo_changes].sort((a, b) => a.tick - b.tick);
+  let seconds = 0;
+  for (const [index, change] of changes.entries()) {
+    const next = changes[index + 1]?.tick ?? Infinity;
+    if (tick <= change.tick) break;
+    seconds += ((Math.min(tick, next) - change.tick) / 960) * (60 / change.bpm);
+  }
+  return seconds;
 }
 
 /** `tone_hz` is `Tone hz`. */

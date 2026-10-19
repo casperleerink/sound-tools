@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity,
+    AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, EventEmitter,
     ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement,
@@ -19,24 +19,30 @@ use gpui::{
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
 use sound_media::AudioAsset;
+use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
+use sound_ui::components::icon::Icon;
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
+use sound_ui::components::meter::Meter;
 use sound_ui::components::text_input::{self, TextInput};
-use sound_ui::{ActiveTheme, ControlEdit, Devices, Session, Views, Waveforms, typography};
+use sound_ui::{
+    ActiveTheme, ControlEdit, Devices, Metering, Session, Views, Waveforms, typography,
+};
 
 use crate::bun::{EventKind, MenuItemSpec, PageSize};
 use crate::feeds::Feeds;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
-    self, Align, Axis, CardProps, Cursor, DivProps, Drag, InputProps, List, NodeTable, Paint,
-    Props, Reach, Readout, ShapeKind, SpaceProps, TextProps, Turned, Words,
+    self, Align, Axis, ButtonLook, ButtonProps, ButtonSized, CardProps, Cursor, DivProps, Drag,
+    IconProps, InputProps, List, MeterProps, NodeTable, Paint, Props, Reach, Readout, ShapeKind,
+    SpaceProps, TextProps, Turned, Words,
 };
 use crate::window::{Live, Surface, state_of};
 
@@ -83,6 +89,10 @@ pub(crate) struct TypeScriptCard {
     inputs: HashMap<u64, (Entity<TextInput>, String)>,
     /// The cards of other instances it shows, by node.
     embedded: HashMap<u64, Embedded>,
+    /// The div it shows in the window's title bar, by its slot and index, as last drawn.
+    title_bar: Option<(usize, Vec<usize>)>,
+    /// How each meter node falls and holds its peak, by node.
+    meters: Rc<RefCell<HashMap<u64, Metering>>>,
 }
 
 /// The view of the card of `instance` that the page `page` shows, for tests that read what a
@@ -93,6 +103,13 @@ pub fn embedded_view(page: &AnyView, instance: &InstanceId, cx: &App) -> Option<
     embedded
         .filter(|card| card.instance == *instance)
         .find_map(|card| card.view.clone())
+}
+
+/// What the page `page` shows in the window's title bar, see [`TitleBar`]. `None` for a view that
+/// is no page of a tool of the project.
+pub fn title_bar_of(page: &AnyView, cx: &mut App) -> Option<Entity<TitleBar>> {
+    let card = page.clone().downcast::<Page>().ok()?.read(cx).0.clone();
+    Some(cx.new(|cx| TitleBar::new(card, cx)))
 }
 
 /// The card of another instance, as a node shows it.
@@ -327,6 +344,8 @@ impl TypeScriptCard {
             menu: None,
             inputs: HashMap::new(),
             embedded: HashMap::new(),
+            title_bar: None,
+            meters: Rc::default(),
         }
     }
 
@@ -1340,6 +1359,11 @@ struct Drawing<'a, 'b> {
     indexes: &'a RefCell<HashMap<String, SpaceIndex>>,
     inputs: &'a HashMap<u64, (Entity<TextInput>, String)>,
     embedded: &'a HashMap<u64, Embedded>,
+    meters: &'a RefCell<HashMap<u64, Metering>>,
+    /// Whether it draws the title bar's div, which the body leaves out.
+    in_title_bar: bool,
+    /// The title bar's div the body left out.
+    title_bar: Option<(usize, Vec<usize>)>,
     cx: &'a mut Context<'b, TypeScriptCard>,
 }
 
@@ -1384,6 +1408,49 @@ impl Drawing<'_, '_> {
                 }
                 None => div().into_any_element(),
             },
+            Props::Button(props) => self.button(id, props, index),
+            Props::Meter(MeterProps {
+                of,
+                horizontal,
+                length,
+                ..
+            }) => {
+                let amplitudes = match of {
+                    Some(name) => self.feeds.peaks.get(name).copied().unwrap_or_default(),
+                    None => self.feeds.output,
+                };
+                let mut meters = self.meters.borrow_mut();
+                let metering = meters.entry(id).or_default();
+                metering.read_amplitudes(amplitudes);
+                let card = self.cx.entity().downgrade();
+                let meter = Meter::new(ElementId::Integer(id), metering.level()).on_clear_clip(
+                    move |_, cx| {
+                        card.update(cx, |card, cx| {
+                            if let Some(metering) = card.meters.borrow_mut().get_mut(&id) {
+                                metering.clear_clip();
+                            }
+                            cx.notify();
+                        })
+                        .ok();
+                    },
+                );
+                let meter = if *horizontal == Some(true) {
+                    meter.horizontal()
+                } else {
+                    meter
+                };
+                match length {
+                    Some(length) => meter.length(*length).into_any_element(),
+                    None => meter.into_any_element(),
+                }
+            }
+            Props::Icon(IconProps { name, size, color }) => {
+                let color = color.map_or(self.cx.theme().gray_950, |color| color.0);
+                Icon::new(name.clone().unwrap_or_default())
+                    .size(size.unwrap_or(16.0))
+                    .color(color)
+                    .into_any_element()
+            }
             Props::Card(_) => match self.embedded.get(&id) {
                 Some(Embedded {
                     view: Some(view), ..
@@ -1399,7 +1466,12 @@ impl Drawing<'_, '_> {
                 follow,
                 carry,
                 on_drop,
+                title_bar,
             }) => {
+                if *title_bar == Some(true) && !std::mem::take(&mut self.in_title_bar) {
+                    self.title_bar = Some((slot, index.to_vec()));
+                    return div().into_any_element();
+                }
                 let style = style.clone().unwrap_or_default();
                 let shown: Vec<usize> = (entry.children.iter())
                     .filter(|child| {
@@ -1514,6 +1586,55 @@ impl Drawing<'_, '_> {
 
     /// A div that hears presses, drops or carries something when dragged.
     #[allow(clippy::too_many_arguments)]
+    /// A button of the app, which tells a press as a pressed div does.
+    fn button(&mut self, id: u64, props: &ButtonProps, index: &[usize]) -> AnyElement {
+        let name = element_name("button", props.key.as_deref(), index);
+        let accent = props.color.map(|color| color.0);
+        let variant = match (props.variant, accent) {
+            (Some(ButtonLook::Subtle), Some(accent)) => ButtonVariant::SubtleColor(accent),
+            (Some(ButtonLook::Ghost), Some(accent)) => ButtonVariant::GhostColor(accent),
+            (Some(ButtonLook::Solid), accent) => {
+                ButtonVariant::Solid(accent.unwrap_or(self.cx.theme().lavender))
+            }
+            (Some(ButtonLook::Subtle), None) => ButtonVariant::Subtle,
+            (Some(ButtonLook::Ghost), None) => ButtonVariant::Ghost,
+            (Some(ButtonLook::Primary) | None, _) => ButtonVariant::Primary,
+        };
+        let size = match props.size {
+            Some(ButtonSized::Xs) => ButtonSize::Xs,
+            Some(ButtonSized::Sm) => ButtonSize::Sm,
+            Some(ButtonSized::Md) | None => ButtonSize::Md,
+        };
+        let button = match (&props.label, &props.icon) {
+            (Some(label), icon) => Button::new(ElementId::Name(name.into()), label.clone())
+                .when_some(icon.clone(), |button, icon| button.icon(icon)),
+            (None, icon) => Button::icon_only(
+                ElementId::Name(name.into()),
+                icon.clone().unwrap_or_default(),
+            ),
+        };
+        let selector = format!("button-{}", props.key.as_deref().unwrap_or_default());
+        button
+            .variant(variant)
+            .size(size)
+            .rounded(props.rounded == Some(true))
+            .disabled(props.disabled == Some(true))
+            .debug_selector(move || selector)
+            .when(props.on_press == Some(true), |button| {
+                button.on_click(
+                    self.cx
+                        .listener(move |view, event: &gpui::ClickEvent, _, cx| {
+                            let mut press = json!({
+                                "x": 0, "y": 0, "button": "left", "clicks": event.click_count(),
+                            });
+                            add_modifiers(&mut press, event.modifiers());
+                            view.event(id, EventKind::Press, press, cx);
+                        }),
+                )
+            })
+            .into_any_element()
+    }
+
     fn heard_div(
         &mut self,
         element: Div,
@@ -2236,6 +2357,12 @@ fn text_of(value: f64, shown: Option<Readout>, clock: Option<&sound_core::Clock>
         Some(Readout::Signature) => signatures.map_or_else(String::new, |signatures| {
             signatures.bar_at(tick).signature.to_string()
         }),
+        Some(Readout::Beats) => signatures.map_or_else(String::new, |signatures| {
+            signatures.bar_at(tick).signature.numerator().to_string()
+        }),
+        Some(Readout::Note) => signatures.map_or_else(String::new, |signatures| {
+            signatures.bar_at(tick).signature.denominator().to_string()
+        }),
     }
 }
 
@@ -2422,7 +2549,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
         PaintedShape::Text(origin, text, font_size, align) => {
             let run = TextRun {
                 len: text.len(),
-                font: typography::ui_font(),
+                font: typography::tabular(),
                 color,
                 background_color: None,
                 underline: None,
@@ -2657,6 +2784,98 @@ fn frame_now(
     }
 }
 
+impl TypeScriptCard {
+    /// Scroll and zoom as drawn, so a wheel scrolls from there; sizes stay the paint's.
+    fn keep_spaces(&self, spaces: HashMap<String, SpaceView>) {
+        let mut kept = self.spaces.borrow_mut();
+        for (key, view) in spaces {
+            let size = kept.get(&key).map(|old| (old.width, old.height));
+            let entry = kept.entry(key).or_insert(view);
+            *entry = view;
+            if let Some((width, height)) = size {
+                (entry.width, entry.height) = (width, height);
+            }
+        }
+    }
+
+    /// The div its view shows in the window's title bar, with what the body last read.
+    fn draw_title_bar(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (slot, index) = self.title_bar.clone()?;
+        let state = self.state(cx)?;
+        let live = self.live.read(cx);
+        let info = live.info(self.card);
+        let Some(Ok(table)) = live.tree(self.card).cloned() else {
+            return None;
+        };
+        let watches = live.watches(self.card).cloned().unwrap_or_default();
+        let played = live.played_of(&self.id).cloned();
+        let tick = self.session.read(cx).playhead().read(cx).tick.0 as f64;
+        let drag =
+            (self.held.as_ref()).and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
+        let mut drawing = Drawing {
+            info,
+            state,
+            watches,
+            played,
+            tick,
+            spaces: self.spaces.borrow().clone(),
+            laid_out: self.spaces.clone(),
+            drag,
+            hovered: self.hovered.clone(),
+            table: &table,
+            feeds: &self.feeds,
+            indexes: &self.indexes,
+            inputs: &self.inputs,
+            embedded: &self.embedded,
+            meters: &self.meters,
+            in_title_bar: true,
+            title_bar: None,
+            cx,
+        };
+        let bar = drawing.draw(slot, &index);
+        let spaces = drawing.spaces;
+        self.keep_spaces(spaces);
+        let theme = cx.theme();
+        Some(
+            div()
+                .text_size(px(12.))
+                .text_color(theme.gray_950)
+                .child(bar)
+                .into_any_element(),
+        )
+    }
+}
+
+/// The div of a page's view that shows in the window's title bar moved, came or went.
+pub(crate) struct TitleBarMoved;
+
+impl EventEmitter<TitleBarMoved> for TypeScriptCard {}
+
+/// What the view of a page shows in the window's title bar: its div that says `titleBar`.
+pub struct TitleBar(Entity<TypeScriptCard>);
+
+impl TitleBar {
+    pub(crate) fn new(card: Entity<TypeScriptCard>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&card, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&card, |_, _, _: &TitleBarMoved, cx| cx.notify())
+            .detach();
+        Self(card)
+    }
+
+    /// Whether the view has a div for the title bar.
+    pub fn shows(&self, cx: &App) -> bool {
+        self.0.read(cx).title_bar.is_some()
+    }
+}
+
+impl Render for TitleBar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let bar = self.0.update(cx, |card, cx| card.draw_title_bar(cx));
+        // A click on it does not move the window, as the rest of the title row does.
+        div().flex_none().occlude().children(bar)
+    }
+}
+
 impl Render for TypeScriptCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(state) = self.state(cx) else {
@@ -2725,23 +2944,21 @@ impl Render for TypeScriptCard {
                     indexes: &self.indexes,
                     inputs: &self.inputs,
                     embedded: &self.embedded,
+                    meters: &self.meters,
+                    in_title_bar: false,
+                    title_bar: None,
                     cx,
                 };
                 let body = match table.root() {
                     Some(root) => drawing.draw(root, &[]),
                     None => div().into_any_element(),
                 };
-                let spaces = drawing.spaces;
-                // Scroll and zoom as drawn, so a wheel scrolls from there; sizes stay the paint's.
-                let mut kept = self.spaces.borrow_mut();
-                for (key, view) in spaces {
-                    let size = kept.get(&key).map(|old| (old.width, old.height));
-                    let entry = kept.entry(key).or_insert(view);
-                    *entry = view;
-                    if let Some((width, height)) = size {
-                        (entry.width, entry.height) = (width, height);
-                    }
+                let (spaces, title_bar) = (drawing.spaces, drawing.title_bar);
+                if self.title_bar != title_bar {
+                    self.title_bar = title_bar;
+                    cx.emit(TitleBarMoved);
                 }
+                self.keep_spaces(spaces);
                 body
             }
             Some(Err(error)) => div()
@@ -2793,7 +3010,7 @@ impl Render for TypeScriptCard {
                 .child(takes_keys(body))
                 .into_any_element(),
             None => {
-                // The room inside the padding, which the page draws from.
+                // The room the page draws in: the whole main area.
                 let (live, card) = (self.live.clone(), self.card);
                 let measure = canvas(
                     move |bounds, _, cx| {
@@ -2813,8 +3030,7 @@ impl Render for TypeScriptCard {
                     .child(measure)
                     // A column, so a page whose top div grows fills the window and no more.
                     .child(body.size_full().flex().flex_col());
-                takes_keys(div().size_full().p(px(24.)).bg(background).child(room))
-                    .into_any_element()
+                takes_keys(div().size_full().bg(background).child(room)).into_any_element()
             }
         }
     }

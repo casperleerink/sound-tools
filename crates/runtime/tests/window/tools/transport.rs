@@ -1,5 +1,6 @@
 //! The clock of the project from a page: the transport of the SDK plays it, its tempo is an edit
-//! of `project.json` and one undo step, its repeat and its click are the window's and no edit.
+//! of `project.json` and one undo step, its click and the computer keys are the window's and no
+//! edit.
 
 use gpui::{Modifiers, TestAppContext, point, px};
 use sound_core::Ticks;
@@ -33,21 +34,18 @@ fn a_drag_on_the_tempo_of_the_transport_is_one_undo_step(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-fn the_repeat_and_the_click_of_the_transport_are_no_edit(cx: &mut TestAppContext) {
+fn the_click_and_the_computer_keys_of_the_transport_are_no_edit(cx: &mut TestAppContext) {
     let mut window = open(cx, &BEAT);
     let session = window.session.clone();
-    let repeat = window.until_found("div-transport-repeat");
-    window.cx.simulate_click(repeat, Modifiers::default());
-    window.until("four bars repeat", |window| {
-        let looped = window
-            .cx
-            .read(|cx| session.read(cx).looped().read(cx).clone());
-        looped.on && looped.range == (Ticks(0)..Ticks(4 * 3840))
-    });
-    let click = window.until_found("div-transport-click");
+    let click = window.until_found("button-click");
     window.cx.simulate_click(click, Modifiers::default());
     window.until("the click", |window| {
         window.cx.read(|cx| session.read(cx).click_on())
+    });
+    let keys = window.until_found("button-computer-keys");
+    window.cx.simulate_click(keys, Modifiers::default());
+    window.until("the computer keys", |window| {
+        window.cx.read(|cx| session.read(cx).computer_keys_on())
     });
     assert_eq!(window.undo_label(), None);
 }

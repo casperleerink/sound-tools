@@ -524,6 +524,7 @@ fn transport_of(session: &Session, cx: &App) -> Transport {
             .on
             .then(|| [looped.range.start.0, looped.range.end.0]),
         click: session.click_on(),
+        keys: session.computer_keys_on(),
     }
 }
 
@@ -1651,6 +1652,7 @@ impl Live {
                 session.set_loop(looped, cx);
             }
             TransportOp::Click { on } => session.set_click(on, cx),
+            TransportOp::Keys { on } => session.set_computer_keys(on, cx),
         });
     }
 

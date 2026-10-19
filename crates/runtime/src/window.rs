@@ -1,5 +1,5 @@
-//! The application window: the title row with the project menu at its left and the live input in
-//! its middle, the view of the project's main instance under it, the left panel beside it, and a
+//! The application window: the title row with the project menu at its left and what the main
+//! view puts in the title bar in its middle, the view of the project's main instance under it, the left panel beside it, and a
 //! quiet line for errors and problems top-right, under the title row.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
@@ -172,6 +172,8 @@ pub struct Shell {
     session: Entity<Session>,
     /// The instance in the main area and its view. Both change when it comes or goes.
     main: Option<(InstanceId, AnyView)>,
+    /// What the main view shows in the title bar, such as the transport of a song.
+    title_bar: Option<Entity<sound_typescript::TitleBar>>,
     project_menu: Entity<ProjectMenu>,
     /// The machine's live input and the meter of the device, see [`LiveInput`].
     live: Entity<LiveInput>,
@@ -293,6 +295,7 @@ impl Shell {
             live,
             session,
             main: None,
+            title_bar: None,
             focus_handle,
             dismiss_focus: cx.focus_handle().tab_stop(true),
             left_panel,
@@ -552,6 +555,8 @@ impl Shell {
             let view = Views::view_of(&self.session, &id, window, cx)?;
             Some((id, view))
         });
+        self.title_bar =
+            (self.main.as_ref()).and_then(|(_, view)| sound_typescript::title_bar_of(view, cx));
         cx.notify();
     }
 
@@ -780,8 +785,8 @@ impl Render for Shell {
             .text_color(text)
             .font(typography::ui_font())
             .text_size(px(14.))
-            // The title row: the project menu, then the transport in the middle of the room
-            // right of it. The air on both sides of the pill moves the window. In a narrow
+            // The title row: the project menu, then what the main view puts there, such as a
+            // song's transport, in the middle of the room right of it. The air on both sides of the pill moves the window. In a narrow
             // window the air goes first, so the pill never covers the menu.
             .child(
                 div()
@@ -793,7 +798,7 @@ impl Render for Shell {
                     .children(self.left_panel_icon(cx))
                     .child(div().flex_none().child(self.project_menu.clone()))
                     .child(Self::drag_region().flex_1())
-                    .child(self.live.clone())
+                    .children(self.title_bar.clone())
                     .child(Self::drag_region().flex_1())
                     .children(Self::window_controls(window)),
             )

@@ -1,6 +1,5 @@
-//! What the machine plays into the project live, and what it hears: the MIDI keyboard, the
-//! computer keys, the audio input, and the meter of what the device plays. None of it is project
-//! state, and every window has it, whatever its main view.
+//! What the machine plays into the project live: the MIDI keyboard, the computer keys and the
+//! audio input. None of it is project state, and every window has it, whatever its main view.
 //!
 //! A take reaches the keyboard and the input through here: while one runs, the live notes stay
 //! where it began and the input stays open, see [`LiveInput::hold`].
@@ -8,22 +7,14 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, KeyDownEvent, Task, Window, div, prelude::*,
-    px,
-};
+use gpui::{App, Context, Entity, EventEmitter, KeyDownEvent, Task, prelude::*};
 use midi::{ComputerKeys, Input, Keyboard, Latency, Lost};
 use sound_core::{InputEndpoint, InstanceId, Project, ProjectEvent, StreamTiming};
 use sound_notes::NOTES_INPUT;
-use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::meter::Meter;
-use sound_ui::{ActiveTheme, Metering, PeaksReader, Recording, Session, every_poll, weak_action};
+use sound_ui::{Recording, Session, every_poll};
 
 use super::audio_input::{AudioInput, OpenInput, OpenedInput};
 use crate::recorder::{RecorderCommand, RecorderReport};
-
-/// The height of the pill of the title row it sits in.
-const HEIGHT: f32 = 36.;
 
 /// What a take of a recorder holds while it runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -53,13 +44,7 @@ pub struct LiveInput {
     audio: AudioInput,
     /// What the takes of the recorders of the project hold, see [`Hold`].
     hold: Hold,
-    /// Whether something takes the notes of the keyboard, as of the last poll.
-    takes_notes: bool,
-    keys_focus: FocusHandle,
-    /// What the device plays, taken once per poll.
-    output: PeaksReader,
-    metering: Metering,
-    /// Drains what the engine reports about the MIDI input, and reads the meter.
+    /// Drains what the engine reports about the MIDI input.
     _polling: Task<()>,
 }
 
@@ -121,12 +106,11 @@ impl LiveInput {
             .detach();
         // Its own timer, next to the one of the session: what the engine reports about the
         // MIDI input must be drained whether the project plays or not.
-        let polling = every_poll(cx, |live: &mut Self, cx| {
-            live.poll_input(cx);
-            live.read_meter(cx);
-        });
-        let output = session.read(cx).output_peaks();
-        let mut live = Self {
+        let polling = every_poll(cx, |live: &mut Self, cx| live.poll_input(cx));
+        // The computer keys go on and off where the session says: cmd-K, or a tool's button.
+        cx.observe(&session, |live, _, cx| live.follow_computer_keys(cx))
+            .detach();
+        Self {
             recording,
             session,
             keyboard,
@@ -134,15 +118,8 @@ impl LiveInput {
             timing,
             audio: AudioInput::new(open_input),
             hold: Hold::default(),
-            takes_notes: false,
-            keys_focus: cx.focus_handle().tab_stop(true),
-            output,
-            metering: Metering::default(),
             _polling: polling,
-        };
-        // So the first frame shows the computer keys, before the first poll.
-        live.takes_notes = !live.live_notes(cx).is_empty();
-        live
+        }
     }
 
     /// Takes what the engine reported about the MIDI input, wires the live input to where it
@@ -153,10 +130,6 @@ impl LiveInput {
     pub fn poll_input(&mut self, cx: &mut Context<Self>) {
         let session = self.session.clone();
         let destinations = self.live_notes(cx);
-        if self.takes_notes != !destinations.is_empty() {
-            self.takes_notes = !destinations.is_empty();
-            cx.notify();
-        }
         self.poll_audio(cx);
         let timing = self.timing.clone();
         let held = self.hold.notes;
@@ -187,14 +160,6 @@ impl LiveInput {
     fn live_notes(&self, cx: &App) -> Vec<InputEndpoint> {
         let session = self.session.read(cx);
         notes_inputs(session.project(), session.selected())
-    }
-
-    /// One poll of the meter: what the device played since the last one. The timer calls it;
-    /// tests call it to skip the wait.
-    pub fn read_meter(&mut self, cx: &mut Context<Self>) {
-        if self.metering.read_amplitudes(self.output.take()) {
-            cx.notify();
-        }
     }
 
     /// Where a device layer puts the messages it reads. `None` when the engine refused the
@@ -230,22 +195,34 @@ impl LiveInput {
         }
     }
 
-    /// Whether the computer keys play. For tests and for the button.
+    /// Whether the computer keys play. For tests.
     pub fn computer_keys_are_on(&self) -> bool {
         self.computer_keys.is_some()
     }
 
-    /// Turns the computer keys on or off. Not an edit, like the click. Off ends what they hold.
+    /// Turns the computer keys on or off, as cmd-K does. Not an edit, like the click.
     pub fn toggle_computer_keys(&mut self, cx: &mut Context<Self>) {
-        if self.keyboard.is_none() {
+        let on = self.computer_keys.is_none();
+        (self.session).update(cx, |session, cx| session.set_computer_keys(on, cx));
+    }
+
+    /// Plays the computer keys while the session wants them, when there is a keyboard to play
+    /// into. Off ends what they hold.
+    fn follow_computer_keys(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.session.read(cx).computer_keys_on();
+        if wanted == self.computer_keys.is_some() {
             return;
         }
-        match self.computer_keys.is_some() {
-            true => {
+        if wanted && self.keyboard.is_none() {
+            (self.session).update(cx, |session, cx| session.set_computer_keys(false, cx));
+            return;
+        }
+        match wanted {
+            true => self.computer_keys = Some(ComputerKeys::default()),
+            false => {
                 self.let_go_of_computer_keys(cx);
                 self.computer_keys = None;
             }
-            false => self.computer_keys = Some(ComputerKeys::default()),
         }
         cx.notify();
     }
@@ -455,30 +432,6 @@ impl LiveInput {
             self.follow_input(cx);
         }
     }
-
-    fn computer_keys_button(&self, cx: &mut Context<Self>) -> Button {
-        let muted = cx.theme().gray_700;
-        Button::icon_only("computer-keys", "keyboard-music")
-            .variant(match self.computer_keys_are_on() {
-                true => ButtonVariant::Primary,
-                false => ButtonVariant::GhostColor(muted),
-            })
-            .size(ButtonSize::Sm)
-            .rounded(true)
-            .disabled(self.keyboard.is_none())
-            .debug_selector(|| "computer-keys".to_string())
-            .focus_handle(&self.keys_focus)
-            .on_click(cx.listener(|live, _, _, cx| live.toggle_computer_keys(cx)))
-    }
-
-    fn output_meter(&self, cx: &mut Context<Self>) -> Meter {
-        Meter::new("master", self.metering.level())
-            .horizontal()
-            .on_clear_clip(weak_action(cx, |live: &mut Self, cx| {
-                live.metering.clear_clip();
-                cx.notify();
-            }))
-    }
 }
 
 /// The `notes` of `selected` or of the nearest parent of it that has them; with nothing
@@ -520,21 +473,5 @@ fn print_midi_report(latency: Latency, lost: Lost) {
             "midi lost: {} messages never played, {} missing from a take",
             lost.input, lost.reports
         );
-    }
-}
-
-impl Render for LiveInput {
-    /// The computer keys, while something takes notes, and the meter of what the device plays.
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(12.))
-            .h(px(HEIGHT))
-            // A click here does not move the window, as the rest of the title row does.
-            .occlude()
-            .children(self.takes_notes.then(|| self.computer_keys_button(cx)))
-            .child(self.output_meter(cx))
     }
 }

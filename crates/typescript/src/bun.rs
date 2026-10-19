@@ -252,6 +252,8 @@ pub(crate) struct Transport {
     /// The ticks playback goes back from the end to the start of, while it repeats.
     pub repeat: Option<[u64; 2]>,
     pub click: bool,
+    /// Whether the computer keys play notes.
+    pub keys: bool,
 }
 
 /// Stopped at the start, at 120 bpm.
@@ -265,6 +267,7 @@ impl Default for Transport {
             bpm: 120.0,
             repeat: None,
             click: false,
+            keys: false,
         }
     }
 }
@@ -293,6 +296,9 @@ pub(crate) enum TransportOp {
         range: Option<[u64; 2]>,
     },
     Click {
+        on: bool,
+    },
+    Keys {
         on: bool,
     },
 }

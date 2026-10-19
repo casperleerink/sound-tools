@@ -205,7 +205,7 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
         window.settle();
         input.openings.load(Ordering::Relaxed) == 1
     });
-    let record = window.until_found("div-record");
+    let record = window.until_found("button-record");
     window.cx.simulate_click(record, Modifiers::default());
     window.record_for(&input, 48_000);
     window.cx.simulate_click(record, Modifiers::default());
@@ -244,7 +244,7 @@ fn a_take_of_sound_on_a_track_is_a_problem(cx: &mut TestAppContext) {
     let arm = gpui::point(row.x - gpui::px(HEADER) + gpui::px(132.), row.y);
     window.press(arm);
     window.release(arm);
-    let record = window.until_found("div-record");
+    let record = window.until_found("button-record");
     window.cx.simulate_click(record, Modifiers::default());
     window.record_for(&input, 48_000);
     window.cx.simulate_click(record, Modifiers::default());
