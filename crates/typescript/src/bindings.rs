@@ -1,0 +1,97 @@
+//! A card's code in Bun, driven as the window drives it: what a press changes crosses as the
+//! props it changes, and no more.
+
+use std::collections::BTreeMap;
+
+use serde_json::json;
+use sound_core::InstanceId;
+
+use crate::bun::{Bun, Clock, Event, EventKind, Request, Transport, new_opening, record_key};
+use crate::tree::{Change, Op, Props};
+use crate::{bun_program, host_script, write_sdk};
+
+const ROW: &str = r#"import { h, pattern, Steps, tool } from "./sdk";
+
+tool({
+  name: "row",
+  title: "Row",
+  when: "A test",
+  doc: "A row of steps.",
+  kind: "source",
+  state: { steps: pattern({ length: 4, min: 0, max: 1, default: 0 }) },
+  sound: () => 0,
+  card: () => h(Steps, { path: "steps" }),
+});
+"#;
+
+fn next_ops(bun: &Bun) -> Vec<Op> {
+    loop {
+        match smol::block_on(bun.events().recv()) {
+            Ok(Event::Ops { ops, .. }) => return ops.unwrap(),
+            Ok(Event::Ended { why, .. }) => panic!("Bun ended: {why}"),
+            Ok(_) => {}
+            Err(error) => panic!("{error}"),
+        }
+    }
+}
+
+#[test]
+fn a_press_on_a_step_sends_its_colour_and_nothing_else() {
+    let Some(program) = bun_program() else {
+        return eprintln!("skipped: Bun is not installed");
+    };
+    let folder = tempfile::tempdir().unwrap();
+    write_sdk(folder.path(), &[]).unwrap();
+    std::fs::write(folder.path().join("row.ts"), ROW).unwrap();
+    let host = host_script().unwrap();
+    let (bun, _) = Bun::start(&program, &host, (folder.path(), new_opening()), &["row.ts"])
+        .unwrap_or_else(|failure| panic!("{}", failure.why));
+    let id = InstanceId::new("row").unwrap();
+    let state = json!({ "steps": [0, 0, 0, 0] }).to_string();
+    assert!(bun.tell([(
+        &id,
+        Some(("row", record_key("row", &state), state.as_str()))
+    )]));
+    let transport = Transport {
+        playing: false,
+        tick: 0,
+        bar: 1,
+        beat: 1,
+        bpm: 120.0,
+    };
+    let clock = Clock {
+        time: 0.0,
+        transport,
+    };
+    let watches = BTreeMap::new();
+    bun.send(&Request::Mount {
+        card: 1,
+        instance: &id,
+        watches: &watches,
+        page: None,
+        clock,
+    });
+    let steps: Vec<u64> = (next_ops(&bun).into_iter())
+        .filter_map(|op| match op {
+            Op::Create(id, Props::Shape(shape)) if shape.on_press == Some(true) => Some(id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(steps.len(), 4);
+    bun.send(&Request::Event {
+        card: 1,
+        node: steps[2],
+        kind: EventKind::Press,
+        payload: json!({ "x": 0, "y": 0, "button": "left", "clicks": 1, "shift": false, "alt": false, "cmd": false, "ctrl": false }),
+        time: 0.0,
+    });
+    let ops = next_ops(&bun);
+    let [Op::Set(node, Change::Shape(change))] = ops.as_slice() else {
+        panic!("one change of one step: {ops:?}");
+    };
+    assert_eq!(*node, steps[2]);
+    assert!(
+        format!("{change:?}").contains("color: Some(Some(Color("),
+        "{change:?}"
+    );
+}

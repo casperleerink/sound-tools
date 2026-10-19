@@ -146,7 +146,7 @@ What the card plays as a performer plays, which nothing saves and no undo takes 
 
 ## Its card
 
-Without `card`, the card has a knob per knob and live control, a row of steps per pattern, and a button per option, toggle and trigger. For your own, give `card` in a `.tsx` file. It draws from the record and the watches; it keeps no state of its own.
+Without `card`, the card has a knob per knob and live control, a row of steps per pattern, and a button per option, toggle and trigger. For your own, give `card` in a `.tsx` file. It runs once and makes what the card shows; what it keeps goes in `memory`.
 
 A card, in the row under the tracks, is at most 144 points tall: more is cut off. It is as wide as it needs, at least 200, and the row scrolls sideways. So put things side by side rather than stacked: a `Knob` is 56 by 72, so two rows of knobs fill a card; a `Pad` 120 square unless `size` says; a `Meter` 64 tall; `Steps` 14 tall; a line of text about 16.
 
@@ -184,19 +184,29 @@ tool({
 | `<Meter watch label?>` | A bar that shows a watch from 0 to 1. |
 | `<Pad x y size?>` | A square for the pointer: across moves the live control `x`, up moves `y`. |
 
-All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `watches`, the last value of each watch; `time` and `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`); `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; and `set`, `fire`, `play` and `send`, which play its live controls, triggers and voices as a performer would. A card draws again when what its code read changed: a field it read, its children, the watches.
+All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `watches`, the last value of each watch; `time` and `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`); `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; and `set`, `fire`, `play` and `send`, which play its live controls, triggers and voices as a performer would.
+
+### Values that change
+
+A card, a page and a component run once. A value that changes (a field, a child, a watch, `transport`, `memory`, `size`) goes in a function, which the window runs again when what it read changes, and only what it gives changes on screen: `style={() => (state.on ? lit : plain)}`, and `{() => `${state.notes.length} notes`}` as a child. Read such a value in the body itself and the card fails with an error that says how: `x={note.start}` is `x={() => note.start}`. A handler reads values as it runs, so it needs no function around them.
+
+- `<For each={() => state.notes}>{(note, index) => ...}</For>` makes a row per item once and keeps it while its item stays: a moved note changes only what reads it. `index()` follows its place. Its body runs once too: `x={() => note.start}`.
+- `<Show when={() => memory.open}>{() => ...}</Show>` makes its part each time it shows.
+- `memo(() => ...)` works a value out once for many functions. `selector(() => memory.selected)` gives `isPicked(key)`, which changes only for the keys that come or go, so a click selects one note at the cost of one.
+- Set a field of `memory` to change it, from any code. A `Set` or a `Map` is replaced, never changed in place: its type refuses `.add`.
 
 ## Shapes that move
 
 A `<Space>` draws shapes: `<Rect>`, `<Circle>`, `<Line>`, `<Arc>`, `<Label>` (text) and `<Group>`. It has units of its own, such as ticks across and notes down (`unit` is points per unit), scrolls over `extent` and zooms in `zoom` by itself, and draws only what shows. The knob, steps, meter and pad above are spaces.
 
-What moves on a space moves in the window with no code running, so it keeps up with the pointer and the playhead: give a number a live value from `now` in place of a number. `now.tick` is where the piece plays, `now.watch(name)` a watch, `now.field(name)` a number of the record as a drag turns it, and `now.drag(id)` how far the drag `id` went, rounded to its `snap`. Combine them with `.plus`, `.times`, `.snap` and the rest. Code hears a drag once, at `onEnd`, and what moved stays where it is until the tree its code draws then arrives:
+What moves on a space moves in the window with no code running, so it keeps up with the pointer and the playhead: give a number a live value from `now` in place of a number. `now.tick` is where the piece plays, `now.watch(name)` a watch, `now.field(name)` a number of the record as a drag turns it, and `now.drag(id)` how far the drag `id` went, rounded to its `snap`. Combine them with `.plus`, `.times`, `.snap` and the rest; a function may give one. Code hears a drag once, at `onEnd`, and what moved stays where it is until what its code changes then arrives:
 
 ```tsx
 const roll = { unit: { x: 0.1, y: 12 }, extent: { x: [0, 38400], y: [0, 128] }, zoom: { x: [0.1, 10] }, scroll: { y: 40 } } as const;
 
 page: ({ state, memory, update, now }) => {
   const move = now.drag("move");
+  const isPicked = selector(() => memory.selected);
   // One drag for every note: a drag many shapes share crosses once.
   const drag: Drag = {
     id: "move", snap: { x: 240, grid: true }, axis: "x",
@@ -204,21 +214,21 @@ page: ({ state, memory, update, now }) => {
       state.notes = state.notes.map((note, index) => (memory.selected.has(index) ? { ...note, start: note.start + dx } : note));
     }),
   };
-  const note = (each: Note, index: number) => (
-    <Rect key={String(index)} x={each.start} y={127 - each.pitch} width={each.length} height={1}
-      color="#a9b1ff" drag={drag} onPress={() => { memory.selected = new Set([index]); }} />
-  );
   return (
     <Space key="roll" width={800} height={400} {...roll}>
-      {state.notes.map((each, index) => (memory.selected.has(index) ? null : note(each, index)))}
-      <Group x={move.dx}>{state.notes.map((each, index) => (memory.selected.has(index) ? note(each, index) : null))}</Group>
+      <For each={() => state.notes}>
+        {(note, index) => (
+          <Rect x={() => (isPicked(index()) ? move.dx.plus(note.start) : note.start)} y={() => 127 - note.pitch} width={() => note.length}
+            height={1} color="#a9b1ff" drag={drag} onPress={() => { memory.selected = new Set([index()]); }} />
+        )}
+      </For>
       <Line from={[now.tick, 0]} to={[now.tick, 128]} color="#7ee0a0" width={2} />
     </Space>
   );
 },
 ```
 
-- A `<Group x y>` moves its shapes by one live value, as the selected notes above. Bind a group, not each shape: a tree of thousands of shapes stays small.
+- A `<Group x y>` moves its shapes by one live value.
 - `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. Escape lets go of a drag, and its code hears nothing.
 - `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts.
 - A drag can also turn a field or a live control as it goes, with no code, as a knob does: a drag of `{ y: { field: "cutoff" } }`; for a field the whole drag is one undo step. `onPress` hears a `Press`: where in units, the button, the clicks and the modifiers. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
@@ -243,7 +253,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
 
 - `send(event, { at, child })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`.
 - `onKey: (tool, { key, down, shift, cmd, alt, ctrl }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. A key with cmd, ctrl or alt only goes down, and one the window uses, such as cmd-z, stays the window's. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; an instrument's or source's sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The MIDI keyboard plays `notes`, and in a track its clips too.
-- `<Canvas width height shapes background? onPress? onDrag?>` is a space in points that draws `shapes` (`{ kind: "circle", x, y, radius, color }` and the other kinds of `Shape`) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. A card or page draws again after every tick.
+- `<Canvas width height shapes background? onPress? onDrag?>` is a space in points that draws `shapes` (`{ kind: "circle", x, y, radius, color }` and the other kinds of `Shape`) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. Give `shapes` as a function to draw what moves, such as from `memory`: they are made again whole when what it reads changes, so keep it to a few hundred.
 
 ## Changing records
 
@@ -258,7 +268,7 @@ update("Add a bass line", ({ children }) => {
 
 ## A project that is one tool
 
-`page: (page) => ...` draws the whole window, from what a card gets and `size`, its width and height in points. Fill it: the window may be any size, and the page draws again when it changes. Keep positions from 0 to 1 and scale them by `size` as it draws.
+`page: (page) => ...` draws the whole window, from what a card gets and `size`, its width and height in points. Fill it: the window may be any size, so read `size` in a function: `width={() => size.width}`.
 
 To make the project one tool:
 
@@ -267,10 +277,10 @@ To make the project one tool:
 3. Make the tool a `source`, or an `instrument` when it plays notes with `play`; a parent leaves `kind` out.
 4. Connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`.
 
-The window shows its page, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and cards and pages draw again as `transport` moves. `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well plays the microphone live into its audio input: an `effect` hears it as `input`, a parent from `{ port: "audio" }`. Tell the composer to use headphones. `{"app": "Music"}` in place of `{"device_input": 0}` plays another app, and `{"app": "all"}` every app.
+The window shows its page, and space plays and stops. With `transport: true` in the tool it shows play, stop, the position, the tempo and the click too, and what reads `transport` follows it. `{"from": {"device_input": 0}, "to": {"input": {"instance": "<name>", "port": "audio"}}}` as well plays the microphone live into its audio input: an `effect` hears it as `input`, a parent from `{ port: "audio" }`. Tell the composer to use headphones. `{"app": "Music"}` in place of `{"device_input": 0}` plays another app, and `{"app": "all"}` every app.
 
 ```tsx
-import { Canvas, feedback, h, live, lowpass, max, noise, tool, trigger, type Shape } from "./sdk";
+import { Canvas, feedback, h, live, lowpass, max, noise, tool, trigger, type ShapeLiteral } from "./sdk";
 
 type Ball = { x: number; y: number; speed: number };
 
@@ -299,11 +309,12 @@ tool({
       }
     }
   },
-  page: ({ memory, size }) => (
+  // A function of the size: the canvas is made again when the window changes.
+  page: ({ memory, size }) => () => (
     <Canvas
       width={size.width}
       height={size.height}
-      shapes={memory.balls.map((ball): Shape => ({ kind: "circle", x: ball.x * size.width, y: ball.y * size.height, radius: 5, color: "#60a5fa" }))}
+      shapes={() => memory.balls.map((ball): ShapeLiteral => ({ kind: "circle", x: ball.x * size.width, y: ball.y * size.height, radius: 5, color: "#60a5fa" }))}
       onPress={(x, y) => memory.balls.push({ x, y, speed: 0 })}
     />
   ),
@@ -373,9 +384,9 @@ tool({
   page: ({ watches, set }) =>
     h("div", { style: { direction: "row", gap: 8, padding: 16 } },
       [0, 1, -1].map((pattern) => {
-        const plays = watches["bass.playing"] === pattern, waits = watches["bass.queued"] === pattern;
+        const plays = () => watches["bass.playing"] === pattern, waits = () => watches["bass.queued"] === pattern;
         return h("div", {
-          style: { padding: 8, radius: 6, background: plays ? "#7c3aed" : waits ? "#4c1d95" : "#2a2f3a" },
+          style: () => ({ padding: 8, radius: 6, background: plays() ? "#7c3aed" : waits() ? "#4c1d95" : "#2a2f3a" }),
           onClick: () => set({ child: "bass", live: "launch" }, pattern),
         }, pattern < 0 ? "Stop" : `Bass ${pattern + 1}`);
       }),

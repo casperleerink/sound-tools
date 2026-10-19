@@ -14,6 +14,8 @@
 //! audio thread, and the window never waits for Bun.
 
 mod behaviours;
+#[cfg(test)]
+mod bindings;
 mod bun;
 mod card;
 mod live;

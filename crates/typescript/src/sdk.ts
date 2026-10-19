@@ -1496,7 +1496,13 @@ const ALL_KEYS = Symbol("keys");
 const proxies = new WeakMap<object, object>();
 const fieldSources = new WeakMap<object, Map<PropertyKey, Dep>>();
 
+/** A proxy hears an index of a list as text: `"3"`, never `3`. */
+function keyOf(key: PropertyKey): PropertyKey {
+  return typeof key === "number" ? String(key) : key;
+}
+
 function fieldSource(target: object, key: PropertyKey): Dep {
+  key = keyOf(key);
   let sources = fieldSources.get(target);
   if (!sources) {
     sources = new Map();
@@ -1511,7 +1517,7 @@ function fieldSource(target: object, key: PropertyKey): Dep {
 }
 
 function changed(target: object, key: PropertyKey) {
-  notify(fieldSources.get(target)?.get(key));
+  notify(fieldSources.get(target)?.get(keyOf(key)));
 }
 
 function isWrapped(value: unknown): value is object {
