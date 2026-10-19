@@ -674,3 +674,14 @@ Casper's three decisions: templates behind one "New project…", the Rust arrang
 - Headless snapshots show no meter motion: card meters poll on timers the snapshot loop does not run.
 - Two window harnesses (`support::Opened`, `tools::Window`) do the same work.
 
+
+### Round 14a
+
+Two independent reviews (Codex, Opus) of the branch; this round fixed their bugs. Each fix has a test that fails without it.
+
+- **One child shape.** Every piece of code gets children filled with their defaults, as `update` did. `OwnedChild` has one `state` type; the template's casts are gone. The DAW template and `host.ts` are type-checked with the SDK now.
+- **Takes go to TS.** A `recorder` writes the files and hands the record of a `timeline` or a `region` to its parent's new `onTake`, which keeps it with `update`. Rust no longer places children. Reason for the hook: what a take becomes is structure, which TS owns. A take keeps pedal and wheels, ends under the clock it began with, waits for the take before it at a loop, survives its recorder being deleted, ends when the input cannot open, and says when its tap missed events.
+- **Sends with `at`** wait for it for numbers, launches and records too, not only bangs.
+- Others: loop watches after `loop` turns on; three returns get three names; a lane starts at the number's value (`numbers()` gives `value`; a JSON fader says its record); refused edits roll back; a child swapped in a list gets new rows; a record of another tool remounts its card; deep number/bang connections into a TS tool; a region reads a file not in memory on a thread; regions follow the tempo map; clip resize and the note editor keep notes inside the clip; overflow of a timeline end is a problem; two cards share a meter's peak; a page asks Bun only for the watches it reads; `number({ integer: true })` keeps its type; node ops refuse a duplicate or a cycle.
+
+**Not done:** the instrument slot by ports (a track's `synth` still names `instrument.synth`): a list of tools or a slot typed by ports is a decision of the SDK's types, for Casper. `a_launch_from_a_page_…` timed out once under a full parallel run and passed on the next; it clicks the middle of the window before the page may be made.
