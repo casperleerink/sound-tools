@@ -735,7 +735,9 @@ fn the_timeline_scrolls_to_its_last_clip(cx: &mut TestAppContext) {
     window.click(at);
     window.wait_for_bun();
     window.cx.simulate_keystrokes("backspace");
-    window.until("the last clip deleted", |window| !window.has("song/t00/c29"));
+    window.until("the last clip deleted", |window| {
+        !window.has("song/t00/c29")
+    });
     assert!(window.has("song/t00/c28"));
 }
 
@@ -753,7 +755,10 @@ fn a_region_that_plays_its_whole_file_trims_no_further_out(cx: &mut TestAppConte
     window.release(end + point(px(960. * ACROSS), px(0.)));
     window.after_the_runs();
     window.wait_for_bun();
-    assert_eq!(window.record("song/voice/region")["file_end_seconds"], serde_json::Value::Null);
+    assert_eq!(
+        window.record("song/voice/region")["file_end_seconds"],
+        serde_json::Value::Null
+    );
     assert_eq!(window.problems(), []);
 }
 
@@ -774,13 +779,19 @@ fn a_chosen_note_stays_chosen_when_the_notes_move_in_the_list(cx: &mut TestAppCo
     window.click(editor + point(px(30.), px((84. - 60.) * 8. + 4.)));
     window.wait_for_bun();
     let session = window.session.clone();
-    let notes = serde_json::json!({ "start": 0, "length": BAR, "notes": [note(1920, 62), note(0, 60)] });
+    let notes =
+        serde_json::json!({ "start": 0, "length": BAR, "notes": [note(1920, 62), note(0, 60)] });
     window.cx.update(|_, cx| {
         session.update(cx, |session, cx| {
             session.edit(cx, |project| {
                 let mut edit = project.begin("Another tool");
                 let mut changes = sound_core::Changes::new();
-                project.set_json(&mut changes, crate::support::id("song/t00/c00"), "timeline", notes)?;
+                project.set_json(
+                    &mut changes,
+                    crate::support::id("song/t00/c00"),
+                    "timeline",
+                    notes,
+                )?;
                 project.publish(&mut edit, changes)?;
                 project.finish(edit)
             })
@@ -789,7 +800,10 @@ fn a_chosen_note_stays_chosen_when_the_notes_move_in_the_list(cx: &mut TestAppCo
     window.wait_for_bun();
     window.cx.simulate_keystrokes("backspace");
     window.until("the note deleted", |window| {
-        window.record("song/t00/c00")["notes"].as_array().map_or(0, Vec::len) == 1
+        window.record("song/t00/c00")["notes"]
+            .as_array()
+            .map_or(0, Vec::len)
+            == 1
     });
     assert_eq!(window.record("song/t00/c00")["notes"][0]["pitch"], 62);
 }
@@ -806,5 +820,8 @@ fn a_clip_added_in_three_four_fills_its_bar(cx: &mut TestAppContext) {
     window.double_click(at);
     window.until("the clip added", |window| window.has("song/t00/clip"));
     let clip = window.record("song/t00/clip");
-    assert_eq!((clip["start"].as_u64(), clip["length"].as_u64()), (Some(2880), Some(2880)));
+    assert_eq!(
+        (clip["start"].as_u64(), clip["length"].as_u64()),
+        (Some(2880), Some(2880))
+    );
 }

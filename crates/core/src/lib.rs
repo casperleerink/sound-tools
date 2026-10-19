@@ -9,7 +9,6 @@ mod automation;
 mod clock;
 mod compensation;
 mod control;
-pub mod decibels;
 mod delay_line;
 mod detector;
 mod device;

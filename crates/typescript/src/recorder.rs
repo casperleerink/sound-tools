@@ -271,7 +271,8 @@ impl Processor for Recorder {
         if let Some(armed) = context.event_inputs.get(Self::ARM).last() {
             self.arm = armed.event.0 > 0.0;
         }
-        self.armed.set(if self.record || self.arm { 1.0 } else { 0.0 });
+        self.armed
+            .set(if self.record || self.arm { 1.0 } else { 0.0 });
     }
 }
 

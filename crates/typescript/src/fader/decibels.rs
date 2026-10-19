@@ -8,10 +8,10 @@ use serde::de::{self, Visitor};
 use serde::{Deserializer, Serializer};
 
 /// What a record says for silence.
-pub const SILENCE: &str = "-inf";
+const SILENCE: &str = "-inf";
 
 /// For `#[serde(with = "decibels")]` on an `f32` in decibels.
-pub fn serialize<S: Serializer>(db: &f32, serializer: S) -> Result<S::Ok, S::Error> {
+pub(super) fn serialize<S: Serializer>(db: &f32, serializer: S) -> Result<S::Ok, S::Error> {
     if *db == f32::NEG_INFINITY {
         serializer.serialize_str(SILENCE)
     } else {
@@ -19,7 +19,7 @@ pub fn serialize<S: Serializer>(db: &f32, serializer: S) -> Result<S::Ok, S::Err
     }
 }
 
-pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
     deserializer.deserialize_any(GainVisitor)
 }
 
@@ -55,39 +55,8 @@ impl Visitor<'_> for GainVisitor {
     }
 }
 
-/// For `#[serde(with = "decibels::by_name")]` on a map of names to gains in decibels.
-pub mod by_name {
-    use std::collections::BTreeMap;
-
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    #[derive(Serialize, Deserialize)]
-    #[serde(transparent)]
-    struct Gain(#[serde(with = "super")] f32);
-
-    pub fn serialize<S: Serializer>(
-        gains: &BTreeMap<String, f32>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.collect_map(gains.iter().map(|(name, db)| (name, Gain(*db))))
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<BTreeMap<String, f32>, D::Error> {
-        let gains = BTreeMap::<String, Gain>::deserialize(deserializer)?;
-        Ok(gains
-            .into_iter()
-            .map(|(name, Gain(db))| (name, db))
-            .collect())
-    }
-}
-
-/// The factor a gain multiplies the samples by: 0 dB is exactly 1 and `-inf` exactly 0.
-pub use crate::amplitude;
-
 /// Whether a gain can be saved and played: at most `max`, and a number or `-inf`.
-pub fn check(field: &str, db: f32, max: f32) -> Result<(), String> {
+pub(super) fn check(field: &str, db: f32, max: f32) -> Result<(), String> {
     if db <= max {
         return Ok(());
     }

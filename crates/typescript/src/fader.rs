@@ -1,16 +1,22 @@
 //! The `fader`: a child of a parent of the project that turns a sound up or down on a fader's
 //! scale, pans it and mutes it, with no click, and keeps the level of what it sends on for a
 //! view. A mixer strip, a send or a master volume is one.
+//!
+//! The volume and the pan are automatable like the numbers of a device. The processor works out
+//! one gain per channel when something moves and ramps to the new pair, so no change clicks.
+
+mod decibels;
 
 use std::sync::Arc;
 
-use crate::mixer::{self, MAX_GAIN_DB, Mix, Mixer};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
-    BehaviourContext, BehaviourError, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint, State,
-    ToolSchema, decibels,
+    AudioInput, AudioOutput, Automated, AutomationInput, BehaviourContext, BehaviourError,
+    CHANNELS, InputEndpoint, JsonTool, JsonToolDoc, OutputEndpoint, Parameter, Peaks, Ports,
+    PrepareConfig, ProcessContext, Processor, Scale, Smoothed, State, Targets, ToolSchema,
+    all_positive_zero, amplitude, pan_gains,
 };
 
 use crate::meter::LEVEL;
@@ -73,10 +79,7 @@ pub(crate) fn json_tool() -> JsonTool {
 /// The record of the fader, for the SDK: its gain and its pan are numbers a cable moves.
 pub(crate) fn schema() -> ToolSchema {
     ToolSchema {
-        numbers: vec![
-            (mixer::GAIN.info(), mixer::GAIN.default),
-            (mixer::PAN.info(), mixer::PAN.default),
-        ],
+        numbers: vec![(GAIN.info(), GAIN.default), (PAN.info(), PAN.default)],
         ..ToolSchema::of::<Record>(&[])
     }
 }
@@ -96,16 +99,181 @@ fn record(state: &Value) -> Result<Record, String> {
 
 fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let record = record(state).map_err(BehaviourError::Other)?;
-    let mix = Mix {
+    let setting = Setting {
         gain_db: record.gain_db,
         pan: record.pan,
         silent: record.mute,
     };
     let peaks = context.peaks(LEVEL);
-    let fader = context.processor(PROCESSOR, || Mixer::new(mix, peaks))?;
-    context.update(fader, mix)?;
-    context.input("audio", InputEndpoint::new(fader, Mixer::INPUT));
-    context.automation_of(fader, Mixer::AUTOMATION, &mix);
-    context.output("audio", OutputEndpoint::new(fader, Mixer::OUTPUT));
+    let fader = context.processor(PROCESSOR, || Fader::new(setting, peaks))?;
+    context.update(fader, setting)?;
+    context.input("audio", InputEndpoint::new(fader, Fader::INPUT));
+    context.automation_of(fader, Fader::AUTOMATION, &setting);
+    context.output("audio", OutputEndpoint::new(fader, Fader::OUTPUT));
     Ok(())
+}
+
+/// The highest gain of a fader, in decibels. Anything under it is a gain too, down to
+/// `-inf`.
+const MAX_GAIN_DB: f32 = 6.0;
+
+/// How long a change of gain, pan or mute takes to arrive. A jump would click.
+const RAMP_SECONDS: f32 = 0.02;
+
+/// The gain of each channel, left first.
+type ChannelGains = [f32; CHANNELS];
+
+/// What a fader plays.
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct Setting {
+    gain_db: f32,
+    pan: f32,
+    /// Muted.
+    silent: bool,
+}
+
+impl Setting {
+    /// The gain of each channel.
+    ///
+    /// The pan law is the equal power law of the SDK, [`pan_gains`]: a sound keeps its
+    /// loudness wherever it is panned, and in the middle it is untouched.
+    fn gains(&self) -> ChannelGains {
+        pan_gains(f64::from(self.level()), self.pan)
+    }
+
+    /// The factor of the volume, 0 when silent.
+    fn level(&self) -> f32 {
+        match self.silent {
+            true => 0.0,
+            false => amplitude(self.gain_db),
+        }
+    }
+}
+
+/// The volume, as a lane moves it: on the scale of a fader.
+const GAIN: Parameter<Setting> = Parameter {
+    field: "gain_db",
+    min: f32::NEG_INFINITY,
+    max: MAX_GAIN_DB,
+    default: 0.0,
+    scale: Scale::Fader,
+    get: |setting| setting.gain_db,
+    set: |setting, value| setting.gain_db = value,
+};
+const PAN: Parameter<Setting> = Parameter {
+    field: "pan",
+    min: -1.0,
+    max: 1.0,
+    default: 0.0,
+    scale: Scale::Linear,
+    get: |setting| setting.pan,
+    set: |setting, value| setting.pan = value,
+};
+
+/// The processor: it multiplies each channel by its gain and ramps to a new one.
+///
+/// The volume and the pan glide apart, each with its own ramp, and the gains of the channels
+/// are worked out from where both are at the end of each block. So a pan lane that moves does
+/// not cut short the glide of a volume lane that just took over.
+struct Fader {
+    /// The record, with the values of its lanes.
+    setting: Automated<Setting, 2>,
+    /// The factor of the volume, 0 when silent.
+    level: Smoothed,
+    pan: Smoothed,
+    /// The gains at the end of the last block, where the next block starts.
+    gains: ChannelGains,
+    /// The frames a change takes. One until `prepare` runs.
+    ramp_frames: f32,
+    /// What it sends on, for a meter.
+    peaks: Peaks,
+}
+
+impl Fader {
+    const INPUT: AudioInput = AudioInput::new(0);
+    const OUTPUT: AudioOutput = AudioOutput::new(0);
+    /// What a lane moves.
+    const AUTOMATION: AutomationInput<Setting, 2> = AutomationInput::new(0, [&GAIN, &PAN]);
+
+    /// Starts at `setting`, so a fader that opens or is added is not faded in.
+    fn new(setting: Setting, peaks: Peaks) -> Self {
+        Self {
+            setting: Automated::new(Self::AUTOMATION, setting),
+            level: Smoothed::new(setting.level()),
+            pan: Smoothed::new(setting.pan),
+            gains: setting.gains(),
+            ramp_frames: 1.0,
+            peaks,
+        }
+    }
+
+    /// Aims at the volume and the pan of the record and its lanes, each in its own ramp.
+    fn aim(&mut self, targets: &Targets<Setting, 2>) {
+        let setting = *self.setting;
+        self.level.set_target(setting.level(), targets.ramp(&GAIN));
+        self.pan.set_target(setting.pan, targets.ramp(&PAN));
+        // Taken at once, so the block starts there too.
+        if targets.snaps() {
+            self.gains = pan_gains(f64::from(self.level.current()), self.pan.current());
+        }
+    }
+}
+
+impl Processor for Fader {
+    type Update = Setting;
+
+    fn ports(&self) -> Ports {
+        Ports::new()
+            .audio_input(Self::INPUT)
+            .audio_output(Self::OUTPUT)
+            .event_input(Self::AUTOMATION.port())
+    }
+
+    fn prepare(&mut self, config: &PrepareConfig) {
+        self.ramp_frames = (RAMP_SECONDS * config.sample_rate as f32).max(1.0);
+    }
+
+    fn update(&mut self, update: &mut Setting) {
+        let targets = self.setting.set_record(update, self.ramp_frames);
+        self.aim(&targets);
+    }
+
+    fn process(&mut self, context: &mut ProcessContext<'_>) {
+        if let Some(targets) = self.setting.follow(context, self.ramp_frames) {
+            self.aim(&targets);
+        }
+        if !self.level.is_moving() && self.level.current() == 0.0 {
+            // A silent fader that has finished its fade touches nothing.
+            self.gains = [0.0; CHANNELS];
+            return;
+        }
+        let frames = context.frames;
+        let before = self.gains;
+        let level = self.level.advance(frames);
+        let pan = self.pan.advance(frames);
+        self.gains = pan_gains(f64::from(level), pan);
+        let input = context.audio_inputs.get(Self::INPUT);
+        // +0.0 times a gain that stays and is not negative is +0.0: the output as it starts,
+        // with no peak.
+        let steady = before == self.gains
+            && before
+                .iter()
+                .all(|gain| gain.is_sign_positive() && gain.is_finite());
+        if steady && input.iter().all(|channel| all_positive_zero(channel)) {
+            return;
+        }
+        let [left, right] = context.audio_outputs.get(Self::OUTPUT);
+        let outputs = [&mut *left, &mut *right];
+        let channels = outputs
+            .into_iter()
+            .zip(input)
+            .zip(before.into_iter().zip(self.gains));
+        for ((output, input), (before, after)) in channels {
+            let step = (after - before) / frames as f32;
+            for (frame, (output, input)) in output.iter_mut().zip(input).enumerate() {
+                *output = input * (before + step * (frame + 1) as f32);
+            }
+        }
+        self.peaks.record_block([&*left, &*right]);
+    }
 }

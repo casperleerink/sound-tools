@@ -253,7 +253,12 @@ fn a_take_of_sound_on_a_track_is_a_problem(cx: &mut TestAppContext) {
         !window.problems().is_empty()
     });
     let problems = window.problems();
-    assert!(problems[0].message.contains("record sound on an audio track"), "{problems:?}");
+    assert!(
+        problems[0]
+            .message
+            .contains("record sound on an audio track"),
+        "{problems:?}"
+    );
 }
 
 impl Opened<'_> {
