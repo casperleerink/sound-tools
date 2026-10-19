@@ -480,7 +480,9 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 }
 
 #[gpui::test]
-fn the_transport_of_the_sdk_plays_and_a_handler_reads_the_clock(cx: &mut TestAppContext) {
+fn the_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
+    cx: &mut TestAppContext,
+) {
     let Some(mut window) = open(cx, &BEAT) else {
         return;
     };
@@ -488,8 +490,14 @@ fn the_transport_of_the_sdk_plays_and_a_handler_reads_the_clock(cx: &mut TestApp
     assert!(window.find("record").is_none());
     assert!(window.find("play").is_none());
     let play = window.until_found("div-transport-play");
-    window.cx.simulate_click(play, Modifiers::default());
-    window.until("the clock plays", Window::playing);
+    window.wait_for_bun();
+
+    // Played from elsewhere, its button says so: Bun hears the clock and sends what changed.
+    let heard = sound_typescript::heard_batches();
+    window.start_playing();
+    window.until("the button follows", |_| {
+        sound_typescript::heard_batches() > heard
+    });
 
     // A click keeps the tick the handler read as it ran.
     let keep = window.until_found("div-keep");
@@ -501,10 +509,12 @@ fn the_transport_of_the_sdk_plays_and_a_handler_reads_the_clock(cx: &mut TestApp
             .is_some_and(|tick| tick > 0.)
     });
 
-    // Space is the page's key wherever the focus is: it pauses.
+    // Its button pauses, and space, its key wherever the focus is, plays again.
+    window.cx.simulate_click(play, Modifiers::default());
+    window.until("the clock stops", |window| !window.playing());
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
-    window.until("the clock stops", |window| !window.playing());
+    window.until("the clock plays", Window::playing);
 }
 
 /// A key the main view does not name in `globalKeys` plays nothing: the app plays no key.
