@@ -18,7 +18,7 @@ Users need enough musical intent to guide the agent. Programming knowledge is no
 
 The core provides reliable audio execution, timing including a musical clock, project storage, shared editing behaviour, a UI SDK, the agent integration, and running the tools a project defines itself.
 
-Extensions provide instruments, effects, editors and complete workflows. The bundled arrangement, mixer, instruments and effects are extensions built on the same SDK available to user extensions. They give the agent working examples to adapt.
+Extensions provide instruments, effects, editors and complete workflows. The bundled instruments and effects are extensions built on the same SDK available to user extensions, and the DAW template is tools of a project, written with the TypeScript SDK an agent writes with. They give the agent working examples to adapt.
 
 Musical conventions beyond tempo and time are extension choices. The bundled extensions use Western notes and bars; other extensions may use frequency ratios, additive rhythms or free timing, and they can coexist in one project.
 

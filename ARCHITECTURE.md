@@ -33,11 +33,10 @@ The technical decisions, why we made them, and what we rejected. How something w
 This is the main rule of the codebase.
 
 - The core has no track, clip, note, effect, plugin or audio file type, and depends on no bundled crate. `tooling/workspace-rules` checks this.
-- Three layers: the core knows no music; the arrangement is the one exception the app may know, one way and in one place (`crates/runtime/src/arrangement_wiring.rs`); every other extension only through core hooks. A tool's page may ask for the transport, but only the arrangement records.
+- Three layers: the core knows no music; extensions reach it only through core hooks; a project's own tools compose them. The app knows no extension but where it registers them.
 - Extensions never depend on each other. What two extensions both need lives in a contract crate, such as `sound-notes` and `sound-media`.
-- Tools find each other by port names, not by type: an instrument has an input `notes` and an output `audio`, an effect an input and an output `audio`. So the arrangement depends on no instrument, effect or plugin.
-- The core does own the musical clock. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in the arrangement.
-- `extensions/tone`, a non-musical tool, proves the core rules hold for a tool unlike the arrangement.
+- Tools find each other by port names, not by type: an instrument has an input `notes` and an output `audio`, an effect an input and an output `audio`. So a parent depends on no instrument, effect or plugin.
+- The core does own the musical clock. Nearly every tool and request talks in bars and beats, so one clock beats one per extension. Sections (named bar ranges) live next to it in `project.json` for the same reason, not in a tool.
 
 ## Tools, instances and behaviours
 
@@ -52,7 +51,7 @@ This is the main rule of the codebase.
 - A service outside the project that can now do more (a plugin scan, a background render, a file arriving under `assets/`) makes the core run a behaviour again with the record it has: no write, no undo step. `runtime::tick` is the one place that asks these services, so the window, headless, a render and the tests behave alike.
 - A tool may say where its instances live (`Place`). A record in the wrong place is a problem that says where it belongs, so an agent's mistake is a message, not silence.
 - A derive turns one changed record into more changes in the same group: one engine batch, one undo step. It never runs on load, undo, redo or cancel, because the files already hold its output. It cannot fail: what it cannot compute is a problem. Rejected: running derives on load (a cost on every inspect, and it could disagree with the files).
-- A tool may register a summary and an end, so the core can print "what plays where" and the transport length without knowing tracks.
+- A tool may register an end, so the core knows the length of the piece without knowing tracks.
 
 ## Project storage
 
@@ -62,7 +61,7 @@ A project is a folder of JSON records and assets. Together with its extensions i
 my-piece/
   project.json              format, extensions, tempo map, sections, hand-made connections
   state/
-    arrangement/            a tool that owns children is a folder
+    song/                   a tool that owns children is a folder
       instance.json
       piano/
         instance.json
@@ -127,33 +126,18 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Levels leave the audio thread through `Peaks`, sound through a `Scope`. Views measure on their own thread. Rejected: measuring on the audio thread, an FFT per card in every block.
 - Every render is deterministic: the same project gives the same bytes. Anything that looks random takes a seed. The click is attached only by the window.
 
-## The arrangement
+## Templates
 
-`extensions/arrangement`.
+`templates/`, `crates/runtime/src/templates.rs`.
 
-- It owns tracks, clips, the track mixer and the master. Mixer values are fields of the track record.
-- A track's chain is its instrument, then the effects its `effects` list names. One list decides the order, so a reorder is one record and one undo step. Rejected: an order number in each effect record (two files per move, and ties).
-- Every device of a track that takes notes hears its notes at once, not delayed by latency before it.
-- Bypass and sidechain are saved on the track's effect slot, not in the effect's record, so plugins and built-in effects share them. The arrangement wires sidechains and names a loop of keys by its tracks, because the core's cycle message names processors an agent cannot act on.
-- A return is a track of kind `return`. Sends are a map on the sending track. No return sends to another yet.
-- Solo mutes the other tracks in their mixers, never a return, so a soloed track keeps its reverb.
-- The master limiter is fixed code of the arrangement, not a tool, so old projects get it without a file changing. It is bit-transparent under its ceiling. The core itself limits nothing.
-- A note starts inside its clip, else the record does not load: a note written with a project position is an error, not silence. An edit, move, delete or tempo change ends every note it started.
-- Expression lanes of a clip are sent only when they move, so outside every clip a lane is at rest and a seek or stop needs no case of its own.
-- Automation lanes are on the track, in project ticks and the number's own units. A device declares what it takes in one `AutomationInput`, so the arrangement knows no device. Whole numbers are not automatable, because a lane is a straight line. A lane that does not fit is a problem; the rest plays.
-- A lane is a straight line on the knob's travel, so a sweep sounds even and the knob and the lane agree.
-- Each automated device gets its own small player on the track, so it sees that device's latency lead and its events need no device id.
-- A player sends every lane every block, also while stopped, and a number that hears nothing goes back to its record. Rejected: sending only what moved, as the expression lanes do, because a removed player cannot say it is gone.
-- Views show the lanes as they play, with the same code the player uses, so a knob and the sound agree.
-- A clip moved in the window takes the automation under it, in the same undo step (`arrangement::moved`, a pure function a drag preview also calls). A clip moved by editing its file moves no automation.
-- An audio clip plays at its file's speed, so a tempo change moves only its start. Every audio clip edge and jump gets a short ramp, so nothing clicks.
-- Selection, snap, zoom, scroll and the clipboard are interface state: not saved, no undo step, invisible to agents. A file is already how an agent shares a clip.
+- A new project starts from a template: a folder of `templates/` copied into it, with what its `template.json` says of it. A new template is a new folder; `build.rs` embeds them. Bare is an empty project.
+- The DAW is a template of tools of the project, written with the SDK. The Rust arrangement that was the home of the product is gone: a song, a track, a mixer and a transport are a project's choice, so they can be changed like any tool. Rejected: keeping it next to the template, two DAWs to maintain.
 
 ## Audio files and the Sampler
 
 `crates/media`, `extensions/sampler`.
 
-- Audio files a clip names are held in memory, shared, and dropped when nothing names them. Not streamed: the audio thread never waits for a disk, seeks are instant, renders repeat to the byte.
+- Audio files a record names are held in memory, shared, and dropped when nothing names them. Not streamed: the audio thread never waits for a disk, seeks are instant, renders repeat to the byte.
 - Our own WAV and AIFF reader, because these formats are a few chunks around plain samples.
 - The Sampler reads the part of SFZ real libraries need and ignores the rest: a third-party file that plays a little plainer beats one that is refused.
 - Library samples are memory-mapped and read ahead off the audio thread. Only files nothing writes in place are mapped, because a mapped file cut short ends the process. Rejected: our own disk streaming with ring buffers per voice, far more code for the same result on an SSD.
@@ -162,15 +146,14 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Other sample rates go through a stateless resampler, so any block can render on its own from any place. Rejected: resamplers that keep filter state.
 - The drawing thread never reads a file; waveform overviews are made in the background and never saved.
 
-## Recording and fit tempo
+## Recording
 
 - MIDI input and the computer keys have no tool and no record. Both reach the audio thread through one lock-free ring, so nothing the interface does can delay sound. Rejected: a tool of the project that plays from the keys.
-- A recorded note is saved at the tick the engine sounded it, so playback matches what was heard. The raw performance is also saved as an asset, written before the clip, so it survives the clip. Its times are microseconds, because a tick means nothing without a tempo map and a fit changes the map.
+- A recorded note is saved at the tick the engine sounded it, so playback matches what was heard. The raw performance is also saved as an asset, written before the timeline, so it survives it. Its times are microseconds, because a tick means nothing without a tempo map.
 - Audio recording does not pass through the engine. A take is placed by mapping its capture time to the engine frame sounding then, which works with any latency compensation.
 - Live input and the sound of other apps are `project.json` connections. Input and output keep their own clocks: the engine drops old frames or plays silence instead of resampling, so the delay stays bounded. The window opens an input only while something needs it, so a project without one never asks for the microphone. Rejected for app sound: a virtual device of our own, which needs a driver install.
 - The audio devices are chosen per machine, never in a project. Picking one restarts the app, because the engine runs at the rate of its output device.
 - A tempo change ends a take, because the take was heard under the old tempo.
-- Fit tempo saves only its inputs in one record. Its outputs go where everything already reads them, the tempo map and the take's clip, through a derive. The beat finder is deterministic, so one take gives the same files on every machine.
 
 ## Built-in instruments and effects
 
@@ -188,12 +171,12 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 
 `extensions/plugin-host`. The core knows no plugins.
 
-- One `plugin` tool for every slot and both formats. Where the track names it decides instrument or effect; what the plugin says only decides which picker offers it, because plugins mislabel themselves.
+- One `plugin` tool for every slot and both formats. How its parent wires it decides instrument or effect; what the plugin says only decides which picker offers it, because plugins mislabel themselves.
 - Nothing a plugin sends out is read, so a plugin cannot make our audio thread allocate.
 - A pin is a parameter the record holds; the rest stays in the state asset. The record wins over the state. Automation of a pin is never an undo step.
 - Scanning runs plugin code, so it runs in child processes, one per bundle with a deadline. A bundle that crashed or hung is not tried again until the composer asks. The window never waits for a scan.
 - Plugin state is not project state: never an undo step, and unchanged bytes are not written again, so a session that changed nothing leaves no diff.
-- A slot with no plugin passes its input through: a missing effect lets the sound through, a missing instrument is silent, with no special case in the arrangement.
+- A slot with no plugin passes its input through: a missing effect lets the sound through, a missing instrument is silent.
 - Inspect loads no plugin. Printing a project must not run third-party code.
 - A parameter value stays in the format's own units, so what is read from a plugin can be sent back unchanged.
 - VST 3 goes through our own safe layer in `src/vst3/`. Bundles are never unloaded: unloading runs static destructors while views and threads may still exist.
@@ -205,7 +188,7 @@ One extension per device, one tool with no children. `extensions/filter` is the 
 `crates/ui` and `crates/runtime/src/window`.
 
 - Views read state when they render and keep no copy of saved state, so an outside edit shows at once, also mid-drag.
-- Views and device offers are registered per tool, so the track panel knows no instrument or plugin.
+- Views and device offers are registered per tool, so a rack knows no instrument or plugin.
 - The playhead is its own entity, because GPUI redraws a notified view and everything above it.
 - `crates/ui` holds the design system and general components; musical interfaces such as a piano roll belong to an extension.
 - Extensions, fonts, icons and agent docs are compiled in. "Open project…" starts a new process, because that tears down the device, plugins and their windows for free.

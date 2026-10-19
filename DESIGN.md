@@ -9,9 +9,9 @@ The design principles of the Sound Tools UI, and the rules of how it is used. Wh
 Every element must earn its keep. Lots of air, colour only where it means something, calm type. Audio tools are usually crowded; we do not copy that.
 
 - A control that does nothing yet is not shown. It is noise.
-- No legends, no zoom controls, no scrollbars, no grid in the arrangement. The note editor is the one place with a grid, because notes are placed by it.
+- No legends, no zoom controls, no scrollbars, no grid in the timeline. The note editor is the one place with a grid, because notes are placed by it.
 - No toolbars and no tools: what the pointer is on decides what a drag does.
-- Chrome is one quiet menu on the project name. The transport is the one floating shape, in the title row, and floats over nothing.
+- Chrome is one quiet menu on the project name, and the live input beside it.
 - Cards have no meta chips, rack ears, screws or gradients. Secondary parameters sit behind the expand icon of a card.
 - Something that cannot run says why in plain words (`This project does not load plugins.`), never as a file edit. File edits are for the agent docs.
 - Notices are quiet lines in a corner. Nothing blocks.
@@ -22,7 +22,7 @@ Every element must earn its keep. Lots of air, colour only where it means someth
 - Every device shows what it does to the sound. A card is a display of the sound on the left and a few knobs at its right. The handles on a display drag.
 - A display is never the only way to reach a value: every value a handle moves also has a knob, visible or behind expand. That knob is the path for the keys.
 - A value is one bright line on dark: the arc of a knob, the thumb on a meter, a curve and its handles. Values are never coloured.
-- One control per value. The tempo and the two numbers of the time signature are drag numbers in the transport; a mark in the ruler selects and seeks.
+- One control per value. The tempo is a drag number in the transport; a mark in the ruler selects and seeks.
 - Every drag control shares one gesture: it moves from where the value is (a press never jumps), shift is ten times finer, double click or backspace sets the default, escape during a drag puts it back.
 - A value an automation lane of the track moves is not the composer's to drag: its control shows what the lane plays at the playhead and stays put, and its keys and reset do nothing. It stays a tab stop, and a small dot and a tooltip say why. Taking the lane out gives the control back the record.
 - Two-finger scroll never changes a value. A control that took the gesture would change a sound while the composer scrolls past.
@@ -52,21 +52,21 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 - InterDisplay with tabular numbers for every number, so readouts and the transport do not jitter while playing. Two sizes in the rack: 14 medium for titles and names, 12 for labels and values.
 - The target is a 13 to 14 inch MacBook with a trackpad: a 1470 x 920 point window. The snapshot tests render at that size.
 - An 8 pt layout grid, 4 pt inside controls.
-- One grid for devices: every card is the same height, with two rows of fixed cells of a knob, a label line and a value line. Cards grow wider, never taller, so the rack has a straight bottom and fits the panel below the arrangement. Empty cells are fine.
+- One grid for devices: every card is the same height, with two rows of fixed cells of a knob, a label line and a value line. Cards grow wider, never taller, so a rack has a straight bottom. Empty cells are fine.
 - Hit targets are larger than what is drawn, for a trackpad.
 
 ## Using the app
 
 ### Gestures
 
-- Everything snaps to the snap setting of the arrangement. Cmd during a drag ignores it. Arrow keys move things in time by one snap step, a sixteenth when snap is off.
+- Everything snaps to the grid of the timeline. Cmd during a drag ignores it. Arrow keys move things in time by one snap step, a sixteenth when snap is off.
 - Every drag and every key that changes the piece is one undo step. Undo waits while a drag is going on.
 - There is no save. Every finished edit is already in the folder.
 - Two fingers pan. Cmd-scroll or pinch zooms in time, about the pointer.
-- The arrangement and the note editor select and edit the same way: click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes. They share one clipboard.
+- The timeline and the note editor select and edit the same way: click selects, shift- or cmd-click adds or takes out, a drag on empty space selects with a rectangle, cmd-a selects all. Cmd-c, cmd-x, cmd-v (at the playhead) and cmd-d (right after) copy, cut, paste and duplicate; delete removes. They share one clipboard.
 - Double click on empty space makes what lives there: a clip, a note, a section. On a control it sets the default.
 - A right click in the ruler adds a tempo change, a time signature change or a section; the menu row under the pointer or the keys shows where it lands.
-- A right click on a clip opens its menu: what the keys do, and Fit tempo to take on a recorded clip. The menu opens and is picked from the way the system's own menus are.
+- A right click on a clip opens its menu, which opens and is picked from the way the system's own menus are.
 - Alt-drag copies clips and notes, and across a lane erases its points.
 - Adding something never changes the sound. A new tempo or time signature change keeps what played there; a new automation lane holds the value its number plays now.
 - A drag shows what it will do before the drop: a lavender ring where it lands, and the automation a clip takes along.
@@ -75,16 +75,15 @@ Text must reach 4.5 : 1 contrast on its surface, icons 3 : 1. A test in `crates/
 ### Keys
 
 - The keys follow macOS. On Windows and Linux ctrl takes the place of cmd.
-- Space plays and `r` records from anywhere, unless something else owns the plain keys: a text field, or a tool of the project that hears keys. Keys with cmd and tab always stay the window's, so the focus can always move on.
+- Space plays from anywhere, unless something else owns the plain keys: a text field, or a tool of the project that hears keys. Keys with cmd and tab always stay the window's, so the focus can always move on.
 - A group of options is one tab stop, such as a segmented control or the drum pads. The arrows move inside it.
 - Enter or cmd-down opens what is selected. Escape lets go, closes the panel below, or gives the focus back.
-- The computer keys (cmd-K) play the selected track like a MIDI keyboard, and their letters then do nothing else. Both play it whether the project plays or not.
+- The computer keys (cmd-K) play what is selected like a MIDI keyboard, and their letters then do nothing else. Both play it whether the project plays or not.
 
 ### Tracks and panels
 
-- A click on a track opens its panel below the arrangement. An open panel follows the selected track.
-- The master is always the last track.
-- Audio clips come from files only. A dropped file is copied into the project.
+- A click on a track shows its devices under the timeline.
+- Audio regions come from files only. A dropped file is copied into the project.
 - Arming a track, the metronome and the computer keys are not saved and are no undo step.
 
 ### The agent

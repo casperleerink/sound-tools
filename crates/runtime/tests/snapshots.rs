@@ -16,6 +16,9 @@
 //! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent` or `=typescript` renders the default
 //! project and those alone.
 
+// The shared helpers of the tests unwrap, as the other test crates allow.
+#![allow(clippy::unwrap_used)]
+
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;

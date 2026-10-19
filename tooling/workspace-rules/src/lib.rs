@@ -4,8 +4,7 @@
 //! contract crates, never on each other. This keeps the build wide and parallel, which
 //! protects the extension edit loop.
 //!
-//! The core depends on no other crate of the workspace, so it knows no music. The runtime names
-//! the arrangement only where it registers it and in its arrangement wiring.
+//! The core depends on no other crate of the workspace, so it knows no music.
 //!
 //! The top-level docs stay within a word limit, and code never points at them.
 
@@ -177,99 +176,29 @@ mod tests {
         Ok(())
     }
 
-    /// Every line of the runtime and of `crates/ui` that names the arrangement, outside its
-    /// wiring and outside comments: the calls that register it, and `--solo`, which plays its
-    /// tracks. A project made of tools of its own works without any of it, so each line here is
-    /// a decision, and a new one fails until it is listed.
-    const NAMES_OF_THE_ARRANGEMENT: [(&str, &str); 7] = [
-        ("crates/runtime/src/lib.rs", "pub mod arrangement_wiring;"),
-        (
-            "crates/runtime/src/lib.rs",
-            "- `--solo <track>`, once per track of the arrangement: only these tracks play, by name or id. No file changes.",
-        ),
-        (
-            "crates/runtime/src/lib.rs",
-            "arrangement_wiring::register(registry)?;",
-        ),
-        (
-            "crates/runtime/src/lib.rs",
-            "arrangement_wiring::register_views(&mut views);",
-        ),
-        (
-            "crates/runtime/src/lib.rs",
-            "pub const NEW_PROJECT: Template = arrangement_wiring::TEMPLATE;",
-        ),
-        (
-            "crates/runtime/src/lib.rs",
-            "pub(crate) const CHROME: window::Chrome = arrangement_wiring::CHROME;",
-        ),
-        (
-            "crates/runtime/src/main.rs",
-            "runtime::arrangement_wiring::solo(&mut project, &mut engine, &plugins, &options.solo)?",
-        ),
-    ];
-
-    /// The arrangement is an extension like the others: the window and the runtime reach it
-    /// only through the calls that register it, so it can be replaced by a project's own tools.
-    #[test]
-    fn the_runtime_names_the_arrangement_only_where_it_registers_it() -> anyhow::Result<()> {
-        let root = workspace_root();
-        let wiring = root.join("crates/runtime/src/arrangement_wiring");
-        let mut found = Vec::new();
-        for path in files(&["crates/runtime/src", "crates/ui/src"])? {
-            let rust = path.extension().is_some_and(|extension| extension == "rs");
-            if !rust || path.starts_with(&wiring) || path == wiring.with_extension("rs") {
-                continue;
-            }
-            let relative = path
-                .strip_prefix(&root)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            for line in fs::read_to_string(&path)?.lines().map(str::trim) {
-                if !line.starts_with("//") && line.to_lowercase().contains("arrangement") {
-                    found.push((relative.clone(), line.to_string()));
-                }
-            }
-        }
-        let unlisted: Vec<_> = (found.iter())
-            .filter(|(file, line)| {
-                !NAMES_OF_THE_ARRANGEMENT.contains(&(file.as_str(), line.as_str()))
-            })
-            .collect();
-        assert!(
-            unlisted.is_empty(),
-            "only the wiring and the calls that register the arrangement name it: {unlisted:?}"
-        );
-        let gone: Vec<_> = (NAMES_OF_THE_ARRANGEMENT.iter())
-            .filter(|(file, line)| !found.iter().any(|(f, l)| f == file && l == line))
-            .collect();
-        assert!(gone.is_empty(), "listed but no longer there: {gone:?}");
-        Ok(())
-    }
-
     #[test]
     fn finds_direct_and_transitive_extension_dependencies() {
         let id = |name: &str| PackageId {
             repr: name.to_string(),
         };
-        let (synth, arrangement, mixer, contract, helper) = (
+        let (synth, song, mixer, contract, helper) = (
             id("synth"),
-            id("arrangement"),
+            id("song"),
             id("mixer"),
             id("contract"),
             id("helper"),
         );
-        let extensions = HashSet::from([&synth, &arrangement, &mixer]);
-        let arrangement_dependencies = [contract.clone(), helper.clone()];
+        let extensions = HashSet::from([&synth, &song, &mixer]);
+        let song_dependencies = [contract.clone(), helper.clone()];
         let synth_dependencies = [contract];
         let helper_dependencies = [mixer.clone()];
         let dependencies = HashMap::from([
-            (&arrangement, arrangement_dependencies.as_slice()),
+            (&song, song_dependencies.as_slice()),
             (&synth, synth_dependencies.as_slice()),
             (&helper, helper_dependencies.as_slice()),
         ]);
 
         let violations = extension_dependency_violations(&extensions, &dependencies);
-        assert_eq!(violations, vec![(&arrangement, &mixer)]);
+        assert_eq!(violations, vec![(&song, &mixer)]);
     }
 }

@@ -6,7 +6,7 @@
 
 A small DAW that an AI agent can work in. A project is a folder of small JSON files, and the running app applies every change to them live, so an agent adds a part by writing a file and you hear it without a build. The agent sidebar runs Claude Code in the project folder. Any coding agent in a terminal works too.
 
-What it has: instrument and audio tracks, clips with notes or audio, a synth, a Wavetable, a Sampler, a Drum pad, CLAP and VST 3 plugins, ten effects (Filter, Compressor, Gate with a transient shaper, Limiter, EQ, Delay, Reverb, Saturator, Utility, and Modulation: a chorus, flanger and phaser), an Analyzer that shows the spectrum, level and pitch of a track, a mixer with a limited master, MIDI and audio recording, and **fit tempo**: play freely with no click, and one action moves the grid onto your playing.
+What a new project can start from: Bare, an empty project, or a DAW written in TypeScript as any tool of a project, with instrument and audio tracks, clips with notes or audio, a synth, a Wavetable, a Sampler, a Drum pad, CLAP and VST 3 plugins, ten effects (Filter, Compressor, Gate with a transient shaper, Limiter, EQ, Delay, Reverb, Saturator, Utility, and Modulation: a chorus, flanger and phaser), an Analyzer that shows the spectrum, level and pitch of a track, a mixer with a limited master, and MIDI and audio recording. Change any of it, or ask the agent to.
 
 ## Requirements
 
@@ -85,13 +85,13 @@ To make a release, run `/release` in Claude Code. With no argument it decides fr
 
 ## Two-minute tour
 
-1. Click **Add track** under the track headers.
-2. Double click empty space in the track row to add a clip, then double click the clip to open the note editor.
-3. Double click in the clip to add a note. Drag to move it, drag its end to change its length.
-4. Press space to play. Click the ruler to move the playhead.
-5. Click a track name for its panel: the instrument, the effects rack and the mixer. Click `Synth` to pick another instrument or a plugin. **Add effect** adds an effect.
-6. Drag a WAV or AIFF file from the Finder onto the arrangement for an audio clip.
-7. Plug in a MIDI keyboard and play. Press `r` to record a take.
+1. **New project…** in the project menu (cmd-N), then **DAW**.
+2. **+ Track** adds a track. Double-click empty space in its row to add a clip, then the clip to edit its notes below.
+3. Double-click in the note editor to add a note. Drag to move it, drag its end to change its length.
+4. Press space to play. Click the ruler to play from there.
+5. Click a track name for its devices: the synth, the filter and the effects of its chain. **+ Effect** adds one.
+6. Drag a WAV or AIFF file from the Finder onto the timeline for an audio region.
+7. Plug in a MIDI keyboard and play. R arms a track; the record button records it.
 8. cmd-z undoes, shift-cmd-z redoes. cmd-q quits. There is no save; every edit is written to the folder.
 
 Every mouse action and key is in [DESIGN.md](DESIGN.md), "Using the app".

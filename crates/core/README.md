@@ -103,6 +103,6 @@ The doc itself says only what no field says: what the tool is for, starting poin
 | A processor driven by the timeline, with snapshots | `crates/notes/src/player.rs` |
 | A device whose numbers an automation lane can move | `extensions/filter` (`AutomationInput`, `Automated`) |
 | The same for numbers known only as the behaviour runs | `extensions/plugin-host` (`runtime_automation`) |
-| A derive | `extensions/fit-tempo/src/lib.rs` |
+| A derive | `crates/core/tests/project/tools.rs` (`derive_reporter`) |
 | A processor that must be released on the audio thread | `extensions/plugin-host/src/processor.rs` |
 | A test of a tool on a real project folder | `extensions/tone/tests/tone/project.rs` |

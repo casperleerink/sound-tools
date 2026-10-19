@@ -2,10 +2,10 @@
 
 When no tool does what the composer asks, write one in TypeScript. It plays as soon as you save the file, with no build, and the runtime writes a doc for the next agent. A tool takes one of two shapes:
 
-- **A device in a track**: an effect or an instrument, used in the arrangement as a built-in one is. Its records go in tracks, and its view is a card in the row under the tracks.
-- **The project is the tool**: an experiment, a game, a thing to play live. There is no arrangement: one record at the top, and its view fills the window. See "A project that is one tool".
+- **A device**: an effect or an instrument, a child of a parent as a built-in one is, such as in the chain of a track of the DAW template. Its view is a card its parent shows.
+- **The project is the tool**: an experiment, a game, a thing to play live. One record at the top, and its view fills the window. See "A project that is one tool".
 
-To play a track from the computer keyboard, write nothing: with the computer keys on (cmd-K, or the keyboard button in the transport), the letter rows play the selected track as a MIDI keyboard does.
+To play from the computer keyboard, write nothing: with the computer keys on (cmd-K, or the keyboard button in the title row), the letter rows play what is selected as a MIDI keyboard does.
 
 ## Where it goes
 
@@ -256,7 +256,7 @@ At the top of a project, `view` draws the whole window: its `size` is the window
 To make the project one tool:
 
 1. Put one record of the tool at the top: `state/<name>.json`, or `state/<name>/instance.json` for a parent.
-2. Name it in `project.json`, `"main": "<name>"`, so the window shows it and not the arrangement; or delete `state/arrangement/`.
+2. Name it in `project.json`, `"main": "<name>"`, so the window shows it and not another one.
 3. Give it a `sound`, with `voices` when it plays chords with `play`.
 4. Connect it to the speakers in `project.json` (see `agent-docs/project-json.md`): `{"from": {"instance": "<name>", "port": "audio"}, "to": {"device_output": 0}}`.
 
@@ -329,7 +329,7 @@ tool({
 - A parent whose children are fixed names them and their tools in `children`, as `loops` below does: a `const` with `as const`, and the return type `Declaration<typeof children>`. TypeScript then checks each connection, `play`, `send` and child `state` against the child's tool. For a tool of this project, name what `tool` returns: `export const drone = tool({ ... })` in its file, then `import { drone } from "./drone"` and `{ lead: drone, fx: "utility" }`. Its `state`, numbers and inputs are then checked; its outputs are not, as its `sound` makes them. A child of another tool, a missing one or one it does not name is a problem of the parent's record; `children: {}` allows none.
 - A child may be a parent too, at `state/<name>/<child>/instance.json`. Each child's `children` holds its own, at any depth, typed by the `children` its tool names, and `update` edits, adds (with their `children`) and takes out records at any depth; one taken out takes all it holds. A name in `children` that ends in `*` stands for every other name that starts as it does: `{ "ret-*": bus, "*": track }` is any number of buses named `ret-…` and tracks of any other name.
 - A port of a child is `audio` when left out; `{ child: "bass/mix" }` is a port of a child of a child, at any depth, so a parent wires across its children, such as a send of one track into another (write such a path `as const`). Leave out `child` for a port of the parent itself: from `{ port: "audio" }` comes what reaches its audio input, from `{ notes: "notes" }` what reaches its `notes`; to `{ port: "audio" }` goes what it plays, through its own `sound` as `input`; to `{ number }`, `{ bang }` or `{ notes }` an output of that name, which its own parent connects as any port of a child.
-- Put the parent at the top of a project that is one tool, or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound and notes and plays into its mixer.
+- Put the parent at the top of a project that is one tool, or as a child of another parent, which wires what it hears and where it plays.
 - The behaviour runs in Bun when the record or a child changes; its answer plays a moment later, the last one until then. `--render` and `--analyze` wait for it.
 - Events connect by the key of their kind at both ends, to the sample:
   - `{ from: { child: "lfo", number: "cutoff" }, to: { child: "filter", number: "cutoff_hz" } }`: the number `lfo` sends with `output` turns the number `cutoff_hz` of `filter` in its units, Hz: a number field of a tool of this project, or any number a lane can automate. It glides, nothing is saved, and without the connection the field glides back. To a number input, it moves that input.

@@ -116,7 +116,7 @@ tool({
 /// A child's record that leaves its fields out reads them at their defaults in an `update`, and
 /// the edit sets only what the change changed.
 #[test]
-fn an_update_reads_a_childs_defaults_and_sets_only_what_it_changed() {
+fn an_update_reads_the_defaults_of_a_child_and_sets_only_what_it_changed() {
     let Some(program) = bun_program() else {
         return eprintln!("skipped: Bun is not installed");
     };
