@@ -21,6 +21,6 @@ Loops one of its note patterns at a time, in time with the bars and to the sampl
 | `plays` | the pattern it plays before any launch, by its index from 0, so a render plays it; a change launches it | none |
 | `quantize` | where a launch lands while the piece plays: `"bar"`, `"beat"` or `"now"`. While it is stopped, at once | `"bar"` |
 
-A number into its input `launch` launches: the index of a pattern, or -1 or one it does not have to stop; what plays goes on until it lands. From a performer, `set({ child: "bass", live: "launch" }, 1)`, nothing saves it and a render does not hear it. A number cable to `{ child: "bass", live: "launch" }` launches each time its number changes, in a render too.
+A number into its input `launch` launches: the index of a pattern, or -1 or one it does not have to stop; what plays goes on until it lands. From a performer, `send({ child: "bass", number: "launch" }, 1)`, nothing saves it and a render does not hear it. A number cable to `{ child: "bass", number: "launch" }` launches each time its number changes, in a render too.
 
 A pattern with a note outside it is silent and a problem of this record.

@@ -54,7 +54,6 @@ export const pianoRoll = tool({
   when: "You change the piano roll page: how notes are drawn, moved and edited",
   doc:
     "A piano roll of the record's `notes`. Double-click to add a note or remove one; drag notes to move them on the grid of sixteenths, alt to copy; drag a note's right end to resize; drag on empty space to select, shift to add; drag a bar in the lane under it to change velocity. Keys: delete, cmd-A, cmd-C, cmd-X, cmd-V, cmd-D, the arrows, escape.",
-  kind: "source",
   state: { notes: notes() },
   transport: true,
   memory: (): Memory => ({ selected: new Set(), clipboard: [], length: BEAT / 2 }),
@@ -97,7 +96,7 @@ export const pianoRoll = tool({
       edit("Move notes", (notes) => moved(notes, chosen, ticks, pitches, false));
     }
   },
-  page: ({ state, memory, update, now, size }) => {
+  view: ({ state, memory, update, now, size }) => {
     const width = () => size.width - KEYS;
     const height = () => size.height - RULER - LANE - 2;
     const marquee = now.drag("marquee");

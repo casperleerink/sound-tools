@@ -29,10 +29,10 @@ function Meter({ level, x }: { level: (channel: 0 | 1) => Live; x: number }) {
 
 /** A fader over a meter: a drag up and down turns `gain_db` of the child `child`, natively. */
 function Fader({ name, child, level }: { name: string; child: string; level: (channel: 0 | 1) => Live }) {
-  const at = now.childField(child, "gain_db", { fraction: true });
+  const at = now.value(`${child}.gain_db`, { fraction: true });
   return (
     <Space key={`fader-${name}`} width={40} height={HEIGHT} cursor="ns-resize"
-      drag={{ y: { field: "gain_db", child, travel: HEIGHT, default: 0, label: "Change the volume" } }}>
+      drag={{ y: { value: `${child}.gain_db`, travel: HEIGHT, default: 0, label: "Change the volume" } }}>
       <Meter level={level} x={4} />
       <Rect x={22} y={0} width={2} height={HEIGHT} color={COLOR.track} />
       <Rect x={16} y={up(at).minus(4)} width={16} height={8} radius={2} color={COLOR.cap} />
@@ -42,18 +42,18 @@ function Fader({ name, child, level }: { name: string; child: string; level: (ch
 
 /** A pan knob that shows the pan as it plays, so a cable into it moves it. */
 function Pan({ name, child }: { name: string; child: string }) {
-  const angle = now.played(`${child}.pan`, { fraction: true }).minus(0.5).times(0.75);
+  const angle = now.value(`${child}.pan`, { played: true, fraction: true }).minus(0.5).times(0.75);
   return (
-    <Space key={`pan-${name}`} width={40} height={36} cursor="ns-resize" drag={{ y: { field: "pan", child, default: 0, label: "Change the pan" } }}>
+    <Space key={`pan-${name}`} width={40} height={36} cursor="ns-resize" drag={{ y: { value: `${child}.pan`, default: 0, label: "Change the pan" } }}>
       <Arc x={20} y={18} radius={12} from={-0.375} to={0.375} color={COLOR.track} width={3} />
       <Arc x={20} y={18} radius={12} from={0} to={angle} color={COLOR.cap} width={3} />
     </Space>
   );
 }
 
-function Button({ label, on, color, onClick }: { label: string; on: () => boolean; color: `#${string}`; onClick: () => void }) {
+function Button({ label, on, color, onPress }: { label: string; on: () => boolean; color: `#${string}`; onPress: () => void }) {
   return (
-    <div style={() => ({ width: 22, height: 18, radius: 4, align: "center", justify: "center", fontSize: 10, background: on() ? color : COLOR.off })} onClick={onClick}>
+    <div style={() => ({ width: 22, height: 18, radius: 4, align: "center", justify: "center", fontSize: 10, background: on() ? color : COLOR.off })} onPress={onPress}>
       {label}
     </div>
   );
@@ -83,7 +83,7 @@ export const mixer = tool({
     }
     return { connections };
   },
-  page: ({ state, children, update }) => {
+  view: ({ state, children, update }) => {
     const strips = () => children.filter((child) => child.tool === "tone").map((child) => child.name);
     const muted = (name: string) => (children.find((child) => child.name === `${name}-mix`)?.state as UtilityState | undefined)?.mute === true;
     const toggleMute = (name: string) =>
@@ -104,11 +104,11 @@ export const mixer = tool({
                 <Pan name={name} child={`${name}-mix`} />
                 <Fader name={name} child={`${name}-mix`} level={(channel) => now.peak(name, channel)} />
                 <Space width={STRIP} height={14}>
-                  <Label x={STRIP / 2} y={0} text={now.childField(`${name}-mix`, "gain_db")} unit="db" size={10} color={COLOR.text} align="center" />
+                  <Label x={STRIP / 2} y={0} text={now.value(`${name}-mix.gain_db`)} unit="db" size={10} color={COLOR.text} align="center" />
                 </Space>
                 <div style={{ direction: "row", gap: 4 }}>
-                  <Button label="M" on={() => muted(name)} color={COLOR.mute} onClick={() => toggleMute(name)} />
-                  <Button label="S" on={() => state.solo.includes(name)} color={COLOR.solo} onClick={() => toggleSolo(name)} />
+                  <Button label="M" on={() => muted(name)} color={COLOR.mute} onPress={() => toggleMute(name)} />
+                  <Button label="S" on={() => state.solo.includes(name)} color={COLOR.solo} onPress={() => toggleSolo(name)} />
                 </div>
                 <div style={{ fontSize: 11, color: COLOR.text }}>{name}</div>
               </div>
@@ -123,7 +123,7 @@ export const mixer = tool({
         <div style={{ gap: 10 }}>
           <div style={{ direction: "row", gap: 6, align: "center" }}>
             <Space width={16} height={16}>
-              <Circle x={8} y={8} radius={5} color={blend(COLOR.dark, COLOR.red, now.time.mod(1).lt(0.5))} />
+              <Circle x={8} y={8} radius={5} color={blend(COLOR.dark, COLOR.red, now.elapsed.mod(1).lt(0.5))} />
             </Space>
             <div style={{ fontSize: 11, color: COLOR.text }}>Live</div>
           </div>
@@ -138,7 +138,7 @@ export const mixer = tool({
           </Space>
           <div style={{ fontSize: 11, color: COLOR.text }}>Device out</div>
           <Space width={30} height={HEIGHT}>
-            <Meter level={(channel) => now.output(channel)} x={6} />
+            <Meter level={(channel) => now.devicePeak(channel)} x={6} />
           </Space>
         </div>
       </div>

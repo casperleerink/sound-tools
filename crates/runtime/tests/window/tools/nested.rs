@@ -62,7 +62,7 @@ tool({
       });
     });
   },
-  page: ({ children }) =>
+  view: ({ children }) =>
     h(Space, {
       key: "probe",
       height: 20,

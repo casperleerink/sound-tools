@@ -1,4 +1,4 @@
-import { choice, db, delay, highpass, input, knob, lowpass, mix, noise, type Signal, sine, tool } from "./sdk";
+import { choice, db, delay, highpass, input, number, lowpass, mix, noise, type Signal, sine, tool } from "./sdk";
 
 // Each wobble is [rate in hz, peak pitch change as a ratio], at full wear.
 // Two slow ones for wow and two fast ones for flutter, at rates that never line up,
@@ -33,7 +33,7 @@ tool({
     "Both channels wobble together, as on one tape; the hiss is apart on each channel. It delays the sound by about 5 ms.",
   ].join("\n"),
   state: {
-    wear: knob({ min: 0, max: 1, default: 0.5, label: "Wear" }),
+    wear: number({ min: 0, max: 1, default: 0.5, label: "Wear" }),
     character: choice({ options: ["cassette", "reel"], default: "cassette", label: "Character" }),
   },
   sound: ({ wear, character }) => {

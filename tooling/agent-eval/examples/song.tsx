@@ -38,9 +38,9 @@ function freeName(names: string[], wanted: string): string {
   return name;
 }
 
-function Button({ label, on, color, onClick }: { label: string; on: Accessor<boolean>; color: `#${string}`; onClick: () => void }) {
+function Button({ label, on, color, onPress }: { label: string; on: Accessor<boolean>; color: `#${string}`; onPress: () => void }) {
   return (
-    <div style={() => ({ width: 20, height: 18, radius: 4, align: "center", justify: "center", fontSize: 10, background: on() ? color : COLOR.off })} onClick={onClick}>
+    <div style={() => ({ width: 20, height: 18, radius: 4, align: "center", justify: "center", fontSize: 10, background: on() ? color : COLOR.off })} onPress={onPress}>
       {label}
     </div>
   );
@@ -92,7 +92,7 @@ export const song = tool({
       ],
     };
   },
-  page: ({ state, children, memory, update }) => {
+  view: ({ state, children, memory, update }) => {
     const tracks = () => children.filter((child) => child.tool === "track");
     const isPicked = selector(() => memory.selected);
     const clipsOf = (each: (typeof children)[number]) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);
@@ -215,8 +215,8 @@ export const song = tool({
     const TrackHead = ({ each }: { each: (typeof children)[number] }) => (
       <>
         <div style={{ width: 56, fontSize: 11, color: COLOR.text }}>{each.name}</div>
-        <Button label="M" on={() => muted(each)} color={COLOR.mute} onClick={() => toggleMute(each.name)} />
-        <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onClick={() => toggleSolo(each.name)} />
+        <Button label="M" on={() => muted(each)} color={COLOR.mute} onPress={() => toggleMute(each.name)} />
+        <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onPress={() => toggleSolo(each.name)} />
         <Space key={`meter-${each.name}`} width={40} height={6} background={COLOR.lane} radius={2}>
           <Rect x={0} y={0} width={place(now.peak(`${each.name}.level`)).fall(0.6).times(40)} height={6} radius={2} color={COLOR.meter} />
         </Space>
@@ -288,7 +288,7 @@ export const song = tool({
             <div style={{ height: EDITOR, gap: 4, padding: 8 }}>
               <div style={{ direction: "row", gap: 8, align: "center" }}>
                 <div style={{ fontSize: 11, color: COLOR.text }}>{() => memory.open ?? ""}</div>
-                <div style={{ fontSize: 11, color: COLOR.edit }} onClick={() => (memory.open = null)}>Close</div>
+                <div style={{ fontSize: 11, color: COLOR.edit }} onPress={() => (memory.open = null)}>Close</div>
               </div>
               <Space key="editor" grow unit={{ x: ACROSS * 4, y: NOTE_ROW }} extent={{ x: [0, 8 * BAR], y: [0, 128] }} zoom={{ x: [0.25, 8] }}
                 scroll={{ y: 127 - 84 }} background={COLOR.lane}

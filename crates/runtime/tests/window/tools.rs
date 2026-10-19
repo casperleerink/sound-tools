@@ -32,15 +32,15 @@ mod song;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
-const KEYS: &str = r#"import { adsr, h, knob, note, sine, tool } from "./sdk";
+const KEYS: &str = r#"import { adsr, h, number, note, sine, tool } from "./sdk";
 
 tool({
   name: "keys",
   title: "Keys",
   when: "You want to play a sine from the computer keyboard",
   doc: "The key a holds A4.",
-  kind: "instrument",
-  state: { last: knob({ min: 0, max: 127, default: 0 }), count: knob({ min: 0, max: 100, default: 0 }) },
+  voices: 8,
+  state: { last: number({ min: 0, max: 127, default: 0 }), count: number({ min: 0, max: 100, default: 0 }) },
   sound: () => sine(note.freq).times(adsr(note.gate, 1, 1, 1, 1)).times(0.2),
   onKey: ({ play, send, update }, { key, down }) => {
     if (down) {
@@ -50,7 +50,7 @@ tool({
     }
     if (key !== "a") return;
     if (down) play(69, { hold: true });
-    else send({ type: "noteOff", pitch: 69 });
+    else send("notes", { type: "noteOff", pitch: 69 });
   },
   onNotes: ({ update }, event) => {
     if (event.type !== "noteOn") return;
@@ -58,7 +58,7 @@ tool({
       state.last = event.pitch;
     });
   },
-  page: () => h("div", {}, "Play a"),
+  view: () => h("div", {}, "Play a"),
 });
 "#;
 
@@ -83,22 +83,22 @@ const BEAT: [(&str, &str); 3] = [
     ),
     (
         "extensions/beat.ts",
-        r#"import { h, input, knob, tool } from "./sdk";
+        r#"import { h, input, number, tool } from "./sdk";
 
 tool({
   name: "beat",
   title: "Beat",
   when: "You want to see the beat",
   doc: "Shows the bar and the beat.",
-  state: { tick: knob({ min: 0, max: 1000000, default: 0 }) },
+  state: { tick: number({ min: 0, max: 1000000, default: 0 }) },
   sound: () => input,
   transport: true,
-  page: ({ size, transport, update }) =>
+  view: ({ size, transport, update }) =>
     h(
       "div",
       {
         style: () => ({ width: size.width, height: size.height }),
-        onClick: () => update("Keep the tick", ({ state }) => { state.tick = transport.tick; }),
+        onPress: () => update("Keep the tick", ({ state }) => { state.tick = transport.tick; }),
       },
       () => `${transport.bar}.${transport.beat}`,
     ),
@@ -116,21 +116,21 @@ const COUNTER: [(&str, &str); 3] = [
     ),
     (
         "extensions/counter.ts",
-        r#"import { h, input, knob, tool } from "./sdk";
+        r#"import { h, input, number, tool } from "./sdk";
 
 tool({
   name: "counter",
   title: "Counter",
   when: "You want to count clicks",
   doc: "Counts the clicks on its page.",
-  state: { count: knob({ min: 0, max: 100, default: 0 }) },
+  state: { count: number({ min: 0, max: 100, default: 0 }) },
   sound: () => input,
-  page: ({ size, state, update }) =>
+  view: ({ size, state, update }) =>
     h(
       "div",
       {
         style: () => ({ width: size.width, height: size.height }),
-        onClick: () => update("Count", ({ state: next }) => { next.count = state.count + 1; }),
+        onPress: () => update("Count", ({ state: next }) => { next.count = state.count + 1; }),
       },
       "Count",
     ),
@@ -146,15 +146,15 @@ const EAR: [(&str, &str); 3] = [
     ("state/keys.json", r#"{"tool": "keys", "state": {}}"#),
     (
         "extensions/keys.ts",
-        r#"import { h, knob, tool } from "./sdk";
+        r#"import { h, number, tool } from "./sdk";
 
 tool({
   name: "keys",
   title: "Ear",
   when: "You want to count what is played",
   doc: "Counts the notes and the keys it hears; a click on its page keeps the count.",
-  kind: "instrument",
-  state: { heard: knob({ min: 0, max: 100, default: 0 }) },
+  voices: 8,
+  state: { heard: number({ min: 0, max: 100, default: 0 }) },
   memory: () => ({ heard: 0 }),
   onNotes: ({ memory }, event) => {
     if (event.type === "noteOn") memory.heard += 1;
@@ -162,12 +162,12 @@ tool({
   onKey: ({ memory }, { down }) => {
     if (down) memory.heard += 1;
   },
-  page: ({ size, memory, update }) =>
+  view: ({ size, memory, update }) =>
     h(
       "div",
       {
         style: () => ({ width: size.width, height: size.height }),
-        onClick: () => update("Keep the count", ({ state }) => { state.heard = memory.heard; }),
+        onPress: () => update("Keep the count", ({ state }) => { state.heard = memory.heard; }),
       },
       "Listen",
     ),
@@ -189,14 +189,14 @@ const ONLY_THE_TOOL: [(&str, &str); 2] = [
 
 /// An effect that keeps the last note of the MIDI keyboard in its record, and how many it
 /// holds.
-const LISTENER: &str = r#"import { input, knob, tool } from "./sdk";
+const LISTENER: &str = r#"import { input, number, tool } from "./sdk";
 
 tool({
   name: "listener",
   title: "Listener",
   when: "You want to know the last note played",
   doc: "Passes the sound and keeps the last note and how many are held.",
-  state: { last: knob({ min: 0, max: 127, default: 0 }), held: knob({ min: 0, max: 128, default: 0 }) },
+  state: { last: number({ min: 0, max: 127, default: 0 }), held: number({ min: 0, max: 128, default: 0 }) },
   sound: () => input,
   onNotes: ({ update }, event) => {
     if (event.type === "noteOn") {
@@ -733,15 +733,14 @@ fn a_tool_on_the_track_the_keyboard_leaves_hears_the_end_of_the_note_it_held(
 /// A player of `sine.wav` at `level`, over and over.
 fn player(level: f32) -> String {
     format!(
-        r#"import {{ phasor, sample, tool }} from "./sdk";
+        r#"import {{ file, phasor, tool }} from "./sdk";
 
 tool({{
   name: "player",
   title: "Player",
   when: "You want a sound file to play",
   doc: "Plays a sound file over and over.",
-  kind: "source",
-  state: {{ sound: sample() }},
+  state: {{ sound: file() }},
   sound: ({{ sound }}) => sound.at(phasor(1).times(sound.length)).times({level}),
 }});
 "#
@@ -810,14 +809,14 @@ fn noted(name: &str, hangs: bool) -> String {
         ""
     };
     format!(
-        r#"import {{ choice, input, knob, tool }} from "./sdk";
+        r#"import {{ choice, input, number, tool }} from "./sdk";
 
 tool({{
   name: "{name}",
   title: "{name}",
   when: "You want to know the last note played",
   doc: "Keeps the last note.",
-  state: {{ last: knob({{ min: 0, max: 127, default: 0 }}), mode: choice({{ options: ["full", "half"], default: "full" }}) }},
+  state: {{ last: number({{ min: 0, max: 127, default: 0 }}), mode: choice({{ options: ["full", "half"], default: "full" }}) }},
   sound: ({{ mode }}) => (mode === "half" ? input.times(0.5) : input),
   {tick}
   onNotes: ({{ update }}, event) => {{
@@ -911,7 +910,6 @@ tool({
   title: "Hum",
   when: "You want a hum",
   doc: "A sine at the level of lib/level.ts.",
-  kind: "source",
   state: {},
   sound: () => sine(441).times(LEVEL),
 });
@@ -939,22 +937,22 @@ tool({
     });
 }
 
-/// A loop that never ends but keeps saying things, here moving a live control, is a hang of
+/// A loop that never ends but keeps saying things, here moving a number input, is a hang of
 /// its tool too.
 #[gpui::test]
 fn a_tick_that_never_ends_while_it_plays_is_a_problem(cx: &mut TestAppContext) {
-    let flood = r#"import { input, live, tool } from "./sdk";
+    let flood = r#"import { input, number, tool } from "./sdk";
 
 tool({
   name: "flood",
   title: "Flood",
   when: "You want a flood",
-  doc: "Its loop never ends and moves a control all the time.",
+  doc: "Its loop never ends and moves an input all the time.",
   state: {},
-  controls: { x: live({ min: 0, max: 1, default: 0 }) },
+  inputs: { x: number({ min: 0, max: 1, default: 0 }) },
   sound: ({ x }) => input.times(x),
-  tick: ({ time, set }) => {
-    while (time > 0) set("x", 0);
+  tick: ({ time, send }) => {
+    while (time > 0) send("x", 0);
   },
 });
 "#;
@@ -1034,15 +1032,14 @@ tool({
 "#;
 
 /// A sine at `hz`, all the time.
-const DRONE: &str = r#"import { knob, sine, tool } from "./sdk";
+const DRONE: &str = r#"import { number, sine, tool } from "./sdk";
 
 tool({
   name: "drone",
   title: "Drone",
   when: "You want a drone",
   doc: "A sine.",
-  kind: "source",
-  state: { hz: knob({ min: 20, max: 2000, default: 220 }) },
+  state: { hz: number({ min: 20, max: 2000, default: 220 }) },
   sound: ({ hz }) => sine(hz).times(0.25),
 });
 "#;
@@ -1114,10 +1111,10 @@ tool({
     ],
   }),
   transport: true,
-  page: ({ size, watches, set }) =>
+  view: ({ size, outputs, send }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
-      onClick: () => set({ child: "bass", live: "launch" }, watches["bass.playing"] === 0 ? -1 : 0),
+      onPress: () => send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 0 ? -1 : 0),
     }, "Launch"),
 });
 "#;
@@ -1200,7 +1197,7 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
 }
 
 /// A parent whose page plays its children, one click each: a note on the built-in `synth`, a
-/// note on the tool `keys`, the live control and the trigger of `drop`; then a trigger `drop`
+/// note on the tool `keys`, the number input and the bang of `drop`; then a bang `drop`
 /// does not have, and a child it does not own.
 const CONDUCTOR: &str = r#"import { h, tool } from "./sdk";
 
@@ -1212,18 +1209,18 @@ tool({
   state: {},
   memory: () => ({ clicks: 0 }),
   behaviour: () => ({ connections: ["synth", "keys", "drop"].map((child) => ({ from: { child }, to: { port: "audio" } })) }),
-  page: ({ size, memory, play, set, fire }) =>
+  view: ({ size, memory, play, send }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
-      onClick: () => {
+      onPress: () => {
         memory.clicks += 1;
         if (memory.clicks === 1) play(45, { child: "synth", seconds: 0.1 });
         if (memory.clicks === 2) play(69, { child: "keys", seconds: 0.1 });
         if (memory.clicks === 3) {
-          set({ child: "drop", live: "gain" }, 1);
-          fire({ child: "drop", trigger: "hit" });
+          send({ child: "drop", number: "gain" }, 1);
+          send({ child: "drop", bang: "hit" });
         }
-        if (memory.clicks === 4) fire({ child: "drop", trigger: "hat" });
+        if (memory.clicks === 4) send({ child: "drop", bang: "hat" });
         if (memory.clicks === 5) play(60, { child: "drum" });
       },
     }, "Play"),
@@ -1231,16 +1228,15 @@ tool({
 "#;
 
 /// Noise that jumps up when `hit` fires and falls away, silent until `gain` is up.
-const DROP: &str = r#"import { feedback, live, max, noise, tool, trigger } from "./sdk";
+const DROP: &str = r#"import { feedback, number, max, noise, tool, bang } from "./sdk";
 
 tool({
   name: "drop",
   title: "Drop",
   when: "You want a hit",
   doc: "A burst of noise.",
-  kind: "source",
   state: {},
-  controls: { hit: trigger(), gain: live({ min: 0, max: 1, default: 0 }) },
+  inputs: { hit: bang(), gain: number({ min: 0, max: 1, default: 0 }) },
   sound: ({ hit, gain }) => {
     const level = feedback();
     level.set(max(hit, level.times(0.9995)));
@@ -1301,10 +1297,10 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
         message: format!("tool conductor: a performer plays the child {message}"),
     };
     window.cx.simulate_click(middle, Modifiers::default());
-    window.until("the problem of the trigger", |window| {
+    window.until("the problem of the bang", |window| {
         !window.problems().is_empty()
     });
-    let trigger = problem("\"drop\", which has no trigger hat: its triggers are hit");
+    let trigger = problem("\"drop\", which has no bang input hat: its bang inputs are hit");
     assert_eq!(window.problems(), std::slice::from_ref(&trigger));
     window.cx.simulate_click(middle, Modifiers::default());
     // A file shows its newest problem.
@@ -1324,7 +1320,7 @@ tool({
   title: "Hearer",
   when: "You want to know what reaches an instrument",
   doc: "Keeps every note event it hears, with its time.",
-  kind: "instrument",
+  voices: 8,
   state: { heard: list({ type: text(), at: number({ min: 0, max: 100000 }) }) },
   sound: () => sine(note.freq).times(note.gate).times(0.1),
   onNotes: ({ update }, event) => {
@@ -1427,12 +1423,12 @@ tool({
   onKey: ({ send, update, time }, { key, down }) => {
     if (key !== "a" || !down) return;
     const at = time + 0.5;
-    send({ type: "cc", controller: 74, value: 1 }, { child: "piano", at });
+    send({ child: "piano", notes: "notes" }, { type: "cc", controller: 74, value: 1 }, { at });
     update("Keep the time", ({ state }) => {
       state.at = at;
     });
   },
-  page: ({ size }) => h("div", { style: () => ({ width: size.width, height: size.height }) }, "Conduct"),
+  view: ({ size }) => h("div", { style: () => ({ width: size.width, height: size.height }) }, "Conduct"),
 });
 "#;
 

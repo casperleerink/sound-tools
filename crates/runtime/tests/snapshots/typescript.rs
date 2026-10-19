@@ -25,7 +25,7 @@ use sound_ui::Session;
 use super::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::plugin_hosts::test_plugin_host;
 
-const DEMO: &str = r##"import { h, knob, Knob, Label, Line, Meter, Pad, pattern, Rect, Space, Steps, live, tool } from "./sdk";
+const DEMO: &str = r##"import { h, number, Knob, Label, Line, Meter, Pad, pattern, Rect, Space, Steps, tool } from "./sdk";
 
 const notes = [[0, 60], [480, 64], [960, 67], [1440, 72], [1920, 67], [2400, 64], [2880, 62], [3360, 60]];
 
@@ -34,21 +34,20 @@ tool({
   title: "Demo",
   when: "A snapshot",
   doc: "Every element of the SDK.",
-  kind: "source",
   state: {
-    cutoff: knob({ min: 100, max: 8000, default: 1200, unit: "hz" }),
-    level: knob({ min: -30, max: 6, default: -6, unit: "db" }),
+    cutoff: number({ min: 100, max: 8000, default: 1200, unit: "hz" }),
+    level: number({ min: -30, max: 6, default: -6, unit: "db" }),
     steps: pattern({ length: 8, min: 0, max: 1, default: 0 }),
   },
-  controls: { bend: live({ min: 0, max: 1, default: 0.3 }), drive: live({ min: 0, max: 1, default: 0.7 }) },
+  inputs: { bend: number({ min: 0, max: 1, default: 0.3 }), drive: number({ min: 0, max: 1, default: 0.7 }) },
   sound: () => 0,
-  page: ({ now }) =>
+  view: ({ now }) =>
     h("div", { style: { direction: "row", gap: 24 } },
       h("div", { style: { gap: 16 } },
         h("div", { style: { direction: "row", gap: 8 } },
-          h(Knob, { path: "cutoff", label: "Cutoff", min: 100, max: 8000, default: 1200, unit: "hz" }),
-          h(Knob, { path: "level", label: "Level", min: -30, max: 6, default: -6, unit: "db" }),
-          h(Meter, { watch: "level", label: "Out" }),
+          h(Knob, { value: "cutoff", label: "Cutoff", min: 100, max: 8000, default: 1200, unit: "hz" }),
+          h(Knob, { value: "level", label: "Level", min: -30, max: 6, default: -6, unit: "db" }),
+          h(Meter, { value: "level", label: "Out" }),
         ),
         h(Steps, { path: "steps" }),
         h(Pad, { x: "bend", y: "drive", size: 120 }),

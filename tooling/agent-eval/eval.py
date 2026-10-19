@@ -7,7 +7,7 @@ the scenario, then runs Claude Code with the app's flags (`claude_run.py`), then
 project. It prints one JSON line per run: whether the check passed, what it cost, how many
 turns, and which docs the agent opened. Logs go to /tmp/sound-tools-eval/.
 
-`examples/` holds tools agents built in these runs, from one prompt each: a gravity harp page,
+`examples/` holds tools agents built in these runs, from one prompt each: a gravity harp view,
 a storm drone played with an XY pad, a generative part in D dorian, and a grain cloud of a sample. Copy one into the
 `extensions/` folder of a project to try it.
 """
@@ -167,7 +167,7 @@ def check_sequencer(folder: Path) -> dict:
     return {
         "a project tool plays the bass": tool in tools,
         "with a pattern": "pattern(" in text,
-        "a step light": "watch" in text and "Steps" in text,
+        "a step light": "output(" in text and "Steps" in text,
         "it sounds": sounds(folder, "bass"),
         "no problems": no_problems(folder),
     }
@@ -179,7 +179,7 @@ def check_toy(folder: Path) -> dict:
     text = tools.get(played[0][1], "") if played else ""
     return {
         "a project tool plays a track": bool(played),
-        "live controls and a trigger": "live(" in text and "trigger(" in text,
+        "number inputs and a bang": "inputs:" in text and "bang(" in text,
         "an XY pad": "Pad" in text,
         "it sounds": bool(played) and sounds(folder, played[0][0]),
         "no problems": no_problems(folder),
@@ -283,7 +283,7 @@ def check_experiment(folder: Path) -> dict:
     return {
         "no arrangement": not (folder / "state/arrangement").exists(),
         "a project tool at the top": bool(top),
-        "with a page, a canvas and a tick": all(word in text for word in ("page", "Canvas", "tick")),
+        "with a view, a space and a tick": all(word in text for word in ("view", "Space", "tick")),
         "connected to the device": any(c.get("from", {}).get("instance") == name for c in connections),
         "no problems": no_problems(folder),
     }
@@ -293,28 +293,28 @@ def check_life(folder: Path) -> dict:
     checks = check_experiment(folder)
     tools = project_tools(folder)
     text = "".join(tools.values())
-    # A note per living cell with `play`, or a trigger per row: either plays the column, and
+    # A note per living cell with `play`, or a bang per row: either plays the column, and
     # on time only ahead, with `at`.
-    plays = "play(" in text or "fire(" in text
+    plays = "play(" in text or "send(" in text
     return {**checks, "plays from its loop": plays, "on time": plays and "at:" in text}
 
 
 def check_mic(folder: Path) -> dict:
     checks = check_experiment(folder)
-    # It needs no control loop: a watch draws the circle.
-    checks.pop("with a page, a canvas and a tick")
+    # It needs no control loop: an output draws the circle.
+    checks.pop("with a view, a space and a tick")
     tools = project_tools(folder)
     text = "".join(tools.values())
     connections = json.loads((folder / "project.json").read_text()).get("connections", [])
     return {
         **checks,
-        "with a page and a canvas": "page" in text and "Canvas" in text,
+        "with a view and a space": "view" in text and "Space" in text,
         "hears the input": any("device_input" in c.get("from", {}) for c in connections),
     }
 
 
 def check_card(track: str, own_card: bool = True):
-    """A project tool on `track`, with a card of its own or the plain one of its knobs. How
+    """A project tool on `track`, with a view of its own or the plain one of its knobs. How
     the card looks is in the screenshots."""
     def check(folder: Path) -> dict:
         tools = project_tools(folder)
@@ -322,15 +322,15 @@ def check_card(track: str, own_card: bool = True):
                 if tool in tools]
         text = tools.get(used[0], "") if used else ""
         return {"a project tool on the track": bool(used),
-                "its own card" if own_card else "the plain card": ("card:" in text) == own_card,
+                "its own view" if own_card else "the plain view": ("view:" in text) == own_card,
                 "no problems": no_problems(folder)}
     return check
 
 
 def check_page(folder: Path) -> dict:
     checks = check_experiment(folder)
-    checks.pop("with a page, a canvas and a tick")
-    return {**checks, "with a page": "page:" in "".join(project_tools(folder).values())}
+    checks.pop("with a view, a space and a tick")
+    return {**checks, "with a view": "view:" in "".join(project_tools(folder).values())}
 
 
 def check_keys(folder: Path) -> dict:
@@ -372,8 +372,8 @@ def check_generative(folder: Path) -> dict:
     text = tools.get(tool, "")
     return {
         "a project tool plays the pad": tool in tools,
-        "a source": '"source"' in text,
-        "shows its note": "watch(" in text,
+        "one voice": "voices:" not in text,
+        "shows its note": "output(" in text,
         "it sounds": sounds(folder, "pad"),
         "no problems": no_problems(folder),
     }
@@ -398,7 +398,7 @@ def check_launcher(folder: Path) -> dict:
         "and an effect": any(child not in ("instrument.synth", "sequencer", None)
                              for child in children),
         "sequencers and launches": "sequencer" in children and '"launch"' in text,
-        "a page with the transport": "page:" in text and "transport: true" in text,
+        "a view with the transport": "view:" in text and "transport: true" in text,
         "connected to the device": owner is not None
         and any(c.get("from", {}).get("instance") == owner.name for c in connections),
         "it sounds": bool(loudness) and float(loudness.group(1)) > -60,
@@ -410,7 +410,7 @@ def check_tracker(folder: Path) -> dict:
     checks = check_launcher(folder)
     sequencers = checks.pop("sequencers and launches")
     text = "".join(project_tools(folder).values())
-    return {**checks, "sequencers": sequencers, "edits from the page": "update(" in text}
+    return {**checks, "sequencers": sequencers, "edits from the view": "update(" in text}
 
 
 SCENARIOS = {

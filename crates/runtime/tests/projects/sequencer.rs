@@ -12,7 +12,7 @@ fn doc_launcher() -> String {
         .split("```ts\n")
         .filter_map(|block| block.split("```").next());
     let block = blocks
-        .find(|block| block.contains("live: \"launch\""))
+        .find(|block| block.contains("number: \"launch\""))
         .unwrap();
     block.to_string()
 }
@@ -118,7 +118,6 @@ tool({
   title: "Conductor",
   when: "Never",
   doc: "Sends the scene to play.",
-  kind: "source",
   state: {},
   sound: () => {
     output("scene", beat.ge(2));
@@ -144,7 +143,7 @@ fn a_number_a_cable_sends_launches_a_pattern_at_the_next_bar_in_a_render() {
     let launcher = doc_launcher().replace(
         "connections: [",
         r#"connections: [
-      { from: { child: "conductor", number: "scene" }, to: { child: "bass", live: "launch" } },"#,
+      { from: { child: "conductor", number: "scene" }, to: { child: "bass", number: "launch" } },"#,
     );
     let folder = closed(harness);
     write(folder.path(), "extensions/loops.ts", &launcher);

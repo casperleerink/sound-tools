@@ -1,6 +1,6 @@
 //! Events that one child of a tool of the project sends out, connected by the parent to another
-//! child: notes a sound makes from what it hears into an instrument, a bang into a trigger, a
-//! number into a live control. Each lands on its sample, in a render too.
+//! child: notes a sound makes from what it hears into an instrument, a bang into a bang input, a
+//! number into a number input. Each lands on its sample, in a render too.
 
 use std::path::Path;
 
@@ -9,15 +9,14 @@ use crate::support::{Harness, first_sound, write};
 /// Frames of the hits in `drums.wav`.
 const HITS: [usize; 4] = [4_800, 16_000, 30_000, 41_000];
 
-const TOOLS: &str = r#"import { choice, feedback, input, live, max, output, sample, tool, trigger } from "./sdk";
+const TOOLS: &str = r#"import { choice, feedback, input, number, max, output, file, tool, bang } from "./sdk";
 
 tool({
   name: "tape",
   title: "Tape",
   when: "Never",
   doc: "Plays its sample, a frame at a time.",
-  kind: "source",
-  state: { sound: sample() },
+  state: { sound: file() },
   sound: ({ sound }) => {
     const frame = feedback();
     frame.set(frame.plus(1));
@@ -47,7 +46,6 @@ tool({
   title: "Pair",
   when: "Never",
   doc: "Holds C4 on `low` and C5 on `high`, sent in the order `order` names.",
-  kind: "source",
   state: { order: choice({ options: ["low first", "high first"], default: "low first" }) },
   sound: ({ order }) => {
     const low = () => output("low", { gate: 1, pitch: 60 });
@@ -61,10 +59,9 @@ tool({
   name: "drop",
   title: "Drop",
   when: "Never",
-  doc: "Its trigger, at its live control `gain`.",
-  kind: "source",
+  doc: "Its bang, at its number input `gain`.",
   state: {},
-  controls: { gain: live({ min: 0, max: 1, default: 1 }), hit: trigger() },
+  inputs: { gain: number({ min: 0, max: 1, default: 1 }), hit: bang() },
   sound: ({ gain, hit }) => hit.times(gain),
 });
 "#;
@@ -175,9 +172,9 @@ fn the_hits_of_a_recording_play_a_synth_on_their_samples_through_notes_a_sound_m
 }
 
 #[test]
-fn a_bang_fires_a_trigger_on_its_sample_and_a_number_moves_a_live_control() {
+fn a_bang_reaches_a_bang_input_on_its_sample_and_a_number_moves_a_number_input() {
     let connections = r#"[
-    { from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } },
+    { from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "hit" } },
     { from: { child: "drop" }, to: { port: "audio" } },
   ]"#;
     let Some(mut harness) = project(connections) else {
@@ -192,8 +189,8 @@ fn a_bang_fires_a_trigger_on_its_sample_and_a_number_moves_a_live_control() {
     assert_eq!(fired(&played), HITS.map(|hit| (hit, 1.0)));
 
     let connections = r#"[
-    { from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "hit" } },
-    { from: { child: "ears", number: "half" }, to: { child: "drop", live: "gain" } },
+    { from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "hit" } },
+    { from: { child: "ears", number: "half" }, to: { child: "drop", number: "gain" } },
     { from: { child: "drop" }, to: { port: "audio" } },
   ]"#;
     let Some(mut harness) = project(connections) else {
@@ -203,11 +200,11 @@ fn a_bang_fires_a_trigger_on_its_sample_and_a_number_moves_a_live_control() {
 }
 
 #[test]
-fn a_cable_between_two_kinds_or_to_a_control_a_child_does_not_have_is_a_problem() {
+fn a_cable_between_two_kinds_or_to_an_input_a_child_does_not_have_is_a_problem() {
     let connections = r#"[
     { from: { child: "ears", notes: "hits" }, to: { child: "drop", number: "gain" } },
-    { from: { child: "ears", bang: "onset" }, to: { child: "drop", trigger: "gain" } },
-    { from: { child: "ears", number: "half" }, to: { child: "drop", live: "level" } },
+    { from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "gain" } },
+    { from: { child: "ears", number: "half" }, to: { child: "drop", number: "level" } },
   ]"#;
     let Some(harness) = project(connections) else {
         return;
@@ -215,9 +212,9 @@ fn a_cable_between_two_kinds_or_to_a_control_a_child_does_not_have_is_a_problem(
     assert_eq!(
         messages(&harness),
         [
-            "its behaviour declares connections[1] from { child: \"ears\", notes: \"hits\" } to { child: \"drop\", number: \"gain\" }, which do not connect: a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }",
-            "its behaviour names the trigger \"gain\" of \"drop\" at connections[2].to, which it does not have: its triggers are hit",
-            "its behaviour names the live control \"level\" of \"drop\" at connections[3].to, which it does not have: its live controls are gain",
+            "its behaviour declares connections[1] from { child: \"ears\", notes: \"hits\" } to { child: \"drop\", number: \"gain\" }, which do not connect: a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child?, number }, a bang from { child, bang } to { child?, bang }",
+            "its behaviour names the bang input \"gain\" of \"drop\" at connections[2].to, which it does not have: its bang inputs are hit",
+            "its behaviour names the number \"level\" of \"drop\" at connections[3].to, which it does not have: its numbers are none; its number inputs are gain",
         ]
     );
 }

@@ -66,17 +66,16 @@ fn open_project<'a>(cx: &'a mut TestAppContext, files: &[(String, String)]) -> O
     open(cx, &files)
 }
 
-const DIAL: &str = r#"import { h, knob, Knob, tool } from "./sdk";
+const DIAL: &str = r#"import { h, number, Knob, tool } from "./sdk";
 
 tool({
   name: "dial",
   title: "Dial",
   when: "You want a knob",
   doc: "A knob on a page.",
-  kind: "source",
-  state: { level: knob({ min: 0, max: 1, default: 0.5 }) },
+  state: { level: number({ min: 0, max: 1, default: 0.5 }) },
   sound: () => 0,
-  page: () => h(Knob, { path: "level", label: "Level", min: 0, max: 1, default: 0.5 }),
+  view: () => h(Knob, { value: "level", label: "Level", min: 0, max: 1, default: 0.5 }),
 });
 "#;
 
@@ -117,10 +116,9 @@ tool({
   title: "Mover",
   when: "You want to move a block",
   doc: "A block that moves along, in steps of 10.",
-  kind: "source",
   state: { x: number({ min: 0, max: 1000, default: 100 }) },
   sound: () => 0,
-  page: ({ state, update, now }) =>
+  view: ({ state, update, now }) =>
     h(Space, { key: "board", width: 400, height: 100, background: "#000000" },
       h(Rect, {
         x: () => now.drag("move").dx.plus(state.x),
@@ -178,10 +176,9 @@ tool({
   title: "Row",
   when: "You want steps",
   doc: "A row of steps.",
-  kind: "source",
   state: { steps: pattern({ length: 4, min: 0, max: 1, default: 0 }) },
   sound: () => 0,
-  page: () => h(Steps, { path: "steps" }),
+  view: () => h(Steps, { path: "steps" }),
 });
 "#;
 
@@ -200,23 +197,21 @@ fn a_click_on_a_step_turns_it_on_through_its_code(cx: &mut TestAppContext) {
     assert_eq!(window.undo_label().as_deref(), Some("Turn a step on"));
 }
 
-const SKETCH: &str = r##"import { Canvas, h, number, tool } from "./sdk";
+const SKETCH: &str = r##"import { Circle, h, number, Space, tool } from "./sdk";
 
 tool({
   name: "sketch",
   title: "Sketch",
   when: "You want to draw with the pointer",
   doc: "Keeps where the pointer is across, in the record, at every move.",
-  kind: "source",
   state: { x: number({ min: 0, max: 1, default: 0 }) },
   sound: () => 0,
-  page: ({ state, update }) =>
-    h(Canvas, {
+  view: ({ state, update }) =>
+    h(Space, {
       width: 400,
       height: 100,
-      shapes: () => [{ kind: "circle", x: state.x * 400, y: 50, radius: 4, color: "#ffffff" }],
-      onDrag: (x) => update("Draw", ({ state }) => { state.x = x; }),
-    }),
+      drag: { onMove: ({ x }) => update("Draw", ({ state }) => { state.x = x / 400; }) },
+    }, h(Circle, { x: () => state.x * 400, y: 50, radius: 4, color: "#ffffff" })),
 });
 "##;
 

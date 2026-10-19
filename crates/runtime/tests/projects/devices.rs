@@ -9,7 +9,7 @@ use crate::support::{Harness, write};
 /// both sides made loud by a knob far past what a sound may play.
 /// `rig` plays its child `hiss`, which it imports from `HISS`, through its child `room`, which
 /// it names. `alone` names no child.
-const TOOLS: &str = r#"import { devices, knob, noise, tool, type Declaration } from "./sdk";
+const TOOLS: &str = r#"import { devices, number, noise, tool, type Declaration } from "./sdk";
 import { hiss } from "./wind";
 
 tool({
@@ -17,7 +17,6 @@ tool({
   title: "Dark",
   when: "Never",
   doc: "Noise through the built-in filter.",
-  kind: "source",
   state: { cutoff_hz: devices.filter.fields.cutoff_hz },
   sound: ({ cutoff_hz }) => devices.filter(noise().times(0.25), { cutoff_hz }),
 });
@@ -27,8 +26,7 @@ tool({
   title: "Aligned",
   when: "Never",
   doc: "Noise less itself through a filter that lets it through.",
-  kind: "source",
-  state: { gain: knob({ min: 1, max: 1000, default: 1000 }) },
+  state: { gain: number({ min: 1, max: 1000, default: 1000 }) },
   sound: ({ gain }) => {
     const hiss = noise().times(0.25);
     return hiss.times(gain).minus(devices.filter(hiss, { mix: 0 }).times(gain)).over(gain);
@@ -71,7 +69,6 @@ export const hiss = tool({
   title: "Hiss",
   when: "Never",
   doc: "Noise.",
-  kind: "source",
   state: {},
   sound: () => noise().times(0.25),
 });
@@ -181,7 +178,6 @@ tool({
   title: "Wrong",
   when: "Never",
   doc: "A filter of a type it does not have.",
-  kind: "source",
   state: {},
   sound: () => devices.filter(noise(), { type: "hi_pass" }),
 });

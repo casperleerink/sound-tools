@@ -59,7 +59,6 @@ tool({
   title: "Follow",
   when: "You want to count frames",
   doc: "Counts its first 20 frames in its record.",
-  kind: "source",
   state: { count: number({ min: 0, max: 1000 }) },
   memory: () => ({ frames: 0 }),
   tick: ({ memory, update }) => {
@@ -99,14 +98,14 @@ fn the_edits_of_a_tick_land_as_one_undo_step_written_once(cx: &mut TestAppContex
 }
 
 /// A key that marks its record a moment later, as after a slow call.
-const LATE: &str = r#"import { h, knob, number, tool } from "./sdk";
+const LATE: &str = r#"import { h, number, tool } from "./sdk";
 
 tool({
   name: "late",
   title: "Late",
   when: "You want to mark the record late",
   doc: "A key marks the record 0.3 s later.",
-  state: { level: knob({ min: 0, max: 1, default: 0 }), late: number({ min: 0, max: 1 }) },
+  state: { level: number({ min: 0, max: 1, default: 0 }), late: number({ min: 0, max: 1 }) },
   onKey: async ({ update }, { key, down }) => {
     if (key !== "a" || !down) return;
     await new Promise((done) => setTimeout(done, 300));
@@ -114,7 +113,7 @@ tool({
       state.late = 1;
     });
   },
-  page: () => h("div", {}, "Late"),
+  view: () => h("div", {}, "Late"),
 });
 "#;
 
@@ -165,10 +164,10 @@ tool({
     ],
   }),
   transport: true,
-  page: ({ size, update }) =>
+  view: ({ size, update }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
-      onClick: () => update("Write a bass line", ({ children }) => {
+      onPress: () => update("Write a bass line", ({ children }) => {
         const bass = children.find((child) => child.name === "bass")!.state as SequencerState;
         bass.patterns = [{ length: 3840, notes: [{ start: 0, length: 3840, pitch: 45, velocity: 100 }] }];
         bass.plays = 0;
@@ -250,7 +249,7 @@ tool({
       children.push({ name: "x/y", tool: "drone", state: {} });
     });
   },
-  page: () => h("div", {}, "Rack"),
+  view: () => h("div", {}, "Rack"),
 });
 "#;
 
@@ -347,7 +346,6 @@ tool({
   title: "Take",
   when: "You want to keep a take",
   doc: "Notes played.",
-  kind: "source",
   state: { notes: notes() },
 });
 

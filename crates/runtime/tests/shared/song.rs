@@ -56,7 +56,10 @@ pub(crate) fn scale_files() -> Vec<(String, String)> {
         (0..100)
             .map(|clip| {
                 let start = (clip as u64 * 8 + track as u64 % 8) * BAR;
-                (clip, json!({ "start": start, "length": BAR, "notes": notes }))
+                (
+                    clip,
+                    json!({ "start": start, "length": BAR, "notes": notes }),
+                )
             })
             .collect()
     })

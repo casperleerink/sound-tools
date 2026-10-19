@@ -10,22 +10,21 @@ use crate::plugin_hosts::open_read_only;
 use crate::support::{Harness, write};
 
 /// A sine at `hz` that runs all the time.
-const DRONE: &str = r#"import { knob, sine, tool } from "./sdk";
+const DRONE: &str = r#"import { number, sine, tool } from "./sdk";
 
 tool({
   name: "drone",
   title: "Drone",
   when: "You want a drone",
   doc: "A sine that never stops.",
-  kind: "source",
-  state: { hz: knob({ min: 20, max: 2000, default: 220, unit: "hz" }) },
+  state: { hz: number({ min: 20, max: 2000, default: 220, unit: "hz" }) },
   sound: ({ hz }) => sine(hz).times(0.25),
 });
 "#;
 
 /// Plays the child its record names through the effects it lists, into its own sound. It throws
 /// for a lead named `boom`.
-const BAND: &str = r#"import { input, knob, list, text, tool, type Connection } from "./sdk";
+const BAND: &str = r#"import { input, number, list, text, tool, type Connection } from "./sdk";
 
 tool({
   name: "band",
@@ -35,7 +34,7 @@ tool({
   state: {
     lead: text({ default: "low" }),
     effects: list(text(), { max: 4 }),
-    level: knob({ min: 0, max: 1, default: 1 }),
+    level: number({ min: 0, max: 1, default: 1 }),
   },
   sound: ({ level }) => input.times(level),
   behaviour: ({ state: { lead, effects } }) => {

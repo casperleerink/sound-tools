@@ -205,7 +205,7 @@ fn the_microphone_into_a_parent_reaches_the_child_it_connects_it_to() {
 /// A constant that sends its value out as the number `level`.
 const LFO: &str = r#"import { output, tool } from "./sdk";
 
-tool({ name: "lfo", title: "LFO", when: "Never", doc: "Sends 0.5.", kind: "source", state: {}, sound: () => { output("level", 0.5); return 0; } });
+tool({ name: "lfo", title: "LFO", when: "Never", doc: "Sends 0.5.", state: {}, sound: () => { output("level", 0.5); return 0; } });
 "#;
 
 /// A parent that passes the number of its child `lfo` on as its own.
@@ -222,11 +222,11 @@ tool({
 "#;
 
 /// A constant 0.5, through `amp`, whose gain the number of `inner` turns.
-const RACK: &str = r#"import { knob, input, tool, type Declaration } from "./sdk";
+const RACK: &str = r#"import { number, input, tool, type Declaration } from "./sdk";
 
-tool({ name: "amp", title: "Amp", when: "Never", doc: "A gain.", state: { gain: knob({ min: 0, max: 1, default: 0 }) }, sound: ({ gain }) => input.times(gain) });
+tool({ name: "amp", title: "Amp", when: "Never", doc: "A gain.", state: { gain: number({ min: 0, max: 1, default: 0 }) }, sound: ({ gain }) => input.times(gain) });
 
-tool({ name: "dc", title: "DC", when: "Never", doc: "A constant.", kind: "source", state: {}, sound: () => 0.5 });
+tool({ name: "dc", title: "DC", when: "Never", doc: "A constant.", state: {}, sound: () => 0.5 });
 
 tool({
   name: "rack",

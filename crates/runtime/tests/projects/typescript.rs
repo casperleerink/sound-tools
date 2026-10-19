@@ -16,7 +16,7 @@ fn doc_example() -> String {
 }
 
 /// Combs whose number is a choice: `sound` builds a different graph for each.
-const COMBS: &str = r#"import { choice, delay, feedback, input, knob, lowpass, mix, tool, type Signal } from "./sdk";
+const COMBS: &str = r#"import { choice, delay, feedback, input, number, lowpass, mix, tool, type Signal } from "./sdk";
 
 const TIMES = [29.7, 37.1, 41.1, 43.7, 31.3, 39.9, 45.1, 33.5];
 
@@ -26,9 +26,9 @@ tool({
   when: "You want a ringing room",
   doc: "Feedback combs.",
   state: {
-    size: knob({ min: 0, max: 0.95, default: 0.8 }),
+    size: number({ min: 0, max: 0.95, default: 0.8 }),
     combs: choice({ options: [2, 4, 8], default: 4 }),
-    blend: knob({ min: 0, max: 1, default: 0.3 }),
+    blend: number({ min: 0, max: 1, default: 0.3 }),
   },
   sound: ({ size, combs, blend }) => {
     const rings: Signal[] = TIMES.slice(0, combs).map((ms) => {
@@ -160,14 +160,14 @@ fn a_lane_of_the_track_moves_a_knob_of_the_tremolo() {
 }
 
 /// A gain the track's lanes can move.
-const LEVEL: &str = r#"import { input, knob, tool } from "./sdk";
+const LEVEL: &str = r#"import { input, number, tool } from "./sdk";
 
 tool({
   name: "level",
   title: "Level",
   when: "You want a gain",
   doc: "A gain.",
-  state: { level: knob({ min: 0, max: 1, default: 1 }) },
+  state: { level: number({ min: 0, max: 1, default: 1 }) },
   sound: ({ level }) => input.times(level),
 });
 "#;
@@ -276,17 +276,17 @@ s.tool({
   doc: "Every function of the sound graph.",
   state: {
     out: s.choice({ options: ["mono", "stereo"], default: "mono" }),
-    level: s.knob({ min: 0, max: 1, default: 0.5 }),
-    on: s.toggle({ default: true }),
+    level: s.number({ min: 0, max: 1, default: 0.5 }),
+    on: s.boolean({ default: true }),
     steps: s.pattern({ length: 4, min: 0, max: 1, default: 0.5 }),
   },
-  controls: { x: s.live({ min: 0, max: 1, default: 0 }), hit: s.trigger() },
+  inputs: { x: s.number({ min: 0, max: 1, default: 0 }), hit: s.bang() },
   sound: ({ out, level, on, steps, x, hit }) => {
     const back = s.feedback();
     back.set(s.input);
     const tape = s.buffer(0.1);
     tape.write(s.phasor(1).times(tape.length), s.input);
-    s.watch("level", level);
+    s.output("level", level);
     const n = s.note;
     const all: s.Operand[] = [
       s.inputLeft, s.inputRight, s.channel, s.sampleRate, s.beat, s.bpm, s.playing,
@@ -329,15 +329,14 @@ fn every_node_of_the_sdk_builds_in_mono_and_in_stereo() {
 }
 
 /// A player of a sample: its sound, from the start, at its own speed.
-const PLAYER: &str = r#"import { phasor, sample, tool } from "./sdk";
+const PLAYER: &str = r#"import { phasor, file, tool } from "./sdk";
 
 tool({
   name: "player",
   title: "Player",
   when: "You want a sound file to play",
   doc: "Plays a sound file over and over.",
-  kind: "source",
-  state: { sound: sample() },
+  state: { sound: file() },
   sound: ({ sound }) => sound.at(phasor(1).times(sound.length)),
 });
 "#;

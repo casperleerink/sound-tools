@@ -15,18 +15,17 @@ use super::{ONLY_THE_TOOL, Window, open};
 /// `count` notes of a piano roll, all in a group the drag `move` moves, as selected notes are,
 /// with a colour of their own under the pointer; or with `canvas`, the same notes on a canvas
 /// whose drag moves the first one through the code, which makes every shape again.
-const GRID: &str = r##"import { Canvas, For, Group, h, number, Rect, Space, tool, type Drag, type ShapeLiteral } from "./sdk";
+const GRID: &str = r##"import { For, Group, h, number, Rect, Space, tool, type Drag } from "./sdk";
 
 tool({
   name: "grid",
   title: "Grid",
   when: "A measurement",
   doc: "Many notes.",
-  kind: "source",
   state: { count: number({ min: 0, max: 100000, default: 100 }), canvas: number({ min: 0, max: 1, default: 0 }) },
   memory: () => ({ x: 0 }),
   sound: () => 0,
-  page: ({ state, memory, now }) => {
+  view: ({ state, memory, now }) => {
     const notes = () => Array.from({ length: state.count }, (_, index) => ({ start: (index % 64) * 240, pitch: 36 + (index % 48) }));
     const canvas = () => state.canvas === 1;
     const shapes = (): ShapeLiteral[] => notes().map((note, index) => ({
@@ -509,7 +508,10 @@ fn performance_of_a_song_of_100_tracks_of_100_clips(cx: &mut TestAppContext) {
         modifiers,
         touch_phase: TouchPhase::Moved,
     };
-    for (name, delta) in [("across", point(px(30.), px(0.))), ("down", point(px(0.), px(30.)))] {
+    for (name, delta) in [
+        ("across", point(px(30.), px(0.))),
+        ("down", point(px(0.), px(30.))),
+    ] {
         let scrolling: Vec<Duration> = (0..MOVES)
             .map(|step| {
                 let sign = if step < MOVES / 2 { -1. } else { 1. };
@@ -537,7 +539,10 @@ fn performance_of_a_song_of_100_tracks_of_100_clips(cx: &mut TestAppContext) {
             window.timed(|window| window.cx.update(|window, _| window.refresh()))
         })
         .collect();
-    print(&format!("{what}: a frame as it plays, every meter moving"), playing);
+    print(
+        &format!("{what}: a frame as it plays, every meter moving"),
+        playing,
+    );
 }
 
 /// The song of `tooling/agent-eval/examples`: how long it takes to open, frames idle, as it

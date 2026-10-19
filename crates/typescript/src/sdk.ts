@@ -127,6 +127,9 @@ export function list<const I extends Field | Fields>(
 /** A row of `length` numbers, such as the steps of a sequence: a list that starts as `length` times `default`. */
 export function pattern(field: { length: number; min: number; max: number; default: number; label?: string }): ListField<NumberField> {
   const { length, min, max, label } = field;
+  if (!Number.isInteger(length) || length < 1 || length > 1024) {
+    throw new RangeError(`a pattern holds 1 to 1024 values, not ${length}`);
+  }
   return list(number({ min, max, default: field.default }), { max: length, label, default: Array<number>(length).fill(field.default) });
 }
 
@@ -1967,7 +1970,7 @@ function element(family: Family, props: Record<string, unknown>, children: Child
   return made;
 }
 
-/** A shape as a plain object, such as one of the `shapes` of a `Canvas`. */
+/** A shape as a plain object, as a child of a space. */
 export type ShapeLiteral = { [Kind in Shape["kind"]]: { kind: Kind } & ShapeProps<Kind> }[Shape["kind"]];
 
 function isNode(value: unknown): value is Made {

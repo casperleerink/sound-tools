@@ -5,14 +5,13 @@ use crate::support::{Harness, write};
 
 /// Noise, and the number `cutoff` at 200 Hz for the first half of each second and 20 kHz for the
 /// second. `broken` is no number for the first tenth of each second.
-const SOURCES: &str = r#"import { knob, mix, noise, output, phasor, pow, sine, tool } from "./sdk";
+const SOURCES: &str = r#"import { number, mix, noise, output, phasor, pow, sine, tool } from "./sdk";
 
 tool({
   name: "hiss",
   title: "Hiss",
   when: "Never",
   doc: "Noise.",
-  kind: "source",
   state: {},
   sound: () => noise().times(0.25),
 });
@@ -22,7 +21,6 @@ tool({
   title: "Square LFO",
   when: "Never",
   doc: "Sends `cutoff` low, then high, once a second.",
-  kind: "source",
   state: {},
   sound: () => {
     output("cutoff", mix(200, 20000, phasor(1).ge(0.5)));
@@ -37,8 +35,7 @@ tool({
   title: "Drone",
   when: "Never",
   doc: "A sine.",
-  kind: "source",
-  state: { hz: knob({ min: 20, max: 2000, default: 220, unit: "hz" }) },
+  state: { hz: number({ min: 20, max: 2000, default: 220, unit: "hz" }) },
   sound: ({ hz }) => sine(hz).times(0.25),
 });
 "#;
@@ -209,7 +206,7 @@ fn a_number_a_child_does_not_send_or_take_is_a_problem_that_names_what_it_has() 
     assert_eq!(
         messages(&harness),
         [
-            "its behaviour declares connections[2] from { child: \"lfo\", number: \"cutoff\" } to { port: \"audio\" }, which do not connect: a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child, number }, { child, live } or { number }, a bang from { child, bang } to { child, trigger } or { bang }"
+            "its behaviour declares connections[2] from { child: \"lfo\", number: \"cutoff\" } to { port: \"audio\" }, which do not connect: a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child?, number }, a bang from { child, bang } to { child?, bang }"
         ]
     );
 }
