@@ -1149,6 +1149,58 @@ tool({
 });
 "#;
 
+/// A loop that plays, whose page shows only whether it plays.
+const SHOWS_PLAYING: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "launcher",
+  title: "Launcher",
+  when: "Never",
+  doc: "Shows whether its loop plays.",
+  state: {},
+  behaviour: () => ({
+    connections: [
+      { from: { child: "bass", notes: "notes" }, to: { child: "synth", notes: "notes" } },
+      { from: { child: "synth" }, to: { port: "audio" } },
+    ],
+  }),
+  view: ({ outputs }) => h("div", {}, () => (outputs["bass.playing"] === 1 ? "On" : "Off")),
+});
+"#;
+
+#[gpui::test]
+fn a_page_that_reads_whether_a_loop_plays_hears_nothing_as_it_moves_on(cx: &mut TestAppContext) {
+    let (_, project) = EXPERIMENT[0];
+    let project = project
+        .replace("\"keys\"", "\"launcher\"")
+        .replace("\"extensions\": []", "\"extensions\": [\"instrument\"]");
+    let files = [
+        ("project.json", project.as_str()),
+        ("state/launcher/instance.json", r#"{"tool": "launcher", "state": {}}"#),
+        ("state/launcher/synth.json", r#"{"tool": "instrument.synth", "state": {}}"#),
+        (
+            "state/launcher/bass.json",
+            r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "notes": [{"start": 0, "length": 960, "pitch": 45, "velocity": 100}]}}"#,
+        ),
+        ("extensions/launcher.ts", SHOWS_PLAYING),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.start_playing();
+    for _ in 0..20 {
+        window.poll();
+    }
+    window.wait_for_bun();
+    let asked = sound_typescript::sent_updates_and_events();
+    // The phase moves on every block; whether it plays does not.
+    for _ in 0..20 {
+        window.loudest(4_800);
+        window.poll();
+    }
+    assert_eq!(sound_typescript::sent_updates_and_events(), asked);
+}
+
 /// Frames in a bar of 4/4 at 120 bpm.
 const BAR_FRAMES: usize = 96_000;
 

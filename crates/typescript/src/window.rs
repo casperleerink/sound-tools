@@ -1271,7 +1271,13 @@ impl Live {
                 .tree
                 .as_ref()
                 .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches));
-            if reads.watches {
+            let read_moved = match &reads.watches {
+                None => true,
+                Some(names) => {
+                    (names.iter()).any(|name| watches.get(name) != entry.watches.get(name))
+                }
+            };
+            if read_moved {
                 moved.insert(entry.id.clone(), watches.clone());
             }
             entry.watches = watches;

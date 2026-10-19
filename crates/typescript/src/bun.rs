@@ -431,12 +431,12 @@ pub(crate) enum Event {
 }
 
 /// What the bindings of the cards of an instance read, so the window tells Bun at once only of a
-/// change of that. `state` names the fields they read, or is `None` for all of them.
+/// change of that. `state` and `watches` name what they read, or are `None` for all of it.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub(crate) struct Reads {
     pub state: Option<Vec<String>>,
     pub children: bool,
-    pub watches: bool,
+    pub watches: Option<Vec<String>>,
 }
 
 /// Before Bun says, its cards read everything.
@@ -445,7 +445,7 @@ impl Default for Reads {
         Self {
             state: None,
             children: true,
-            watches: true,
+            watches: None,
         }
     }
 }

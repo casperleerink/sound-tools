@@ -522,7 +522,9 @@ impl NodeTable {
                     let mut above = Some(parent);
                     while let Some(slot) = above {
                         if slot == node {
-                            return Err("a node goes into itself or into a node inside it".to_string());
+                            return Err(
+                                "a node goes into itself or into a node inside it".to_string()
+                            );
                         }
                         above = self.get(slot).and_then(|entry| entry.parent);
                     }
@@ -1548,13 +1550,25 @@ mod tests {
     fn a_node_made_twice_or_put_inside_itself_is_an_error() {
         let mut table = NodeTable::default();
         let made = ops(serde_json::json!([
-            ["create", 1, "div", {}], ["create", 2, "div", {}], ["insert", 1, 2, null],
+            ["create", 1, "div", {}],
+            ["create", 2, "div", {}],
+            ["insert", 1, 2, null],
         ]));
         table.apply(made.unwrap()).unwrap();
         let twice = ops(serde_json::json!([["create", 1, "div", {}]]));
-        assert!(table.apply(twice.unwrap()).unwrap_err().contains("made twice"));
+        assert!(
+            table
+                .apply(twice.unwrap())
+                .unwrap_err()
+                .contains("made twice")
+        );
         let inside = ops(serde_json::json!([["insert", 2, 1, null]]));
-        assert!(table.apply(inside.unwrap()).unwrap_err().contains("into itself"));
+        assert!(
+            table
+                .apply(inside.unwrap())
+                .unwrap_err()
+                .contains("into itself")
+        );
         assert_eq!(table.children_of(1), [2]);
     }
 }

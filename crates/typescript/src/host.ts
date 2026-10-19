@@ -66,7 +66,7 @@ type Request =
   | { type: "numbered"; question: number; numbers: MovedNumber[] };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
-type Reads = { state: string[] | null; children: boolean; watches: boolean };
+type Reads = { state: string[] | null; children: boolean; watches: string[] | null };
 
 /** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function say(message: object) {
@@ -1115,7 +1115,7 @@ function flushOps() {
     const reads: Reads = {
       state: sdk.host.readFields(known.state),
       children: sdk.host.isRead(known.children),
-      watches: sdk.host.isRead(known.watches),
+      watches: sdk.host.readFields(known.watches),
     };
     const text = JSON.stringify(reads);
     if (text !== known.told) {
