@@ -138,27 +138,8 @@ pub(crate) enum Request<'a> {
     Drop {
         card: u64,
     },
-    /// The answer to an `openFile` of a tool: the name under `assets/audio/` of the file the
-    /// composer chose and the runtime copied there, or none.
-    FileOpened {
-        question: u64,
-        asset: Option<&'a str>,
-    },
-    /// The answer to an `openMenu`: the place of the item the composer picked, or none.
-    MenuPicked {
-        question: u64,
-        item: Option<usize>,
-    },
-    /// The answer to an `offers`: what the window offers that takes what was asked for.
-    Offered {
-        question: u64,
-        offers: Vec<Offered>,
-    },
-    /// The answer to a `numbers`: what a lane or a cable can move of the child asked about.
-    Numbered {
-        question: u64,
-        numbers: Vec<Moved>,
-    },
+    /// The answer to a question of a tool: `openFile`, `openMenu`, `offers` or `numbers`.
+    Answer { question: u64, answer: Answer<'a> },
     /// What the behaviour of an owner declares for its record and its children, as Bun was
     /// told them.
     Behaviour {
@@ -194,6 +175,21 @@ pub(crate) struct Moved {
     pub scale: &'static str,
     /// What its record holds now.
     pub value: Option<f32>,
+}
+
+/// What the window answers a tool that asked.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(crate) enum Answer<'a> {
+    /// The name under `assets/audio/` of the file the composer chose and the runtime copied
+    /// there, or none.
+    Asset(Option<&'a str>),
+    /// The place of the item the composer picked in a menu, or none.
+    Item(Option<usize>),
+    /// What the window offers that takes what was asked for.
+    Offers(Vec<Offered>),
+    /// What a lane or a cable can move of the child asked about.
+    Numbers(Vec<Moved>),
 }
 
 /// A device the window offers, as code gets it: what `addOffer` names it by.

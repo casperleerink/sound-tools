@@ -57,14 +57,8 @@ type Request =
   | ({ type: "take"; instance: Played } & Take & Clock)
   | { type: "drop"; card: number }
   | { type: "behaviour"; question: number; tool: string; instance: string }
-  /** The file the composer chose for an `openFile`, as it is named under `assets/audio/` now, or `null`. */
-  | { type: "file_opened"; question: number; asset: string | null }
-  /** The place of the item the composer picked in an `openMenu`, or `null`. */
-  | { type: "menu_picked"; question: number; item: number | null }
-  /** What the window offers, the answer to `offers`. */
-  | { type: "offered"; question: number; offers: Offer[] }
-  /** What a lane or a cable can move of a child, the answer to `numbers`. */
-  | { type: "numbered"; question: number; numbers: MovedNumber[] };
+  /** The answer to a question of `ask`. */
+  | { type: "answer"; question: number; answer: unknown };
 
 /** What bindings of an instance read: the window tells this Bun at once only what they read. */
 type Reads = { state: string[] | null; children: boolean; watches: string[] | null };
@@ -148,6 +142,13 @@ function problemsOf(spec: Spec): string[] {
     }
     if (spec.behaviour && voices !== 1) {
       problems.push('voices: a parent\'s sound is one voice that hears what it connects to its own { port: "audio" } as `input`, so leave `voices` out');
+    }
+    for (const [list, names] of [["keys", spec.keys ?? []], ["globalKeys", spec.globalKeys ?? []]] as const) {
+      for (const name of names) {
+        if (!sdk.host.isKeyName(name)) {
+          problems.push(`${list}: ${name} is no key; name one as "a", "space", "left" or "cmd-c", with cmd, ctrl and alt first`);
+        }
+      }
     }
     for (const key of spec.globalKeys ?? []) {
       if (APP_KEYS.includes(key)) {
@@ -873,18 +874,8 @@ function contextOf<Extra extends object>(
 ) {
   const context = {
     ...extra,
-    memory: memoryOf(instance, spec),
     time,
-    clock: clockFor(instance),
-    update: updater(instance),
-    openFile: fileOpener(),
-    select: selector(instance),
-    openMenu: menuOpener(),
-    offers: offerAsker(),
-    numbers: numbersAsker(instance),
-    addOffer: offerAdder(instance),
-    now: sdk.now as Context<State>["now"],
-    ...performer(instance),
+    ...doers(instance, spec),
   };
   // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
   let children: OwnedChild[] | undefined;
@@ -895,6 +886,20 @@ function contextOf<Extra extends object>(
   }) as typeof context & { state: State; outputs: Watches; children: OwnedChild[] };
 }
 
+/** What every piece of code of an instance can do, in a view or in `tick`, `onKey`, `onNotes` and `onTake`. */
+function doers(instance: string, spec: Spec) {
+  return {
+    memory: memoryOf(instance, spec),
+    clock: clockFor(instance),
+    update: updater(instance),
+    select: selector(instance),
+    addOffer: offerAdder(instance),
+    now: sdk.now as Context<State>["now"],
+    ...askers(instance),
+    ...performer(instance),
+  };
+}
+
 /** `select`: what the composer works on, a child by its path, which the window plays live notes into. */
 function selector(instance: string) {
   return (path: string | null, { span }: { span?: { from: number; to: number } } = {}) => {
@@ -903,53 +908,31 @@ function selector(instance: string) {
   };
 }
 
-/** `openMenu`: the window shows it where the pointer is, and answers its question. */
-const menusAsked = new Map<number, (item: number | null) => void>();
-let menuQuestions = 0;
-function menuOpener() {
-  return (items: readonly MenuItem[]): Promise<number | null> => {
-    const question = ++menuQuestions;
-    say({ type: "open_menu", question, items: items.map(({ label, disabled, checked }) => ({ label, disabled, checked })) });
-    return new Promise((resolve) => menusAsked.set(question, resolve));
-  };
+/** Questions to the window, by number, which its answers settle: `openFile`, `openMenu`, `offers`, `numbers`. */
+const asked = new Map<number, (answer: unknown) => void>();
+let questions = 0;
+function ask<Answer>(message: { type: string } & Record<string, unknown>): Promise<Answer> {
+  const question = ++questions;
+  say({ ...message, question });
+  return new Promise((resolve) => asked.set(question, resolve as (answer: unknown) => void));
 }
 
-/** `offers`: the window lists them and answers its question. */
-const offersAsked = new Map<number, (offers: Offer[]) => void>();
-let offerQuestions = 0;
-function offerAsker() {
-  return (takes: "notes" | "audio"): Promise<Offer[]> => {
-    const question = ++offerQuestions;
-    say({ type: "offers", question, takes });
-    return new Promise((resolve) => offersAsked.set(question, resolve));
-  };
-}
-
-/** `numbers`: the window lists what a lane or a cable can move of a child. */
-const numbersAsked = new Map<number, (numbers: MovedNumber[]) => void>();
-let numberQuestions = 0;
-function numbersAsker(instance: string) {
-  return (path: string): Promise<MovedNumber[]> => {
-    const question = ++numberQuestions;
-    say({ type: "numbers", question, instance, path });
-    return new Promise((resolve) => numbersAsked.set(question, resolve));
+/** What a tool asks the window, for its instance. */
+function askers(instance: string) {
+  return {
+    /** The window shows it where the pointer is. */
+    openMenu: (items: readonly MenuItem[]) =>
+      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked }) => ({ label, disabled, checked })) }),
+    offers: (takes: "notes" | "audio") => ask<Offer[]>({ type: "offers", takes }),
+    numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
+    /** The runtime opens the file and copies it under `assets/audio/`. */
+    openFile: ({ title = "Choose a file" }: { title?: string } = {}) => ask<string | null>({ type: "open_file", title }),
   };
 }
 
 /** `addOffer`: the window writes the offer's record into the child, as one edit. */
 function offerAdder(instance: string) {
   return (key: string, path: string, label: string) => say({ type: "add_offer", instance, path, key, label });
-}
-
-/** `openFile`: the runtime opens the file, copies it, and answers its question. */
-const filesAsked = new Map<number, (asset: string | null) => void>();
-let fileQuestions = 0;
-function fileOpener() {
-  return ({ title = "Choose a file" }: { title?: string } = {}): Promise<string | null> => {
-    const question = ++fileQuestions;
-    say({ type: "open_file", question, title });
-    return new Promise((resolve) => filesAsked.set(question, resolve));
-  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1160,17 +1143,7 @@ function cardContext<Extra extends object>(instance: string, spec: Spec, known: 
     state: sdk.host.store(known.state, false) as State,
     children: sdk.host.store(known.children, false),
     outputs: sdk.host.store(known.watches, false),
-    clock: clockFor(instance),
-    memory: memoryOf(instance, spec),
-    update: updater(instance),
-    openFile: fileOpener(),
-    select: selector(instance),
-    openMenu: menuOpener(),
-    offers: offerAsker(),
-    numbers: numbersAsker(instance),
-    addOffer: offerAdder(instance),
-    now: sdk.now as Context<State>["now"],
-    ...performer(instance),
+    ...doers(instance, spec),
   };
   return Object.defineProperty(context, "time", { enumerable: true, get: () => now }) as typeof context & { time: number };
 }
@@ -1332,21 +1305,9 @@ function handle(request: Request) {
     case "behaviour":
       declare(request);
       break;
-    case "file_opened":
-      filesAsked.get(request.question)?.(request.asset);
-      filesAsked.delete(request.question);
-      break;
-    case "menu_picked":
-      menusAsked.get(request.question)?.(request.item);
-      menusAsked.delete(request.question);
-      break;
-    case "offered":
-      offersAsked.get(request.question)?.(request.offers);
-      offersAsked.delete(request.question);
-      break;
-    case "numbered":
-      numbersAsked.get(request.question)?.(request.numbers);
-      numbersAsked.delete(request.question);
+    case "answer":
+      asked.get(request.question)?.(request.answer);
+      asked.delete(request.question);
       break;
   }
 }

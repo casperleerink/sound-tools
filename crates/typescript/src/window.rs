@@ -32,7 +32,7 @@ use sound_ui::{
 };
 
 use crate::bun::{
-    Bun, Clock, Event, EventKind, Heard, MenuItemSpec, Moved, Offered, PageSize, Played, Reads,
+    Answer, Bun, Clock, Event, EventKind, Heard, MenuItemSpec, Moved, Offered, PageSize, Played, Reads,
     RecordEdit, Request, Runs, Skipped, Telling, Transport, TransportOp, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
@@ -794,7 +794,7 @@ impl Live {
 
     /// Answers an `openMenu` with the place of the item picked, or none.
     pub(crate) fn menu_picked(&mut self, question: u64, item: Option<usize>) {
-        self.host.send(&Request::MenuPicked { question, item });
+        self.host.send(&Request::Answer { question, answer: Answer::Item(item) });
     }
 
     /// Puts the offer `key` at the child `path` of `instance`, as one edit `label`: a device a
@@ -1477,7 +1477,7 @@ impl Live {
             }
             Event::Offers { question, takes } => {
                 let offers = offered(takes_of(&takes), self.session.upgrade(), cx);
-                self.host.send(&Request::Offered { question, offers });
+                self.host.send(&Request::Answer { question, answer: Answer::Offers(offers) });
             }
             Event::AddOffer {
                 instance,
@@ -1493,7 +1493,7 @@ impl Live {
                 let numbers = (self.session.upgrade())
                     .map(|session| moved_numbers(session.read(cx).project(), &instance, &path))
                     .unwrap_or_default();
-                self.host.send(&Request::Numbered { question, numbers });
+                self.host.send(&Request::Answer { question, answer: Answer::Numbers(numbers) });
             }
             Event::Transport { op } => self.transport(op, cx),
             Event::Select {
@@ -1695,7 +1695,7 @@ impl Live {
                     None => None,
                 };
                 let asset = asset.as_deref();
-                live.host.send(&Request::FileOpened { question, asset });
+                live.host.send(&Request::Answer { question, answer: Answer::Asset(asset) });
             })
             .ok();
         })

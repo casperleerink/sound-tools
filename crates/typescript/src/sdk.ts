@@ -683,13 +683,13 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    * with cmd, ctrl or alt held first, `"cmd-c"`. The rest go on to `globalKeys`. Left out, every
    * plain key.
    */
-  keys?: readonly string[];
+  keys?: readonly KeyName[];
   /**
    * The keys `onKey` hears wherever the focus is, outside a text field, while its view is the
    * whole window: `["space"]` to play and stop. The app keeps undo, opening, quitting and its
    * panel; nothing else plays a key by itself.
    */
-  globalKeys?: readonly string[];
+  globalKeys?: readonly KeyName[];
   /**
    * Hears what reaches its `notes`, whatever plays them: the keyboard, a clip, a cable, a
    * parent's `play` and `send`; not its own. Its sound plays them by itself as well.
@@ -1321,6 +1321,17 @@ function sources(): Now<Record<string, number>> {
 /** The sources of live values, for components of a view, which name fields by strings. */
 export const now: Now<Record<string, number>> = sources();
 
+
+/** The keys of the computer keyboard, as the window names them. */
+const PLAIN_KEYS = [
+  "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+  "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "=",
+  "[", "]", ";", "'", ",", ".", "/", "`", "\\", "space", "enter", "escape", "backspace", "delete",
+  "tab", "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "f1", "f2", "f3",
+  "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"
+] as const;
+/** A key by name, with cmd, ctrl and alt held first and in that order: `"space"`, `"cmd-c"`, `"cmd-alt-left"`. */
+export type KeyName = `${"" | "cmd-"}${"" | "ctrl-"}${"" | "alt-"}${(typeof PLAIN_KEYS)[number]}`;
 
 /** An item of `openMenu`. */
 export interface MenuItem {
@@ -2827,6 +2838,8 @@ function nodeEvent(id: number, kind: "press" | "end" | "commit" | "drop" | "powe
 
 /** What the host reads. Not for tools. */
 export const host = {
+  /** Whether `name` names a key as `KeyName` does. */
+  isKeyName: (name: string) => PLAIN_KEYS.includes(name.replace(/^(cmd-)?(ctrl-)?(alt-)?/, "") as never),
   tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),

@@ -384,3 +384,14 @@ tool({
     ],
   }),
 });
+
+tool({
+  name: "keyed",
+  title: "Keyed",
+  when: "Never",
+  doc: "Keys.",
+  sound: () => 0,
+  keys: ["delete", "cmd-c", "cmd-alt-left"],
+  // @ts-expect-error: no key is called `del`, and shift is not a name of a key.
+  globalKeys: ["del", "shift-a"],
+});
