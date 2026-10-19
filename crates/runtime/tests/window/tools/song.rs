@@ -5,7 +5,8 @@
 use super::{Window, open};
 use crate::song::{ACROSS, BAR, HEADER, ROW, song_files};
 use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
+    ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
 };
 
 pub(super) fn open_song(
@@ -71,6 +72,7 @@ fn a_clip_moves_on_the_grid_as_one_file_and_one_undo_step(cx: &mut TestAppContex
     // The second clip of the second track, half a bar into it.
     let at = window.on_lane(3 * BAR + BAR / 2, 1);
     window.wait_for_bun();
+    let questions = sound_typescript::asked_behaviours();
     window.press(at);
     window.drag_to(at + point(px(10.), px(0.)));
     // A bar and a bit on: it lands on the nearest beat line.
@@ -88,6 +90,8 @@ fn a_clip_moves_on_the_grid_as_one_file_and_one_undo_step(cx: &mut TestAppContex
         .map(|(old, _)| &old.0)
         .collect();
     assert_eq!(changed, ["song/t01/c01"]);
+    // The behaviour of the track reads the names and tools of its clips, not where they start.
+    assert_eq!(sound_typescript::asked_behaviours(), questions);
     assert_eq!(window.problems(), []);
 }
 
@@ -134,6 +138,60 @@ fn the_mute_of_a_track_mutes_its_mix_as_one_undo_step(cx: &mut TestAppContext) {
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Mute a track"));
     assert_eq!(window.record("song/t01/mix")["mute"], false);
+}
+
+#[gpui::test]
+fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
+    // More tracks than the window is tall.
+    let Some(mut window) = open_song(cx, 40, 40) else {
+        return;
+    };
+    let timeline = window.space_at("timeline");
+    window.wait_for_bun();
+    window.cx.simulate_event(ScrollWheelEvent {
+        position: timeline + point(px(200.), px(100.)),
+        delta: ScrollDelta::Pixels(point(px(0.), px(-10. * ROW))),
+        modifiers: Modifiers::default(),
+        touch_phase: TouchPhase::Moved,
+    });
+    window.cx.run_until_parked();
+    // The M on the top row is the eleventh track's now.
+    let mute = timeline + point(px(80.) - px(HEADER), px(ROW / 2.));
+    window.press(mute);
+    window.release(mute);
+    window.until("the track muted", |window| {
+        window.record("song/t10/mix")["mute"] == true
+    });
+    assert_eq!(window.record("song/t00/mix")["mute"], false);
+}
+
+#[gpui::test]
+fn delete_removes_the_chosen_clip_and_space_still_plays(cx: &mut TestAppContext) {
+    let Some(mut window) = open_song(cx, 4, 12) else {
+        return;
+    };
+    let clip = window.on_lane(3 * BAR + BAR / 2, 1);
+    window.wait_for_bun();
+    window.press(clip);
+    window.release(clip);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("cmd-d");
+    window.until("the clip copied on", |window| {
+        window.clips().iter().any(|(id, _)| id == "song/t01/c01-2")
+    });
+    window.press(clip);
+    window.release(clip);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("delete");
+    window.until("the clip removed", |window| {
+        window.clips().iter().all(|(id, _)| id != "song/t01/c01")
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Remove clips"));
+    // The page names its keys: space is the window's, and plays.
+    window.cx.simulate_keystrokes("space");
+    window.poll();
+    assert!(window.playing());
 }
 
 #[gpui::test]

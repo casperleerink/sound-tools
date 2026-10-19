@@ -484,6 +484,62 @@ fn performance_of_a_song_of_24_tracks_of_600_clips(cx: &mut TestAppContext) {
     measure_song(cx, 24, 600);
 }
 
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_a_song_of_100_tracks_of_100_clips(cx: &mut TestAppContext) {
+    let what = "the scale project as a song, 100 tracks of 100 clips";
+    let files = crate::song::scale_files();
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let opened = Instant::now();
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let timeline = window.space_at("timeline");
+    println!("{what}: opened and drawn in {:?}", opened.elapsed());
+    window.wait_for_bun();
+    let idle: Vec<Duration> = (0..MOVES)
+        .map(|_| window.timed(|window| window.cx.update(|window, _| window.refresh())))
+        .collect();
+    print(&format!("{what}: an idle frame"), idle);
+    let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollWheelEvent {
+        position: timeline + point(px(300.), px(100.)),
+        delta: ScrollDelta::Pixels(delta),
+        modifiers,
+        touch_phase: TouchPhase::Moved,
+    };
+    for (name, delta) in [("across", point(px(30.), px(0.))), ("down", point(px(0.), px(30.)))] {
+        let scrolling: Vec<Duration> = (0..MOVES)
+            .map(|step| {
+                let sign = if step < MOVES / 2 { -1. } else { 1. };
+                let event = wheel(point(delta.x * sign, delta.y * sign), Modifiers::default());
+                window.timed(|window| window.cx.simulate_event(event))
+            })
+            .collect();
+        print(&format!("{what}: a frame as it scrolls {name}"), scrolling);
+    }
+    let zooming: Vec<Duration> = (0..MOVES)
+        .map(|step| {
+            let sign = if step < MOVES / 2 { 1. } else { -1. };
+            let event = wheel(point(px(0.), px(sign * 4.)), Modifiers::command());
+            window.timed(|window| window.cx.simulate_event(event))
+        })
+        .collect();
+    print(&format!("{what}: a frame as it zooms"), zooming);
+    window.focus_the_window();
+    window.cx.simulate_keystrokes("space");
+    window.poll();
+    window.wait_for_bun();
+    let playing: Vec<Duration> = (0..MOVES * 2)
+        .map(|_| {
+            window.loudest(800);
+            window.timed(|window| window.cx.update(|window, _| window.refresh()))
+        })
+        .collect();
+    print(&format!("{what}: a frame as it plays, every meter moving"), playing);
+}
+
 /// The song of `tooling/agent-eval/examples`: how long it takes to open, frames idle, as it
 /// scrolls, zooms and plays with every meter, and what a click on a clip, a move of one and a
 /// note added in the editor cost until they are drawn.

@@ -23,6 +23,51 @@ fn noise(seed: &mut u64) -> u64 {
 /// The files of a song of `tracks` tracks with `clips` clips in all, each of 30 to 150 notes: a
 /// synth, a filter and a utility per track, and a utility `master`.
 pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
+    let mut seed = 7;
+    song_with(tracks, |track| {
+        let mine = clips / tracks + usize::from(track < clips % tracks);
+        (0..mine)
+            .map(|clip| {
+                let bars = 1 + noise(&mut seed) % 2;
+                let length = bars * BAR;
+                let count = 30 + noise(&mut seed) % 121;
+                let notes: Vec<Value> = (0..count)
+                    .map(|index| {
+                        let start = index * length / count;
+                        let pitch = 48 + noise(&mut seed) % 36;
+                        json!({ "start": start, "length": 120 + noise(&mut seed) % 360, "pitch": pitch, "velocity": 60 + noise(&mut seed) % 60 })
+                    })
+                    .collect();
+                let start = clip as u64 * 3 * BAR;
+                (clip, json!({ "start": start, "length": length, "notes": notes }))
+            })
+            .collect()
+    })
+}
+
+/// The scale project of the Rust arrangement's measurement as a song: 100 tracks of 100 clips of
+/// one bar and four notes, clip `c` of track `t` at bar `8c + t mod 8`.
+pub(crate) fn scale_files() -> Vec<(String, String)> {
+    song_with(100, |track| {
+        let pitch = 36 + (track % 40) as u64;
+        let notes: Vec<Value> = (0..4)
+            .map(|beat| json!({ "start": beat * 960, "length": 900, "pitch": pitch + beat * 3, "velocity": 100 }))
+            .collect();
+        (0..100)
+            .map(|clip| {
+                let start = (clip as u64 * 8 + track as u64 % 8) * BAR;
+                (clip, json!({ "start": start, "length": BAR, "notes": notes }))
+            })
+            .collect()
+    })
+}
+
+/// The files of a song of `tracks` tracks, each with the clips `clips` gives it: the state of each
+/// by its number.
+fn song_with(
+    tracks: usize,
+    mut clips: impl FnMut(usize) -> Vec<(usize, Value)>,
+) -> Vec<(String, String)> {
     let project = json!({
         "format": 1,
         "extensions": ["instrument", "filter", "utility"],
@@ -45,7 +90,6 @@ pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
             r#"{"tool": "utility", "state": {}}"#.to_string(),
         ),
     ];
-    let mut seed = 7;
     for track in 0..tracks {
         let folder = format!("state/song/t{track:02}");
         let colour = colours[track % colours.len()];
@@ -65,20 +109,8 @@ pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
             format!("{folder}/mix.json"),
             r#"{"tool": "utility", "state": {}}"#.to_string(),
         ));
-        let mine = clips / tracks + usize::from(track < clips % tracks);
-        for clip in 0..mine {
-            let bars = 1 + noise(&mut seed) % 2;
-            let length = bars * BAR;
-            let count = 30 + noise(&mut seed) % 121;
-            let notes: Vec<Value> = (0..count)
-                .map(|index| {
-                    let start = index * length / count;
-                    let pitch = 48 + noise(&mut seed) % 36;
-                    json!({ "start": start, "length": 120 + noise(&mut seed) % 360, "pitch": pitch, "velocity": 60 + noise(&mut seed) % 60 })
-                })
-                .collect();
-            let start = clip as u64 * 3 * BAR;
-            let record = json!({ "tool": "timeline", "state": { "start": start, "length": length, "notes": notes } });
+        for (clip, state) in clips(track) {
+            let record = json!({ "tool": "timeline", "state": state });
             files.push((format!("{folder}/c{clip:02}.json"), record.to_string()));
         }
     }

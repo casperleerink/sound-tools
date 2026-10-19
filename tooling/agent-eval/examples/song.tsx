@@ -1,4 +1,4 @@
-import { For, Group, h, Label, Line, list, now, Rect, selector, Show, Space, text, tool, type Accessor, type Declaration, type Drag, type Live, type Note, type Press } from "./sdk";
+import { For, Fragment, Group, h, Label, Line, list, now, Rect, selector, Show, Space, text, tool, type Accessor, type Declaration, type Drag, type FilledStateOfTool, type Live, type Press } from "./sdk";
 import { track } from "./track";
 
 // A song: tracks of clips in time, with a mixer strip per track and a note editor for one clip.
@@ -51,11 +51,34 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, mixer strips or note editor",
   doc:
-    "Tracks of clips in time. Each `track` child plays into the utility `master`; `solo` names the tracks that play alone. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. M mutes a track, S solos it.",
+    "Tracks of clips in time. Each `track` child plays into the utility `master`; `solo` names the tracks that play alone. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below. Delete removes the chosen clips, cmd-D copies them on. M mutes a track, S solos it.",
   state: { solo: list(text(), { max: 64 }) },
   children: parts,
   transport: true,
   memory: (): Memory => ({ selected: new Set(), open: null, note: null }),
+  keys: ["delete", "backspace", "cmd-d"],
+  onKey: ({ memory, update }, { key, down }) => {
+    if (!down || memory.selected.size === 0) return;
+    const chosen = new Set(memory.selected);
+    update(key === "d" ? "Copy clips on" : "Remove clips", ({ children }) => {
+      for (const row of children) {
+        if (row.tool !== "track") continue;
+        const mine = row.children.filter((clip) => clip.tool === "timeline" && chosen.has(`${row.name}/${clip.name}`));
+        if (key !== "d") {
+          row.children = row.children.filter((clip) => !mine.includes(clip));
+          continue;
+        }
+        const copies = mine.flatMap((clip) => {
+          if (clip.tool !== "timeline") return [];
+          const length = clip.state.length ?? BAR;
+          const name = freeName(row.children.map((each) => each.name), clip.name);
+          return [{ name, tool: "timeline" as const, state: { ...clip.state, start: clip.state.start + length } }];
+        });
+        row.children = [...row.children, ...copies];
+      }
+    });
+    memory.selected = new Set();
+  },
   behaviour: ({ state, children }): Declaration<typeof parts> => {
     const tracks = children.filter((child) => child.tool === "track").map((child) => child.name);
     const soloed = state.solo.filter((name) => tracks.includes(name));
@@ -80,14 +103,13 @@ export const song = tool({
     };
 
     /** Changes the clips `keys` names, `track/clip`, in one undo step. */
-    const editClips = (label: string, keys: Iterable<string>, change: (state: { start: number; length?: number; notes: Note[] }, track: number) => void) =>
+    const editClips = (label: string, keys: Iterable<string>, change: (state: FilledStateOfTool<"timeline">) => void) =>
       update(label, ({ children }) => {
-        const rows = children.filter((child) => child.tool === "track");
         for (const key of keys) {
           const [trackName, clipName] = key.split("/");
-          const row = rows.findIndex((each) => each.name === trackName);
-          const clip = rows[row]?.children?.find((child) => child.name === clipName);
-          if (clip?.tool === "timeline") change(clip.state as { start: number; length?: number; notes: Note[] }, row);
+          const row = children.find((each) => each.name === trackName);
+          const clip = row?.tool === "track" ? row.children.find((child) => child.name === clipName) : undefined;
+          if (clip?.tool === "timeline") change(clip.state);
         }
       });
 
@@ -103,17 +125,18 @@ export const song = tool({
             const from = rows.findIndex((each) => each.name === trackName);
             const to = rows[clamp(from + Math.round(dy), 0, rows.length - 1)];
             const source = rows[from];
-            const clip = source?.children?.find((child) => child.name === clipName);
-            if (!to || !source || clip?.tool !== "timeline") continue;
-            const start = Math.max((clip.state.start ?? 0) + dx, 0);
+            if (to?.tool !== "track" || source?.tool !== "track") continue;
+            const clip = source.children.find((child) => child.name === clipName);
+            if (clip?.tool !== "timeline") continue;
+            const start = Math.max(clip.state.start + dx, 0);
             if (!alt && to === source) {
               clip.state.start = start;
               chosen.add(key);
               continue;
             }
-            const name = freeName((to.children ?? []).map((child) => child.name), clipName);
-            to.children = [...(to.children ?? []), { name, tool: "timeline", state: { ...clip.state, start } }];
-            if (!alt) source.children = (source.children ?? []).filter((child) => child !== clip);
+            const name = freeName(to.children.map((child) => child.name), clipName);
+            to.children = [...to.children, { name, tool: "timeline", state: { ...clip.state, start } }];
+            if (!alt) source.children = source.children.filter((child) => child !== clip);
             chosen.add(`${to.name}/${name}`);
           }
           memory.selected = chosen;
@@ -161,15 +184,15 @@ export const song = tool({
       update("Add a clip", ({ children }) => {
         const owner = children.find((child) => child.name === row.name);
         if (owner?.tool !== "track") return;
-        const name = freeName((owner.children ?? []).map((child) => child.name), "clip");
-        owner.children = [...(owner.children ?? []), { name, tool: "timeline", state: { start, length: BAR, notes: [] } }];
+        const name = freeName(owner.children.map((child) => child.name), "clip");
+        owner.children = [...owner.children, { name, tool: "timeline", state: { start, length: BAR, notes: [] } }];
         memory.selected = new Set([`${owner.name}/${name}`]);
       });
     };
     const toggleMute = (name: string) =>
       update("Mute a track", ({ children }) => {
         const owner = children.find((child) => child.name === name);
-        const mix = owner?.tool === "track" ? owner.children?.find((child) => child.name === "mix") : undefined;
+        const mix = owner?.tool === "track" ? owner.children.find((child) => child.name === "mix") : undefined;
         if (mix?.tool === "utility") mix.state.mute = !mix.state.mute;
       });
     const toggleSolo = (name: string) =>
@@ -189,23 +212,31 @@ export const song = tool({
     const timeline = now.space("timeline");
     const handle = timeline.pointX.times(6);
 
+    const TrackHead = ({ each }: { each: (typeof children)[number] }) => (
+      <>
+        <div style={{ width: 56, fontSize: 11, color: COLOR.text }}>{each.name}</div>
+        <Button label="M" on={() => muted(each)} color={COLOR.mute} onClick={() => toggleMute(each.name)} />
+        <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onClick={() => toggleSolo(each.name)} />
+        <Space key={`meter-${each.name}`} width={40} height={6} background={COLOR.lane} radius={2}>
+          <Rect x={0} y={0} width={place(now.peak(`${each.name}.level`)).fall(0.6).times(40)} height={6} radius={2} color={COLOR.meter} />
+        </Space>
+      </>
+    );
+
     return (
       <div style={{ grow: true, background: COLOR.back }}>
-        <div style={{ direction: "row" }}>
+        <div style={{ direction: "row", grow: true }}>
           <div style={{ width: HEADER }}>
             <div style={{ height: RULER }} />
-            <For each={tracks}>
-              {(each) => (
-                <div style={{ height: ROW, direction: "row", gap: 6, align: "center", paddingX: 8 }}>
-                  <div style={{ width: 56, fontSize: 11, color: COLOR.text }}>{each.name}</div>
-                  <Button label="M" on={() => muted(each)} color={COLOR.mute} onClick={() => toggleMute(each.name)} />
-                  <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onClick={() => toggleSolo(each.name)} />
-                  <Space key={`meter-${each.name}`} width={40} height={6} background={COLOR.lane} radius={2}>
-                    <Rect x={0} y={0} width={place(now.peak(`${each.name}.level`)).fall(0.6).times(40)} height={6} radius={2} color={COLOR.meter} />
-                  </Space>
-                </div>
-              )}
-            </For>
+            <div style={{ grow: true }} follow={{ y: "timeline" }}>
+              <For each={tracks}>
+                {(each) => (
+                  <div style={{ height: ROW, direction: "row", gap: 6, align: "center", paddingX: 8 }}>
+                    <TrackHead each={each} />
+                  </div>
+                )}
+              </For>
+            </div>
           </div>
           <div style={{ grow: true }}>
             <Space key="ruler" height={RULER} unit={{ x: ACROSS }} extent={{ x: [0, END] }} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }}>
@@ -213,10 +244,10 @@ export const song = tool({
                 <Label x={bar * BAR + 60} y={5} text={String(bar + 1)} size={10} color={COLOR.text} />
               ))}
             </Space>
-            <Space key="timeline" height={() => tracks().length * ROW} unit={{ x: ACROSS, y: ROW }} extent={{ x: [0, END] }} zoom={{ x: [0.1, 8] }}
+            <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [0, END], y: [0, Math.max(tracks().length, 1)] })} zoom={{ x: [0.1, 8] }}
               background={COLOR.lane} onPress={pressLane}>
               {Array.from({ length: BARS }, (_, bar) => (
-                <Line from={[bar * BAR, 0]} to={[bar * BAR, 64]} color={COLOR.bar} width={1} />
+                <Line from={[bar * BAR, 0]} to={[bar * BAR, 1000]} color={COLOR.bar} width={1} />
               ))}
               <For each={tracks}>
                 {(each, row) => (
@@ -224,22 +255,23 @@ export const song = tool({
                     {(clip) => {
                       const key = `${each.name}/${clip.name}`;
                       const picked = () => isPicked(key);
-                      const start = () => clip.state.start ?? 0;
-                      const end = () => start() + (clip.state.length ?? BAR);
-                      const follows = () => (picked() ? MOVES : undefined);
+                      const length = () => clip.state.length ?? BAR;
+                      const resizes = () => (picked() ? RESIZES : undefined);
+                      // The clip and its notes move together, and its notes end at its end.
                       return (
-                        <Group>
-                          <Rect x={start} y={() => row() + 0.06} width={() => end() - start()} height={0.88} radius={3} anchor={() => ({ x: start(), y: row() })}
+                        <Group x={() => clip.state.start ?? 0} y={row} clip={() => ({ width: length(), height: 1 })}
+                          moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
+                          <Rect x={0} y={0.06} width={length} height={0.88} radius={3} anchor={{ x: 0, y: 0 }}
                             color={() => (picked() ? COLOR.chosen : colourOf(each))}
-                            moves={follows} grows={() => (picked() ? RESIZES : undefined)} drag={moveDrag} onPress={pressClip(key)} cursor="grab" />
+                            grows={resizes} drag={moveDrag} onPress={pressClip(key)} cursor="grab" />
                           <For each={() => clip.state.notes ?? []}>
                             {(note) => (
-                              <Rect x={() => start() + note.start} y={() => row() + 0.12 + (1 - (clamp(note.pitch, LOW, HIGH) - LOW) / (HIGH - LOW)) * 0.7}
-                                width={() => note.length} height={0.05} color={COLOR.note} moves={follows} />
+                              <Rect x={() => note.start} y={() => 0.12 + (1 - (clamp(note.pitch, LOW, HIGH) - LOW) / (HIGH - LOW)) * 0.7}
+                                width={() => note.length} height={0.05} color={COLOR.note} />
                             )}
                           </For>
-                          <Rect x={() => handle.negate().plus(end())} y={() => row() + 0.06} width={handle} height={0.88} color={COLOR.clear}
-                            anchor={() => ({ x: end() })} moves={() => (picked() ? RESIZES : undefined)}
+                          <Rect x={() => handle.negate().plus(length())} y={0.06} width={handle} height={0.88} color={COLOR.clear}
+                            anchor={() => ({ x: length() })} moves={resizes}
                             drag={resizeDrag} onPress={pressClip(key)} cursor="ew-resize" />
                         </Group>
                       );
@@ -247,7 +279,7 @@ export const song = tool({
                   </For>
                 )}
               </For>
-              <Line from={[now.tick, 0]} to={[now.tick, 64]} color={COLOR.playhead} width={2} />
+              <Line from={[now.tick, 0]} to={[now.tick, 1000]} color={COLOR.playhead} width={2} />
             </Space>
           </div>
         </div>
