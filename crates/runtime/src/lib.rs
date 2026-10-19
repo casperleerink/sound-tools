@@ -4,7 +4,6 @@
 //! crate.
 
 pub mod app;
-pub mod arrangement_wiring;
 pub mod log_file;
 pub mod recorder;
 pub mod report;
@@ -29,7 +28,7 @@ use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::{DeviceOffer, Devices, OfferGroup, Views};
 use window::{LeftPanel, LeftPanelSlot};
 
-pub use templates::{BARE, DAW, TEMPLATES, Template};
+pub use templates::{TEMPLATES, Template};
 
 pub const PROJECT_FILE: &str = "project.json";
 
@@ -67,7 +66,6 @@ sound-tools . --render <wav>
 
 - `--from <at>` and `--to <at>`, together or alone: a part of the piece, and its tail. `<at>` is ticks (`3840`), or a time as the composer reads it off the playhead (`1:23.5`) or in seconds (`83.5s`). When the composer says what they heard at a time, measure that time.
 - `--seconds <n>`: the first `n` seconds, with no tail.
-- `--solo <track>`, once per track of the arrangement: only these tracks play, by name or id. No file changes.
 - `--only <path>`: the device plays only the sound of this instance, such as `song/bass`, before what its parents do to it. No file changes.
 
 `sound-tools <file> --analyze` measures an audio file, such as a sample under `assets/audio/`, with `--from` and `--to` as times.
@@ -154,13 +152,11 @@ pub fn registry(plugins: Plugins) -> Result<Registry> {
 /// Registers every bundled extension, and the plugin host when given the plugins it hosts.
 fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Result<()> {
     analyzer::register(registry)?;
-    arrangement_wiring::register(registry)?;
     compressor::register(registry)?;
     delay::register(registry)?;
     drum_pad::register(registry)?;
     eq::register(registry)?;
     filter::register(registry)?;
-    fit_tempo::register(registry)?;
     gate::register(registry)?;
     instrument::register(registry)?;
     limiter::register(registry)?;
@@ -177,7 +173,7 @@ fn register_extensions(registry: &mut Registry, plugins: Option<Plugins>) -> Res
     Ok(())
 }
 
-/// The name of every bundled extension, which a new `project.json` enables.
+/// The name of every bundled extension.
 pub fn bundled_extensions() -> Result<Vec<&'static str>> {
     let mut registry = Registry::new();
     register_extensions(&mut registry, None)?;
@@ -202,7 +198,6 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
 pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();
-    arrangement_wiring::register_views(&mut views);
     // The order here is the order of a picker: the instruments, then the effects group by
     // group, and the plugins of this Mac after the built-in devices.
     instrument::view::register(&mut views, &mut devices);
@@ -360,20 +355,13 @@ fn plugin_offers(
 /// The key of the `Scan again` row of a picker, see [`plugin_offers`].
 pub const SCAN_AGAIN: &str = "plugins:scan-again";
 
-/// What a new folder becomes unless it is asked to be another [`Template`].
-pub const NEW_PROJECT: Template = arrangement_wiring::TEMPLATE;
-
-/// What the arrangement adds to the window while it is the main view: its transport.
-pub(crate) const CHROME: window::Chrome = arrangement_wiring::CHROME;
-
 /// Opens the project with its lock. The plugin host is given: the application passes
 /// [`plugins`], which scans this machine, and a test passes one that looks in a folder of its
 /// own. A host that was not told to scan on a thread scans on this one, the first time a
 /// record needs a plugin.
 ///
-/// A folder without a `project.json` becomes a new project: 120 bpm, 4/4, and what
-/// [`NEW_PROJECT`] makes. Other files in it, such as `.git` or `.DS_Store`, do not make it an
-/// existing project.
+/// A folder without a `project.json` becomes an empty project: 120 bpm, 4/4, every bundled
+/// extension.
 ///
 /// With no window, it waits for what the behaviours of its own tools declare, so it plays what
 /// the records say from the start.
@@ -382,21 +370,22 @@ pub fn open_or_create_with(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
-    open_or_create_from(folder, control, plugins, NEW_PROJECT)
+    let extensions = Extensions::load(folder, &tool_schemas()?);
+    let mut project = open_with_loaded(folder, control, plugins, extensions)?.0;
+    first(settle_behaviours(&mut project))?;
+    Ok(project)
 }
 
-/// [`open_or_create_with`], where a new folder becomes `template`.
+/// [`open_or_create_with`], where a new folder, one with nothing in it but hidden files such as
+/// `.git`, becomes `template`.
 pub fn open_or_create_from(
     folder: &Path,
     control: EngineControl,
     plugins: Plugins,
-    template: Template,
+    template: &Template,
 ) -> Result<Project> {
-    templates::write(folder, &template)?;
-    let extensions = Extensions::load(folder, &tool_schemas()?);
-    let mut project = open_with_loaded(folder, control, plugins, extensions, template)?.0;
-    first(settle_behaviours(&mut project))?;
-    Ok(project)
+    templates::write(folder, template)?;
+    open_or_create_with(folder, control, plugins)
 }
 
 /// [`open_or_create_with`], and the project's own tools in `extensions/` for a window to keep
@@ -408,28 +397,21 @@ pub fn open_with_extensions(
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
     let extensions = Extensions::load(folder, &tool_schemas()?);
-    open_with_loaded(folder, control, plugins, extensions, NEW_PROJECT)
+    open_with_loaded(folder, control, plugins, extensions)
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see
-/// [`Extensions::load`], where a new folder becomes `template`.
+/// [`Extensions::load`].
 pub(crate) fn open_with_loaded(
     folder: &Path,
     control: EngineControl,
     plugins: Plugins,
     extensions: Option<FirstLoad>,
-    template: Template,
 ) -> Result<(Project, Option<Extensions>)> {
-    let is_new = !folder.join(PROJECT_FILE).exists();
     let (registry, extensions) = registry_of(plugins, extensions)?;
     let mut project = Project::open(folder, registry, control)?;
     if let Some(extensions) = &extensions {
         extensions.report(&mut project);
-    }
-    // A `state/` folder with content but no project file is someone's work, not a new project.
-    if is_new && project.instances().next().is_none() && project.problems().is_empty() {
-        (template.create)(&mut project)?;
-        project.clear_history();
     }
     Ok((project, extensions))
 }

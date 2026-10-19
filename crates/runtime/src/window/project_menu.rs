@@ -10,6 +10,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -40,8 +41,6 @@ const INPUT_DEVICE: &str = "input-device";
 const OUTPUT_CHOICE: &str = "output-device:";
 const INPUT_CHOICE: &str = "input-device:";
 const NEW_PROJECT: &str = "new-project";
-/// Followed by the index of a template in [`crate::TEMPLATES`] after the first.
-const NEW_FROM: &str = "new-project:";
 const OPEN_PROJECT: &str = "open-project";
 const OPEN_RECENT: &str = "open-recent";
 /// Followed by the index in the recent projects.
@@ -234,15 +233,6 @@ impl ProjectMenu {
         if let Some(chosen) = self.chosen(&picked.0) {
             return self.session.update(cx, |_, cx| switch_devices(chosen, cx));
         }
-        let from = picked.0.strip_prefix(NEW_FROM);
-        if let Some(template) =
-            from.and_then(|index| crate::TEMPLATES.get(index.parse::<usize>().ok()?))
-        {
-            let template = *template;
-            return self
-                .session
-                .update(cx, |session, cx| new_project(session, template, cx));
-        }
         let recent = picked.0.strip_prefix(RECENT_PROJECT);
         if let Some(folder) = recent.and_then(|index| self.recent.get(index.parse::<usize>().ok()?))
         {
@@ -256,7 +246,7 @@ impl ProjectMenu {
             .update(cx, |session, cx| match picked.0.as_ref() {
                 UNDO => session.undo(cx),
                 REDO => session.redo(cx),
-                NEW_PROJECT => new_project(session, crate::NEW_PROJECT, cx),
+                NEW_PROJECT => choose_new_project(cx.entity(), cx),
                 OPEN_PROJECT => open_another_project(cx),
                 REVEAL => cx.reveal_path(session.project().root()),
                 LOG => {
@@ -543,10 +533,18 @@ fn open_terminal(folder: PathBuf, cx: &mut Context<Session>) {
     .detach();
 }
 
+/// Shows the templates, and makes a new project of the one picked, see [`new_project`].
+pub(super) fn choose_new_project(session: Entity<Session>, cx: &mut App) {
+    let on_pick = move |template, cx: &mut App| {
+        session.update(cx, |session, cx| new_project(session, template, cx));
+    };
+    super::new_project::choose_template(Rc::new(on_pick), cx);
+}
+
 /// Asks for the name and place of a new project in the save panel, next to the open project,
 /// and opens it as [`open_another_project`] does. The panel itself asks before it reuses a
 /// folder that is there, and a folder with other files in it is refused as when opened.
-pub(super) fn new_project(session: &Session, template: crate::Template, cx: &mut Context<Session>) {
+fn new_project(session: &Session, template: &'static crate::Template, cx: &mut Context<Session>) {
     let root = session.project().root();
     let picked = cx.prompt_for_new_path(root.parent().unwrap_or(root), Some("New project"));
     cx.spawn(async move |session, cx| {
@@ -587,7 +585,7 @@ pub(super) fn open_another_project(cx: &mut Context<Session>) {
 /// starts the app again on it.
 async fn start_on(
     folder: PathBuf,
-    template: Option<crate::Template>,
+    template: Option<&'static crate::Template>,
     session: &WeakEntity<Session>,
     cx: &mut AsyncApp,
 ) {
@@ -597,7 +595,7 @@ async fn start_on(
             std::fs::create_dir_all(&folder)
                 .with_context(|| format!("could not make {}", folder.display()))?;
             if let Some(template) = template {
-                crate::templates::write(&folder, &template)?;
+                crate::templates::write(&folder, template)?;
             }
             app::remember_project(&folder)
         })
@@ -811,16 +809,6 @@ fn folder_items(recent: &[PathBuf]) -> Vec<MenuItem> {
             .selectable(false)
             .shortcut("mod+n"),
     ];
-    // The default template is the plain "New project…".
-    for (index, template) in crate::TEMPLATES.iter().enumerate().skip(1) {
-        items.push(
-            MenuItem::new(
-                format!("{NEW_FROM}{index}"),
-                format!("New {} project…", template.name),
-            )
-            .selectable(false),
-        );
-    }
     let rest = [
         (OPEN_PROJECT, "Open project…"),
         (OPEN_RECENT, "Open recent"),
@@ -971,8 +959,6 @@ mod tests {
             .collect();
         let mut expected: Vec<(SharedString, SharedString)> = vec![
             (NEW_PROJECT.into(), "New project…".into()),
-            (format!("{NEW_FROM}1").into(), "New DAW project…".into()),
-            (format!("{NEW_FROM}2").into(), "New Bare project…".into()),
             (OPEN_PROJECT.into(), "Open project…".into()),
             (OPEN_RECENT.into(), "Open recent".into()),
             (REVEAL.into(), "Reveal project folder".into()),

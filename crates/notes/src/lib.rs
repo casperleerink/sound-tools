@@ -1,11 +1,9 @@
 //! The note contract: what a tool that sends notes and a tool that plays them agree on.
 //!
 //! Both sides depend on this crate and not on each other. It holds the saved [`Note`] and
-//! [`Clip`] with its expression lanes ([`Point`]), the saved [`RawTake`] a recording writes and
-//! a fit reads, the realtime [`NoteEvent`] with the wheels an instrument follows
-//! ([`Expression`]), and the port names of
-//! an instrument and an effect. The port names live here and not in a crate of their own,
-//! because both sides of a track already read this one.
+//! [`Clip`] with its expression lanes ([`Point`]), the saved [`RawTake`] a recording writes,
+//! the realtime [`NoteEvent`] with the wheels an instrument follows ([`Expression`]), and the
+//! port names of an instrument and an effect.
 //!
 //! It also holds how the bundled instruments play notes, [`Voices`] and [`Wheels`], so they
 //! all play them the same way, and the note lengths a time that follows the tempo is picked
@@ -40,7 +38,7 @@ mod voices;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sound_core::{Place, State, Ticks};
+use sound_core::Ticks;
 
 pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
@@ -63,9 +61,6 @@ pub use voices::{Voice, Voices, frequency_hz};
 
 /// The event input of an instrument. It carries [`NoteEvent`].
 pub const NOTES_INPUT: &str = "notes";
-
-/// The tool that owns clips. Named here because the clip record is: see [`Clip`].
-pub const TRACK_TOOL: &str = "arrangement.track";
 
 /// The audio output of an instrument or an effect. Stereo, like every audio port.
 pub const AUDIO_OUTPUT: &str = "audio";
@@ -497,8 +492,8 @@ pub struct PlacedPedal {
     pub value: Pedal,
 }
 
-/// A saved clip: a stretch of the timeline of whatever owns it, with the notes that play in it.
-/// This is the record other extensions read, so it lives here and not in the arrangement.
+/// A clip: a stretch of the song with the notes that play in it, as a recording and a timeline
+/// read it.
 ///
 /// The rules, the same for everyone who plays or draws a clip:
 /// - `start` is a position on the project timeline. Note starts count from the clip start.
@@ -510,7 +505,6 @@ pub struct PlacedPedal {
 /// - `bend`, `mod_wheel` and `pressure` are the expression lanes: points inside the clip, in
 ///   tick order, one per tick, read with [`value_at`]. An empty lane is left out of the file
 ///   and moves nothing; a lane with points holds for the whole clip, and ends with it.
-/// - `take` names the raw take this clip was recorded from, when it was recorded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Clip {
@@ -530,19 +524,10 @@ pub struct Clip {
     /// The key pressure.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pressure: Vec<Point<Amount>>,
-    /// The raw take this clip came from: a saved reference, the name of a file under
-    /// `assets/takes/` without `.json`. It owns nothing and keeps nothing alive, like every
-    /// other reference. A clip that was not recorded leaves it out.
-    ///
-    /// It is a field and not the path of the clip, because the path changes: a clip moves to
-    /// another track, and an agent renames its file. The reference travels with the clip
-    /// through every edit, because every edit keeps the rest of the record.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub take: Option<String>,
 }
 
 impl Clip {
-    /// A clip with notes, no pedal, no lanes and no take.
+    /// A clip with notes, no pedal and no lanes.
     pub fn new(start: Ticks, length: Length, notes: Vec<Note>) -> Self {
         Self {
             start,
@@ -552,14 +537,7 @@ impl Clip {
             bend: Vec::new(),
             mod_wheel: Vec::new(),
             pressure: Vec::new(),
-            take: None,
         }
-    }
-
-    /// Whether `name` may name a raw take: it becomes a file name, so it follows the rule of
-    /// an asset name. Without this a record could point outside the project folder.
-    pub fn is_valid_take_name(name: &str) -> bool {
-        take_asset(name).is_ok()
     }
 
     /// The first tick after the clip.
@@ -596,14 +574,8 @@ impl Clip {
         self.mod_wheel = cut(&self.mod_wheel, inside.clone());
         self.pressure = cut(&self.pressure, inside);
     }
-}
-
-impl State for Clip {
-    const TOOL: &'static str = "arrangement.clip";
-    /// Only a track plays clips. Anywhere else a clip would load and never sound.
-    const PLACE: Place = Place::In(TRACK_TOOL);
-
-    fn validate(&self) -> Result<(), String> {
+    /// Whether it follows the rules above, with a message that names the field when not.
+    pub fn validate(&self) -> Result<(), String> {
         let length = self.length.ticks();
         let inside = |field: &str, what: &str, index: usize, start: Ticks| {
             format!(
@@ -621,13 +593,7 @@ impl State for Clip {
         }
         lane::check("bend", &self.bend, length)?;
         lane::check("mod_wheel", &self.mod_wheel, length)?;
-        lane::check("pressure", &self.pressure, length)?;
-        match &self.take {
-            Some(take) if !Self::is_valid_take_name(take) => Err(format!(
-                "take must be the name of a file under assets/takes/ without `.json`: lowercase letters, digits, `-` and `_`, not {take:?}"
-            )),
-            _ => Ok(()),
-        }
+        lane::check("pressure", &self.pressure, length)
     }
 }
 

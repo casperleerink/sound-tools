@@ -29,7 +29,7 @@ use sound_ui::components::knob::{
 };
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, LiveBody, Session, Views, Waveforms, typography,
+    ActiveTheme, ControlEdit, Devices, Session, Views, Waveforms, typography,
 };
 
 use crate::bun::{EventKind, MenuItemSpec, PageSize};
@@ -2699,9 +2699,7 @@ impl Render for TypeScriptCard {
         self.feeds.takes = (uses.takes.iter())
             .filter_map(|name| {
                 let recorder = self.id.child(name).ok()?;
-                let LiveBody::Audio(Some(sound)) = &recording.take_of(&recorder)?.body else {
-                    return None;
-                };
+                let sound = &recording.take_of(&recorder)?.sound;
                 Some((name.clone(), sound.overview.read(Feeds::take)))
             })
             .collect();

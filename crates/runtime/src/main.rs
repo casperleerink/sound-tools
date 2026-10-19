@@ -19,9 +19,8 @@
 //!
 //! `<at>` is a position in ticks (`3840`), or a time as a playhead shows it (`1:23.5`) or in
 //! seconds (`83.5s`). A render and an analysis of a project take `--from` and `--to`, either
-//! one alone, or `--seconds`, and `--solo <track>`, as often as there are tracks of the
-//! arrangement to hear, by name or id, or `--only <path>`, the one instance whose sound the device
-//! plays. Neither changes a file. An analysis of a file takes times only.
+//! one alone, or `--seconds`, and `--only <path>`, the one instance whose sound the device plays,
+//! which changes no file. An analysis of a file takes times only.
 //!
 //! A render with `--progress` at the end also prints `progress: <percent>` lines, for the
 //! progress bar of the window's export.
@@ -300,7 +299,6 @@ struct Options {
     seconds: Option<f64>,
     from: Option<Position>,
     to: Option<Position>,
-    solo: Vec<String>,
     only: Option<String>,
 }
 
@@ -314,7 +312,6 @@ impl Options {
                 }
                 "--from" => options.from = Some(Position::parse(value)?),
                 "--to" => options.to = Some(Position::parse(value)?),
-                "--solo" => options.solo.push(value.to_string()),
                 "--only" => options.only = Some(value.to_string()),
                 _ => bail!(USAGE),
             }
@@ -353,8 +350,8 @@ impl Options {
 
     /// The span of an audio file of `length` seconds, in seconds. A file has no ticks.
     fn file_span(&self, length: f64) -> Result<(f64, f64)> {
-        if !self.solo.is_empty() || self.only.is_some() {
-            bail!("--solo and --only are for a project: a file has one sound");
+        if self.only.is_some() {
+            bail!("--only is for a project: a file has one sound");
         }
         let seconds = |position: Option<Position>, otherwise: f64| match position {
             None => Ok(otherwise),
@@ -377,17 +374,11 @@ impl Options {
     }
 }
 
-/// Opens the project read-only, with the tracks of `--solo` soloed and `--only` heard alone,
-/// in memory.
+/// Opens the project read-only, with `--only` heard alone, in memory.
 fn open_for_render(folder: &Path, options: &Options) -> Result<(Project, Engine, Plugins)> {
     let plugins = runtime::plugins(true)?;
-    let (mut project, mut engine) = open_read_only_with(folder, plugins.clone())?;
+    let (mut project, engine) = open_read_only_with(folder, plugins.clone())?;
     print_problems(&project);
-    for problem in
-        runtime::arrangement_wiring::solo(&mut project, &mut engine, &plugins, &options.solo)?
-    {
-        println!("error: {problem}");
-    }
     if let Some(only) = &options.only {
         runtime::listen_only(&mut project, only)?;
     }
@@ -653,7 +644,7 @@ fn scan_one_bundle(format: &str, bundle: &Path) -> Result<()> {
     }
 }
 
-const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at>] [--solo <track>]... [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
+const USAGE: &str = "usage: sound-tools [<project-folder> [--headless | --inspect | --render <wav> [<span>] [--progress] | --analyze [<span>]]]\n       sound-tools <audio-file> --analyze [--seconds <n> | --from <time> --to <time>]\n       sound-tools --plugins | --plugin-params <format> <plugin_id> | --version | --help\n<span>: [--seconds <n> | --from <at> --to <at>] [--only <path>]\n<at>: ticks (3840), a time (1:23.5) or seconds (83.5s)";
 
 /// Gives a window program the terminal that started it, so `--version` and the other forms
 /// print there. Only when it was handed no output: what a parent pipes, such as an agent's

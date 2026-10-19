@@ -1,12 +1,13 @@
 //! The app started with no folder, as the Finder starts it. It opens the last project, or
 //! shows the macOS folder panel when there is none: the panel has a New Folder button, and a
-//! new empty folder becomes a new project. Cancel quits. The start window also makes a new
-//! project from another template.
+//! new empty folder becomes a new, empty project. Cancel quits. The start window also makes a
+//! new project from a template.
 //!
 //! When a project does not open, a small window says why and offers the panel again, since an
 //! app started from the Finder has no terminal to print to.
 
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui::{
     App, Global, PathPromptOptions, SharedString, TitlebarOptions, Window, WindowBounds,
@@ -102,7 +103,7 @@ pub(super) fn choose_project(cx: &mut App) {
 
 /// Asks where a new project goes, writes `template` there and opens it. Does nothing while a
 /// project opens.
-fn new_project(template: crate::Template, cx: &mut App) {
+fn new_project(template: &'static crate::Template, cx: &mut App) {
     if opening(cx) {
         return;
     }
@@ -122,7 +123,7 @@ fn new_project(template: crate::Template, cx: &mut App) {
                 let folder = folder.clone();
                 async move {
                     check_project_folder(&folder)?;
-                    crate::templates::write(&folder, &template)
+                    crate::templates::write(&folder, template)
                 }
             })
             .await;
@@ -234,14 +235,13 @@ impl Render for StartView {
                                 Button::new("choose-folder", "Choose folder…")
                                     .on_click(|_, _, cx| choose_project(cx)),
                             )
-                            .children(crate::TEMPLATES.iter().skip(1).map(|template| {
-                                let template = *template;
-                                Button::new(
-                                    SharedString::from(format!("new-{}", template.name)),
-                                    format!("New {} project…", template.name),
-                                )
-                                .on_click(move |_, _, cx| new_project(template, cx))
-                            })),
+                            .child(Button::new("new-project", "New project…").on_click(
+                                |_, _, cx| {
+                                    let on_pick =
+                                        |template, cx: &mut App| new_project(template, cx);
+                                    super::new_project::choose_template(Rc::new(on_pick), cx)
+                                },
+                            )),
                     ),
             )
     }

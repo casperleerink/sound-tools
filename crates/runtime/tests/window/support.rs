@@ -1,37 +1,30 @@
 //! A window on a temporary project, and the hands of a composer: a mouse that presses, moves
-//! and releases at the place of a tick, a track or a pitch, and the keys.
+//! and releases, and the keys. A project's own tools run in Bun, which these tests need.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use arrangement::view::layout::{HEADER_WIDTH, NAME_MIDDLE, RULER_HEIGHT, TRACK_HEIGHT};
-use arrangement::view::roll::{self, EDITOR_HEIGHT, KEY_HEIGHT};
-use arrangement::view::{ArrangementView, NoteEditor, Timeline, TrackPanel};
 use gpui::{
     AppContext, BackgroundExecutor, Bounds, Entity, KeyUpEvent, Keystroke, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta,
     ScrollWheelEvent, TestAppContext, VisualTestContext, point, px,
 };
-use plugin_host::WeakPlugins;
-use runtime::arrangement_wiring::transport::TransportPill;
+use plugin_host::{Plugins, ScanCache, WeakPlugins};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use runtime::window::live_input::LiveInput;
 use runtime::window::other_apps::AppSounds;
 use runtime::window::{DeviceAccess, ListDevices, Shell, bind_keys};
 use runtime::{OFFLINE, views};
-use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project, Ticks};
-use sound_notes::{Clip, Length, Note, Pitch, Velocity};
+use sound_core::{CaptureWriter, Engine, InstanceId, LiveWriter, Project};
 use sound_ui::{POLL_INTERVAL, Playhead, Session};
 use tempfile::TempDir;
 
-use crate::plugin_hosts::{open_or_create, scanner, test_plugin_folders, test_plugin_host};
+use crate::plugin_hosts::{scanner, test_plugin_host};
+use crate::rack::rack_files;
 
 pub(crate) const BAR: u64 = 3840;
-/// A sixteenth, the snap step.
-pub(crate) const STEP: u64 = 240;
-/// The height of the row with the project menu, above the main area.
-pub(crate) const TOP_ROW: f32 = 48.;
 
 pub(crate) struct Opened<'a> {
     pub folder: TempDir,
@@ -41,8 +34,6 @@ pub(crate) struct Opened<'a> {
     pub plugins: WeakPlugins,
     pub session: Entity<Session>,
     pub shell: Entity<Shell>,
-    pub arrangement: Entity<ArrangementView>,
-    pub timeline: Entity<Timeline>,
     /// What the scan had found the last time a poll asked for a frame, as the window's own
     /// poll keeps it.
     scanned: u64,
@@ -53,195 +44,100 @@ pub(crate) fn id(id: &str) -> InstanceId {
     InstanceId::new(id).unwrap()
 }
 
-pub(crate) fn note(start: u64, length: u64, pitch: u8) -> Note {
-    Note {
-        start: Ticks(start),
-        length: Length::new(Ticks(length)).unwrap(),
-        pitch: Pitch::new(pitch).unwrap(),
-        velocity: Velocity::new(100).unwrap(),
-    }
-}
-
-pub(crate) fn clip(start: u64, length: u64, notes: Vec<Note>) -> Clip {
-    Clip::new(Ticks(start), Length::new(Ticks(length)).unwrap(), notes)
-}
-
-/// Opens the window on a project that enables only these extensions, as one made before an
-/// extension existed does. `fill` adds to it first.
-pub(crate) fn open_without_extensions<'a>(
-    cx: &'a mut TestAppContext,
-    extensions: &str,
-    fill: impl FnOnce(&mut Project),
-) -> Opened<'a> {
-    let folder = tempfile::tempdir().unwrap();
-    let file = format!(
-        r#"{{"format": 1, "extensions": {extensions}, "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}}, "connections": []}}"#
-    );
-    let write = |relative: &str, contents: &str| {
-        let path = folder.path().join(relative);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, contents).unwrap();
-    };
-    write("project.json", &file);
-    // An arrangement with one track. `open_or_create` makes the arrangement only for a folder
-    // with no `project.json` at all.
-    write(
-        "state/arrangement/instance.json",
-        r#"{"tool": "arrangement", "state": {}}"#,
-    );
-    write(
-        "state/arrangement/track-1/instance.json",
-        r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "order": 0}}"#,
-    );
-    write(
-        "state/arrangement/track-1/instrument.json",
-        r#"{"tool": "instrument.synth", "state": {}}"#,
-    );
-    let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, plugins) = open_or_create(folder.path(), control);
-    fill(&mut project);
-    open_project(cx, folder, project, engine, plugins.downgrade())
-}
-
-/// Opens the window on a new project in a temporary folder, as the app makes it: an
-/// arrangement with no tracks.
+/// Opens the window on a new, empty project.
 pub(crate) fn open_new(cx: &mut TestAppContext) -> Opened<'_> {
-    let folder = tempfile::tempdir().unwrap();
-    let (control, engine) = Engine::new(OFFLINE);
-    let (project, plugins) = open_or_create(folder.path(), control);
-    open_project(cx, folder, project, engine, plugins.downgrade())
+    open_files(cx, &[])
 }
 
-/// Adds `Track 1` to a new project, as the add track button makes it, with no undo step: the
-/// track most tests start from.
-pub(crate) fn add_first_track(project: &mut Project) {
-    let arrangement = runtime::arrangement_wiring::main_arrangement(project).unwrap();
-    runtime::arrangement_wiring::add_track(project, &arrangement).unwrap();
-    project.clear_history();
+/// Opens the window on a project of these files, by their paths in its folder.
+pub(crate) fn open_files<'a>(cx: &'a mut TestAppContext, files: &[(String, String)]) -> Opened<'a> {
+    open_with(cx, files, no_plugins, DeviceAccess::default())
 }
 
-/// Opens the window on a new project in a temporary folder with one track, `Track 1`. `fill`
-/// adds to it first.
-pub(crate) fn open_with(cx: &mut TestAppContext, fill: impl FnOnce(&mut Project)) -> Opened<'_> {
-    let folder = tempfile::tempdir().unwrap();
-    let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, plugins) = open_or_create(folder.path(), control);
-    add_first_track(&mut project);
-    fill(&mut project);
-    open_project(cx, folder, project, engine, plugins.downgrade())
+/// Opens the window on a `rack` of these children, see `crate::rack`, once Bun drew the card
+/// of each.
+pub(crate) fn open_rack<'a>(cx: &'a mut TestAppContext, children: &[(&str, &str)]) -> Opened<'a> {
+    open_rack_with(cx, children, no_plugins)
 }
 
 /// The same, with a plugin host that looks only in `plugins/` inside the project folder, where
 /// the repository's own test plugin is put. No plugin of this machine is ever used, so these
 /// tests run the same everywhere.
-pub(crate) fn open_with_test_plugin(
-    cx: &mut TestAppContext,
-    fill: impl FnOnce(&mut Project),
-) -> Opened<'_> {
-    open_with_plugin_host(cx, |root| test_plugin_host(root), fill)
+pub(crate) fn open_rack_with_test_plugin<'a>(
+    cx: &'a mut TestAppContext,
+    children: &[(&str, &str)],
+) -> Opened<'a> {
+    open_rack_with(cx, children, test_plugin_host)
 }
 
-/// The same with the host given, for a test that says how the scan behaves. The window starts
-/// the scan on a thread of its own before it opens the project, as the application does.
-pub(crate) fn open_with_plugin_host(
-    cx: &mut TestAppContext,
-    host: impl FnOnce(&Path) -> plugin_host::Plugins,
-    fill: impl FnOnce(&mut Project),
-) -> Opened<'_> {
-    let folder = tempfile::tempdir().unwrap();
-    let (control, engine) = Engine::new(OFFLINE);
-    let plugins = host(folder.path());
-    let mut project =
-        runtime::open_or_create_with(folder.path(), control, plugins.clone()).unwrap();
-    add_first_track(&mut project);
-    fill(&mut project);
-    open_project(cx, folder, project, engine, plugins.downgrade())
+fn open_rack_with<'a>(
+    cx: &'a mut TestAppContext,
+    children: &[(&str, &str)],
+    host: impl FnOnce(&Path) -> Plugins,
+) -> Opened<'a> {
+    let mut opened = open_with(cx, &rack_files(children), host, DeviceAccess::default());
+    for (name, record) in children {
+        if !record.contains(r#""timeline""#) {
+            opened.control(&format!("div-card-{name}"));
+        }
+    }
+    opened
 }
 
-/// Opens the window on a project whose `project.json` does not enable the plugin host, as a
-/// project made before step 4a has, with one track.
-pub(crate) fn open_without_plugin_host(cx: &mut TestAppContext) -> Opened<'_> {
+fn no_plugins(_: &Path) -> Plugins {
+    Plugins::new(Vec::new(), scanner(), ScanCache::none())
+}
+
+/// Opens the window on a project of `files` with the plugin host `host` makes for its folder,
+/// and what the window may open of the machine.
+pub(crate) fn open_with<'a>(
+    cx: &'a mut TestAppContext,
+    files: &[(String, String)],
+    host: impl FnOnce(&Path) -> Plugins,
+    device: DeviceAccess,
+) -> Opened<'a> {
+    assert!(
+        sound_typescript::has_bun(),
+        "these tests run the tools of a project in Bun: install it, see tooling/fetch-bun.sh"
+    );
     let folder = tempfile::tempdir().unwrap();
-    let root = folder.path();
-    let write = |relative: &str, contents: &str| {
-        let path = root.join(relative);
+    for (path, contents) in files {
+        let path = folder.path().join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, contents).unwrap();
-    };
-    write(
-        "project.json",
-        r#"{"format": 1, "extensions": ["arrangement", "instrument", "tone"],
-            "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
-            "connections": []}"#,
-    );
-    write(
-        "state/arrangement/instance.json",
-        r#"{"tool": "arrangement", "state": {}}"#,
-    );
-    write(
-        "state/arrangement/track-1/instance.json",
-        r#"{"tool": "arrangement.track", "state": {"name": "Track 1", "order": 1}}"#,
-    );
-    write(
-        "state/arrangement/track-1/instrument.json",
-        r#"{"tool": "instrument.synth", "state": {}}"#,
-    );
-    let (control, engine) = Engine::new(OFFLINE);
-    let plugins = test_plugin_host(root);
-    let project = runtime::open_or_create_with(root, control, plugins.clone()).unwrap();
-    assert_eq!(project.problems().len(), 0, "{:?}", project.problems());
-    open_project(cx, folder, project, engine, plugins.downgrade())
-}
-
-/// The host of the test plugin with every bundle taking `milliseconds` to be listed, as the
-/// real bundles of a machine do. A window opened while that runs sees what a picker holds
-/// before the scan has found anything.
-pub(crate) fn slow_test_plugin_host(root: &Path, milliseconds: u64) -> plugin_host::Plugins {
-    let scanner = scanner().with_environment(
-        test_plugin_support::SLOW_VARIABLE,
-        &milliseconds.to_string(),
-    );
-    plugin_host::Plugins::new(
-        test_plugin_folders(root),
-        scanner,
-        plugin_host::ScanCache::none(),
-    )
-}
-
-/// The id of the repository's test plugin in `format`. The two are the same instrument in the
-/// two formats, so a test reads either the same way.
-pub(crate) fn test_plugin_id(format: plugin_host::PluginFormat) -> &'static str {
-    match format {
-        plugin_host::PluginFormat::Clap => test_clap_plugin::PLUGIN_ID,
-        plugin_host::PluginFormat::Vst3 => test_vst3_plugin::PLUGIN_ID,
     }
-}
-
-/// The record of a plugin instrument that names the repository's test plugin.
-pub(crate) fn test_plugin_record(format: plugin_host::PluginFormat, state_asset: &str) -> String {
-    format!(
-        r#"{{"tool": "plugin", "state": {{"format": "{}", "plugin_id": "{}", "state_asset": "{state_asset}"}}}}"#,
-        format.as_str(),
-        test_plugin_id(format)
-    )
-}
-
-/// Opens the window on a project that is open already.
-pub(crate) fn open_project(
-    cx: &mut TestAppContext,
-    folder: TempDir,
-    project: Project,
-    engine: Engine,
-    plugins: WeakPlugins,
-) -> Opened<'_> {
-    open_project_with_device(
-        cx,
+    // Bun's answers wake the window's tasks from a thread of their own.
+    cx.executor().allow_parking();
+    let (control, engine) = Engine::new(OFFLINE);
+    let plugins = host(folder.path());
+    let (project, extensions) =
+        runtime::open_with_extensions(folder.path(), control, plugins.clone()).unwrap();
+    assert_eq!(project.problems(), []);
+    cx.update(sound_ui::init);
+    let session = cx.new(|cx| Session::new(project, cx));
+    cx.update(bind_keys);
+    let plugins = plugins.downgrade();
+    let (shell, cx) = cx.add_window_view({
+        let (session, plugins) = (session.clone(), plugins.clone());
+        move |window, cx| {
+            let (mut views, mut devices) = views(plugins);
+            if let Some(extensions) = extensions {
+                sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
+            }
+            let name = "Test device".into();
+            Shell::with_device(session, (views, devices), name, device, window, cx)
+        }
+    });
+    cx.run_until_parked();
+    Opened {
         folder,
-        project,
         engine,
         plugins,
-        DeviceAccess::default(),
-    )
+        session,
+        shell,
+        scanned: 0,
+        cx,
+    }
 }
 
 /// An audio input the window opens as its default input, with no device: two channels at
@@ -339,24 +235,14 @@ impl SimulatedInput {
     }
 }
 
-/// The same, with a simulated audio input as the default input.
-pub(crate) fn open_with_input(
-    cx: &mut TestAppContext,
-    fill: impl FnOnce(&mut Project),
-) -> (Opened<'_>, SimulatedInput) {
-    let folder = tempfile::tempdir().unwrap();
-    let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, plugins) = open_or_create(folder.path(), control);
-    add_first_track(&mut project);
-    fill(&mut project);
+/// A new, empty project in a window whose default input is a simulated one.
+pub(crate) fn open_with_input(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedInput) {
     let input = SimulatedInput::default();
     let device = DeviceAccess {
         open_input: Some(input.opener(cx.executor())),
         ..DeviceAccess::default()
     };
-    let plugins = plugins.downgrade();
-    let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
-    (opened, input)
+    (open_with(cx, &[], no_plugins, device), input)
 }
 
 /// The sound of one app that runs or not, with no tap: two channels at 48 kHz, into which the
@@ -427,75 +313,28 @@ impl Drop for SimulatedStream {
     }
 }
 
-/// A new project with one track, in a window that hears a simulated app.
+/// A new, empty project in a window that hears a simulated app.
 pub(crate) fn open_with_app(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedApp) {
-    let folder = tempfile::tempdir().unwrap();
-    let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, plugins) = open_or_create(folder.path(), control);
-    add_first_track(&mut project);
     let app = SimulatedApp::default();
     let device = DeviceAccess {
         app_sounds: Some(app.sounds(cx.executor())),
         ..DeviceAccess::default()
     };
-    let plugins = plugins.downgrade();
-    let opened = open_project_with_device(cx, folder, project, engine, plugins, device);
-    (opened, app)
+    (open_with(cx, &[], no_plugins, device), app)
 }
 
-/// A new project with one track, in a window that lists the audio devices with `list`.
+/// A new, empty project in a window that lists the audio devices with `list`.
 pub(crate) fn open_with_devices(cx: &mut TestAppContext, list: ListDevices) -> Opened<'_> {
-    let folder = tempfile::tempdir().unwrap();
-    let (control, engine) = Engine::new(OFFLINE);
-    let (mut project, plugins) = open_or_create(folder.path(), control);
-    add_first_track(&mut project);
     let device = DeviceAccess {
         list_devices: Some(list),
         ..DeviceAccess::default()
     };
-    let plugins = plugins.downgrade();
-    open_project_with_device(cx, folder, project, engine, plugins, device)
-}
-
-fn open_project_with_device(
-    cx: &mut TestAppContext,
-    folder: TempDir,
-    project: Project,
-    engine: Engine,
-    plugins: WeakPlugins,
-    device: DeviceAccess,
-) -> Opened<'_> {
-    cx.update(sound_ui::init);
-    let session = cx.new(|cx| Session::new(project, cx));
-    cx.update(bind_keys);
-    let (shell, cx) = cx.add_window_view({
-        let (session, plugins) = (session.clone(), plugins.clone());
-        move |window, cx| {
-            let name = "Test device".into();
-            Shell::with_device(session, views(plugins), name, device, window, cx)
-        }
-    });
-    cx.run_until_parked();
-    let main = shell
-        .read_with(cx, |shell, _| shell.main_view().cloned())
-        .unwrap();
-    let arrangement = main.downcast::<ArrangementView>().ok().unwrap();
-    let timeline = arrangement.read_with(cx, |view, _| view.timeline().clone());
-    Opened {
-        folder,
-        engine,
-        plugins,
-        session,
-        shell,
-        arrangement,
-        timeline,
-        scanned: 0,
-        cx,
-    }
+    open_with(cx, &[], no_plugins, device)
 }
 
 impl Opened<'_> {
-    /// Lets the engine take what was sent to it and the poll timer see the result.
+    /// Lets the engine take what was sent to it, the poll timer see the result, and what Bun
+    /// answered land.
     pub(crate) fn settle(&mut self) {
         // The sounds of a Drum pad are made on a thread of their own; the window takes them
         // once per poll.
@@ -507,9 +346,21 @@ impl Opened<'_> {
         self.poll_plugins();
     }
 
-    /// One poll of the background work, which the runtime does on its own timer every 16 ms.
-    /// It is what lets go of a plugin whose record no longer names it, and what closes its
-    /// window.
+    /// Settles until `done` holds: Bun answers on a thread of its own, in real time.
+    pub(crate) fn until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) {
+            self.settle();
+            if done(self) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("{what} did not happen within 5 s");
+    }
+
+    /// One poll of the background work, which the runtime does on its own timer every 16 ms:
+    /// what Bun said is heard, and a plugin whose record no longer names it is let go of.
     pub(crate) fn poll_plugins(&mut self) {
         let Some(plugins) = self.plugins.upgrade() else {
             return;
@@ -529,44 +380,16 @@ impl Opened<'_> {
         output
     }
 
-    pub(crate) fn transport(&mut self) -> Entity<TransportPill> {
-        let shell = self.shell.clone();
-        self.cx.read(|cx| {
-            shell
-                .read(cx)
-                .chrome()
-                .clone()
-                .downcast::<TransportPill>()
-                .unwrap()
-        })
-    }
-
     /// The window's MIDI keyboard, computer keys, audio input and meter.
     pub(crate) fn live_input(&mut self) -> Entity<LiveInput> {
         let shell = self.shell.clone();
         self.cx.read(|cx| shell.read(cx).live_input().clone())
     }
 
-    /// The tempo the transport shows, in bpm.
-    pub(crate) fn shown_tempo(&mut self) -> f64 {
-        let transport = self.transport();
-        self.cx.read(|cx| transport.read(cx).shown_tempo(cx).bpm())
-    }
-
-    pub(crate) fn click_is_on(&mut self) -> bool {
-        let transport = self.transport();
-        self.cx.read(|cx| transport.read(cx).click_is_on(cx))
-    }
-
     /// Where a MIDI keyboard would put what it plays.
     pub(crate) fn midi_input(&mut self) -> midi::Input {
         let live = self.live_input();
         self.cx.read(|cx| live.read(cx).midi_input()).unwrap()
-    }
-
-    pub(crate) fn is_recording(&mut self) -> bool {
-        let transport = self.transport();
-        self.cx.read(|cx| transport.read(cx).is_recording())
     }
 
     /// One key of a keyboard, and the blocks that carry it to the instrument and back.
@@ -612,14 +435,6 @@ impl Opened<'_> {
         result
     }
 
-    pub(crate) fn clip(&mut self, clip: &str) -> Option<Clip> {
-        let clip = id(clip);
-        self.project(|project| {
-            let instance = project.resolve::<Clip>(&clip)?;
-            project.state(&instance).cloned()
-        })
-    }
-
     pub(crate) fn undo_label(&mut self) -> Option<String> {
         self.project(|project| project.undo_label().map(str::to_string))
     }
@@ -644,87 +459,22 @@ impl Opened<'_> {
         self.project(|project| project.root().join(relative))
     }
 
-    /// The file of a clip as it is on disk. `None` when there is none.
-    pub(crate) fn clip_file(&mut self, clip: &str) -> Option<String> {
-        std::fs::read_to_string(self.path(&format!("state/{clip}.json"))).ok()
-    }
-
-    pub(crate) fn selected_clip(&mut self) -> Option<InstanceId> {
-        let timeline = self.timeline.clone();
-        self.cx
-            .read(|cx| timeline.read(cx).selected_clip().cloned())
-    }
-
-    /// The place of a tick on a track row of the arrangement, in the middle of the row.
-    pub(crate) fn at(&mut self, tick: u64, track: usize) -> Point<Pixels> {
-        let timeline = self.timeline.clone();
-        let (viewport, rows) = self.cx.read(|cx| {
-            let timeline = timeline.read(cx);
-            (timeline.viewport(), timeline.rows(cx))
-        });
-        point(
-            px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
-            px(TOP_ROW + RULER_HEIGHT + viewport.y_of(&rows, track) + TRACK_HEIGHT / 2.),
-        )
-    }
-
-    /// The place of a tick in an automation lane of a track that shows its lanes, `y` down
-    /// from the top of the lane.
-    pub(crate) fn in_track_lane(
-        &mut self,
-        tick: u64,
-        track: usize,
-        lane: usize,
-        y: f32,
-    ) -> Point<Pixels> {
-        let timeline = self.timeline.clone();
-        let (viewport, rows) = self.cx.read(|cx| {
-            let timeline = timeline.read(cx);
-            (timeline.viewport(), timeline.rows(cx))
-        });
-        let top = viewport.y_at(rows.lane_top(track, lane));
-        point(
-            px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
-            px(TOP_ROW + RULER_HEIGHT + top + y),
-        )
-    }
-
-    /// The name line of the header of a track row of the arrangement, clear of its toggles.
-    pub(crate) fn track_header(&mut self, track: usize) -> Point<Pixels> {
-        let y = self.at(0, track).y + px(NAME_MIDDLE - TRACK_HEIGHT / 2.);
-        point(px(HEADER_WIDTH / 2.), y)
-    }
-
-    pub(crate) fn selected_track(&mut self) -> Option<InstanceId> {
-        let timeline = self.timeline.clone();
-        self.cx
-            .read(|cx| timeline.read(cx).selected_track().cloned())
-    }
-
-    pub(crate) fn track_panel(&mut self) -> Option<Entity<TrackPanel>> {
-        let arrangement = self.arrangement.clone();
-        self.cx
-            .read(|cx| arrangement.read(cx).track_panel().cloned())
-    }
-
-    pub(crate) fn master_panel(&mut self) -> Option<Entity<arrangement::view::MasterPanel>> {
-        let arrangement = self.arrangement.clone();
-        self.cx
-            .read(|cx| arrangement.read(cx).master_panel().cloned())
-    }
-
-    /// The track that the open track panel shows.
-    pub(crate) fn panel_track(&mut self) -> Option<InstanceId> {
-        let panel = self.track_panel()?;
-        Some(self.cx.read(|cx| panel.read(cx).track().id().clone()))
-    }
-
     /// The middle of a control that names itself for tests: `knob-<id>` or `segment-<value>`.
     /// GPUI knows the bounds of what the last frame painted, and a cached view paints
-    /// nothing, so this asks for a whole frame first.
+    /// nothing, so this asks for a whole frame first. Waits for Bun to draw it, up to 5 s.
     pub(crate) fn control(&mut self, selector: &str) -> Point<Pixels> {
-        self.find(selector)
-            .unwrap_or_else(|| panic!("nothing on screen is called {selector}"))
+        let start = Instant::now();
+        loop {
+            if let Some(found) = self.find(selector) {
+                return found;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "nothing on screen is called {selector}"
+            );
+            self.settle();
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     /// Where a control is on screen, whole. `None` when it is not there.
@@ -743,70 +493,6 @@ impl Opened<'_> {
         self.cx.update(|window, _| window.refresh());
         self.cx.run_until_parked();
         self.cx.debug_bounds(selector).map(|bounds| bounds.center())
-    }
-
-    pub(crate) fn editor(&mut self) -> Option<Entity<NoteEditor>> {
-        let arrangement = self.arrangement.clone();
-        self.cx.read(|cx| arrangement.read(cx).editor().cloned())
-    }
-
-    /// The clip that the open editor shows.
-    pub(crate) fn editor_clip(&mut self) -> Option<InstanceId> {
-        let editor = self.editor()?;
-        Some(self.cx.read(|cx| editor.read(cx).clip().id().clone()))
-    }
-
-    pub(crate) fn selected_note(&mut self) -> Option<usize> {
-        let editor = self.editor()?;
-        self.cx.read(|cx| editor.read(cx).selected_note(cx))
-    }
-
-    /// Every selected note of the open editor, as indices of its clip.
-    pub(crate) fn selected_notes(&mut self) -> Vec<usize> {
-        let Some(editor) = self.editor() else {
-            return Vec::new();
-        };
-        self.cx.read(|cx| editor.read(cx).selected_notes(cx))
-    }
-
-    /// The place in the velocity lane of the open editor where the bar of a note at a project
-    /// tick is, at the height of the top of a bar of `velocity`.
-    pub(crate) fn in_lane(&mut self, tick: u64, velocity: u8) -> Point<Pixels> {
-        let editor = self.editor().unwrap();
-        let viewport = self.cx.read(|cx| editor.read(cx).viewport());
-        let y = roll::velocity_y(Velocity::new(velocity).unwrap());
-        point(
-            px(HEADER_WIDTH + viewport.x_of(Ticks(tick)) + roll::VELOCITY_BAR_WIDTH / 2.),
-            px(self.editor_top() + RULER_HEIGHT + roll::ROLL_HEIGHT + y),
-        )
-    }
-
-    /// The place in the lane of the open editor at a project tick, `y` down from the top of
-    /// the lane.
-    pub(crate) fn in_lane_at(&mut self, tick: u64, y: f32) -> Point<Pixels> {
-        let editor = self.editor().unwrap();
-        let viewport = self.cx.read(|cx| editor.read(cx).viewport());
-        point(
-            px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
-            px(self.editor_top() + RULER_HEIGHT + roll::ROLL_HEIGHT + y),
-        )
-    }
-
-    fn editor_top(&mut self) -> f32 {
-        let height = self.cx.update(|window, _| window.viewport_size().height);
-        f32::from(height) - EDITOR_HEIGHT
-    }
-
-    /// The place of a project tick on the row of a pitch in the open note editor, in the
-    /// middle of the row.
-    pub(crate) fn in_editor(&mut self, tick: u64, pitch: u8) -> Point<Pixels> {
-        let editor = self.editor().unwrap();
-        let viewport = self.cx.read(|cx| editor.read(cx).viewport());
-        let y = roll::y_of(&viewport, Pitch::new(pitch).unwrap()) + KEY_HEIGHT / 2.;
-        point(
-            px(HEADER_WIDTH + viewport.x_of(Ticks(tick))),
-            px(self.editor_top() + RULER_HEIGHT + y),
-        )
     }
 
     pub(crate) fn press(&mut self, position: Point<Pixels>) {
@@ -895,46 +581,6 @@ impl Opened<'_> {
         self.cx.run_until_parked();
     }
 
-    /// The place of a tick in the ruler of the arrangement.
-    pub(crate) fn ruler(&mut self, tick: u64) -> Point<Pixels> {
-        let x = self.at(tick, 0).x;
-        point(x, px(TOP_ROW + RULER_HEIGHT / 2.))
-    }
-
-    /// Every selected clip of the arrangement.
-    pub(crate) fn selected_clips(&mut self) -> Vec<InstanceId> {
-        let timeline = self.timeline.clone();
-        self.cx
-            .read(|cx| timeline.read(cx).selected_clips().cloned().collect())
-    }
-
-    /// Writes the tempo map into `project.json` from outside and applies it, as an agent's
-    /// edit arrives.
-    pub(crate) fn write_tempo_map(&mut self, tempo_map: &str) {
-        let path = self.path("project.json");
-        let text = std::fs::read_to_string(&path).unwrap();
-        let start = text.find("\"tempo_map\"").unwrap();
-        let end = text[start..].find("\"connections\"").unwrap() + start;
-        let replaced = format!(
-            "{}\"tempo_map\": {tempo_map},\n  {}",
-            &text[..start],
-            &text[end..]
-        );
-        std::fs::write(&path, replaced).unwrap();
-        self.edit(|project| project.apply_outside_changes(std::slice::from_ref(&path)));
-        self.settle();
-    }
-
-    /// The tempo changes of the project, as ticks and bpm.
-    pub(crate) fn tempo_changes(&mut self) -> Vec<(u64, f64)> {
-        self.project(|project| {
-            let changes = project.project_file().tempo_map.tempo_changes().iter();
-            changes
-                .map(|change| (change.tick.0, change.bpm.bpm()))
-                .collect()
-        })
-    }
-
     /// The button goes down where the pointer is, with no move before it: what arrives when
     /// the mouse up of a drag was lost and the next press comes.
     pub(crate) fn mouse_down(&mut self, position: Point<Pixels>) {
@@ -1005,15 +651,6 @@ impl Opened<'_> {
         self.release(to);
     }
 
-    /// Clicks a row of the open effect picker that may be below the fold: the built-in effects
-    /// come first, and the list scrolls, so the menu is scrolled to its end first.
-    pub(crate) fn click_effect_row(&mut self, row: &str) {
-        let first = self.control("menu-filter");
-        self.scroll(first, 0., -2_000.);
-        let row = self.control(row);
-        self.click(row);
-    }
-
     /// A scroll of the wheel or the trackpad at a place. A negative `dy` goes down.
     pub(crate) fn scroll(&mut self, position: Point<Pixels>, dx: f32, dy: f32) {
         self.cx
@@ -1034,14 +671,12 @@ impl Opened<'_> {
             plugins,
             session,
             shell,
-            arrangement,
-            timeline,
             scanned: _,
             cx,
         } = self;
         drop(plugins);
         cx.update(|window, _| window.remove_window());
-        drop((engine, shell, arrangement, timeline));
+        drop((engine, shell));
         cx.run_until_parked();
         // The window held every view, and the views held the session. This was the last hold.
         let released = session.downgrade();
@@ -1073,15 +708,6 @@ impl Opened<'_> {
         self.press_times(position, 2);
     }
 
-    /// Draws a note in the note editor: a double click on empty space whose second press
-    /// drags to `to`.
-    pub(crate) fn draw(&mut self, from: Point<Pixels>, to: Point<Pixels>) {
-        self.double_press(from);
-        let half = point((from.x + to.x) / 2., (from.y + to.y) / 2.);
-        self.drag_to(half);
-        self.drag_to(to);
-        self.release_times(to, 2);
-    }
 }
 
 /// The loudest sample.

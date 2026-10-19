@@ -15,8 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sound_core::{
-    EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, Ticks,
-    monotonic_nanos,
+    EventOutput, EventOutputs, Ports, PrepareConfig, ProcessContext, Processor, monotonic_nanos,
 };
 use sound_notes::{Amount, Bend, Controller, Expression, NoteEvent, Pedal, Pitch, Velocity};
 
@@ -110,18 +109,6 @@ impl Played {
             Self::Control { controller, value } => NoteEvent::Control { controller, value },
         }
     }
-
-    /// The message of a controller the note contract sends. `None` for a key.
-    pub(crate) fn of_event(event: NoteEvent) -> Option<Self> {
-        match event {
-            NoteEvent::Pedal(value) => Some(Self::Pedal(value)),
-            NoteEvent::Bend(bend) => Some(Self::Bend(bend)),
-            NoteEvent::ModWheel(amount) => Some(Self::ModWheel(amount)),
-            NoteEvent::Pressure(amount) => Some(Self::Pressure(amount)),
-            NoteEvent::Control { controller, value } => Some(Self::Control { controller, value }),
-            NoteEvent::On { .. } | NoteEvent::Off { .. } | NoteEvent::AllOff => None,
-        }
-    }
 }
 
 /// A message with the moment it reached this process, on the clock of
@@ -138,11 +125,6 @@ pub(crate) struct Sounded {
     pub arrived: Arrived,
     /// The engine frame this block began on. The sound of the message starts there.
     pub frame: u64,
-    /// The tick the device played at the start of that block: where a recording writes the
-    /// message. That is where the player heard the project, whatever latency the track the
-    /// message plays into has.
-    pub tick: Ticks,
-    pub playing: bool,
 }
 
 /// What the audio thread tells the control side, in the order it happened.
@@ -382,8 +364,6 @@ impl Keys {
             self.report(Report::Sounded(Sounded {
                 arrived,
                 frame: context.start_frame,
-                tick: context.transport.heard_tick,
-                playing: context.transport.playing,
             }));
         }
         sent

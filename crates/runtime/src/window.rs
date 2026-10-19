@@ -1,16 +1,17 @@
-//! The application window: the title row with the project menu at its left and the main tool's
-//! chrome, such as a transport, in its middle, the view of the project's main instance under it, the left panel beside it,
-//! and a quiet line for errors and problems top-right, under the title row.
+//! The application window: the title row with the project menu at its left and the live input in
+//! its middle, the view of the project's main instance under it, the left panel beside it, and a
+//! quiet line for errors and problems top-right, under the title row.
 //!
 //! The window is the project runtime. It names no extension type: the main area shows whatever
-//! view the installed [`Views`] has for the main instance of the project, and the title row
-//! what [`Chrome`] the main tool brings. Nor does it name the agent: the left panel is whatever
+//! view the installed [`Views`] has for the main instance of the project. Nor does it name the
+//! agent: the left panel is whatever
 //! the installed [`LeftPanelSlot`] makes. Its own keys are the app's: undo, the panel, opening
 //! and quitting. Musical keys, such as space to play, are the project's, through
 //! [`GlobalKeys`].
 
 pub mod audio_input;
 pub mod live_input;
+pub mod new_project;
 pub mod other_apps;
 mod project_menu;
 pub mod recorders;
@@ -30,8 +31,8 @@ use gpui::{
 };
 use plugin_host::{Plugins, WeakPlugins};
 use sound_core::{
-    Engine, EngineConfig, InputEndpoint, InstanceId, OutputDevice, OutputStream, Project,
-    ProjectEvent, StreamTiming,
+    Engine, EngineConfig, InstanceId, OutputDevice, OutputStream, Project, ProjectEvent,
+    StreamTiming,
 };
 use sound_typescript::{Extensions, FirstLoad};
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
@@ -47,7 +48,7 @@ use audio_input::OpenInput;
 use live_input::LiveInput;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
-use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
+use project_menu::{ProjectMenu, choose_new_project, open_another_project, start_again};
 use recorders::Recorders;
 
 use crate::app::ChosenDevices;
@@ -167,16 +168,6 @@ pub struct DeviceAccess {
     pub list_devices: Option<ListDevices>,
 }
 
-/// What a tool adds to the window while its instance is the main view: a view in the middle of
-/// the title row, made once with the window, and where live notes go. The window shows the
-/// live input there instead, and routes live notes to what is selected, for every other tool.
-#[derive(Clone, Copy)]
-pub struct Chrome {
-    pub tool: &'static str,
-    pub make: fn(Entity<Session>, Entity<LiveInput>, &mut Window, &mut App) -> AnyView,
-    pub live_notes: fn(&Project, Option<&InstanceId>) -> Vec<InputEndpoint>,
-}
-
 /// The root view of the window.
 pub struct Shell {
     session: Entity<Session>,
@@ -185,8 +176,6 @@ pub struct Shell {
     project_menu: Entity<ProjectMenu>,
     /// The machine's live input and the meter of the device, see [`LiveInput`].
     live: Entity<LiveInput>,
-    /// What the main tool of [`crate::CHROME`] shows in the title row while it is the main view.
-    chrome: AnyView,
     focus_handle: FocusHandle,
     dismiss_focus: FocusHandle,
     left_panel: Option<LeftPanel>,
@@ -298,15 +287,11 @@ impl Shell {
             let session = session.clone();
             cx.new(|cx| OtherApps::new(session, sounds, cx))
         });
-        let chrome = crate::CHROME;
-        let live =
-            cx.new(|cx| LiveInput::new(session.clone(), timing, open_input, Some(chrome), cx));
-        let chrome_view = (chrome.make)(session.clone(), live.clone(), window, cx);
+        let live = cx.new(|cx| LiveInput::new(session.clone(), timing, open_input, cx));
         let recorders = cx.new(|cx| Recorders::new(session.clone(), live.clone(), cx));
         let mut shell = Self {
             project_menu,
             live,
-            chrome: chrome_view,
             session,
             main: None,
             focus_handle,
@@ -362,21 +347,6 @@ impl Shell {
     /// The takes of the recorders of the project.
     pub fn recorders(&self) -> &Entity<Recorders> {
         &self.recorders
-    }
-
-    /// What the main tool of [`crate::CHROME`] shows in the title row, while it is the main view.
-    pub fn chrome(&self) -> &AnyView {
-        &self.chrome
-    }
-
-    /// The chrome, when the main view is of its tool, else the live input.
-    fn title_middle(&self, cx: &App) -> AnyView {
-        let project = self.session.read(cx).project();
-        let main_tool = (self.main.as_ref()).and_then(|(id, _)| project.tool_of(id));
-        match main_tool == Some(crate::CHROME.tool) {
-            true => self.chrome.clone(),
-            false => self.live.clone().into(),
-        }
     }
 
     /// The view in the left panel, open or not.
@@ -698,8 +668,7 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &ToggleComputerKeys, _, cx| {
                 shell.live.update(cx, LiveInput::toggle_computer_keys)
             }))
-            // Before the focused view hears it, so a key that plays does nothing else, such as
-            // `a` in the arrangement.
+            // Before the focused view hears it, so a key that plays does nothing else.
             .capture_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
                 let free = keys_are_free(window);
                 if (shell.live).update(cx, |live, _| live.computer_key_down(event, free)) {
@@ -745,9 +714,7 @@ impl Render for Shell {
                 shell.open_or_close_left_panel(window, cx)
             }))
             .on_action(cx.listener(|shell, _: &NewProject, _, cx| {
-                shell.session.update(cx, |session, cx| {
-                    new_project(session, crate::NEW_PROJECT, cx)
-                })
+                choose_new_project(shell.session.clone(), cx)
             }))
             .on_action(cx.listener(|shell, _: &OpenProject, _, cx| {
                 shell.session.update(cx, |_, cx| open_another_project(cx))
@@ -775,7 +742,7 @@ impl Render for Shell {
                     .children(self.left_panel_icon(cx))
                     .child(div().flex_none().child(self.project_menu.clone()))
                     .child(Self::drag_region().flex_1())
-                    .child(self.title_middle(cx))
+                    .child(self.live.clone())
                     .child(Self::drag_region().flex_1())
                     .children(Self::window_controls(window)),
             )
@@ -978,8 +945,7 @@ impl Opened {
         // up: the tick below runs its behaviour again.
         let plugins = crate::plugins(false)?;
         plugins.start_scanning();
-        let (mut project, extensions) =
-            open_with_loaded(folder, control, plugins.clone(), tools, crate::NEW_PROJECT)?;
+        let (mut project, extensions) = open_with_loaded(folder, control, plugins.clone(), tools)?;
         project.watch()?;
         // From here only the project holds the plugins, so that dropping the project ends them
         // and saves the state of every one. A handle kept here would outlive the project: the

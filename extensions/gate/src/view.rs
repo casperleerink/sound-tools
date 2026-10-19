@@ -1,7 +1,7 @@
 //! The card of the gate: the transfer curve, a step down by the range under the threshold, with
 //! the threshold handle, the level now as a dot on it and the gain reduction as a bar. Then
-//! Threshold, Range, Attack, Release, Transient and Sustain, and behind expand Hold and the
-//! sidechain picker. The rack gives the view a [`CardFrame`].
+//! Threshold, Range, Attack, Release, Transient and Sustain, and behind expand Hold. The rack
+//! gives the view a [`CardFrame`].
 //!
 //! The view keeps no copy of the state. It reads the record when it renders, and every change
 //! goes through the session by [`DeviceEdit`], as on the compressor. A number that an
@@ -10,7 +10,7 @@
 
 use gpui::{Context, Entity, Point, Task, Window, div, point, prelude::*};
 use sound_core::Instance;
-use sound_ui::components::device_card::{CardFrame, Column, Section};
+use sound_ui::components::device_card::{CardFrame, Column};
 use sound_ui::components::display::{Axis, Display, Handle};
 use sound_ui::components::dynamics_display::{self, Levels, Reading};
 use sound_ui::components::gesture::ValueChange;
@@ -88,7 +88,7 @@ fn curve(state: &GateState) -> Vec<Point<f32>> {
 pub struct GateView {
     device: DeviceEdit<GateState>,
     frame: CardFrame,
-    /// Whether the card shows hold and the sidechain. Interface state: not saved.
+    /// Whether the card shows hold. Interface state: not saved.
     expanded: bool,
     reading: Reading,
     _metering: Task<()>,
@@ -132,7 +132,7 @@ impl GateView {
         }
     }
 
-    /// Shows or hides hold and the sidechain, as the expand icon does.
+    /// Shows or hides hold, as the expand icon does.
     fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.expanded = expanded;
         cx.notify();
@@ -200,12 +200,6 @@ impl Render for GateView {
             .into_iter()
             .fold(card, |card, column| card.column(column))
             .hidden_column(Column::new().top(knob(HOLD_KNOB, cx)));
-        // Made only while it shows: it reads the tracks.
-        let sidechain = self.expanded.then(|| self.frame.sidechain_column(cx));
-        let card = match sidechain.flatten() {
-            Some(column) => card.section(Section::new().column(column)),
-            None => card,
-        };
         card.into_any_element()
     }
 }

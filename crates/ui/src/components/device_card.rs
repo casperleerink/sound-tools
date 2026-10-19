@@ -25,8 +25,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Entity, Hsla, MouseButton, SharedString,
-    Stateful, StyleRefinement, Window, div, prelude::*, px,
+    AnyElement, AnyView, App, ClickEvent, Div, ElementId, Hsla, MouseButton, SharedString,
+    StyleRefinement, Window, div, prelude::*, px,
 };
 
 use crate::components::cell::{CELL_WIDTH, ROW_HEIGHT, VALUE_LINE};
@@ -61,10 +61,6 @@ const HIDDEN_GAP: f32 = 8.;
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// Whether a device is on, read when the card draws.
 type IsOn = Rc<dyn Fn(&App) -> bool>;
-/// The column of the sidechain picker, made when the card draws, see [`CardFrame::sidechain`].
-type SidechainColumn = Rc<dyn Fn(&App) -> Column>;
-/// What makes the header of a card a handle that drags it, see [`CardFrame::draggable`].
-type Grip = Rc<dyn Fn(Stateful<Div>) -> Stateful<Div>>;
 
 /// What a rack gives the view of the device in one of its slots, so that the view can draw the
 /// whole card with [`CardFrame::card`] and add its display and cells.
@@ -77,8 +73,6 @@ pub struct CardFrame {
     title: AnyView,
     power: Option<(IsOn, Rc<dyn Fn(&mut Window, &mut App)>)>,
     close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
-    sidechain: Option<SidechainColumn>,
-    grip: Option<Grip>,
 }
 
 impl CardFrame {
@@ -88,28 +82,7 @@ impl CardFrame {
             title: title.into(),
             power: None,
             close: None,
-            sidechain: None,
-            grip: None,
         }
-    }
-
-    /// Makes the header of the card a handle that drags it, as a rack reorders its cards: a
-    /// press on the header that moves carries `value` to wherever the rack takes a drop of it,
-    /// with `preview` under the pointer. A press that does not move is still a click on the
-    /// title or an icon.
-    pub fn draggable<T: Clone + 'static, W: Render>(
-        mut self,
-        value: T,
-        preview: impl Fn(&T, &mut Window, &mut App) -> Entity<W> + 'static,
-    ) -> Self {
-        let preview = Rc::new(preview);
-        self.grip = Some(Rc::new(move |header: Stateful<Div>| {
-            let preview = preview.clone();
-            header.on_drag(value.clone(), move |value, _, window, cx| {
-                preview(value, window, cx)
-            })
-        }));
-        self
     }
 
     /// The power icon, which bypasses the device. `is_on` is read every time the card draws,
@@ -129,19 +102,6 @@ impl CardFrame {
         self
     }
 
-    /// The sidechain picker of a device that takes a sidechain: what keys it, which only the
-    /// rack knows. `column` is made every time the card draws, from the record of the rack.
-    pub fn sidechain(mut self, column: impl Fn(&App) -> Column + 'static) -> Self {
-        self.sidechain = Some(Rc::new(column));
-        self
-    }
-
-    /// The column of the sidechain picker, for the view to place. `None` when the rack gives
-    /// none.
-    pub fn sidechain_column(&self, cx: &App) -> Option<Column> {
-        self.sidechain.as_ref().map(|column| column(cx))
-    }
-
     /// A card with the id, the title, and the power and close icons of this frame. The view
     /// adds the rest.
     pub fn card(&self) -> DeviceCard {
@@ -149,7 +109,6 @@ impl CardFrame {
         // where a card title is.
         let title = div().flex().min_w_0().ml(px(-8.)).child(self.title.clone());
         let mut card = DeviceCard::new(ElementId::Name(self.id.clone()), title);
-        card.grip = self.grip.clone();
         if let Some((is_on, toggle)) = self.power.clone() {
             card.power = Some((is_on, Box::new(move |_, window, cx| toggle(window, cx))));
         }
@@ -283,7 +242,6 @@ pub struct DeviceCard {
     tabs: Option<AnyElement>,
     power: Option<(IsOn, ClickHandler)>,
     close: Option<ClickHandler>,
-    grip: Option<Grip>,
     display: Option<AnyElement>,
     columns: Vec<Column>,
     hidden: Vec<Column>,
@@ -303,7 +261,6 @@ impl DeviceCard {
             tabs: None,
             power: None,
             close: None,
-            grip: None,
             display: None,
             columns: Vec::new(),
             hidden: Vec::new(),
@@ -499,10 +456,6 @@ impl RenderOnce for DeviceCard {
             )
             .children(tabs.map(|tabs| div().flex_none().mr(px(ICON_GAP)).child(tabs)))
             .children(icons);
-        let header = match self.grip {
-            Some(grip) => grip(header),
-            None => header,
-        };
 
         let sections = expanded.then_some(self.sections).unwrap_or_default();
         let hidden = (expanded && !self.hidden.is_empty()).then(|| {

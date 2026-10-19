@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use sound_core::{Changes, Clock, EventTap, Frames, InstanceId, Project, Ticks};
 use sound_notes::{NoteEvent, RawEvent, RawTake};
 use sound_typescript::{ARMED, HEARD, Heard, RECORDER, RecorderState};
-use sound_ui::{LiveBody, LiveSound, LiveTake, Session, every_poll};
+use sound_ui::{LiveSound, LiveTake, Session, every_poll};
 
 use super::live_input::{Hold, LiveInput, Recorded};
 use crate::recorder::{
@@ -244,7 +244,7 @@ impl Recorders {
         self.live.update(cx, |live, cx| {
             live.open_input(cx);
             live.record(RecorderCommand::Start(requests));
-            live.hold_for_recorders(
+            live.hold(
                 Hold {
                     notes: false,
                     audio: true,
@@ -310,14 +310,14 @@ impl Recorders {
         let shown = audio.started.iter().map(|started| LiveTake {
             track: started.track.clone(),
             start,
-            body: LiveBody::Audio(Some(LiveSound {
+            sound: LiveSound {
                 overview: started.overview.clone(),
                 start_seconds,
-            })),
+            },
         });
         let shown = shown.collect();
         let recording = self.session.read(cx).recording().clone();
-        recording.update(cx, |recording, cx| recording.set_audio_takes(shown, cx));
+        recording.update(cx, |recording, cx| recording.set_takes(shown, cx));
     }
 
     /// What the recorder of the input reported: about the recording of the recorders, when one
@@ -385,10 +385,10 @@ impl Recorders {
         let records: Vec<_> = audio.notes.into_iter().chain(records).collect();
         self.write(records, cx);
         self.live
-            .update(cx, |live, cx| live.hold_for_recorders(Hold::default(), cx));
+            .update(cx, |live, cx| live.hold(Hold::default(), cx));
         let recording = self.session.read(cx).recording().clone();
         recording.update(cx, |recording, cx| {
-            recording.set_audio_takes(Vec::new(), cx)
+            recording.set_takes(Vec::new(), cx)
         });
     }
 

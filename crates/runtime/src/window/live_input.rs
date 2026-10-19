@@ -1,10 +1,9 @@
 //! What the machine plays into the project live, and what it hears: the MIDI keyboard, the
 //! computer keys, the audio input, and the meter of what the device plays. None of it is project
-//! state, and every window has it, whatever its main view: the main tool decides only where
-//! live notes go, see [`Chrome::live_notes`].
+//! state, and every window has it, whatever its main view.
 //!
-//! A take of the main tool reaches the keyboard and the input through here: while one runs, the
-//! live notes stay where it began and the input stays open, see [`LiveInput::hold`].
+//! A take reaches the keyboard and the input through here: while one runs, the live notes stay
+//! where it began and the input stays open, see [`LiveInput::hold`].
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -18,18 +17,15 @@ use sound_core::{InputEndpoint, InstanceId, Project, ProjectEvent, StreamTiming}
 use sound_notes::NOTES_INPUT;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::meter::Meter;
-use sound_ui::{
-    ActiveTheme, Metering, PeaksReader, Recording, Session, Views, every_poll, weak_action,
-};
+use sound_ui::{ActiveTheme, Metering, PeaksReader, Recording, Session, every_poll, weak_action};
 
-use super::Chrome;
 use super::audio_input::{AudioInput, OpenInput, OpenedInput};
 use crate::recorder::{RecorderCommand, RecorderReport};
 
 /// The height of the pill of the title row it sits in.
 const HEIGHT: f32 = 36.;
 
-/// What a take of the main tool holds while it runs.
+/// What a take of a recorder holds while it runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Hold {
     /// The live notes stay where they went when it began.
@@ -41,15 +37,6 @@ pub struct Hold {
 /// What the recorder of the input reported in one run, for every take that listens: each
 /// keeps what is about the takes it started.
 pub struct Recorded(pub Rc<[RecorderReport]>);
-
-/// What the audio input did that a take of the main tool has to know.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InputEvent {
-    /// It did not open, and is not open now.
-    Failed,
-    /// It went away, such as an interface that was unplugged. Every track is disarmed.
-    Gone,
-}
 
 pub struct LiveInput {
     session: Entity<Session>,
@@ -64,12 +51,8 @@ pub struct LiveInput {
     /// The audio input, open while an instance is armed, a take records or `project.json`
     /// connects it, and its recorder.
     audio: AudioInput,
-    /// What the main tool's take holds, see [`Hold`].
+    /// What the takes of the recorders of the project hold, see [`Hold`].
     hold: Hold,
-    /// What the takes of the recorders of the project hold.
-    recorders_hold: Hold,
-    /// Where live notes go when the main tool is this one's, see [`Chrome::live_notes`].
-    chrome: Option<Chrome>,
     /// Whether something takes the notes of the keyboard, as of the last poll.
     takes_notes: bool,
     keys_focus: FocusHandle,
@@ -80,7 +63,6 @@ pub struct LiveInput {
     _polling: Task<()>,
 }
 
-impl EventEmitter<InputEvent> for LiveInput {}
 impl EventEmitter<Recorded> for LiveInput {}
 
 impl LiveInput {
@@ -88,7 +70,6 @@ impl LiveInput {
         session: Entity<Session>,
         timing: Option<Arc<StreamTiming>>,
         open_input: Option<OpenInput>,
-        chrome: Option<Chrome>,
         cx: &mut Context<Self>,
     ) -> Self {
         // An agent may connect the device input in `project.json`, or take it away, while the
@@ -153,8 +134,6 @@ impl LiveInput {
             timing,
             audio: AudioInput::new(open_input),
             hold: Hold::default(),
-            recorders_hold: Hold::default(),
-            chrome,
             takes_notes: false,
             keys_focus: cx.focus_handle().tab_stop(true),
             output,
@@ -180,7 +159,7 @@ impl LiveInput {
         }
         self.poll_audio(cx);
         let timing = self.timing.clone();
-        let held = self.holds().notes;
+        let held = self.hold.notes;
         let Some(keyboard) = self.keyboard.as_mut() else {
             return;
         };
@@ -202,21 +181,12 @@ impl LiveInput {
         }
     }
 
-    /// Where live notes go now: as the main tool says, or else into the `notes` of the selected
-    /// instance or of the nearest parent of it that has them, and with nothing selected into
-    /// every instance at the top that has them. Read it after every change: a port moves when
-    /// an instance is built again.
+    /// Where live notes go now: into the `notes` of the selected instance or of the nearest
+    /// parent of it that has them, and with nothing selected into every instance at the top
+    /// that has them. Read it after every change: a port moves when an instance is built again.
     fn live_notes(&self, cx: &App) -> Vec<InputEndpoint> {
         let session = self.session.read(cx);
-        let (project, selected) = (session.project(), session.selected());
-        let main = Views::main_instance(&self.session, cx);
-        let main_tool = main.as_ref().and_then(|main| project.tool_of(main));
-        match &self.chrome {
-            Some(chrome) if main_tool == Some(chrome.tool) => {
-                (chrome.live_notes)(project, selected)
-            }
-            _ => notes_inputs(project, selected),
-        }
+        notes_inputs(session.project(), session.selected())
     }
 
     /// One poll of the meter: what the device played since the last one. The timer calls it;
@@ -231,11 +201,6 @@ impl LiveInput {
     /// MIDI input.
     pub fn midi_input(&self) -> Option<Input> {
         self.keyboard.as_ref().map(Keyboard::input)
-    }
-
-    /// The MIDI input, for a take of the main tool. `None` when the engine refused it.
-    pub fn keyboard(&mut self) -> Option<&mut Keyboard> {
-        self.keyboard.as_mut()
     }
 
     pub fn timing(&self) -> Option<Arc<StreamTiming>> {
@@ -256,27 +221,12 @@ impl LiveInput {
             .unwrap_or_default()
     }
 
-    /// What the main tool's take holds while it runs. The input follows at once.
+    /// What the takes of the recorders of the project hold while they run. The input follows
+    /// at once.
     pub fn hold(&mut self, hold: Hold, cx: &mut Context<Self>) {
         if self.hold != hold {
             self.hold = hold;
             self.follow_input(cx);
-        }
-    }
-
-    /// What the takes of the recorders of the project hold while they run.
-    pub fn hold_for_recorders(&mut self, hold: Hold, cx: &mut Context<Self>) {
-        if self.recorders_hold != hold {
-            self.recorders_hold = hold;
-            self.follow_input(cx);
-        }
-    }
-
-    /// What every take that runs holds.
-    fn holds(&self) -> Hold {
-        Hold {
-            notes: self.hold.notes || self.recorders_hold.notes,
-            audio: self.hold.audio || self.recorders_hold.audio,
         }
     }
 
@@ -397,7 +347,7 @@ impl LiveInput {
         let notice = opened.as_mut().ok().and_then(|input| input.notice.take());
         match self.audio.opened(generation, opened, &assets, cx) {
             None => {}
-            Some(Ok((channels, live))) => {
+            Some(Ok(live)) => {
                 if let Some(notice) = notice {
                     self.session
                         .update(cx, |session, cx| session.report(notice, cx));
@@ -412,13 +362,10 @@ impl LiveInput {
                 // problem of the connection says why, and the device closes. A take records at
                 // any rate.
                 let armed = self.recording.read(cx).armed().next().is_some();
-                if !plays && !armed && !self.holds().audio {
+                if !plays && !armed && !self.hold.audio {
                     self.audio.give_up(cx);
                     return;
                 }
-                self.recording.update(cx, |recording, cx| {
-                    recording.set_input_channels(Some(channels), cx)
-                });
             }
             Some(Err(error)) => {
                 self.session
@@ -426,9 +373,8 @@ impl LiveInput {
                 // Armed with no input would show a level that never moves.
                 self.recording.update(cx, |recording, cx| {
                     recording.retain_armed(|_| false, cx);
-                    recording.set_audio_takes(Vec::new(), cx);
+                    recording.set_takes(Vec::new(), cx);
                 });
-                cx.emit(InputEvent::Failed);
             }
         }
     }
@@ -443,26 +389,21 @@ impl LiveInput {
         let heard = self.session.read(cx).project().hears_device_input();
         if self.audio.wants(armed, heard) && !self.audio.is_gone() {
             self.open_input(cx);
-        } else if !self.holds().audio && self.audio.is_open_or_opening() {
+        } else if !self.hold.audio && self.audio.is_open_or_opening() {
             self.audio.close(cx);
-            self.recording
-                .update(cx, |recording, cx| recording.set_input_channels(None, cx));
             self.session.update(cx, |session, cx| {
                 session.background(cx, |project| project.set_live_input(None))
             });
         }
     }
 
-    /// One poll of the audio input: the level, and a device that went away.
+    /// One poll of the audio input: a silence that says what is wrong, and a device that went
+    /// away.
     fn poll_audio(&mut self, cx: &mut Context<Self>) {
-        if let Some((levels, silent)) = self.audio.poll_levels() {
-            self.recording
-                .update(cx, |recording, cx| recording.set_levels(levels, cx));
-            if silent {
-                let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then open the project again.";
-                self.session
-                    .update(cx, |session, cx| session.report(notice, cx));
-            }
+        if self.audio.poll_silence() {
+            let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then open the project again.";
+            self.session
+                .update(cx, |session, cx| session.report(notice, cx));
         }
         if self.audio.went_away() {
             self.input_gone(cx);
@@ -499,15 +440,14 @@ impl LiveInput {
     /// arming again opens the default input that macOS has then. A take that records audio ends
     /// and says so itself; the recorder writes the last of it before the input closes.
     fn input_gone(&mut self, cx: &mut Context<Self>) {
-        if !self.holds().audio {
+        if !self.hold.audio {
             self.session.update(cx, |session, cx| {
                 session.report("The audio input went away.", cx)
             });
         }
         self.recording
             .update(cx, |recording, cx| recording.retain_armed(|_| false, cx));
-        cx.emit(InputEvent::Gone);
-        if !self.holds().audio {
+        if !self.hold.audio {
             self.follow_input(cx);
         }
     }

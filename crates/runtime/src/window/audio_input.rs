@@ -157,7 +157,7 @@ impl AudioInput {
         opened: Result<OpenedInput, DeviceError>,
         assets: &Assets,
         cx: &App,
-    ) -> Option<Result<(usize, LiveInput), DeviceError>> {
+    ) -> Option<Result<LiveInput, DeviceError>> {
         if self.opening != Some(generation) {
             if let Ok(input) = opened {
                 drop_in_background(input, cx);
@@ -179,7 +179,6 @@ impl AudioInput {
             }
         };
         let status = reader.status();
-        let channels = status.channels();
         self.failed = false;
         self.open = Some(Open {
             generation,
@@ -190,7 +189,7 @@ impl AudioInput {
             sample_rate: reader.sample_rate(),
             recorder: Some(Recorder::new(reader, assets.clone())),
         });
-        Some(Ok((channels, live)))
+        Some(Ok(live))
     }
 
     /// Whether the open input went away, such as an interface that was unplugged.
@@ -212,18 +211,19 @@ impl AudioInput {
         self.open.as_ref().map(|open| open.sample_rate)
     }
 
-    /// The loudest sample of each channel since the last call, while the input is open, and
-    /// whether it just reached about two seconds of nothing but exact silence, once per
-    /// opening. A real input is never exactly silent: macOS gives zeros to an app it does not
+    /// Whether the open input just reached about two seconds of nothing but exact silence, once
+    /// per opening. A real input is never exactly silent: macOS gives zeros to an app it does not
     /// let use the microphone.
-    pub(crate) fn poll_levels(&mut self) -> Option<(Vec<f32>, bool)> {
-        let open = self.open.as_mut()?;
+    pub(crate) fn poll_silence(&mut self) -> bool {
+        let Some(open) = self.open.as_mut() else {
+            return false;
+        };
         let levels = open.status.take_levels();
         match levels.iter().all(|level| *level == 0.0) {
             true => open.silent_polls = open.silent_polls.saturating_add(1),
             false => open.silent_polls = u32::MAX,
         }
-        Some((levels, open.silent_polls == SILENT_POLLS))
+        open.silent_polls == SILENT_POLLS
     }
 
     /// Whether the device just went away or stopped: true once, on the poll that sees it.

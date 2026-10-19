@@ -1,34 +1,18 @@
-//! The card of the built-in EQ in the track rack, with a simulated mouse and keys: it is added
-//! from the control at the end of the rack, a press on a handle selects its band, and every
-//! edit of it is one undo step written once.
+//! The card of the built-in EQ in a rack, with a simulated mouse and keys: a press on a handle
+//! selects its band, and every edit of it is one undo step written once.
 
-use eq::view::EqView;
 use eq::{Band, EqState, Shape};
-use gpui::{Entity, TestAppContext, point, px};
+use gpui::{TestAppContext, point, px};
 
+use crate::rack::record;
 use crate::support::{self, Opened, id};
 
-const EQ: &str = "arrangement/track-1/eq";
-const EQ_FILE: &str = "state/arrangement/track-1/eq.json";
+const EQ: &str = "rack/eq";
+const EQ_FILE: &str = "state/rack/eq.json";
 
-/// One track with no instrument, so the only card with knobs is the EQ, and its panel open.
-/// The EQ is added the way a composer adds it: `Add effect`, then `EQ`.
+/// A rack of the EQ alone, so its card is the only one with knobs.
 fn open_panel(cx: &mut TestAppContext) -> Opened<'_> {
-    let mut opened = support::open_with(cx, |project| {
-        let mut changes = sound_core::Changes::new();
-        changes.delete(&id("arrangement/track-1/instrument"));
-        project.commit("Remove synth", changes).unwrap();
-        project.clear_history();
-    });
-    let header = opened.track_header(0);
-    opened.click(header);
-    let trigger = opened.control("add-effect");
-    opened.click(trigger);
-    let row = opened.control("menu-eq");
-    opened.click(row);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add EQ"));
-    opened.project(|project| assert_eq!(project.problems(), []));
-    opened
+    support::open_rack(cx, &[("eq", &record("eq", "{}"))])
 }
 
 fn state(opened: &mut Opened<'_>) -> EqState {
@@ -42,35 +26,13 @@ fn file(opened: &mut Opened<'_>) -> String {
     std::fs::read_to_string(opened.path(EQ_FILE)).unwrap()
 }
 
-fn view(opened: &mut Opened<'_>) -> Entity<EqView> {
-    let panel = opened.track_panel().unwrap();
-    let view = opened.cx.read(|cx| {
-        let mut views = panel.read(cx).device_views();
-        views.nth(1).unwrap().cloned()
-    });
-    view.unwrap().downcast::<EqView>().ok().unwrap()
-}
-
-fn selected(opened: &mut Opened<'_>) -> usize {
-    let view = view(opened);
-    opened.cx.read(|cx| view.read(cx).selected())
-}
-
-fn shown_shape(opened: &mut Opened<'_>) -> Option<String> {
-    let view = view(opened);
-    opened
-        .cx
-        .read(|cx| view.read(cx).shown_shape(cx).map(str::to_owned))
-}
-
 /// A click on a handle selects its band and is no edit. The knobs then change that band only.
 #[gpui::test]
 fn a_click_on_a_handle_selects_its_band_and_the_knobs_follow(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
     let handle = opened.control("handle-band-3");
     opened.click(handle);
-    assert_eq!(selected(&mut opened), 2);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add EQ"));
+    assert_eq!(opened.undo_label(), None);
 
     let knob = opened.control("knob-gain_db");
     opened.press(knob);
@@ -106,7 +68,6 @@ fn a_drag_of_a_handle_changes_frequency_and_gain_as_one_step(cx: &mut TestAppCon
     let default = Band::default_at(1);
     assert!(after.frequency_hz > default.frequency_hz, "{after:?}");
     assert!(after.gain_db > 0.0, "{after:?}");
-    assert_eq!(selected(&mut opened), 1);
     assert_eq!(
         opened.undo_label().as_deref(),
         Some("Change frequency and gain")
@@ -158,9 +119,9 @@ fn a_shape_is_one_step_and_a_cut_moves_only_sideways(cx: &mut TestAppContext) {
 #[gpui::test]
 fn expand_shows_the_switches_of_the_bands_and_the_output(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    let expand = opened.control("card-eq-expand");
+    let expand = opened.control("card-rack/eq-expand");
     opened.click(expand);
-    assert_eq!(opened.undo_label().as_deref(), Some("Add EQ"));
+    assert_eq!(opened.undo_label(), None);
     for hidden in [
         "toggle-band-1-on",
         "toggle-band-2-on",
@@ -181,7 +142,7 @@ fn expand_shows_the_switches_of_the_bands_and_the_output(cx: &mut TestAppContext
     assert!(state(&mut opened).output_gain_db < 0.0);
     assert_eq!(opened.undo_label().as_deref(), Some("Change output"));
 
-    let expand = opened.control("card-eq-expand");
+    let expand = opened.control("card-rack/eq-expand");
     opened.click(expand);
     assert_eq!(opened.find("toggle-band-1-on"), None);
 }
@@ -194,30 +155,31 @@ fn the_number_keys_select_a_band(cx: &mut TestAppContext) {
     let knob = opened.control("knob-q");
     opened.click(knob);
     opened.keys("4");
-    assert_eq!(selected(&mut opened), 3);
-    // And the arrows on the focused knob now step the Q of band 4.
+    // The arrows on the focused knob now step the Q of band 4.
     opened.keys("up");
     let after = state(&mut opened);
     assert!(after.bands[3].q > 0.71, "{after:?}");
     assert_eq!(after.bands[0], Band::default_at(0));
     assert_eq!(opened.undo_label().as_deref(), Some("Change Q"));
     opened.keys("1");
-    assert_eq!(selected(&mut opened), 0);
+    opened.keys("up");
+    assert!(state(&mut opened).bands[0].q > Band::default_at(0).q);
 }
 
-/// The shape select shows the shape of the selected band. An agent edits the file while the
-/// card is open: the card shows it at once. Band 1 is now a notch, which has no gain, so its
-/// handle moves only sideways.
+/// The shape select changes the selected band. An agent edits the file while the card is
+/// open: the card follows it at once. Band 1 is now a notch, which has no gain, so its handle
+/// moves only sideways.
 #[gpui::test]
 fn the_shape_select_follows_the_selected_band_and_an_outside_edit(cx: &mut TestAppContext) {
     let mut opened = open_panel(cx);
-    assert_eq!(shown_shape(&mut opened).as_deref(), Some("low_shelf"));
     let handle = opened.control("handle-band-3");
     opened.click(handle);
-    assert_eq!(shown_shape(&mut opened).as_deref(), Some("bell"));
-    let handle = opened.control("handle-band-1");
-    opened.click(handle);
-    assert_eq!(shown_shape(&mut opened).as_deref(), Some("low_shelf"));
+    let trigger = opened.control("shape");
+    opened.click(trigger);
+    let row = opened.control("menu-notch");
+    opened.click(row);
+    assert_eq!(state(&mut opened).bands[2].shape, Shape::Notch);
+    assert_eq!(state(&mut opened).bands[0], Band::default_at(0));
 
     let path = opened.path(EQ_FILE);
     std::fs::write(
@@ -227,8 +189,6 @@ fn the_shape_select_follows_the_selected_band_and_an_outside_edit(cx: &mut TestA
     .unwrap();
     opened.edit(|project| project.apply_outside_changes(&[path]).map(|_| ()));
     assert_eq!(state(&mut opened).bands[0].shape, Shape::Notch);
-    // The select shows the new shape too.
-    assert_eq!(shown_shape(&mut opened).as_deref(), Some("notch"));
     let handle = opened.control("handle-band-1");
     opened.drag(handle, point(handle.x, handle.y - px(40.)));
     assert_eq!(state(&mut opened).bands[0].gain_db, 0.0);
