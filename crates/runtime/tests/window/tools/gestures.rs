@@ -1,42 +1,11 @@
 //! What moves on a page moves in the window, with no Bun: a knob turns its field as one undo
 //! step, and a drag moves what binds to it; Bun hears the drag once, at its end.
 
-use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
-};
+use gpui::{Pixels, Point, TestAppContext, point, px};
 
-use super::{ONLY_THE_TOOL, Window, open};
+use super::{ONLY_THE_TOOL, Opened, open};
 
-impl Window<'_> {
-    pub(super) fn press(&mut self, position: Point<Pixels>) {
-        self.cx
-            .simulate_mouse_move(position, None, Modifiers::default());
-        self.cx.simulate_event(MouseDownEvent {
-            position,
-            modifiers: Modifiers::default(),
-            button: MouseButton::Left,
-            click_count: 1,
-            first_mouse: false,
-        });
-        self.cx.run_until_parked();
-    }
-
-    pub(super) fn drag_to(&mut self, position: Point<Pixels>) {
-        self.cx
-            .simulate_mouse_move(position, MouseButton::Left, Modifiers::default());
-        self.cx.run_until_parked();
-    }
-
-    pub(super) fn release(&mut self, position: Point<Pixels>) {
-        self.cx.simulate_event(MouseUpEvent {
-            position,
-            modifiers: Modifiers::default(),
-            button: MouseButton::Left,
-            click_count: 1,
-        });
-        self.cx.run_until_parked();
-    }
-
+impl Opened<'_> {
     /// The top left of the space of `key`, once it shows.
     fn space(&mut self, key: &str) -> Point<Pixels> {
         let selector: &'static str = format!("space-{key}").leak();
@@ -58,7 +27,7 @@ fn project(name: &str, code: &str) -> [(String, String); 3] {
     ]
 }
 
-fn open_project<'a>(cx: &'a mut TestAppContext, files: &[(String, String)]) -> Option<Window<'a>> {
+fn open_project<'a>(cx: &'a mut TestAppContext, files: &[(String, String)]) -> Opened<'a> {
     let files: Vec<(&str, &str)> = files
         .iter()
         .map(|(path, text)| (path.as_str(), text.as_str()))
@@ -83,9 +52,7 @@ tool({
 fn a_knob_of_a_page_turns_its_field_as_it_drags_as_one_undo_step_and_asks_bun_for_nothing(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_project(cx, &project("dial", DIAL)) else {
-        return;
-    };
+    let mut window = open_project(cx, &project("dial", DIAL));
     let dial = window.space("knob-level") + point(px(28.), px(20.));
     let asked = sound_typescript::sent_updates_and_events();
     window.press(dial);
@@ -139,9 +106,7 @@ tool({
 
 #[gpui::test]
 fn a_drag_moves_what_binds_to_it_and_bun_hears_it_once_at_its_end(cx: &mut TestAppContext) {
-    let Some(mut window) = open_project(cx, &project("mover", MOVER)) else {
-        return;
-    };
+    let mut window = open_project(cx, &project("mover", MOVER));
     let block = window.space("board") + point(px(125.), px(25.));
     let (updates, events) = sound_typescript::sent_updates_and_events();
     window.press(block);
@@ -184,9 +149,7 @@ tool({
 
 #[gpui::test]
 fn a_click_on_a_step_turns_it_on_through_its_code(cx: &mut TestAppContext) {
-    let Some(mut window) = open_project(cx, &project("row", STEPS)) else {
-        return;
-    };
+    let mut window = open_project(cx, &project("row", STEPS));
     let second = window.space("steps-steps") + point(px(17. + 7.), px(7.));
     window.press(second);
     window.release(second);

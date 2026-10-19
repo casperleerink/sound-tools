@@ -7,7 +7,7 @@ use gpui::{
 };
 use serde_json::{Value, json};
 
-use super::{ONLY_THE_TOOL, Window, open};
+use super::{ONLY_THE_TOOL, Opened, open};
 
 const PIANO_ROLL: &str = include_str!("../../../../../tooling/agent-eval/examples/piano-roll.tsx");
 
@@ -29,7 +29,7 @@ fn note(start: u32, length: u32, pitch: u8, velocity: u8) -> Value {
     json!({ "start": start, "length": length, "pitch": pitch, "velocity": velocity })
 }
 
-pub(super) fn open_roll<'a>(cx: &'a mut TestAppContext, notes: &Value) -> Option<Window<'a>> {
+pub(super) fn open_roll<'a>(cx: &'a mut TestAppContext, notes: &Value) -> Opened<'a> {
     let record = json!({ "tool": "piano-roll", "state": { "notes": notes } }).to_string();
     open(
         cx,
@@ -41,7 +41,7 @@ pub(super) fn open_roll<'a>(cx: &'a mut TestAppContext, notes: &Value) -> Option
     )
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     /// The top left of the space of `key`, once it shows.
     pub(super) fn space_at(&mut self, key: &str) -> Point<Pixels> {
         let selector: &'static str = format!("space-{key}").leak();
@@ -131,9 +131,7 @@ impl Window<'_> {
 
 #[gpui::test]
 fn a_double_click_adds_a_note_on_the_grid_and_another_on_it_removes_it(cx: &mut TestAppContext) {
-    let Some(mut window) = open_roll(cx, &three_notes()) else {
-        return;
-    };
+    let mut window = open_roll(cx, &three_notes());
     let empty = window.on_roll(1940.0, 85);
     window.click_at(empty, Modifiers::none(), 2);
     let mut notes = three_notes();
@@ -149,9 +147,7 @@ fn a_double_click_adds_a_note_on_the_grid_and_another_on_it_removes_it(cx: &mut 
 fn a_drag_moves_the_selected_notes_on_the_grid_as_one_undo_step_and_bun_hears_it_once(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_roll(cx, &three_notes()) else {
-        return;
-    };
+    let mut window = open_roll(cx, &three_notes());
     let (a, b) = (window.on_roll(100.0, 86), window.on_roll(1100.0, 84));
     window.click_at(a, Modifiers::none(), 1);
     window.click_at(b, Modifiers::shift(), 1);
@@ -175,9 +171,7 @@ fn a_drag_moves_the_selected_notes_on_the_grid_as_one_undo_step_and_bun_hears_it
 
 #[gpui::test]
 fn a_drag_with_alt_copies_the_selected_notes(cx: &mut TestAppContext) {
-    let Some(mut window) = open_roll(cx, &three_notes()) else {
-        return;
-    };
+    let mut window = open_roll(cx, &three_notes());
     let c = window.on_roll(3000.0, 82);
     window.click_at(c, Modifiers::none(), 1);
     window.drag_by(c, point(px(96.), px(-2. * ROW)), Modifiers::alt());
@@ -189,9 +183,7 @@ fn a_drag_with_alt_copies_the_selected_notes(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_drag_of_the_end_of_a_note_resizes_it_to_the_grid(cx: &mut TestAppContext) {
-    let Some(mut window) = open_roll(cx, &three_notes()) else {
-        return;
-    };
+    let mut window = open_roll(cx, &three_notes());
     // The end of b is at 1920; 330 ticks on puts it on 2160.
     let end_of_b = window.on_roll(1900.0, 84);
     window.drag_by(end_of_b, point(px(33.), px(0.)), Modifiers::none());
@@ -208,9 +200,7 @@ fn a_drag_of_the_end_of_a_note_resizes_it_to_the_grid(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_marquee_selects_what_it_covers_and_delete_removes_it(cx: &mut TestAppContext) {
-    let Some(mut window) = open_roll(cx, &three_notes()) else {
-        return;
-    };
+    let mut window = open_roll(cx, &three_notes());
     let from = window.on_roll(2000.0, 87);
     window.drag_by(from, point(px(150.), px(6. * ROW)), Modifiers::none());
     window.chord("backspace");
@@ -223,9 +213,7 @@ fn a_marquee_selects_what_it_covers_and_delete_removes_it(cx: &mut TestAppContex
 
 #[gpui::test]
 fn copy_paste_duplicate_and_select_all_work_from_the_keys(cx: &mut TestAppContext) {
-    let Some(mut window) = open_roll(cx, &three_notes()) else {
-        return;
-    };
+    let mut window = open_roll(cx, &three_notes());
     let a = window.on_roll(100.0, 86);
     window.click_at(a, Modifiers::none(), 1);
     window.chord("cmd-c");
@@ -247,9 +235,7 @@ fn copy_paste_duplicate_and_select_all_work_from_the_keys(cx: &mut TestAppContex
 
 #[gpui::test]
 fn a_drag_of_a_bar_in_the_lane_changes_the_velocity(cx: &mut TestAppContext) {
-    let Some(mut window) = open_roll(cx, &three_notes()) else {
-        return;
-    };
+    let mut window = open_roll(cx, &three_notes());
     let lane = window.space_at("velocity");
     let bar_of_c = lane + point(px(2880. * ACROSS + 2.), px(68.));
     // 31 points up of the lane's 62: half of 127 more.
@@ -267,9 +253,7 @@ fn a_drag_of_a_bar_in_the_lane_changes_the_velocity(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn escape_lets_go_of_a_drag_and_its_code_hears_nothing(cx: &mut TestAppContext) {
-    let Some(mut window) = open_roll(cx, &three_notes()) else {
-        return;
-    };
+    let mut window = open_roll(cx, &three_notes());
     let a = window.on_roll(100.0, 86);
     window.pointer_down(a, Modifiers::none(), 1);
     window.wait_for_bun();

@@ -10,10 +10,11 @@ use serde_json::Value;
 use sound_core::InstanceId;
 use std::sync::atomic::Ordering;
 
-use super::{Window, open_with_device, write};
+use super::{Opened, write};
 use crate::plugin_hosts::scanner;
 use crate::song::{HEADER, song_files};
 use crate::support::SimulatedInput;
+use crate::support::open_folder_with;
 
 const STUDIO: &str = r#"import { h, tool, type Declaration } from "./sdk";
 
@@ -48,7 +49,7 @@ fn tone(_: u64) -> [f32; 2] {
     [0.5, 0.25]
 }
 
-fn open_studio(cx: &mut TestAppContext) -> Option<(Window<'_>, SimulatedInput)> {
+fn open_studio(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedInput) {
     let folder = tempfile::tempdir().unwrap();
     let project = r#"{"format": 1, "extensions": [],
   "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
@@ -70,12 +71,11 @@ fn open_studio(cx: &mut TestAppContext) -> Option<(Window<'_>, SimulatedInput)> 
         open_input: Some(input.opener(cx.executor())),
         ..DeviceAccess::default()
     };
-    let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
-    let window = open_with_device(cx, folder, plugins, device)?;
-    Some((window, input))
+    let plugins = |_: &std::path::Path| Plugins::new(Vec::new(), scanner(), ScanCache::none());
+    (open_folder_with(cx, folder, plugins, device), input)
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     /// The records of the children of `studio` of `tool`, by name.
     fn made(&mut self, tool: &str) -> Vec<(String, Value)> {
         let session = self.session.clone();
@@ -98,16 +98,14 @@ impl Window<'_> {
         for _ in 0..frames.div_ceil(2_048) {
             self.loudest(2_048);
             input.write_until(self.engine.frames(), tone);
-            self.poll();
+            self.settle();
         }
     }
 }
 
 #[gpui::test]
 fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut TestAppContext) {
-    let Some((mut window, input)) = open_studio(cx) else {
-        return;
-    };
+    let (mut window, input) = open_studio(cx);
     // Armed from the view: the input opens before the song plays.
     let arm = window.until_found("div-arm");
     window.cx.simulate_click(arm, Modifiers::default());
@@ -178,10 +176,8 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
         open_input: Some(input.opener(cx.executor())),
         ..DeviceAccess::default()
     };
-    let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
-    let Some(mut window) = open_with_device(cx, folder, plugins, device) else {
-        return;
-    };
+    let plugins = |_: &std::path::Path| Plugins::new(Vec::new(), scanner(), ScanCache::none());
+    let mut window = open_folder_with(cx, folder, plugins, device);
     window.wait_for_bun();
     // The R of the voice, the fifth row: after its name, M and S in the header.
     let row = window.on_lane(0, 4);
@@ -205,7 +201,7 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
     assert_eq!(window.problems(), []);
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     fn song_regions(&mut self) -> usize {
         let session = self.session.clone();
         self.cx.read(|cx| {
@@ -222,9 +218,7 @@ impl Window<'_> {
 /// waits for ever.
 #[gpui::test]
 fn a_take_whose_input_cannot_open_keeps_its_notes(cx: &mut TestAppContext) {
-    let Some((mut window, input)) = open_studio(cx) else {
-        return;
-    };
+    let (mut window, input) = open_studio(cx);
     input.fails.store(true, Ordering::Relaxed);
     let arm = window.until_found("div-arm");
     window.cx.simulate_click(arm, Modifiers::default());
@@ -245,9 +239,7 @@ fn a_take_whose_input_cannot_open_keeps_its_notes(cx: &mut TestAppContext) {
 /// held is let go.
 #[gpui::test]
 fn a_recorder_deleted_while_it_takes_lets_go_of_the_input(cx: &mut TestAppContext) {
-    let Some((mut window, input)) = open_studio(cx) else {
-        return;
-    };
+    let (mut window, input) = open_studio(cx);
     let arm = window.until_found("div-arm");
     window.cx.simulate_click(arm, Modifiers::default());
     window.until("the input opens", |_| {

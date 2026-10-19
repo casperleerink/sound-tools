@@ -121,7 +121,7 @@ pub(crate) fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Opened<'_
     open_folder_with(cx, folder, no_plugins, DeviceAccess::default())
 }
 
-fn open_folder_with<'a>(
+pub(crate) fn open_folder_with<'a>(
     cx: &'a mut TestAppContext,
     folder: TempDir,
     host: impl FnOnce(&Path) -> Plugins,

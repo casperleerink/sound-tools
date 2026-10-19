@@ -612,6 +612,8 @@ static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
 static SENT_UPDATES: AtomicU64 = AtomicU64::new(0);
 static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
 static HEARD_BATCHES: AtomicU64 = AtomicU64::new(0);
+/// What every Bun of the process was told and has not done.
+static IN_FLIGHT: AtomicU64 = AtomicU64::new(0);
 static HEARD_BYTES: AtomicU64 = AtomicU64::new(0);
 /// What the last batch of ops cost: Bun's milliseconds and the window's microseconds to apply.
 static LAST_BUN_MICROS: AtomicU64 = AtomicU64::new(0);
@@ -630,6 +632,12 @@ pub fn sent_updates_and_events() -> (u64, u64) {
         SENT_UPDATES.load(Ordering::Relaxed),
         SENT_EVENTS.load(Ordering::Relaxed),
     )
+}
+
+/// Whether every Bun of this process did all it was told, for a test that waits for Bun before
+/// it says nothing happened.
+pub fn bun_answered_everything() -> bool {
+    IN_FLIGHT.load(Ordering::Relaxed) == 0
 }
 
 /// How many batches of ops the windows of this process applied, for a measurement of how long
@@ -778,6 +786,7 @@ impl Bun {
                 busy.since = Instant::now();
             }
             busy.pending += 1;
+            IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
         }
         let length = line.len() as u64;
         let sent = self.lines.try_send(line).is_ok();
@@ -793,8 +802,7 @@ impl Bun {
                 _ => 0,
             };
         } else {
-            let mut busy = lock();
-            busy.pending = busy.pending.saturating_sub(1);
+            done(&mut lock());
         }
         sent
     }
@@ -971,6 +979,14 @@ fn read(stdout: ChildStdout, said: &mpsc::Sender<Line>) {
 
 /// Hears what Bun `number` says after its load and passes its events on to `events`, and the
 /// answers of behaviours to them, until it hangs or stops, which [`Event::Ended`] says.
+/// One thing Bun was told is done, or will never be.
+fn done(busy: &mut Busy) {
+    if busy.pending > 0 {
+        busy.pending -= 1;
+        IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 fn hear(
     number: u64,
     heard: &mpsc::Receiver<Line>,
@@ -980,7 +996,12 @@ fn hear(
     let lock = || busy.lock().unwrap_or_else(PoisonError::into_inner);
     let ended = |why: String| {
         behaviours::ended(number, &why);
-        let blame = lock().runs.take();
+        let mut busy = lock();
+        while busy.pending > 0 {
+            done(&mut busy);
+        }
+        let blame = busy.runs.take();
+        drop(busy);
         // Outside the window nobody hears it.
         events.try_send(Event::Ended { blame, why }).ok();
     };
@@ -995,7 +1016,7 @@ fn hear(
             Ok(Line::Done) => {
                 let mut busy = lock();
                 busy.since = Instant::now();
-                busy.pending = busy.pending.saturating_sub(1);
+                done(&mut busy);
                 busy.runs = None;
             }
             // Code that says things in a loop that never ends says more than the window hears.

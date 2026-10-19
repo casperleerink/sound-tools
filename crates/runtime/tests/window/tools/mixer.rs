@@ -5,7 +5,7 @@
 use gpui::{TestAppContext, point, px};
 use serde_json::json;
 
-use super::{Window, open};
+use super::{Opened, open};
 
 const MIXER: &str = include_str!("../../../../../tooling/agent-eval/examples/mixer.tsx");
 const SWAY: &str = include_str!("../../../../../tooling/agent-eval/examples/sway.ts");
@@ -26,7 +26,7 @@ pub(super) fn strip_names(count: usize) -> Vec<String> {
 
 /// The mixer with `count` strips of tones, and a `sway` that swings the pan of the first strip
 /// in name order four times a second.
-pub(super) fn open_mixer(cx: &mut TestAppContext, count: usize) -> Option<Window<'_>> {
+pub(super) fn open_mixer(cx: &mut TestAppContext, count: usize) -> Opened<'_> {
     let project = json!({
         "format": 1,
         "extensions": ["tone", "utility"],
@@ -70,7 +70,7 @@ pub(super) fn open_mixer(cx: &mut TestAppContext, count: usize) -> Option<Window
     open(cx, &files)
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     /// Plays `frames` of the engine and draws a frame of the page.
     pub(super) fn play_and_draw(&mut self, frames: usize) {
         self.loudest(frames);
@@ -82,9 +82,7 @@ impl Window<'_> {
 fn a_meter_shows_the_level_of_its_strip_as_it_plays_and_asks_bun_for_nothing(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_mixer(cx, 4) else {
-        return;
-    };
+    let mut window = open_mixer(cx, 4);
     window.space_at("fader-kick");
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
@@ -102,9 +100,7 @@ fn a_meter_shows_the_level_of_its_strip_as_it_plays_and_asks_bun_for_nothing(
 fn a_fader_turns_the_volume_of_its_strip_as_one_undo_step_and_changes_no_node(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_mixer(cx, 4) else {
-        return;
-    };
+    let mut window = open_mixer(cx, 4);
     let fader = window.space_at("fader-bass") + point(px(20.), px(110.));
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
@@ -134,9 +130,7 @@ fn a_fader_turns_the_volume_of_its_strip_as_one_undo_step_and_changes_no_node(
 
 #[gpui::test]
 fn a_pan_knob_shows_the_pan_a_cable_plays_and_not_its_record(cx: &mut TestAppContext) {
-    let Some(mut window) = open_mixer(cx, 4) else {
-        return;
-    };
+    let mut window = open_mixer(cx, 4);
     // The first strip in name order.
     window.space_at("pan-bass");
     window.wait_for_bun();

@@ -10,14 +10,14 @@ use gpui::{
 use sound_core::Ticks;
 
 use super::song::open_song;
-use super::{Window, write_sine};
+use super::{Opened, write_sine};
 use crate::song::{ACROSS, BAR, HEADER};
 
 /// Points per tick in the note editor at zoom 1, and the height of its lane, as `clip-editor.tsx` has them.
 const EDITOR_ACROSS: f32 = 0.1;
 const EDITOR_LANE: f32 = 64.;
 
-impl Window<'_> {
+impl Opened<'_> {
     fn alt_click(&mut self, position: Point<Pixels>) {
         let modifiers = Modifiers {
             alt: true,
@@ -46,7 +46,8 @@ impl Window<'_> {
         self.click(item);
     }
 
-    /// Drops a second of a sine from the system on bar 3 of the audio track, the third row.
+    /// Drops a second of a sine from the system on bar 3 of the audio track, the third row, and
+    /// waits for it to be drawn as long as it plays.
     fn drop_sine(&mut self) {
         let files = tempfile::tempdir().unwrap();
         write_sine(files.path(), 0.5);
@@ -66,6 +67,15 @@ impl Window<'_> {
         self.cx
             .simulate_event(FileDropEvent::Submit { position: to });
         self.until("the region added", |window| window.has("song/voice/region"));
+        // Its width is what it says it plays, once its file is read.
+        let region = crate::support::id("song/voice/region");
+        self.until("the region's length", |window| {
+            window.project(|project| {
+                (project.watches(&region).iter())
+                    .any(|(name, watch)| name == "seconds" && watch.get() > 0.0)
+            })
+        });
+        self.wait_for_bun();
     }
 
     fn project_file(&mut self) -> serde_json::Value {
@@ -90,9 +100,7 @@ impl Window<'_> {
 
 #[gpui::test]
 fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 2, 2) else {
-        return;
-    };
+    let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     let add = window.until_found("div-add-track");
     window.click(add);
@@ -140,9 +148,7 @@ fn a_track_is_added_coloured_and_deleted_from_menus(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_track_head_dragged_onto_another_goes_before_it(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 3, 2) else {
-        return;
-    };
+    let mut window = open_song(cx, 3, 2);
     window.wait_for_bun();
     // By the left edge of a head, where none of its buttons is.
     let edge = point(px(HEADER / 2. - 2.), px(0.));
@@ -166,9 +172,7 @@ fn a_track_head_dragged_onto_another_goes_before_it(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_clip_is_renamed_copied_pasted_and_nudged(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 2, 2) else {
-        return;
-    };
+    let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 1);
     window.click_with(clip, MouseButton::Right);
@@ -206,9 +210,7 @@ fn a_clip_is_renamed_copied_pasted_and_nudged(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 2, 2) else {
-        return;
-    };
+    let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     let name = window.until_found("div-name-t00");
     window.click_with(name, MouseButton::Right);
@@ -250,7 +252,7 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     let at = window.on_lane(2 * BAR, 1);
     window.until_found("div-remove-t00-lane-cutoff");
     window.double_click(at);
-    let points = |window: &mut Window<'_>| {
+    let points = |window: &mut Opened<'_>| {
         window.record("song/t00/lane-cutoff")["points"]
             .as_array()
             .map(Vec::len)
@@ -277,9 +279,7 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
 
 #[gpui::test]
 fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 2, 2) else {
-        return;
-    };
+    let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 1);
     window.double_click(clip);
@@ -344,9 +344,7 @@ fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppCo
 
 #[gpui::test]
 fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 2, 2) else {
-        return;
-    };
+    let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     let ruler = window.space_at("ruler");
     let third = ruler + point(px((2 * BAR + 200) as f32 * ACROSS), px(8.));
@@ -401,9 +399,7 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
 
 #[gpui::test]
 fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 2, 2) else {
-        return;
-    };
+    let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     window.drop_sine();
     let region = window.record("song/voice/region");
@@ -427,9 +423,7 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
 /// clips do: the line under it lands where it lands, and the move is one undo step.
 #[gpui::test]
 fn a_clip_moved_on_its_track_takes_its_automation_along(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
+    let mut window = open_song(cx, 4, 12);
     let before = window.record("song/t00/lane-cutoff");
     // The cutoff starts at 6 kHz on tick 0, under the first clip of the first track.
     assert_eq!(before["points"][0]["tick"], 0);
@@ -463,9 +457,7 @@ fn a_clip_moved_on_its_track_takes_its_automation_along(cx: &mut TestAppContext)
 /// 120 bpm leaves half a second, read from what the region says it plays.
 #[gpui::test]
 fn a_region_trims_from_its_end(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 2, 2) else {
-        return;
-    };
+    let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     window.drop_sine();
     // A second at 120 bpm is two beats: its end, a little inside.
@@ -492,9 +484,7 @@ fn a_region_trims_from_its_end(cx: &mut TestAppContext) {
 /// those and only those.
 #[gpui::test]
 fn a_marquee_over_the_timeline_chooses_the_clips_under_it(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
+    let mut window = open_song(cx, 4, 12);
     window.wait_for_bun();
     // Between the first and second clips of each track (every clip is one or two bars), down
     // to the middle of the third track: the second clips of the first three tracks.
@@ -522,10 +512,8 @@ fn a_marquee_over_the_timeline_chooses_the_clips_under_it(cx: &mut TestAppContex
 /// start of the clip here, as one undo step.
 #[gpui::test]
 fn notes_are_copied_and_pasted_in_the_editor(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
-    let notes = |window: &mut Window| {
+    let mut window = open_song(cx, 4, 12);
+    let notes = |window: &mut Opened| {
         window.record("song/t00/c00")["notes"]
             .as_array()
             .map_or(0, Vec::len)
@@ -554,9 +542,7 @@ fn the_editor_of_a_clip_whose_file_has_no_notes_takes_its_keys(cx: &mut TestAppC
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
-    let Some(mut window) = super::open(cx, &files) else {
-        return;
-    };
+    let mut window = super::open(cx, &files);
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 0);
     window.double_click(clip);
@@ -570,10 +556,8 @@ fn the_editor_of_a_clip_whose_file_has_no_notes_takes_its_keys(cx: &mut TestAppC
 /// took away are no longer chosen: neither is a problem.
 #[gpui::test]
 fn the_editor_keeps_notes_inside_the_clip_and_forgets_what_an_undo_took(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 1, 1) else {
-        return;
-    };
-    let notes = |window: &mut Window| {
+    let mut window = open_song(cx, 1, 1);
+    let notes = |window: &mut Opened| {
         window.record("song/t00/c00")["notes"]
             .as_array()
             .map_or(0, Vec::len)
@@ -599,9 +583,7 @@ fn the_editor_keeps_notes_inside_the_clip_and_forgets_what_an_undo_took(cx: &mut
 /// A clip made shorter than its notes loses what starts past its new end, in one undo step.
 #[gpui::test]
 fn a_clip_made_shorter_cuts_what_starts_past_its_end(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 1, 1) else {
-        return;
-    };
+    let mut window = open_song(cx, 1, 1);
     window.wait_for_bun();
     let length = window.record("song/t00/c00")["length"].as_u64().unwrap();
     let clip = window.on_lane(BAR / 4, 0);
@@ -644,9 +626,7 @@ fn a_region_after_a_tempo_change_is_as_long_as_its_file_at_that_tempo(cx: &mut T
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
-    let Some(mut window) = super::open(cx, &files) else {
-        return;
-    };
+    let mut window = super::open(cx, &files);
     assert_eq!(
         window.project_file()["tempo_map"]["tempo_changes"][1]["bpm"],
         60.0

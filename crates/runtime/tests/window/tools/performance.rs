@@ -10,7 +10,7 @@ use gpui::{
 };
 
 use super::piano_roll::{ROW, open_roll};
-use super::{ONLY_THE_TOOL, Window, open};
+use super::{ONLY_THE_TOOL, Opened, open};
 
 /// `count` notes of a piano roll, all in a group the drag `move` moves, as selected notes are,
 /// with a colour of their own under the pointer.
@@ -49,7 +49,7 @@ fn print(what: &str, mut times: Vec<Duration>) {
     println!("{what}: mean {mean:?}, median {median:?}, worst {worst:?}");
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     /// One mouse event and the frame it causes.
     fn timed(&mut self, event: impl FnOnce(&mut Self)) -> Duration {
         let started = Instant::now();
@@ -87,7 +87,7 @@ impl Window<'_> {
     }
 }
 
-fn open_grid(cx: &mut TestAppContext, count: usize) -> Option<Window<'_>> {
+fn open_grid(cx: &mut TestAppContext, count: usize) -> Opened<'_> {
     let record = format!(r#"{{"tool": "grid", "state": {{"count": {count}}}}}"#);
     open(
         cx,
@@ -119,9 +119,7 @@ fn performance_of_a_page_of_many_shapes_2000(cx: &mut TestAppContext) {
 
 /// The new road: the window moves every note as the pointer goes, and Bun hears the end.
 fn measure(cx: &mut TestAppContext, count: usize) {
-    let Some(mut window) = open_grid(cx, count) else {
-        return;
-    };
+    let mut window = open_grid(cx, count);
     let roll = window.origin("space-roll");
     // The first note, and a place between notes.
     let (note, empty) = (
@@ -193,7 +191,7 @@ fn performance_of_the_piano_roll_of_20000_notes(cx: &mut TestAppContext) {
     measure_roll(cx, 20_000, 32);
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     /// Waits for the next batch of ops and its frame: how long from `started`, and what it cost.
     fn next_batch(&mut self, what: &str, started: Instant, batches: u64, bytes: u64) {
         while sound_typescript::heard_batches() == batches {
@@ -217,9 +215,7 @@ impl Window<'_> {
 fn measure_roll(cx: &mut TestAppContext, count: usize, rows: usize) {
     let bytes = sound_typescript::heard_bytes();
     let opened = Instant::now();
-    let Some(mut window) = open_roll(cx, &many_notes(count, rows)) else {
-        return;
-    };
+    let mut window = open_roll(cx, &many_notes(count, rows));
     let roll = window.space_at("roll");
     let (bun, apply) = sound_typescript::last_batch();
     println!(
@@ -365,9 +361,7 @@ fn performance_of_the_mixer_32(cx: &mut TestAppContext) {
 
 /// The mixer of `count` strips as it plays: a frame, and what it asks of Bun.
 fn measure_mixer(cx: &mut TestAppContext, count: usize) {
-    let Some(mut window) = super::mixer::open_mixer(cx, count) else {
-        return;
-    };
+    let mut window = super::mixer::open_mixer(cx, count);
     window.space_at("fader-master");
     window.until("the master meter to show a level", |window| {
         window.play_and_draw(800);
@@ -418,9 +412,7 @@ fn performance_of_a_song_of_100_tracks_of_100_clips(cx: &mut TestAppContext) {
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
     let opened = Instant::now();
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     let timeline = window.space_at("timeline");
     println!("{what}: opened and drawn in {:?}", opened.elapsed());
     window.wait_for_bun();
@@ -457,7 +449,7 @@ fn performance_of_a_song_of_100_tracks_of_100_clips(cx: &mut TestAppContext) {
     print(&format!("{what}: a frame as it zooms"), zooming);
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
-    window.poll();
+    window.settle();
     window.wait_for_bun();
     let playing: Vec<Duration> = (0..MOVES * 2)
         .map(|_| {
@@ -478,9 +470,7 @@ fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {
     let what = format!("{tracks} tracks of {clips} clips");
     let bytes = sound_typescript::heard_bytes();
     let opened = Instant::now();
-    let Some(mut window) = super::song::open_song(cx, tracks, clips) else {
-        return;
-    };
+    let mut window = super::song::open_song(cx, tracks, clips);
     let timeline = window.space_at("timeline");
     let (bun, apply) = sound_typescript::last_batch();
     println!(
@@ -607,7 +597,7 @@ fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {
     // Space is the song's key: its code plays the clock.
     let pressed = Instant::now();
     window.cx.simulate_keystrokes("space");
-    window.until("the song plays", Window::playing);
+    window.until("the song plays", Opened::playing);
     println!(
         "{what}: space until the clock plays: {:?}",
         pressed.elapsed()

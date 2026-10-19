@@ -1,26 +1,21 @@
 //! Tools of the project in the window, run by Bun: a key on a page and a note of the MIDI
 //! keyboard or the computer keys reach the code of a tool, and what it plays or changes comes
-//! back; a save of a tool keeps the sample it plays. Bun is not part of the build, so where it
-//! is not installed, these tests say so and pass.
+//! back; a save of a tool keeps the sample it plays.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AppContext, Entity, FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    Pixels, Point, TestAppContext, VisualTestContext, point,
+    FocusHandle, Focusable, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, Pixels, Point,
+    TestAppContext, point,
 };
 use midi::Played;
-use plugin_host::{Plugins, ScanCache};
-use runtime::window::{DeviceAccess, Shell, bind_keys};
-use runtime::{OFFLINE, views};
-use sound_core::{Changes, Engine, Problem};
+use runtime::OFFLINE;
+use runtime::window::DeviceAccess;
+use sound_core::{Changes, Problem};
 use sound_notes::{Pitch, Velocity};
-use sound_ui::{POLL_INTERVAL, Session};
-use tempfile::TempDir;
 
-use crate::plugin_hosts::scanner;
-use crate::support::{id, peak};
+use crate::support::{Opened, id, open_files, open_folder, peak};
 
 mod edits;
 mod gestures;
@@ -235,23 +230,12 @@ const TWO_LISTENERS: [(&str, &str); 4] = [
     ("extensions/listener.ts", LISTENER),
 ];
 
-struct Window<'a> {
-    _folder: TempDir,
-    engine: Engine,
-    plugins: Plugins,
-    session: Entity<Session>,
-    shell: Entity<Shell>,
-    cx: &'a mut VisualTestContext,
-}
-
 /// Opens the window, as the application does, on a project of these files and its tools.
-/// `None` without Bun.
-fn open<'a>(cx: &'a mut TestAppContext, files: &[(&str, &str)]) -> Option<Window<'a>> {
-    let folder = tempfile::tempdir().unwrap();
-    for (path, contents) in files {
-        write(folder.path(), path, contents);
-    }
-    open_folder(cx, folder)
+fn open<'a>(cx: &'a mut TestAppContext, files: &[(&str, &str)]) -> Opened<'a> {
+    let files: Vec<(String, String)> = (files.iter())
+        .map(|(path, contents)| ((*path).to_string(), (*contents).to_string()))
+        .collect();
+    open_files(cx, &files)
 }
 
 fn write(folder: &Path, path: &str, contents: &str) {
@@ -260,116 +244,29 @@ fn write(folder: &Path, path: &str, contents: &str) {
     std::fs::write(path, contents).unwrap();
 }
 
-/// [`open`] on a project folder that is written already.
-fn open_folder(cx: &mut TestAppContext, folder: TempDir) -> Option<Window<'_>> {
-    let plugins = Plugins::new(Vec::new(), scanner(), ScanCache::none());
-    open_with(cx, folder, plugins)
+/// [`open`] with a plugin host that finds the repository's test plugins.
+fn open_with_test_plugins<'a>(cx: &'a mut TestAppContext, files: &[(&str, &str)]) -> Opened<'a> {
+    let files: Vec<(String, String)> = (files.iter())
+        .map(|(path, contents)| ((*path).to_string(), (*contents).to_string()))
+        .collect();
+    let host = crate::plugin_hosts::test_plugin_host;
+    crate::support::open_with(cx, &files, host, DeviceAccess::default())
 }
 
-/// [`open_folder`] with a plugin host that finds the repository's test plugins.
-fn open_with_test_plugins<'a>(
-    cx: &'a mut TestAppContext,
-    files: &[(&str, &str)],
-) -> Option<Window<'a>> {
-    let folder = tempfile::tempdir().unwrap();
-    for (path, contents) in files {
-        write(folder.path(), path, contents);
-    }
-    let plugins = crate::plugin_hosts::test_plugin_host(folder.path());
-    open_with(cx, folder, plugins)
-}
-
-fn open_with(cx: &mut TestAppContext, folder: TempDir, plugins: Plugins) -> Option<Window<'_>> {
-    open_with_device(cx, folder, plugins, DeviceAccess::default())
-}
-
-/// [`open_with`] with what the window may open of the machine, such as an audio input.
-fn open_with_device(
-    cx: &mut TestAppContext,
-    folder: TempDir,
-    plugins: Plugins,
-    device: DeviceAccess,
-) -> Option<Window<'_>> {
-    if !sound_typescript::has_bun() {
-        eprintln!("skipped: Bun is not installed");
-        return None;
-    }
-    // Bun's answers wake the window's tasks from a thread of their own.
-    cx.executor().allow_parking();
-    let (control, engine) = Engine::new(OFFLINE);
-    let (project, extensions) =
-        runtime::open_with_extensions(folder.path(), control, plugins.clone()).unwrap();
-    assert_eq!(project.problems(), []);
-    cx.update(sound_ui::init);
-    let session = cx.new(|cx| Session::new(project, cx));
-    cx.update(bind_keys);
-    let (shell, cx) = cx.add_window_view({
-        let (session, plugins) = (session.clone(), plugins.clone());
-        move |window, cx| {
-            let (mut views, mut devices) = views(plugins.downgrade());
-            let extensions = extensions.unwrap();
-            sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
-            Shell::with_device(session, (views, devices), "Test".into(), device, window, cx)
-        }
-    });
-    cx.run_until_parked();
-    Some(Window {
-        _folder: folder,
-        engine,
-        plugins,
-        session,
-        shell,
-        cx,
-    })
-}
-
-impl Window<'_> {
+impl Opened<'_> {
     /// Runs the engine for `frames` and gives the loudest sample it played.
     fn loudest(&mut self, frames: usize) -> f32 {
-        let mut output = vec![0.0_f32; frames * OFFLINE.channels];
-        for buffer in output.chunks_mut(64 * OFFLINE.channels) {
-            self.engine.process_block(buffer);
-        }
-        peak(&output)
+        peak(&self.render(frames))
     }
 
-    /// One poll of the window, after a block of the engine: what Bun said is heard, and the
-    /// tick of the window runs.
-    fn poll(&mut self) {
-        self.loudest(64);
-        self.cx.executor().advance_clock(POLL_INTERVAL);
-        self.cx.run_until_parked();
-        let (session, plugins) = (self.session.clone(), self.plugins.clone());
-        (self.cx).update(|_, cx| runtime::window::tick(&session, &plugins, &mut 0, cx));
-    }
-
-    /// Polls until `done` holds: Bun answers on a thread of its own, in real time.
-    fn until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(5) {
-            self.poll();
-            if done(self) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("{what} did not happen within 5 s");
-    }
-
-    /// Polls for as long as Bun takes to answer, for a test that nothing happens.
+    /// Settles until Bun has answered everything it was told, twice over: what it answered may
+    /// tell it more. For a test that nothing happens.
     fn wait_for_bun(&mut self) {
-        for _ in 0..10 {
-            self.poll();
-            std::thread::sleep(Duration::from_millis(5));
+        for _ in 0..2 {
+            self.until("Bun answered", |_| {
+                sound_typescript::bun_answered_everything()
+            });
         }
-    }
-
-    /// The middle of a control that names itself for tests, after a whole frame. `None` when it
-    /// is not on screen.
-    fn find(&mut self, selector: &'static str) -> Option<Point<Pixels>> {
-        self.cx.update(|window, _| window.refresh());
-        self.cx.run_until_parked();
-        self.cx.debug_bounds(selector).map(|bounds| bounds.center())
     }
 
     fn focused(&mut self) -> FocusHandle {
@@ -395,7 +292,7 @@ impl Window<'_> {
     }
 
     /// Where the element of `selector` is, once the page drew it.
-    fn until_found(&mut self, selector: &'static str) -> Point<Pixels> {
+    fn until_found(&mut self, selector: &str) -> Point<Pixels> {
         let mut found = None;
         self.until(selector, |window| {
             found = window.find(selector);
@@ -409,7 +306,7 @@ impl Window<'_> {
         let session = self.session.clone();
         self.cx
             .update(|_, cx| session.update(cx, |session, _| session.engine().play()));
-        self.poll();
+        self.settle();
     }
 
     fn playing(&mut self) -> bool {
@@ -423,8 +320,8 @@ impl Window<'_> {
         let shell = self.shell.clone();
         let live = self.cx.read(|cx| shell.read(cx).live_input().clone());
         let input = self.cx.read(|cx| live.read(cx).midi_input()).unwrap();
-        self.poll();
-        self.poll();
+        self.settle();
+        self.settle();
         let pitch = Pitch::new(pitch).unwrap();
         let velocity = Velocity::new(100).unwrap();
         assert!(input.send(Played::On { pitch, velocity }));
@@ -432,24 +329,18 @@ impl Window<'_> {
 
     /// The record of `instance`.
     fn record(&mut self, instance: &str) -> serde_json::Value {
-        let session = self.session.clone();
-        let state = (self.cx)
-            .read(|cx| session.read(cx).project().state_json(&id(instance)))
-            .unwrap();
-        serde_json::from_str(&state).unwrap()
+        let state = self.project(|project| project.state_json(&id(instance)));
+        serde_json::from_str(&state.unwrap()).unwrap()
     }
 
     fn problems(&mut self) -> Vec<Problem> {
-        let session = self.session.clone();
-        self.cx.read(|cx| session.read(cx).project().problems())
+        self.project(sound_core::Project::problems)
     }
 }
 
 #[gpui::test]
 fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     assert_eq!(window.loudest(4_800), 0.0);
 
     window.cx.simulate_keystrokes("a");
@@ -460,7 +351,7 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 
     // The page has the keys, so space is the tool's and does not play.
     window.cx.simulate_keystrokes("space");
-    window.poll();
+    window.settle();
     assert!(!window.playing());
 
     let keystroke = Keystroke::parse("a").unwrap();
@@ -474,9 +365,7 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 fn the_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open(cx, &BEAT) else {
-        return;
-    };
+    let mut window = open(cx, &BEAT);
     let play = window.until_found("div-transport-play");
     window.wait_for_bun();
 
@@ -502,19 +391,17 @@ fn the_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
     window.until("the clock stops", |window| !window.playing());
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
-    window.until("the clock plays", Window::playing);
+    window.until("the clock plays", Opened::playing);
 }
 
 /// A key the main view does not name in `globalKeys` plays nothing: the app plays no key.
 #[gpui::test]
 fn space_does_nothing_in_a_project_whose_tool_does_not_take_it(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &COUNTER) else {
-        return;
-    };
+    let mut window = open(cx, &COUNTER);
     window.wait_for_bun();
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
-    window.poll();
+    window.settle();
     assert!(!window.playing());
 }
 
@@ -523,18 +410,16 @@ fn space_does_nothing_in_a_project_whose_tool_does_not_take_it(cx: &mut TestAppC
 fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open(cx, &COUNTER) else {
-        return;
-    };
+    let mut window = open(cx, &COUNTER);
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
-    let count = |window: &mut Window| window.record("counter")["count"].as_f64();
+    let count = |window: &mut Opened| window.record("counter")["count"].as_f64();
     // Clicked again until it counts: the first click may come before the first tree.
     for wanted in [1.0, 2.0] {
         window.until("the click counts", |window| {
             window.cx.simulate_click(middle, Modifiers::default());
             (0..40).any(|_| {
-                window.poll();
+                window.settle();
                 std::thread::sleep(Duration::from_millis(5));
                 count(window) == Some(wanted)
             })
@@ -547,16 +432,14 @@ fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
 /// The page draws again after its code hears a note or a key, and a click on it still runs.
 #[gpui::test]
 fn a_page_still_takes_clicks_after_its_code_hears_a_note_and_a_key(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EAR) else {
-        return;
-    };
+    let mut window = open(cx, &EAR);
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
-    let kept = |window: &mut Window, wanted: f64| {
+    let kept = |window: &mut Opened, wanted: f64| {
         window.until("the click keeps the count", |window| {
             window.cx.simulate_click(middle, Modifiers::default());
             (0..40).any(|_| {
-                window.poll();
+                window.settle();
                 std::thread::sleep(Duration::from_millis(5));
                 window.record("keys")["heard"].as_f64() == Some(wanted)
             })
@@ -571,9 +454,7 @@ fn a_page_still_takes_clicks_after_its_code_hears_a_note_and_a_key(cx: &mut Test
 /// The computer keys play as a MIDI keyboard, but a page that hears keys keeps them.
 #[gpui::test]
 fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     window.cx.simulate_keystrokes("secondary-k");
     window.cx.simulate_keystrokes("a");
     window.until("the key on the page", |window| {
@@ -587,14 +468,12 @@ fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestA
 /// the computer keys hold stays theirs, also where the system does not mark a repeat (X11).
 #[gpui::test]
 fn a_key_that_went_down_elsewhere_repeats_into_nothing_on_the_page(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     let page = window.focused();
     window.cx.simulate_keystrokes("secondary-k");
     // The keys play where the window wired them, and the tool hears what reaches it.
-    window.poll();
-    window.poll();
+    window.settle();
+    window.settle();
     window.focus_the_window();
     window.cx.simulate_keystrokes("a");
     window.until("the note of the computer keys", |window| {
@@ -611,9 +490,7 @@ fn a_key_that_went_down_elsewhere_repeats_into_nothing_on_the_page(cx: &mut Test
 /// keys.
 #[gpui::test]
 fn a_key_the_page_held_repeats_into_nothing_on_the_computer_keys(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     window.cx.simulate_keystrokes("secondary-k");
     window.cx.simulate_keystrokes("a");
     window.until("the key on the page", |window| {
@@ -627,9 +504,7 @@ fn a_key_the_page_held_repeats_into_nothing_on_the_computer_keys(cx: &mut TestAp
 
 #[gpui::test]
 fn a_held_key_comes_up_with_ctrl_held_and_when_cmd_goes_down(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     // macOS sends no key up while cmd is held.
     window.cx.simulate_keystrokes("a");
     window.until("the note of the key", |window| window.loudest(480) > 0.1);
@@ -651,9 +526,7 @@ fn a_held_key_comes_up_with_ctrl_held_and_when_cmd_goes_down(cx: &mut TestAppCon
 
 #[gpui::test]
 fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     // All six go to Bun before the edit of the first comes back.
     window.cx.simulate_keystrokes("q w e r t y");
     window.until("six keys in the record", |window| {
@@ -663,9 +536,7 @@ fn every_key_counts_when_the_keys_come_faster_than_bun_answers(cx: &mut TestAppC
 
 #[gpui::test]
 fn a_page_that_opens_leaves_the_focus_where_it_is(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &ONLY_THE_TOOL) else {
-        return;
-    };
+    let mut window = open(cx, &ONLY_THE_TOOL);
     // A control has the focus, as the composer of the agent does while it is typed in.
     let window_focus = window.cx.update(|window, cx| window.focused(cx));
     window.cx.simulate_keystrokes("tab");
@@ -683,7 +554,7 @@ fn a_page_that_opens_leaves_the_focus_where_it_is(cx: &mut TestAppContext) {
             })
         })
     });
-    window.poll();
+    window.settle();
     let shell = window.shell.clone();
     assert!(window.cx.read(|cx| shell.read(cx).main_view().is_some()));
     assert_eq!(window.cx.update(|window, cx| window.focused(cx)), focused);
@@ -691,9 +562,7 @@ fn a_page_that_opens_leaves_the_focus_where_it_is(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
+    let mut window = open(cx, &EXPERIMENT);
     // The keyboard plays into `keys`, the instance at the top.
     window.play_midi(64);
     window.until("the note in the record", |window| {
@@ -703,7 +572,7 @@ fn a_note_of_the_midi_keyboard_reaches_a_tool_at_the_top_and_still_sounds(cx: &m
     assert!(window.loudest(480) > 0.1);
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     fn select(&mut self, instance: &str) {
         let session = self.session.clone();
         let instance = id(instance);
@@ -714,9 +583,7 @@ impl Window<'_> {
 
 #[gpui::test]
 fn the_selected_tool_hears_the_keyboard_and_another_does_not(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &TWO_LISTENERS) else {
-        return;
-    };
+    let mut window = open(cx, &TWO_LISTENERS);
     window.select("one");
     window.play_midi(60);
     window.until("the note in the first", |window| {
@@ -724,7 +591,7 @@ fn the_selected_tool_hears_the_keyboard_and_another_does_not(cx: &mut TestAppCon
     });
     // Bun would have answered for both at once.
     for _ in 0..10 {
-        window.poll();
+        window.settle();
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(window.record("two")["last"], serde_json::Value::Null);
@@ -732,13 +599,11 @@ fn the_selected_tool_hears_the_keyboard_and_another_does_not(cx: &mut TestAppCon
 
 #[gpui::test]
 fn the_selected_tool_hears_the_computer_keys(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &TWO_LISTENERS) else {
-        return;
-    };
+    let mut window = open(cx, &TWO_LISTENERS);
     window.select("one");
     window.cx.simulate_keystrokes("secondary-k");
-    window.poll();
-    window.poll();
+    window.settle();
+    window.settle();
     window.cx.simulate_keystrokes("a");
     window.until("the note in the first", |window| {
         window.record("one")["last"] == 60
@@ -747,9 +612,7 @@ fn the_selected_tool_hears_the_computer_keys(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_tool_the_keyboard_leaves_hears_the_end_of_the_note_it_held(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &TWO_LISTENERS) else {
-        return;
-    };
+    let mut window = open(cx, &TWO_LISTENERS);
     window.select("one");
     window.play_midi(60);
     window.until("the note held in the first", |window| {
@@ -810,9 +673,7 @@ fn a_save_of_a_tool_keeps_its_sample_playing_and_does_not_read_it_again(cx: &mut
     write(&root, "state/player.json", record);
     write(&root, "extensions/player.ts", &player(1.0));
     write_sine(&root, 0.5);
-    let Some(mut window) = open_folder(cx, folder) else {
-        return;
-    };
+    let mut window = open_folder(cx, folder);
     let level = window.loudest(4_800);
     assert!((level - 0.5).abs() < 0.02, "{level}");
 
@@ -874,10 +735,8 @@ fn a_tool_whose_tick_hangs_is_a_problem_the_others_play_on_and_a_fix_brings_it_b
         ("extensions/heard.ts", heard.as_str()),
         ("extensions/stuck.ts", stuck.as_str()),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
-    let root = window._folder.path().to_path_buf();
+    let mut window = open(cx, &files);
+    let root = window.folder.path().to_path_buf();
     // The engine runs and the loops tick: Bun hangs in the tick of `stuck`.
     window.wait_for_bun();
 
@@ -940,13 +799,11 @@ tool({
         ("extensions/hum.ts", hum),
         ("extensions/lib/level.ts", "export const LEVEL = 0.5;\n"),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     let level = window.loudest(4_800);
     assert!((level - 0.5).abs() < 0.02, "{level}");
 
-    let root = window._folder.path().to_path_buf();
+    let root = window.folder.path().to_path_buf();
     write(
         &root,
         "extensions/lib/level.ts",
@@ -982,9 +839,7 @@ tool({
         ("state/flood.json", r#"{"tool": "flood", "state": {}}"#),
         ("extensions/flood.ts", flood),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.until("the flood among the problems", |window| {
         let problems = window.problems();
         problems
@@ -1024,9 +879,7 @@ tool({
         ("extensions/heard.ts", heard.as_str()),
         ("extensions/timer.ts", timer),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.until("the hang among the problems", |window| {
         !window.problems().is_empty()
     });
@@ -1082,11 +935,9 @@ fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestApp
         ("extensions/band.ts", BAND),
         ("extensions/drone.ts", DRONE),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     // A tenth of a second of the left channel: how often it rises through zero.
-    let rises = |window: &mut Window| {
+    let rises = |window: &mut Opened| {
         let mut output = vec![0.0_f32; 4_800 * OFFLINE.channels];
         window.engine.process_block(&mut output);
         let left: Vec<f32> = output.iter().step_by(OFFLINE.channels).copied().collect();
@@ -1179,19 +1030,17 @@ fn a_page_that_reads_whether_a_loop_plays_hears_nothing_as_it_moves_on(cx: &mut 
         ),
         ("extensions/launcher.ts", SHOWS_PLAYING),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.start_playing();
     for _ in 0..20 {
-        window.poll();
+        window.settle();
     }
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     // The phase moves on every block; whether it plays does not.
     for _ in 0..20 {
         window.loudest(4_800);
-        window.poll();
+        window.settle();
     }
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
 }
@@ -1226,10 +1075,8 @@ fn a_launch_sent_for_later_waits_for_its_time(cx: &mut TestAppContext) {
         ),
         ("extensions/launcher.ts", later.as_str()),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
-    let queued = |window: &mut Window| {
+    let mut window = open(cx, &files);
+    let queued = |window: &mut Opened| {
         let session = window.session.clone();
         let bass = id("launcher/bass");
         let watches = (window.cx).read(|cx| session.read(cx).project().watches(&bass));
@@ -1243,11 +1090,11 @@ fn a_launch_sent_for_later_waits_for_its_time(cx: &mut TestAppContext) {
         .cx
         .simulate_click(point(middle.width, middle.height), Modifiers::default());
     window.wait_for_bun();
-    window.poll();
+    window.settle();
     assert_eq!(queued(&mut window), Some(0.0));
     // Seven seconds on, it waits for the bar line after them.
     window.loudest(7 * 48_000 + 12_000);
-    window.poll();
+    window.settle();
     assert_eq!(queued(&mut window), Some(1.0));
     assert_eq!(window.problems(), []);
 }
@@ -1279,13 +1126,11 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
         ),
         ("extensions/launcher.ts", LAUNCHER),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.start_playing();
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
-    let queued = |window: &mut Window| {
+    let queued = |window: &mut Opened| {
         let session = window.session.clone();
         let bass = id("launcher/bass");
         let watches = (window.cx).read(|cx| session.read(cx).project().watches(&bass));
@@ -1298,7 +1143,7 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
     assert!(window.playing());
 
     // Frames from the bar line on, in blocks of 64 as the device asks: silent until it.
-    let to_the_bar = |window: &mut Window| {
+    let to_the_bar = |window: &mut Opened| {
         let session = window.session.clone();
         let status = window
             .cx
@@ -1407,9 +1252,7 @@ fn a_page_of_a_parent_plays_notes_on_two_children_and_the_controls_of_a_third(
         ("extensions/keys.ts", KEYS),
         ("extensions/drop.ts", DROP),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
     window.wait_for_bun();
@@ -1463,7 +1306,7 @@ tool({
 });
 "#;
 
-impl Window<'_> {
+impl Opened<'_> {
     /// The engine frame of the next block, the clock `time` and `at` count on.
     fn engine_frame(&mut self) -> u64 {
         let session = self.session.clone();
@@ -1503,16 +1346,14 @@ fn an_instrument_hears_the_timeline_of_its_parent_at_the_samples_it_sounds(
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.wait_for_bun();
     let start = window.engine_frame();
     let session = window.session.clone();
     (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().play()));
     // Past the last note: 2100 ticks, 25 frames each at 120 bpm.
     window.loudest(54_000);
-    let heard = |window: &mut Window| window.record("rack/instrument")["heard"].clone();
+    let heard = |window: &mut Opened| window.record("rack/instrument")["heard"].clone();
     window.until("every event of the clip", |window| {
         heard(window)
             .as_array()
@@ -1581,9 +1422,7 @@ fn a_controller_a_parent_sends_reaches_its_plugin_child_on_its_sample(cx: &mut T
         ("state/conductor/piano.json", plugin.as_str()),
         ("extensions/conductor.ts", CONDUCTOR_OF_A_PLUGIN),
     ];
-    let Some(mut window) = open_with_test_plugins(cx, &files) else {
-        return;
-    };
+    let mut window = open_with_test_plugins(cx, &files);
     window.until("the plugin", |window| window.problems().is_empty());
     window.cx.simulate_keystrokes("a");
     window.until("the time it was sent at", |window| {

@@ -4,16 +4,14 @@
 
 use gpui::TestAppContext;
 
-use super::{Window, open_folder};
+use super::{Opened, open_folder};
 use crate::song::BAR;
 
 #[gpui::test]
 fn a_new_daw_project_opens_its_song_and_plays(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
     runtime::templates::write(folder.path(), crate::song::daw()).unwrap();
-    let Some(mut window) = open_folder(cx, folder) else {
-        return;
-    };
+    let mut window = open_folder(cx, folder);
     window.wait_for_bun();
 
     // A track from "+ Track".
@@ -39,7 +37,7 @@ fn a_new_daw_project_opens_its_song_and_plays(cx: &mut TestAppContext) {
     // A clip drawn on the first track.
     let at = window.on_lane(BAR / 2, 0);
     window.double_click(at);
-    let clips = |window: &mut Window| {
+    let clips = |window: &mut Opened| {
         let session = window.session.clone();
         window.cx.read(|cx| {
             (session.read(cx).project().instances())
@@ -52,7 +50,7 @@ fn a_new_daw_project_opens_its_song_and_plays(cx: &mut TestAppContext) {
     // Space plays, through the song's own keys.
     window.focus_the_window();
     window.key_down("space", false);
-    window.until("playing", Window::playing);
+    window.until("playing", Opened::playing);
     assert_eq!(window.problems(), []);
 }
 
@@ -60,9 +58,7 @@ fn a_new_daw_project_opens_its_song_and_plays(cx: &mut TestAppContext) {
 fn three_returns_added_have_three_names(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
     runtime::templates::write(folder.path(), crate::song::daw()).unwrap();
-    let Some(mut window) = open_folder(cx, folder) else {
-        return;
-    };
+    let mut window = open_folder(cx, folder);
     for name in ["song/ret-a", "song/ret-b", "song/ret-c"] {
         let add = window.until_found("div-add-track");
         window.click(add);

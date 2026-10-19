@@ -4,7 +4,7 @@
 
 use gpui::TestAppContext;
 
-use super::{Window, open};
+use super::{Opened, open};
 
 /// A song whose page is as wide as the start of the clip `verse` of the track `piano`, over
 /// ten. `m` moves the verse a bar on, `d` takes the piano out, `a` adds a track with a clip.
@@ -78,7 +78,7 @@ const PROJECT: &str = r#"{"format": 1, "extensions": ["instrument"],
   "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
   "connections": [{"from": {"instance": "song", "port": "audio"}, "to": {"device_output": 0}}]}"#;
 
-fn open_song(cx: &mut TestAppContext) -> Option<Window<'_>> {
+fn open_song(cx: &mut TestAppContext) -> Opened<'_> {
     let files = [
         ("project.json", PROJECT),
         ("extensions/song.ts", SONG),
@@ -102,7 +102,7 @@ fn open_song(cx: &mut TestAppContext) -> Option<Window<'_>> {
     open(cx, &files)
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     /// The width of the space `probe`, once it shows.
     fn probe(&mut self) -> f32 {
         self.until("the probe", |window| window.find("space-probe").is_some());
@@ -111,15 +111,13 @@ impl Window<'_> {
     }
 
     fn exists(&self, path: &str) -> bool {
-        self._folder.path().join(path).exists()
+        self.folder.path().join(path).exists()
     }
 }
 
 #[gpui::test]
 fn a_page_reads_a_clip_of_a_track_and_an_edit_of_it_is_one_undo_step(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx) else {
-        return;
-    };
+    let mut window = open_song(cx);
     assert_eq!(window.probe(), 384.0);
 
     window.cx.simulate_keystrokes("m");
@@ -139,9 +137,7 @@ fn a_page_reads_a_clip_of_a_track_and_an_edit_of_it_is_one_undo_step(cx: &mut Te
 fn a_track_taken_out_goes_with_what_it_holds_and_one_added_comes_with_its_clips(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_song(cx) else {
-        return;
-    };
+    let mut window = open_song(cx);
     assert_eq!(window.probe(), 384.0);
 
     window.cx.simulate_keystrokes("d");

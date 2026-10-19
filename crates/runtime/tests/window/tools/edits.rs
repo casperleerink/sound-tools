@@ -1,24 +1,23 @@
 //! A tool edits its part of the project: its record and those of its children, from any of its
 //! code, on the records as they are when the edit lands.
 
-use std::time::Duration;
-
 use gpui::{Modifiers, TestAppContext, point};
 use sound_core::RUN_QUIET;
 
-use super::{EXPERIMENT, ONLY_THE_TOOL, Window, open, write};
+use super::{EXPERIMENT, ONLY_THE_TOOL, Opened, open, write};
 use crate::support::id;
 
-impl Window<'_> {
+impl Opened<'_> {
     /// The file at `path` in the project folder, if there is one.
     fn file(&self, path: &str) -> Option<String> {
-        std::fs::read_to_string(self._folder.path().join(path)).ok()
+        std::fs::read_to_string(self.folder.path().join(path)).ok()
     }
 
     /// Polls once the runs of edits went quiet, so they are written and undoable.
     pub(super) fn after_the_runs(&mut self) {
-        std::thread::sleep(RUN_QUIET + Duration::from_millis(50));
-        self.poll();
+        let later = std::time::Instant::now() + RUN_QUIET;
+        self.edit(|project| project.finish_quiet_runs_at(later));
+        self.settle();
     }
 
     pub(super) fn undo(&mut self) -> Option<String> {
@@ -27,12 +26,6 @@ impl Window<'_> {
             .update(|_, cx| session.update(cx, |session, cx| session.undo(cx)));
         self.cx
             .read(|cx| session.read(cx).project().redo_label().map(String::from))
-    }
-
-    pub(super) fn undo_label(&mut self) -> Option<String> {
-        let session = self.session.clone();
-        self.cx
-            .read(|cx| session.read(cx).project().undo_label().map(String::from))
     }
 
     fn middle(&mut self) -> gpui::Point<gpui::Pixels> {
@@ -80,9 +73,7 @@ fn the_edits_of_a_tick_land_as_one_undo_step_written_once(cx: &mut TestAppContex
         ("state/follow.json", record),
         ("extensions/follow.ts", FOLLOW),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.until("20 frames", |window| window.record("follow")["count"] == 20);
     // Live, but neither a step nor a write per frame.
     assert_eq!(window.file("state/follow.json").as_deref(), Some(record));
@@ -125,11 +116,9 @@ fn an_edit_after_an_await_keeps_an_edit_made_meanwhile(cx: &mut TestAppContext) 
         ("state/late.json", r#"{"tool": "late", "state": {}}"#),
         ("extensions/late.ts", LATE),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.cx.simulate_keystrokes("a");
-    window.poll();
+    window.settle();
     // The composer turns a knob while the code waits.
     let session = window.session.clone();
     window.cx.update(|_, cx| {
@@ -193,9 +182,7 @@ fn a_page_writes_the_notes_of_its_timeline_and_they_play(cx: &mut TestAppContext
         ),
         ("extensions/writer.ts", WRITER),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.start_playing();
     assert_eq!(window.loudest(9_600), 0.0);
 
@@ -252,7 +239,7 @@ tool({
 });
 "#;
 
-fn open_rack(cx: &mut TestAppContext) -> Option<Window<'_>> {
+fn open_rack(cx: &mut TestAppContext) -> Opened<'_> {
     let project = at_the_top("rack", "");
     let files = [
         ("project.json", project.as_str()),
@@ -270,9 +257,7 @@ fn open_rack(cx: &mut TestAppContext) -> Option<Window<'_>> {
 fn a_key_adds_a_child_and_takes_it_out_its_parent_plays_it_and_undo_brings_it_back(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
+    let mut window = open_rack(cx);
     assert_eq!(window.loudest(4_800), 0.0);
     window.cx.simulate_keystrokes("a");
     window.until("the new drone", |window| window.loudest(4_800) > 0.1);
@@ -295,9 +280,7 @@ fn a_key_adds_a_child_and_takes_it_out_its_parent_plays_it_and_undo_brings_it_ba
 
 #[gpui::test]
 fn a_child_its_tool_refuses_is_a_problem_and_nothing_of_the_edit_applies(cx: &mut TestAppContext) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
+    let mut window = open_rack(cx);
     window.cx.simulate_keystrokes("b");
     window.until("the refusal", |window| !window.problems().is_empty());
     let problems = window.problems();
@@ -388,10 +371,8 @@ fn a_frame_of_a_parent_of_300_takes_tells_bun_none_of_them_again(cx: &mut TestAp
             &take,
         );
     }
-    let Some(mut window) = super::open_folder(cx, folder) else {
-        return;
-    };
-    let frames = |window: &mut Window| window.record("shelf")["frames"].as_u64().unwrap_or(0);
+    let mut window = super::open_folder(cx, folder);
+    let frames = |window: &mut Opened| window.record("shelf")["frames"].as_u64().unwrap_or(0);
     window.until("the first frames", |window| frames(window) >= 5);
     let (first, sent) = (frames(&mut window), sound_typescript::sent_bytes());
     window.until("more frames", |window| frames(window) >= first + 20);
@@ -426,11 +407,9 @@ fn a_page_follows_its_room_when_the_window_resizes(cx: &mut TestAppContext) {
         ("state/room.json", r#"{"tool": "room", "state": {}}"#),
         ("extensions/room.ts", ROOM),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.until_found("div-room");
-    let width = |window: &mut Window| {
+    let width = |window: &mut Opened| {
         window.find("div-room");
         window
             .cx
@@ -475,9 +454,7 @@ fn an_edit_the_runtime_refuses_shows_no_more_once_it_is_heard(cx: &mut TestAppCo
         ("state/refused.json", r#"{"tool": "refused", "state": {}}"#),
         ("extensions/refused.ts", REFUSED),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     let narrow = window.until_found("div-box");
     window.click(narrow);
     window.until("the refusal", |window| !window.problems().is_empty());
@@ -526,9 +503,7 @@ fn a_child_swapped_for_another_gets_a_row_of_its_own(cx: &mut TestAppContext) {
         ("state/rows/b.json", r#"{"tool": "utility", "state": {}}"#),
         ("extensions/rows.tsx", ROWS),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     window.until_found("div-a");
     let swap = window.until_found("div-swap");
     window.click(swap);
@@ -567,9 +542,7 @@ fn a_record_of_another_tool_shows_as_that_tool(cx: &mut TestAppContext) {
         ("state/shape.json", r#"{"tool": "wide", "state": {}}"#),
         ("extensions/shapes.ts", WIDE_AND_NARROW),
     ];
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     let wide = window.until_found("div-box");
     let session = window.session.clone();
     window.cx.update(|_, cx| {

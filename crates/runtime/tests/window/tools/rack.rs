@@ -6,12 +6,12 @@ use gpui::{
 };
 use sound_ui::{Devices, Takes};
 
-use super::{Window, open};
+use super::{Opened, open};
 use crate::song::{BAR, song_files};
 
 /// The song of two tracks of a clip each, the first with a reverb `room` and a utility `trim` in its chain, with
 /// the devices of that track showing.
-fn open_rack(cx: &mut TestAppContext) -> Option<Window<'_>> {
+fn open_rack(cx: &mut TestAppContext) -> Opened<'_> {
     let mut files = song_files(2, 2);
     files.retain(|(path, _)| path != "state/song/t00/chain/instance.json");
     for (path, record) in [
@@ -27,18 +27,14 @@ fn open_rack(cx: &mut TestAppContext) -> Option<Window<'_>> {
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
-    let mut window = open(cx, &files)?;
+    let mut window = open(cx, &files);
     let name = window.until_found("div-name-t00");
     window.click(name);
     window.until_found("div-effect-room");
-    Some(window)
+    window
 }
 
-impl Window<'_> {
-    pub(super) fn click(&mut self, position: Point<Pixels>) {
-        self.click_with(position, MouseButton::Left);
-    }
-
+impl Opened<'_> {
     pub(super) fn click_with(&mut self, position: Point<Pixels>, button: MouseButton) {
         self.cx
             .simulate_mouse_move(position, None, Modifiers::default());
@@ -73,9 +69,7 @@ impl Window<'_> {
 
 #[gpui::test]
 fn a_knob_on_the_card_of_an_effect_turns_its_record_as_one_undo_step(cx: &mut TestAppContext) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
+    let mut window = open_rack(cx);
     let before = window.record("song/t00/chain/room");
     let knob = window.until_found("knob-size");
     window.press(knob);
@@ -93,9 +87,7 @@ fn a_knob_on_the_card_of_an_effect_turns_its_record_as_one_undo_step(cx: &mut Te
 fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
+    let mut window = open_rack(cx);
     let add = window.until_found("div-add-effect");
     window.click(add);
     // The menu lists what the window offers that takes sound, as a picker of the window does.
@@ -127,9 +119,7 @@ fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
 
 #[gpui::test]
 fn the_icons_of_an_effect_card_turn_it_off_and_take_it_out(cx: &mut TestAppContext) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
+    let mut window = open_rack(cx);
     let power = window.until_found("card-song/t00/chain/room-power");
     window.click(power);
     window.until("the room turned off", |window| {
@@ -149,9 +139,7 @@ fn the_icons_of_an_effect_card_turn_it_off_and_take_it_out(cx: &mut TestAppConte
 
 #[gpui::test]
 fn an_effect_dragged_onto_another_goes_before_it_as_one_undo_step(cx: &mut TestAppContext) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
+    let mut window = open_rack(cx);
     let room = window.until_found("div-effect-room");
     let trim = window.until_found("div-effect-trim");
     // By the header of its card, above the knobs, which take a drag themselves.
@@ -172,9 +160,7 @@ fn an_effect_dragged_onto_another_goes_before_it_as_one_undo_step(cx: &mut TestA
 
 #[gpui::test]
 fn a_track_is_renamed_in_a_text_field_and_space_types_there(cx: &mut TestAppContext) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
+    let mut window = open_rack(cx);
     let name = window.until_found("div-name-t00");
     window.double_click(name);
     window.cx.simulate_input("Bass");
@@ -198,9 +184,7 @@ fn a_track_is_renamed_in_a_text_field_and_space_types_there(cx: &mut TestAppCont
 
 #[gpui::test]
 fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
+    let mut window = open_rack(cx);
     assert!(window.has("song/t01/c00"));
     let clip = window.on_lane(BAR / 2, 1);
     window.wait_for_bun();

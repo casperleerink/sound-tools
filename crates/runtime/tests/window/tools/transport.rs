@@ -4,9 +4,9 @@
 use gpui::{Modifiers, TestAppContext, point, px};
 use sound_core::Ticks;
 
-use super::{BEAT, Window, open};
+use super::{BEAT, Opened, open};
 
-impl Window<'_> {
+impl Opened<'_> {
     fn tempo(&mut self) -> f64 {
         let session = self.session.clone();
         self.cx.read(|cx| {
@@ -18,9 +18,7 @@ impl Window<'_> {
 
 #[gpui::test]
 fn a_drag_on_the_tempo_of_the_transport_is_one_undo_step(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &BEAT) else {
-        return;
-    };
+    let mut window = open(cx, &BEAT);
     let tempo = window.space_at("transport-tempo") + point(px(10.), px(8.));
     window.press(tempo);
     window.drag_to(tempo + point(px(0.), px(-10.)));
@@ -36,9 +34,7 @@ fn a_drag_on_the_tempo_of_the_transport_is_one_undo_step(cx: &mut TestAppContext
 
 #[gpui::test]
 fn the_repeat_and_the_click_of_the_transport_are_no_edit(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &BEAT) else {
-        return;
-    };
+    let mut window = open(cx, &BEAT);
     let session = window.session.clone();
     let repeat = window.until_found("div-transport-repeat");
     window.cx.simulate_click(repeat, Modifiers::default());

@@ -2,18 +2,13 @@
 //! agent writes them. A clip moves as one file, a clip's notes are edited below it, a track
 //! mutes, and its meter follows the engine with nothing from Bun.
 
-use super::{Window, open};
+use super::{Opened, open};
 use crate::song::{ACROSS, BAR, HEADER, ROW, song_files};
 use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, ScrollDelta,
-    ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
+    Modifiers, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, point, px,
 };
 
-pub(super) fn open_song(
-    cx: &mut TestAppContext,
-    tracks: usize,
-    clips: usize,
-) -> Option<Window<'_>> {
+pub(super) fn open_song(cx: &mut TestAppContext, tracks: usize, clips: usize) -> Opened<'_> {
     let files = song_files(tracks, clips);
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
@@ -21,33 +16,11 @@ pub(super) fn open_song(
     open(cx, &files)
 }
 
-impl Window<'_> {
+impl Opened<'_> {
     /// Where `tick` is on the row of track `row` of the timeline, as it opens.
     pub(super) fn on_lane(&mut self, tick: u64, row: usize) -> Point<Pixels> {
         let timeline = self.space_at("timeline");
         timeline + point(px(tick as f32 * ACROSS), px(row as f32 * ROW + ROW / 2.))
-    }
-
-    pub(super) fn double_click(&mut self, position: Point<Pixels>) {
-        for click_count in [1, 2] {
-            self.cx
-                .simulate_mouse_move(position, None, Modifiers::default());
-            let (modifiers, button) = (Modifiers::default(), MouseButton::Left);
-            self.cx.simulate_event(MouseDownEvent {
-                position,
-                modifiers,
-                button,
-                click_count,
-                first_mouse: false,
-            });
-            self.cx.simulate_event(MouseUpEvent {
-                position,
-                modifiers,
-                button,
-                click_count,
-            });
-            self.cx.run_until_parked();
-        }
     }
 
     /// Every record of the song's clips, by id.
@@ -65,9 +38,7 @@ impl Window<'_> {
 
 #[gpui::test]
 fn a_clip_moves_on_the_grid_as_one_file_and_one_undo_step(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
+    let mut window = open_song(cx, 4, 12);
     let before = window.clips();
     // The second clip of the second track, half a bar into it.
     let at = window.on_lane(3 * BAR + BAR / 2, 1);
@@ -97,10 +68,8 @@ fn a_clip_moves_on_the_grid_as_one_file_and_one_undo_step(cx: &mut TestAppContex
 
 #[gpui::test]
 fn a_double_click_opens_a_clip_below_and_a_double_click_there_adds_a_note(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
-    let notes = |window: &mut Window| {
+    let mut window = open_song(cx, 4, 12);
+    let notes = |window: &mut Opened| {
         window.record("song/t00/c00")["notes"]
             .as_array()
             .map_or(0, Vec::len)
@@ -123,9 +92,7 @@ fn a_double_click_opens_a_clip_below_and_a_double_click_there_adds_a_note(cx: &m
 
 #[gpui::test]
 fn the_mute_of_a_track_mutes_its_mix_as_one_undo_step(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
+    let mut window = open_song(cx, 4, 12);
     let lane = window.on_lane(0, 2);
     // The M of the third track: after its name, in the header left of the timeline.
     let mute = point(lane.x - px(HEADER) + px(80.), lane.y);
@@ -143,9 +110,7 @@ fn the_mute_of_a_track_mutes_its_mix_as_one_undo_step(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
     // More tracks than the window is tall.
-    let Some(mut window) = open_song(cx, 40, 40) else {
-        return;
-    };
+    let mut window = open_song(cx, 40, 40);
     let timeline = window.space_at("timeline");
     window.wait_for_bun();
     // Only the heads that show are drawn.
@@ -172,9 +137,7 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn delete_removes_the_chosen_clip_and_space_still_plays(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
+    let mut window = open_song(cx, 4, 12);
     let clip = window.on_lane(3 * BAR + BAR / 2, 1);
     window.wait_for_bun();
     window.press(clip);
@@ -195,19 +158,17 @@ fn delete_removes_the_chosen_clip_and_space_still_plays(cx: &mut TestAppContext)
     assert_eq!(window.undo_label().as_deref(), Some("Remove clips"));
     // The page names its keys: space is not one of them, and plays as the song's global key.
     window.cx.simulate_keystrokes("space");
-    window.until("the song plays", Window::playing);
+    window.until("the song plays", Opened::playing);
 }
 
 #[gpui::test]
 fn space_plays_the_song_and_the_meters_follow_with_nothing_from_bun(cx: &mut TestAppContext) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
+    let mut window = open_song(cx, 4, 12);
     window.space_at("meter-t00");
     window.wait_for_bun();
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
-    window.until("the song plays", Window::playing);
+    window.until("the song plays", Opened::playing);
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let batches = sound_typescript::heard_batches();
@@ -227,9 +188,7 @@ fn space_plays_the_song_and_the_meters_follow_with_nothing_from_bun(cx: &mut Tes
 fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selection(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
+    let mut window = open_song(cx, 4, 12);
     window.wait_for_bun();
     window.play_midi(60);
     assert_eq!(window.loudest(4_800), 0.0);
@@ -239,7 +198,7 @@ fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selectio
     window.press(name);
     window.release(name);
     let session = window.session.clone();
-    let selected = |window: &mut Window| {
+    let selected = |window: &mut Opened| {
         (window.cx).read(|cx| session.read(cx).selected().map(ToString::to_string))
     };
     window.until("the track selected", |window| {
@@ -253,7 +212,7 @@ fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selectio
     window.press(clip);
     window.release(clip);
     let length = window.record("song/t00/c00")["length"].as_u64().unwrap();
-    let span = |window: &mut Window| (window.cx).read(|cx| session.read(cx).selected_span());
+    let span = |window: &mut Opened| (window.cx).read(|cx| session.read(cx).selected_span());
     window.until("the clip selected", |window| span(window).is_some());
     assert_eq!(
         span(&mut window),
@@ -286,9 +245,7 @@ fn main_in_the_project_file_shows_the_song_and_not_another_page(cx: &mut TestApp
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
-    let Some(mut window) = open(cx, &files) else {
-        return;
-    };
+    let mut window = open(cx, &files);
     let session = window.session.clone();
     let main = window
         .cx
@@ -303,9 +260,7 @@ fn main_in_the_project_file_shows_the_song_and_not_another_page(cx: &mut TestApp
 fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
     cx: &mut TestAppContext,
 ) {
-    let Some(mut window) = open_song(cx, 4, 12) else {
-        return;
-    };
+    let mut window = open_song(cx, 4, 12);
     window.wait_for_bun();
     let toggle = window.until_found("div-mixer-toggle");
     window.press(toggle);
