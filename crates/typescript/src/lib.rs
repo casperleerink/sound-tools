@@ -18,7 +18,7 @@ mod behaviours;
 mod bindings;
 mod bun;
 mod card;
-mod clip;
+mod timeline;
 mod live;
 #[cfg(test)]
 mod performance;
@@ -332,7 +332,7 @@ fn define(
 ) -> Vec<ToolInfo> {
     let mut infos: Vec<ToolInfo> = sounds.iter().map(|sounds| sounds.info().clone()).collect();
     // First, so a tool of the project of its name is the one refused.
-    let tools = [sequencer::json_tool(), clip::json_tool()].into_iter();
+    let tools = [sequencer::json_tool(), timeline::json_tool()].into_iter();
     let refused = define(
         tools
             .chain(sounds.into_iter().map(Sounds::json_tool))

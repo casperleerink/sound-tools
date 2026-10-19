@@ -1,13 +1,13 @@
 //! A song as tools of the project build one: a `song` whose children are tracks, and tracks
-//! whose children are a synth and `clip`s, each clip a record of its own that plays its notes at
-//! its place in the song.
+//! whose children are a synth and `timeline`s, the clips, each a record of its own that plays its
+//! notes at their positions in the song.
 
 use crate::owners::{closed, rendered_frames};
 use crate::support::{BAR, Harness, first_sound, write};
 
 const TOOLS: &str = r#"import { tool, type Declaration } from "./sdk";
 
-const parts = { synth: "instrument.synth", "*": "clip" } as const;
+const parts = { synth: "instrument.synth", "*": "timeline" } as const;
 
 export const track = tool({
   name: "track",
@@ -19,7 +19,7 @@ export const track = tool({
   behaviour: ({ children }): Declaration<typeof parts> => ({
     connections: [
       ...children
-        .filter((child) => child.tool === "clip")
+        .filter((child) => child.tool === "timeline")
         .map((clip) => ({ from: { child: clip.name, notes: "notes" }, to: { child: "synth", notes: "notes" } })),
       { from: { child: "synth" }, to: { port: "audio" } },
     ],
@@ -41,10 +41,10 @@ tool({
 });
 "#;
 
-/// A clip at `start` with one note `at` ticks into it.
+/// A clip, a `timeline` at `start`, with one note `at` ticks into it.
 fn clip(start: u64, at: u64) -> String {
     let note = format!(r#"{{"start": {at}, "length": 240, "pitch": 60, "velocity": 100}}"#);
-    format!(r#"{{"tool": "clip", "state": {{"start": {start}, "length": 3840, "notes": [{note}]}}}}"#)
+    format!(r#"{{"tool": "timeline", "state": {{"start": {start}, "length": 3840, "notes": [{note}]}}}}"#)
 }
 
 /// A song with the track `piano`, whose clip `verse` starts on the second bar with its note on
@@ -103,6 +103,13 @@ fn a_clip_moves_alone_a_second_track_plays_and_a_note_outside_its_clip_is_a_prob
     assert_eq!(first_sound(&played, first + 12_000).map(|frame| frame / 48), Some(1000));
     assert_eq!(harness.project.problems(), []);
 
+    // A timeline with no start and no length plays from the start of the song.
+    let free = r#"{"tool": "timeline", "state": {"notes": [{"start": 2880, "length": 240, "pitch": 60, "velocity": 100}]}}"#;
+    harness.write_and_apply("state/song/bass/line.json", free);
+    let played = harness.play_from_the_start(BAR);
+    let first = first_sound(&played, 0).unwrap();
+    assert_eq!(first_sound(&played, first + 12_000).map(|frame| frame / 48), Some(1500));
+
     // 4000 ticks is after the end of a clip of 3840.
     harness.write_and_apply("state/song/piano/verse.json", &clip(0, 4000));
     let problems = harness.project.problems();
@@ -111,7 +118,7 @@ fn a_clip_moves_alone_a_second_track_plays_and_a_note_outside_its_clip_is_a_prob
     };
     assert_eq!(problem.path, "state/song/piano/verse.json");
     assert!(
-        problem.message.contains("notes[0].start must be less than the clip length 3840"),
+        problem.message.contains("notes[0].start must be less than the length 3840"),
         "{problem:?}"
     );
 }

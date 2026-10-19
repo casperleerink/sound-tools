@@ -19,6 +19,9 @@ const COLOR = {
   white: "#d8dbe2", black: "#2a2d35",
 } as const;
 
+// The drags a selected note follows.
+const [MOVES, RESIZES, MOVES_OR_RESIZES, VELOCITY] = [["move"], ["resize"], ["move", "resize"], ["velocity"]];
+
 const isBlack = (pitch: number) => [1, 3, 6, 8, 10].includes(pitch % 12);
 const rowOf = (pitch: number) => 127 - pitch;
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
@@ -97,7 +100,7 @@ export const pianoRoll = tool({
   page: ({ state, memory, update, now, size }) => {
     const width = () => size.width - KEYS;
     const height = () => size.height - RULER - LANE - 2;
-    const [move, resize, velocity, marquee] = [now.drag("move"), now.drag("resize"), now.drag("velocity"), now.drag("marquee")];
+    const marquee = now.drag("marquee");
     // A note's shapes follow only its own place in the selection.
     const isPicked = selector(() => memory.selected);
 
@@ -169,27 +172,26 @@ export const pianoRoll = tool({
       }
     };
 
+    // A selected note moves and grows with the drags, natively, until its code hears the end.
     const noteShapes = (note: Note, index: Accessor<number>) => {
       const picked = memo(() => isPicked(index()));
       const row = () => rowOf(note.pitch);
       const end = () => note.start + note.length;
       const handle = () => Math.min(HANDLE, note.length / 3);
-      // A selected note moves with the drag, natively, until its code hears the end.
-      const x = (at: Accessor<number>) => () => (picked() ? move.dx.plus(at()) : at());
-      const y = () => (picked() ? move.dy.plus(row()) : row());
       const onPress = press(index);
       return [
-        <Rect x={x(() => note.start)} y={y} width={() => (picked() ? resize.dx.plus(note.length).max(STEP / 4) : note.length)} height={1} radius={2}
+        <Rect x={() => note.start} y={row} width={() => note.length} height={1} radius={2}
+          moves={() => (picked() ? MOVES : undefined)} grows={() => (picked() ? RESIZES : undefined)}
           color={() => (picked() ? COLOR.chosen : COLOR.note)} hover={() => (picked() ? undefined : COLOR.hover)} cursor="grab" drag={moveDrag} onPress={onPress} />,
-        <Rect x={() => (picked() ? move.dx.plus(resize.dx).plus(end() - handle()) : end() - handle())} y={y} width={handle} height={1}
+        <Rect x={() => end() - handle()} y={row} width={handle} height={1} moves={() => (picked() ? MOVES_OR_RESIZES : undefined)}
           color={COLOR.clear} cursor="ew-resize" drag={resizeDrag} onPress={onPress} anchor={() => ({ x: end() })} />,
       ];
     };
     const bar = (note: Note, index: Accessor<number>) => {
       const picked = memo(() => isPicked(index()));
-      const top = () => LANE - barHeight(note.velocity);
       return (
-        <Rect x={() => note.start} y={() => (picked() ? velocity.dy.plus(top()) : top())} width={() => Math.min(note.length, 120)} height={LANE}
+        <Rect x={() => note.start} y={() => LANE - barHeight(note.velocity)} width={() => Math.min(note.length, 120)} height={LANE}
+          moves={() => (picked() ? VELOCITY : undefined)}
           color={() => (picked() ? COLOR.chosen : COLOR.note)} cursor="ns-resize" drag={velocityDrag} onPress={press(index)} />
       );
     };

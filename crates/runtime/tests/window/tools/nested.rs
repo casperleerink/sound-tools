@@ -10,7 +10,7 @@ use super::{Window, open};
 /// ten. `m` moves the verse a bar on, `d` takes the piano out, `a` adds a track with a clip.
 const SONG: &str = r#"import { h, Space, tool, type Declaration } from "./sdk";
 
-const parts = { synth: "instrument.synth", "*": "clip" } as const;
+const parts = { synth: "instrument.synth", "*": "timeline" } as const;
 
 export const track = tool({
   name: "track",
@@ -22,7 +22,7 @@ export const track = tool({
   behaviour: ({ children }): Declaration<typeof parts> => ({
     connections: [
       ...children
-        .filter((child) => child.tool === "clip")
+        .filter((child) => child.tool === "timeline")
         .map((clip) => ({ from: { child: clip.name, notes: "notes" }, to: { child: "synth", notes: "notes" } })),
       { from: { child: "synth" }, to: { port: "audio" } },
     ],
@@ -45,7 +45,7 @@ tool({
     if (!down) return;
     if (key === "m") update("Move the verse", ({ children }) => {
       const verse = children.find((track) => track.name === "piano")?.children?.find((clip) => clip.name === "verse");
-      if (verse?.tool === "clip") verse.state.start += 3840;
+      if (verse?.tool === "timeline") verse.state.start += 3840;
     });
     if (key === "d") update("Take the piano out", (part) => {
       part.children = part.children.filter((track) => track.name !== "piano");
@@ -57,7 +57,7 @@ tool({
         state: {},
         children: [
           { name: "synth", tool: "instrument.synth", state: {} },
-          { name: "line", tool: "clip", state: { start: 0, length: 3840, notes: [] } },
+          { name: "line", tool: "timeline", state: { start: 0, length: 3840, notes: [] } },
         ],
       });
     });
@@ -68,7 +68,7 @@ tool({
       height: 20,
       width: () => {
         const verse = children.find((track) => track.name === "piano")?.children.find((clip) => clip.name === "verse");
-        return verse?.tool === "clip" ? verse.state.start / 10 : 1;
+        return verse?.tool === "timeline" ? verse.state.start / 10 : 1;
       },
     }),
 });
@@ -87,7 +87,7 @@ fn open_song(cx: &mut TestAppContext) -> Option<Window<'_>> {
         ("state/song/piano/synth.json", r#"{"tool": "instrument.synth", "state": {}}"#),
         (
             "state/song/piano/verse.json",
-            r#"{"tool": "clip", "state": {"start": 3840, "length": 3840, "notes": []}}"#,
+            r#"{"tool": "timeline", "state": {"start": 3840, "length": 3840, "notes": []}}"#,
         ),
     ];
     open(cx, &files)

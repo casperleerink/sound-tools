@@ -296,8 +296,9 @@ fn measure_roll(cx: &mut TestAppContext, count: usize, rows: usize) {
         return;
     };
     let roll = window.space_at("roll");
+    let (bun, apply) = sound_typescript::last_batch();
     println!(
-        "{count} notes: opened and drawn in {:?}, its first ops are {} bytes",
+        "{count} notes: opened and drawn in {:?}, its first ops are {} bytes; Bun {bun:.2} ms, apply {apply:.2} ms",
         opened.elapsed(),
         sound_typescript::heard_bytes() - bytes
     );

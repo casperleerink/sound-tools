@@ -1193,9 +1193,22 @@ impl Placing<'_> {
         }
     }
 
+    /// How far the drag that goes on moves a shape that follows it with `follows`.
+    fn followed(&self, follows: &Option<Vec<String>>) -> (f64, f64) {
+        match (self.sources.drag, follows) {
+            (Some((held, numbers)), Some(ids)) if ids.iter().any(|id| id == held) => {
+                (numbers.dx, numbers.dy)
+            }
+            _ => (0.0, 0.0),
+        }
+    }
+
     fn shape(&mut self, id: u64, shape: &tree::ShapeProps, (left, top): (f64, f64)) {
         let index = self.pointed.len();
         let hovered = self.hovered == Some(id);
+        let (moved_x, moved_y) = self.followed(&shape.moves);
+        let (left, top) = (left + moved_x, top + moved_y);
+        let (grown_x, grown_y) = self.followed(&shape.grows);
         let reach = |reach: &Option<Reach>| match reach {
             Some(Reach::Point([x, y])) => {
                 (left + self.sources.number(x), top + self.sources.number(y))
@@ -1213,8 +1226,8 @@ impl Placing<'_> {
                 Geometry::Rect {
                     x,
                     y,
-                    width: self.number(&shape.width),
-                    height: self.number(&shape.height),
+                    width: (self.number(&shape.width) + grown_x).max(0.0),
+                    height: (self.number(&shape.height) + grown_y).max(0.0),
                     radius: self.number(&shape.radius) as f32,
                     border: (shape.border)
                         .filter(|_| border_width > 0.0)

@@ -94,6 +94,9 @@ props! {
         on_press: bool,
         drag: u64,
         anchor: Axes,
+        /// The drags it moves with, and those it grows with, by their ids.
+        moves: Vec<String>,
+        grows: Vec<String>,
         hover: Color,
         cursor: Cursor,
         opacity: Num,

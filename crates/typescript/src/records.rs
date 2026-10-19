@@ -6,12 +6,12 @@
 use serde_json::Value;
 use sound_core::{FieldDoc, RecordSchema, ToolSchema, type_doc, unit_of};
 
-use crate::{clip, sequencer};
+use crate::{sequencer, timeline};
 
-/// The runtime's part of `sdk.ts` for the tools of `schemas`, the `sequencer` and the `clip`.
+/// The runtime's part of `sdk.ts` for the tools of `schemas`, the `sequencer` and the `timeline`.
 pub(crate) fn sdk_records(schemas: &[ToolSchema]) -> String {
-    let (sequencer, clip) = (sequencer::schema(), clip::schema());
-    let mut tools: Vec<&ToolSchema> = schemas.iter().chain([&sequencer, &clip]).collect();
+    let (sequencer, timeline) = (sequencer::schema(), timeline::schema());
+    let mut tools: Vec<&ToolSchema> = schemas.iter().chain([&sequencer, &timeline]).collect();
     tools.sort_by_key(|schema| schema.tool);
     let mut text = String::from(
         "

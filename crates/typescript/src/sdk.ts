@@ -2071,6 +2071,14 @@ interface Pointed {
   opacity?: Bind<Num>;
   /** The point a drag with `snap.grid` puts on the grid: its own `x` and `y` when left out, such as the end of a note for its resize handle. */
   anchor?: Bind<{ x?: number; y?: number }>;
+  /**
+   * The drags it moves with, by their `id`: while one goes on, it is `dx` across and `dy` down
+   * from its place, in the window, until its code answers the end. The selected notes of a piano
+   * roll: `moves={() => (picked() ? ["move"] : undefined)}`, one small change as the selection does.
+   */
+  moves?: Bind<readonly string[] | undefined>;
+  /** The drags that make it `dx` wider and `dy` taller while they go on, as `moves`: notes being resized. */
+  grows?: Bind<readonly string[] | undefined>;
 }
 
 /**
