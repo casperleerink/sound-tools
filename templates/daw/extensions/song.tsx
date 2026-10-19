@@ -345,7 +345,17 @@ export const song = tool({
       id: "resize",
       axis: "x",
       snap: { x: BEAT, grid: true },
-      onEnd: ({ dx }) => editClips("Resize clips", memory.selected, (clip) => (clip.length = Math.max((clip.length ?? BAR) + dx, BEAT))),
+      onEnd: ({ dx }) =>
+        editClips("Resize clips", memory.selected, (clip) => {
+          const length = Math.max((clip.length ?? BAR) + dx, BEAT);
+          // What starts at or past its new end is cut: a timeline plays nothing there.
+          clip.length = length;
+          clip.notes = clip.notes.filter((note) => note.start < length);
+          clip.pedal = clip.pedal.filter((change) => change.start < length);
+          clip.bend = clip.bend.filter((point) => point.tick < length);
+          clip.mod_wheel = clip.mod_wheel.filter((point) => point.tick < length);
+          clip.pressure = clip.pressure.filter((point) => point.tick < length);
+        }),
     };
 
     const clipMenu = async (key: string) => {

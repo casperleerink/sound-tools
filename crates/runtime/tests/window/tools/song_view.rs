@@ -573,3 +573,30 @@ fn the_editor_keeps_notes_inside_the_clip_and_forgets_what_an_undo_took(cx: &mut
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
+
+/// A clip made shorter than its notes loses what starts past its new end, in one undo step.
+#[gpui::test]
+fn a_clip_made_shorter_cuts_what_starts_past_its_end(cx: &mut TestAppContext) {
+    let Some(mut window) = open_song(cx, 1, 1) else {
+        return;
+    };
+    window.wait_for_bun();
+    let length = window.record("song/t00/c00")["length"].as_u64().unwrap();
+    let clip = window.on_lane(BAR / 4, 0);
+    window.click(clip);
+    window.after_the_runs();
+    let end = window.on_lane(length, 0) - point(px(2.), px(0.));
+    let half = px((length / 2) as f32 * ACROSS);
+    window.press(end);
+    window.drag_to(end - point(half / 2., px(0.)));
+    window.drag_to(end - point(half, px(0.)));
+    window.release(end - point(half, px(0.)));
+    window.until("the clip shorter", |window| {
+        window.record("song/t00/c00")["length"].as_u64() < Some(length)
+    });
+    let record = window.record("song/t00/c00");
+    let short = record["length"].as_u64().unwrap();
+    let starts = record["notes"].as_array().unwrap().iter().map(|note| note["start"].as_u64().unwrap());
+    assert!(starts.into_iter().all(|start| start < short), "{record}");
+    assert_eq!(window.problems(), []);
+}
