@@ -434,3 +434,44 @@ Goal: the engine blocks a TS arrangement still lacked, each a child that compose
 **Not done:** expression lanes of notes; layers of regions; regions in the song's length (the `end` hook gets no file); exact placement of a recorder fed by something other than the machine input (it records the input, not its audio port); the arrangement's pill is still its own recorder of takes.
 
 **Too specific (to revisit)**, new: `"*"` names one tool, so a track cannot hold both timelines and regions under any name; a named child is required, so a lane or recorder cannot be optional.
+
+### Round 10
+
+Goal: the view blocks a TS arrangement still lacked, as general elements: native where focus, the system or a popover needs it, TS for the rest.
+
+| Block | What it is | Native part |
+| --- | --- | --- |
+| `<DeviceCard path>` | the card of any instance below the tool, by its path: a built-in device's own card, a plugin's, a tool's view; power and close icons with `onPower`/`onClose` | `Views::card_of` with a `CardFrame`, kept per node |
+| `offers(takes)`, `addOffer(key, path, label)` | what the window offers that takes notes or audio, and putting one at a child's path as one undo step | the pickers' `Devices`, now asked by what a device takes (`Takes::{Notes, Audio}`), not by a slot of a track |
+| `openMenu(items)` | a menu where the pointer is; resolves to the item's place or `null` | `DropdownMenu` with `Trigger::Pointer`, one per card |
+| `<Input value onCommit>` | a text field; tells its text on enter or blur, escape takes it back | `TextInput`; the card's keys and the window's global keys skip it |
+| `onDrop`, `carry` | a div or a space hears audio files from the system (copied into `assets/audio/`, where they fell in units) and what a dragged div carries | GPUI's `ExternalPaths` and its drag and drop |
+| right click | `onPress` of a div now hears the right button too; a space already did | |
+
+**Choices:**
+- Reorder is a drop, not a new drag kind: a div `carry`s a name to a div that hears drops, as the Rust track panel drags effects. One concept for files and rows.
+- A menu, the offers and the file chooser answer a promise, so code reads top to bottom: `const picked = await openMenu(...)`.
+- Device chains are a generic project tool, `chain` (`tooling/agent-eval/examples/chain.ts`): children in the order a record names, each on or off. It names no `children`, so any device may be one; the track wires through it only when it plays something.
+
+**The song** shows the devices of the chosen track under the timeline: the synth, the filter and the chain's effects as their own cards, "+ Effect" from the window's offers, power and close icons, effects dragged onto each other to reorder. Double-click a track's name to rename it (a `title` field). Right click a clip for a menu (edit notes, copy on, delete). Audio files dropped on the timeline become regions of the audio track where they fell.
+
+**A core fix the tests found:** two labels of one tool within a second, both changing one record (turn an effect off, then take another out), landed in the first's undo step: runs were per label and the record was held by the older one. A run of another label of the same editor now ends the open one first (`project/runs.rs`, with a test). This is what ARCHITECTURE.md already says.
+
+**Tests:** window (`tools/rack.rs`): a knob on an embedded reverb card turns its record, one undo step; "+ Effect" picks Reverb from the menu of offers into the chain, one undo step; the power and close icons; an effect dragged onto another goes before it, one step; a track renamed in a field where space types and plays nothing, one step; a clip's menu deletes it; a WAV dropped on the audio row becomes a region at its bar. Core: another label ends a run. All earlier song tests pass. Snapshot `typescript-song.png` shows the rack: synth, filter, a reverb with its icons and a utility turned off.
+
+**Numbers** (M1 Max, release-fast):
+
+| Song | Idle frame | Idle, devices showing | Dragging a clip | Playing, meters | Clip release until drawn |
+| --- | --- | --- | --- | --- | --- |
+| 12 tracks / 150 clips | 1.7 ms | 2.3 ms | 2.4 ms | 2.4 ms | 13 ms |
+| 24 tracks / 600 clips | 4.2 ms | 3.3 ms | 3.4 ms | 3.3 ms | 22 ms |
+
+Three Rust cards add about 0.6 ms a frame; with them the timeline shows fewer rows, so the larger song's frame got cheaper. Bun gets 0 requests while dragging or playing.
+
+**Found, not fixed:**
+- A div does not scroll: a long rack runs off the window ("+ Effect" with it). Only spaces scroll.
+- A timeline clip has no title field, so the clip menu has no rename.
+- A behaviour that reads a child's `children` reruns when anything below the parent changes: the track's behaviour read the chain's children and reran on a clip move. Reading them only when needed avoids it; read tracking per nested list would fix it.
+- Embedded card titles are plain labels, not the window's pickers: swapping the synth for another instrument is `addOffer` on its path, without a picker on the card.
+
+**Too specific (to revisit)**, now done: `Slot` in the pickers. Still open: notes as the only event kind, `devices` as only in-code effects, `"*"` naming one tool, required named children.
