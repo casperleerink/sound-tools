@@ -294,10 +294,6 @@ function sound(spec: Spec, choices: Choices): Graph {
 }
 
 /**
- * Answers what the behaviour of a parent declares for its record and its children as the
- * runtime told them, which its question is for: not with the edits this Bun sent since.
- */
-/**
  * What a behaviour read of its record and its children: the fields of its own state, and the
  * fields of any child's state, each `null` when it read them all, as `Object.keys` does. The
  * names and tools of its children always count. The runtime asks again only when one of these
@@ -344,6 +340,10 @@ function notingChildren(children: OwnedChild[], into: { fields: Set<string> | nu
   });
 }
 
+/**
+ * Answers what the behaviour of a parent declares for its record and its children as the
+ * runtime told them, which its question is for: not with the edits this Bun sent since.
+ */
 function declare({ question, tool, instance }: Extract<Request, { type: "behaviour" }>) {
   const own = { fields: new Set<string>() as Set<string> | null };
   const inside = { fields: new Set<string>() as Set<string> | null };

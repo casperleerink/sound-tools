@@ -81,7 +81,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_template_writes_into_a_new_folder_only_with_every_extension() {
+    fn a_template_writes_into_a_new_folder_only_with_what_it_plays() {
         let daw = named("DAW").unwrap();
         let folder = tempfile::tempdir().unwrap();
         let new = folder.path().join("new");
@@ -90,10 +90,9 @@ mod tests {
         assert!(!new.join("template.json").exists());
         let file = std::fs::read_to_string(new.join(PROJECT_FILE)).unwrap();
         let file: serde_json::Value = serde_json::from_str(&file).unwrap();
-        let enabled: Vec<&str> = (file["extensions"].as_array().unwrap().iter())
-            .filter_map(serde_json::Value::as_str)
-            .collect();
-        assert_eq!(enabled, crate::bundled_extensions().unwrap());
+        // Its tracks play the synth of the `instrument` extension, which it enables.
+        let enabled = file["extensions"].as_array().unwrap();
+        assert!(enabled.contains(&"instrument".into()), "{enabled:?}");
 
         // A project, or someone's files: nothing is written, and the error says why.
         let error = write(&new, daw).unwrap_err();

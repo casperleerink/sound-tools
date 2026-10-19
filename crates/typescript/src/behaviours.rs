@@ -332,8 +332,6 @@ pub(crate) fn ended(number: u64, why: &str) {
     STORE.1.notify_all();
 }
 
-/// The instances of the project of `assets` whose behaviour Bun answered since the last call,
-/// to run again: they find the answer.
 /// Lets go of what is kept for the owners of `project` that are gone.
 pub(crate) fn forget_gone(project: &sound_core::Project) {
     let assets = project.assets();

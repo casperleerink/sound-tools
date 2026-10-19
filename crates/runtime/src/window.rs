@@ -81,8 +81,7 @@ const NOTICE_WIDTH: f32 = 400.;
 /// The window of the design: a 13 to 14 inch MacBook, less its menu bar.
 const WINDOW_WIDTH: f32 = 1470.;
 const WINDOW_HEIGHT: f32 = 920.;
-/// The smallest window: the project menu, the whole transport of a fitted project beside it,
-/// and a track panel with room for a card.
+/// The smallest window: the project menu beside a tool's page with room for a card.
 const MIN_WINDOW_WIDTH: f32 = 1100.;
 const MIN_WINDOW_HEIGHT: f32 = 640.;
 /// The left panel has one width, so the main area keeps the width it was designed for.

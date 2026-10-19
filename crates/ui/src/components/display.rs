@@ -23,8 +23,7 @@
 //! handles with their values, and hears what a handle moves.
 //!
 //! A display can also show a waveform under its curve, with the part outside two lines shaded
-//! and a green line where the sound plays: that is the waveform display of the Clip card and
-//! the Sampler, see [`waveform_display`](super::waveform_display).
+//! and a green line where the sound plays: that is the waveform display of the Sampler, see [`waveform_display`](super::waveform_display).
 
 use std::rc::Rc;
 use std::sync::Arc;

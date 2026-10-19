@@ -8,7 +8,7 @@ Sound Tools becomes a small core plus a TypeScript SDK with few concepts and man
 
 - **Few concepts.** Anything that can be a child or a helper is one. Change the cut when the work shows a better one; every new concept needs a reason.
 - **Rust builds blocks, TS owns structure.** Rust is welcome for blocks the SDK uses as children: a reverb, a synth, a sampler, the plugin host, timeline, recorder, audio and MIDI in and out, meters. A block composes through ports and knows no DAW idea. Rust never owns how a tool or project is organised: no tracks, clips, mixer layout, transport bar or views that decide a workflow.
-- **The core knows no music beyond the clock:** position, tempo map, start, stop, jump, a repeat range. What play or record means, the transport bar and every musical key are SDK or project code. The app keeps only app and file shortcuts and machine settings.
+- **The core knows no music beyond the clock:** position, tempo map with its sections (a change of time signatures moves them), start, stop, jump, a repeat range. What play or record means, the transport bar and every musical key are SDK or project code. The app keeps only app and file shortcuts and machine settings.
 - **Motion never crosses to Bun; structure updates are fine-grained.** The mechanism is open: change it when a measurement says so.
 - **TS tools run unchanged on any OS, with no build.**
 - **Typed end to end.** Misuse is a type error, or an error that says the fix.
@@ -45,7 +45,7 @@ Settled during rounds 1–14; the round-by-round log is in git history. The last
 - **One road to a built-in effect: a child.** `devices.reverb(...)` inside a `sound` was removed: a second road with its own types, checks and engine ports.
 - **Clock in the core, everything musical outside it.** `clock.play/pause/stop/jump(to, { atTick })/setRepeat/setClick/update`; the transport bar is ~50 lines of SDK; space plays only where a tool's `globalKeys` takes it.
 - **Device in and out stay `project.json` connection ends.** An `audio-out` child would need the parent's own sound as a source, which ARCHITECTURE rejects (`ownSound`).
-- **`--only <path>`** plays one instance's sound by rerouting `project.json` in memory; `--solo` named tracks.
+- **`--only <path>`** plays one instance's sound by rerouting `project.json` in memory.
 - **Solo is a cable:** a `lane` holding -1000 dB into every other track's fader gain. Pre-fader sends are the return's choice.
 - **No compiled extensions.** Rejected: rebuilding the app, wasm or dylibs from a project: Xcode tools or MSVC and a build when a project opens.
 - **Templates:** a folder of `templates/` is a template; Bare and DAW. The Rust arrangement, `arrangement_wiring` and fit-tempo are deleted.
@@ -76,7 +76,6 @@ M1 Max, release-fast. Repeat with `projects/render_cost.rs` and the ignored test
 - A clip moved to another track is a delete and a create: a record's id is its path.
 - Copied notes and copied clips are two clipboards.
 - `"*"` and named children cannot be optional.
-- Notes are the only event kind. A second waits for a tool that needs one.
 - Inline TS tools in Rust tests are not type-checked: some are wrong on purpose and need a mark first.
 - Headless snapshots show no meter motion.
 - Recording paths with no test that fails without them: the old clock closing a take at a tempo change, missed events and falling behind reported, a take held while Bun restarts, questions numbered per Bun.

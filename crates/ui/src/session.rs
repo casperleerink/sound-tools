@@ -142,7 +142,7 @@ impl Session {
         &self.playhead
     }
 
-    /// Recording audio as the views see it: the armed tracks, the input level and the takes
+    /// Recording audio as the views see it: the armed recorders, the input level and the takes
     /// while they grow. Its own entity, like the playhead, because the level changes every poll.
     pub fn recording(&self) -> &Entity<Recording> {
         &self.recording
@@ -154,13 +154,12 @@ impl Session {
         self.status
     }
 
-    /// The instance the composer is working on, such as the track whose header was clicked
-    /// last. It is interface state: nothing is saved and there is no undo step.
+    /// The instance the composer is working on, as the view that chose it last says. It is
+    /// interface state: nothing is saved and there is no undo step.
     ///
     /// The view that owns a selection publishes it here, and anything outside that view reads
-    /// it. Live MIDI input plays into the instrument of the selected track, and the window
-    /// wires that, so the extension that owns the tracks and the one that reads the keyboard
-    /// need nothing of each other.
+    /// it. Live MIDI input plays into the selected instance, and the window wires that, so the
+    /// tool that chooses and the one that reads the keyboard need nothing of each other.
     pub fn selected(&self) -> Option<&InstanceId> {
         self.selected.as_ref()
     }

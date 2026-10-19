@@ -288,7 +288,7 @@ impl Devices {
 
     /// Adds a source of instruments. It is asked every time a picker is filled, not while the
     /// window opens, so a source that has to look at this machine pays for it when a composer
-    /// opens a track panel and not before.
+    /// opens a picker and not before.
     pub fn instruments(&mut self, list: impl Fn() -> Vec<DeviceOffer> + 'static) {
         self.instruments.push(Rc::new(list));
     }

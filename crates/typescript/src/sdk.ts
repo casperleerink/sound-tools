@@ -1835,15 +1835,15 @@ function sameShallow(a: unknown, b: unknown): boolean {
   return keys.length === Object.keys(right).length && keys.every((key) => sameShallow(left[key], right[key]));
 }
 
-/**
- * Makes `target` hold what `next` holds, keeping each object that stays, so only bindings of
- * what changed run. A list of the same length keeps its items by place, so a moved note is the
- * same note, unless a child there has another name; one that grew or shrank keeps the items that did not change by what they hold, so
- * a note deleted before others leaves them be.
- */
 /** The value each part of a store was last made like: one given again is the same, and is not walked. */
 const madeFrom = new WeakMap<object, object>();
 
+/**
+ * Makes `target` hold what `next` holds, keeping each object that stays, so only bindings of
+ * what changed run. A list of the same length keeps its items by place, so a moved note is the
+ * same note, unless a child there has another name; one that grew or shrank keeps the items
+ * that did not change by what they hold, so a note deleted before others leaves them be.
+ */
 function reconcile(target: Record<PropertyKey, unknown>, next: Record<PropertyKey, unknown>) {
   // Frozen values are kept as they are, so a record that did not change, and all it holds, is
   // the same object as last time: the clips of the tracks an edit left alone.
@@ -2284,12 +2284,12 @@ function longestRising(values: number[]): number[] {
   return run.reverse();
 }
 
-/** Shows `children` while `when` holds, else `fallback`: made again each time it shows. */
 /** Several children where one goes, as `<>…</>` writes them: a component that gives two shapes. */
 export function Fragment(props: { children?: Child }): Region {
   return { mount: (into, family) => materialize(props.children, into, family) };
 }
 
+/** Shows `children` while `when` holds, else `fallback`: made again each time it shows. */
 export function Show(props: { when: Accessor<unknown>; children: () => Child; fallback?: () => Child }): Region {
   return {
     mount(into, family) {
