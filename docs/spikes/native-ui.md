@@ -536,3 +536,51 @@ Engine parity and speed: the render gap closed to within 10 %, timelines carry a
 The rest of the render gap is the engine's work per step: the TS song has about three times the steps of the arrangement (a timeline per clip, a feed per instrument, a cable per lane, a fader per send), and a resting step still costs its check. `render_cost_of_the_arrangement_alone` profiles the arrangement beside `render_cost_of_the_song_alone`.
 
 **Too specific (to revisit):** lanes only on a timeline that plays once.
+
+### Round 11c
+
+View parity of the TS song with main's arrangement views, in project code (`tooling/agent-eval/examples/song.tsx`, `track.ts`, and a new `clip-editor.tsx`), adding SDK pieces only where a general one was missing.
+
+**SDK pieces, each general:**
+- `numbers(path)`: what a lane or a cable can move of a child, with its range and scale (`project.automatable`). A menu that adds a lane needs it; nothing about tracks.
+- `scroll: "x" | "y"` in a div's style: a long rack or mixer scrolls. The box keeps the size, the children keep theirs.
+- `title` on a `timeline`: a name a view shows; nothing plays it.
+- A built-in device's card shows what a cable plays into its number, as it shows a lane of the arrangement: the parent's cables declare `show_lanes` for the child. The song's filter card reads 5.97 kHz as its lane closes.
+- **Two bugs the work found, fixed in the host:** memory changed after an `await` (a menu's answer) drew nothing until the next message: bindings that ran again now send their ops. A value read from `memory` is a proxy, which `structuredClone` refused when it went into a new record: records are copied as JSON.
+
+**Decided by the work:** automation is a list on the track, `automation: [{ lane, target }]` (target `"fx.cutoff_hz"` or `"chain/verb.mix"`), with `lane-*` children: the track wires them, so a lane knows nothing of what it moves. Audio tracks are `audio-*` children, as one named child `voice` could not be a second. Track order is `order` on the song. The clipboard and the editor's grid live in memory.
+
+**Parity with main's arrangement** (done / partial / missing):
+
+| Area | Done | Partial | Missing |
+| --- | --- | --- | --- |
+| Tracks | add instrument, audio, return; delete; reorder by drag; colour; rename; mute, solo, arm; choose | returns renamed only in the record | the foldable returns section of the timeline |
+| Clips | add, choose, shift-choose, move (alt copies, across tracks), resize, titles and rename, menu, cmd-C/X/V/D, delete, arrows | | a marquee over clips |
+| Audio regions | waveform, move, trim the start, delete, gain, fades and offset as dials | fades as dials, not handles on the waveform | trimming the end (needs a file's length in TS: a `fileInfo` block), the layer rule |
+| Automation | a lane per number, a menu of a track's numbers, add, move, alt-erase points, knobs show what plays | a fader's lane is a line in dB, not on the knob's travel | a clip moved takes its automation along |
+| Note editor | draw, move, alt-copy, resize, marquee, delete, velocity lane, pedal, bend, mod and pressure lanes, snap menu, touched notes sound | up and down move a note, not its velocity; the pedal is points, not steps | cmd-C/V of notes, a double click that clears a lane |
+| Ruler | click to play from there, a repeat dragged under it, tempo changes, time signatures and sections from its menu, bars that follow the signatures | | dragging a marker |
+| Rest | file drop, device cards, mixer, recording arm and the growing take | | |
+
+**Painful as an author:**
+- A `Show`'s children and fallback are made once, so a fallback that read memory threw (the message said why). A binding, `{() => lane === "velocity" ? ... : ...}`, is what works.
+- A view reads a child's record as the file holds it, an `update` draft with every field filled: `?? []` came back for view code. Filling a view's child records too would remove it (in "Too specific").
+- A drag is made once: the editor's notes are made again when the grid changes, to get drags with the new snap.
+- Rows past one tape needed a pattern child; typed children made that obvious, not silent.
+- A text field has no key for tests; a div with a key around it does.
+
+**Tests** (`window/tools/song_view.rs`, each gesture one undo step): a track added from "+ Track", coloured and deleted from its menu; a track head dragged onto another; a clip renamed from its menu, copied, pasted at the playhead and nudged; a lane added from a track's menu, a point added and alt-clicked away, the filter's card shows the lane; the editor's velocity dragged, a bend point added in the middle, a note on a grid of bars; the ruler's tempo change, section and dragged repeat; a dropped region chosen and deleted. All 644 window, projects and typescript tests pass, clippy is clean, `bun check` passes on every example. Snapshots looked at: `typescript-song.png` (clip titles, the editor's lane buttons, the filter's cutoff from its lane), `typescript-song-lanes.png` (the cutoff lane under its track), `typescript-song-mixer.png`.
+
+**Numbers** (M1 Max, release-fast):
+
+| | Round 11b | Round 11c |
+| --- | --- | --- |
+| Song 12 / 150: idle / scroll frame | 1.7 / 1.75 ms | 2.0 / 1.86 ms |
+| Song 12 / 150: select a clip / release a clip move, until drawn | 11.1 / 13.2 ms | 12.4 / 14.0 ms |
+| Song 12 / 150: a note added in the editor, until drawn | | 23.9 ms (13.9 of it the frame) |
+| Song 24 / 600: idle / scroll frame | 3.7 / 3.5 ms | 4.45 / 4.06 ms |
+| Scale project (100 x 100): scroll / play frame | 1.6 / 1.7 ms | 2.0 / 2.1 ms (Rust arrangement: 3.6 ms scroll) |
+
+The frames grew with what each row and clip now draws: a colour and an A button per head, a title per clip (150 to 10,000 more texts), bar lines that follow the signatures. Still under the Rust arrangement's scroll.
+
+**Too specific (to revisit):** a view's child records are not filled with defaults where an update's are; a file's length is not readable in TS.
