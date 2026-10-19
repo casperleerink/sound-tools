@@ -833,7 +833,7 @@ impl Bun {
         );
         let given: BTreeSet<&InstanceId> = records.iter().map(|(id, _)| *id).collect();
         let held: Vec<InstanceId> = (told.records.keys())
-            .filter(|child| child.parent().as_ref() == Some(id) && !given.contains(child))
+            .filter(|child| child.is_inside(id) && !given.contains(child))
             .cloned()
             .collect();
         records.extend(held.iter().map(|child| (child, None)));

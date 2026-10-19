@@ -326,9 +326,11 @@ function noting<T extends object>(source: T, into: { fields: Set<string> | null 
 }
 
 /** The children as a behaviour reads them: every child's state notes the fields it reads. */
+/** `children` as a behaviour reads them, at any depth: the fields of the state it reads are what the runtime compares of each. */
 function notingChildren(children: OwnedChild[], into: { fields: Set<string> | null }): OwnedChild[] {
   return children.map((child) => {
     let state: unknown;
+    let inside: OwnedChild[] | undefined;
     return Object.freeze({
       name: child.name,
       tool: child.tool,
@@ -336,9 +338,7 @@ function notingChildren(children: OwnedChild[], into: { fields: Set<string> | nu
         return (state ??= isObject(child.state) ? noting(child.state, into) : child.state);
       },
       get children() {
-        // What is inside a child is not in what the runtime compares: any change asks again.
-        into.fields = null;
-        return child.children;
+        return (inside ??= notingChildren(child.children, into));
       },
     }) as OwnedChild;
   });

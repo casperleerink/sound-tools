@@ -1106,7 +1106,7 @@ impl Live {
             return self.tool_problem(id, problem, cx);
         }
         session.update(cx, |session, cx| {
-            if crate::tools::feed_child(session.project().assets(), &played) {
+            if crate::tools::feed_child(session.project().assets(), id, child) {
                 session.rebind(std::slice::from_ref(id), cx);
             }
             let update = NoteFeedUpdate::Note(performed);

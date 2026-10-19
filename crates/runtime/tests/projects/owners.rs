@@ -335,3 +335,116 @@ fn an_owner_in_the_chain_of_a_rack_plays_its_children_into_it() {
         rises(&played)
     );
 }
+
+/// A box that holds what is put in it and plays none of it itself.
+const BOX: &str = r#"import { tool } from "./sdk";
+
+tool({
+  name: "box",
+  title: "Box",
+  when: "Never",
+  doc: "Holds children for its owner to wire.",
+  state: {},
+  behaviour: () => ({ connections: [] }),
+});
+"#;
+
+/// Plays the drone `a` in its box only while it is above 500 Hz, and the notes of its clip into
+/// the voice in its box while `on` is above 0.
+const OUTER: &str = r#"import { number, tool } from "./sdk";
+
+tool({
+  name: "outer",
+  title: "Outer",
+  when: "Never",
+  doc: "Wires what is inside its box.",
+  state: { on: number({ min: 0, max: 1, default: 1 }) },
+  behaviour: ({ state: { on }, children }) => {
+    const inside = children.find((child) => child.name === "inner")?.children ?? [];
+    const high = inside.some((child) => child.name === "a" && (child.state as { hz: number }).hz > 500);
+    const voice = inside.some((child) => child.name === "voice");
+    return {
+      connections: [
+        ...(high ? [{ from: { child: "inner/a" }, to: { port: "audio" as const } }] : []),
+        ...(voice && on > 0 ? [{ from: { child: "clip", notes: "notes" as const }, to: { child: "inner/voice", notes: "notes" as const } }] : []),
+        ...(voice ? [{ from: { child: "inner/voice" }, to: { port: "audio" as const } }] : []),
+      ],
+    };
+  },
+});
+"#;
+
+/// `outer` at the top, with its box holding `inside`, each `(name, record)`, and `more` of its
+/// own children.
+fn outer(inside: &[(&str, &str)], more: &[(&str, &str)]) -> Harness {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    let project = r#"{"format": 1, "extensions": ["instrument"],
+  "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
+  "connections": [{"from": {"instance": "outer", "port": "audio"}, "to": {"device_output": 0}}]}"#;
+    write(root, "project.json", project);
+    write(root, "extensions/drone.ts", DRONE);
+    write(root, "extensions/box.ts", BOX);
+    write(root, "extensions/outer.ts", OUTER);
+    write(
+        root,
+        "state/outer/instance.json",
+        r#"{"tool": "outer", "state": {}}"#,
+    );
+    write(
+        root,
+        "state/outer/inner/instance.json",
+        r#"{"tool": "box", "state": {}}"#,
+    );
+    for (name, record) in inside {
+        write(root, &format!("state/outer/inner/{name}.json"), record);
+    }
+    for (name, record) in more {
+        write(root, &format!("state/outer/{name}.json"), record);
+    }
+    Harness::open(folder)
+}
+
+fn peak(samples: &[f32]) -> f32 {
+    samples
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
+}
+
+/// What the behaviour of an owner reads of a grandchild asks it again when that changes.
+#[test]
+fn a_change_deep_inside_an_owner_asks_its_behaviour_again() {
+    let drone = r#"{"tool": "drone", "state": {"hz": 220}}"#;
+    let mut harness = outer(&[("a", drone)], &[]);
+    assert_eq!(peak(&harness.play(24_000)), 0.0);
+    harness.write_and_apply(
+        "state/outer/inner/a.json",
+        r#"{"tool": "drone", "state": {"hz": 880}}"#,
+    );
+    // Half a second of it, once Bun answered.
+    let high = harness.render(48_000);
+    let late = rises(&high[48_000..]);
+    assert!((late as i64 - 440).abs() <= 2, "{late}");
+    assert_eq!(harness.project.problems(), []);
+}
+
+/// Notes an owner plays into a grandchild end when it stops playing them there.
+#[test]
+fn notes_into_a_grandchild_end_when_the_owner_stops_sending_them() {
+    let voice = r#"{"tool": "instrument.synth", "state": {}}"#;
+    let clip = r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "notes": [{"start": 0, "length": 3840, "pitch": 57, "velocity": 100}]}}"#;
+    let mut harness = outer(&[("voice", voice)], &[("clip", clip)]);
+    assert!(peak(&harness.play(24_000)) > 0.05);
+    harness.write_and_apply(
+        "state/outer/instance.json",
+        r#"{"tool": "outer", "state": {"on": 0}}"#,
+    );
+    let after = harness.render(96_000);
+    // Released within a second.
+    assert!(
+        peak(&after[48_000 * 2..]) < 1e-3,
+        "{}",
+        peak(&after[48_000 * 2..])
+    );
+    assert_eq!(harness.project.problems(), []);
+}

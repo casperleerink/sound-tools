@@ -6,6 +6,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 use std::sync::Arc;
 
 use super::assets::Assets;
@@ -527,11 +528,18 @@ impl BehaviourContext<'_> {
         children.map(|(id, record)| (id.name(), record.tool, record.state.to_json()))
     }
 
-    /// Every owned child as (name, tool, the state it holds), in name order: for an owner that
-    /// keeps what it made of each child state and reads again only the changed ones.
-    pub fn child_stamps(&self) -> impl Iterator<Item = (&str, &'static str, RecordStamp)> {
-        let children = self.id.children_in(self.instances);
-        children.map(|(id, record)| (id.name(), record.tool, RecordStamp(record.state.clone())))
+    /// Every instance inside this one at any depth, in id order, with its tool and a stamp of
+    /// its record.
+    pub fn descendant_stamps(
+        &self,
+    ) -> impl Iterator<Item = (&InstanceId, &'static str, RecordStamp)> {
+        let (start, end) = (format!("{}/", self.id), format!("{}0", self.id));
+        let bounds = (
+            Bound::Included(start.as_str()),
+            Bound::Excluded(end.as_str()),
+        );
+        (self.instances.range::<str, _>(bounds))
+            .map(|(id, record)| (id, record.tool, RecordStamp(record.state.clone())))
     }
 
     /// The names of the outputs and the inputs the owned child `name` exposed, for a message

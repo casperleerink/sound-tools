@@ -1083,7 +1083,7 @@ impl Sounds {
         let child_fields = reads.as_ref().and_then(|reads| reads.children.as_deref());
         let children = kept_children(
             (context.assets(), &id),
-            context.child_stamps(),
+            context.descendant_stamps(),
             child_fields,
         )
         .map_err(|error| BehaviourError::Other(error.to_string()))?;
@@ -1101,7 +1101,10 @@ impl Sounds {
                 .map(|child| (&child.id, child.tool, child.key, &*child.json));
             bun.tell_owner((&id, &self.info.name, &state), told)
         };
-        self.check_children(&children.children, context);
+        let own_children: Vec<&KeptChild> = (children.children.iter())
+            .filter(|child| child.id.parent().as_ref() == Some(&id))
+            .collect();
+        self.check_children(&own_children, context);
         let instance = (context.assets(), &id);
         let declared = behaviours::declared(bun, instance, &self.info.name, key, tell);
         if let Some(problem) = declared.problem {
@@ -1119,7 +1122,7 @@ impl Sounds {
 
     /// A problem for each child that is not of the tool its `children` name, and each they
     /// name that it does not have.
-    fn check_children(&self, children: &[KeptChild], context: &mut BehaviourContext<'_>) {
+    fn check_children(&self, children: &[&KeptChild], context: &mut BehaviourContext<'_>) {
         let Some(named) = &self.info.children else {
             return;
         };
@@ -1166,7 +1169,8 @@ struct Kept {
     key: u64,
     /// Of the children's names and tools, and the fields of their states in `fields`.
     read_key: u64,
-    /// The fields of a child's state the behaviour read; `None` for all.
+    /// The fields of the state of what is inside the owner, at any depth, the behaviour read;
+    /// `None` for all.
     fields: Option<Vec<String>>,
 }
 
@@ -1214,7 +1218,10 @@ pub fn forget_gone(project: &sound_core::Project) {
     let assets = project.assets();
     let live = |(of, id): &(Assets, InstanceId)| of != assets || project.tool_of(id).is_some();
     (KEPT.lock().unwrap_or_else(PoisonError::into_inner)).retain(|key, _| live(key));
-    (FED.lock().unwrap_or_else(PoisonError::into_inner)).retain(live);
+    (FED.lock().unwrap_or_else(PoisonError::into_inner)).retain(|(of, owner, path)| {
+        let fed = InstanceId::new(&format!("{owner}/{path}"));
+        of != assets || fed.is_ok_and(|fed| project.tool_of(&fed).is_some())
+    });
     crate::behaviours::forget_gone(project);
 }
 
@@ -1222,15 +1229,15 @@ pub fn forget_gone(project: &sound_core::Project) {
 /// since the last time.
 fn kept_children<'a>(
     (assets, owner): (&Assets, &InstanceId),
-    stamps: impl Iterator<Item = (&'a str, &'static str, RecordStamp)>,
+    stamps: impl Iterator<Item = (&'a InstanceId, &'static str, RecordStamp)>,
     fields: Option<&[String]>,
 ) -> Result<Arc<Kept>, Box<dyn std::error::Error>> {
     let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
     let entry = (assets.clone(), owner.clone());
     let last = kept.get(&entry).cloned().unwrap_or_default();
-    let stamps: Vec<(&str, &'static str, RecordStamp)> = stamps.collect();
-    let is_known = |(name, tool, stamp): &(&str, &str, RecordStamp), child: &KeptChild| {
-        child.id.name() == *name && child.tool == *tool && child.stamp == *stamp
+    let stamps: Vec<(&InstanceId, &'static str, RecordStamp)> = stamps.collect();
+    let is_known = |(id, tool, stamp): &(&InstanceId, &str, RecordStamp), child: &KeptChild| {
+        child.id == **id && child.tool == *tool && child.stamp == *stamp
     };
     let same_fields = last.fields.as_deref() == fields;
     let unchanged = same_fields
@@ -1241,10 +1248,10 @@ fn kept_children<'a>(
     }
     let mut children = Vec::with_capacity(stamps.len());
     let mut known = last.children.iter().peekable();
-    for (name, tool, stamp) in stamps {
-        // Both in name order.
-        while known.next_if(|child| child.id.name() < name).is_some() {}
-        let child = match known.next_if(|child| is_known(&(name, tool, stamp.clone()), child)) {
+    for (id, tool, stamp) in stamps {
+        // Both in id order.
+        while known.next_if(|child| child.id < *id).is_some() {}
+        let child = match known.next_if(|child| is_known(&(id, tool, stamp.clone()), child)) {
             Some(child) => KeptChild {
                 id: child.id.clone(),
                 tool,
@@ -1259,9 +1266,8 @@ fn kept_children<'a>(
             None => {
                 let json: Arc<str> = stamp.state_json()?.into();
                 let key = crate::bun::record_key(tool, &json);
-                let id = owner.child(name)?;
                 KeptChild {
-                    id,
+                    id: id.clone(),
                     tool,
                     stamp,
                     read_key: read_key(tool, &json, key, fields)?,
@@ -1272,11 +1278,11 @@ fn kept_children<'a>(
         };
         children.push(child);
     }
-    let keys: Vec<(&str, u64)> = (children.iter())
-        .map(|child| (child.id.name(), child.key))
+    let keys: Vec<(&InstanceId, u64)> = (children.iter())
+        .map(|child| (&child.id, child.key))
         .collect();
-    let read_keys: Vec<(&str, u64)> = (children.iter())
-        .map(|child| (child.id.name(), child.read_key))
+    let read_keys: Vec<(&InstanceId, u64)> = (children.iter())
+        .map(|child| (&child.id, child.read_key))
         .collect();
     let fresh = Arc::new(Kept {
         key: key(&keys),
@@ -1717,19 +1723,19 @@ fn cable<From: Event + Shown, To: Placed<From>>(
     Ok(Some(InputEndpoint::new(cable, Cable::<From, To>::INPUT)))
 }
 
-/// The children of every project that have had a [`NoteFeed`]: their feed stays, to release
-/// what a sender that went away left sounding.
-static FED: Mutex<BTreeSet<(Assets, InstanceId)>> = Mutex::new(BTreeSet::new());
+/// What every owner of every project has had a [`NoteFeed`] for, by the path of the child
+/// inside it: the feed stays, to release what a sender that went away left sounding.
+static FED: Mutex<BTreeSet<(Assets, InstanceId, String)>> = Mutex::new(BTreeSet::new());
 
-/// Asks for a feed for `child`, for a performer to play it. Whether it had none: then its owner
-/// must run its behaviour again to make it.
-pub(crate) fn feed_child(assets: &Assets, child: &InstanceId) -> bool {
+/// Asks for a feed of `owner` for its child at `path`, for a performer to play it. Whether it
+/// had none: then the owner must run its behaviour again to make it.
+pub(crate) fn feed_child(assets: &Assets, owner: &InstanceId, path: &str) -> bool {
     let mut fed = FED.lock().unwrap_or_else(PoisonError::into_inner);
-    fed.insert((assets.clone(), child.clone()))
+    fed.insert((assets.clone(), owner.clone(), path.to_string()))
 }
 
-/// The [`NoteFeed`] of each child that has `notes` and is `fed` now or was before, by the
-/// child's name. Only those, so a parent of a thousand takes declares no thousand feeds.
+/// The [`NoteFeed`] of each child, at any depth, that has `notes` and is `fed` now or was
+/// before, by its path. Only those, so a parent of a thousand takes declares no thousand feeds.
 fn feeds<'a>(
     fed: impl Iterator<Item = &'a str>,
     context: &mut BehaviourContext<'_>,
@@ -1738,16 +1744,13 @@ fn feeds<'a>(
     let assets = context.assets().clone();
     let children: BTreeSet<String> = {
         let mut known = FED.lock().unwrap_or_else(PoisonError::into_inner);
-        for child in fed {
-            if let Ok(id) = owner.child(child) {
-                known.insert((assets.clone(), id));
-            }
+        for path in fed {
+            known.insert((assets.clone(), owner.clone(), path.to_string()));
         }
-        let start = (assets.clone(), owner.clone());
+        let start = (assets.clone(), owner.clone(), String::new());
         (known.range(start..))
-            .take_while(|(project, _)| *project == assets)
-            .filter(|(_, id)| id.parent().as_ref() == Some(&owner))
-            .map(|(_, id)| id.name().to_string())
+            .take_while(|(project, of, _)| *project == assets && *of == owner)
+            .map(|(_, _, path)| path.clone())
             .collect()
     };
     let mut feeds = BTreeMap::new();
