@@ -1142,13 +1142,15 @@ function mount(request: Extract<Request, { type: "mount" }>) {
   cards.delete(card);
   const known = storesOf(instance, spec, record);
   setWatches(instance, watches);
-  const size = sdk.host.store({ ...request.size }, false);
+  // A resize reconciles the object itself: the store over it is read only.
+  const room = { ...request.size };
+  const size = sdk.host.store(room, false);
   runs(spec.name, "view");
   try {
     const context = cardContext(instance, spec, known, { size });
     const draw = drawerOf(spec);
     const root = sdk.host.mount(card, () => draw(context), { state: context.state, fields: spec.state, update: context.update });
-    cards.set(card, { root, instance, tool: spec.name, size: sdk.host.store(size, false) });
+    cards.set(card, { root, instance, tool: spec.name, size: room });
     mounting.add(card);
   } catch (error) {
     say({ type: "ops", card, error: String(error), event: false });

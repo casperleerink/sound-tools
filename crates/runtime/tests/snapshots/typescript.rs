@@ -21,15 +21,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use gpui::{
     AppContext, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformInput, Point, point, px, size,
+    MouseUpEvent, Pixels, PlatformInput, Point, point, px,
 };
-use runtime::window::{DeviceAccess, Shell};
-use runtime::{OFFLINE, views};
-use sound_core::{Engine, Ticks};
-use sound_ui::Session;
-
-use super::{WINDOW_HEIGHT, WINDOW_WIDTH};
-use crate::plugin_hosts::test_plugin_host;
+use sound_core::Ticks;
 
 const DEMO: &str = r##"import { h, number, Knob, Label, Line, Meter, Pad, pattern, Rect, Space, Steps, tool } from "./sdk";
 
@@ -76,17 +70,14 @@ const MIXER: &str = include_str!("../../../../tooling/agent-eval/examples/mixer.
 const METER: &str = r#"{"tool": "meter", "state": {}}"#;
 const SWAY: &str = include_str!("../../../../tooling/agent-eval/examples/sway.ts");
 
-pub(crate) fn snapshots(
-    cx: &mut HeadlessAppContext,
-    save: &impl Fn(&mut HeadlessAppContext, &super::Opened, &str) -> Result<()>,
-) -> Result<()> {
+pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Result<()> {
     if !sound_typescript::has_bun() {
         println!("Bun is not installed: no snapshot of a page of a tool of the project");
         return Ok(());
     }
     let demo = r#"{"tool": "demo", "state": {"steps": [1, 0, 0, 1, 0, 1, 0, 0], "cutoff": 2400}}"#;
     let opened = open_page(cx, "demo", demo, "extensions/demo.ts", DEMO)?;
-    save(cx, &opened, "typescript-page")?;
+    save(cx, opened.window.into(), "typescript-page")?;
     drop(opened);
 
     let record = serde_json::json!({ "tool": "piano-roll", "state": { "notes": melody() } });
@@ -101,7 +92,7 @@ pub(crate) fn snapshots(
     let roll = point(px(24. + 44.), px(48. + 24. + 22. + 1.));
     let at = |tick: f32, row: f32| roll + point(px(tick * 0.1), px((row - 40.) * 12.));
     let mouse = |opened: &super::Opened, cx: &mut HeadlessAppContext, event| {
-        opened.mouse(event, cx).map(|_| wait_for_bun(cx))
+        opened.event(event, cx).map(|_| wait_for_bun(cx))
     };
     let moved = |position: Point<Pixels>, pressed_button| {
         PlatformInput::MouseMove(MouseMoveEvent {
@@ -140,14 +131,14 @@ pub(crate) fn snapshots(
     mouse(&opened, cx, down(note))?;
     let held = note + point(px(192.), px(-24.));
     mouse(&opened, cx, moved(held, Some(MouseButton::Left)))?;
-    save(cx, &opened, "typescript-piano-roll")?;
+    save(cx, opened.window.into(), "typescript-piano-roll")?;
     drop(opened);
 
     let mut opened = open_mixer(cx)?;
     // Half a second of sound in frames of the window, as when it plays, so the meters, their
     // peak lines and the level's history move as they do.
     play(&mut opened, cx)?;
-    save(cx, &opened, "typescript-mixer")?;
+    save(cx, opened.window.into(), "typescript-mixer")?;
     drop(opened);
 
     let mut files = crate::song::song_files(12, 150);
@@ -209,32 +200,26 @@ pub(crate) fn snapshots(
     click(&opened, cx, lane(crate::song::BAR / 2, 2.5), 2)?;
     click(&opened, cx, lane(3 * crate::song::BAR + 960, 4.5), 1)?;
     play(&mut opened, cx)?;
-    save(cx, &opened, "typescript-song")?;
+    save(cx, opened.window.into(), "typescript-song")?;
     // The Mixer button, right of the record button: a strip per track and return, the master.
     click(&opened, cx, point(px(537.), px(92.)), 1)?;
     play(&mut opened, cx)?;
-    save(cx, &opened, "typescript-song-mixer")?;
+    save(cx, opened.window.into(), "typescript-song-mixer")?;
     // The mixer closed again, and the A of the first track's head: its lane of the cutoff
     // shows under it, closing over the song.
     click(&opened, cx, point(px(537.), px(92.)), 1)?;
     click(&opened, cx, point(px(171.), lane(0, 1.5).y), 1)?;
     play(&mut opened, cx)?;
-    save(cx, &opened, "typescript-song-lanes")?;
+    save(cx, opened.window.into(), "typescript-song-lanes")?;
     drop(opened);
 
-    let opened = open_files(cx, runtime::DAW.files)?;
-    save(cx, &opened, "typescript-daw")
+    let opened = open_files(cx, crate::song::daw().files)?;
+    save(cx, opened.window.into(), "typescript-daw")
 }
 
 /// Plays half a second in frames of the window, so meters and what eases move as they do.
 fn play(opened: &mut super::Opened, cx: &mut HeadlessAppContext) -> Result<()> {
-    opened.play_from(Ticks(0), cx)?;
-    for _ in 0..30 {
-        opened.advance(800, cx);
-        cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
-        cx.run_until_parked();
-    }
-    Ok(())
+    opened.play_from(Ticks(0), cx)
 }
 
 /// The mixer of `tooling/agent-eval/examples` with five strips of tones, a quieter one muted and
@@ -368,47 +353,8 @@ fn open_files_with(
     files: &[(&str, &str)],
     prepare: impl FnOnce(&Path) -> Result<()>,
 ) -> Result<super::Opened> {
-    let folder = tempfile::tempdir()?;
-    let root = folder.path().join("Night Study");
-    for (relative, contents) in files {
-        let path = root.join(relative);
-        std::fs::create_dir_all(path.parent().context("a parent folder")?)?;
-        std::fs::write(path, contents)?;
-    }
-    prepare(&root)?;
-    cx.allow_parking();
-    let (control, engine) = Engine::new(OFFLINE);
-    let plugins = test_plugin_host(&root);
-    let (project, extensions) = runtime::open_with_extensions(&root, control, plugins.clone())?;
-    let extensions = extensions.context("the tools of the project")?;
-    let plugins = plugins.downgrade();
-    let session = cx.update(|cx| cx.new(|cx| Session::new(project, cx)));
-    let window = cx.open_window(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), |window, cx| {
-        let session = session.clone();
-        let (mut views, mut devices) = views(plugins.clone());
-        sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
-        cx.new(|cx| {
-            let name = "MacBook Pro Speakers".into();
-            Shell::with_device(
-                session,
-                (views, devices),
-                name,
-                DeviceAccess::default(),
-                window,
-                cx,
-            )
-        })
-    })?;
-    let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(2) {
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    Ok(super::Opened {
-        _folder: folder,
-        engine,
-        plugins,
-        session,
-        window,
-    })
+    let files: Vec<(String, String)> = (files.iter())
+        .map(|(path, text)| (path.to_string(), text.to_string()))
+        .collect();
+    super::Opened::open_with(cx, &files, prepare)
 }

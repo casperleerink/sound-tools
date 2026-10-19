@@ -403,3 +403,39 @@ fn a_frame_of_a_parent_of_300_takes_tells_bun_none_of_them_again(cx: &mut TestAp
         "{per_frame} bytes a frame"
     );
 }
+
+/// A page that fills the room it gets.
+const ROOM: &str = r#"import { h, tool } from "./sdk";
+
+tool({
+  name: "room",
+  title: "Room",
+  when: "Never",
+  doc: "Fills its room.",
+  state: {},
+  view: ({ size }) => h("div", { key: "room", style: () => ({ width: size.width, height: size.height }) }),
+});
+"#;
+
+/// A resize of the window reaches the page's `size`, which only the window writes.
+#[gpui::test]
+fn a_page_follows_its_room_when_the_window_resizes(cx: &mut TestAppContext) {
+    let project = at_the_top("room", "");
+    let files = [
+        ("project.json", project.as_str()),
+        ("state/room.json", r#"{"tool": "room", "state": {}}"#),
+        ("extensions/room.ts", ROOM),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    window.until_found("div-room");
+    let width = |window: &mut Window| {
+        window.find("div-room");
+        window.cx.debug_bounds("div-room").map(|bounds| bounds.size.width)
+    };
+    let before = width(&mut window);
+    window.cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(700.)));
+    window.until("the page follows the window", |window| width(window) != before);
+    assert_eq!(window.problems(), []);
+}
