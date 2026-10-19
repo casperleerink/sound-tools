@@ -76,6 +76,7 @@ M1 Max, release-fast. Repeat with `projects/render_cost.rs` and the ignored test
 - A clip moved to another track is a delete and a create: a record's id is its path.
 - Copied notes and copied clips are two clipboards.
 - `"*"` and named children cannot be optional.
+- A `takes("notes")` slot accepts any tool name in `update`'s types; only the runtime says one takes no notes. The built-in tools' entries do not say what they take.
 - Inline TS tools in Rust tests are not type-checked: some are wrong on purpose and need a mark first.
 - Headless snapshots show no meter motion.
 - Recording paths with no test that fails without them: the old clock closing a take at a tempo change, missed events and falling behind reported, a take held while Bun restarts, questions numbered per Bun.
