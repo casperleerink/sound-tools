@@ -8,18 +8,17 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use sound_core::InstanceId;
 
-use crate::bun::{Bun, Clock, Drawn, Event, PageSize, Request, Transport, new_opening, record_key};
+use crate::bun::{Bun, Clock, Event, PageSize, Request, Transport, new_opening, record_key};
 use crate::live::{DragNumbers, Sources};
-use crate::tree::{Node, Num};
+use crate::tree::{NodeTable, Num, Op};
 use crate::{bun_program, host_script, write_sdk};
 
 const SIZES: [usize; 3] = [100, 1_000, 2_000];
 const ROUNDS: usize = 30;
 
 /// A page of `count` notes, all in a group the drag `move` moves, as the selected notes of a
-/// piano roll are, the first one at the watch `v` so every draw is a new tree; and a canvas
-/// whose drag moves the first note through the code, as a drag did before live values.
-const GRID: &str = r##"import { Canvas, Group, h, number, Rect, Space, tool, type Drag, type Shape } from "./sdk";
+/// piano roll are, the first one at the watch `v`, so a round moves one note.
+const GRID: &str = r##"import { For, Group, h, number, Rect, Space, tool, type Drag } from "./sdk";
 
 tool({
   name: "grid",
@@ -27,24 +26,16 @@ tool({
   when: "A measurement",
   doc: "Many notes.",
   kind: "source",
-  state: { count: number({ min: 0, max: 100000, default: 100 }), canvas: number({ min: 0, max: 1, default: 0 }) },
-  memory: () => ({ x: 0 }),
+  state: { count: number({ min: 0, max: 100000, default: 100 }) },
   sound: () => 0,
-  page: ({ state, watches, memory, now }) => {
-    const notes = Array.from({ length: state.count }, (_, index) => ({ start: (index % 64) * 240, pitch: 36 + (index % 48) }));
-    if (state.canvas === 1) {
-      const shapes: Shape[] = notes.map((note, index) => ({
-        kind: "rect", x: (index === 0 ? memory.x + (watches.v ?? 0) : note.start) / 10, y: note.pitch * 4, width: 20, height: 4, color: "#a9b1ff",
-      }));
-      return h(Canvas, { width: 800, height: 600, shapes, onDrag: (x) => { memory.x = x * 8000; } });
-    }
+  page: ({ state, watches, now }) => {
+    const notes = () => Array.from({ length: state.count }, (_, index) => ({ index, start: (index % 64) * 240, pitch: 36 + (index % 48) }));
     const move = now.drag("move");
     const drag: Drag = { id: "move", snap: { x: 240, y: 1 }, onEnd: () => {} };
     return h(Space, { key: "roll", grow: true, unit: { x: 0.1, y: 4 }, extent: { x: [0, 38400], y: [0, 128] }, zoom: { x: [0.1, 10] } },
       h(Group, { x: move.dx, y: move.dy },
-        notes.map((note, index) => h(Rect, {
-          key: String(index),
-          x: index === 0 ? (watches.v ?? 0) : note.start,
+        h(For<{ index: number; start: number; pitch: number }>, { each: notes }, (note) => h(Rect, {
+          x: note.index === 0 ? () => watches.v ?? 0 : note.start,
           y: note.pitch,
           width: 240,
           height: 1,
@@ -79,19 +70,15 @@ fn print(what: &str, mut times: Vec<Duration>) {
     println!("{what}: mean {mean:?}, median {median:?}, worst {worst:?}");
 }
 
-/// The next tree Bun sends, read into nodes, how long it took, and its version.
-fn next_tree(bun: &Bun, sent: Instant) -> (Duration, Node, u64) {
+/// The next ops Bun sends for a card, read, and how long they took to come.
+fn next_ops(bun: &Bun, sent: Instant) -> (Duration, Vec<Op>) {
     let events = bun.events();
     loop {
         match smol::block_on(events.recv()) {
-            Ok(Event::Tree {
-                tree: Ok((version, Drawn(tree))),
-                ..
-            }) => return (sent.elapsed(), tree.unwrap(), version),
-            Ok(Event::Tree {
-                tree: Err(error), ..
+            Ok(Event::Ops { ops: Ok(ops), .. }) => return (sent.elapsed(), ops),
+            Ok(Event::Ops {
+                ops: Err(error), ..
             }) => panic!("{error}"),
-            Ok(Event::Unchanged { .. }) => panic!("the same tree again: nothing to measure"),
             Ok(Event::Ended { why, .. }) => panic!("Bun ended: {why}"),
             Ok(_) => {}
             Err(error) => panic!("{error}"),
@@ -121,66 +108,54 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
         width: 1400,
         height: 800,
     });
-    for count in SIZES {
-        for canvas in [0, 1] {
-            let state = json!({ "count": count, "canvas": canvas }).to_string();
-            let key = record_key("grid", &state);
-            assert!(bun.tell([(&id, Some(("grid", key, state.as_str())))]));
-            let mut trips = Vec::new();
-            let mut bytes = 0;
-            let mut tree = None;
-            for round in 0..ROUNDS {
-                let watches = BTreeMap::from([("v".to_string(), round as f32)]);
-                let card = 1;
-                let heard = crate::heard_tree_bytes();
-                let sent = Instant::now();
-                bun.send(&Request::Render {
-                    card,
-                    instance: &id,
-                    watches: &watches,
-                    page,
-                    clock: clock(),
-                });
-                let (trip, drawn, version) = next_tree(&bun, sent);
-                bytes = crate::heard_tree_bytes() - heard;
-                trips.push(trip);
-                tree = Some((drawn, version));
-            }
-            let kind = if canvas == 1 { "canvas" } else { "space" };
-            println!("{count} shapes, {kind}: a tree is {bytes} bytes");
-            print(
-                &format!("{count} shapes, {kind}: render asked to tree read into nodes"),
-                trips,
-            );
-            if canvas == 1 {
-                // What one drag step cost before live values: Bun runs `onDrag` and draws again.
-                let (tree, mut version) = tree.unwrap();
-                let Node::Space(space) = tree else {
-                    panic!("a canvas is a space");
-                };
-                let handler = space.drag.and_then(|drag| drag.on_move).unwrap();
-                let mut steps = Vec::new();
-                for step in 1..=ROUNDS {
-                    let sent = Instant::now();
-                    bun.send(&Request::Event {
-                        card: 1,
-                        version,
-                        handler,
-                        payload: json!({ "startX": 0, "startY": 0, "dx": step, "dy": 0, "x": step, "y": 0 }),
-                        time: 0.0,
-                    });
-                    let (trip, _, drawn) = next_tree(&bun, sent);
-                    version = drawn;
-                    steps.push(trip);
-                }
-                print(
-                    &format!(
-                        "{count} shapes, canvas: one drag step through Bun, move to tree here"
-                    ),
-                    steps,
-                );
-            }
+    for (card, count) in SIZES.into_iter().enumerate() {
+        let card = card as u64;
+        let state = json!({ "count": count }).to_string();
+        let key = record_key("grid", &state);
+        assert!(bun.tell([(&id, Some(("grid", key, state.as_str())))]));
+        let heard = crate::heard_bytes();
+        let watches = BTreeMap::new();
+        let sent = Instant::now();
+        bun.send(&Request::Mount {
+            card,
+            instance: &id,
+            watches: &watches,
+            page,
+            clock: clock(),
+        });
+        let (trip, ops) = next_ops(&bun, sent);
+        let bytes = crate::heard_bytes() - heard;
+        let started = Instant::now();
+        let mut table = NodeTable::default();
+        table.apply(ops).unwrap();
+        println!(
+            "{count} shapes: made in {trip:?} with {bytes} bytes of ops, applied in {:?}, {} nodes",
+            started.elapsed(),
+            table.len()
+        );
+        let mut trips = Vec::new();
+        let mut applies = Vec::new();
+        for round in 1..=ROUNDS {
+            let watches = BTreeMap::from([("v".to_string(), round as f32)]);
+            let heard = crate::heard_bytes();
+            let sent = Instant::now();
+            bun.send(&Request::Watches {
+                instance: &id,
+                watches: &watches,
+            });
+            let (trip, ops) = next_ops(&bun, sent);
+            let started = Instant::now();
+            table.apply(ops).unwrap();
+            applies.push(started.elapsed());
+            trips.push(trip);
+            assert!(crate::heard_bytes() - heard < 200);
         }
+        print(
+            &format!("{count} shapes: a watch moves one note, told to ops read"),
+            trips,
+        );
+        print(&format!("{count} shapes: its ops applied"), applies);
+        bun.send(&Request::Drop { card });
     }
     live_values();
 }

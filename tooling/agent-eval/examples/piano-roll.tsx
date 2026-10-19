@@ -1,4 +1,4 @@
-import { Group, h, Label, Line, notes, Rect, Space, tool, type Drag, type Key, type Note, type Press } from "./sdk";
+import { For, h, Label, Line, memo, notes, Rect, selector, Space, tool, type Accessor, type Drag, type Key, type Note, type Press } from "./sdk";
 
 const BEAT = 960;
 const BAR = 4 * BEAT;
@@ -27,7 +27,7 @@ const barHeight = (velocity: number) => 4 + (velocity / 127) * (LANE - 10);
 type Memory = { selected: Set<number>; clipboard: Note[]; length: number };
 
 /** `notes` with `chosen` moved by `ticks` and `pitches`, or copied there: the notes, and which are chosen after. */
-function moved(notes: readonly Note[], chosen: Set<number>, ticks: number, pitches: number, copy: boolean) {
+function moved(notes: readonly Note[], chosen: ReadonlySet<number>, ticks: number, pitches: number, copy: boolean) {
   const shifted = (note: Note) => ({ ...note, start: Math.max(note.start + ticks, 0), pitch: clamp(note.pitch + pitches, 0, 127) });
   if (!copy) {
     return { notes: notes.map((note, index) => (chosen.has(index) ? shifted(note) : note)), chosen };
@@ -37,7 +37,7 @@ function moved(notes: readonly Note[], chosen: Set<number>, ticks: number, pitch
 }
 
 /** The notes `chosen` names, from the earliest one. */
-function copied(notes: readonly Note[], chosen: Set<number>): Note[] {
+function copied(notes: readonly Note[], chosen: ReadonlySet<number>): Note[] {
   const picked = [...chosen].sort((a, b) => a - b).map((index) => notes[index]);
   const first = Math.min(...picked.map((note) => note.start));
   return picked.map((note) => ({ ...note, start: note.start - first }));
@@ -62,7 +62,7 @@ export const pianoRoll = tool({
     }
     const chosen = memory.selected;
     const all = state.notes;
-    const edit = (label: string, change: (notes: Note[]) => { notes: Note[]; chosen: Set<number> }) =>
+    const edit = (label: string, change: (notes: Note[]) => { notes: Note[]; chosen: ReadonlySet<number> }) =>
       update(label, ({ state }) => {
         const result = change(state.notes);
         state.notes = result.notes;
@@ -95,27 +95,28 @@ export const pianoRoll = tool({
     }
   },
   page: ({ state, memory, update, now, size }) => {
-    const all = state.notes;
-    const chosen = memory.selected;
-    const width = size.width - KEYS;
-    const height = size.height - RULER - LANE - 2;
+    const width = () => size.width - KEYS;
+    const height = () => size.height - RULER - LANE - 2;
     const [move, resize, velocity, marquee] = [now.drag("move"), now.drag("resize"), now.drag("velocity"), now.drag("marquee")];
+    // A note's shapes follow only its own place in the selection.
+    const isPicked = selector(() => memory.selected);
 
-    const edit = (label: string, change: (notes: Note[]) => { notes: Note[]; chosen: Set<number> }) =>
+    const edit = (label: string, change: (notes: Note[]) => { notes: Note[]; chosen: ReadonlySet<number> }) =>
       update(label, ({ state }) => {
         const result = change(state.notes);
         state.notes = result.notes;
         memory.selected = result.chosen;
       });
-    const press = (index: number) => ({ clicks, shift }: Press) => {
+    const press = (index: Accessor<number>) => ({ clicks, shift }: Press) => {
+      const chosen = memory.selected;
       if (clicks === 2) {
-        edit("Remove a note", (notes) => ({ notes: notes.filter((_, each) => each !== index), chosen: new Set() }));
+        edit("Remove a note", (notes) => ({ notes: notes.filter((_, each) => each !== index()), chosen: new Set() }));
       } else if (shift) {
         const next = new Set(chosen);
-        if (!next.delete(index)) next.add(index);
+        if (!next.delete(index())) next.add(index());
         memory.selected = next;
-      } else if (!chosen.has(index)) {
-        memory.selected = new Set([index]);
+      } else if (!chosen.has(index())) {
+        memory.selected = new Set([index()]);
       }
     };
     // One of each for every note: a drag shared by many shapes crosses once.
@@ -152,11 +153,11 @@ export const pianoRoll = tool({
       onEnd: ({ startX, startY, x, y, shift }) => {
         const [left, right] = [Math.min(startX, x), Math.max(startX, x)];
         const [top, bottom] = [Math.min(startY, y), Math.max(startY, y)];
-        const inside = all.flatMap((note, index) => {
+        const inside = state.notes.flatMap((note, index) => {
           const row = rowOf(note.pitch);
           return note.start < right && note.start + note.length > left && row < bottom && row + 1 > top ? [index] : [];
         });
-        memory.selected = new Set([...(shift ? chosen : []), ...inside]);
+        memory.selected = new Set([...(shift ? memory.selected : []), ...inside]);
       },
     };
     const pressEmpty = ({ clicks, shift, x, y }: Press) => {
@@ -168,28 +169,34 @@ export const pianoRoll = tool({
       }
     };
 
-    const noteShapes = (index: number, note: Note, picked: boolean) => {
-      const row = rowOf(note.pitch);
-      const end = note.start + note.length;
-      const handle = Math.min(HANDLE, note.length / 3);
+    const noteShapes = (note: Note, index: Accessor<number>) => {
+      const picked = memo(() => isPicked(index()));
+      const row = () => rowOf(note.pitch);
+      const end = () => note.start + note.length;
+      const handle = () => Math.min(HANDLE, note.length / 3);
+      // A selected note moves with the drag, natively, until its code hears the end.
+      const x = (at: Accessor<number>) => () => (picked() ? move.dx.plus(at()) : at());
+      const y = () => (picked() ? move.dy.plus(row()) : row());
       const onPress = press(index);
       return [
-        <Rect key={`n${index}`} x={note.start} y={row} width={picked ? resize.dx.plus(note.length).max(STEP / 4) : note.length} height={1} radius={2}
-          color={picked ? COLOR.chosen : COLOR.note} hover={picked ? undefined : COLOR.hover} cursor="grab" drag={moveDrag} onPress={onPress} />,
-        <Rect key={`r${index}`} x={picked ? resize.dx.plus(end - handle) : end - handle} y={row} width={handle} height={1}
-          color={COLOR.clear} cursor="ew-resize" drag={resizeDrag} onPress={onPress} anchor={{ x: end }} />,
+        <Rect x={x(() => note.start)} y={y} width={() => (picked() ? resize.dx.plus(note.length).max(STEP / 4) : note.length)} height={1} radius={2}
+          color={() => (picked() ? COLOR.chosen : COLOR.note)} hover={() => (picked() ? undefined : COLOR.hover)} cursor="grab" drag={moveDrag} onPress={onPress} />,
+        <Rect x={() => (picked() ? move.dx.plus(resize.dx).plus(end() - handle()) : end() - handle())} y={y} width={handle} height={1}
+          color={COLOR.clear} cursor="ew-resize" drag={resizeDrag} onPress={onPress} anchor={() => ({ x: end() })} />,
       ];
     };
-    const bar = (index: number, note: Note, picked: boolean) => (
-      <Rect key={`v${index}`} x={note.start} y={LANE - barHeight(note.velocity)} width={Math.min(note.length, 120)} height={LANE}
-        color={picked ? COLOR.chosen : COLOR.note} cursor="ns-resize" drag={velocityDrag} onPress={press(index)} />
-    );
+    const bar = (note: Note, index: Accessor<number>) => {
+      const picked = memo(() => isPicked(index()));
+      const top = () => LANE - barHeight(note.velocity);
+      return (
+        <Rect x={() => note.start} y={() => (picked() ? velocity.dy.plus(top()) : top())} width={() => Math.min(note.length, 120)} height={LANE}
+          color={() => (picked() ? COLOR.chosen : COLOR.note)} cursor="ns-resize" drag={velocityDrag} onPress={press(index)} />
+      );
+    };
     const across = { unit: { x: ACROSS, y: 1 }, extent: { x: [0, END] as const }, zoom: { x: [0.05, 8] as const } };
     const rows = Array.from({ length: 128 }, (_, row) => 127 - row);
     const bars = Array.from({ length: BARS + 1 }, (_, bar) => bar * BAR);
     const beats = Array.from({ length: BARS * 4 }, (_, beat) => beat * BEAT).filter((tick) => tick % BAR !== 0);
-    const picked = all.flatMap((note, index) => (chosen.has(index) ? [[index, note] as const] : []));
-    const rest = all.flatMap((note, index) => (chosen.has(index) ? [] : [[index, note] as const]));
 
     return (
       <div style={{ gap: 1, background: COLOR.back }}>
@@ -215,10 +222,7 @@ export const pianoRoll = tool({
             {rows.filter(isBlack).map((pitch) => <Rect x={0} y={rowOf(pitch)} width={END} height={1} color={COLOR.dark} />)}
             {beats.map((tick) => <Line from={[tick, 0]} to={[tick, 128]} color={COLOR.beat} width={1} />)}
             {bars.map((tick) => <Line from={[tick, 0]} to={[tick, 128]} color={COLOR.bar} width={1} />)}
-            {rest.map(([index, note]) => noteShapes(index, note, false))}
-            <Group x={move.dx} y={move.dy}>
-              {picked.map(([index, note]) => noteShapes(index, note, true))}
-            </Group>
+            <For each={() => state.notes}>{noteShapes}</For>
             <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
               color={COLOR.marquee} opacity={marquee.active} />
             <Line from={[now.tick, 0]} to={[now.tick, 128]} color={COLOR.playhead} width={2} />
@@ -227,8 +231,7 @@ export const pianoRoll = tool({
         <div style={{ direction: "row" }}>
           <div style={{ width: KEYS, padding: 4, color: COLOR.text, fontSize: 10 }}>Vel</div>
           <Space key="velocity" width={width} height={LANE} {...across} follow={{ x: "roll" }}>
-            {rest.map(([index, note]) => bar(index, note, false))}
-            <Group y={velocity.dy}>{picked.map(([index, note]) => bar(index, note, true))}</Group>
+            <For each={() => state.notes}>{bar}</For>
           </Space>
         </div>
       </div>

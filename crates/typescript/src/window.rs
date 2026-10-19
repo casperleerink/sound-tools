@@ -25,13 +25,13 @@ use sound_signals::{Signals, SignalsUpdate};
 use sound_ui::{DeviceLabel, DeviceOffer, Devices, OfferGroup, Playhead, Session, Views};
 
 use crate::bun::{
-    Bun, Clock, Drawn, Event, Heard, PageSize, Played, Reads, RecordEdit, Request, Runs, Skipped,
-    Telling, Transport, record_key,
+    Bun, Clock, Event, EventKind, Heard, PageSize, Played, Reads, RecordEdit, Request, Runs,
+    Skipped, Telling, Transport, record_key,
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::sequencer::{self, Sequencer, SequencerUpdate};
 use crate::tools::{Control, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
-use crate::tree::{Node, Uses};
+use crate::tree::{NodeTable, Uses};
 use crate::{Extensions, FOLDER, Launched, NoteMessage, OWNED};
 
 /// How often the cards look at their watches and the control loops run: often enough for a
@@ -59,6 +59,12 @@ pub(crate) struct Live {
     played: HashMap<InstanceId, BTreeMap<String, f32>>,
     /// The records that changed since Bun was last told, see [`Live::tell`].
     changed_records: BTreeSet<InstanceId>,
+    /// A tell is due soon: a record changed that a binding reads.
+    telling: bool,
+    /// What the bindings of the cards of each instance read, as Bun said last.
+    reads: HashMap<InstanceId, Reads>,
+    /// The transport Bun was told last.
+    told_transport: Option<Transport>,
     /// The tap of what reaches the notes of each instance whose tool hears them, and how far
     /// it was read.
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
@@ -108,44 +114,18 @@ struct Card {
     /// The name of its tool, which a card keeps for its life.
     tool: String,
     surface: Surface,
-    /// The last tree with its version, which a click on it names, or why there is none. `None`
-    /// until the first one arrives.
-    tree: Option<Result<(u64, Rc<Node>), String>>,
-    /// The watches the last tree was drawn with, which its live values read too.
+    /// Its nodes, or why there are none. `None` until its first ops arrive.
+    tree: Option<Result<Rc<NodeTable>, String>>,
+    /// The watches its live values read.
     watches: BTreeMap<String, f32>,
-    /// What of the window the live values of the last tree move with.
-    uses: Uses,
-    /// What the code read as it drew the last tree, and the record it drew from: a change of
-    /// the record asks for a tree again only when what the code read changed.
-    reads: Reads,
-    drawn_record: Option<Value>,
-    /// The record told with the render out, which the next tree is drawn from.
-    asked_record: Option<Value>,
+    /// Its code made its nodes, or is asked to.
+    mounted: bool,
+    /// Its nodes are an earlier Bun's: a press on them reaches nothing until the new ones come.
+    stale: bool,
     /// The presses and drags of the card told to its code, and how many of them its code
-    /// answered with a tree: a drag's preview stays until its answer.
+    /// answered: a drag's preview stays until its answer.
     events_sent: u64,
     events_answered: u64,
-    /// The transport the last tree was asked with.
-    transport: Option<Transport>,
-    /// A render was asked for and its tree has not come yet.
-    asked: bool,
-    /// The record or a watch changed while a render was out, so one more is due when it comes.
-    stale: bool,
-}
-
-impl Card {
-    /// Its code drew again: after a render the window asked for, or after a press or a drag.
-    fn answered(&mut self, reads: Reads, event: bool) {
-        if event {
-            self.events_answered += 1;
-        } else {
-            self.asked = false;
-            if let Some(record) = self.asked_record.take() {
-                self.drawn_record = Some(record);
-            }
-        }
-        self.reads = reads;
-    }
 }
 
 /// What a tree is drawn on.
@@ -349,11 +329,14 @@ impl Live {
                 Some(bun) => Live::running(bun, cx),
                 None => Host::Stopped,
             };
-            cx.subscribe(session, |live, _, event, _| match event {
+            cx.subscribe(session, |live, _, event, cx| match event {
                 ProjectEvent::Created(id)
                 | ProjectEvent::Changed(id)
                 | ProjectEvent::Deleted(id) => {
                     live.changed_records.insert(id.clone());
+                    if live.is_read(id) {
+                        live.tell_soon(cx);
+                    }
                 }
                 ProjectEvent::ProjectFileChanged | ProjectEvent::ProblemsChanged => {}
             })
@@ -371,6 +354,9 @@ impl Live {
                 next_card: 0,
                 played: HashMap::new(),
                 changed_records: every_instance(session.read(cx).project()),
+                telling: false,
+                reads: HashMap::new(),
+                told_transport: None,
                 taps: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
@@ -523,12 +509,12 @@ fn offers(tools: &[ToolInfo], kind: impl Fn(ToolKind) -> bool) -> Vec<DeviceOffe
 }
 
 impl Live {
-    /// The last tree of a card, with its version. `None` until it first drew.
-    pub(crate) fn tree(&self, card: u64) -> Option<&Result<(u64, Rc<Node>), String>> {
+    /// The nodes of a card. `None` until its first ops came.
+    pub(crate) fn tree(&self, card: u64) -> Option<&Result<Rc<NodeTable>, String>> {
         self.cards.get(&card)?.tree.as_ref()
     }
 
-    /// The watches a card last drew with.
+    /// The watches the live values of a card read.
     pub(crate) fn watches(&self, card: u64) -> Option<&BTreeMap<String, f32>> {
         self.cards.get(&card).map(|card| &card.watches)
     }
@@ -538,7 +524,7 @@ impl Live {
         find(&self.tools.borrow(), &self.cards.get(&card)?.tool).cloned()
     }
 
-    /// A new card of the instance, which draws at once.
+    /// A new card of the instance, whose code makes its nodes at once.
     pub(crate) fn add(
         &mut self,
         id: InstanceId,
@@ -548,24 +534,24 @@ impl Live {
     ) -> u64 {
         let card = self.next_card;
         self.next_card += 1;
+        let watches = self
+            .session
+            .upgrade()
+            .map(|session| watches_of(session.read(cx).project(), &id))
+            .unwrap_or_default();
         let entry = Card {
             id,
             tool,
             surface,
             tree: None,
-            watches: BTreeMap::new(),
-            uses: Uses::default(),
-            reads: Reads::default(),
-            drawn_record: None,
-            asked_record: None,
+            watches,
+            mounted: false,
+            stale: false,
             events_sent: 0,
             events_answered: 0,
-            transport: None,
-            asked: false,
-            stale: false,
         };
         self.cards.insert(card, entry);
-        self.render(card, cx);
+        self.mount(card, cx);
         card
     }
 
@@ -574,48 +560,63 @@ impl Live {
         self.host.send(&Request::Drop { card });
     }
 
-    /// Asks for the tree of the card again, from the record and the watches as they are now.
-    /// While one is out, one more is asked for when it comes, so a drag that changes the record
-    /// sixty times a second keeps one request in flight and not sixty.
-    pub(crate) fn render(&mut self, card: u64, cx: &mut Context<Self>) {
+    /// Asks the code of the card to make its nodes, from the records as they are now.
+    fn mount(&mut self, card: u64, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let Some(entry) = self.cards.get_mut(&card) else {
+        let Some(entry) = self.cards.get(&card) else {
             return;
         };
-        if entry.asked {
-            entry.stale = true;
-            return;
-        }
         let page = match entry.surface {
             Surface::Card => None,
             Surface::Page(Some(size)) => Some(size),
-            // It draws once it is laid out and has a size.
+            // It is made once it is laid out and has a size.
             Surface::Page(None) => return,
         };
         self.tell(cx);
         let clock = clock_of(&session, cx);
+        self.told_transport = Some(clock.transport);
         let Some(entry) = self.cards.get_mut(&card) else {
             return;
         };
-        let request = Request::Render {
+        let request = Request::Mount {
             card,
             instance: &entry.id,
             watches: &entry.watches,
             page,
             clock,
         };
-        // A render that did not go is not waited for: the next change asks again.
-        if self.host.send(&request) {
-            entry.asked = true;
-            entry.transport = Some(clock.transport);
-            entry.asked_record = session
-                .read(cx)
-                .project()
-                .state_json(&entry.id)
-                .and_then(|text| serde_json::from_str(&text).ok());
+        // One that did not go is asked again by the next Bun.
+        entry.mounted = self.host.send(&request);
+    }
+
+    /// Tells Bun soon the records that changed: once for all that change together.
+    fn tell_soon(&mut self, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.telling, true) {
+            return;
         }
+        cx.spawn(async move |live, cx| {
+            live.update(cx, |live, cx| {
+                live.telling = false;
+                live.tell(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Whether a binding of a card reads the record of `id`: of its instance, or of a child.
+    fn is_read(&self, id: &InstanceId) -> bool {
+        let reads = |instance: &InstanceId| {
+            let shown = self.cards.values().any(|card| card.id == *instance);
+            (shown).then(|| self.reads.get(instance).cloned().unwrap_or_default())
+        };
+        let own = reads(id)
+            .is_some_and(|reads| reads.state.as_ref().is_none_or(|fields| !fields.is_empty()));
+        own || (id.parent())
+            .and_then(|parent| reads(&parent))
+            .is_some_and(|reads| reads.children)
     }
 
     /// Tells Bun the records that changed since it was last told, before it runs code that
@@ -649,7 +650,7 @@ impl Live {
         }
     }
 
-    /// The page was laid out at `size`: it draws again when that is new.
+    /// The page was laid out at `size`: its code hears it when that is new.
     pub(crate) fn resize(&mut self, card: u64, size: PageSize, cx: &mut Context<Self>) {
         let Some(entry) = self.cards.get_mut(&card) else {
             return;
@@ -658,30 +659,33 @@ impl Live {
             return;
         }
         entry.surface = Surface::Page(Some(size));
-        self.render(card, cx);
+        if entry.mounted {
+            self.host.send(&Request::Resize { card, page: size });
+        } else {
+            self.mount(card, cx);
+        }
     }
 
-    /// A click on an element of the tree of `version` of the card, or a press or a drag on a
-    /// canvas `at` across and down, 0 to 1.
+    /// A press, a click or a drag on the node `node` of the card. The number of the event.
     pub(crate) fn event(
         &mut self,
         card: u64,
-        version: u64,
-        handler: usize,
+        node: u64,
+        kind: EventKind,
         payload: serde_json::Value,
         cx: &mut App,
     ) -> u64 {
         let Some(session) = self.session.upgrade() else {
             return 0;
         };
-        if !self.cards.contains_key(&card) {
+        if self.cards.get(&card).is_none_or(|entry| entry.stale) {
             return 0;
         }
         self.tell(cx);
         let request = Request::Event {
             card,
-            version,
-            handler,
+            node,
+            kind,
             payload,
             time: engine_time(&session, cx),
         };
@@ -693,51 +697,24 @@ impl Live {
         entry.events_sent
     }
 
-    /// How many presses and drags of the card its code answered with a tree.
+    /// How many presses and drags of the card its code answered.
     pub(crate) fn events_answered(&self, card: u64) -> u64 {
         self.cards
             .get(&card)
             .map_or(0, |entry| entry.events_answered)
     }
 
-    /// What the live values of the card's tree move with.
+    /// What the live values of the card's nodes move with.
     pub(crate) fn uses(&self, card: u64) -> Uses {
-        self.cards
-            .get(&card)
-            .map_or(Uses::default(), |entry| entry.uses)
+        match self.cards.get(&card).and_then(|entry| entry.tree.as_ref()) {
+            Some(Ok(table)) => table.uses(),
+            _ => Uses::default(),
+        }
     }
 
     /// Where each live control of the instance was put last.
     pub(crate) fn played_of(&self, id: &InstanceId) -> Option<&BTreeMap<String, f32>> {
         self.played.get(id)
-    }
-
-    /// The record of the card, or of a child of it, changed: its tree is drawn again when its
-    /// code read what changed. Its live values follow by themselves.
-    pub(crate) fn record_changed(&mut self, card: u64, id: &InstanceId, cx: &mut Context<Self>) {
-        let (Some(session), Some(entry)) = (self.session.upgrade(), self.cards.get(&card)) else {
-            return;
-        };
-        let read = if *id != entry.id {
-            entry.reads.children
-        } else {
-            match (&entry.reads.state, &entry.drawn_record) {
-                (Some(names), Some(drawn)) => {
-                    let now = (session.read(cx).project().state_json(id))
-                        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-                    let field = |record: Option<&Value>, name: &String| {
-                        record.and_then(|record| record.get(name)).cloned()
-                    };
-                    names
-                        .iter()
-                        .any(|name| field(now.as_ref(), name) != field(Some(drawn), name))
-                }
-                _ => true,
-            }
-        };
-        if read {
-            self.render(card, cx);
-        }
     }
 
     /// Sends what `update` makes for the tool of instance `id` to its processor, as the
@@ -1114,39 +1091,47 @@ impl Live {
         }
     }
 
-    /// Reads the watches of every card. A card whose code read the watches draws again as they
-    /// move, and one of a tool with the transport whose code read it as that moves; the live
-    /// values of the others follow without a new tree.
+    /// Reads the watches of every card, which its live values follow, and tells Bun those its
+    /// bindings read as they move, and the transport to a tool that shows it.
     fn look_at_watches(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
             return;
         };
-        let mut moved = Vec::new();
+        let mut moved = BTreeMap::new();
         let mut shown_watches_moved = false;
+        let mut shows_transport = false;
         let tools = self.tools.borrow();
-        let transport = transport_of(session.read(cx), cx);
-        for (card, entry) in &mut self.cards {
-            let info = find(&tools, &entry.tool);
+        for entry in self.cards.values_mut() {
             let watches = watches_of(session.read(cx).project(), &entry.id);
-            // The control loop draws the card of its tool after every step anyway, but with
-            // the transport of its last draw.
-            let watches_changed = watches != entry.watches;
-            let watches_moved =
-                watches_changed && entry.reads.watches && !info.is_some_and(|info| info.tick);
-            shown_watches_moved |= watches_changed && entry.uses.watches;
-            entry.watches = watches;
-            let transport_moved = info.is_some_and(|info| info.transport)
-                && entry.reads.transport
-                && entry.transport != Some(transport);
-            if watches_moved || transport_moved {
-                moved.push(*card);
+            if watches == entry.watches {
+                continue;
             }
+            let reads = self.reads.get(&entry.id).cloned().unwrap_or_default();
+            shown_watches_moved |= entry
+                .tree
+                .as_ref()
+                .is_some_and(|tree| tree.as_ref().is_ok_and(|table| table.uses().watches));
+            if reads.watches {
+                moved.insert(entry.id.clone(), watches.clone());
+            }
+            entry.watches = watches;
+        }
+        for entry in self.cards.values() {
+            let info = find(&tools, &entry.tool);
+            let reads = self.reads.get(&entry.id).cloned().unwrap_or_default();
+            shows_transport |= info.is_some_and(|info| info.transport) && reads.transport;
         }
         drop(tools);
-        for card in &moved {
-            self.render(*card, cx);
+        for (instance, watches) in &moved {
+            self.host.send(&Request::Watches { instance, watches });
         }
-        // What else the watches move comes with a tree.
+        let transport = transport_of(session.read(cx), cx);
+        if shows_transport && self.told_transport != Some(transport) {
+            let clock = clock_of(&session, cx);
+            if self.host.send(&Request::Clock { clock }) {
+                self.told_transport = Some(clock.transport);
+            }
+        }
         if shown_watches_moved {
             cx.notify();
         }
@@ -1168,38 +1153,45 @@ impl Live {
                     self.report(cx);
                 }
             }
-            Event::Tree {
+            Event::Ops {
                 card,
-                tree,
-                reads,
+                ops,
+                mount,
                 event,
             } => {
                 let Some(entry) = self.cards.get_mut(&card) else {
                     return;
                 };
-                entry.answered(reads, event);
-                entry.tree =
-                    Some(tree.and_then(|(version, Drawn(node))| Ok((version, Rc::new(node?)))));
-                entry.uses = match &entry.tree {
-                    Some(Ok((_, node))) => node.uses(),
-                    _ => Uses::default(),
-                };
-                crate::bun::count_tree();
-                if std::mem::take(&mut entry.stale) {
-                    self.render(card, cx);
-                }
-            }
-            Event::Unchanged { card, reads, event } => {
-                if let Some(entry) = self.cards.get_mut(&card) {
-                    entry.answered(reads, event);
-                    if std::mem::take(&mut entry.stale) {
-                        self.render(card, cx);
-                    }
-                }
-                // A drag's preview lets go with it.
                 if event {
-                    cx.notify();
+                    entry.events_answered += 1;
                 }
+                let started = Instant::now();
+                // Taken out, so a change applies in place rather than to a copy.
+                let base = match entry.tree.take() {
+                    _ if mount => Some(Rc::default()),
+                    Some(Ok(table)) => Some(table),
+                    // Failed, or not made yet: what comes before its nodes changes nothing.
+                    other => {
+                        entry.tree = other;
+                        None
+                    }
+                };
+                match (base, ops) {
+                    (Some(mut table), ops) => {
+                        let applied = ops.and_then(|ops| {
+                            Rc::make_mut(&mut table).apply(ops)?;
+                            Ok(table)
+                        });
+                        entry.stale &= !(mount && applied.is_ok());
+                        entry.tree = Some(applied);
+                    }
+                    (None, Err(error)) => entry.tree = Some(Err(error)),
+                    (None, Ok(_)) => {}
+                }
+                crate::bun::count_batch(started.elapsed());
+            }
+            Event::Reads { instance, reads } => {
+                self.reads.insert(instance, reads);
                 return;
             }
             Event::Edit {
@@ -1443,13 +1435,16 @@ impl Live {
         self.report(cx);
         *self.tools.borrow_mut() = gone.into_iter().chain(tools).collect();
         self.generation.set(self.generation.get() + 1);
+        // The new Bun knows no card and has read nothing yet.
+        self.reads.clear();
+        self.told_transport = None;
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
-            // A tree asked of the Bun before never comes.
             if let Some(entry) = self.cards.get_mut(&card) {
-                entry.asked = false;
+                entry.mounted = false;
+                entry.stale = entry.tree.is_some();
             }
-            self.render(card, cx);
+            self.mount(card, cx);
         }
     }
 

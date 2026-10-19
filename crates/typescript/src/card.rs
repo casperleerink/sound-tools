@@ -1,5 +1,5 @@
 //! The card of an instance of a tool of the project, in a rack, or its page, the whole window:
-//! the tree its code draws. What moves on it moves here, with no code: a space scrolls and
+//! the nodes its code made. What moves on it moves here, with no code: a space scrolls and
 //! zooms, a drag moves what binds to it and turns what it turns, and live values follow the
 //! playhead, the watches and the record. Code hears a press, and a drag once, at its end.
 
@@ -25,16 +25,16 @@ use sound_ui::components::knob::{
 use sound_ui::import::{choose_file, import_file};
 use sound_ui::{ActiveTheme, ControlEdit, Session, typography};
 
-use crate::bun::PageSize;
+use crate::bun::{EventKind, PageSize};
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
-    self, Align, Axis, Cursor, DivNode, Drag, Node, Reach, SampleNode, ShapeKind, SpaceNode,
-    TextNode, Words,
+    self, Align, Axis, Cursor, DivProps, Drag, NodeTable, Props, Reach, SampleProps, ShapeKind,
+    SpaceProps, TextProps, Words,
 };
 use crate::window::{Live, Surface, edit_record, state_of};
 
-/// How long an ended drag keeps its values at most, when the tree after its end does not come,
+/// How long an ended drag keeps its values at most, when the answer to its end does not come,
 /// such as when Bun stopped.
 const ENDED_DRAG: Duration = Duration::from_secs(2);
 /// Points of pointer travel for the whole range of what a drag turns, as a knob of the window.
@@ -55,10 +55,10 @@ pub(crate) struct TypeScriptCard {
     /// The scroll and zoom of each space, by its key, and the size it was last laid out at,
     /// which its paint writes.
     spaces: Rc<RefCell<HashMap<String, SpaceView>>>,
-    /// The drag of the pointer, from its press until the tree after its end arrives.
+    /// The drag of the pointer, from its press until the answer to its end arrives.
     held: Option<Held>,
-    /// The shape the pointer is over: the key of its space and its own.
-    hovered: Option<(String, String)>,
+    /// The shape the pointer is over: the key of its space and its node.
+    hovered: Option<(String, u64)>,
     /// It has the keys while it, or a control in it, has the focus: a click on it gives it
     /// them, and a page takes them when it opens and nothing else has them.
     focus: FocusHandle,
@@ -83,11 +83,10 @@ impl Render for Page {
 #[derive(Clone)]
 struct Held {
     space: String,
-    /// The key of the shape it holds, or `None` for the space itself, which finds its drag in
-    /// each new tree.
-    target: Option<String>,
-    /// The version of the tree whose handlers it calls: the last one drawn.
-    version: u64,
+    /// The node that hears it: the shape it holds, or the space.
+    node: u64,
+    /// Whether it holds a shape, whose drag it takes again as the shape changes.
+    on_shape: bool,
     drag: Drag,
     /// Where it was pressed and where the pointer is, in the window.
     start: Point<Pixels>,
@@ -104,23 +103,21 @@ struct Held {
     modifiers: Modifiers,
     moved: bool,
     /// When it ended, and the number of the event that told its code: its values stay until
-    /// the tree after that event arrives.
+    /// the answer to that event arrives.
     ended: Option<(u64, Instant)>,
 }
 
 impl Held {
-    /// Takes the drag of what it holds from the tree drawn last, whose handlers its code
-    /// keeps: the tree of the press may be gone by the end of a long drag.
+    /// Takes the drag of what it holds as it is now: its code may give it another.
     fn follow(&mut self, frame: &SpaceFrame) {
-        let drag = match &self.target {
-            None => frame.drag.clone(),
-            Some(key) => (frame.pointed.iter().flatten())
-                .find(|pointer| pointer.key == *key)
+        let drag = match self.on_shape {
+            false => frame.drag.clone(),
+            true => (frame.pointed.iter().flatten())
+                .find(|pointer| pointer.node == self.node)
                 .and_then(|pointer| pointer.drag.clone()),
         };
         if let Some(drag) = drag {
             self.drag = drag;
-            self.version = frame.version;
         }
     }
 
@@ -207,15 +204,8 @@ impl TypeScriptCard {
         cx.subscribe(&session, |view, _, event, cx| match event {
             ProjectEvent::Deleted(id) if *id == view.id => view.edit.finish(&view.session, cx),
             // Its code reads the records of its children too.
-            ProjectEvent::Created(id) | ProjectEvent::Changed(id) | ProjectEvent::Deleted(id)
-                if *id == view.id || id.parent().as_ref() == Some(&view.id) =>
-            {
-                let (card, id) = (view.card, id.clone());
-                view.live
-                    .update(cx, |live, cx| live.record_changed(card, &id, cx));
-                // Its live values read the record, also when the tree stays the same.
-                cx.notify();
-            }
+            // Its live values read the record.
+            ProjectEvent::Changed(id) if *id == view.id => cx.notify(),
             _ => {}
         })
         .detach();
@@ -297,12 +287,11 @@ impl TypeScriptCard {
         }
     }
 
-    /// Runs a handler of the tree of `version` with what it hears. The number of the event.
-    fn event(&mut self, version: u64, handler: usize, payload: Value, cx: &mut App) -> u64 {
+    /// Runs the handler of `kind` of the node `node` with what it hears. The number of the
+    /// event.
+    fn event(&mut self, node: u64, kind: EventKind, payload: Value, cx: &mut App) -> u64 {
         let card = self.card;
-        (self.live).update(cx, |live, cx| {
-            live.event(card, version, handler, payload, cx)
-        })
+        (self.live).update(cx, |live, cx| live.event(card, node, kind, payload, cx))
     }
 
     /// The record with each field it leaves out at its default, and its tool.
@@ -326,19 +315,20 @@ impl TypeScriptCard {
         cx: &mut Context<Self>,
     ) {
         let units = frame.units_at(bounds, event.position);
-        let (on_press, drag, target, anchor) = match target {
+        let (on_press, drag, node, on_shape, anchor) = match target {
             Some(index) => match frame.pointed.get(index).and_then(Option::as_ref) {
                 Some(pointer) => (
                     pointer.on_press,
                     pointer.drag.clone(),
-                    Some(pointer.key.clone()),
+                    pointer.node,
+                    true,
                     pointer.anchor,
                 ),
                 None => return,
             },
-            None => (frame.on_press, frame.drag.clone(), None, units),
+            None => (frame.on_press, frame.drag.clone(), frame.node, false, units),
         };
-        if let Some(handler) = on_press {
+        if on_press {
             let button = match event.button {
                 MouseButton::Right => "right",
                 _ => "left",
@@ -350,7 +340,7 @@ impl TypeScriptCard {
                 "clicks": event.click_count,
             });
             add_modifiers(&mut press, event.modifiers);
-            self.event(frame.version, handler, press, cx);
+            self.event(node, EventKind::Press, press, cx);
         }
         let Some(drag) = drag.filter(|_| event.button == MouseButton::Left) else {
             return;
@@ -386,8 +376,8 @@ impl TypeScriptCard {
         let (across, down) = frame.view.scale();
         let held = Held {
             space: frame.key.clone(),
-            target,
-            version: frame.version,
+            node,
+            on_shape,
             drag,
             start: event.position,
             now: event.position,
@@ -436,8 +426,8 @@ impl TypeScriptCard {
         held.moved = true;
         let held = held.clone();
         self.turn_held(&held, cx);
-        if let Some(handler) = held.drag.on_move {
-            self.event(held.version, handler, held.result(), cx);
+        if held.drag.on_move {
+            self.event(held.node, EventKind::Move, held.result(), cx);
         }
         cx.notify();
     }
@@ -471,14 +461,14 @@ impl TypeScriptCard {
             );
         }
         self.held = match held.drag.on_end {
-            Some(handler) => {
-                let number = self.event(held.version, handler, held.result(), cx);
+            true => {
+                let number = self.event(held.node, EventKind::End, held.result(), cx);
                 Some(Held {
                     ended: Some((number, Instant::now())),
                     ..held
                 })
             }
-            None => None,
+            false => None,
         };
         cx.notify();
     }
@@ -595,7 +585,7 @@ impl TypeScriptCard {
         cx.notify();
     }
 
-    fn hover(&mut self, hovered: Option<(String, String)>, cx: &mut Context<Self>) {
+    fn hover(&mut self, hovered: Option<(String, u64)>, cx: &mut Context<Self>) {
         if self.hovered != hovered {
             self.hovered = hovered;
             cx.notify();
@@ -618,8 +608,8 @@ fn range_of(info: Option<&ToolInfo>, turns: &tree::Turns) -> Option<ValueRange> 
 /// What a shape of a space does with the pointer.
 #[derive(Clone)]
 struct Pointer {
-    key: String,
-    on_press: Option<usize>,
+    node: u64,
+    on_press: bool,
     drag: Option<Drag>,
     cursor: Option<Cursor>,
     anchor: (f64, f64),
@@ -671,14 +661,15 @@ enum Geometry {
 /// Everything a space paints and hears the pointer with, for one draw.
 struct SpaceFrame {
     key: String,
-    version: u64,
+    /// The node of the space, which hears a press and a drag on it.
+    node: u64,
     view: SpaceView,
     placed: Vec<Placed>,
     /// What each shape does with the pointer, by its place.
     pointed: Vec<Option<Pointer>>,
     background: Option<Hsla>,
     radius: f32,
-    on_press: Option<usize>,
+    on_press: bool,
     drag: Option<Drag>,
     cursor: Option<Cursor>,
     extent: tree::Ranges,
@@ -851,9 +842,8 @@ struct Drawing<'a, 'b> {
     /// The card's own, which the paint of a space writes its size in.
     laid_out: Rc<RefCell<HashMap<String, SpaceView>>>,
     drag: Option<(String, DragNumbers)>,
-    hovered: Option<(String, String)>,
-    /// The version of the tree, which its handlers name: the one on screen, not a newer one.
-    version: u64,
+    hovered: Option<(String, u64)>,
+    table: &'a NodeTable,
     cx: &'a mut Context<'b, TypeScriptCard>,
 }
 
@@ -870,27 +860,46 @@ impl Drawing<'_, '_> {
         }
     }
 
-    /// Draws `node`. `index` tells siblings apart, so every element that needs an id gets its
-    /// own.
-    fn draw(&mut self, node: &Node, index: &[usize]) -> AnyElement {
-        match node {
-            Node::Text(TextNode { text }) => SharedString::from(text.clone()).into_any_element(),
-            Node::Sample(SampleNode { path, label }) => self.sample(path, label.as_deref()),
-            Node::Space(space) => self.space(space, index),
-            Node::Div(DivNode {
+    /// Draws the node `id`. `index` tells siblings apart, so every element that needs an id
+    /// gets its own.
+    fn draw(&mut self, id: u64, index: &[usize]) -> AnyElement {
+        let table = self.table;
+        let Some(entry) = table.get(id) else {
+            return div().into_any_element();
+        };
+        match &entry.props {
+            Props::Text(TextProps { text }) => {
+                SharedString::from(text.clone().unwrap_or_default()).into_any_element()
+            }
+            Props::Sample(SampleProps { path, label }) => {
+                self.sample(path.as_deref().unwrap_or_default(), label.as_deref())
+            }
+            Props::Space(space) => self.space(id, space, &entry.children, index),
+            // A shape outside a space, or a marker, draws nothing.
+            Props::Shape(_) | Props::Marker => div().into_any_element(),
+            Props::Div(DivProps {
                 key,
                 style,
                 on_click,
-                children,
             }) => {
-                let children: Vec<AnyElement> = (children.iter().enumerate())
-                    .map(|(position, child)| self.draw(child, &[index, &[position]].concat()))
+                let children: Vec<AnyElement> = (entry.children.iter())
+                    .filter(|child| {
+                        !matches!(
+                            table.get(**child).map(|child| &child.props),
+                            Some(Props::Marker)
+                        )
+                    })
+                    .enumerate()
+                    .map(|(position, child)| self.draw(*child, &[index, &[position]].concat()))
                     .collect();
-                let element = style.apply(div()).children(children);
-                let Some(handler) = *on_click else {
+                let element = style
+                    .clone()
+                    .unwrap_or_default()
+                    .apply(div())
+                    .children(children);
+                if *on_click != Some(true) {
                     return element.into_any_element();
-                };
-                let version = self.version;
+                }
                 element
                     .id(ElementId::Name(
                         element_name("div", key.as_deref(), index).into(),
@@ -903,7 +912,7 @@ impl Drawing<'_, '_> {
                                 "clicks": event.click_count(),
                             });
                             add_modifiers(&mut press, event.modifiers());
-                            view.event(version, handler, press, cx);
+                            view.event(id, EventKind::Click, press, cx);
                         }),
                     )
                     .into_any_element()
@@ -958,21 +967,27 @@ impl Drawing<'_, '_> {
 
     /// The shapes of a space with their numbers worked out, each in the colour it shows, those
     /// of its groups among them, moved by the group.
-    fn place(&self, space: &SpaceNode, key: &str) -> (Vec<Placed>, Vec<Option<Pointer>>) {
+    fn place(&self, children: &[u64], key: &str) -> (Vec<Placed>, Vec<Option<Pointer>>) {
         let mut placing = Placing {
             sources: self.sources(),
-            drags: &space.drags,
+            table: self.table,
             hovered: (self.hovered.as_ref())
                 .filter(|(space, _)| space == key)
-                .map(|(_, shape)| shape.as_str()),
-            placed: Vec::with_capacity(space.children.len()),
-            pointed: Vec::with_capacity(space.children.len()),
+                .map(|(_, shape)| *shape),
+            placed: Vec::with_capacity(children.len()),
+            pointed: Vec::with_capacity(children.len()),
         };
-        placing.shapes(&space.children, (0.0, 0.0));
+        placing.shapes(children, (0.0, 0.0));
         (placing.placed, placing.pointed)
     }
 
-    fn space(&mut self, space: &SpaceNode, index: &[usize]) -> AnyElement {
+    fn space(
+        &mut self,
+        id: u64,
+        space: &SpaceProps,
+        children: &[u64],
+        index: &[usize],
+    ) -> AnyElement {
         let key = element_name("space", space.key.as_deref(), index);
         let (unit_x, unit_y) = space.unit();
         let extent = space.extent.unwrap_or_default();
@@ -989,17 +1004,17 @@ impl Drawing<'_, '_> {
         let follow = space.follow.clone().unwrap_or_default();
         let view = followed(clamped(view, &extent), &follow, &self.spaces);
         self.spaces.insert(key.clone(), view);
-        let (placed, pointed) = self.place(space, &key);
+        let (placed, pointed) = self.place(children, &key);
         let frame = Rc::new(SpaceFrame {
             key,
-            version: self.version,
+            node: id,
             view,
             placed,
             pointed,
             background: space.background.map(|color| color.0),
             radius: space.radius.unwrap_or(0.0),
-            on_press: space.on_press,
-            drag: space.drag.clone(),
+            on_press: space.on_press == Some(true),
+            drag: self.table.drag(space.drag).cloned(),
             cursor: space.cursor,
             extent: space.extent.unwrap_or_default(),
             zoom: space.zoom.unwrap_or_default(),
@@ -1039,7 +1054,7 @@ impl Drawing<'_, '_> {
             Some(height) => holder.h(px(height)),
             None => holder.h_full(),
         };
-        let holder = if space.grow {
+        let holder = if space.grow == Some(true) {
             holder.flex_grow(1.).min_h_0()
         } else {
             holder.flex_none()
@@ -1051,9 +1066,9 @@ impl Drawing<'_, '_> {
 /// The shapes of a space as they are placed, in the order they paint.
 struct Placing<'a> {
     sources: Sources<'a>,
-    drags: &'a [Drag],
-    /// The key of the shape of this space the pointer is over.
-    hovered: Option<&'a str>,
+    table: &'a NodeTable,
+    /// The node of the shape of this space the pointer is over.
+    hovered: Option<u64>,
     placed: Vec<Placed>,
     /// What each shape does with the pointer, by its place; a group has none.
     pointed: Vec<Option<Pointer>>,
@@ -1066,21 +1081,27 @@ impl Placing<'_> {
             .map_or(0.0, |number| self.sources.number(number))
     }
 
-    fn shapes(&mut self, shapes: &[tree::Shape], (left, top): (f64, f64)) {
-        for shape in shapes {
-            if shape.kind == ShapeKind::Group {
+    fn shapes(&mut self, children: &[u64], (left, top): (f64, f64)) {
+        let table = self.table;
+        for id in children {
+            let Some(entry) = table.get(*id) else {
+                continue;
+            };
+            let Props::Shape(shape) = &entry.props else {
+                continue;
+            };
+            if shape.kind == Some(ShapeKind::Group) {
                 let offset = (left + self.number(&shape.x), top + self.number(&shape.y));
-                self.shapes(&shape.children, offset);
+                self.shapes(&entry.children, offset);
             } else {
-                self.shape(shape, (left, top));
+                self.shape(*id, shape, (left, top));
             }
         }
     }
 
-    fn shape(&mut self, shape: &tree::Shape, (left, top): (f64, f64)) {
+    fn shape(&mut self, id: u64, shape: &tree::ShapeProps, (left, top): (f64, f64)) {
         let index = self.pointed.len();
-        let shape_key = shape.key.clone().unwrap_or_else(|| index.to_string());
-        let hovered = self.hovered == Some(shape_key.as_str());
+        let hovered = self.hovered == Some(id);
         let reach = |reach: &Option<Reach>| match reach {
             Some(Reach::Point([x, y])) => {
                 (left + self.sources.number(x), top + self.sources.number(y))
@@ -1089,7 +1110,10 @@ impl Placing<'_> {
             None => (left, top),
         };
         let (x, y) = (left + self.number(&shape.x), top + self.number(&shape.y));
-        let geometry = match shape.kind {
+        let Some(kind) = shape.kind else {
+            return;
+        };
+        let geometry = match kind {
             ShapeKind::Rect => {
                 let border_width = self.number(&shape.border_width) as f32;
                 Geometry::Rect {
@@ -1141,9 +1165,9 @@ impl Placing<'_> {
         };
         let anchor = shape.anchor.unwrap_or_default();
         self.pointed.push(shape.is_pointed().then(|| Pointer {
-            key: shape_key,
-            on_press: shape.on_press,
-            drag: shape.drag.and_then(|drag| self.drags.get(drag).cloned()),
+            node: id,
+            on_press: shape.on_press == Some(true),
+            drag: self.table.drag(shape.drag).cloned(),
             cursor: shape.cursor,
             anchor: (
                 anchor.x.map_or(origin.0, |x| left + f64::from(x)),
@@ -1393,7 +1417,7 @@ fn listen(
                 return;
             }
             let target = found(&frame, &painted, event.position);
-            if target.is_none() && frame.on_press.is_none() && frame.drag.is_none() {
+            if target.is_none() && !frame.on_press && frame.drag.is_none() {
                 return;
             }
             card.update(cx, |card, cx| {
@@ -1426,7 +1450,7 @@ fn listen(
                 let hovered = found(&frame, &painted, event.position)
                     .filter(|_| over)
                     .and_then(|index| frame.pointed.get(index).cloned().flatten())
-                    .map(|pointer| (frame.key.clone(), pointer.key));
+                    .map(|pointer| (frame.key.clone(), pointer.node));
                 let hovered_here = card
                     .hovered
                     .as_ref()
@@ -1497,13 +1521,13 @@ fn frame_now(
     view.height = f64::from(f32::from(bounds.size.height));
     SpaceFrame {
         key: frame.key.clone(),
-        version: frame.version,
+        node: frame.node,
         view,
         placed: Vec::new(),
         pointed: Vec::new(),
         background: None,
         radius: 0.0,
-        on_press: None,
+        on_press: false,
         drag: None,
         cursor: None,
         extent: frame.extent,
@@ -1517,7 +1541,7 @@ impl Render for TypeScriptCard {
         let Some(state) = state_of(self.session.read(cx).project(), &self.id) else {
             return div().into_any_element();
         };
-        // An ended drag lets go once the tree after its end arrived.
+        // An ended drag lets go once the answer to its end arrived.
         let answered = self.live.read(cx).events_answered(self.card);
         if let Some(Held {
             ended: Some((number, at)),
@@ -1543,7 +1567,7 @@ impl Render for TypeScriptCard {
             window.request_animation_frame();
         }
         let body = match tree {
-            Some(Ok((version, node))) => {
+            Some(Ok(table)) => {
                 let drag = (self.held.as_ref())
                     .and_then(|held| Some((held.drag.id.clone()?, held.numbers())));
                 let mut drawing = Drawing {
@@ -1556,10 +1580,13 @@ impl Render for TypeScriptCard {
                     laid_out: self.spaces.clone(),
                     drag,
                     hovered: self.hovered.clone(),
-                    version,
+                    table: &table,
                     cx,
                 };
-                let body = drawing.draw(&node, &[]);
+                let body = match table.root() {
+                    Some(root) => drawing.draw(root, &[]),
+                    None => div().into_any_element(),
+                };
                 let spaces = drawing.spaces;
                 // Scroll and zoom as drawn, so a wheel scrolls from there; sizes stay the paint's.
                 let mut kept = self.spaces.borrow_mut();
@@ -1577,7 +1604,7 @@ impl Render for TypeScriptCard {
                 .text_color(cx.theme().red)
                 .child(format!("ui: {error}"))
                 .into_any_element(),
-            // Until its first tree arrives, a moment after the card opens.
+            // Until its first nodes arrive, a moment after the card opens.
             None => div().into_any_element(),
         };
         let theme = cx.theme();
@@ -1646,13 +1673,13 @@ mod tests {
     fn frame(view: SpaceView, extent: tree::Ranges, zoom: tree::Ranges) -> SpaceFrame {
         SpaceFrame {
             key: "roll".into(),
-            version: 1,
+            node: 1,
             view,
             placed: Vec::new(),
             pointed: Vec::new(),
             background: None,
             radius: 0.0,
-            on_press: None,
+            on_press: false,
             drag: None,
             cursor: None,
             extent,

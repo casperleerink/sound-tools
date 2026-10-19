@@ -1,88 +1,242 @@
-//! The tree a card draws, as the host sends it. The types are the contract with `sdk.ts`: a
-//! field this side does not know is an error on the card, not something left out.
+//! The nodes a card makes, as the host sends them: ops on a table the window keeps, so a change
+//! of a prop crosses as that prop. The types are the contract with `sdk.ts`: a prop this side
+//! does not know is an error on the card, not something left out.
+
+use std::collections::{HashMap, HashSet};
 
 use gpui::{Div, Hsla, prelude::*, px};
 use serde::de::value::MapAccessDeserializer;
-use serde::de::{Error, MapAccess, Visitor};
+use serde::de::{Error, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use crate::tools::Unit;
 
-/// A node of a tree. Its `type` comes first, as `host.ts` writes it, so a large space is read
-/// in one pass; serde's tagged enums would read it twice.
-#[derive(Debug)]
-pub(crate) enum Node {
-    Div(DivNode),
-    Text(TextNode),
-    /// The file of a sample field, and a button that chooses one.
-    Sample(SampleNode),
-    Space(Box<SpaceNode>),
+/// A value whose change may set it, unset it with `null`, or leave it out.
+fn changed<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct DivNode {
-    /// Keeps the state of the element when the tree is drawn again.
-    pub key: Option<String>,
-    #[serde(default)]
-    pub style: Style,
-    /// The index of its click handler in the host.
-    #[serde(rename = "onClick")]
-    pub on_click: Option<usize>,
-    pub children: Vec<Node>,
+/// The props of a kind of node, every one optional, and a change of some of them.
+macro_rules! props {
+    ($(#[$meta:meta])* $name:ident / $change:ident { $($(#[$field_meta:meta])* $field:ident : $ty:ty),* $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, Default, Deserialize)]
+        #[serde(deny_unknown_fields, rename_all = "camelCase")]
+        pub(crate) struct $name {
+            $($(#[$field_meta])* pub $field: Option<$ty>,)*
+        }
+
+        #[derive(Debug, Default, Deserialize)]
+        #[serde(deny_unknown_fields, rename_all = "camelCase")]
+        pub(crate) struct $change {
+            $(#[serde(default, deserialize_with = "changed")] $field: Option<Option<$ty>>,)*
+        }
+
+        impl $name {
+            fn apply(&mut self, change: $change) {
+                $(if let Some(value) = change.$field {
+                    self.$field = value;
+                })*
+            }
+        }
+    };
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct TextNode {
-    pub text: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SampleNode {
-    pub path: String,
-    pub label: Option<String>,
-}
-
-impl<'de> Deserialize<'de> for Node {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_map(NodeVisitor)
+props! {
+    DivProps / DivChange {
+        /// Keeps the state of the element.
+        key: String,
+        style: Style,
+        /// It hears a click.
+        on_click: bool,
     }
 }
 
-struct NodeVisitor;
+props! {
+    TextProps / TextChange { text: String }
+}
 
-impl<'de> Visitor<'de> for NodeVisitor {
-    type Value = Node;
+props! {
+    /// The file of a sample field, and a button that chooses one.
+    SampleProps / SampleChange { path: String, label: String }
+}
+
+props! {
+    /// A surface that draws shapes in units of its own, scrolls and zooms, and hears the pointer.
+    SpaceProps / SpaceChange {
+        key: String,
+        width: f32,
+        height: f32,
+        grow: bool,
+        /// Points per unit at zoom 1.
+        unit: Axes,
+        extent: Ranges,
+        zoom: Ranges,
+        /// Where it shows from when it first draws.
+        scroll: Axes,
+        follow: Follow,
+        background: Color,
+        radius: f32,
+        on_press: bool,
+        /// Its drag, by its number among the drags of the card.
+        drag: u64,
+        cursor: Cursor,
+    }
+}
+
+props! {
+    /// A shape of a space. One struct for every kind, as the props a kind does not have are left
+    /// out by `sdk.ts`'s types; a prop no kind has is still an error.
+    ShapeProps / ShapeChange {
+        kind: ShapeKind,
+        on_press: bool,
+        drag: u64,
+        anchor: Axes,
+        hover: Color,
+        cursor: Cursor,
+        opacity: Num,
+        x: Num,
+        y: Num,
+        width: Num,
+        height: Num,
+        radius: Num,
+        color: Color,
+        border: Color,
+        border_width: Num,
+        from: Reach,
+        to: Reach,
+        text: Words,
+        unit: Unit,
+        size: f32,
+        align: Align,
+    }
+}
+
+/// A node of the table.
+#[derive(Clone, Debug)]
+pub(crate) enum Props {
+    Div(DivProps),
+    Text(TextProps),
+    Sample(SampleProps),
+    Space(Box<SpaceProps>),
+    Shape(Box<ShapeProps>),
+    /// Where a list or a part that changes puts its nodes: draws nothing.
+    Marker,
+}
+
+#[derive(Debug)]
+pub(crate) enum Change {
+    Div(DivChange),
+    Text(TextChange),
+    Sample(SampleChange),
+    Space(Box<SpaceChange>),
+    Shape(Box<ShapeChange>),
+    Marker,
+}
+
+/// One change of the nodes of a card, as `host.ts` writes it: `["create", id, family, props]`,
+/// `["set", id, family, props]`, `["insert", parent, id, before]`, `["remove", id]`, `["root",
+/// id]` and `["drag", id, drag]`.
+#[derive(Debug)]
+pub(crate) enum Op {
+    Create(u64, Props),
+    Set(u64, Change),
+    Insert {
+        parent: u64,
+        node: u64,
+        before: Option<u64>,
+    },
+    Remove(u64),
+    Root(u64),
+    Drag(u64, Drag),
+}
+
+impl<'de> Deserialize<'de> for Op {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_seq(OpVisitor)
+    }
+}
+
+struct OpVisitor;
+
+fn next<'de, T: Deserialize<'de>, A: SeqAccess<'de>>(
+    seq: &mut A,
+    what: &str,
+) -> Result<T, A::Error> {
+    seq.next_element()?
+        .ok_or_else(|| A::Error::custom(format!("an op without its {what}")))
+}
+
+impl<'de> Visitor<'de> for OpVisitor {
+    type Value = Op;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("a node with its `type` first")
+        formatter.write_str("an op such as [\"set\", id, family, props]")
     }
 
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
-        let first: Option<String> = map.next_key()?;
-        if first.as_deref() != Some("type") {
-            return Err(A::Error::custom("a node names its `type` first"));
-        }
-        let kind: String = map.next_value()?;
-        let rest = MapAccessDeserializer::new(map);
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Op, A::Error> {
+        let kind: String = next(&mut seq, "kind")?;
+        let id: u64 = next(&mut seq, "node")?;
         Ok(match kind.as_str() {
-            "div" => Node::Div(DivNode::deserialize(rest)?),
-            "text" => Node::Text(TextNode::deserialize(rest)?),
-            "sample" => Node::Sample(SampleNode::deserialize(rest)?),
-            "space" => Node::Space(Box::new(SpaceNode::deserialize(rest)?)),
+            "create" => {
+                let family: String = next(&mut seq, "family")?;
+                Op::Create(
+                    id,
+                    match family.as_str() {
+                        "div" => Props::Div(next(&mut seq, "props")?),
+                        "text" => Props::Text(next(&mut seq, "props")?),
+                        "sample" => Props::Sample(next(&mut seq, "props")?),
+                        "space" => Props::Space(Box::new(next(&mut seq, "props")?)),
+                        "shape" => Props::Shape(Box::new(next(&mut seq, "props")?)),
+                        "marker" => {
+                            next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
+                            Props::Marker
+                        }
+                        other => return Err(A::Error::unknown_variant(other, FAMILIES)),
+                    },
+                )
+            }
+            "set" => {
+                let family: String = next(&mut seq, "family")?;
+                Op::Set(
+                    id,
+                    match family.as_str() {
+                        "div" => Change::Div(next(&mut seq, "props")?),
+                        "text" => Change::Text(next(&mut seq, "props")?),
+                        "sample" => Change::Sample(next(&mut seq, "props")?),
+                        "space" => Change::Space(Box::new(next(&mut seq, "props")?)),
+                        "shape" => Change::Shape(Box::new(next(&mut seq, "props")?)),
+                        "marker" => {
+                            next::<serde::de::IgnoredAny, _>(&mut seq, "props")?;
+                            Change::Marker
+                        }
+                        other => return Err(A::Error::unknown_variant(other, FAMILIES)),
+                    },
+                )
+            }
+            "insert" => Op::Insert {
+                parent: id,
+                node: next(&mut seq, "child")?,
+                before: next(&mut seq, "sibling")?,
+            },
+            "remove" => Op::Remove(id),
+            "root" => Op::Root(id),
+            "drag" => Op::Drag(id, next(&mut seq, "drag")?),
             other => {
                 return Err(A::Error::unknown_variant(
                     other,
-                    &["div", "text", "sample", "space"],
+                    &["create", "set", "insert", "remove", "root", "drag"],
                 ));
             }
         })
     }
 }
 
-/// What of the window a tree moves with, without asking for a new tree.
+const FAMILIES: &[&str] = &["div", "text", "sample", "space", "shape", "marker"];
+
+/// What of the window the live values of a card move with, without its code.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Uses {
     pub watches: bool,
@@ -98,53 +252,232 @@ impl Uses {
     }
 }
 
-impl Node {
+/// A node of a card and its children, in order.
+#[derive(Clone, Debug)]
+pub(crate) struct Entry {
+    pub props: Props,
+    pub children: Vec<u64>,
+    parent: Option<u64>,
+    uses: Uses,
+}
+
+/// The nodes of a card as the window keeps them, by id.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct NodeTable {
+    nodes: HashMap<u64, Entry>,
+    root: Option<u64>,
+    drags: HashMap<u64, Drag>,
+    /// How many nodes read the playhead and the watches.
+    tick: usize,
+    watches: usize,
+}
+
+impl NodeTable {
+    pub(crate) fn root(&self) -> Option<u64> {
+        self.root
+    }
+
+    pub(crate) fn get(&self, id: u64) -> Option<&Entry> {
+        self.nodes.get(&id)
+    }
+
+    pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Drag> {
+        self.drags.get(&id?)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub(crate) fn uses(&self) -> Uses {
-        match self {
-            Self::Div(DivNode { children, .. }) => (children.iter())
-                .map(Self::uses)
-                .fold(Uses::default(), Uses::and),
-            Self::Space(space) => space.uses(),
-            Self::Text(_) | Self::Sample(_) => Uses::default(),
+        Uses {
+            watches: self.watches > 0,
+            tick: self.tick > 0,
         }
     }
-}
 
-/// A surface that draws shapes in units of its own, scrolls and zooms, and hears the pointer.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub(crate) struct SpaceNode {
-    pub key: Option<String>,
-    pub width: Option<f32>,
-    pub height: Option<f32>,
-    #[serde(default)]
-    pub grow: bool,
-    /// Points per unit at zoom 1.
-    pub unit: Option<Axes>,
-    pub extent: Option<Ranges>,
-    pub zoom: Option<Ranges>,
-    /// Where it shows from when it first draws.
-    pub scroll: Option<Axes>,
-    pub follow: Option<Follow>,
-    pub background: Option<Color>,
-    pub radius: Option<f32>,
-    pub on_press: Option<usize>,
-    pub drag: Option<Drag>,
-    /// The drags of its shapes, which name theirs by its place here: a drag every note shares
-    /// comes once.
-    #[serde(default)]
-    pub drags: Vec<Drag>,
-    pub cursor: Option<Cursor>,
-    pub children: Vec<Shape>,
-}
-
-impl SpaceNode {
-    fn uses(&self) -> Uses {
-        self.children
-            .iter()
-            .fold(Uses::default(), |uses, shape| uses.and(shape.uses()))
+    /// Applies the ops of one batch, or says what is wrong with them.
+    pub(crate) fn apply(&mut self, ops: Vec<Op>) -> Result<(), String> {
+        let mut emptied = HashSet::new();
+        for op in ops {
+            match op {
+                Op::Create(id, props) => {
+                    if let Props::Shape(shape) = &props
+                        && shape.kind.is_none()
+                    {
+                        return Err(format!("the shape {id} has no kind"));
+                    }
+                    let uses = uses_of(&props);
+                    self.count(uses, true);
+                    let entry = Entry {
+                        props,
+                        children: Vec::new(),
+                        parent: None,
+                        uses,
+                    };
+                    if let Some(old) = self.nodes.insert(id, entry) {
+                        self.count(old.uses, false);
+                    }
+                }
+                Op::Set(id, change) => {
+                    let entry = self
+                        .nodes
+                        .get_mut(&id)
+                        .ok_or_else(|| format!("no node {id}"))?;
+                    match (&mut entry.props, change) {
+                        (Props::Div(props), Change::Div(change)) => props.apply(change),
+                        (Props::Text(props), Change::Text(change)) => props.apply(change),
+                        (Props::Sample(props), Change::Sample(change)) => props.apply(change),
+                        (Props::Space(props), Change::Space(change)) => props.apply(*change),
+                        (Props::Shape(props), Change::Shape(change)) => props.apply(*change),
+                        (Props::Marker, Change::Marker) => {}
+                        _ => return Err(format!("a change of another kind of node for {id}")),
+                    }
+                    let (before, after) = (entry.uses, uses_of(&entry.props));
+                    entry.uses = after;
+                    self.count(before, false);
+                    self.count(after, true);
+                }
+                Op::Insert {
+                    parent,
+                    node,
+                    before,
+                } => {
+                    let Some(entry) = self.nodes.get_mut(&node) else {
+                        return Err(format!("no node {node} to put in {parent}"));
+                    };
+                    let old = entry.parent.replace(parent);
+                    // A move: out of where it was first.
+                    if let Some(old) = old
+                        && let Some(old) = self.nodes.get_mut(&old)
+                        && let Some(at) = old.children.iter().rposition(|child| *child == node)
+                    {
+                        old.children.remove(at);
+                    }
+                    if emptied.remove(&parent) {
+                        self.tidy(parent);
+                    }
+                    let Some(siblings) = self.nodes.get_mut(&parent) else {
+                        return Err(format!("no node {parent} to put {node} in"));
+                    };
+                    let at = before.and_then(|before| {
+                        siblings.children.iter().rposition(|child| *child == before)
+                    });
+                    match at {
+                        Some(at) => siblings.children.insert(at, node),
+                        None => siblings.children.push(node),
+                    }
+                }
+                Op::Remove(id) => {
+                    let parent = self.nodes.get(&id).and_then(|entry| entry.parent);
+                    self.remove(id);
+                    // Taken out of its parent once for the whole batch: a list of thousands loses
+                    // hundreds of rows at once.
+                    if let Some(parent) = parent {
+                        emptied.insert(parent);
+                    }
+                }
+                Op::Root(id) => self.root = Some(id),
+                Op::Drag(id, drag) => {
+                    self.drags.insert(id, drag);
+                }
+            }
+        }
+        for parent in emptied {
+            self.tidy(parent);
+        }
+        Ok(())
     }
 
+    /// Takes the children that are gone out of the list of `parent`.
+    fn tidy(&mut self, parent: u64) {
+        let Some(entry) = self.nodes.get(&parent) else {
+            return;
+        };
+        let kept: Vec<u64> = (entry.children.iter().copied())
+            .filter(|child| self.nodes.contains_key(child))
+            .collect();
+        if let Some(entry) = self.nodes.get_mut(&parent) {
+            entry.children = kept;
+        }
+    }
+
+    fn remove(&mut self, id: u64) {
+        let Some(entry) = self.nodes.remove(&id) else {
+            return;
+        };
+        self.count(entry.uses, false);
+        for child in entry.children {
+            self.remove(child);
+        }
+    }
+
+    fn count(&mut self, uses: Uses, add: bool) {
+        let step = |count: &mut usize, used: bool| {
+            if used {
+                *count = if add {
+                    *count + 1
+                } else {
+                    count.saturating_sub(1)
+                };
+            }
+        };
+        step(&mut self.tick, uses.tick);
+        step(&mut self.watches, uses.watches);
+    }
+}
+
+fn uses_of(props: &Props) -> Uses {
+    match props {
+        Props::Shape(shape) => shape.uses(),
+        _ => Uses::default(),
+    }
+}
+
+impl ShapeProps {
+    fn uses(&self) -> Uses {
+        self.numbers()
+            .fold(Uses::default(), |uses, number| uses.and(number.uses()))
+    }
+
+    fn numbers(&self) -> impl Iterator<Item = &Num> {
+        let reaches = [&self.from, &self.to]
+            .into_iter()
+            .flatten()
+            .flat_map(|reach| match reach {
+                Reach::Point([x, y]) => vec![x, y],
+                Reach::Turn(turn) => vec![turn],
+            });
+        let words = match &self.text {
+            Some(Words::Live(live)) => Some(live),
+            _ => None,
+        };
+        [
+            &self.opacity,
+            &self.x,
+            &self.y,
+            &self.width,
+            &self.height,
+            &self.radius,
+            &self.border_width,
+        ]
+        .into_iter()
+        .flatten()
+        .chain(reaches)
+        .chain(words)
+    }
+
+    /// Whether the pointer can do something with it, so it is found under the pointer.
+    pub(crate) fn is_pointed(&self) -> bool {
+        self.on_press == Some(true)
+            || self.drag.is_some()
+            || self.hover.is_some()
+            || self.cursor.is_some()
+    }
+}
+
+impl SpaceProps {
     /// Points per unit at zoom 1, across and down.
     pub(crate) fn unit(&self) -> (f64, f64) {
         let unit = self.unit.unwrap_or_default();
@@ -199,81 +532,6 @@ impl Cursor {
     }
 }
 
-/// A shape of a space. One struct for every kind, as the fields a kind does not have are left
-/// out by `sdk.ts`'s types; a field no kind has is still an error.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub(crate) struct Shape {
-    pub kind: ShapeKind,
-    pub key: Option<String>,
-    pub on_press: Option<usize>,
-    /// Its drag, by its place in the space's `drags`.
-    pub drag: Option<usize>,
-    pub anchor: Option<Axes>,
-    pub hover: Option<Color>,
-    pub cursor: Option<Cursor>,
-    pub opacity: Option<Num>,
-    pub x: Option<Num>,
-    pub y: Option<Num>,
-    pub width: Option<Num>,
-    pub height: Option<Num>,
-    pub radius: Option<Num>,
-    pub color: Option<Color>,
-    pub border: Option<Color>,
-    pub border_width: Option<Num>,
-    pub from: Option<Reach>,
-    pub to: Option<Reach>,
-    pub text: Option<Words>,
-    pub unit: Option<Unit>,
-    pub size: Option<f32>,
-    pub align: Option<Align>,
-    /// The shapes of a group.
-    #[serde(default)]
-    pub children: Vec<Shape>,
-}
-
-impl Shape {
-    fn uses(&self) -> Uses {
-        let own = (self.numbers()).fold(Uses::default(), |uses, number| uses.and(number.uses()));
-        (self.children.iter()).fold(own, |uses, shape| uses.and(shape.uses()))
-    }
-
-    fn numbers(&self) -> impl Iterator<Item = &Num> {
-        let reaches = [&self.from, &self.to]
-            .into_iter()
-            .flatten()
-            .flat_map(|reach| match reach {
-                Reach::Point([x, y]) => vec![x, y],
-                Reach::Turn(turn) => vec![turn],
-            });
-        let words = match &self.text {
-            Some(Words::Live(live)) => Some(live),
-            _ => None,
-        };
-        [
-            &self.opacity,
-            &self.x,
-            &self.y,
-            &self.width,
-            &self.height,
-            &self.radius,
-            &self.border_width,
-        ]
-        .into_iter()
-        .flatten()
-        .chain(reaches)
-        .chain(words)
-    }
-
-    /// Whether the pointer can do something with it, so it is found under the pointer.
-    pub(crate) fn is_pointed(&self) -> bool {
-        self.on_press.is_some()
-            || self.drag.is_some()
-            || self.hover.is_some()
-            || self.cursor.is_some()
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ShapeKind {
@@ -294,7 +552,7 @@ pub(crate) enum Align {
 }
 
 /// An end of a line, a point, or of an arc, a turn.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum Reach {
     Point([Num; 2]),
@@ -302,7 +560,7 @@ pub(crate) enum Reach {
 }
 
 /// The text of a shape: as it is, or a live number as a readout.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum Words {
     Fixed(String),
@@ -460,8 +718,11 @@ pub(crate) struct Drag {
     pub axis: Option<Axis>,
     pub x: Option<Turns>,
     pub y: Option<Turns>,
-    pub on_end: Option<usize>,
-    pub on_move: Option<usize>,
+    /// Its code hears its end, or every move.
+    #[serde(default)]
+    pub on_end: bool,
+    #[serde(default)]
+    pub on_move: bool,
 }
 
 /// Whole steps of a drag, in units: of how far it went, or with `grid`, of where the anchor of
@@ -499,7 +760,7 @@ pub(crate) struct Turns {
     pub label: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct Style {
     direction: Option<Direction>,
@@ -520,14 +781,14 @@ pub(crate) struct Style {
     border_width: Option<f32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Direction {
     Row,
     Column,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Place {
     Start,
@@ -535,7 +796,7 @@ enum Place {
     End,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Justify {
     Start,
@@ -652,26 +913,56 @@ mod tests {
         assert_eq!(decimal(0.1).to_string(), "0.1");
     }
 
+    fn ops(json: serde_json::Value) -> Result<Vec<Op>, serde_json::Error> {
+        serde_json::from_value(json)
+    }
+
     #[test]
-    fn a_field_the_runtime_does_not_know_is_an_error() {
-        let trees = [
+    fn a_prop_the_runtime_does_not_know_is_an_error() {
+        let wrong = [
             (
-                serde_json::json!({ "type": "div", "style": { "margin": 4 }, "children": [] }),
+                serde_json::json!([["create", 1, "div", { "style": { "margin": 4 } }]]),
                 "margin",
             ),
             (
-                serde_json::json!({ "type": "space", "children": [], "shapes": [] }),
+                serde_json::json!([["set", 1, "space", { "shapes": [] }]]),
                 "shapes",
             ),
         ];
-        for (tree, field) in trees {
-            let error = serde_json::from_value::<Node>(tree)
-                .unwrap_err()
-                .to_string();
+        for (json, field) in wrong {
+            let error = ops(json).unwrap_err().to_string();
             assert!(
                 error.contains(&format!("unknown field `{field}`")),
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn ops_set_unset_move_and_remove_nodes_in_place() {
+        let mut table = NodeTable::default();
+        let made = ops(serde_json::json!([
+            ["create", 1, "space", { "key": "roll" }],
+            ["create", 2, "shape", { "kind": "rect", "x": 1, "color": "#ffffff", "hover": "#000000" }],
+            ["create", 3, "shape", { "kind": "rect", "x": { "op": "tick" } }],
+            ["create", 4, "marker", {}],
+            ["insert", 1, 4, null], ["insert", 1, 2, 4], ["insert", 1, 3, 4], ["root", 1],
+        ]));
+        table.apply(made.unwrap()).unwrap();
+        assert_eq!(table.get(1).unwrap().children, [2, 3, 4]);
+        assert!(table.uses().tick);
+        let changed = ops(serde_json::json!([
+            ["set", 2, "shape", { "x": 5, "hover": null }],
+            ["insert", 1, 3, 2],
+            ["remove", 3],
+        ]));
+        table.apply(changed.unwrap()).unwrap();
+        assert_eq!(table.get(1).unwrap().children, [2, 4]);
+        assert!(!table.uses().tick);
+        let Props::Shape(shape) = &table.get(2).unwrap().props else {
+            panic!("a shape");
+        };
+        assert!(matches!(shape.x, Some(Num::Fixed(5.0))));
+        assert!(shape.hover.is_none() && shape.color.is_some());
     }
 }

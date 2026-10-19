@@ -762,9 +762,9 @@ export interface ToolSpec<S extends Fields, C extends Controls, M, K extends Chi
    */
   tick?: (tool: Tick<ValuesOf<S>, C, M, K>) => void;
   /** Its card. Without one it gets a knob per knob and a button per option and toggle. */
-  card?: (card: Context<ValuesOf<S>, C, M, K>) => Node;
+  card?: (card: Context<ValuesOf<S>, C, M, K>) => Child;
   /** Its page: the whole window, for an instance at the top of a project with no arrangement. */
-  page?: (page: Page<ValuesOf<S>, C, M, K>) => Node;
+  page?: (page: Page<ValuesOf<S>, C, M, K>) => Child;
   /**
    * Its page shows the transport (play, stop, position, tempo, time signature, click), and its
    * card and page draw again as `transport` moves. Recording is the arrangement's.
@@ -1003,13 +1003,13 @@ export interface Context<State, C extends Controls = Controls, M = unknown, K ex
    * of one `label` in a row are one undo step.
    */
   update(label: string, change: (part: Part<State, K>) => void): void;
-  /** What its code keeps and nothing saves. A card draws again after a click. */
-  memory: M;
-  /** The last value of each `watch` of the sound, by name. A card draws again as they move. */
+  /** What its code keeps and nothing saves. A binding that read a field of it runs again when code sets that field. */
+  memory: Memory<M>;
+  /** The last value of each `watch` of the sound, by name. A binding that read one runs again as it moves. */
   watches: Record<string, number>;
   /** The clock of the sound, in seconds: where it is now. Play `at` a little after it. */
   time: number;
-  /** Where the piece plays. A card draws again as it moves only when the tool sets `transport: true`. */
+  /** Where the piece plays. A binding that read it runs again as it moves only when the tool sets `transport: true`. */
   transport: Transport;
   /** The sources of live values: what a card shows moving without drawing again. */
   now: Now<State, C>;
@@ -1024,35 +1024,8 @@ export interface Tick<State, C extends Controls = Controls, M = unknown, K exten
 
 
 // ---------------------------------------------------------------------------------------------
-// Cards and pages: a tree the code draws, which the window shows. What moves on it (a drag, a
-// playhead, a meter, a knob turned) moves in the window, without running code: a live value.
-
-/** A colour as `#rrggbb` or `#rrggbbaa`. */
-export type Color = `#${string}`;
-
-/** How a `div` lays out and looks. Numbers are points. */
-export interface Style {
-  /** How children line up. A div is a column unless this says `row`. */
-  direction?: "row" | "column";
-  gap?: number;
-  padding?: number;
-  paddingX?: number;
-  paddingY?: number;
-  width?: number;
-  height?: number;
-  /** Takes the room left in its parent. */
-  grow?: boolean;
-  /** Where children sit across the direction. */
-  align?: "start" | "center" | "end";
-  /** Where children sit along the direction. */
-  justify?: "start" | "center" | "end" | "between";
-  background?: Color;
-  color?: Color;
-  fontSize?: number;
-  radius?: number;
-  borderColor?: Color;
-  borderWidth?: number;
-}
+// Cards and pages: nodes the code makes once, which the window keeps. What moves on them (a
+// drag, a playhead, a meter, a knob turned) moves in the window, without running code: a live value.
 
 /** Where the project plays, as the window shows it. */
 export interface Transport {
@@ -1069,7 +1042,7 @@ export interface Transport {
 /** What a page gets: what all code gets, and the room it has. */
 export interface Page<State, C extends Controls = Controls, M = unknown, K extends ChildTools = ChildTools>
   extends Context<State, C, M, K> {
-  /** Its width and height in points. It draws again when the window changes. */
+  /** Its width and height in points, which change with the window: read them in a binding. */
   size: { width: number; height: number };
 }
 
@@ -1089,7 +1062,7 @@ type LiveNode =
  * A number the window works out again on every frame, without running code: where the
  * playhead is, a watch, a field as a drag turns it, how far a drag went. Combine them with the
  * methods, which take a live value or a number. Code cannot read one: it is no number, so
- * `if (now.tick > 960)` is a type error. A card draws again only when what its code read changed.
+ * `if (now.tick > 960)` is a type error.
  */
 export class Live {
   constructor(readonly node: LiveNode) {}
@@ -1189,6 +1162,7 @@ function sources(): Now<Record<string, number>> {
 /** The sources of live values, for the components of a card, which name fields by strings. */
 export const now: Now<Record<string, number>> = sources();
 
+
 // Pointer
 
 /** Which modifier keys were held. */
@@ -1240,8 +1214,8 @@ export type DragTurns = ({ field: string } | { control: string }) & {
 /**
  * The pointer pressing and dragging a shape or a space. The window moves what binds to
  * `now.drag(id)` as the pointer goes, and turns `x` and `y`; code hears it once, at `onEnd`.
- * Until its next tree after `onEnd` arrives, the drag's values stay, so what moved does not
- * jump back while its code runs.
+ * Until the changes its code makes then arrive, the drag's values stay, so what moved does not
+ * jump back while its code runs. Make one and give it to every shape it drags.
  */
 export interface Drag {
   /** Names its live values: `now.drag(id)`. */
@@ -1265,19 +1239,804 @@ export interface Drag {
   onMove?: (drag: DragResult) => void;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Reactivity. A card, a page and a component run once and make the nodes the window keeps. A
+// function given as a prop or a child is a binding: it runs again when a record field, memory,
+// a watch or a signal it read changes, and only what it gives the window changes there.
+
+/** A function the window calls again when what it read changed. */
+export type Accessor<T> = () => T;
+
+/**
+ * A prop as written: a value, which stays, or an `Accessor`, which runs again when what it
+ * reads changes: `x={() => note.start}`. An accessor may give a live value: `x={() =>
+ * picked() ? move.dx.plus(note.start) : note.start}`.
+ */
+export type Bind<T> = T | Accessor<T>;
+
+/** Memory as code gets it: change it by setting a field. A `Set` or a `Map` is replaced, never changed in place. */
+export type Memory<M> = M extends Set<infer T>
+  ? ReadonlySet<T>
+  : M extends Map<infer K, infer V>
+    ? ReadonlyMap<K, V>
+    : M extends (...args: never[]) => unknown
+      ? M
+      : M extends object
+        ? { -readonly [Key in keyof M]: Memory<M[Key]> }
+        : M;
+
+interface Owner {
+  owner: Owner | null;
+  owned: Computation[];
+  cleanups: Array<() => void>;
+  /** The card whose nodes it makes. */
+  card: CardRoot | null;
+  disposed: boolean;
+}
+
+interface Computation extends Owner {
+  run: () => void;
+  sources: Dep[];
+  /** Made earlier runs first, so a binding runs after what made it. */
+  order: number;
+  queued: boolean;
+}
+
+interface Dep {
+  observers: Set<Computation>;
+}
+
+let listener: Computation | null = null;
+let owner: Owner | null = null;
+/** Above 0 while the body of a component runs, which reads nothing that changes. */
+let settingUp = 0;
+let batching = 0;
+let queue: Computation[] = [];
+let order = 0;
+
+const READ_IN_SETUP =
+  "a card, a page and a component run once, so a value that changes is read inside a function the window calls again: " +
+  "x={() => note.start}, not x={note.start}; {() => `${state.count} notes`} as a child; <For each={() => state.notes}>";
+
+function dep(): Dep {
+  return { observers: new Set() };
+}
+
+function track(read: Dep) {
+  if (listener) {
+    if (!read.observers.has(listener)) {
+      read.observers.add(listener);
+      listener.sources.push(read);
+    }
+  } else if (settingUp > 0) {
+    throw new Error(READ_IN_SETUP);
+  }
+}
+
+function notify(changed: Dep | undefined) {
+  if (!changed) return;
+  for (const computation of changed.observers) {
+    if (!computation.queued) {
+      computation.queued = true;
+      queue.push(computation);
+    }
+  }
+  if (batching === 0) flush();
+}
+
+/** Runs `change` and then, once, every binding what it changed reaches. */
+export function batch<T>(change: () => T): T {
+  batching += 1;
+  try {
+    return change();
+  } finally {
+    batching -= 1;
+    if (batching === 0) flush();
+  }
+}
+
+function flush() {
+  batching += 1;
+  try {
+    while (queue.length > 0) {
+      const due = queue.sort((a, b) => a.order - b.order);
+      queue = [];
+      for (const computation of due) {
+        computation.queued = false;
+        if (!computation.disposed) rerun(computation);
+      }
+    }
+  } finally {
+    batching -= 1;
+  }
+}
+
+function clean(node: Owner) {
+  for (const child of node.owned) dispose(child);
+  node.owned = [];
+  for (const cleanup of node.cleanups.splice(0)) cleanup();
+  if ("sources" in node) {
+    const computation = node as Computation;
+    for (const read of computation.sources) read.observers.delete(computation);
+    computation.sources = [];
+  }
+}
+
+function dispose(node: Owner) {
+  clean(node);
+  node.disposed = true;
+}
+
+function rerun(computation: Computation) {
+  clean(computation);
+  const [lastListener, lastOwner, lastSetup] = [listener, owner, settingUp];
+  [listener, owner, settingUp] = [computation, computation, 0];
+  try {
+    computation.run();
+  } catch (error) {
+    failedIn(computation, error);
+  } finally {
+    [listener, owner, settingUp] = [lastListener, lastOwner, lastSetup];
+  }
+}
+
+function failedIn(where: Owner, error: unknown) {
+  let card: CardRoot | null = null;
+  for (let at: Owner | null = where; at && !card; at = at.owner) card = at.card;
+  if (!card) throw error;
+  card.error ??= String(error);
+}
+
+function computation(run: () => void): Computation {
+  const made: Computation = { run, sources: [], owner, owned: [], cleanups: [], card: owner?.card ?? null, disposed: false, order: order++, queued: false };
+  owner?.owned.push(made);
+  return made;
+}
+
+/** Runs `run` now and again whenever what it read changes. */
+function effect(run: () => void) {
+  rerun(computation(run));
+}
+
+/** A root of its own, disposed by hand: a row of a list, a card. */
+function root<T>(make: (dispose: () => void) => T, card: CardRoot | null = owner?.card ?? null): T {
+  const made: Owner = { owner, owned: [], cleanups: [], card, disposed: false };
+  const [lastListener, lastOwner] = [listener, owner];
+  [listener, owner] = [null, made];
+  try {
+    return make(() => dispose(made));
+  } finally {
+    [listener, owner] = [lastListener, lastOwner];
+  }
+}
+
+/** Runs `cleanup` when what runs now runs again or goes. */
+export function onCleanup(cleanup: () => void) {
+  owner?.cleanups.push(cleanup);
+}
+
+/** Reads without making what runs now depend on it, such as the record in a handler. */
+export function untrack<T>(read: () => T): T {
+  const [lastListener, lastSetup] = [listener, settingUp];
+  [listener, settingUp] = [null, 0];
+  try {
+    return read();
+  } finally {
+    [listener, settingUp] = [lastListener, lastSetup];
+  }
+}
+
+/** Runs the body of a component: once, reading nothing that changes. */
+function setup<T>(body: () => T): T {
+  const [lastListener] = [listener];
+  listener = null;
+  settingUp += 1;
+  try {
+    return body();
+  } finally {
+    settingUp -= 1;
+    listener = lastListener;
+  }
+}
+
+/** A value of the card's own that bindings follow: `const [open, setOpen] = signal(false)`. */
+export function signal<T>(initial: T): [Accessor<T>, (next: T) => void] {
+  let value = initial;
+  const read = dep();
+  return [
+    () => {
+      track(read);
+      return value;
+    },
+    (next) => {
+      if (!Object.is(value, next)) {
+        value = next;
+        notify(read);
+      }
+    },
+  ];
+}
+
+/** A value worked out from others once per change, for many bindings to read. */
+export function memo<T>(work: () => T): Accessor<T> {
+  const [read, write] = signal<T>(undefined as T);
+  effect(() => write(work()));
+  return read;
+}
+
+/**
+ * Whether a key is in a set that changes, such as the selected notes: a binding that asks for
+ * one key runs again only when that key comes or goes, not when any does.
+ */
+export function selector<K>(keys: Accessor<ReadonlySet<K>>): (key: K) => boolean {
+  const watched = new Map<K, Dep>();
+  let current: ReadonlySet<K> = new Set();
+  effect(() => {
+    const next = keys();
+    const last = current;
+    current = next;
+    for (const key of last) if (!next.has(key)) notify(watched.get(key));
+    for (const key of next) if (!last.has(key)) notify(watched.get(key));
+  });
+  return (key) => {
+    let read = watched.get(key);
+    if (!read) {
+      read = dep();
+      watched.set(key, read);
+    }
+    track(read);
+    return current.has(key);
+  };
+}
+
+// Stores: the record, memory, watches and the transport, read field by field.
+
+const RAW = Symbol("raw");
+const ALL_KEYS = Symbol("keys");
+const proxies = new WeakMap<object, object>();
+const fieldSources = new WeakMap<object, Map<PropertyKey, Dep>>();
+
+function fieldSource(target: object, key: PropertyKey): Dep {
+  let sources = fieldSources.get(target);
+  if (!sources) {
+    sources = new Map();
+    fieldSources.set(target, sources);
+  }
+  let found = sources.get(key);
+  if (!found) {
+    found = dep();
+    sources.set(key, found);
+  }
+  return found;
+}
+
+function changed(target: object, key: PropertyKey) {
+  notify(fieldSources.get(target)?.get(key));
+}
+
+function isWrapped(value: unknown): value is object {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return Array.isArray(value) || prototype === Object.prototype || prototype === null;
+}
+
+function raw<T>(value: T): T {
+  return (value !== null && typeof value === "object" && (value as Record<symbol, unknown>)[RAW]) as T || value;
+}
+
+/** A store over `target`: reads are tracked; writes go through only when `writable`. */
+function store<T extends object>(target: T, writable: boolean): T {
+  const known = proxies.get(target);
+  if (known) return known as T;
+  const proxy = new Proxy(target, {
+    get(object, key, receiver) {
+      if (key === RAW) return object;
+      const value = Reflect.get(object, key, receiver);
+      if (typeof key === "symbol" || (typeof value === "function" && !Object.hasOwn(object, key))) return value;
+      track(fieldSource(object, key));
+      return isWrapped(value) ? store(value, writable) : value;
+    },
+    has(object, key) {
+      if (typeof key !== "symbol") track(fieldSource(object, key));
+      return Reflect.has(object, key);
+    },
+    ownKeys(object) {
+      track(fieldSource(object, ALL_KEYS));
+      return Reflect.ownKeys(object);
+    },
+    set(object, key, value) {
+      if (!writable) {
+        throw new TypeError(`${String(key)} is read only here: change the record with update(label, ({ state }) => ...)`);
+      }
+      const fresh = !Object.hasOwn(object, key);
+      const next = raw(value);
+      const last = (object as Record<PropertyKey, unknown>)[key];
+      const lengthBefore = Array.isArray(object) ? object.length : 0;
+      Reflect.set(object, key, next);
+      if (!Object.is(last, next)) changed(object, key);
+      if (Array.isArray(object) && object.length !== lengthBefore) changed(object, "length");
+      if (fresh || (Array.isArray(object) && !Object.is(last, next))) changed(object, ALL_KEYS);
+      return true;
+    },
+    deleteProperty(object, key) {
+      if (!writable) throw new TypeError(`${String(key)} is read only here`);
+      const had = Object.hasOwn(object, key);
+      Reflect.deleteProperty(object, key);
+      if (had) {
+        changed(object, key);
+        changed(object, ALL_KEYS);
+      }
+      return true;
+    },
+  });
+  proxies.set(target, proxy);
+  return proxy;
+}
+
+function sameShallow(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (!isWrapped(a) || !isWrapped(b) || Array.isArray(a) !== Array.isArray(b)) return false;
+  const [left, right] = [a as Record<string, unknown>, b as Record<string, unknown>];
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every((key) => sameShallow(left[key], right[key]));
+}
+
+/**
+ * Makes `target` hold what `next` holds, keeping each object that stays, so only bindings of
+ * what changed run. A list of the same length keeps its items by place, so a moved note is the
+ * same note; one that grew or shrank keeps the items that did not change by what they hold, so
+ * a note deleted before others leaves them be.
+ */
+function reconcile(target: Record<PropertyKey, unknown>, next: Record<PropertyKey, unknown>) {
+  if (Array.isArray(target) && Array.isArray(next)) {
+    reconcileList(target, next);
+    return;
+  }
+  let keysChanged = false;
+  for (const key of Object.keys(target)) {
+    if (!Object.hasOwn(next, key)) {
+      delete target[key];
+      changed(target, key);
+      keysChanged = true;
+    }
+  }
+  for (const [key, value] of Object.entries(next)) {
+    keysChanged ||= !Object.hasOwn(target, key);
+    reconcileField(target, key, value);
+  }
+  if (keysChanged) changed(target, ALL_KEYS);
+}
+
+function reconcileField(target: Record<PropertyKey, unknown>, key: PropertyKey, value: unknown) {
+  const last = target[key];
+  if (isWrapped(last) && isWrapped(value) && Array.isArray(last) === Array.isArray(value)) {
+    reconcile(last as Record<PropertyKey, unknown>, value as Record<PropertyKey, unknown>);
+  } else if (!Object.is(last, value)) {
+    target[key] = adopted(value);
+    changed(target, key);
+    if (Array.isArray(target)) changed(target, ALL_KEYS);
+  }
+}
+
+/** A value of `next` as a store keeps it: its own copy, which a later reconcile changes in place. */
+function adopted<T>(value: T): T {
+  return isWrapped(value) ? structuredClone(value) : value;
+}
+
+function reconcileList(target: unknown[], next: unknown[]) {
+  if (target.length === next.length) {
+    next.forEach((value, index) => reconcileField(target as never, index, value));
+    return;
+  }
+  const lengthBefore = target.length;
+  let start = 0;
+  while (start < target.length && start < next.length && sameShallow(target[start], next[start])) start++;
+  let endTarget = target.length;
+  let endNext = next.length;
+  while (endTarget > start && endNext > start && sameShallow(target[endTarget - 1], next[endNext - 1])) {
+    endTarget--;
+    endNext--;
+  }
+  const byContent = new Map<string, unknown[]>();
+  for (let index = start; index < endTarget; index++) {
+    const key = JSON.stringify(target[index]);
+    byContent.set(key, [...(byContent.get(key) ?? []), target[index]]);
+  }
+  const middle = next.slice(start, endNext).map((value) => {
+    const same = byContent.get(JSON.stringify(value))?.shift();
+    return same === undefined ? { value } : { kept: same };
+  });
+  const unused = [...byContent.values()].flat();
+  const result = middle.map((each) => {
+    if ("kept" in each) return each.kept;
+    const reused = isWrapped(each.value) ? unused.find((old) => isWrapped(old) && Array.isArray(old) === Array.isArray(each.value)) : undefined;
+    if (reused === undefined) return adopted(each.value);
+    unused.splice(unused.indexOf(reused), 1);
+    reconcile(reused as Record<PropertyKey, unknown>, each.value as Record<PropertyKey, unknown>);
+    return reused;
+  });
+  const before = target.slice();
+  target.splice(start, endTarget - start, ...result);
+  target.forEach((value, index) => {
+    if (!Object.is(before[index], value)) changed(target, index);
+  });
+  for (let index = target.length; index < before.length; index++) changed(target, index);
+  if (target.length !== lengthBefore) changed(target, "length");
+  changed(target, ALL_KEYS);
+}
+
+/** The fields of a store that bindings read now, or `null` when one reads them all. */
+function readFields(target: object): string[] | null {
+  const sources = fieldSources.get(target);
+  if (!sources) return [];
+  if ((sources.get(ALL_KEYS)?.observers.size ?? 0) > 0) return null;
+  return [...sources].filter(([key, read]) => typeof key === "string" && read.observers.size > 0).map(([key]) => key as string);
+}
+
+function isRead(target: object): boolean {
+  const fields = readFields(target);
+  return fields === null || fields.length > 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Nodes: what a card makes, which the window keeps by id. A change sends the window only what
+// changed: a prop of a node, a node in or out.
+
+declare const nodeBrand: unique symbol;
+
+/** A node the window draws: what JSX makes. */
+export interface UiNode {
+  readonly [nodeBrand]: true;
+}
+
+/** Shows what a function gives, a list, or one of two, in place: see `For` and `Show`. */
+interface Region {
+  readonly mount: (into: UiNode[], family: Family) => void;
+}
+
+/** Anything a node takes as a child. A function is a binding: what it gives is shown again when what it read changes. */
+export type Child = UiNode | Region | ShapeLiteral | string | number | boolean | null | undefined | (() => Child) | Child[];
+
+type Family = "div" | "text" | "sample" | "space" | "shape" | "marker";
+/** What the window gets of a node: a pointer handler is `true`, a drag the number of its kept drag. */
+type Wired = Record<string, unknown>;
+
+interface Made {
+  readonly [nodeBrand]: true;
+  id: number;
+  family: Family;
+  card: CardRoot;
+  props: Wired;
+  /** Sent to the window: changes after this go as `set`. */
+  sent: boolean;
+  onPress?: (press: Press) => void;
+  onClick?: (press: Press) => void;
+  drag?: Drag;
+  children: Set<Made>;
+  /** The region a marker stands for, which puts what it shows before the marker. */
+  region?: { parent: number | null };
+}
+
+/** What the window gets of a card at once: the ops since the last time. */
+type Op = [string, ...unknown[]];
+
+/** The nodes of one card. */
+interface CardRoot {
+  id: number;
+  ops: Op[];
+  /** Props changed since the last ops, by node: sent as one `set` each. */
+  changes: Map<Made, Wired>;
+  drags: Map<Drag, number>;
+  error?: string;
+  dispose: () => void;
+}
+
+/** The window drops a press on a node an earlier Bun made, so ids start again with each Bun. */
+let nextNode = 1;
+const nodes = new Map<number, Made>();
+
+function currentCard(): CardRoot {
+  const card = owner?.card;
+  if (!card) throw new Error("a node is made outside a card or a page");
+  return card;
+}
+
+function makeNode(family: Family): Made {
+  const made: Made = { id: nextNode++, family, card: currentCard(), props: {}, sent: false, children: new Set() } as unknown as Made;
+  nodes.set(made.id, made);
+  return made;
+}
+
+function send(made: Made) {
+  made.card.ops.push(["create", made.id, made.family, made.props]);
+  made.sent = true;
+}
+
+function same(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function setProp(made: Made, name: string, value: unknown) {
+  const wired = value === undefined ? null : value;
+  if (same(made.props[name] ?? null, wired)) return;
+  made.props[name] = wired;
+  if (!made.sent) return;
+  const pending = made.card.changes.get(made) ?? {};
+  pending[name] = wired;
+  made.card.changes.set(made, pending);
+}
+
+function insert(parent: number, child: Made, before: Made | null) {
+  child.card.ops.push(["insert", parent, child.id, before?.id ?? null]);
+  if (child.region) child.region.parent = parent;
+}
+
+function forget(made: Made) {
+  nodes.delete(made.id);
+  made.card.changes.delete(made);
+  for (const child of made.children) forget(child);
+}
+
+function remove(made: Made) {
+  made.card.ops.push(["remove", made.id]);
+  forget(made);
+}
+
+/** The number of `drag` on its card: a drag every note shares goes to the window once. */
+function keptDrag(card: CardRoot, drag: Drag): number {
+  let id = card.drags.get(drag);
+  if (id === undefined) {
+    id = nextNode++;
+    card.drags.set(drag, id);
+    card.ops.push(["drag", id, { ...drag, onEnd: drag.onEnd !== undefined, onMove: drag.onMove !== undefined }]);
+  }
+  return id;
+}
+
+const HANDLERS = new Set(["onPress", "onClick"]);
+
+/** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
+function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {
+  const made = makeNode(family);
+  for (const [name, value] of Object.entries(props)) {
+    if (name === "children" || value === undefined) continue;
+    if (HANDLERS.has(name)) {
+      made[name as "onPress"] = value as Made["onPress"];
+      made.props[name] = true;
+    } else if (name === "drag") {
+      made.drag = value as Drag;
+      made.props.drag = keptDrag(made.card, value as Drag);
+    } else if (typeof value === "function") {
+      effect(() => setProp(made, name, (value as Accessor<unknown>)()));
+    } else {
+      made.props[name] = value;
+    }
+  }
+  const placed: UiNode[] = [];
+  for (const child of children) materialize(child, placed, family);
+  send(made);
+  for (const child of placed as Made[]) {
+    made.children.add(child);
+    insert(made.id, child, null);
+  }
+  return made;
+}
+
+/** A shape as a plain object, such as one of the `shapes` of a `Canvas`. */
+export type ShapeLiteral = { [Kind in Shape["kind"]]: { kind: Kind } & ShapeProps<Kind> }[Shape["kind"]];
+
+function isNode(value: unknown): value is Made {
+  return typeof value === "object" && value !== null && nodes.has((value as Made).id) && (value as Made).card !== undefined;
+}
+
+/** The nodes `child` makes, in order, as children of a node of `family`. */
+function materialize(child: Child, into: UiNode[], family: Family) {
+  if (child === null || child === undefined || typeof child === "boolean") return;
+  if (Array.isArray(child)) {
+    for (const each of child) materialize(each, into, family);
+  } else if (typeof child === "function") {
+    dynamic(child, into, family);
+  } else if (typeof child === "string" || typeof child === "number") {
+    if (family === "space" || family === "shape") throw new Error(`a Space draws shapes such as Rect and Label, not the text ${JSON.stringify(child)}`);
+    const text = makeNode("text");
+    text.props.text = String(child);
+    send(text);
+    into.push(text);
+  } else if ("mount" in child && typeof child.mount === "function") {
+    child.mount(into, family);
+  } else if (isNode(child)) {
+    if ((family === "space" || family === "shape") && child.family !== "shape" && child.family !== "marker") {
+      throw new Error(`a Space draws shapes such as Rect and Label, not a ${child.family}`);
+    }
+    if (family !== "space" && family !== "shape" && child.family === "shape") {
+      throw new Error("a shape is drawn inside a Space");
+    }
+    into.push(child);
+  } else if ("kind" in child) {
+    const { kind, ...props } = child as ShapeLiteral;
+    into.push(shapeNode(kind, props, []));
+  } else {
+    throw new Error("a child is a node, text, a list or a function that gives one: not a node of a list that is gone");
+  }
+}
+
+/** A marker the nodes of a region go before, so they keep their place among their siblings. */
+function marker(): Made {
+  const made = makeNode("marker");
+  made.region = { parent: null };
+  send(made);
+  return made;
+}
+
+/** Where a region puts nodes now: in its parent before `marker`, or into the list its parent is made from. */
+function place(region: Made, nodesToPlace: Made[], before: Made, into: UiNode[] | null) {
+  const parent = region.region?.parent;
+  for (const made of nodesToPlace) {
+    if (into) into.push(made);
+    else if (parent !== null && parent !== undefined) insert(parent, made, before);
+    const parentNode = parent === null || parent === undefined ? undefined : nodes.get(parent);
+    parentNode?.children.add(made);
+  }
+}
+
+/** A child that is a function: shown again whole when what it read changes; text changes in place. */
+function dynamic(show: Accessor<Child>, into: UiNode[], family: Family) {
+  const end = marker();
+  let shown: Made[] = [];
+  let first: UiNode[] | null = into;
+  effect(() => {
+    const value = show();
+    const parent = end.region?.parent;
+    const parentNode = parent === null || parent === undefined ? undefined : nodes.get(parent);
+    if ((typeof value === "string" || typeof value === "number") && shown.length === 1 && shown[0]?.family === "text") {
+      setProp(shown[0], "text", String(value));
+      return;
+    }
+    const next: UiNode[] = [];
+    materialize(value, next, family);
+    for (const old of shown) {
+      if (!next.includes(old)) {
+        parentNode?.children.delete(old);
+        remove(old);
+      }
+    }
+    shown = next as Made[];
+    place(end, shown, end, first);
+    first = null;
+  });
+  into.push(end);
+}
+
+/**
+ * A list of `each`, one row per item, kept by its item: a row is made once, moves when its item
+ * moves and goes when its item goes. Its body runs once, as a component's; `index` follows its
+ * place. `<For each={() => state.notes}>{(note, index) => <Rect x={() => note.start} ... />}</For>`
+ */
+export function For<T>(props: { each: Accessor<readonly T[]>; children: (item: T, index: Accessor<number>) => Child }): Region {
+  return {
+    mount(into, family) {
+      const end = marker();
+      type Row = { nodes: Made[]; index: (next: number) => void; dispose: () => void };
+      let rows = new Map<T, Row>();
+      let order: T[] = [];
+      let first: UiNode[] | null = into;
+      onCleanup(() => {
+        for (const row of rows.values()) row.dispose();
+      });
+      effect(() => {
+        const list = props.each();
+        // A store list is followed as a whole, not item by item: a list of thousands costs one read.
+        const items = (list as unknown as Record<symbol, unknown>)[RAW] ? (Reflect.ownKeys(list), untrack(() => [...list])) : [...list];
+        untrack(() => {
+          const parent = end.region?.parent;
+          const parentNode = parent === null || parent === undefined ? undefined : nodes.get(parent);
+          const next = new Map<T, Row>();
+          const keep = new Set(items);
+          for (const [item, row] of rows) {
+            if (!keep.has(item)) {
+              for (const made of row.nodes) {
+                parentNode?.children.delete(made);
+                remove(made);
+              }
+              row.dispose();
+            }
+          }
+          const fresh = new Set<T>();
+          items.forEach((item, index) => {
+            const known = rows.get(item);
+            if (known && !next.has(item)) {
+              known.index(index);
+              next.set(item, known);
+              return;
+            }
+            const row = root((dispose) => {
+              const [readIndex, setIndex] = signal(index);
+              const made: UiNode[] = [];
+              materialize(setup(() => props.children(item, readIndex)), made, family);
+              return { nodes: made as Made[], index: setIndex, dispose };
+            });
+            next.set(item, row);
+            fresh.add(item);
+          });
+          if (first) {
+            for (const item of items) place(end, next.get(item)?.nodes ?? [], end, first);
+            first = null;
+          } else {
+            // The rows that stay in the order they had stay put; the others move before the row after them.
+            const kept = items.filter((item) => !fresh.has(item));
+            const before = new Map(order.map((item, index) => [item, index]));
+            const places = kept.map((item) => before.get(item) ?? 0);
+            const inOrder = places.every((place, index) => index === 0 || place > (places[index - 1] as number));
+            const staying = new Set(inOrder ? kept : longestRising(places).map((index) => kept[index]));
+            let anchor: Made = end;
+            for (let index = items.length - 1; index >= 0; index--) {
+              const item = items[index] as T;
+              const row = next.get(item) as Row;
+              if (!staying.has(item)) {
+                place(end, row.nodes, anchor, null);
+              }
+              anchor = row.nodes[0] ?? anchor;
+            }
+          }
+          rows = next;
+          order = items;
+        });
+      });
+      into.push(end);
+    },
+  };
+}
+
+/** The places in `values` of a longest rising run, in order. */
+function longestRising(values: number[]): number[] {
+  const tails: number[] = [];
+  const previous: number[] = new Array(values.length).fill(-1);
+  values.forEach((value, index) => {
+    let low = 0;
+    let high = tails.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if ((values[tails[middle] as number] as number) < value) low = middle + 1;
+      else high = middle;
+    }
+    if (low > 0) previous[index] = tails[low - 1] as number;
+    tails[low] = index;
+  });
+  const run: number[] = [];
+  for (let at = tails.at(-1) ?? -1; at >= 0; at = previous[at] as number) run.push(at);
+  return run.reverse();
+}
+
+/** Shows `children` while `when` holds, else `fallback`: made again each time it shows. */
+export function Show(props: { when: Accessor<unknown>; children: () => Child; fallback?: () => Child }): Region {
+  return {
+    mount(into, family) {
+      const shown = memo(() => Boolean(props.when()));
+      dynamic(() => (shown() ? setup(props.children) : props.fallback ? setup(props.fallback) : null), into, family);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// What a card draws.
+
+/** A colour as `#rrggbb` or `#rrggbbaa`. */
+export type Color = `#${string}`;
+
 /** What a shape the pointer reaches can do. */
 interface Pointed {
-  /** Keeps its hover and its drag when the tree is drawn again. */
-  key?: string;
   onPress?: (press: Press) => void;
+  /** A drag, made once and given to every shape it drags. */
   drag?: Drag;
   /** Its colour while the pointer is over it. */
-  hover?: Color;
+  hover?: Bind<Color | undefined>;
   cursor?: "pointer" | "grab" | "crosshair" | "ew-resize" | "ns-resize";
   /** 0 to 1; 1 when left out. */
-  opacity?: Num;
+  opacity?: Bind<Num>;
   /** The point a drag with `snap.grid` puts on the grid: its own `x` and `y` when left out, such as the end of a note for its resize handle. */
-  anchor?: { x?: number; y?: number };
+  anchor?: Bind<{ x?: number; y?: number }>;
 }
 
 /**
@@ -1285,18 +2044,36 @@ interface Pointed {
  * of a line and `size` of text are in points.
  */
 export type Shape =
-  /** Shapes moved together by `x` and `y`, such as the selected notes by a drag: one live value for all of them. */
-  | { kind: "group"; x?: Num; y?: Num; children: Child[] }
+  /** Shapes moved together by `x` and `y`: one live value for all of them. */
+  | { kind: "group"; x?: Bind<Num>; y?: Bind<Num> }
   | (Pointed &
-  (
-    | { kind: "rect"; x: Num; y: Num; width: Num; height: Num; color: Color; radius?: number; border?: Color; borderWidth?: Num }
-    | { kind: "circle"; x: Num; y: Num; radius: Num; color: Color }
-    | { kind: "line"; from: [Num, Num]; to: [Num, Num]; color: Color; width?: number }
-    /** Along a circle from one angle to another, in turns clockwise from the top: a dial. */
-    | { kind: "arc"; x: Num; y: Num; radius: number; from: Num; to: Num; color: Color; width?: number }
-    /** Text at `x`, `y`, its top; a live number shows as a readout in `unit`. */
-    | { kind: "text"; x: Num; y: Num; text: string | Live; unit?: Unit; color?: Color; size?: number; align?: "left" | "center" | "right" }
-  ));
+      (
+        | { kind: "rect"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; color: Bind<Color>; radius?: Bind<number>; border?: Bind<Color>; borderWidth?: Bind<Num> }
+        | { kind: "circle"; x: Bind<Num>; y: Bind<Num>; radius: Bind<Num>; color: Bind<Color> }
+        | { kind: "line"; from: Bind<readonly [Num, Num]>; to: Bind<readonly [Num, Num]>; color: Bind<Color>; width?: Bind<number> }
+        /** Along a circle from one angle to another, in turns clockwise from the top: a dial. */
+        | { kind: "arc"; x: Bind<Num>; y: Bind<Num>; radius: Bind<number>; from: Bind<Num>; to: Bind<Num>; color: Bind<Color>; width?: Bind<number> }
+        /** Text at `x`, `y`, its top; a live number shows as a readout in `unit`. */
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live>; unit?: Unit; color?: Bind<Color>; size?: number; align?: "left" | "center" | "right" }
+      ));
+
+type ShapeProps<Kind extends Shape["kind"]> = Omit<Extract<Shape, { kind: Kind }>, "kind">;
+
+function shapeNode(kind: Shape["kind"], props: object, children: Child[]): UiNode {
+  return element("shape", { kind, ...props }, children);
+}
+
+const shape =
+  <Kind extends Exclude<Shape["kind"], "group">>(kind: Kind) =>
+  (props: ShapeProps<Kind>): UiNode =>
+    shapeNode(kind, props, []);
+export const Rect = shape("rect");
+export const Circle = shape("circle");
+export const Line = shape("line");
+export const Arc = shape("arc");
+export const Label = shape("text");
+/** Shapes moved together, see `Shape`. */
+export const Group = ({ children, ...props }: ShapeProps<"group"> & { children?: Child }): UiNode => shapeNode("group", props, [children]);
 
 /**
  * A surface that draws shapes in units of its own, such as ticks across and notes down. It
@@ -1304,16 +2081,16 @@ export type Shape =
  * shows. Without `unit`, a unit is a point.
  */
 export interface SpaceProps {
-  /** Names it for `now.space(key)`, and keeps its scroll and zoom when the tree is drawn again. */
+  /** Names it for `now.space(key)`, and keeps its scroll and zoom. */
   key?: string;
   /** Its size in points; `grow` takes the room left in its parent. */
-  width?: number;
-  height?: number;
+  width?: Bind<number>;
+  height?: Bind<number>;
   grow?: boolean;
   /** Points per unit at zoom 1. */
   unit?: { x?: number; y?: number };
   /** What it scrolls over, in units; an axis without one does not scroll, and shows from 0. */
-  extent?: { x?: readonly [number, number]; y?: readonly [number, number] };
+  extent?: Bind<{ x?: readonly [number, number]; y?: readonly [number, number] }>;
   /** How far it zooms in and out, as a factor; an axis without one does not zoom. Cmd and scroll, or a pinch. */
   zoom?: { x?: readonly [number, number]; y?: readonly [number, number] };
   /** Where it is scrolled to when it first draws, in units; the window keeps where it is after. */
@@ -1323,7 +2100,7 @@ export interface SpaceProps {
    * ruler and the keys of a piano roll. Give it the same `unit`, `extent` and `zoom` on that axis.
    */
   follow?: { x?: string; y?: string };
-  background?: Color;
+  background?: Bind<Color>;
   radius?: number;
   /** A press where no shape that hears the pointer is. */
   onPress?: (press: Press) => void;
@@ -1333,33 +2110,69 @@ export interface SpaceProps {
   children?: Child;
 }
 
-export type Child = Node | string | number | boolean | null | undefined | Child[];
-
-/** What a card draws. A `Shape` is one too, for JSX, but only a `Space` draws one. */
-export type Node =
-  | Shape
-  | { type: "div"; key?: string; style?: Style; onClick?: (press: Press) => void; children: Child[] }
-  | { type: "sample"; path: string; label?: string }
-  | ({ type: "space" } & Omit<SpaceProps, "children"> & { children: Child[] });
-
 /** A space, see `SpaceProps`. */
-export const Space = ({ children, ...props }: SpaceProps): Node => ({ type: "space", ...props, children: [children] });
+export const Space = ({ children, ...props }: SpaceProps): UiNode => element("space", props, [children]);
 
-type ShapeOf<Kind extends Shape["kind"]> = Omit<Extract<Shape, { kind: Kind }>, "kind">;
-const shape =
-  <Kind extends Shape["kind"]>(kind: Kind) =>
-  (props: ShapeOf<Kind>) =>
-    ({ kind, ...props }) as unknown as Shape;
-export const Rect = shape("rect");
-export const Circle = shape("circle");
-export const Line = shape("line");
-export const Arc = shape("arc");
-export const Label = shape("text");
-/** Shapes moved together, see `Shape`. */
-export const Group = ({ children, ...props }: { x?: Num; y?: Num; children?: Child }): Shape => ({ kind: "group", ...props, children: [children] });
+/** How a `div` lays out and looks. Numbers are points. */
+export interface Style {
+  /** How children line up. A div is a column unless this says `row`. */
+  direction?: "row" | "column";
+  gap?: number;
+  padding?: number;
+  paddingX?: number;
+  paddingY?: number;
+  width?: number;
+  height?: number;
+  /** Takes the room left in its parent. */
+  grow?: boolean;
+  /** Where children sit across the direction. */
+  align?: "start" | "center" | "end";
+  /** Where children sit along the direction. */
+  justify?: "start" | "center" | "end" | "between";
+  background?: Color;
+  color?: Color;
+  fontSize?: number;
+  radius?: number;
+  borderColor?: Color;
+  borderWidth?: number;
+}
+
+interface DivProps {
+  key?: string;
+  style?: Bind<Style>;
+  onClick?: (press: Press) => void;
+  children?: Child;
+}
 
 /** The file of a sample field at `path`, and a button that opens a file to put there. */
-export const SampleChooser = (props: { path: string; label?: string }): Node => ({ type: "sample", ...props });
+export const SampleChooser = (props: { path: string; label?: string }): UiNode => element("sample", props, []);
+
+type Component<Props> = (props: Props) => UiNode | Region;
+
+/** Makes the nodes of JSX. `tsconfig.json` next to this file points JSX here. */
+export function h<Props>(type: "div" | Component<Props>, props: (Props & DivProps) | null, ...children: Child[]): UiNode {
+  if (typeof type === "function") {
+    // One child as it is, such as the row of a `For`; a component without children gets none.
+    const given = children.length === 0 ? {} : { children: children.length === 1 ? children[0] : children };
+    return setup(() => type({ ...props, ...given } as Props)) as UiNode;
+  }
+  return element("div", { ...props }, children);
+}
+
+export namespace h {
+  export namespace JSX {
+    export type Element = UiNode | Region;
+    export interface IntrinsicElements {
+      div: DivProps;
+    }
+    export interface ElementChildrenAttribute {
+      children: {};
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Components made of the blocks above.
 
 /** The card that draws now, for the components below, which read its record and fields. */
 function drawing() {
@@ -1379,7 +2192,7 @@ const SWEEP = 0.75;
  * one undo step. With `live`, it plays a live control instead, which nothing saves. A double
  * click puts it at `default`.
  */
-export function Knob(props: { path?: string; live?: string; label: string; min: number; max: number; default: number; unit?: Unit }): Node {
+export function Knob(props: { path?: string; live?: string; label: string; min: number; max: number; default: number; unit?: Unit }): UiNode {
   const { path, live, label, min, max, unit } = props;
   const value = path !== undefined ? now.field(path) : now.control(live ?? "");
   const fraction = path !== undefined ? now.field(path, { fraction: true }) : now.control(live ?? "", { fraction: true });
@@ -1423,42 +2236,43 @@ const STEP = { size: 14, gap: 3, on: "#a9b1ff", off: "#292c34", light: "#e9ebef"
  * max when left out) or off (to its min). `playing` names a watch whose value is the step that
  * plays, which lights up.
  */
-export function Steps(props: { path: string; max?: number; playing?: string }): Node {
+export function Steps(props: { path: string; max?: number; playing?: string }): UiNode {
   const { state, fields, update } = drawing();
   const field = fields[props.path];
-  const [off, on] = field?.kind === "pattern" ? [field.min, props.max ?? field.max] : [0, props.max ?? 1];
-  const list = (state[props.path] as number[] | undefined) ?? [];
+  const [off, on, length] = field?.kind === "pattern" ? [field.min, props.max ?? field.max, field.length] : [0, props.max ?? 1, 0];
+  const list = () => (state[props.path] as number[] | undefined) ?? [];
+  const isOn = (step: number) => (list()[step] ?? off) > off;
   const pitch = STEP.size + STEP.gap;
   return Space({
     key: `steps-${props.path}`,
-    width: Math.max(list.length * pitch - STEP.gap, 0),
+    width: Math.max(length * pitch - STEP.gap, 0),
     height: STEP.size,
-    children: list.map((value, step) => {
-      const isOn = value > off;
-      return Rect({
-        key: String(step),
+    children: Array.from({ length }, (_, step) =>
+      Rect({
         x: step * pitch,
         y: 0,
         width: STEP.size,
         height: STEP.size,
         radius: 3,
-        color: isOn ? STEP.on : STEP.off,
+        color: () => (isOn(step) ? STEP.on : STEP.off),
         border: STEP.light,
         borderWidth: props.playing === undefined ? 0 : now.watch(props.playing).floor().eq(step).times(2),
         cursor: "pointer",
-        onPress: () =>
-          update(isOn ? "Turn a step off" : "Turn a step on", ({ state: next }) => {
-            const changed = [...list];
-            changed[step] = isOn ? off : on;
+        onPress: () => {
+          const wasOn = isOn(step);
+          update(wasOn ? "Turn a step off" : "Turn a step on", ({ state: next }) => {
+            const changed = [...list()];
+            changed[step] = wasOn ? off : on;
             next[props.path] = changed;
-          }),
-      });
-    }),
+          });
+        },
+      }),
+    ),
   });
 }
 
 /** A bar that shows a watch from 0 to 1, such as a level. */
-export function Meter(props: { watch: string; label?: string }): Node {
+export function Meter(props: { watch: string; label?: string }): UiNode {
   const level = now.watch(props.watch).clamp(0, 1).times(64);
   const bar = Space({
     width: 8,
@@ -1472,7 +2286,7 @@ export function Meter(props: { watch: string; label?: string }): Node {
 }
 
 /** A square to play with the pointer: across sets the live control `x`, up sets `y`. */
-export function Pad(props: { x: string; y: string; size?: number }): Node {
+export function Pad(props: { x: string; y: string; size?: number }): UiNode {
   const size = props.size ?? 120;
   return Space({
     key: `pad-${props.x}-${props.y}`,
@@ -1494,17 +2308,18 @@ export function Pad(props: { x: string; y: string; size?: number }): Node {
 }
 
 /**
- * A surface to draw on and play: `shapes` are drawn in order. `onPress` and `onDrag` hear the
- * pointer, at `x` across and `y` down, from 0 to 1. A `Space` with a unit of a point.
+ * A surface to draw on and play: `shapes` are drawn in order, made again whole when what the
+ * function reads changes. `onPress` and `onDrag` hear the pointer, at `x` across and `y` down,
+ * from 0 to 1. A `Space` with a unit of a point.
  */
 export function Canvas(props: {
   width: number;
   height: number;
-  shapes: Shape[];
+  shapes: Bind<ShapeLiteral[]>;
   background?: Color;
   onPress?: (x: number, y: number) => void;
   onDrag?: (x: number, y: number) => void;
-}): Node {
+}): UiNode {
   const { width, height, onPress, onDrag } = props;
   const across = (x: number, y: number): [number, number] => [Math.min(Math.max(x / width, 0), 1), Math.min(Math.max(y / height, 0), 1)];
   return Space({
@@ -1516,37 +2331,6 @@ export function Canvas(props: {
     drag: onDrag && { onMove: (drag) => onDrag(...across(drag.x, drag.y)) },
     children: props.shapes,
   });
-}
-
-interface DivProps {
-  key?: string;
-  style?: Style;
-  onClick?: (press: Press) => void;
-  children?: Child;
-}
-
-type Component<Props> = (props: Props) => Node;
-
-/** Makes the nodes of JSX. `tsconfig.json` next to this file points JSX here. */
-export function h<Props>(
-  type: "div" | Component<Props>,
-  props: (Props & DivProps) | null,
-  ...children: Child[]
-): Node {
-  if (typeof type === "function") {
-    // A component such as `Knob` takes no children: an empty list would be one more field.
-    return type((children.length > 0 ? { ...props, children } : { ...props }) as Props);
-  }
-  return { type, key: props?.key, style: props?.style, onClick: props?.onClick, children };
-}
-
-export namespace h {
-  export namespace JSX {
-    export type Element = Node;
-    export interface IntrinsicElements {
-      div: DivProps;
-    }
-  }
 }
 
 /** `tone_hz` is `Tone hz`. */
@@ -1563,39 +2347,38 @@ const CHOSEN: Style = { ...BUTTON, background: "#7c3aed", color: "#ffffff" };
  * pattern, a button per option, toggle and trigger.
  */
 export function defaultCard(fields: Fields, controls: Controls = {}) {
-  return ({ state, update, fire }: Context<Record<string, unknown>>): Node => {
-    const knobs: Node[] = [];
-    const rows: Node[] = [];
+  return ({ state, update, fire }: Context<Record<string, unknown>>): UiNode => {
+    const knobs: Child[] = [];
+    const rows: Child[] = [];
     // Toggles and triggers share one row, so a card fits its 144 points.
-    const buttons: Node[] = [];
+    const buttons: Child[] = [];
     for (const [name, field] of Object.entries(fields)) {
       const label = field.label ?? words(name);
       if (field.kind === "knob") {
-        knobs.push(
-          Knob({ path: name, label, min: field.min, max: field.max, default: field.default, unit: field.unit }),
-        );
+        knobs.push(Knob({ path: name, label, min: field.min, max: field.max, default: field.default, unit: field.unit }));
       } else if (field.kind === "pattern") {
         rows.push(Steps({ path: name, max: field.max }));
       } else if (field.kind === "sample") {
         rows.push(SampleChooser({ path: name, label }));
       } else if (field.kind === "toggle") {
-        const on = state[name] as boolean;
         buttons.push(
           h("div", {
-            style: on ? CHOSEN : BUTTON,
-            onClick: () => update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
-              next[name] = !on;
-            }),
+            style: () => (state[name] ? CHOSEN : BUTTON),
+            onClick: () => {
+              const on = state[name] as boolean;
+              update(`Turn ${label.toLowerCase()} ${on ? "off" : "on"}`, ({ state: next }) => {
+                next[name] = !on;
+              });
+            },
           }, label),
         );
       } else if (field.kind === "choice") {
-        const chosen = state[name];
         rows.push(
           h("div", { style: { direction: "row", gap: 4, align: "center" } },
             h("div", { style: { color: "#9ca3af" } }, label),
             field.options.map((option) =>
               h("div", {
-                style: option === chosen ? CHOSEN : BUTTON,
+                style: () => (option === state[name] ? CHOSEN : BUTTON),
                 onClick: () => update(`Set ${label.toLowerCase()} to ${option}`, ({ state: next }) => {
                   next[name] = option;
                 }),
@@ -1626,13 +2409,77 @@ export function defaultCard(fields: Fields, controls: Controls = {}) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------
+// For the host.
+
+/** What the components of a card read while it is made. */
+type Drawing = { state: Record<string, unknown>; fields: Fields; update: Context<Record<string, unknown>>["update"] };
+
+/** Makes the nodes of a card: `draw` runs once. The window gets them with `takeOps`. */
+function mount(id: number, draw: () => Child, drawn: Drawing): CardRoot {
+  const card: CardRoot = { id, ops: [], changes: new Map(), drags: new Map(), dispose: () => {} };
+  root((dispose) => {
+    let top: Made | undefined;
+    card.dispose = () => {
+      dispose();
+      if (top) forget(top);
+    };
+    host.drawing = drawn;
+    try {
+      const made: UiNode[] = [];
+      materialize(setup(draw), made, "div");
+      const [only] = made as Made[];
+      top = only;
+      if (made.length !== 1 || !only || only.family === "marker" || only.family === "text") {
+        top = makeNode("div");
+        send(top);
+        for (const child of made as Made[]) {
+          top.children.add(child);
+          insert(top.id, child, null);
+        }
+      }
+      card.ops.push(["root", (top as Made).id]);
+    } catch (error) {
+      card.dispose();
+      throw error;
+    } finally {
+      host.drawing = undefined;
+    }
+  }, card);
+  return card;
+}
+
+/** What changed on `card` since the last time, as ops for the window, or why it failed. */
+function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
+  if (card.error !== undefined) return { error: card.error };
+  const ops = card.ops;
+  for (const [made, props] of card.changes) ops.push(["set", made.id, made.family, props]);
+  card.ops = [];
+  card.changes.clear();
+  return { ops };
+}
+
+/** A press, a click or the end or a move of a drag on the node `id`. */
+function nodeEvent(id: number, kind: "press" | "click" | "end" | "move", payload: never) {
+  const made = nodes.get(id);
+  if (!made) return;
+  const handler = { press: made.onPress, click: made.onClick, end: made.drag?.onEnd, move: made.drag?.onMove }[kind];
+  return handler?.(payload);
+}
+
 /** What the host reads. Not for tools. */
 export const host = {
   tools: new Map<string, ToolSpec<Fields, Controls, unknown>>(),
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),
   /** The card that draws now: its record, its fields and its `update`. */
-  drawing: undefined as
-    | { state: Record<string, unknown>; fields: Fields; update: Context<Record<string, unknown>>["update"] }
-    | undefined,
+  drawing: undefined as Drawing | undefined,
+  mount,
+  takeOps,
+  nodeEvent,
+  store,
+  reconcile,
+  readFields,
+  isRead,
+  batch,
 };

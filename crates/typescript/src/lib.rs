@@ -35,7 +35,7 @@ use sound_core::{AgentDoc, JsonTool, Problem, Project, Registry, ToolSchema};
 use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 
 pub use behaviours::{take_declared, wait_for_behaviours};
-pub use bun::{heard_tree_bytes, heard_trees, sent_bytes, sent_renders_and_events};
+pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
 pub use window::{page_shows_transport, start_window};
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
@@ -345,11 +345,10 @@ fn define(
     infos
 }
 
-/// Whether a card or a page drew a tree the window can show.
-fn drawn(tree: Result<serde_json::Value, String>) -> Result<(), String> {
-    serde_json::from_value::<tree::Node>(tree?)
-        .map(drop)
-        .map_err(|error| error.to_string())
+/// Whether a card or a page made nodes the window can show.
+fn drawn(ops: Result<serde_json::Value, String>) -> Result<(), String> {
+    let ops: Vec<tree::Op> = serde_json::from_value(ops?).map_err(|error| error.to_string())?;
+    tree::NodeTable::default().apply(ops)
 }
 
 /// The files of tools in `extensions`, by name, in order: those that are not the runtime's.

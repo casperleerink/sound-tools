@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Context, Controls, Drag, Field, Fields, Graph, HeardEvent, Node, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
+import type { Child, Context, Controls, Field, Fields, Graph, HeardEvent, NoteEvent, OwnedChild, Part, Performer, ToolSpec, ValuesOf, Transport } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -36,27 +36,24 @@ type Told = { id: string; tool: string; state: unknown };
 /** Where the sound and the piece are now, which all code of a tool gets. */
 type Clock = { time: number; transport: Transport };
 
-type Render = { type: "render"; card: number; instance: string; watches: Watches; page: Size | null } & Clock;
 type Request =
   /** The records this Bun did not hold as they are, those that are gone, and how many of its edits the runtime heard. */
   | { type: "records"; records: Told[]; gone: string[]; edits: number }
-  | Render
-  /** A press, or a drag that ended or moved, with what its handler hears. */
-  | { type: "event"; card: number; version: number; handler: number; payload: unknown; time: number }
+  /** A card or a page opens: its code makes its nodes. */
+  | ({ type: "mount"; card: number; instance: string; watches: Watches; page: Size | null } & Clock)
+  | { type: "resize"; card: number; page: Size }
+  | { type: "watches"; instance: string; watches: Watches }
+  | ({ type: "clock" } & Clock)
+  /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
+  | { type: "event"; card: number; node: number; kind: "press" | "click" | "end" | "move"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: string; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
   | { type: "drop"; card: number }
   | { type: "behaviour"; question: number; tool: string; instance: string };
 
-/** What the runtime gets of a node or a shape: a handler is its index. */
-type Sent = { [key: string]: unknown };
-
-/** A press or a drag, which hears what the window says of it. */
-type Handler = (payload: never) => unknown;
-
-/** What the code of a card read as it drew: it draws again only when one of those changes. */
-type Reads = { state: Set<string>; all: boolean; children: boolean; watches: boolean; transport: boolean };
+/** What bindings of an instance read: the window tells this Bun at once only what they read. */
+type Reads = { state: string[] | null; children: boolean; watches: boolean; transport: boolean };
 
 /** Says something to the runtime, at once: before code that may hang runs, and in order. */
 function say(message: object) {
@@ -68,19 +65,6 @@ function runs(tool: string, what: string) {
   say({ type: "runs", tool, what });
 }
 
-/** The handlers of the last trees of each card, by the version of the tree. */
-const handlers = new Map<number, Map<number, Handler[]>>();
-/**
- * The version of the last tree drawn: a click names the tree it was on. From the time this Bun
- * started, so a click on a tree an earlier Bun drew runs nothing here.
- */
-let treeVersion = Date.now() * 1000;
-/** The trees of a card whose clicks still count: the window may still show an older one. */
-const KEPT_TREES = 8;
-/** The last tree sent of each card, so the same tree again is not sent. */
-const lastTrees = new Map<number, { text: string; version: number }>();
-/** What each card was last drawn from, so it draws again after a tick or a click. */
-const drawn = new Map<number, Render & { tool: string }>();
 /** What the control loop and the cards of each instance keep. */
 const memories = new Map<string, unknown>();
 /** The tools whose tick or a click on whose card failed. */
@@ -194,8 +178,8 @@ async function load() {
 
 /**
  * A tool as the runtime reads it: what it is, the sound of every combination of its choices,
- * and its card and page at their defaults, so the runtime never waits for Bun. A function of
- * the wrong type is called anyway, so it fails as a problem of its tool.
+ * and the nodes of its card and page at their defaults, so a card that fails is a problem at
+ * once. A function of the wrong type is called anyway, so it fails as a problem of its tool.
  */
 function described(spec: Spec, file: string) {
   return {
@@ -312,112 +296,27 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
   say({ type: "declared", question, declaration });
 }
 
-function flatten(child: Child, handlers: Kept, into: Sent[]) {
-  if (child === null || child === undefined || typeof child === "boolean") {
-    return;
-  }
-  if (Array.isArray(child)) {
-    for (const each of child) {
-      flatten(each, handlers, into);
-    }
-  } else if (typeof child === "string" || typeof child === "number") {
-    // `{count} lines` is three children in JSX and one line of text on screen.
-    const last = into.at(-1);
-    if (last?.type === "text") {
-      last.text += String(child);
-    } else {
-      into.push({ type: "text", text: String(child) });
-    }
-  } else {
-    into.push(serialize(child, handlers));
-  }
-}
-
-/** The handlers of a tree, by their index, which the runtime names; a handler used twice is kept once. */
-type Kept = { list: Handler[]; index: Map<Handler, number> };
-
-function kept(): Kept {
-  return { list: [], index: new Map() };
-}
-
-/** A node as the runtime gets it, with its handlers kept for its card. */
-function serialize(node: Node, handlers: Kept): Sent {
-  const keep = (handler: Handler | undefined) => {
-    if (!handler) {
-      return undefined;
-    }
-    let index = handlers.index.get(handler);
-    if (index === undefined) {
-      index = handlers.list.push(handler) - 1;
-      handlers.index.set(handler, index);
-    }
-    return index;
-  };
-  const drag = (drag: Drag | undefined) => drag && { ...drag, onEnd: keep(drag.onEnd), onMove: keep(drag.onMove) };
-  if ("kind" in node) {
-    throw new Error(`a ${node.kind} is a shape: put it in a Space`);
-  }
-  if (node.type === "space") {
-    // A drag many shapes share, such as the one of every note, goes once: shapes name it by its place.
-    const drags: Sent[] = [];
-    const dragIndex = new Map<Drag, number>();
-    const shared = (shape: Drag | undefined) => {
-      if (!shape) {
-        return undefined;
-      }
-      let index = dragIndex.get(shape);
-      if (index === undefined) {
-        index = drags.push(drag(shape) as Sent) - 1;
-        dragIndex.set(shape, index);
-      }
-      return index;
-    };
-    const collect = (child: Child, into: Sent[]) => {
-      if (Array.isArray(child)) {
-        for (const each of child) {
-          collect(each, into);
-        }
-      } else if (child !== null && typeof child === "object" && "kind" in child) {
-        if (child.kind === "group") {
-          const shapes: Sent[] = [];
-          collect(child.children, shapes);
-          into.push({ ...child, children: shapes });
-        } else {
-          into.push({ ...child, onPress: keep(child.onPress), drag: shared(child.drag) });
-        }
-      } else if (child !== null && child !== undefined && typeof child !== "boolean") {
-        throw new Error(`a Space draws shapes such as Rect and Label, not ${typeof child === "object" && "type" in child ? `a ${child.type}` : JSON.stringify(child)}`);
-      }
-    };
-    const shapes: Sent[] = [];
-    collect(node.children, shapes);
-    return { ...node, onPress: keep(node.onPress), drag: drag(node.drag), drags, children: shapes };
-  }
-  if (node.type !== "div") {
-    return node;
-  }
-  const children: Sent[] = [];
-  flatten(node.children, handlers, children);
-  return { type: "div", key: node.key, style: node.style, onClick: keep(node.onClick), children };
-}
-
 /** What draws the card of a tool, or its page. */
 function drawerOf(spec: Spec, page: boolean) {
   const draw = page ? spec.page : (spec.card ?? sdk.defaultCard(spec.state, spec.controls));
   if (!draw) {
     throw new Error(`${spec.name} has no page`);
   }
-  return draw as (card: unknown) => Node;
+  return draw as (card: unknown) => Child;
 }
 
-/** The memory of an instance, made when it is first needed. */
+/** The memory of an instance, made when it is first needed: a store its cards follow. */
 function memoryOf(instance: string, spec: Spec): unknown {
   // A record that becomes another tool's starts its memory again.
   const key = `${instance} ${spec.name}`;
   if (!memories.has(key)) {
-    memories.set(key, spec.memory ? spec.memory() : {});
+    memories.set(key, freshMemory(spec));
   }
   return memories.get(key);
+}
+
+function freshMemory(spec: Spec): unknown {
+  return sdk.host.store((spec.memory ? spec.memory() : {}) as object, true);
 }
 
 /** The `time` of the last frame. */
@@ -548,6 +447,13 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
     }
   }
   unheard = unheard.filter(({ number }) => number > heard);
+  const touched = new Set<string>();
+  for (const id of [...records.map((record) => record.id), ...gone]) {
+    touched.add(id);
+    const [parent] = parentOf(id) ?? [];
+    if (parent !== undefined) touched.add(parent);
+  }
+  refresh(touched);
 }
 
 /** The record of `id` as its code knows it: as told, and with the edits not heard on top when `latest`. */
@@ -756,10 +662,12 @@ function updater(instance: string) {
     edits += 1;
     unheard.push({ number: edits, changes });
     writeSync(1, line);
+    // What its cards show follows at once, before the runtime answers.
+    refresh([instance, ...changes.map((change) => parentOf(change.id)?.[0] ?? change.id)]);
   };
 }
 
-/** What all code of an instance gets: a card, a page, `tick`, `onKey` and `onNotes`. */
+/** What `tick`, `onKey` and `onNotes` of an instance get: the record as it is now, and its memory. */
 function contextOf<Extra extends object>(
   instance: string,
   spec: Spec,
@@ -767,7 +675,6 @@ function contextOf<Extra extends object>(
   watches: Watches,
   { time, transport }: Clock,
   extra: Extra,
-  reads?: Reads,
 ) {
   const context = {
     ...extra,
@@ -777,115 +684,175 @@ function contextOf<Extra extends object>(
     now: sdk.now as Context<State>["now"],
     ...performer(instance),
   };
-  const filled = filledState(spec, record);
-  const state = reads ? tracked(filled, reads) : filled;
   // Made when code reads them: a tick of a parent of a thousand takes that does not costs nothing for them.
   let children: OwnedChild[] | undefined;
-  const read = <T>(what: "children" | "watches" | "transport", value: () => T) => ({
-    enumerable: true,
-    get: () => {
-      if (reads) {
-        reads[what] = true;
-      }
-      return value();
-    },
-  });
   return Object.defineProperties(context, {
-    state: { enumerable: true, value: state },
-    watches: read("watches", () => watches),
-    transport: read("transport", () => transport),
-    children: read("children", () => (children ??= childrenOf(instance))),
+    state: { enumerable: true, value: filledState(spec, record) },
+    watches: { enumerable: true, value: watches },
+    transport: { enumerable: true, value: transport },
+    children: { enumerable: true, get: () => (children ??= childrenOf(instance)) },
   }) as typeof context & { state: State; watches: Watches; transport: Transport; children: OwnedChild[] };
 }
 
-/** `state` that notes in `reads` each field code reads of it. */
-function tracked(state: State, reads: Reads): State {
-  return new Proxy(state, {
-    get(target, name, receiver) {
-      if (typeof name === "string") {
-        reads.state.add(name);
-      }
-      return Reflect.get(target, name, receiver);
-    },
-    has(target, name) {
-      if (typeof name === "string") {
-        reads.state.add(name);
-      }
-      return Reflect.has(target, name);
-    },
-    ownKeys(target) {
-      reads.all = true;
-      return Reflect.ownKeys(target);
-    },
+// ---------------------------------------------------------------------------------------------
+// Cards and pages: their code runs once and makes nodes; stores of the record, its children,
+// the watches and the transport change what reads them. The window gets the ops of each card
+// after every request, and at once after an `await`.
+
+/** What the cards of an instance read, which its stores hold as they are now. */
+type Stores = {
+  tool: string;
+  state: Record<string, unknown>;
+  children: OwnedChild[];
+  watches: Watches;
+  transport: Transport;
+  /** What its bindings read as last told to the window, as JSON. */
+  told?: string;
+};
+
+type Mounted = { root: ReturnType<typeof sdk.host.mount>; instance: string; tool: string; size: Size };
+
+const stores = new Map<string, Stores>();
+const cards = new Map<number, Mounted>();
+/** Cards whose next ops make all of them again, and the card whose event the next ops answer. */
+const mounting = new Set<number>();
+const answering = new Set<number>();
+let flushing = false;
+let transport: Transport = { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 };
+
+/** The stores of `instance`, made from the record as code knows it, with its edits not heard. */
+function storesOf(instance: string, spec: Spec, record: Entry): Stores {
+  let known = stores.get(instance);
+  if (!known) {
+    known = {
+      tool: spec.name,
+      state: structuredClone(filledObject(spec.state, record.state)) as Record<string, unknown>,
+      children: structuredClone(childrenOf(instance)) as OwnedChild[],
+      watches: {},
+      transport: { ...transport },
+    };
+    stores.set(instance, known);
+  }
+  return known;
+}
+
+/** Brings the stores of each of `instances` to the records as code knows them now. */
+function refresh(instances: Iterable<string>) {
+  sdk.host.batch(() => {
+    for (const instance of instances) {
+      const known = stores.get(instance);
+      const record = recordOf(instance);
+      const spec = sdk.host.tools.get(known?.tool ?? "");
+      if (!known || !record || !spec || record.tool !== known.tool) continue;
+      sdk.host.reconcile(known.state, filledState(spec, record) as Record<string, unknown>);
+      sdk.host.reconcile(known.children as never, childrenOf(instance) as never);
+    }
+  });
+  later();
+}
+
+function setWatches(instance: string, watches: Watches) {
+  const known = stores.get(instance);
+  if (known) sdk.host.reconcile(known.watches, watches);
+}
+
+function setClock({ time, transport: next }: Clock) {
+  now = time;
+  transport = next;
+  sdk.host.batch(() => {
+    for (const known of stores.values()) sdk.host.reconcile(known.transport as never, next as never);
   });
 }
 
-/**
- * Draws a card and sends its tree, or why there is none: the window waits for one or the other.
- * With what its code read, so the window asks again only when that changed; and `event` after
- * a press or a drag, whose preview the window drops with this tree.
- */
-function render(request: Render, event = false) {
+/** Sends the ops at once when code changed something outside a request, such as after an `await`. */
+function later() {
+  if (!flushing) {
+    flushing = true;
+    queueMicrotask(flushOps);
+  }
+}
+
+/** Sends the window the ops of every card that has some, and what the bindings of each instance read now. */
+function flushOps() {
+  flushing = false;
+  for (const [card, mounted] of cards) {
+    const taken = sdk.host.takeOps(mounted.root);
+    const mount = mounting.delete(card);
+    const event = answering.delete(card);
+    if ("error" in taken) {
+      fail(mounted.tool, `its card failed: ${taken.error}`);
+      say({ type: "ops", card, error: taken.error, event });
+      mounted.root.dispose();
+      cards.delete(card);
+    } else if (taken.ops.length > 0 || mount || event) {
+      const started = performance.now();
+      const text = JSON.stringify(taken.ops);
+      writeSync(1, `{"type":"ops","card":${card},"mount":${mount},"event":${event},"took":${performance.now() - started + took},"ops":${text}}\n`);
+    }
+  }
+  for (const card of answering) {
+    say({ type: "ops", card, mount: false, event: true, took: 0, ops: [] });
+  }
+  answering.clear();
+  for (const [instance, known] of stores) {
+    const reads: Reads = {
+      state: sdk.host.readFields(known.state),
+      children: sdk.host.isRead(known.children),
+      watches: sdk.host.isRead(known.watches),
+      transport: sdk.host.isRead(known.transport),
+    };
+    const text = JSON.stringify(reads);
+    if (text !== known.told) {
+      known.told = text;
+      say({ type: "reads", instance, reads });
+    }
+  }
+}
+
+/** Milliseconds this Bun spent on the request whose ops go now. */
+let took = 0;
+
+/** Opens a card or a page: its code runs once and makes its nodes, or the window hears why not. */
+function mount(request: Extract<Request, { type: "mount" }>) {
   const { card, instance, watches, page } = request;
-  now = request.time;
+  setClock(request);
   const record = recordOf(instance);
-  if (!record) {
-    say({ type: "tree", card, tree: { Err: "drawn without a record" } });
+  const spec = sdk.host.tools.get(record?.tool ?? "");
+  if (!record || !spec) {
+    say({ type: "ops", card, error: record ? `no tool ${record.tool} is loaded` : "drawn without a record", event: false });
     return;
   }
-  const { tool } = record;
-  drawn.set(card, { ...request, tool });
-  let same = false;
-  const reads: Reads = { state: new Set(), all: false, children: false, watches: false, transport: false };
-  const tree = made(() => {
-    // Such as a tool whose file this Bun runs without.
-    const spec = specOf(tool);
-    const drawnHandlers = kept();
-    runs(tool, page ? "page" : "card");
-    const context = contextOf(instance, spec, record, watches, request, page ? { size: page } : {}, reads);
-    const drawnTree = drawing(spec, context, () => serialize(drawerOf(spec, page !== null)(context), drawnHandlers));
-    const text = JSON.stringify(drawnTree);
-    const trees = handlers.get(card) ?? new Map<number, Handler[]>();
-    const last = lastTrees.get(card);
-    // The same tree keeps its version, with the handlers of this draw.
-    if (last?.text === text) {
-      trees.set(last.version, drawnHandlers.list);
-      same = true;
-      return null;
-    }
-    treeVersion += 1;
-    lastTrees.set(card, { text, version: treeVersion });
-    trees.set(treeVersion, drawnHandlers.list);
-    if (trees.size > KEPT_TREES) {
-      const [oldest] = trees.keys();
-      trees.delete(oldest);
-    }
-    handlers.set(card, trees);
-    return [treeVersion, text] as const;
-  });
-  if ("Err" in tree) {
-    lastTrees.delete(card);
-  }
-  const read = { state: reads.all ? null : [...reads.state], children: reads.children, watches: reads.watches, transport: reads.transport };
-  if (same) {
-    say({ type: "unchanged", card, reads: read, event });
-  } else if ("Err" in tree) {
-    say({ type: "tree", card, tree, reads: read, event });
-  } else {
-    // The tree is JSON already: a large one is not written out twice.
-    const [version, text] = tree.Ok as readonly [number, string];
-    writeSync(1, `{"type":"tree","card":${card},"tree":{"Ok":[${version},${text}]},"reads":${JSON.stringify(read)},"event":${event}}\n`);
+  cards.get(card)?.root.dispose();
+  cards.delete(card);
+  const known = storesOf(instance, spec, record);
+  setWatches(instance, watches);
+  const size = sdk.host.store({ width: page?.width ?? 0, height: page?.height ?? 0 }, false);
+  runs(spec.name, page ? "page" : "card");
+  try {
+    const context = cardContext(instance, spec, known, page ? { size } : {});
+    const draw = drawerOf(spec, page !== null);
+    const root = sdk.host.mount(card, () => draw(context), { state: context.state, fields: spec.state, update: context.update });
+    cards.set(card, { root, instance, tool: spec.name, size: sdk.host.store(size, false) });
+    mounting.add(card);
+  } catch (error) {
+    say({ type: "ops", card, error: String(error), event: false });
   }
 }
 
-/** Runs `draw` as the card of `context` draws, for the components of the SDK that read it. */
-function drawing<T>(spec: Spec, context: { state: State; update: Context<State>["update"] }, draw: () => T): T {
-  sdk.host.drawing = { state: context.state, fields: spec.state, update: context.update };
-  try {
-    return draw();
-  } finally {
-    sdk.host.drawing = undefined;
-  }
+/** What a card or a page gets: the stores of its instance, its memory, and what plays it. */
+function cardContext<Extra extends object>(instance: string, spec: Spec, known: Stores, extra: Extra) {
+  const context = {
+    ...extra,
+    state: sdk.host.store(known.state, false) as State,
+    children: sdk.host.store(known.children, false),
+    watches: sdk.host.store(known.watches, false),
+    transport: sdk.host.store(known.transport, false),
+    memory: memoryOf(instance, spec),
+    update: updater(instance),
+    now: sdk.now as Context<State>["now"],
+    ...performer(instance),
+  };
+  return Object.defineProperty(context, "time", { enumerable: true, get: () => now }) as typeof context & { time: number };
 }
 
 /** `value` of `field` as the window gives it: at its default when left out, and so each item. */
@@ -921,34 +888,36 @@ function defaultOf(field: Field): unknown {
   }
 }
 
-/** The tree of a tool's card or page at its defaults, after one tick: a check without a window. */
-function draw(spec: Spec, page: boolean): Sent {
-  const context = {
-    state: frozen(filledObject(spec.state, {})),
-    children: [],
-    watches: {},
-    memory: spec.memory ? spec.memory() : {},
-    time: 0,
-    transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 },
-    set() {},
-    fire() {},
-    play() {},
-    send() {},
-    update() {},
-    now: sdk.now as Context<State>["now"],
-  };
+/** The ops of a tool's card or page at its defaults, after one tick: a check without a window. */
+function draw(spec: Spec, page: boolean): unknown {
+  const clock: Clock = { time: 0, transport: { playing: false, tick: 0, bar: 1, beat: 1, bpm: 120 } };
+  const memory = freshMemory(spec);
+  const performs = { set() {}, fire() {}, play() {}, send() {}, update() {} };
+  const state = frozen(filledObject(spec.state, {}));
+  const context = { state, children: [], watches: {}, memory, time: 0, transport: clock.transport, now: sdk.now, ...performs };
   try {
-    spec.tick?.({ ...context, dt: 1 / 30 });
+    spec.tick?.({ ...context, dt: 1 / 30 } as never);
   } catch (error) {
     throw new Error(`its tick fails: ${error}`);
   }
-  const drawn = { ...context, ...(page && { size: CHECKED_PAGE }) };
-  return drawing(spec, drawn, () => serialize(drawerOf(spec, page)(drawn), kept()));
+  const known: Stores = { tool: spec.name, state: structuredClone(state), children: [], watches: {}, transport: clock.transport };
+  const drawn = {
+    ...context,
+    state: sdk.host.store(known.state, false),
+    ...(page && { size: sdk.host.store({ ...CHECKED_PAGE }, false) }),
+  };
+  const root = sdk.host.mount(-1, () => drawerOf(spec, page)(drawn), { state: drawn.state as never, fields: spec.state, update() {} });
+  const taken = sdk.host.takeOps(root);
+  root.dispose();
+  if ("error" in taken) {
+    throw new Error(taken.error);
+  }
+  return taken.ops;
 }
 
 /**
- * Runs the code of each instance that `call` picks, with what all its code gets, then its cards
- * draw again. `what` names that code in a problem.
+ * Runs the code of each instance that `call` picks, with what all its code gets; its cards
+ * follow what it changed. `what` names that code in a problem.
  */
 function run<Extra extends object>(
   // Only the clock: a key or notes request has an `instance` of its own, which the cards would draw.
@@ -959,8 +928,9 @@ function run<Extra extends object>(
   call: (spec: Spec, tool: Context<State, Controls, unknown> & Extra) => unknown,
 ) {
   const clock = { time, transport };
-  now = time;
+  setClock(clock);
   for (const { instance, watches } of instances) {
+    setWatches(instance, watches);
     const record = recordOf(instance);
     const spec = sdk.host.tools.get(record?.tool ?? "");
     if (!spec || !record) {
@@ -972,12 +942,6 @@ function run<Extra extends object>(
       caught(call(spec, contextOf(instance, spec, record, watches, clock, extra)), failed);
     } catch (error) {
       failed(error);
-      continue;
-    }
-    for (const last of drawn.values()) {
-      if (last.instance === instance) {
-        render({ ...last, ...clock, watches });
-      }
     }
   }
 }
@@ -994,26 +958,33 @@ function handle(request: Request) {
     case "records":
       hear(request);
       break;
-    case "render":
-      render(request);
+    case "mount":
+      mount(request);
+      break;
+    case "resize": {
+      const mounted = cards.get(request.card);
+      if (mounted) sdk.host.reconcile(mounted.size as never, request.page as never);
+      break;
+    }
+    case "watches":
+      setWatches(request.instance, request.watches);
+      break;
+    case "clock":
+      setClock(request);
       break;
     case "event": {
       now = request.time;
-      const last = drawn.get(request.card);
-      const failed = (error: unknown) => last && fail(last.tool, `a click on its card failed: ${error}`);
+      const mounted = cards.get(request.card);
+      const failed = (error: unknown) => mounted && fail(mounted.tool, `a click on its card failed: ${error}`);
       try {
-        if (last) {
-          runs(last.tool, "click handler");
+        if (mounted) {
+          runs(mounted.tool, "click handler");
         }
-        const handler = handlers.get(request.card)?.get(request.version)?.[request.handler] as ((payload: unknown) => unknown) | undefined;
-        caught(handler?.(request.payload), failed);
+        caught(sdk.host.batch(() => sdk.host.nodeEvent(request.node, request.kind, request.payload as never)), failed);
       } catch (error) {
         failed(error);
       }
-      // It may have changed the memory.
-      if (last) {
-        render(last, true);
-      }
+      answering.add(request.card);
       break;
     }
     case "frame":
@@ -1032,16 +1003,15 @@ function handle(request: Request) {
       );
       break;
     case "drop":
-      handlers.delete(request.card);
-      lastTrees.delete(request.card);
-      drawn.delete(request.card);
+      cards.get(request.card)?.root.dispose();
+      cards.delete(request.card);
+      mounting.delete(request.card);
       break;
     case "behaviour":
       declare(request);
       break;
   }
 }
-
 
 await load();
 
@@ -1050,9 +1020,12 @@ for await (const line of console) {
   if (line === "") {
     continue;
   }
+  const started = performance.now();
   try {
-    handle(JSON.parse(line) as Request);
+    sdk.host.batch(() => handle(JSON.parse(line) as Request));
   } finally {
+    took = performance.now() - started;
+    flushOps();
     // Bun does one thing at a time, so the runtime knows what hangs: the oldest not done.
     say({ type: "done" });
   }

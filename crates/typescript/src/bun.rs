@@ -20,7 +20,7 @@ use sound_core::InstanceId;
 use sound_signals::Graph;
 
 use crate::tools::ToolInfo;
-use crate::tree::Node;
+use crate::tree::Op;
 use crate::{NoteMessage, behaviours};
 
 /// How long one step of a load, the start of Bun or a file, may take before Bun counts as
@@ -56,7 +56,8 @@ pub(crate) enum Request<'a> {
         /// has the edits it sent after those.
         edits: u64,
     },
-    Render {
+    /// A card or a page opens: its code makes its nodes once.
+    Mount {
         card: u64,
         instance: &'a InstanceId,
         /// The last value of each watch of the instance, by name.
@@ -66,12 +67,27 @@ pub(crate) enum Request<'a> {
         #[serde(flatten)]
         clock: Clock,
     },
-    /// A press, or a drag that ended or moved: `payload` is what its handler hears.
+    /// The page has another size.
+    Resize {
+        card: u64,
+        page: PageSize,
+    },
+    /// The watches of an instance moved, and a binding of its cards reads them.
+    Watches {
+        instance: &'a InstanceId,
+        watches: &'a BTreeMap<String, f32>,
+    },
+    /// The transport moved, and a binding of a card of a tool with the transport reads it.
+    Clock {
+        #[serde(flatten)]
+        clock: Clock,
+    },
+    /// A press, a click, or a drag that ended or moved, on a node: `payload` is what its
+    /// handler hears.
     Event {
         card: u64,
-        /// The version of the tree that was pressed.
-        version: u64,
-        handler: usize,
+        node: u64,
+        kind: EventKind,
         payload: Value,
         time: f64,
     },
@@ -112,6 +128,16 @@ pub(crate) enum Request<'a> {
         tool: &'a str,
         instance: &'a InstanceId,
     },
+}
+
+/// What happened on a node, which names the handler that hears it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EventKind {
+    Press,
+    Click,
+    End,
+    Move,
 }
 
 /// Where the sound and the piece are, which all code of a tool gets.
@@ -195,26 +221,18 @@ pub(crate) enum Event {
     Framed,
     /// The tick of a tool, or a click on its card, failed: the first time.
     Failed { tool: String, message: String },
-    /// A card drew, with the version of its tree, which a click on it names, so it runs a
-    /// handler of this tree and not of a newer one. Or why it did not. Read by [`read_line`].
+    /// What changed on the nodes of a card, or why it failed. Read by [`read_line`].
     #[serde(skip_deserializing)]
-    Tree {
+    Ops {
         card: u64,
-        tree: Result<(u64, Drawn), String>,
-        #[serde(default)]
-        reads: Reads,
-        /// Drawn after a press or a drag, which this tree answers.
-        #[serde(default)]
+        ops: Result<Vec<Op>, String>,
+        /// The ops make all of it again, as after a new Bun.
+        mount: bool,
+        /// They answer a press or a drag, whose preview lets go with them.
         event: bool,
     },
-    /// A card drew the tree it drew last.
-    Unchanged {
-        card: u64,
-        #[serde(default)]
-        reads: Reads,
-        #[serde(default)]
-        event: bool,
-    },
+    /// What the bindings of an instance read now: the window tells Bun at once only of that.
+    Reads { instance: InstanceId, reads: Reads },
     /// The code of an instance changed its record or those of its children, as one edit
     /// called `label`.
     Edit {
@@ -257,23 +275,8 @@ pub(crate) enum Event {
     Ended { blame: Option<Runs>, why: String },
 }
 
-/// A tree as Bun sends it, read into nodes on the thread that hears Bun, not the window's: a
-/// large tree takes milliseconds. Or why its nodes are wrong, which the card shows.
-#[derive(Debug)]
-pub(crate) struct Drawn(pub Result<Node, String>);
-
-impl<'de> Deserialize<'de> for Drawn {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
-        HEARD_TREE_BYTES.fetch_add(raw.get().len() as u64, Ordering::Relaxed);
-        Ok(Self(
-            serde_json::from_str(raw.get()).map_err(|error| error.to_string()),
-        ))
-    }
-}
-
-/// What the code of a card read as it drew, so the window asks for a tree again only when that
-/// changed. `state` names the fields it read, or is `None` for all of them.
+/// What the bindings of the cards of an instance read, so the window tells Bun at once only of a
+/// change of that. `state` names the fields they read, or is `None` for all of them.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub(crate) struct Reads {
     pub state: Option<Vec<String>>,
@@ -282,7 +285,7 @@ pub(crate) struct Reads {
     pub transport: bool,
 }
 
-/// Before the first tree says, a card reads everything.
+/// Before Bun says, its cards read everything.
 impl Default for Reads {
     fn default() -> Self {
         Self {
@@ -315,7 +318,7 @@ pub(crate) struct LoadedTool {
     pub info: ToolInfo,
     /// The sound for every combination of its choices.
     pub sounds: Vec<(Map<String, Value>, Result<Graph, String>)>,
-    /// The tree of its card at its defaults, after one tick.
+    /// The ops of its card at its defaults, after one tick.
     pub card: Result<Value, String>,
     /// The same of its page, when it has one.
     pub page: Option<Result<Value, String>>,
@@ -442,38 +445,50 @@ static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
 static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
 
 static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
-static SENT_RENDERS: AtomicU64 = AtomicU64::new(0);
+static SENT_UPDATES: AtomicU64 = AtomicU64::new(0);
 static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
-static HEARD_TREES: AtomicU64 = AtomicU64::new(0);
-static HEARD_TREE_BYTES: AtomicU64 = AtomicU64::new(0);
+static HEARD_BATCHES: AtomicU64 = AtomicU64::new(0);
+static HEARD_BYTES: AtomicU64 = AtomicU64::new(0);
+/// What the last batch of ops cost: Bun's milliseconds and the window's microseconds to apply.
+static LAST_BUN_MICROS: AtomicU64 = AtomicU64::new(0);
+static LAST_APPLY_MICROS: AtomicU64 = AtomicU64::new(0);
 
 /// How many bytes this process told every Bun, for a test of what a frame costs.
 pub fn sent_bytes() -> u64 {
     SENT_BYTES.load(Ordering::Relaxed)
 }
 
-/// How many trees this process asked every Bun for, and how many presses and drags it told,
-/// for a test that a drag does not cross to Bun.
-pub fn sent_renders_and_events() -> (u64, u64) {
+/// How many times this process told every Bun something that changes what cards show (records,
+/// watches, the transport, a card that opens) and how many presses and drags it told, for a
+/// test that a drag does not cross to Bun.
+pub fn sent_updates_and_events() -> (u64, u64) {
     (
-        SENT_RENDERS.load(Ordering::Relaxed),
+        SENT_UPDATES.load(Ordering::Relaxed),
         SENT_EVENTS.load(Ordering::Relaxed),
     )
 }
 
-/// How many new trees the windows of this process heard from every Bun, for a measurement of
-/// how long a tree takes to come.
-pub fn heard_trees() -> u64 {
-    HEARD_TREES.load(Ordering::Relaxed)
+/// How many batches of ops the windows of this process applied, for a measurement of how long
+/// one takes to come.
+pub fn heard_batches() -> u64 {
+    HEARD_BATCHES.load(Ordering::Relaxed)
 }
 
-/// How many bytes of trees this process heard from every Bun, for a measurement of their size.
-pub fn heard_tree_bytes() -> u64 {
-    HEARD_TREE_BYTES.load(Ordering::Relaxed)
+/// How many bytes of ops this process heard from every Bun, for a measurement of their size.
+pub fn heard_bytes() -> u64 {
+    HEARD_BYTES.load(Ordering::Relaxed)
 }
 
-pub(crate) fn count_tree() {
-    HEARD_TREES.fetch_add(1, Ordering::Relaxed);
+/// What the last batch of ops cost, in milliseconds: Bun's work for its request, and the
+/// window's to apply it.
+pub fn last_batch() -> (f64, f64) {
+    let millis = |micros: &AtomicU64| micros.load(Ordering::Relaxed) as f64 / 1000.0;
+    (millis(&LAST_BUN_MICROS), millis(&LAST_APPLY_MICROS))
+}
+
+pub(crate) fn count_batch(apply: Duration) {
+    HEARD_BATCHES.fetch_add(1, Ordering::Relaxed);
+    LAST_APPLY_MICROS.store(apply.as_micros() as u64, Ordering::Relaxed);
 }
 
 /// A number for one opening of a project, which every Bun of it runs for: the first, and those
@@ -605,7 +620,11 @@ impl Bun {
         if sent {
             SENT_BYTES.fetch_add(length, Ordering::Relaxed);
             match request {
-                Request::Render { .. } => SENT_RENDERS.fetch_add(1, Ordering::Relaxed),
+                Request::Records { .. }
+                | Request::Mount { .. }
+                | Request::Resize { .. }
+                | Request::Watches { .. }
+                | Request::Clock { .. } => SENT_UPDATES.fetch_add(1, Ordering::Relaxed),
                 Request::Event { .. } => SENT_EVENTS.fetch_add(1, Ordering::Relaxed),
                 _ => 0,
             };
@@ -721,33 +740,46 @@ struct Kind<'a> {
     kind: std::borrow::Cow<'a, str>,
 }
 
-/// A tree a card drew, as [`Event::Tree`].
+/// The ops of a card, as [`Event::Ops`].
 #[derive(Deserialize)]
-struct TreeLine {
+struct OpsLine<'a> {
     card: u64,
-    tree: Result<(u64, Drawn), String>,
+    #[serde(borrow)]
+    ops: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
     #[serde(default)]
-    reads: Reads,
+    mount: bool,
     #[serde(default)]
     event: bool,
+    #[serde(default)]
+    took: f64,
 }
 
-/// A line of Bun. A tree is read on its own road: serde's tagged enums read a line twice, and a
-/// tree may be half a megabyte.
+/// A line of Bun. Ops are read on their own road, here on the thread that hears Bun, not the
+/// window's: the first ops of a page of thousands of notes are megabytes.
 fn read_line(line: &str) -> serde_json::Result<Line> {
-    if serde_json::from_str::<Kind>(line)?.kind != "tree" {
+    if serde_json::from_str::<Kind>(line)?.kind != "ops" {
         return serde_json::from_str(line);
     }
-    let TreeLine {
+    let OpsLine {
         card,
-        tree,
-        reads,
+        ops,
+        error,
+        mount,
         event,
+        took,
     } = serde_json::from_str(line)?;
-    Ok(Line::Event(Event::Tree {
+    HEARD_BYTES.fetch_add(line.len() as u64, Ordering::Relaxed);
+    LAST_BUN_MICROS.store((took * 1000.0) as u64, Ordering::Relaxed);
+    let ops = match (ops, error) {
+        (_, Some(error)) => Err(error),
+        (Some(ops), None) => serde_json::from_str(ops.get()).map_err(|error| error.to_string()),
+        (None, None) => Ok(Vec::new()),
+    };
+    Ok(Line::Event(Event::Ops {
         card,
-        tree,
-        reads,
+        ops,
+        mount,
         event,
     }))
 }
