@@ -508,3 +508,31 @@ Mixer parity in the TS song: per-track faders, returns, sends before or after th
 Profile of the TS render (`sample`, release-fast): the synth is 40 % of the work on both sides. The rest of the TS gap: per-processor work in `Engine::process_block` (zeroing outputs, summing inputs) for about twice the processors a track has in the arrangement, 150 `NotePlayer`s doing per-block lookups where the arrangement has 12, and each parent's own `Signals` pass-through and thru stages. Two generic next steps: a parent with no `sound` connects its children straight to its output (no pass-through stage), and a note player with nothing in or near its range returns at once.
 
 **Too specific (to revisit)**, now done: `"*"` naming one tool. Still open: notes as the only event kind, `devices` as only in-code effects, required named children.
+
+### Round 11b
+
+Engine parity and speed: the render gap closed to within 10 %, timelines carry a pedal and expression lanes, a sidechain across tracks is tested, and the scale project's frame regression is found and fixed.
+
+**What it took:**
+- **A processor may rest** (`Processor::rests_until`, default never): after a block it names the tick before which its blocks would do nothing, and the engine skips it until its range gets there, with no jump, start or stop, nothing reaching its inputs and no update in between. Only one with no audio output. A note player says so when nothing is held, pending or shown, the pedal is up and the lanes at rest, up to the next tick its timeline or placed pattern plays. The check sits first in the step loop: a check placed after the inputs and outputs were cleared gained nothing, as the engine's own work per step is what costs. `crates/core/tests/transport.rs` plays its beats on the same frames resting or not, at every buffer size, over a tempo change, a loop and a jump, and counts the skipped blocks.
+- **A parent with no sound passes its children's sound on with no stage** (`sound` in a tool's info): no `Signals` of its own; one child sending to `{ port: "audio" }` is its output, several are summed. The pass-through no longer limits to ±4, which only a sound of its own did.
+- **Rejected: a parent with no audio input where nothing reads it.** It removed a step per track but broke a parent placed in an arrangement's effects; Round 6a decided one voice always has an audio input, and a parent keeps it too.
+- **A timeline carries `pedal`, `bend`, `mod_wheel` and `pressure`** beside its notes: the same fields and rules as the arrangement's clip, played by the note player's timeline (sent only when they move, ended by seeks and edits). Only on a timeline that plays once; a loop or one waiting for a launch with lanes does not load and says so. Notes are still the only event kind; this is what a clip needed.
+- **The song keys an effect by another track**: `sidechains` names an effect by path and a track whose sound after its fader keys it.
+- **The scale regression was the page, not the SDK**: the R buttons of round 9 added 100 divs, about 7 µs each per frame, all laid out though a dozen show. **Rows of fixed heights that follow a space down are drawn only where they show**, the rest replaced by one spacer: generic, a virtual list for any rows that scroll with a space.
+
+**Tests:** `transport.rs` (resting beats), `projects/blocks.rs` (a bend lane bends the notes two semitones; a loop with lanes is refused), `projects/song_mixer.rs` (a silent key leaves the compressor open, no key compresses, the key playing ducks), `window/tools/song.rs` (heads off screen are not drawn and come back as it scrolls). Snapshot `typescript-song.png` looked at.
+
+**Numbers** (M1 Max, release-fast):
+
+| | Round 11a | Round 11b | Rust arrangement |
+| --- | --- | --- | --- |
+| Render, 16 bars, same content | 21x real time | 26x | 28x |
+| Scale project (100 x 100): scroll / zoom / play frame | 3.95 / 3.9 / 4.0 ms | 1.6 / 1.55 / 1.7 ms | 3.6 ms scroll (Round 5) |
+| Song 12 / 150: idle / scroll frame | 1.75 ms | 1.7 / 1.75 ms | |
+| Song 24 / 600: idle / scroll frame | 3.9 ms | 3.7 / 3.5 ms | |
+| Song 12 / 150: a click that selects a clip, until drawn | 11.6 ms | 11.1 ms | |
+
+The rest of the render gap is the engine's work per step: the TS song has about three times the steps of the arrangement (a timeline per clip, a feed per instrument, a cable per lane, a fader per send), and a resting step still costs its check. `render_cost_of_the_arrangement_alone` profiles the arrangement beside `render_cost_of_the_song_alone`.
+
+**Too specific (to revisit):** lanes only on a timeline that plays once.
