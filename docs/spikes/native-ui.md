@@ -334,3 +334,45 @@ The timeline is the note player of the arrangement with two small additions in `
 **Open:** two timelines into one instrument can put an off and an on of one pitch on the same frame, ordered by connection, so a launcher that swaps patterns on a bar may cut the new note of that pitch. The arrangement never meets it: a track's clips are one player.
 
 **Too specific (to revisit)**, now done: `sequencer` beside `timeline`. Still open: `transport: true`, notes as the only event kind, `devices` as only in-code effects, docs placing tools by `state/arrangement/...`.
+
+### Round 7
+
+Goal: the clock is a concept of the SDK, the transport bar is SDK code, and the app keeps no musical key.
+
+**Moved out of the app:** the bindings of space and `r` and their actions; the `transport: true` flag of a tool and the pill's mode for it; the window's knowledge of which page "shows the transport". Space and `r` are now the arrangement's own keys, taken through the same `GlobalKeys` a project uses, only while it is the main view. A project whose tool takes no key plays nothing on space.
+
+**What the app still owns, and why:**
+- App and file shortcuts (undo, redo, new, open, quit, the panel, tab), and cmd-K: they act on the app or the machine. A tool that names one in `globalKeys` gets a problem at load.
+- The machine inputs: the MIDI keyboard, the computer keys and the output meter. They still live in the arrangement's pill, which every window has; moving them to the window is the hooks round, with `select` deciding where they play.
+- The click's processor, attached by the window (a machine thing, never project state); its switch is the session's, so the pill and a tool's `clock.click` are one click.
+- The arrangement's pill, while the arrangement is the main view, until the TS project reaches parity.
+
+**API** (one concept, `clock` in all code; the design pass's `Song` folded into it):
+- Followed by bindings: `playing`, `repeat`, `click`, `tempo_map`, `sections` (as `project.json` holds them).
+- Moving on every frame, for handlers: `tick`, `bar`, `beat`, `bpm`. A binding that reads one fails with "show it with now.tick or now.bpm". On screen: `now.tick`, the new `now.bpm`, and text readouts `unit: "position" | "time" | "signature"` of a tick, all native.
+- `play`, `pause`, `stop`, `jump(to, { at? })`, `setRepeat`, `setClick`, and `update(label, draft)` for the tempo map and sections, one undo step by label like record edits.
+- `globalKeys: ["space"]`: the keys `onKey` hears wherever the focus is, outside a text field, while the tool's view is the main view. A focused view's own `keys` come first.
+- `<Transport clock={clock} />` in `sdk.ts`: play, stop, position, time, a tempo drag (one undo step), signature, repeat, click. About 50 lines of ordinary SDK code.
+
+**Core:** `jump_at(at, to)`: once playback reaches `at` it goes on from `to` on that frame (a sub-block ends there, as at a loop end); a tick already passed jumps at once, a seek drops one that waits. `stop` is a pause and a seek in one batch; the engine's `Stop` command is gone.
+
+**Where the code said otherwise than the design pass:**
+- No TS copies of the bar math (`barAt`, `tickOfBar`): nothing needed them once readouts are native. YAGNI.
+- Global keys only for the main view's tool, not every top instance: one main view, so no rule for duplicates.
+- The 6b risk needed no fix: every child's notes pass its `NoteFeed`, which already puts offs before ons on one frame. `projects/song.rs` proves it with two clips meeting on a bar line in either connection order, and fails when the feed's order is swapped.
+
+**Tests:** core: a jump lands on its frame for every buffer size, once; a passed tick jumps at once and a seek drops a waiting jump. `sound_ui`: global keys route a key's up to the taker of its down. Bun: a binding follows the tempo map, code edits it as one song edit, a binding of the playhead fails with the fix. Window: the SDK's transport follows a clock played from elsewhere (fails when the window stops telling Bun), pauses, space plays as a global key; a tempo drag is one undo step; repeat and click are no edit; space does nothing without a tool that takes it; the song's delete keys and space together. Projects: a key the app keeps is a problem.
+
+**Numbers** (M1 Max, release-fast). The song now draws the SDK's transport; frames are as before:
+
+| | Round 6b | Round 7 |
+| --- | --- | --- |
+| 12 / 150: idle, scroll, play frame | 1.5, 1.5, 1.6 ms | 1.5, 1.5, 1.7 ms |
+| 24 / 600: idle, scroll, play frame | 3.5, 3.5, 3.6 ms | 3.8, 3.9, 3.9 ms |
+| Scale project, 100 × 100: idle, scroll, play; open | 3.1, 3.1, 3.2 ms; 3.4 s | 3.3, 3.3, 3.6 ms; 3.5 s |
+| Ops from Bun while playing, 120 frames | 0 | 0 (the position, time and tempo are native readouts) |
+| Space until the clock plays | (a binding of the window) | 18 ms (12 / 150), 24 ms (24 / 600), through the song's code, with the harness's polling |
+
+**Open:** a musical key now crosses to Bun before it plays. 18 to 24 ms with the harness is fine for play and stop, not for a key that should sound on the press. If that matters, a key could be declared to do a clock op natively, as a drag turns a field without code.
+
+**Too specific (to revisit)**, now done: `transport: true`. Still open: notes as the only event kind, `devices` as only in-code effects, docs placing tools by `state/arrangement/...`.
