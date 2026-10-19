@@ -52,7 +52,7 @@ use project_menu::{ProjectMenu, choose_new_project, open_another_project, start_
 use recorders::Recorders;
 
 use crate::app::ChosenDevices;
-use crate::{open_with_loaded, update, views};
+use crate::{TEMPLATES, Template, open_with_loaded, update, views};
 
 actions!(
     sound_tools,
@@ -360,21 +360,25 @@ impl Shell {
     /// cmd-L: opens the panel and focuses it, focuses it when it is open and the focus is
     /// elsewhere, and closes it when the focus is in it.
     fn toggle_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.left_panel_open && self.left_panel_area.contains_focused(window, cx) {
+            self.set_left_panel_open(false, window, cx);
+            self.give_focus_back(window, cx);
+        } else {
+            self.focus_left_panel(window, cx);
+        }
+    }
+
+    /// Opens the panel when it is closed, and focuses it.
+    fn focus_left_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = &self.left_panel else {
             return;
         };
         let focus = (panel.focus)(cx);
+        self.remember_focus(window, cx);
         if !self.left_panel_open {
-            self.remember_focus(window, cx);
             self.set_left_panel_open(true, window, cx);
-            window.focus(&focus, cx);
-        } else if self.left_panel_area.contains_focused(window, cx) {
-            self.set_left_panel_open(false, window, cx);
-            self.give_focus_back(window, cx);
-        } else {
-            self.remember_focus(window, cx);
-            window.focus(&focus, cx);
         }
+        window.focus(&focus, cx);
     }
 
     /// The icon in the title row and cmd-B open and close the panel, and leave the focus where
@@ -487,6 +491,56 @@ impl Shell {
                     )
                 }),
         )
+    }
+
+    /// What the main area shows with no view: in an empty project, the ways to start one.
+    fn empty_state(&self, cx: &mut Context<Self>) -> EmptyState {
+        if self.session.read(cx).project().instances().next().is_some() {
+            return EmptyState::new(
+                "Nothing to show",
+                "None of the tools of this project has a view.",
+            );
+        }
+        let templates = (TEMPLATES.iter())
+            .filter(|template| !template.files.is_empty())
+            .map(|template| {
+                new_project::template_row(template, cx)
+                    .on_click(cx.listener(move |shell, _, _, cx| shell.start_from(template, cx)))
+            });
+        let ask = self.left_panel.as_ref().map(|_| {
+            Button::new("ask-the-agent", "Ask the agent")
+                .on_click(cx.listener(|shell, _, window, cx| shell.focus_left_panel(window, cx)))
+        });
+        EmptyState::new(
+            "An empty project",
+            "Ask the agent for the tools you want, or start from a template.",
+        )
+        .action(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .w(px(420.))
+                .children(templates)
+                .children(ask),
+        )
+    }
+
+    /// Writes `template` into this empty project, which then shows it as it would a change
+    /// of the agent's.
+    fn start_from(&mut self, template: &'static Template, cx: &mut Context<Self>) {
+        let root = self.session.read(cx).project().root().to_path_buf();
+        let session = self.session.downgrade();
+        cx.spawn(async move |_, cx| {
+            let written = (cx.background_executor())
+                .spawn(async move { crate::templates::write(&root, template) })
+                .await;
+            if let Err(error) = written {
+                // The window is gone when this fails, and there is nobody left to tell.
+                (session.update(cx, |session, cx| session.report(format!("{error:#}"), cx))).ok();
+            }
+        })
+        .detach();
     }
 
     fn show_main_instance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -653,10 +707,7 @@ impl Render for Shell {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(EmptyState::new(
-                    "Nothing to show",
-                    "Nothing at the top of state/ has a view.",
-                ))
+                .child(self.empty_state(cx))
                 .into_any_element(),
         };
 

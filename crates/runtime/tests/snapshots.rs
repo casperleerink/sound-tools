@@ -3,7 +3,7 @@
 //! is 1470 x 920 points at scale 2, the screen of a 13 inch MacBook Air without the menu bar,
 //! which is the laptop the design is for:
 //!
-//! - `default.png`: a new, empty project.
+//! - `default.png`: a new, empty project, with the ways to start one.
 //! - `new-project.png`: the templates a new project starts from.
 //! - `notices.png`: an error from an edit, a file that is not live and an update that is ready,
 //!   top-right.

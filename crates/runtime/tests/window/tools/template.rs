@@ -67,3 +67,26 @@ fn three_returns_added_have_three_names(cx: &mut TestAppContext) {
     }
     assert_eq!(window.problems(), []);
 }
+
+#[gpui::test]
+fn an_empty_project_starts_from_the_daw_template_in_place(cx: &mut TestAppContext) {
+    let folder = tempfile::tempdir().unwrap();
+    // The window makes it for every project it opens.
+    std::fs::create_dir_all(folder.path().join("extensions")).unwrap();
+    let mut window = open_folder(cx, folder);
+    let session = window.session.clone();
+    window
+        .cx
+        .update(|_, cx| {
+            session.update(cx, |session, cx| {
+                session.background(cx, |project| project.watch())
+            })
+        })
+        .unwrap();
+
+    let daw = window.until_found("template-DAW");
+    window.click(daw);
+    window.until_found("div-add-track");
+    window.wait_for_bun();
+    assert_eq!(window.problems(), []);
+}

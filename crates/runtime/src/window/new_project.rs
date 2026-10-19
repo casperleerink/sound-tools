@@ -5,8 +5,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    size,
+    App, Div, SharedString, Stateful, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, size,
 };
 use sound_ui::{ActiveTheme, typography};
 
@@ -55,37 +55,13 @@ pub struct TemplatePicker {
 impl Render for TemplatePicker {
     fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let (background, text) = (theme.gray_100, theme.gray_950);
         let rows = TEMPLATES.iter().map(|template| {
             let on_pick = self.on_pick.clone();
-            let id = SharedString::from(format!("template-{}", template.name));
-            div()
-                .id(id.clone())
-                .debug_selector(move || id.to_string())
-                .flex()
-                .flex_col()
-                .gap_1()
-                .p_3()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.gray_300)
-                .bg(theme.gray_50)
-                .hover(|row| row.bg(theme.gray_200))
-                .cursor_pointer()
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child(template.name),
-                )
-                .child(
-                    div()
-                        .text_color(theme.gray_700)
-                        .text_size(px(13.))
-                        .child(template.description),
-                )
-                .on_click(move |_, window, cx| {
-                    window.remove_window();
-                    on_pick(template, cx);
-                })
+            template_row(template, cx).on_click(move |_, window, cx| {
+                window.remove_window();
+                on_pick(template, cx);
+            })
         });
         div()
             .size_full()
@@ -93,11 +69,42 @@ impl Render for TemplatePicker {
             .flex_col()
             .gap_3()
             .p_6()
-            .bg(theme.gray_100)
-            .text_color(theme.gray_950)
+            .bg(background)
+            .text_color(text)
             .font(typography::ui_font())
             .text_size(px(14.))
             .child(div().text_size(px(16.)).child("Start from"))
             .children(rows)
     }
+}
+
+/// A template by its name and description, for a list to pick from.
+pub fn template_row(template: &'static Template, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let id = SharedString::from(format!("template-{}", template.name));
+    div()
+        .id(id.clone())
+        .debug_selector(move || id.to_string())
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_3()
+        .text_left()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.gray_300)
+        .bg(theme.gray_50)
+        .hover(|row| row.bg(theme.gray_200))
+        .cursor_pointer()
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(template.name),
+        )
+        .child(
+            div()
+                .text_color(theme.gray_700)
+                .text_size(px(13.))
+                .child(template.description),
+        )
 }

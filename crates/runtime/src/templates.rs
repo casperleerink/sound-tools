@@ -8,6 +8,8 @@ use anyhow::{Context as _, Result, bail};
 
 use crate::PROJECT_FILE;
 
+mod written;
+
 pub struct Template {
     pub name: &'static str,
     pub description: &'static str,
@@ -23,10 +25,11 @@ pub fn named(name: &str) -> Option<&'static Template> {
     TEMPLATES.iter().find(|template| template.name == name)
 }
 
-/// Writes the files of `template` into `folder`, which must hold nothing but hidden files.
-/// Makes the folder when it is missing.
+/// Writes the files of `template` into `folder`, which must be new or an empty project: one
+/// that holds nothing but its `project.json` and what the runtime writes. Makes the folder when
+/// it is missing.
 pub fn write(folder: &Path, template: &Template) -> Result<()> {
-    if folder.exists() && !is_empty(folder)? {
+    if folder.exists() && !is_empty_project(folder, folder)? {
         let name = folder.file_name().unwrap_or(folder.as_os_str());
         bail!(
             "“{}” has files in it. Pick a new folder for a new project.",
@@ -61,6 +64,30 @@ fn with_extensions(contents: &str) -> Result<String> {
         file.insert("extensions".into(), crate::bundled_extensions()?.into());
     }
     Ok(serde_json::to_string_pretty(&file)?)
+}
+
+/// Whether `folder`, in the project at `root`, holds no file but `project.json` and what the
+/// runtime writes.
+fn is_empty_project(root: &Path, folder: &Path) -> Result<bool> {
+    let entries = std::fs::read_dir(folder)
+        .with_context(|| format!("could not read {}", folder.display()))?;
+    for entry in entries {
+        let path = entry
+            .with_context(|| format!("could not read {}", folder.display()))?
+            .path();
+        let inside = path
+            .strip_prefix(root)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let empty = match path.is_dir() {
+            true => written::written_by_the_runtime(&inside) || is_empty_project(root, &path)?,
+            false => inside == PROJECT_FILE || written::written_by_the_runtime(&inside),
+        };
+        if !empty {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether `folder` holds nothing but hidden files.
@@ -102,5 +129,15 @@ mod tests {
         std::fs::write(theirs.join("state/a.json"), "{}").unwrap();
         write(&theirs, daw).unwrap_err();
         assert!(!theirs.join(crate::PROJECT_FILE).exists());
+
+        // An empty project the window opened takes it in place.
+        let opened = folder.path().join("opened");
+        std::fs::create_dir_all(opened.join("state")).unwrap();
+        std::fs::create_dir_all(opened.join("extensions")).unwrap();
+        std::fs::write(opened.join(PROJECT_FILE), "{}").unwrap();
+        std::fs::write(opened.join("extensions/sdk.ts"), "").unwrap();
+        std::fs::write(opened.join("AGENTS.md"), "").unwrap();
+        write(&opened, daw).unwrap();
+        assert!(opened.join("state/song/instance.json").exists());
     }
 }

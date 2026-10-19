@@ -5,6 +5,10 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+#[path = "src/templates/written.rs"]
+mod written;
+use written::written_by_the_runtime;
+
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
     let crate_folder = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
@@ -79,21 +83,6 @@ fn embed_templates(templates: &Path) -> Result<(), Box<dyn Error>> {
     let out = PathBuf::from(std::env::var("OUT_DIR")?).join("templates.rs");
     std::fs::write(out, code)?;
     Ok(())
-}
-
-/// What the runtime writes into a project when it opens, as when a template folder is opened
-/// to try it: hidden files, the agent docs and the SDK beside the extensions.
-fn written_by_the_runtime(path: &str) -> bool {
-    path.split('/')
-        .any(|part| part.starts_with('.') || part == "node_modules")
-        || ["AGENTS.md", "CLAUDE.md", "problems.txt"].contains(&path)
-        || path.starts_with("agent-docs/")
-        || [
-            "extensions/sdk.ts",
-            "extensions/tsconfig.json",
-            "extensions/bun.d.ts",
-        ]
-        .contains(&path)
 }
 
 fn files_in(folder: &Path, files: &mut Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
