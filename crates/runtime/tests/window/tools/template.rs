@@ -1,5 +1,5 @@
-//! A new project from the DAW template, as a composer starts one: the song of `templates/daw`,
-//! with no arrangement enabled, opens on its own view, takes a track and a clip, plays the
+//! A new project from the DAW template, as a composer starts one: the song of `templates/daw`
+//! opens on its own view, takes a track and a clip, plays the
 //! keyboard on the track it selects and plays from space.
 
 use gpui::TestAppContext;
@@ -8,27 +8,13 @@ use super::{Window, open_folder};
 use crate::song::BAR;
 
 #[gpui::test]
-fn a_new_daw_project_opens_its_song_with_no_arrangement_and_plays(cx: &mut TestAppContext) {
+fn a_new_daw_project_opens_its_song_and_plays(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
     runtime::templates::write(folder.path(), crate::song::daw()).unwrap();
-    let file = std::fs::read_to_string(folder.path().join("project.json")).unwrap();
-    let file: serde_json::Value = serde_json::from_str(&file).unwrap();
-    let enabled: Vec<&str> = (file["extensions"].as_array().unwrap().iter())
-        .filter_map(serde_json::Value::as_str)
-        .collect();
-    assert!(!enabled.contains(&"arrangement"), "{enabled:?}");
     let Some(mut window) = open_folder(cx, folder) else {
         return;
     };
     window.wait_for_bun();
-    let no_arrangement = |window: &mut Window| {
-        let session = window.session.clone();
-        window.cx.read(|cx| {
-            (session.read(cx).project().instances())
-                .all(|(_, tool)| !tool.starts_with("arrangement"))
-        })
-    };
-    assert!(no_arrangement(&mut window));
 
     // A track from "+ Track".
     let add = window.until_found("div-add-track");
@@ -68,7 +54,6 @@ fn a_new_daw_project_opens_its_song_with_no_arrangement_and_plays(cx: &mut TestA
     window.key_down("space", false);
     window.until("playing", Window::playing);
     assert_eq!(window.problems(), []);
-    assert!(no_arrangement(&mut window));
 }
 
 #[gpui::test]

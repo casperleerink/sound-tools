@@ -406,6 +406,9 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     };
     window.wait_for_bun();
     window.drop_sine();
+    let region = window.record("song/voice/region");
+    assert_eq!(region["asset"], "sine.wav");
+    assert_eq!(region["start"], 2 * BAR);
     // Its waveform shows once its length is known: a click on it chooses it.
     let inside = window.on_lane(2 * BAR + 960, 2);
     window.until_found("div-mixer-toggle");

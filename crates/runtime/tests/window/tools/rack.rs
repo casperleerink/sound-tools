@@ -1,14 +1,12 @@
 //! The blocks the song builds the devices of a track with: the cards of its children, a menu
-//! of what the window offers, a text field, rows dragged onto each other and audio files
-//! dropped from the system.
+//! of what the window offers, a text field and rows dragged onto each other.
 
 use gpui::{
-    ExternalPaths, FileDropEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels,
-    Point, TestAppContext, point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
 };
 use sound_ui::{Devices, Takes};
 
-use super::{Window, open, write_sine};
+use super::{Window, open};
 use crate::song::{BAR, song_files};
 
 /// The song of two tracks of a clip each, the first with a reverb `room` and a utility `trim` in its chain, with
@@ -211,40 +209,5 @@ fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
     let delete = window.until_found("menu-4");
     window.click(delete);
     window.until("the clip deleted", |window| !window.has("song/t01/c00"));
-    assert_eq!(window.problems(), []);
-}
-
-#[gpui::test]
-fn an_audio_file_dropped_on_the_audio_track_becomes_a_region_where_it_fell(
-    cx: &mut TestAppContext,
-) {
-    let Some(mut window) = open_rack(cx) else {
-        return;
-    };
-    let files = tempfile::tempdir().unwrap();
-    write_sine(files.path(), 0.5);
-    let file = files.path().join("assets/audio/sine.wav");
-    // The rows are the two tracks, then the audio track.
-    let to = window.on_lane(2 * BAR, 2);
-    let paths = ExternalPaths(vec![file].into());
-    window.cx.simulate_event(FileDropEvent::Entered {
-        position: to - point(px(20.), px(0.)),
-        paths,
-    });
-    for step in [10., 0.] {
-        window.cx.update(|window, _| window.refresh());
-        window.cx.run_until_parked();
-        let position = to - point(px(step), px(0.));
-        window
-            .cx
-            .simulate_event(FileDropEvent::Pending { position });
-    }
-    window
-        .cx
-        .simulate_event(FileDropEvent::Submit { position: to });
-    window.until("the region added", |window| window.has("song/voice/region"));
-    let region = window.record("song/voice/region");
-    assert_eq!(region["asset"], "sine.wav");
-    assert_eq!(region["start"], 2 * BAR);
     assert_eq!(window.problems(), []);
 }

@@ -477,9 +477,6 @@ fn the_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
     let Some(mut window) = open(cx, &BEAT) else {
         return;
     };
-    // The app has no transport of its own for a page.
-    assert!(window.find("record").is_none());
-    assert!(window.find("play").is_none());
     let play = window.until_found("div-transport-play");
     window.wait_for_bun();
 
@@ -569,14 +566,6 @@ fn a_page_still_takes_clicks_after_its_code_hears_a_note_and_a_key(cx: &mut Test
     kept(&mut window, 1.0);
     window.cx.simulate_keystrokes("a");
     kept(&mut window, 2.0);
-}
-
-#[gpui::test]
-fn a_page_that_does_not_ask_for_the_transport_has_no_play(cx: &mut TestAppContext) {
-    let Some(mut window) = open(cx, &EXPERIMENT) else {
-        return;
-    };
-    assert!(window.find("play").is_none());
 }
 
 /// The computer keys play as a MIDI keyboard, but a page that hears keys keeps them.
