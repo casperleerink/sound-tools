@@ -1085,6 +1085,8 @@ fn a_launch_sent_for_later_waits_for_its_time(cx: &mut TestAppContext) {
     };
     window.start_playing();
     window.until("the timeline", |window| queued(window).is_some());
+    // The page is drawn before the click.
+    window.wait_for_bun();
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     window
         .cx
@@ -1138,6 +1140,8 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
         queued.map(|(_, watch)| watch.get())
     };
     window.until("the timeline", |window| queued(window).is_some());
+    // The page is drawn before the click.
+    window.wait_for_bun();
     window.cx.simulate_click(middle, Modifiers::default());
     window.until("the launch", |window| queued(window) == Some(1.0));
     assert!(window.playing());
