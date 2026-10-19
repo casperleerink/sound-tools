@@ -475,3 +475,36 @@ Three Rust cards add about 0.6 ms a frame; with them the timeline shows fewer ro
 - Embedded card titles are plain labels, not the window's pickers: swapping the synth for another instrument is `addOffer` on its path, without a picker on the card.
 
 **Too specific (to revisit)**, now done: `Slot` in the pickers. Still open: notes as the only event kind, `devices` as only in-code effects, `"*"` naming one tool, required named children.
+
+### Round 11a
+
+Mixer parity in the TS song: per-track faders, returns, sends before or after the fader, solo, the master's limiter, meters, a mixer view; regions end the song; the render cost compared on the same content.
+
+**What it took:**
+- **One new block, `fader`**: gain on a fader's scale (`-inf` to +6 dB), pan, mute, every change gliding, peaks for `now.peak("t00/mix")`. It is the arrangement's track mixer, moved into `sound_core::mixer` (with `decibels`), so both play one stage. A track's `mix`, each `send-<return>`, the master and a return's volume are all faders: one block, four uses. The per-track `meter` children are gone; the fader keeps the level.
+- **Children named by a pattern**: `"ret-*": bus, "*": track` (longest prefix wins). Replaces "`*` names one tool". Typed as `` `ret-${string}` ``.
+- **Ports of a child of a child**: `{ child: "t00/send-ret-a" }` in a connection. The core already resolved paths; only the TS types needed it (`as const` on a built path). This is what lets the song wire sends across tracks, and a sidechain from one track into an effect of another, without the tracks knowing each other. The sidechain is not tested.
+- **Solo is a cable, not routing**: a `lane` child `quiet` holding -1000 dB is cabled into every other track's fader gain. It glides like the arrangement's solo, saves nothing, and a return never gets it. A one-point lane as a constant is a small trick; a constant connection end would be one more concept, not added.
+- **The `end` hook of a JSON tool gets the project**, so a `region` ends the song at its file's end.
+- **Core fix**: a built-in tool whose state is JSON had no record values for its numbers, so `now.value("t00/mix.gain_db", { fraction: true })` read 0 for a field the record leaves out. It now reads the number's default.
+- **Engine**: processors of one lead share one view of the transport per sub-block instead of working it out each (150 timelines lead by the filter's latency).
+
+**Decided by the work, not by Casper:** pre-fader is the return's choice (`pre_fader` on `bus`), as in the arrangement, so the song (not the track) wires sends; `preFader(track)` in `track.ts` names the child before the fader.
+
+**Not done:** expression lanes of notes (pedal, bend, mod, pressure: needs a timeline of more event kinds than notes, which is the "notes are the only event kind" item); overlapping regions sum but have no "upper layer covers" rule (the arrangement's `layer`); sidechain untested.
+
+**Tests:** `projects/song_mixer.rs` renders the example song: a solo silences other tracks and keeps the reverb return; sends after the fader are silent with faders at `-inf` and sound with `pre_fader`; the limiter after a +6 dB master holds -18 dB; overlapping regions sum and the last ends the song. `window/tools/song.rs`: a mixer fader is one undo step, with no Bun update or behaviour question while it moves. Snapshot `typescript-song-mixer.png` (looked at: 12 track strips with send and pan knobs, voice, two returns, master, the limiter's card).
+
+**Numbers** (M1 Max, release-fast). Render: `render_cost` in `projects`, the same content written by `shared/song.rs` as the TS song and as a Rust arrangement (12 tracks, 150 clips, a lane per track, sends into a reverb return, a pre-fader return, a region, the master's limiter):
+
+| | Tools of the project | Rust arrangement |
+| --- | --- | --- |
+| Render, 16 bars | 21x real time (20x before the transport fix) | 28x |
+| Window, scale project (100 x 100), scroll frame | 3.95 ms | 3.6 ms (Round 5) |
+| Song 12 / 150: idle / play frame | 1.75 / 2.45 ms | |
+| Song 24 / 600: idle / play frame | 3.9 / 3.7 ms | |
+| Song 12 / 150: select / move a clip, until drawn | 11.6 / 13.2 ms | |
+
+Profile of the TS render (`sample`, release-fast): the synth is 40 % of the work on both sides. The rest of the TS gap: per-processor work in `Engine::process_block` (zeroing outputs, summing inputs) for about twice the processors a track has in the arrangement, 150 `NotePlayer`s doing per-block lookups where the arrangement has 12, and each parent's own `Signals` pass-through and thru stages. Two generic next steps: a parent with no `sound` connects its children straight to its output (no pass-through stage), and a note player with nothing in or near its range returns at once.
+
+**Too specific (to revisit)**, now done: `"*"` naming one tool. Still open: notes as the only event kind, `devices` as only in-code effects, required named children.
