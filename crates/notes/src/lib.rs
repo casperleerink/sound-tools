@@ -202,7 +202,18 @@ impl From<Velocity> for u8 {
 /// synth of this repository only asks [`is_down`](Self::is_down), which is MIDI's rule: down
 /// from [`DOWN_FROM`](Self::DOWN_FROM).
 #[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 #[serde(try_from = "i64", into = "u8")]
 pub struct Pedal(u8);
@@ -253,7 +264,18 @@ impl From<Pedal> for u8 {
 /// Where the pitch bend wheel stands, -8192 to 8191, with 0 in the middle: MIDI's 14 bits with
 /// the middle moved to 0. How far a full bend goes is the instrument's choice.
 #[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 #[serde(try_from = "i64", into = "i16")]
 pub struct Bend(i16);
@@ -305,7 +327,18 @@ impl From<Bend> for i16 {
 /// How far the modulation wheel is turned or how hard the keys are pressed, 0 to 127, as MIDI
 /// sends it. What it does is the instrument's choice.
 #[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 #[serde(try_from = "i64", into = "u8")]
 pub struct Amount(u8);
@@ -450,7 +483,7 @@ impl Note {
 }
 
 /// A saved move of the sustain pedal. `start` counts from the start of the clip, like a note.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PedalChange {
     pub start: Ticks,

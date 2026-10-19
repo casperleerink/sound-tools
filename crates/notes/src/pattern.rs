@@ -60,7 +60,7 @@ impl Pattern {
         })
     }
 
-    pub(crate) fn length(&self) -> Length {
+    pub fn length(&self) -> Length {
         self.length
     }
 

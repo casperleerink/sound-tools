@@ -15,8 +15,8 @@ use sound_core::{
     ToolSchema, Watch,
 };
 use sound_notes::{
-    Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer, NotePlayerUpdate, Pattern, Placing,
-    PlayerWatches, QUEUED_STOP, Quantize,
+    Amount, Bend, Clip, Launch, Length, NO_PATTERN, Note, NoteEvent, NotePlayer, NotePlayerUpdate,
+    NoteTimeline, Pattern, PedalChange, Placing, PlayerWatches, Point, QUEUED_STOP, Quantize,
 };
 use sound_signals::Number;
 
@@ -51,6 +51,20 @@ struct Record {
     /// Where a launch lands while the piece plays. While it is stopped, at once.
     #[serde(default)]
     quantize: Quantize,
+    /// The sustain pedal: moves in ticks from `start`, down from 64. It goes up where the
+    /// timeline ends.
+    #[serde(default)]
+    pedal: Vec<PedalChange>,
+    /// The bend wheel, -8192 to 8191 with 0 in the middle: points in ticks from `start`, a
+    /// straight line between them, which holds to the end and rests after it.
+    #[serde(default)]
+    bend: Vec<Point<Bend>>,
+    /// The modulation wheel, 0 to 127, as `bend`.
+    #[serde(default)]
+    mod_wheel: Vec<Point<Amount>>,
+    /// The key pressure, 0 to 127, as `bend`.
+    #[serde(default)]
+    pressure: Vec<Point<Amount>>,
 }
 
 fn plays() -> bool {
@@ -65,7 +79,10 @@ impl State for Record {
 pub(crate) fn json_tool() -> JsonTool {
     JsonTool {
         name: NAME.to_string(),
-        check: Arc::new(|state| record(state).and_then(|record| round(&record)).map(drop)),
+        check: Arc::new(|state| {
+            let record = record(state)?;
+            lanes(&record, &round(&record)?).map(drop)
+        }),
         doc: Some(JsonToolDoc {
             when: "A parent of this project plays notes in time: clips or cues in the song, or patterns that loop and launch"
                 .to_string(),
@@ -134,11 +151,41 @@ fn round(record: &Record) -> Result<Pattern, String> {
     })
 }
 
+/// Its pedal and expression lanes over its round, as a clip with no notes, or what is wrong
+/// with them. They play where it plays once: a loop or a timeline that waits for a launch
+/// moves none.
+fn lanes(record: &Record, round: &Pattern) -> Result<Clip, String> {
+    let lanes = Clip {
+        pedal: record.pedal.clone(),
+        bend: record.bend.clone(),
+        mod_wheel: record.mod_wheel.clone(),
+        pressure: record.pressure.clone(),
+        ..Clip::new(record.start, round.length(), Vec::new())
+    };
+    lanes.validate().map_err(|error| {
+        let error = error.replace("the clip length", "the length");
+        error.replace("from the start of its clip", "from `start`")
+    })?;
+    let moves = !(lanes.pedal.is_empty()
+        && lanes.bend.is_empty()
+        && lanes.mod_wheel.is_empty()
+        && lanes.pressure.is_empty());
+    if moves && (record.looped || !record.plays) {
+        return Err(
+            "a timeline that loops or waits for a launch plays notes only: its pedal and lanes need one that plays once"
+                .to_string(),
+        );
+    }
+    Ok(lanes)
+}
+
 /// One player. A change of its notes swaps them, so held notes follow; a change of where it
-/// plays places it again, which ends what it holds.
+/// plays places it again, which ends what it holds. Its pedal and lanes play from a timeline
+/// of the player, which sends them only when they move.
 fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let record = record(state).map_err(BehaviourError::Other)?;
     let pattern = round(&record).map_err(BehaviourError::Other)?;
+    let lanes = lanes(&record, &pattern).map_err(BehaviourError::Other)?;
     // Only a loop shows what plays: a song of many timelines keeps no watches it never reads.
     let watches = record.looped.then(|| TimelineWatches {
         playing: context.watch("playing"),
@@ -152,6 +199,14 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     ) {
         let patterns = NotePlayerUpdate::Patterns(Arc::new(vec![pattern]));
         context.update(node, TimelineUpdate::Player(patterns))?;
+    }
+    let moved = (&lanes.pedal, &lanes.bend, &lanes.mod_wheel, &lanes.pressure);
+    if context.changed("lanes", key(&(lanes.start, lanes.length, moved))) {
+        let timeline = Arc::new(NoteTimeline::new([&lanes]));
+        context.update(
+            node,
+            TimelineUpdate::Player(NotePlayerUpdate::Timeline(timeline)),
+        )?;
     }
     if context.changed("quantize", key(&(record.quantize, record.looped))) {
         let how = (record.quantize, record.looped);

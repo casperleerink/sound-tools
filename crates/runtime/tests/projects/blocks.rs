@@ -1,12 +1,12 @@
-//! The building blocks a parent of the project plays with, beside the `timeline`: a `lane` that
-//! moves a number of another child over the song, and a `region` that plays an audio file at
-//! its place in it.
+//! The building blocks a parent of the project plays with: a `timeline` whose pedal and
+//! expression lanes move with its notes, a `lane` that moves a number of another child over the
+//! song, and a `region` that plays an audio file at its place in it.
 
 use crate::support::{BAR, Harness, difference, write, write_samples};
 
 const BAR_TICKS: u64 = 3840;
 
-const TOOLS: &str = r#"import { tool, type Declaration } from "./sdk";
+const TOOLS: &str = r#"import { note, sine, tool, type Declaration } from "./sdk";
 
 const parts = { synth: "instrument.synth", gain: "utility", filter: "filter", level: "lane", chord: "timeline" } as const;
 
@@ -24,6 +24,32 @@ export const keys = tool({
       { from: { child: "gain" }, to: { child: "filter" } },
       { from: { child: "level", number: "value" }, to: { child: "gain", number: "gain_db" } },
       { from: { child: "filter" }, to: { port: "audio" } },
+    ],
+  }),
+});
+
+export const pure = tool({
+  name: "pure",
+  title: "Pure",
+  when: "Never",
+  doc: "A sine at the newest note, bent as the note is.",
+  state: {},
+  sound: () => sine(note.freq).times(note.gate).times(0.5),
+});
+
+const bent = { line: "timeline", voice: pure } as const;
+
+export const bender = tool({
+  name: "bender",
+  title: "Bender",
+  when: "Never",
+  doc: "Plays its timeline on its sine.",
+  state: {},
+  children: bent,
+  behaviour: (): Declaration<typeof bent> => ({
+    connections: [
+      { from: { child: "line", notes: "notes" }, to: { child: "voice", notes: "notes" } },
+      { from: { child: "voice" }, to: { port: "audio" } },
     ],
   }),
 });
@@ -120,6 +146,51 @@ fn a_lane_moves_a_number_of_another_child_on_its_frames() {
     // The utility glides every change over 20 ms, 960 frames.
     let (_, last) = difference(&gated, &open).unwrap();
     assert!(last < BAR + 75 + 1_000, "{last}");
+}
+
+/// A bender whose timeline holds A4 for a bar, with `lanes` beside its notes.
+fn bender(lanes: &str) -> Option<Harness> {
+    let line = format!(
+        r#"{{"tool": "timeline", "state": {{"length": 3840, "notes": [{{"start": 0, "length": 3840, "pitch": 69, "velocity": 100}}]{lanes}}}}}"#
+    );
+    let voice = r#"{"tool": "pure", "state": {}}"#.to_string();
+    project("bender", &[("line.json", line), ("voice.json", voice)])
+}
+
+fn rises(samples: &[f32]) -> usize {
+    let left: Vec<f32> = samples.iter().step_by(2).copied().collect();
+    let pairs = left.windows(2);
+    pairs.filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0).count()
+}
+
+/// The bend lane of a timeline bends the notes it plays: a full bend is two semitones up. A
+/// loop with lanes does not load, and says why.
+#[test]
+fn a_timeline_bends_its_notes_as_its_lane_says_and_a_loop_has_no_lanes() {
+    let Some(mut straight) = bender("") else {
+        return;
+    };
+    let straight = straight.play_from_the_start(BAR / 2);
+    // A second: 440 rises at A4, 494 two semitones up.
+    assert!(
+        (rises(&straight) as i64 - 440).abs() <= 2,
+        "{}",
+        rises(&straight)
+    );
+    let up = r#", "bend": [{"tick": 0, "value": 8191}]"#;
+    let mut bent = bender(up).unwrap();
+    assert_eq!(bent.project.problems(), []);
+    let bent = bent.play_from_the_start(BAR / 2);
+    assert!((rises(&bent) as i64 - 494).abs() <= 2, "{}", rises(&bent));
+
+    let looped = bender(&format!(r#", "loop": true{up}"#)).unwrap();
+    let problems = looped.project.problems();
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.message.contains("plays notes only")),
+        "{problems:?}"
+    );
 }
 
 /// A lane checks its record: points in tick order, and a log lane above 0.
