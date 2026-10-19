@@ -163,13 +163,23 @@ fn render_cost_of_the_song_alone() {
     if !sound_typescript::has_bun() {
         return;
     }
+    keep_rendering(&mut typescript_song());
+}
+
+/// The same for the Rust arrangement, to compare the two profiles.
+#[test]
+#[ignore = "a measurement"]
+fn render_cost_of_the_arrangement_alone() {
+    keep_rendering(&mut rust_arrangement());
+}
+
+fn keep_rendering(harness: &mut Harness) {
     let seconds: f64 = std::env::var("RENDER_COST_SECONDS")
         .ok()
         .and_then(|text| text.parse().ok())
         .unwrap_or(10.0);
-    let mut typescript = typescript_song();
     let started = Instant::now();
     while started.elapsed().as_secs_f64() < seconds {
-        realtime(&mut typescript);
+        realtime(harness);
     }
 }
