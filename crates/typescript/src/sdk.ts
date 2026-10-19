@@ -1001,7 +1001,11 @@ export type SendTo<I extends Inputs, K extends ChildTools = ChildTools> =
   | "notes"
   | PortOf<"number", K, false, "input">
   | ChildBang<K>
-  | ChildNotes<K>;
+  | ChildNotes<K>
+  | Deeper;
+
+/** An input of an instance deeper down, by its path such as `"voice/rec"`: its name is not checked. */
+type Deeper = { child: `${string}/${string}` } & (Keyed<"number"> | Keyed<"bang"> | Keyed<"notes", "notes">);
 
 /** What `send` takes after the input: a number for a number, a note event for notes, nothing for a bang. */
 type SendArgs<P, I extends Inputs> = P extends "notes" | { notes: string }
@@ -1025,8 +1029,9 @@ export interface Performer<I extends Inputs, K extends ChildTools = ChildTools> 
   /**
    * Plays an input: `send("rate", 2)` moves the number input `rate`, `send("hit")` sends the bang
    * `hit`, `send("notes", { type: "noteOn", pitch: 60, velocity: 0.8 })` plays the tool's voices,
-   * and `{ child, number }`, `{ child, bang }` or `{ child, notes }` plays a child's. At most 256
-   * wait for their `at`: past that a `noteOn` is dropped, and anything else plays at once.
+   * and `{ child, number }`, `{ child, bang }` or `{ child, notes }` plays a child's, or one
+   * deeper by its path, `"voice/rec"`. At most 256 wait for their `at`: past that a `noteOn` is
+   * dropped, and anything else plays at once.
    */
   send<P extends SendTo<I, K>>(input: P, ...value: SendArgs<P, I>): void;
   /**
@@ -1274,7 +1279,7 @@ type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? 
 export type WaveList =
   | { source: "scope"; name: string; channel?: Channel; frames?: number }
   | { source: "history"; of: Num; frames: number; key: string }
-  | { source: "file"; asset: string; from?: number; to?: number }
+  | { source: "file"; asset: string; from?: number | null; to?: number | null }
   | { source: "take"; name: string };
 
 /** The names a tool reads with `now.value`: its numbers, its number inputs, and any output, by any name. */
@@ -1313,7 +1318,7 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
    * seconds of it (all of it when left out), for a `Wave` with `band` from `low: -1` to `high: 1`.
    * Made in the background: it shows once it is ready.
    */
-  file(asset: string, options?: { from?: number; to?: number }): WaveList;
+  file(asset: string, options?: { from?: number | null; to?: number | null }): WaveList;
   /** The sound a `recorder` child by its path records, as it grows, in the form of `file`. */
   take(name: string): WaveList;
   /** The drag of `id`, see `Drag`. */
@@ -2290,7 +2295,7 @@ export type Shape =
          * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
          * the highest under each point, as a waveform.
          */
-        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: WaveList; color: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number }
+        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number }
       ));
 
 /** A colour, or one between two by a live value: see `blend`. */

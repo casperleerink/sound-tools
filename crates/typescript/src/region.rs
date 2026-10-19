@@ -14,6 +14,8 @@ use sound_media::{AUDIO_FOLDER, AudioAsset, AudioPlayer, AudioUpdate, Region};
 
 pub(crate) const NAME: &str = "region";
 const PROCESSOR: &str = "player";
+/// What its parent's view reads of how long it plays, in seconds.
+const SECONDS: &str = "seconds";
 
 /// The loudest a region plays over its file, in decibels.
 const MAX_GAIN_DB: f32 = 24.0;
@@ -134,6 +136,10 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
         fade_out_ms: record.fade_out_ms,
     };
     let rate = context.prepare_config().sample_rate;
+    // How long it plays, for a view to draw it: seconds of its file, so no tempo moves them.
+    let seconds = sound_media::info(context.assets(), &region.asset)
+        .map(|file| region.length(&file, rate) as f64 / f64::from(rate.max(1)));
+    context.watch(SECONDS).set(seconds.unwrap_or(0.0) as f32);
     let what = format!("the region {:?}", context.id().name());
     let (snapshot, problems) = sound_media::snapshot([(what, region)], context.assets(), rate);
     for problem in problems {

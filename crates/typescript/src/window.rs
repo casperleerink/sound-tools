@@ -862,9 +862,10 @@ impl Live {
     ) -> Option<InstanceId> {
         let session = self.session.upgrade()?;
         let project = session.read(cx).project();
-        // Not a grandchild, as a name with a `/` would give.
-        let id = (parent.child(child).ok())
-            .filter(|id| id.parent().as_ref() == Some(parent) && project.tool_of(id).is_some());
+        // A path such as `voice/rec` reaches deeper, but never out of the parent.
+        let id = InstanceId::new(&format!("{}/{child}", parent.as_str()))
+            .ok()
+            .filter(|id| id.is_inside(parent) && project.tool_of(id).is_some());
         if id.is_none() {
             let children: Vec<&str> = (project.instances())
                 .filter(|(id, _)| id.parent().as_ref() == Some(parent))

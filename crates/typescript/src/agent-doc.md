@@ -238,7 +238,7 @@ Levels, the clock and easing are live values too, so a meter or a light moves on
 - `now.value(name, { played: true })`: a field as it plays, what a lane or a cable plays into it, else its record. A drag of `{ y: { value: "bass-mix.gain_db" } }` turns a child's.
 - `now.elapsed`, seconds, and `.mod`, `.pow`, `.decibels()`. `.smooth(ms)`, `.fall(perSecond)` and `.hold(seconds)` follow a value over frames: a meter's bar is `level.fall(0.5)`, its peak line `level.hold(1.5).fall(0.5)`.
 - `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.elapsed.mod(1).lt(0.5))` blinks.
-- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter, or `now.history(value, frames)`, the last values of any live value. `band` draws a waveform.
+- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far. `band` from `low: -1` to `high: 1` draws a waveform.
 
 ## A control loop, the keys
 
@@ -360,6 +360,7 @@ tool({
   - `{ from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } }` plays an instrument; `notes` is the input of each. `{ from: { notes: "notes" }, to: { child: "piano", notes: "notes" } }` plays it from the keyboard.
 - A parent plays its children by name: `play(pitch, { child: "synth" })` and `send({ child: "synth", notes: "notes" }, event)` reach its `notes`; `send({ child: "lfo", number: "rate" }, 2)` and `send({ child: "drop", bang: "hit" })` its inputs. A number field of a child is its record: a cable moves it.
 - A `timeline` child plays notes in time out of its output `notes` (`agent-docs/timeline.md`): once at their place in the song, one per clip, so moving a clip changes one file; or round after round with `"loop": true`. `send({ child: "bass", number: "launch" }, 1)` starts it at the next bar, `0` stops it there. A parent's view reads the outputs of each child as `<child>.<name>`: a looping timeline's `playing` is 1 while it plays.
+- A `lane` child moves a number of another child over the song, as automation (`agent-docs/lane.md`): `{ from: { child: "cutoff", number: "value" }, to: { child: "filter", number: "cutoff_hz" } }`. A `region` child plays an audio file at its place in the song (`agent-docs/region.md`). A `recorder` child records the notes it hears and the audio input while its input `record` is on and the song plays, into a `timeline` and a `region` next to it (`agent-docs/recorder.md`).
 - A missing child or port, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
 A clip launcher, with two looping timelines `low` and `high`, an instrument `synth` and a utility `fx` as its children:
