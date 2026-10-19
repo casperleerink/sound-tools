@@ -680,9 +680,13 @@ impl Bun {
         files: &[&str],
     ) -> Result<(Self, Loaded), LoadFailure> {
         let failure = |why: String| LoadFailure { file: None, why };
+        let number = NEXT_BUN.fetch_add(1, Ordering::Relaxed);
         #[allow(clippy::disallowed_methods)]
         let mut child = sound_core::process::background_command(program)
             .arg(host_script)
+            // Its questions are numbered from its own: an answer meant for a Bun before it
+            // settles none of them.
+            .arg(number.to_string())
             .args(files)
             .current_dir(folder)
             .stdin(Stdio::piped())
@@ -702,7 +706,6 @@ impl Bun {
             runs: None,
         }));
         // From here a failure drops it, which ends the process.
-        let number = NEXT_BUN.fetch_add(1, Ordering::Relaxed);
         let bun = Self {
             number,
             opening,

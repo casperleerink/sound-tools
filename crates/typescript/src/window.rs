@@ -60,6 +60,8 @@ pub(crate) struct Live {
     folder: PathBuf,
     session: WeakEntity<Session>,
     host: Host,
+    /// Takes that ended while no Bun ran, for the next one to keep.
+    held_takes: Vec<FinishedTake>,
     /// The opening of the project every Bun of the window runs for.
     opening: u64,
     skipped: Skipped,
@@ -388,6 +390,7 @@ impl Live {
                 folder,
                 session: session.downgrade(),
                 host,
+                held_takes: Vec::new(),
                 opening,
                 skipped,
                 tools: tools.clone(),
@@ -1223,7 +1226,7 @@ impl Live {
         let clock = clock_of(&session, cx);
         self.tell(cx);
         let instance = played(session.read(cx).project(), &parent);
-        self.host.send(&Request::Take {
+        let sent = self.host.send(&Request::Take {
             instance,
             recorder: take.recorder.name(),
             name: &take.name,
@@ -1231,6 +1234,14 @@ impl Live {
             state: &take.state,
             clock,
         });
+        if !sent {
+            let message = format!(
+                "The take of {} waits for the code of the project to run again.",
+                take.recorder
+            );
+            session.update(cx, |session, cx| session.report(message, cx));
+            self.held_takes.push(take.clone());
+        }
     }
 
     /// Gives `heard` to the `onNotes` of the instance `id` of `tool`, when it has one.
@@ -1675,6 +1686,8 @@ impl Live {
     /// `openFile` `question` of Bun with its name there, or with none.
     fn open_file(&mut self, question: u64, title: String, cx: &mut Context<Self>) {
         let Some(session) = self.session.upgrade() else {
+            let answer = Answer::Asset(None);
+            self.host.send(&Request::Answer { question, answer });
             return;
         };
         let picked = cx.prompt_for_paths(PathPromptOptions {
@@ -1687,6 +1700,12 @@ impl Live {
         cx.spawn(async move |live, cx| {
             let path = match picked.await {
                 Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Err(error)) => {
+                    let error = format!("The file picker did not open: {error}");
+                    let reported = session.clone();
+                    cx.update(|cx| reported.update(cx, |session, cx| session.report(error, cx)));
+                    None
+                }
                 _ => None,
             };
             let imported = match path {
@@ -1912,6 +1931,11 @@ impl Live {
                 entry.stale = entry.tree.is_some();
             }
             self.mount(card, cx);
+        }
+        if matches!(self.host, Host::Running { .. }) {
+            for take in std::mem::take(&mut self.held_takes) {
+                self.take(&take, cx);
+            }
         }
     }
 

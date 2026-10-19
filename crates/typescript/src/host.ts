@@ -9,7 +9,7 @@ import type { Child, Clock as SdkClock, Take, Context, Field, Fields, Graph, Hea
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
-const files = process.argv.slice(2);
+const [bunNumber, ...files] = process.argv.slice(2);
 /** Each file as a call stack names it, with links resolved. */
 const stackPaths = files.map((file) => [file, `${realpathSync(join(folder, file))}:`] as const);
 // So the stack `tool` keeps reaches its file through any number of helpers.
@@ -540,8 +540,16 @@ function withOwners(ids: Iterable<string>): Set<string> {
   return all;
 }
 
+/** Forgets the memory of `id`, which is gone or another tool's now. */
+function forget(id: string) {
+  for (const key of memories.keys()) {
+    if (key.startsWith(`${id} `)) memories.delete(key);
+  }
+}
+
 function hear({ records, gone, edits: heard }: Extract<Request, { type: "records" }>) {
   for (const { id, tool, state } of records) {
+    if (told.get(id)?.tool !== tool) forget(id);
     told.set(id, { tool, state });
     const [parent, name] = parentOf(id) ?? [];
     if (parent !== undefined && name !== undefined) {
@@ -550,6 +558,8 @@ function hear({ records, gone, edits: heard }: Extract<Request, { type: "records
   }
   for (const id of gone) {
     told.delete(id);
+    kids.delete(id);
+    forget(id);
     const [parent, name] = parentOf(id) ?? [];
     const known = parent === undefined ? undefined : kids.get(parent);
     if (parent !== undefined && name !== undefined && known) {
@@ -636,7 +646,17 @@ function filledOf(child: { tool: string; state: unknown }): unknown {
   const spec = sdk.host.tools.get(child.tool);
   if (spec) return filledObject(spec.state, child.state);
   const defaults = (sdk as { defaultStates?: Record<string, object> }).defaultStates?.[child.tool];
-  return defaults && isObject(child.state) ? { ...structuredClone(defaults), ...child.state } : child.state;
+  return defaults && isObject(child.state) ? deepFilled(defaults, child.state) : child.state;
+}
+
+/** `state` with what it leaves out of `defaults` filled in, also inside its objects, as Rust reads it. */
+function deepFilled(defaults: object, state: Record<string, unknown>): Record<string, unknown> {
+  const filled: Record<string, unknown> = structuredClone(defaults) as Record<string, unknown>;
+  for (const [name, value] of Object.entries(state)) {
+    const fallback = filled[name];
+    filled[name] = isObject(value) && isObject(fallback) ? deepFilled(fallback, value) : value;
+  }
+  return filled;
 }
 
 /** What a change did with a child it got: whether it read its state, and its children as it left them. */
@@ -910,7 +930,7 @@ function selector(instance: string) {
 
 /** Questions to the window, by number, which its answers settle: `openFile`, `openMenu`, `offers`, `numbers`. */
 const asked = new Map<number, (answer: unknown) => void>();
-let questions = 0;
+let questions = Number(bunNumber) * 2 ** 32;
 function ask<Answer>(message: { type: string } & Record<string, unknown>): Promise<Answer> {
   const question = ++questions;
   say({ ...message, question });
