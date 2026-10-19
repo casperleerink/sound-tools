@@ -259,3 +259,43 @@ Goal: the song scales with what shows and what changed, not with the song, and t
 The Rust arrangement scrolls the same scale project at 3.6 ms. 24 tracks cost about twice 12 because twice as many rows show. Opening is now the cost that grows with the song: about 0.8 µs per binding in Bun (round 4a), 3 s at 10,000 clips. Fixing that is the next SDK cost, a leaner reactive core or lazy rows.
 
 **Too specific (to revisit)**, added: a tool's `keys` cannot take space or `r` from the window without taking every plain key's binding context; fine for now, a per-key context would be cleaner.
+
+### Round 6a
+
+Goal: fewer author-facing concepts, toward the cut in the Goal. Mostly renames and merges; the engine needed one real change.
+
+| Before (concepts an author met) | After |
+| --- | --- |
+| `kind`: effect, instrument, source | `voices` (1 to 8). A sound that reads `input` has an audio input; that alone makes it an effect in a track's picker |
+| `controls`: `live`, `trigger`; `set`, `fire`, `send(event)`, `play` | `inputs`: `number(...)`, `bang()`; one `send(input, value?)`; `play` a helper |
+| cable keys `number`, `live`, `bang`, `trigger` into a child | `number`, `bang`: a number into a child is an input of that name, else a field a lane moves |
+| fields `knob`, `toggle`, `choice`, `pattern`, `sample`, `notes`, `text`, `number`, `list` (9) | `number`, `boolean`, `choice`, `text`, `file`, `list` (6); `pattern()` and `notes()` are helpers that make lists |
+| `card`, `page` | `view`, drawn in the room the window gives (`size`, a card or the whole window) |
+| `watch()` and `output()`; `watches` | `output()`; a view reads a number output as `now.value(name)` or `outputs` |
+| `now.field`, `childField`, `played`, `control`, `watch`, `time`, `output` | `now.value(path, { played?, fraction? })`, `now.elapsed`, `now.devicePeak` |
+| drag turns `{ field, child }` or `{ control }` | `{ value: path }`, named as `now.value` names it |
+| `SampleChooser`, `Canvas`, a div's `onClick` | `openFile()` and a div; a `Space`; `onPress` everywhere |
+
+Where the code showed a better cut than the plan:
+- **The `notes` input stays with every sound.** It is how a sound's voices are played, not a DAW idea; making it a declaration would make every effect that follows a note declare it.
+- **Effect and source were one thing in the engine.** `Signals` played them the same; only the audio input a behaviour declared told them apart. Now one voice always has the input, so `Kind::Source` is gone, and a tool that plays its track's notes while sitting in `effects` still sits in the chain.
+- **A number is live where it is read.** One `number` field glides in a sound that reads it, reruns a behaviour that reads it, rebinds a view that reads it. A sound declares only the numbers it reads, so a data tool may hold any number of them; a lane moves one only when the sound reads it and it is not whole.
+- `transport: true` stays until the clock round gives views a clock to draw. `devices` stays until an eval says otherwise.
+
+**Numbers** (M1 Max, release-fast). Round 5 numbers held:
+
+| | Round 5 | Round 6a |
+| --- | --- | --- |
+| 12 / 150: idle, scroll, play frame | 1.7, 1.6, 1.8 ms | 1.5, 1.5, 1.7 ms |
+| 12 / 150: release that moves a clip, until drawn | 7.6 ms | 7.2 ms |
+| 24 / 600: idle, scroll, play frame | 3.5, 3.7, 3.6 ms | 3.7 to 4.2, 3.7 to 4.3, 3.8 to 4.5 ms (three runs) |
+| Scale project, 100 × 100: idle, scroll across, play; open | 3.2, 3.2, 3.7 ms; 3.1 s | 3.3, 3.3, 3.6 ms; 3.1 s |
+
+**Agent eval** on the new doc, one run each: `ui-chords` passed (18 turns, $0.61), `ui-paint` passed (17 turns, $0.69). Both used `view`, `number`, `pattern`, `output` read by `now.value`, `onPress`, and a `Space` with `onMove` to paint, unprompted.
+
+**Open questions for Casper:**
+- A number a sound does not read is not automatable, so a TS track's volume must be heard by its sound to have a lane. That is "a lane moves what plays"; fine?
+- A view now reads at most 8 number outputs of a sound (watches allowed 16).
+- `send("notes", event)` replaces `send(event)`: one more word, one less concept.
+
+**Too specific (to revisit)**, from round 4a's list, now done: `kind`, the default `notes` input in types (it is intrinsic now, see above), the card height in the SDK (the window gives the room). Still open: `transport: true`, `sequencer` beside `timeline`, notes as the only event kind, `devices` as only in-code effects, docs placing tools by `state/arrangement/...`.
