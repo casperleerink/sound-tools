@@ -13,7 +13,6 @@ The technical decisions, why we made them, and what we rejected. How something w
 | Instance | One use of a tool in a project, with its own record. |
 | Record | The saved JSON state of one instance, one file in `state/`. |
 | Behaviour | A function from the state of an instance to what it needs in the engine: processors, updates, connections, ports. |
-| Derive | A function from a changed record to more changes in the same edit group. |
 | Asset | Bytes under `assets/` the core never looks inside: audio files, raw takes, plugin states. |
 | Problem | A part of the project that is not live, listed in `problems.txt`. Never a reason to refuse the rest. |
 
@@ -50,7 +49,6 @@ This is the main rule of the codebase.
 - Ownership is the folder tree. References are saved ids that keep nothing alive. A reference may arrive before its target; data of a missing extension stays intact.
 - A service outside the project that can now do more (a plugin scan, a background render, a file arriving under `assets/`) makes the core run a behaviour again with the record it has: no write, no undo step. `runtime::tick` is the one place that asks these services, so the window, headless, a render and the tests behave alike.
 - A tool may say where its instances live (`Place`). A record in the wrong place is a problem that says where it belongs, so an agent's mistake is a message, not silence.
-- A derive turns one changed record into more changes in the same group: one engine batch, one undo step. It never runs on load, undo, redo or cancel, because the files already hold its output. It cannot fail: what it cannot compute is a problem. Rejected: running derives on load (a cost on every inspect, and it could disagree with the files).
 - A tool may register an end, so the core knows the length of the piece without knowing tracks.
 
 ## Project storage
@@ -113,7 +111,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 - Every audio port is stereo: no channel negotiation, a cable cannot be half connected, and a plugin's stereo output fits one port.
 - Time is integers: frames for the engine, ticks for music. Saved positions are ticks or bars, never floats or seconds.
 - Time signatures are runs of whole bars and sections start at a bar number, so neither falls inside a bar. Rejected: ticks.
-- Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would need a derive that moves every clip, which goes wrong for clips off the bar lines.
+- Changing the time signatures moves bar lines and sections, never notes. Keeping bar positions would move every clip, which goes wrong for clips off the bar lines.
 - Bar math lives in `TimeSignatures`, so no extension assumes a fixed bar length.
 - The core holds no scheduled events: timeline processors make theirs from the transport, so a seek has nothing to invalidate.
 - The loop goes back by a seek on the frame of its end, so processors need no loop code. With latency that leaves a gap as long as the latency. Rejected: wrapping each processor ahead of the device, far more transport code.

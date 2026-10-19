@@ -10,7 +10,6 @@ use schemars::JsonSchema;
 
 use super::Project;
 use super::binding::{BehaviourContext, BehaviourError};
-use super::editing::Derived;
 use super::instance::{Instance, InstanceId, JsonState, Record, State, is_valid_name};
 use crate::clock::Ticks;
 use crate::parameter::{Parameter, ParameterInfo};
@@ -153,39 +152,12 @@ type ErasedBehaviour =
 
 type ErasedEnd = Box<dyn Fn(&Project, &InstanceId) -> Option<Ticks>>;
 
-/// Not `Send`, like a behaviour: it may keep control-side state, such as a cache of a big file
-/// it reads.
-type ErasedDerive = Box<dyn Fn(&Project, &InstanceId, DerivedFrom<'_>, &mut Derived)>;
-
-/// The untyped form of [`Was`], which only this crate can build.
-pub(crate) enum DerivedFrom<'a> {
-    Created,
-    Changed(&'a Record),
-    Unchanged,
-}
-
-/// What the record of a derived instance was before the group that is running its derive.
-///
-/// A derive that writes several things uses it to write only what really moved: the tempo fit
-/// rewrites the notes of a clip when a field that decides where the beats are changed, and
-/// only the tempo map when the steadiness did, so a hand edit of that clip survives.
-pub enum Was<'a, S> {
-    /// The record was created in this group. There is nothing it was.
-    Created,
-    /// The record changed in this group, from this state.
-    Changed(&'a S),
-    /// The record did not change. Something else this derive follows did, such as the
-    /// project's time signature.
-    Unchanged,
-}
-
 pub(crate) struct ToolDefinition {
     /// `None` for a tool of the project itself, which every project loads.
     pub extension: Option<&'static str>,
     /// Decodes and validates the `state` value of a record. The error names the field.
     pub decode: Box<dyn Fn(serde_json::Value) -> Result<Record, String>>,
     pub behaviour: Option<ErasedBehaviour>,
-    pub derive: Option<ErasedDerive>,
     pub end: Option<ErasedEnd>,
     pub owns_children: bool,
     /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
@@ -241,7 +213,6 @@ impl Registry {
             extension: Some(extension),
             decode: Box::new(decode::<S>),
             behaviour: None,
-            derive: None,
             end: None,
             owns_children: S::OWNS_CHILDREN,
             asset_folders: Vec::new(),
@@ -357,7 +328,6 @@ impl Registry {
                 extension: None,
                 decode: Box::new(decode),
                 behaviour: Some(Box::new(behaviour)),
-                derive: None,
                 end: end.map(|end| -> ErasedEnd {
                     Box::new(move |project, id| end(project, project.json_state(id)?))
                 }),
@@ -442,45 +412,6 @@ impl<S: State> ToolRegistration<'_, S> {
         S: JsonSchema,
     {
         self.definition.schema = Some(ToolSchema::of(numbers));
-        self
-    }
-
-    /// What this instance decides about other records and about the tempo map: state that is
-    /// computed from its own, never edited by hand, and always rebuilt from it.
-    ///
-    /// It runs inside the same state application as the change that asked for it, so the
-    /// record, what it decides and the tempo map are one group, one engine batch and one undo
-    /// step. It runs when a record of this tool changed in the group, and when the project's
-    /// time signature changed, which is the other thing a musical grid is made of. It does not
-    /// run while the project loads, for undo, for redo or for a cancel: the files and the undo
-    /// step already hold what it would compute, and a read-only project therefore writes
-    /// nothing. Its own changes never start another round, so it cannot loop.
-    ///
-    /// Keep it a pure function of the project: it may be called several times for one gesture,
-    /// once per mouse move. Say in your agent doc that the records it writes are derived, so an
-    /// agent edits the input and not the result.
-    ///
-    /// [`Was`] is what the record was before this group, so a derive that writes several
-    /// things can write only what really moved.
-    pub fn derive(
-        self,
-        derive: impl Fn(&Project, &Instance<S>, Was<'_, S>, &mut Derived) + 'static,
-    ) -> Self {
-        self.definition.derive = Some(Box::new(move |project, id, from, derived| {
-            let was = match from {
-                DerivedFrom::Created => Was::Created,
-                DerivedFrom::Unchanged => Was::Unchanged,
-                // The record of an instance always holds the state type of its tool.
-                DerivedFrom::Changed(record) => match record.state::<S>() {
-                    Some(state) => Was::Changed(state),
-                    None => Was::Unchanged,
-                },
-            };
-            // Only called for a live instance of this tool.
-            if let Some(instance) = project.resolve::<S>(id) {
-                derive(project, &instance, was, derived);
-            }
-        }));
         self
     }
 

@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 pub use assets::{ASSETS_FOLDER, AssetError, AssetName, Assets, InvalidAssetName};
 pub use binding::{BehaviourContext, BehaviourError, InputEndpoint, OutputEndpoint, RecordStamp};
-pub use editing::{Changes, Derived, Edit};
+pub use editing::{Changes, Edit};
 pub use fields::{FieldDoc, FieldRange, RecordSchema, ranges, type_doc, unit_of};
 pub use file::{
     FORMAT, PortReference, ProjectFile, SavedConnection, SavedDestination, SavedSource,
@@ -38,7 +38,7 @@ pub use history::OUTSIDE_UNDO_WINDOW;
 pub use instance::{Instance, InstanceId, InvalidInstanceId, Place, State};
 pub use registry::{
     AgentDoc, AgentDocText, JsonTool, JsonToolDoc, Registry, RegistryError, ToolRegistration,
-    ToolSchema, Was,
+    ToolSchema,
 };
 pub use runs::{RUN_LONGEST, RUN_QUIET};
 pub use storage::StorageError;
@@ -98,10 +98,6 @@ pub enum ProjectError {
     UnknownTool(&'static str),
     #[error("instance {id}: {message}")]
     InvalidState { id: InstanceId, message: String },
-    #[error(
-        "{path} holds a change that did not load, and {id} decides what is in it, so this cannot be applied: a record and what it derives are saved together or not at all. Fix {path} first"
-    )]
-    DerivesIntoAStaleProjectFile { id: InstanceId, path: String },
     #[error("the behaviour of {instance} failed: {source}")]
     Behaviour {
         instance: InstanceId,
@@ -180,9 +176,6 @@ pub struct Project {
     events: Vec<ProjectEvent>,
     /// By path relative to the project folder.
     file_problems: BTreeMap<String, String>,
-    /// What the derive of an instance could not compute, by instance. It stays until that
-    /// derive runs again, like what a behaviour reports about its own instance.
-    derive_problems: BTreeMap<InstanceId, Vec<String>>,
     /// Rejected groups of outside changes, see [`NotApplied`].
     not_applied: Vec<NotApplied>,
     /// The generated files may no longer match the project. See `generated.rs`.
@@ -244,7 +237,6 @@ impl Project {
             history: History::default(),
             events: Vec::new(),
             file_problems: BTreeMap::new(),
-            derive_problems: BTreeMap::new(),
             not_applied: Vec::new(),
             generated_are_stale: true,
             watcher: None,
@@ -593,7 +585,7 @@ impl Project {
                 path: storage::PROJECT_FILE.to_string(),
                 message,
             });
-        // What a behaviour or a derive said about its own instance while it ran. The record is
+        // What a behaviour said about its own instance while it ran. The record is
         // live and untouched; part of what it asks for is not.
         files
             .chain(connections)
@@ -601,15 +593,10 @@ impl Project {
             .collect()
     }
 
-    /// What every behaviour and every derive reported about its own instance, on the path of
-    /// its record.
+    /// What every behaviour reported about its own instance, on the path of its record.
     fn instance_problems(&self) -> Vec<Problem> {
-        let derived = self
-            .derive_problems
-            .iter()
-            .flat_map(|(id, messages)| messages.iter().map(move |message| (id, message)));
-        let problems = self.bindings.instance_problems().chain(derived);
-        problems
+        self.bindings
+            .instance_problems()
             .filter_map(|(id, message)| {
                 let record = self.instances.get(id)?;
                 let path = self.storage.record_path(id, Form::of(record));
