@@ -147,7 +147,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     for (path, record) in [
         (
             "chain/instance.json",
-            r#"{"tool": "chain", "state": {"order": ["room", "trim"], "off": ["trim"]}}"#,
+            r#"{"tool": "chain", "state": {"order": ["filter", "room", "trim"], "off": ["trim"]}}"#,
         ),
         ("chain/room.json", r#"{"tool": "reverb", "state": {}}"#),
         ("chain/trim.json", r#"{"tool": "utility", "state": {}}"#),

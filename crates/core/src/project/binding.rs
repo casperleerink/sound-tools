@@ -493,11 +493,12 @@ impl BehaviourContext<'_> {
     }
 
     /// Shows the views the lanes this instance plays into the numbers of its owned child
-    /// `child`, or of itself with `None`, so a knob of an automated number shows the value that
-    /// plays, see [`Project::lanes`](super::Project::lanes). Declare them each run, as the rest.
+    /// `child`, at any depth as `chain/filter`, or of itself with `None`, so a knob of an
+    /// automated number shows the value that plays, see [`Project::lanes`](super::Project::lanes).
+    /// Declare them each run, as the rest.
     pub fn show_lanes(&mut self, child: Option<&str>, lanes: Arc<dyn PlayedLanes>) {
         let instance = match child {
-            Some(name) => self.id.child(name),
+            Some(path) => InstanceId::new(&format!("{}/{path}", self.id.as_str())),
             None => Ok(self.id.clone()),
         };
         // A name that cannot be a child has no view to show it.
@@ -790,8 +791,9 @@ impl Bindings {
     /// A view asks every frame while the project plays, so it allocates nothing.
     pub(super) fn lanes(&self, instance: &InstanceId) -> Option<&dyn PlayedLanes> {
         let shown_by = |owner: &str| self.by_instance.get(owner)?.lanes.get(instance);
-        let owner = instance.as_str().rsplit_once('/').map(|(owner, _)| owner);
-        let lanes = shown_by(instance.as_str()).or_else(|| shown_by(owner?));
+        let path = instance.as_str();
+        let owners = path.match_indices('/').map(|(at, _)| &path[..at]);
+        let lanes = shown_by(path).or_else(|| owners.rev().find_map(shown_by));
         lanes.map(|lanes| &**lanes)
     }
 

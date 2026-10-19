@@ -31,7 +31,7 @@ fn noise(seed: &mut u64) -> u64 {
 }
 
 /// The files of a song of `tracks` tracks with `clips` clips in all, each of 30 to 150 notes: a
-/// synth, a filter whose cutoff a lane closes, a fader and a recorder of notes per track, each
+/// synth, a filter in its chain whose cutoff a lane closes, a fader and a recorder of notes per track, each
 /// sending -12 dB into the return `ret-a`, a reverb; a return `ret-b` that hears before the
 /// faders; a fader `master` into a limiter `limit`, and an audio track `audio-voice` with a recorder
 /// of the first channel of the input and no region yet.
@@ -167,14 +167,14 @@ fn song_with(
         let colour = colours[track % colours.len()];
         files.push((
             format!("{folder}/instance.json"),
-            json!({ "tool": "track", "state": { "colour": colour, "automation": [{ "lane": "lane-cutoff", "target": "fx.cutoff_hz" }] } }).to_string(),
+            json!({ "tool": "track", "state": { "colour": colour, "automation": [{ "lane": "lane-cutoff", "target": "chain/filter.cutoff_hz" }] } }).to_string(),
         ));
         files.push((
             format!("{folder}/synth.json"),
             r#"{"tool": "instrument.synth", "state": {}}"#.to_string(),
         ));
         files.push((
-            format!("{folder}/fx.json"),
+            format!("{folder}/chain/filter.json"),
             r#"{"tool": "filter", "state": {}}"#.to_string(),
         ));
         files.push((
@@ -189,7 +189,7 @@ fn song_with(
         }
         files.push((
             format!("{folder}/chain/instance.json"),
-            r#"{"tool": "chain", "state": {}}"#.to_string(),
+            r#"{"tool": "chain", "state": {"order": ["filter"]}}"#.to_string(),
         ));
         // The cutoff closes from 6 kHz to 1.5 kHz over 64 bars.
         let cutoff = r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": 6000}, {"tick": 245760, "value": 1500}], "scale": "log"}}"#;
@@ -202,6 +202,85 @@ fn song_with(
             let record = json!({ "tool": "timeline", "state": state });
             files.push((format!("{folder}/c{clip:02}.json"), record.to_string()));
         }
+    }
+    files
+}
+
+/// The piece the Rust arrangement's snapshots drew, as the DAW template's tools: chords on
+/// `track-1`, a bass line on `bass` and a melody with a gap on `melody`, over twelve bars, with
+/// nothing in their chains. `more` adds files after the tracks.
+pub(crate) fn piece_files(more: &[(&str, Value)]) -> Vec<(String, String)> {
+    let note = |start: u64, length: u64, pitch: u64| json!({ "start": start, "length": length, "pitch": pitch, "velocity": 100 });
+    let mut chords = Vec::new();
+    for (bar, root) in [(0, 57), (1, 53), (2, 48), (3, 55)] {
+        for interval in [0, 4, 7, 12] {
+            chords.push(note(bar * BAR, BAR - 120, root + interval));
+        }
+    }
+    let mut bass = Vec::new();
+    for (bar, root) in [(0, 33), (1, 29), (2, 36), (3, 31)] {
+        for eighth in 0..8 {
+            let pitch = if eighth % 4 == 3 { root + 12 } else { root };
+            bass.push(note(bar * BAR + eighth * 480, 360, pitch));
+        }
+    }
+    let line = [76, 74, 72, 74, 76, 79, 76, 72, 69, 72, 74, 72, 71, 67, 69, 71];
+    let melody: Vec<Value> = (line.iter().enumerate())
+        .map(|(index, pitch)| note(index as u64 * 960, 720, *pitch))
+        .collect();
+    let clip = |bar: u64, bars: u64, notes: &[Value]| {
+        json!({ "tool": "timeline", "state": { "start": bar * BAR, "length": bars * BAR, "notes": notes } })
+    };
+    let tracks = [
+        ("track-1", "Track 1", "blue", vec![clip(0, 4, &chords), clip(4, 4, &chords), clip(8, 4, &chords)]),
+        ("bass", "Bass", "peach", vec![clip(0, 4, &bass), clip(4, 4, &bass), clip(8, 4, &bass)]),
+        (
+            "melody",
+            "A melody with a name too long for its header",
+            "mauve",
+            vec![clip(4, 4, &melody), clip(10, 2, &melody[..8])],
+        ),
+    ];
+    let project = json!({
+        "format": 1,
+        "extensions": ["instrument", "filter", "utility", "reverb", "compressor", "limiter", "wavetable"],
+        "tempo_map": { "time_signature": "4/4", "tempo_changes": [{ "tick": 0, "bpm": 120.0 }] },
+        "connections": [{ "from": { "instance": "song", "port": "audio" }, "to": { "device_output": 0 } }],
+    });
+    let names: Vec<&str> = tracks.iter().map(|(name, ..)| *name).collect();
+    let mut files = vec![
+        ("project.json".to_string(), project.to_string()),
+        (
+            "state/song/instance.json".to_string(),
+            json!({ "tool": "song", "state": { "order": names } }).to_string(),
+        ),
+    ];
+    // The template's tools and the song's own records: its master, limiter and the lane a solo
+    // turns tracks down with.
+    files.extend(
+        (daw().files.iter())
+            .filter(|(path, _)| path.starts_with("extensions/") || path.starts_with("state/song/") && !path.starts_with("state/song/t00") && !path.ends_with("song/instance.json"))
+            .map(|(path, contents)| (path.to_string(), contents.to_string())),
+    );
+    for (name, title, colour, clips) in tracks {
+        let folder = format!("state/song/{name}");
+        let record = |tool: &str| json!({ "tool": tool, "state": {} }).to_string();
+        files.push((
+            format!("{folder}/instance.json"),
+            json!({ "tool": "track", "state": { "colour": colour, "title": title } }).to_string(),
+        ));
+        files.push((format!("{folder}/synth.json"), record("instrument.synth")));
+        files.push((format!("{folder}/chain/instance.json"), record("chain")));
+        files.push((format!("{folder}/mix.json"), record("fader")));
+        files.push((format!("{folder}/rec.json"), record("recorder")));
+        for (index, clip) in clips.into_iter().enumerate() {
+            files.push((format!("{folder}/clip-{index:03}.json"), clip.to_string()));
+        }
+    }
+    for (path, record) in more {
+        let path = format!("state/song/{path}");
+        files.retain(|(each, _)| *each != path);
+        files.push((path, record.to_string()));
     }
     files
 }

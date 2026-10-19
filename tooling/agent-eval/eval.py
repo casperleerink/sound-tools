@@ -42,7 +42,6 @@ def track(folder: Path, name: str, title: str, synth: dict, clips: dict) -> None
     base = f"{SONG}/{name}"
     write(folder, f"{base}/instance.json", {"tool": "track", "state": {"title": title}})
     write(folder, f"{base}/synth.json", {"tool": "instrument.synth", "state": synth})
-    write(folder, f"{base}/fx.json", {"tool": "filter", "state": {}})
     write(folder, f"{base}/chain/instance.json", {"tool": "chain", "state": {}})
     write(folder, f"{base}/mix.json", {"tool": "fader", "state": {}})
     write(folder, f"{base}/rec.json", {"tool": "recorder", "state": {}})
