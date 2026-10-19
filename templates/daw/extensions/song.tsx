@@ -689,12 +689,7 @@ export const song = tool({
         });
       return (
         <div key="rack" style={{ height: RACK, direction: "row", gap: 8, padding: 8, align: "start", scroll: "x" }}>
-          <div key="instrument" style={{ gap: 4 }}>
-            <DeviceCard path={`${name}/synth`} />
-            <div key="change-instrument" style={{ paddingX: 8, paddingY: 4, radius: 6, background: COLOR.off, fontSize: 11 }} onPress={changeInstrument}>
-              Instrument…
-            </div>
-          </div>
+          <DeviceCard path={`${name}/synth`} />
           <DeviceCard path={`${name}/fx`} />
           <For each={order}>
             {(effect) => (
@@ -703,8 +698,13 @@ export const song = tool({
               </div>
             )}
           </For>
-          <div key="add-effect" style={{ paddingX: 8, paddingY: 4, radius: 6, background: COLOR.off, fontSize: 11 }} onPress={addEffect}>
-            + Effect
+          <div key="rack-buttons" style={{ gap: 4 }}>
+            <div key="add-effect" style={{ paddingX: 8, paddingY: 4, radius: 6, background: COLOR.off, fontSize: 11 }} onPress={addEffect}>
+              + Effect
+            </div>
+            <div key="change-instrument" style={{ paddingX: 8, paddingY: 4, radius: 6, background: COLOR.off, fontSize: 11 }} onPress={changeInstrument}>
+              Instrument…
+            </div>
           </div>
         </div>
       );
