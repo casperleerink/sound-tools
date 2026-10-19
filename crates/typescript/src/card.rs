@@ -2675,12 +2675,8 @@ impl Render for TypeScriptCard {
         let live = self.live.read(cx);
         let info = live.info(self.card);
         let hears_keys = info.as_ref().is_some_and(|info| info.keys);
-        // The window's plain keys, space and `r`, stay its own unless the tool takes every
-        // plain key or names one of them.
-        let blocks_plain_keys = info.as_ref().is_some_and(|info| match &info.takes {
-            Some(takes) => takes.iter().any(|key| key == "space" || key == "r"),
-            None => true,
-        });
+        // What of the plain keys the computer keys leave to it: all, or those it names.
+        let key_context = (info.as_ref()).map(|info| crate::key_context(info.takes.as_deref()));
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
         let watches = live.watches(self.card).cloned().unwrap_or_default();
@@ -2762,8 +2758,8 @@ impl Render for TypeScriptCard {
             element.when(hears_keys, |element| {
                 element
                     .track_focus(&self.focus)
-                    .when(blocks_plain_keys, |element| {
-                        element.key_context(crate::KEY_CONTEXT)
+                    .when_some(key_context.clone(), |element, context| {
+                        element.key_context(context)
                     })
                     .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
                         // A text field in it has the keys first.

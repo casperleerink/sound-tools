@@ -62,9 +62,31 @@ use crate::tools::{Sounds, ToolInfo, Tools};
 /// The folder of a project that holds its own tools and cards.
 pub const FOLDER: &str = "extensions";
 
-/// The key context of a card or a page whose tool hears the computer keyboard while it has the
-/// focus. The plain keys of the window, such as space, leave it alone.
+/// The key context of a card or a page whose tool hears every key of the computer keyboard while
+/// it has the focus. The plain keys of the window, such as space, leave it alone.
 pub const KEY_CONTEXT: &str = "ToolKeys";
+
+/// The key context of a card or a page whose tool hears the keys `takes`, or every key: the
+/// computer keys leave those to it.
+pub(crate) fn key_context(takes: Option<&[String]>) -> gpui::KeyContext {
+    let mut context = gpui::KeyContext::default();
+    match takes {
+        None => context.add(KEY_CONTEXT),
+        Some(takes) => takes.iter().for_each(|key| context.add(taken(key))),
+    }
+    context
+}
+
+fn taken(key: &str) -> String {
+    format!("{KEY_CONTEXT}_{key}")
+}
+
+/// Whether the focus is in a tool that hears the plain key `key`, which the computer keys leave
+/// to it.
+pub fn takes_key(window: &gpui::Window, key: &str) -> bool {
+    let key = taken(key);
+    (window.context_stack().iter()).any(|context| context.contains(&key))
+}
 
 /// A note event as the code of a tool sends and hears it, see `NoteEvent` in `sdk.ts`: a
 /// velocity or a value from 0 to 1, the bend from -1 to 1. The pedal is controller 64 and the

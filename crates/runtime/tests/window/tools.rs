@@ -464,6 +464,34 @@ fn a_page_that_hears_keys_keeps_them_while_the_computer_keys_play(cx: &mut TestA
     assert_eq!(window.record("keys")["last"], serde_json::Value::Null);
 }
 
+/// A page that names its keys has those while the computer keys play the rest.
+#[gpui::test]
+fn a_page_that_names_its_keys_has_them_and_the_computer_keys_play_the_rest(
+    cx: &mut TestAppContext,
+) {
+    let keys = KEYS.replace("  voices: 8,", "  voices: 8,\n  keys: [\"a\"],");
+    let files = [
+        EXPERIMENT[0],
+        EXPERIMENT[1],
+        ("extensions/keys.ts", keys.as_str()),
+    ];
+    let mut window = open(cx, &files);
+    window.cx.simulate_keystrokes("secondary-k");
+    window.settle();
+    window.settle();
+    window.cx.simulate_keystrokes("a");
+    window.until("a on the page", |window| {
+        window.record("keys")["count"] == 1
+    });
+    window.cx.simulate_keystrokes("s");
+    window.until("s played by the computer keys", |window| {
+        window.record("keys")["last"]
+            .as_u64()
+            .is_some_and(|last| last > 0)
+    });
+    assert_eq!(window.record("keys")["count"], 1);
+}
+
 /// A key that went down before the page had the keys starts nothing there as it repeats. A key
 /// the computer keys hold stays theirs, also where the system does not mark a repeat (X11).
 #[gpui::test]
