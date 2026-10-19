@@ -3,6 +3,8 @@
 //! - `typescript-mixer.png`: the mixer of `tooling/agent-eval/examples` as five tones play:
 //!   meters, faders, a muted strip, the master's scope and the device output.
 //! - `typescript-song-mixer.png`: the same song with its mixer open.
+//! - `typescript-song-lanes.png`: the same song with the automation lane of its first track
+//!   showing under it.
 //! - `typescript-song.png`: the song of `tooling/agent-eval/examples`, 12 tracks of 150 clips,
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
@@ -169,8 +171,9 @@ pub(crate) fn snapshots(
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
     let mut opened = open_files_with(cx, &files, write_voice)?;
-    // The timeline's top left: the page's padding, the title bar and the ruler; the headers.
-    let timeline = point(px(24. + crate::song::HEADER), px(48. + 24. + 22.));
+    // The timeline's top left: the page's padding, the title bar, the ruler and the repeat
+    // strip under it; the headers.
+    let timeline = point(px(24. + crate::song::HEADER), px(48. + 24. + 22. + 10.));
     let lane = |tick: u64, row: f32| {
         timeline
             + point(
@@ -209,7 +212,13 @@ pub(crate) fn snapshots(
     // The Mixer button, right of the record button: a strip per track and return, the master.
     click(&opened, cx, point(px(537.), px(92.)), 1)?;
     play(&mut opened, cx)?;
-    save(cx, &opened, "typescript-song-mixer")
+    save(cx, &opened, "typescript-song-mixer")?;
+    // The mixer closed again, and the A of the first track's head: its lane of the cutoff
+    // shows under it, closing over the song.
+    click(&opened, cx, point(px(537.), px(92.)), 1)?;
+    click(&opened, cx, point(px(171.), lane(0, 1.5).y), 1)?;
+    play(&mut opened, cx)?;
+    save(cx, &opened, "typescript-song-lanes")
 }
 
 /// Plays half a second in frames of the window, so meters and what eases move as they do.
