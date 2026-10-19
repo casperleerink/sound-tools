@@ -186,4 +186,16 @@ impl Quantize {
 pub struct Launch {
     pub pattern: Option<usize>,
     pub quantize: Quantize,
+    /// Plays one round and stops, instead of looping.
+    pub once: bool,
+}
+
+/// An edit, not a performance: pattern `pattern` plays from the tick `at` of the song, where it
+/// stays through seeks, and nothing of it before. `None` plays none. It replaces a launch.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Placing {
+    pub pattern: Option<usize>,
+    pub at: Ticks,
+    /// Plays one round and stops, instead of looping.
+    pub once: bool,
 }

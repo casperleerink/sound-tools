@@ -1,6 +1,6 @@
-//! The `sequencer`, a child of a tool of the project that loops note patterns in time with the
-//! bars: what it plays from its record in a render, the launches a cable sends it, and the notes
-//! it holds when what it plays into changes.
+//! Timelines that loop, the clip launcher of the doc for agents: what they play from their
+//! records in a render, the launches a cable sends them, and the notes they hold when what they
+//! play into changes.
 
 use crate::owners::{closed, rendered_frames};
 use crate::support::{BAR, Harness, first_sound, write};
@@ -17,22 +17,18 @@ fn doc_launcher() -> String {
     block.to_string()
 }
 
-/// The record of the sequencer of its doc, as it is written there.
-fn doc_sequencer(harness: &Harness) -> String {
-    let doc = (harness.project.agent_docs())
-        .find(|doc| doc.name == "sequencer")
-        .unwrap()
-        .markdown
-        .to_string();
-    let start = doc.find("```json state/loops/bass.json\n").unwrap();
-    let body = &doc[start..];
-    body[body.find('\n').unwrap() + 1..body.find("\n```\n").unwrap()].to_string()
-}
+/// A looping timeline of a bar that waits for a launch, with one note on the second beat.
+const HIGH: &str = r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [
+  {"start": 960, "length": 480, "pitch": 48, "velocity": 100}]}}"#;
+
+/// A looping timeline of a bar with notes on beats 1 and 3, each an eighth long.
+const LOW: &str = r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "notes": [
+  {"start": 0, "length": 480, "pitch": 36, "velocity": 100}, {"start": 1920, "length": 480, "pitch": 43, "velocity": 100}]}}"#;
 
 /// A project of the doc's launcher `loops` at the top, connected to the device, with the
-/// sequencer `bass` of `bass`, the doc's when `None`, a synth that lets go at once, a utility,
-/// and the tools of `extra` in `extensions/extra.ts`.
-fn loops(bass: Option<&str>, extra: &str) -> Option<Harness> {
+/// timeline `low` of `low` and [`HIGH`], a synth that lets go at once, a utility, and
+/// the tools of `extra` in `extensions/extra.ts`.
+fn loops(low: &str, extra: &str) -> Option<Harness> {
     if !sound_typescript::has_bun() {
         eprintln!("skipped: Bun is not installed");
         return None;
@@ -54,21 +50,21 @@ fn loops(bass: Option<&str>, extra: &str) -> Option<Harness> {
     write(root, "state/loops/synth.json", synth);
     let utility = r#"{"tool": "utility", "state": {}}"#;
     write(root, "state/loops/fx.json", utility);
+    write(root, "state/loops/high.json", HIGH);
     let mut harness = Harness::open(folder);
-    let bass = bass.map_or_else(|| doc_sequencer(&harness), str::to_string);
-    harness.write_and_apply("state/loops/bass.json", &bass);
+    harness.write_and_apply("state/loops/low.json", low);
     Some(harness)
 }
 
 #[test]
-fn a_render_of_the_launcher_of_the_doc_plays_the_pattern_its_sequencer_names_on_the_bars() {
-    let Some(harness) = loops(None, "") else {
+fn a_render_of_the_launcher_of_the_doc_loops_the_timeline_that_plays_on_the_bars() {
+    let Some(harness) = loops(LOW, "") else {
         return;
     };
     assert_eq!(harness.project.problems(), []);
     let played = rendered_frames(closed(harness).path(), 2 * BAR);
     // Its notes start on beats 1 and 3 and loop after a bar. A note sounds within a
-    // millisecond of its frame.
+    // millisecond of its frame; `high` waits for a launch.
     let mut from = 0;
     for start in [0, 48_000, 96_000, 144_000] {
         let sound = first_sound(&played, from).unwrap();
@@ -79,61 +75,60 @@ fn a_render_of_the_launcher_of_the_doc_plays_the_pattern_its_sequencer_names_on_
 }
 
 #[test]
-fn an_edit_of_a_pattern_plays_and_a_note_outside_it_is_a_problem() {
+fn an_edit_of_a_loop_plays_and_a_note_outside_it_is_refused() {
     let record = |start: u64| {
         let note = format!(r#"{{"start": {start}, "length": 240, "pitch": 48, "velocity": 100}}"#);
-        let patterns = format!(r#"[{{"length": 3840, "notes": [{note}]}}]"#);
-        format!(r#"{{"tool": "sequencer", "state": {{"patterns": {patterns}, "plays": 0}}}}"#)
+        format!(
+            r#"{{"tool": "timeline", "state": {{"length": 3840, "loop": true, "notes": [{note}]}}}}"#
+        )
     };
-    let Some(mut harness) = loops(Some(&record(960)), "") else {
+    let Some(mut harness) = loops(&record(960), "") else {
         return;
     };
     let played = harness.play_from_the_start(BAR);
     // 960 ticks are 24 000 frames.
     assert_eq!(first_sound(&played, 0).map(|frame| frame / 48), Some(500));
 
-    harness.write_and_apply("state/loops/bass.json", &record(2880));
+    harness.write_and_apply("state/loops/low.json", &record(2880));
     let played = harness.play_from_the_start(BAR);
     assert_eq!(first_sound(&played, 0).map(|frame| frame / 48), Some(1500));
     assert_eq!(harness.project.problems(), []);
 
-    // A bar is 3840 ticks: this note starts after the pattern.
-    harness.write_and_apply("state/loops/bass.json", &record(4000));
+    // A bar is 3840 ticks: this note starts after the round. The record is refused, so the
+    // last one plays on.
+    harness.write_and_apply("state/loops/low.json", &record(4000));
     let played = harness.play_from_the_start(BAR);
-    assert_eq!(first_sound(&played, 0), None);
+    assert_eq!(first_sound(&played, 0).map(|frame| frame / 48), Some(1500));
     let problems = harness.project.problems();
-    let [problem] = problems.as_slice() else {
-        panic!("{problems:?}");
-    };
-    assert_eq!(problem.path, "state/loops/bass.json");
-    let message = "patterns[0].notes[0].start must be less than the pattern length 3840, not 4000";
+    let problem = problems
+        .iter()
+        .find(|problem| problem.path == "state/loops/low.json")
+        .unwrap_or_else(|| panic!("{problems:?}"));
+    let message = "notes[0].start must be less than the length 3840, not 4000";
     assert!(problem.message.contains(message), "{problem:?}");
 }
 
-/// Sends the number `scene`: 0, then 1 from the third beat of the first bar.
+/// Sends the number `first`, 1 until the third beat of the first bar, and `second`, 1 from
+/// there.
 const CONDUCTOR: &str = r#"import { beat, output, tool } from "./sdk";
 
 tool({
   name: "conductor",
   title: "Conductor",
   when: "Never",
-  doc: "Sends the scene to play.",
+  doc: "Sends what to play.",
   state: {},
   sound: () => {
-    output("scene", beat.ge(2));
+    output("first", beat.lt(2));
+    output("second", beat.ge(2));
     return 0;
   },
 });
 "#;
 
 #[test]
-fn a_number_a_cable_sends_launches_a_pattern_at_the_next_bar_in_a_render() {
-    // The second pattern has one note on the second beat.
-    let bass = r#"{"tool": "sequencer", "state": {"patterns": [
-  {"length": 3840, "notes": [{"start": 0, "length": 480, "pitch": 36, "velocity": 100}, {"start": 1920, "length": 480, "pitch": 43, "velocity": 100}]},
-  {"length": 3840, "notes": [{"start": 960, "length": 480, "pitch": 48, "velocity": 100}]}
-]}}"#;
-    let Some(mut harness) = loops(Some(bass), CONDUCTOR) else {
+fn a_number_a_cable_sends_starts_and_stops_loops_at_the_next_bar_in_a_render() {
+    let Some(mut harness) = loops(LOW, CONDUCTOR) else {
         return;
     };
     harness.write_and_apply(
@@ -143,12 +138,18 @@ fn a_number_a_cable_sends_launches_a_pattern_at_the_next_bar_in_a_render() {
     let launcher = doc_launcher().replace(
         "connections: [",
         r#"connections: [
-      { from: { child: "conductor", number: "scene" }, to: { child: "bass", number: "launch" } },"#,
+      { from: { child: "conductor", number: "first" }, to: { child: "low", number: "launch" } },
+      { from: { child: "conductor", number: "second" }, to: { child: "high", number: "launch" } },"#,
+    )
+    .replace(
+        "{ low: \"timeline\", high: \"timeline\",",
+        "{ conductor: \"conductor\", low: \"timeline\", high: \"timeline\",",
     );
     let folder = closed(harness);
     write(folder.path(), "extensions/loops.ts", &launcher);
     let played = rendered_frames(folder.path(), 2 * BAR);
-    // The first pattern, the cable's 0, plays its bar out; the second from the next bar line.
+    // `low` plays its bar out and stops at the next bar line; `high`, one note on the second
+    // beat, starts there.
     for (from, start) in [(0, 0), (24_000, 48_000), (72_000, 120_000)] {
         let sound = first_sound(&played, from).unwrap();
         assert!((start..start + 48).contains(&sound), "{sound} for {start}");
@@ -156,7 +157,7 @@ fn a_number_a_cable_sends_launches_a_pattern_at_the_next_bar_in_a_render() {
     assert_eq!(first_sound(&played, 144_000), None);
 }
 
-/// Plays a pattern of one note held for most of a bar into the child `to` names, or none.
+/// Plays a loop of one note held for most of a bar into the child `to` names, or none.
 const KEYS: &str = r#"import { text, tool } from "./sdk";
 
 tool({
@@ -176,7 +177,7 @@ tool({
 "#;
 
 #[test]
-fn a_note_a_sequencer_holds_ends_when_it_plays_into_nothing_or_into_another_child() {
+fn a_note_a_loop_holds_ends_when_it_plays_into_nothing_or_into_another_child() {
     for to in ["none", "other"] {
         if !sound_typescript::has_bun() {
             eprintln!("skipped: Bun is not installed");
@@ -194,7 +195,7 @@ fn a_note_a_sequencer_holds_ends_when_it_plays_into_nothing_or_into_another_chil
             "state/keys/instance.json",
             r#"{"tool": "keys", "state": {}}"#,
         );
-        let held = r#"{"tool": "sequencer", "state": {"patterns": [{"length": 3840, "notes": [{"start": 0, "length": 3800, "pitch": 60, "velocity": 100}]}], "plays": 0}}"#;
+        let held = r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "notes": [{"start": 0, "length": 3800, "pitch": 60, "velocity": 100}]}}"#;
         write(root, "state/keys/held.json", held);
         let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
         write(root, "state/keys/synth.json", synth);
@@ -207,7 +208,7 @@ fn a_note_a_sequencer_holds_ends_when_it_plays_into_nothing_or_into_another_chil
         let record = format!(r#"{{"tool": "keys", "state": {{"to": "{to}"}}}}"#);
         harness.write_and_apply("state/keys/instance.json", &record);
         let after = harness.render(24_000);
-        // `other` gets the note of the sequencer at the next bar, not before.
+        // `other` gets the note of the loop at the next round, not before.
         assert_eq!(first_sound(&after, 1_200), None, "{to}");
     }
 }

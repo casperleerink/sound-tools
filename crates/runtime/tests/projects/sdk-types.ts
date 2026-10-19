@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { devices, h, input, number, list, notes, output, prefixed, rise, text, tool, bang, type Declaration, type HeardEvent, type SequencerState } from "./sdk";
+import { devices, h, input, number, list, notes, output, prefixed, rise, text, tool, bang, type Declaration, type HeardEvent, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -177,7 +177,7 @@ tool({
   name: "takes",
   title: "Takes",
   when: "Never",
-  doc: "Saves each take as a child, and edits its sequencer.",
+  doc: "Saves each take as a child, and edits its timeline.",
   state: { count: number({ min: 0, max: 100 }) },
   behaviour: (): Declaration => ({ connections: [] }),
   view: ({ time, transport, children }) => h("div", {}, () => `${children.length} at ${time} s, ${transport.bpm} bpm`),
@@ -187,10 +187,10 @@ tool({
     update("Save a take", ({ state, children }) => {
       state.count = taken + 1;
       children.push({ name: `take-${taken}`, tool: "take", state: { notes: [] } });
-      const bass = children.find((child) => child.name === "bass")!.state as SequencerState;
-      bass.patterns?.push({ length: 3840, notes: [{ start: 0, length: 480, pitch: event.type === "noteOn" ? event.pitch : 60, velocity: 100 }] });
+      const bass = children.find((child) => child.name === "bass")!.state as TimelineState;
+      bass.notes?.push({ start: 0, length: 480, pitch: event.type === "noteOn" ? event.pitch : 60, velocity: 100 });
       // @ts-expect-error: a child's state is any tool's: say which it is.
-      children[0]!.state.patterns;
+      children[0]!.state.notes;
       // @ts-expect-error: a child names its tool.
       children.push({ name: "take", state: {} });
       // @ts-expect-error: a field it does not have.
@@ -243,7 +243,7 @@ tool({
   },
 });
 
-const parts = { bass: "sequencer", fx: "filter", drop: "rain" } as const;
+const parts = { bass: "timeline", fx: "filter", drop: "rain" } as const;
 
 tool({
   name: "loops",
@@ -254,7 +254,7 @@ tool({
   children: parts,
   behaviour: ({ children }): Declaration<typeof parts> => {
     const bass = children.find((child) => child.name === "bass");
-    const length: number | undefined = bass?.state.patterns?.[0]?.length;
+    const length: number | undefined = bass?.state.notes?.[0]?.length;
     if (length === 0) return { connections: [] };
     return {
       connections: [
@@ -273,7 +273,7 @@ tool({
   },
   tick: ({ send, play, update }) => {
     send({ child: "bass", number: "launch" }, 1);
-    // @ts-expect-error: the sequencer's number input is `launch`.
+    // @ts-expect-error: the timeline's number input is `launch`.
     send({ child: "bass", number: "lunch" }, 1);
     // @ts-expect-error: a number field of a child is the composition: a cable moves it.
     send({ child: "fx", number: "cutoff_hz" }, 800);
@@ -284,8 +284,8 @@ tool({
         if (child.name === "fx") child.state.type = "high_pass";
         // @ts-expect-error: a choice of a child is one of its options.
         if (child.name === "fx") child.state.type = "notches";
-        // @ts-expect-error: a field the record of a sequencer does not have.
-        if (child.name === "bass") child.state.pattern = [];
+        // @ts-expect-error: a field the record of a timeline does not have.
+        if (child.name === "bass") child.state.patterns = [];
       }
       children.push({ name: "fx", tool: "filter", state: { cutoff_hz: 500 } });
       // @ts-expect-error: the child `fx` is a filter.
@@ -294,7 +294,7 @@ tool({
   },
 });
 
-const loose = { bass: "sequencer" };
+const loose = { bass: "timeline" };
 
 tool({
   name: "loose",
@@ -314,7 +314,7 @@ tool({
   doc: "Names its children in place, with a return type that names none.",
   state: {},
   // @ts-expect-error: a plain `Declaration` widens the tool names too.
-  children: { bass: "sequencer" },
+  children: { bass: "timeline" },
   behaviour: (): Declaration => ({ connections: [] }),
 });
 

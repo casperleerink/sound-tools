@@ -148,8 +148,8 @@ fn an_edit_after_an_await_keeps_an_edit_made_meanwhile(cx: &mut TestAppContext) 
     assert_eq!(window.problems(), []);
 }
 
-/// A parent whose page writes the patterns of its sequencer `bass`, which plays `synth`.
-const WRITER: &str = r#"import { h, tool, type Declaration, type SequencerState } from "./sdk";
+/// A parent whose page writes the notes of its looping timeline `bass`, which plays `synth`.
+const WRITER: &str = r#"import { h, tool, type Declaration, type TimelineState } from "./sdk";
 
 tool({
   name: "writer",
@@ -168,16 +168,15 @@ tool({
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
       onPress: () => update("Write a bass line", ({ children }) => {
-        const bass = children.find((child) => child.name === "bass")!.state as SequencerState;
-        bass.patterns = [{ length: 3840, notes: [{ start: 0, length: 3840, pitch: 45, velocity: 100 }] }];
-        bass.plays = 0;
+        const bass = children.find((child) => child.name === "bass")!.state as TimelineState;
+        bass.notes = [{ start: 0, length: 3840, pitch: 45, velocity: 100 }];
       }),
     }, "Write"),
 });
 "#;
 
 #[gpui::test]
-fn a_page_writes_the_patterns_of_its_sequencer_and_they_play(cx: &mut TestAppContext) {
+fn a_page_writes_the_notes_of_its_timeline_and_they_play(cx: &mut TestAppContext) {
     let project = at_the_top("writer", "\"instrument\"");
     let files = [
         ("project.json", project.as_str()),
@@ -191,7 +190,7 @@ fn a_page_writes_the_patterns_of_its_sequencer_and_they_play(cx: &mut TestAppCon
         ),
         (
             "state/writer/bass.json",
-            r#"{"tool": "sequencer", "state": {"patterns": []}}"#,
+            r#"{"tool": "timeline", "state": {"length": 3840, "loop": true}}"#,
         ),
         ("extensions/writer.ts", WRITER),
     ];
@@ -207,13 +206,10 @@ fn a_page_writes_the_patterns_of_its_sequencer_and_they_play(cx: &mut TestAppCon
     window.cx.simulate_click(middle, Modifiers::default());
     window.until("the bass line", |window| window.loudest(4_800) > 0.05);
     let bass = window.record("writer/bass");
-    assert_eq!(bass["patterns"][0]["notes"][0]["pitch"], 45, "{bass}");
+    assert_eq!(bass["notes"][0]["pitch"], 45, "{bass}");
 
     assert_eq!(window.undo().as_deref(), Some("Write a bass line"));
-    assert_eq!(
-        window.record("writer/bass")["patterns"],
-        serde_json::json!([])
-    );
+    assert_eq!(window.record("writer/bass").get("notes"), None);
     assert_eq!(window.problems(), []);
 }
 

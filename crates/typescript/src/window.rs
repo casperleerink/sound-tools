@@ -33,7 +33,7 @@ use crate::bun::{
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::feeds::played_name;
-use crate::sequencer::{self, Sequencer, SequencerUpdate};
+use crate::timeline::{self, Timeline, TimelineUpdate};
 use crate::tools::{Input, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
 use crate::tree::{NodeTable, Uses};
 use crate::{Extensions, FOLDER, Launched, NoteMessage, OWNED};
@@ -441,7 +441,7 @@ fn told_to_bun(project: &Project, tools: &[ToolInfo], id: &InstanceId) -> bool {
 
 /// The watches of `id` as its code reads them: its own, and those of each instance inside it
 /// by its path from `id`, as `<child>.<watch>` or `<child>/<grandchild>.<watch>`, such as what
-/// a sequencer plays.
+/// a looping timeline plays.
 fn watches_of(project: &Project, id: &InstanceId) -> BTreeMap<String, f32> {
     let inside = (project.instances()).filter(|(inner, _)| inner.is_inside(id));
     let children = inside.flat_map(|(inner, _)| {
@@ -872,7 +872,7 @@ impl Live {
             return;
         };
         if let Some(session) = self.session.upgrade()
-            && session.read(cx).project().tool_of(&played) == Some(sequencer::NAME)
+            && session.read(cx).project().tool_of(&played) == Some(timeline::NAME)
         {
             return self.launch_on(id, &played, (name, value), &session, cx);
         }
@@ -882,8 +882,8 @@ impl Live {
         }
     }
 
-    /// Launches what `value` says on the sequencer `played`, a child of `id`, as a performer
-    /// moves its input `launch` like a live control: nothing is saved.
+    /// Starts or stops the timeline `played`, a child of `id`, as `value` says, as a performer
+    /// plays its input `launch`: nothing is saved.
     fn launch_on(
         &mut self,
         id: &InstanceId,
@@ -892,17 +892,17 @@ impl Live {
         session: &Entity<Session>,
         cx: &mut Context<Self>,
     ) {
-        let Some(value) = value.filter(|_| name == sequencer::LAUNCH) else {
+        let Some(value) = value.filter(|_| name == timeline::LAUNCH) else {
             let problem = format!(
-                "a performer plays {name:?} of the sequencer {:?}, which takes only the live control `launch`",
+                "a performer plays {name:?} of the timeline {:?}, which takes only the number input `launch`",
                 played.name()
             );
             return self.tool_problem(id, problem, cx);
         };
-        let update = SequencerUpdate::Launch(sequencer::launched(value));
+        let update = TimelineUpdate::Launch(timeline::launched(value));
         session.update(cx, |session, cx| {
             let sent = session.background(cx, |project| {
-                project.send::<Sequencer>(played, sequencer::PROCESSOR, update)
+                project.send::<Timeline>(played, timeline::PROCESSOR, update)
             });
             if let Err(error) = sent {
                 session.report(error, cx);

@@ -361,14 +361,7 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
       }
     });
     // Here, so a value JSON cannot hold, such as a cycle, is the parent's problem and does not throw in `say`.
-    const declared = JSON.parse(JSON.stringify(answer));
-    if (declared !== null && typeof declared === "object" && "players" in declared) {
-      throw new Error(
-        "`players` are gone: a child of tool `sequencer` loops the patterns now (agent-docs/sequencer.md), " +
-          'connected by { from: { child, notes: "notes" }, to: { child, notes: "notes" } }, and send({ child, number: "launch" }, index) launches',
-      );
-    }
-    return declared;
+    return JSON.parse(JSON.stringify(answer));
   });
   const list = (read: { fields: Set<string> | null }) => (read.fields ? [...read.fields].sort() : null);
   const reads: Reads = { state: list(own), children: list(inside) };

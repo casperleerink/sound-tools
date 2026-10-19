@@ -1685,7 +1685,7 @@ fn automation(
 
 /// Whether `child` takes `name` as a number input, which a cable plays as a performer would,
 /// and not as a field a lane moves: an input of a tool of this project, or a number of another
-/// tool that a lane does not move, such as `launch` of a sequencer.
+/// tool that a lane does not move, such as `launch` of a timeline.
 fn takes_number(
     child: &str,
     name: &str,
@@ -1704,7 +1704,7 @@ fn takes_number(
 
 /// Where a connection `at` into the number input `name` of `child` goes, or into its bang when
 /// not `number`. A tool of this project in `child_tools` takes all of them on one input, so a
-/// cable says which; another, such as a sequencer, takes each on an input of its own.
+/// cable says which; another, such as a timeline, takes each on an input of its own.
 fn control<From: Event + Shown>(
     cable_name: String,
     (child, name, number): (&str, &str, bool),

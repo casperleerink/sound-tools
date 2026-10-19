@@ -246,7 +246,7 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
 
 - `memory: () => ({ ... })` makes what the tool keeps and nothing saves, per instance. All its code gets it and may change it.
 - `tick: ({ state, memory, dt, time, play, update }) => { ... }` runs about 30 times a second while the window is open, `dt` seconds apart. Offline, in `--render`, it does not run.
-- What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a sequencer (see "Children"). For a rhythm the loop makes up, play ahead: `time` is the clock of the sound, in seconds, and `play`, and `send` of a bang or notes, with `{ at }` happen on the sample of `at`:
+- What the loop plays at once lands up to 30 ms late. Patterns in time with the bars belong in a timeline (see "Children"). For a rhythm the loop makes up, play ahead: `time` is the clock of the sound, in seconds, and `play`, and `send` of a bang or notes, with `{ at }` happen on the sample of `at`:
 
   ```ts
   tick: ({ memory, time, play }) => {
@@ -263,12 +263,12 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
 
 ## Changing records
 
-`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest, every field at its default where the file leaves it out, children's too. Edit a field or a child's `state` (typed when the parent names its `children`, else `as SequencerState`), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
+`update(label, change)`, from any of a tool's code and also after an `await`, changes its record and its children's: `change` runs at once on `{ state, children }`, copies of the latest, every field at its default where the file leaves it out, children's too. Edit a field or a child's `state` (typed when the parent names its `children`, else `as TimelineState`), push a new child, or leave one out of a new list. A child's `name` is the id of its record and stays: keep a title in a field. Only what changes lands, on the records as they are then; a record its tool refuses fails the whole update, in `problems.txt`. Updates of one label in a row are one undo step, saved once they stop and every 5 s while they go on, so a `tick` may update every frame.
 
 ```ts
 update("Add a bass line", ({ children }) => {
-  const bass = children.find((child) => child.name === "bass")!.state as SequencerState;
-  bass.patterns = [...(bass.patterns ?? []), { length: 3840, notes: [{ start: 0, length: 480, pitch: 36, velocity: 100 }] }];
+  const bass = children.find((child) => child.name === "bass")!.state as TimelineState;
+  bass.notes = [...(bass.notes ?? []), { start: 0, length: 480, pitch: 36, velocity: 100 }];
 });
 ```
 
@@ -359,44 +359,52 @@ tool({
   - `{ from: { child: "ears", bang: "onset" }, to: { child: "drop", bang: "hit" } }` sends a bang input.
   - `{ from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } }` plays an instrument; `notes` is the input of each. `{ from: { notes: "notes" }, to: { child: "piano", notes: "notes" } }` plays it from the keyboard.
 - A parent plays its children by name: `play(pitch, { child: "synth" })` and `send({ child: "synth", notes: "notes" }, event)` reach its `notes`; `send({ child: "lfo", number: "rate" }, 2)` and `send({ child: "drop", bang: "hit" })` its inputs. A number field of a child is its record: a cable moves it.
-- A `sequencer` child loops note patterns in time with the bars, also in a render, out of its output `notes` (`agent-docs/sequencer.md`). `send({ child: "bass", number: "launch" }, 1)` launches its second pattern at the next bar. A parent's view reads the outputs of each child as `<child>.<name>`: a sequencer's `playing` and `queued` are a pattern's index, -1 for none, -2 for a stop that waits.
-- A `timeline` child plays notes once at their positions in the song, out of its output `notes` (`agent-docs/timeline.md`): one per clip, so moving a clip changes one file.
+- A `timeline` child plays notes in time out of its output `notes` (`agent-docs/timeline.md`): once at their place in the song, one per clip, so moving a clip changes one file; or round after round with `"loop": true`. `send({ child: "bass", number: "launch" }, 1)` starts it at the next bar, `0` stops it there. A parent's view reads the outputs of each child as `<child>.<name>`: a looping timeline's `playing` is 1 while it plays.
 - A missing child or port, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
-A clip launcher, with a sequencer `bass`, an instrument `synth` and a utility `fx` as its children:
+A clip launcher, with two looping timelines `low` and `high`, an instrument `synth` and a utility `fx` as its children:
 
 ```ts
 import { h, tool, type Declaration } from "./sdk";
 
-const children = { bass: "sequencer", synth: "instrument.synth", fx: "utility" } as const;
+const children = { low: "timeline", high: "timeline", synth: "instrument.synth", fx: "utility" } as const;
+const loops = ["low", "high"] as const;
 
 tool({
   name: "loops",
   title: "Loops",
-  when: "You want bass patterns to launch in time with the bars",
-  doc: "Plays the patterns of the sequencer `bass` on `synth` through `fx`; its view launches them.",
+  when: "You want bass loops to launch in time with the bars",
+  doc: "Loops the timelines `low` and `high` on `synth` through `fx`; its view starts one and stops the other, or stops both, at the next bar.",
   state: {},
   children,
   behaviour: (): Declaration<typeof children> => ({
     connections: [
-      { from: { child: "bass", notes: "notes" }, to: { child: "synth", notes: "notes" } },
+      { from: { child: "low", notes: "notes" }, to: { child: "synth", notes: "notes" } },
+      { from: { child: "high", notes: "notes" }, to: { child: "synth", notes: "notes" } },
       { from: { child: "synth" }, to: { child: "fx" } },
       { from: { child: "fx" }, to: { port: "audio" } },
     ],
   }),
   transport: true,
-  view: ({ outputs, send }) =>
-    h("div", { style: { direction: "row", gap: 8, padding: 16 } },
-      [0, 1, -1].map((pattern) => {
-        const plays = () => outputs["bass.playing"] === pattern, waits = () => outputs["bass.queued"] === pattern;
+  view: ({ outputs, send }) => {
+    const launch = (chosen?: string) => {
+      for (const loop of loops) send({ child: loop, number: "launch" }, loop === chosen ? 1 : 0);
+    };
+    return h("div", { style: { direction: "row", gap: 8, padding: 16 } },
+      [...loops, undefined].map((loop) => {
+        const plays = () => loop !== undefined && outputs[`${loop}.playing`] === 1;
+        const waits = () => loop !== undefined && outputs[`${loop}.queued`] === 1;
         return h("div", {
           style: () => ({ padding: 8, radius: 6, background: plays() ? "#7c3aed" : waits() ? "#4c1d95" : "#2a2f3a" }),
-          onPress: () => send({ child: "bass", number: "launch" }, pattern),
-        }, pattern < 0 ? "Stop" : `Bass ${pattern + 1}`);
+          onPress: () => launch(loop),
+        }, loop ?? "Stop");
       }),
-    ),
+    );
+  },
 });
 ```
+
+Its timelines, `state/loops/low.json` and `state/loops/high.json`, loop a bar each, such as `{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [...]}}`: `"plays": false` waits for a launch.
 
 ## Check your work
 

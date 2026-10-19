@@ -1094,8 +1094,8 @@ fn an_owner_in_the_window_plays_its_new_wiring_once_bun_answers(cx: &mut TestApp
     assert_eq!(window.problems(), []);
 }
 
-/// A note a bar long that its sequencer `bass` loops on its child `synth` once a click on the
-/// page launches it; a click while the page sees it play stops it. Nothing plays before.
+/// A note a bar long that its looping timeline `bass` plays on its child `synth` once a click
+/// on the page launches it; a click while the page sees it play stops it. Nothing plays before.
 const LAUNCHER: &str = r#"import { h, tool } from "./sdk";
 
 tool({
@@ -1114,7 +1114,7 @@ tool({
   view: ({ size, outputs, send }) =>
     h("div", {
       style: () => ({ width: size.width, height: size.height }),
-      onPress: () => send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 0 ? -1 : 0),
+      onPress: () => send({ child: "bass", number: "launch" }, outputs["bass.playing"] === 1 ? 0 : 1),
     }, "Launch"),
 });
 "#;
@@ -1142,7 +1142,7 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
         ),
         (
             "state/launcher/bass.json",
-            r#"{"tool": "sequencer", "state": {"patterns": [{"length": 3840, "notes": [{"start": 0, "length": 3840, "pitch": 45, "velocity": 100}]}]}}"#,
+            r#"{"tool": "timeline", "state": {"length": 3840, "loop": true, "plays": false, "notes": [{"start": 0, "length": 3840, "pitch": 45, "velocity": 100}]}}"#,
         ),
         ("extensions/launcher.ts", LAUNCHER),
     ];
@@ -1160,9 +1160,9 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
         let queued = watches.iter().find(|(name, _)| name == "queued");
         queued.map(|(_, watch)| watch.get())
     };
-    window.until("the sequencer", |window| queued(window).is_some());
+    window.until("the timeline", |window| queued(window).is_some());
     window.cx.simulate_click(middle, Modifiers::default());
-    window.until("the launch", |window| queued(window) == Some(0.0));
+    window.until("the launch", |window| queued(window) == Some(1.0));
     assert!(window.playing());
 
     // Frames from the bar line on, in blocks of 64 as the device asks: silent until it.
@@ -1186,7 +1186,7 @@ fn a_launch_from_a_page_lands_on_the_next_bar_line_and_a_stop_ends_the_notes(
 
     window.until("the stop", |window| {
         window.cx.simulate_click(middle, Modifiers::default());
-        queued(window) == Some(sound_notes::QUEUED_STOP)
+        queued(window) == Some(-1.0)
     });
     // It plays on to the bar line, and is silent from a release after it.
     let (bar, before) = to_the_bar(&mut window);

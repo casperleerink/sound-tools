@@ -17,7 +17,9 @@ use sound_core::{
     Watch,
 };
 
-use crate::{Expression, Launch, NoteEvent, NoteTimeline, Pattern, Pedal, Pitch, Velocity};
+use crate::{
+    Expression, Launch, NoteEvent, NoteTimeline, Pattern, Pedal, Pitch, Placing, Velocity,
+};
 
 /// How long a preview note sounds. Its off comes from the processor after this time, so no
 /// interface can leave one sounding.
@@ -42,6 +44,8 @@ pub enum NotePlayerUpdate {
     Patterns(Arc<Vec<Pattern>>),
     /// Takes the place of a launch that has not landed yet.
     Launch(Launch),
+    /// Puts a pattern on the song from the next block on: the notes it holds end there.
+    Place(Placing),
     /// A note from an interface that sounds now, for [`PREVIEW_SECONDS`], also while the
     /// project does not play. A new one ends the one before it.
     Preview { pitch: Pitch, velocity: Velocity },
@@ -93,6 +97,24 @@ enum Source {
 struct Launched {
     pattern: usize,
     anchor: Ticks,
+    /// Placed on the song: the anchor stays through seeks, and nothing plays before it.
+    placed: bool,
+    /// One round from the anchor, and nothing before it.
+    once: bool,
+}
+
+impl Launched {
+    /// Whether the note that starts at `start` of the song plays, in a round of `length`.
+    fn plays_at(&self, start: Ticks, length: Ticks) -> bool {
+        let from_anchor = self.placed || self.once;
+        (!from_anchor || start >= self.anchor) && (!self.once || start < self.anchor + length)
+    }
+
+    /// Whether it sounds at `heard`, for the watches.
+    fn sounds_at(&self, heard: Ticks, length: Ticks) -> bool {
+        let started = !self.placed || heard >= self.anchor;
+        started && (!self.once || heard < self.anchor + length)
+    }
 }
 
 pub struct NotePlayer {
@@ -104,6 +126,8 @@ pub struct NotePlayer {
     launched: Option<Launched>,
     /// A launch that has not landed yet.
     queued: Option<Launch>,
+    /// A placing that came since the last block.
+    placing: Option<Placing>,
     watches: Option<PlayerWatches>,
     /// Never grows past [`HELD_CAPACITY`], so it never allocates on the audio thread.
     held: Vec<Held>,
@@ -144,6 +168,7 @@ impl Default for NotePlayer {
             patterns_swapped: false,
             launched: None,
             queued: None,
+            placing: None,
             watches: None,
             held: Vec::with_capacity(HELD_CAPACITY),
             preview_wanted: None,
@@ -178,6 +203,7 @@ impl Processor for NotePlayer {
                 self.patterns_swapped = true;
             }
             NotePlayerUpdate::Launch(launch) => self.queued = Some(*launch),
+            NotePlayerUpdate::Place(placing) => self.placing = Some(*placing),
             NotePlayerUpdate::Preview { pitch, velocity } => {
                 self.preview_wanted = Some((*pitch, *velocity));
             }
@@ -198,6 +224,7 @@ impl Processor for NotePlayer {
             patterns_swapped,
             launched,
             queued,
+            placing,
             watches,
             held,
             preview_wanted,
@@ -224,7 +251,7 @@ impl Processor for NotePlayer {
             // pause keeps the anchor, so play from the same spot keeps the phase.
             if transport.jumped
                 && !transport.playing
-                && let Some(launched) = launched
+                && let Some(launched) = launched.as_mut().filter(|launched| !launched.placed)
             {
                 launched.anchor = transport.heard_tick;
             }
@@ -302,6 +329,17 @@ impl Processor for NotePlayer {
             }
         }
 
+        if let Some(placing) = placing.take() {
+            cut_patterns(range.start, held, transport, &mut sender);
+            *launched = placing.pattern.map(|pattern| Launched {
+                pattern,
+                anchor: placing.at,
+                placed: true,
+                once: placing.once,
+            });
+            *queued = None;
+        }
+
         // A launch lands on its point inside this block. While the project does not play it
         // lands at once, anchored where play will start: the tick the device stands on, not
         // the range, which is ahead of it by the latency after this player.
@@ -331,6 +369,8 @@ impl Processor for NotePlayer {
             *launched = launch.pattern.map(|pattern| Launched {
                 pattern,
                 anchor: at,
+                placed: false,
+                once: launch.once,
             });
             *queued = None;
             let pattern = playing(*launched);
@@ -346,14 +386,21 @@ impl Processor for NotePlayer {
 
         if let Some(watches) = watches {
             let shown = |pattern: Option<usize>| pattern.map_or(NO_PATTERN, |index| index as f32);
+            // A launch of a pattern the set does not have shows, so a view sees what it asked.
+            let sounding = launched.filter(|launched| {
+                let length = patterns
+                    .get(launched.pattern)
+                    .map(|pattern| pattern.length());
+                length.is_none_or(|length| launched.sounds_at(transport.heard_tick, length.ticks()))
+            });
             watches
                 .playing
-                .set(shown(launched.map(|launched| launched.pattern)));
+                .set(shown(sounding.map(|launched| launched.pattern)));
             watches.queued.set(match queued {
                 Some(Launch { pattern: None, .. }) => QUEUED_STOP,
                 launch => shown(launch.and_then(|launch| launch.pattern)),
             });
-            let phase = playing(*launched).map(|(pattern, launched)| {
+            let phase = playing(sounding).map(|(pattern, launched)| {
                 // Before the anchor, as a launch is while the latency after the player passes.
                 let heard = transport.heard_tick.max(launched.anchor);
                 let phase = pattern.phase(launched.anchor, heard);
@@ -379,7 +426,9 @@ fn play(
         .map(|note| (*note, Source::Timeline))
         .peekable();
     let from_pattern = pattern.into_iter().flat_map(|(pattern, launched)| {
+        let length = pattern.length().ticks();
         let notes = pattern.starting_in(launched.anchor, ticks.clone());
+        let notes = notes.filter(move |(note, _)| launched.plays_at(note.start, length));
         notes.map(move |(note, start)| {
             let pattern = launched.pattern;
             (note, Source::Pattern { pattern, start })

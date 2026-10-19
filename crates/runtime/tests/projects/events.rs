@@ -67,9 +67,8 @@ tool({
 "#;
 
 /// The drums into `ears`, and `connections` of the parent's behaviour, a list, which plain
-/// JavaScript may get wrong where TypeScript would not, and `more` of the declaration. `ears`
-/// plays into nothing.
-fn listener(connections: &str, more: &str) -> String {
+/// JavaScript may get wrong where TypeScript would not. `ears` plays into nothing.
+fn listener(connections: &str) -> String {
     format!(
         r#"import {{ tool }} from "./sdk";
 
@@ -79,7 +78,7 @@ tool({{
   when: "Never",
   doc: "Hears the drums.",
   state: {{}},
-  behaviour: () => ({{ connections: [{{ from: {{ child: "drums" }}, to: {{ child: "ears" }} }}, ...{connections}]{more} }}),
+  behaviour: () => ({{ connections: [{{ from: {{ child: "drums" }}, to: {{ child: "ears" }} }}, ...{connections}] }}),
 }});
 "#
     )
@@ -88,11 +87,6 @@ tool({{
 /// A project of the parent `listener` at the top with `connections`, and its children: the
 /// drums, which play `drums.wav`, `ears`, which hears them, a synth and `drop`.
 fn project(connections: &str) -> Option<Harness> {
-    project_with(connections, "")
-}
-
-/// [`project`], with `more` in the declaration.
-fn project_with(connections: &str, more: &str) -> Option<Harness> {
     if !sound_typescript::has_bun() {
         eprintln!("skipped: Bun is not installed");
         return None;
@@ -104,7 +98,7 @@ fn project_with(connections: &str, more: &str) -> Option<Harness> {
   "connections": [{"from": {"instance": "listener", "port": "audio"}, "to": {"device_output": 0}}]}"#;
     write(root, "project.json", project);
     write(root, "extensions/tools.ts", TOOLS);
-    write(root, "extensions/listener.ts", &listener(connections, more));
+    write(root, "extensions/listener.ts", &listener(connections));
     drums(root);
     let state = |name: &str, record: &str| write(root, &format!("state/listener/{name}"), record);
     state("instance.json", r#"{"tool": "listener", "state": {}}"#);
@@ -216,21 +210,6 @@ fn a_cable_between_two_kinds_or_to_an_input_a_child_does_not_have_is_a_problem()
             "its behaviour names the bang input \"gain\" of \"drop\" at connections[2].to, which it does not have: its bang inputs are hit",
             "its behaviour names the number \"level\" of \"drop\" at connections[3].to, which it does not have: its numbers are none; its number inputs are gain",
         ]
-    );
-}
-
-#[test]
-fn a_behaviour_that_declares_players_says_a_sequencer_plays_patterns_now() {
-    let Some(harness) = project_with("[]", ", players: {}") else {
-        return;
-    };
-    let messages = messages(&harness);
-    let [message] = messages.as_slice() else {
-        panic!("{messages:?}");
-    };
-    assert!(
-        message.contains("`players` are gone: a child of tool `sequencer`"),
-        "{message}"
     );
 }
 

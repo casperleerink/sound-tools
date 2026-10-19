@@ -46,7 +46,7 @@ pub use division::{Division, Feel};
 pub use expression::{Expression, Wheels};
 pub use feed::{NoteFeed, NoteFeedUpdate};
 pub use lane::{ExpressionValue, LaneValue, Point, check_order, cut, thinned, value_at};
-pub use pattern::{Launch, Pattern, PatternError, Quantize};
+pub use pattern::{Launch, Pattern, PatternError, Placing, Quantize};
 pub use player::{
     HELD_CAPACITY, NO_PATTERN, NotePlayer, NotePlayerUpdate, PREVIEW_SECONDS, PlayerWatches,
     QUEUED_STOP,

@@ -395,9 +395,9 @@ def check_launcher(folder: Path) -> dict:
         "no arrangement": not (folder / "state/arrangement").exists(),
         "a project tool owns the parts": owner is not None,
         "it owns the built-in synth": "instrument.synth" in children,
-        "and an effect": any(child not in ("instrument.synth", "sequencer", None)
+        "and an effect": any(child not in ("instrument.synth", "timeline", None)
                              for child in children),
-        "sequencers and launches": "sequencer" in children and '"launch"' in text,
+        "timelines and launches": "timeline" in children and '"launch"' in text,
         "a view with the transport": "view:" in text and "transport: true" in text,
         "connected to the device": owner is not None
         and any(c.get("from", {}).get("instance") == owner.name for c in connections),
@@ -408,9 +408,9 @@ def check_launcher(folder: Path) -> dict:
 
 def check_tracker(folder: Path) -> dict:
     checks = check_launcher(folder)
-    sequencers = checks.pop("sequencers and launches")
+    timelines = checks.pop("timelines and launches")
     text = "".join(project_tools(folder).values())
-    return {**checks, "sequencers": sequencers, "edits from the view": "update(" in text}
+    return {**checks, "timelines": timelines, "edits from the view": "update(" in text}
 
 
 SCENARIOS = {

@@ -63,7 +63,7 @@ pub struct ToolSchema {
     /// The numbers a cable or a signal moves, each with its default, by their paths in the
     /// record.
     pub numbers: Vec<(ParameterInfo, f32)>,
-    /// The other numbers a parent plays it from, such as `launch` of the sequencer.
+    /// The other numbers a parent plays it from, such as `launch` of the timeline.
     pub live: &'static [&'static str],
     /// A sound may play it as a device, see [`ToolRegistration::in_code`].
     pub in_code: bool,

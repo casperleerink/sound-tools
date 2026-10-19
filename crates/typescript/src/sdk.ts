@@ -719,7 +719,7 @@ export interface ToolSpec<S extends Fields, I extends Inputs, M, K extends Child
    */
   behaviour?: (parent: Parent<S, K>) => Declaration<K>;
   /**
-   * The children it has, by name, and the tool of each: `{ bass: "sequencer", lead: drone }`,
+   * The children it has, by name, and the tool of each: `{ bass: "timeline", lead: drone }`,
    * where `drone` is what `tool` returned for a tool of this project. TypeScript then checks
    * every connection, `send` and edit of them against their tools, and a child of another tool,
    * a missing one or one it does not name is a problem. Leave it out for children whose names a
@@ -845,7 +845,7 @@ export type OwnedChild<K extends ChildTools = ChildTools, Edit extends boolean =
         set children(children: Array<OwnedChild<ChildrenOfTool<K[Name]>, true> | NewChild<ChildrenOfTool<K[Name]>>>);
       }
     : {
-        /** Its `state` as the file holds it, such as a `SequencerState`. */
+        /** Its `state` as the file holds it, such as a `TimelineState`. */
         state: StateOfTool<K[Name]>;
         /**
          * Its own children, in name order, when it is a parent, such as the clips of a track.

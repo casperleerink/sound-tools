@@ -7,7 +7,8 @@
 //! graph of signals that the SDK sends as JSON. The runtime registers each as a [`JsonTool`]
 //! before the records load, so a record of one loads like any other, and plays with no Bun.
 //! Only an owner asks Bun while it plays: how its children connect (`behaviours`). The
-//! `sequencer` a parent plays patterns with is a tool of this crate, defined with them.
+//! built-in children a parent plays with, such as the `timeline`, are tools of this crate,
+//! defined with them.
 //!
 //! In the window, any change in `extensions/`, a crash or a hang of Bun starts a new Bun, which
 //! loads every file again and defines the tools again: one path. Nothing of it runs on the
@@ -25,7 +26,6 @@ mod meter;
 mod performance;
 mod records;
 mod samples;
-mod sequencer;
 mod timeline;
 mod tools;
 mod tree;
@@ -326,7 +326,7 @@ fn define(
 ) -> Vec<ToolInfo> {
     let mut infos: Vec<ToolInfo> = sounds.iter().map(|sounds| sounds.info().clone()).collect();
     // First, so a tool of the project of its name is the one refused.
-    let tools = [sequencer::json_tool(), timeline::json_tool()].into_iter();
+    let tools = [timeline::json_tool()].into_iter();
     let refused = define(
         tools
             .chain(sounds.into_iter().map(Sounds::json_tool))
