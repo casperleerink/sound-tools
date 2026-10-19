@@ -1274,7 +1274,8 @@ type NumberNames<State> = { [Name in keyof State]: State[Name] extends number ? 
 export type WaveList =
   | { source: "scope"; name: string; channel?: Channel; frames?: number }
   | { source: "history"; of: Num; frames: number; key: string }
-  | { source: "file"; asset: string; from?: number; to?: number };
+  | { source: "file"; asset: string; from?: number; to?: number }
+  | { source: "take"; name: string };
 
 /** The names a tool reads with `now.value`: its numbers, its number inputs, and any output, by any name. */
 type ValueNames<State, I extends Inputs> = NumberNames<State> | InputNames<I, "number"> | (string & {});
@@ -1313,6 +1314,8 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
    * Made in the background: it shows once it is ready.
    */
   file(asset: string, options?: { from?: number; to?: number }): WaveList;
+  /** The sound a `recorder` child by its path records, as it grows, in the form of `file`. */
+  take(name: string): WaveList;
   /** The drag of `id`, see `Drag`. */
   drag(id: string): DragValues;
   /** The space of `key`, see `Space`. */
@@ -1337,6 +1340,7 @@ function sources(): Now<Record<string, number>> {
     scope: (name, options) => ({ source: "scope", name, ...options }),
     history: (of, frames) => ({ source: "history", of, frames, key: liveKey([of, frames]) }),
     file: (asset, options) => ({ source: "file", asset, ...options }),
+    take: (name) => ({ source: "take", name }),
     drag: (id) =>
       part<keyof DragValues>((each) => ({ op: "drag", id, part: each }))(["startX", "startY", "dx", "dy", "x", "y", "active"]),
     space: (key) =>

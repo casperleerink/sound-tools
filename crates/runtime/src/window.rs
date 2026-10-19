@@ -12,6 +12,7 @@
 pub mod audio_input;
 pub mod live_input;
 pub mod other_apps;
+pub mod recorders;
 mod project_menu;
 mod start;
 
@@ -44,6 +45,7 @@ use sound_ui::{
 
 use audio_input::OpenInput;
 use live_input::LiveInput;
+use recorders::Recorders;
 use other_apps::{AppSounds, OtherApps};
 pub use project_menu::{DeviceMenu, ListDevices};
 use project_menu::{ProjectMenu, new_project, open_another_project, start_again};
@@ -201,6 +203,7 @@ pub struct Shell {
     remembering: Task<()>,
     /// The taps of the other apps `project.json` hears, in a window that can open them.
     _other_apps: Option<Entity<OtherApps>>,
+    recorders: Entity<Recorders>,
 }
 
 impl Shell {
@@ -299,6 +302,7 @@ impl Shell {
         let live =
             cx.new(|cx| LiveInput::new(session.clone(), timing, open_input, Some(chrome), cx));
         let chrome_view = (chrome.make)(session.clone(), live.clone(), window, cx);
+        let recorders = cx.new(|cx| Recorders::new(session.clone(), live.clone(), cx));
         let mut shell = Self {
             project_menu,
             live,
@@ -315,6 +319,7 @@ impl Shell {
             return_focus: None,
             remembering: Task::ready(()),
             _other_apps: other_apps,
+            recorders,
         };
         // A plugin's window passes on the keys its plugin does not use, to play the computer
         // keys. The plain keys are always free there: it has no text field and no tool.
@@ -352,6 +357,11 @@ impl Shell {
     /// The machine's live input: the keyboard, the computer keys, the audio input and the meter.
     pub fn live_input(&self) -> &Entity<LiveInput> {
         &self.live
+    }
+
+    /// The takes of the recorders of the project.
+    pub fn recorders(&self) -> &Entity<Recorders> {
+        &self.recorders
     }
 
     /// What the main tool of [`crate::CHROME`] shows in the title row, while it is the main view.

@@ -36,6 +36,7 @@ use crate::bun::{
 };
 use crate::card::{Page, TypeScriptCard};
 use crate::feeds::played_name;
+use crate::recorder::{self, Recorder, RecorderUpdate};
 use crate::timeline::{self, Timeline, TimelineUpdate};
 use crate::tools::{Input, NOTES_TAP, Sounds, ToolInfo, ToolKind, feed_processor};
 use crate::tree::{NodeTable, Uses};
@@ -901,10 +902,14 @@ impl Live {
         let Some(played) = self.child_of(id, child, cx) else {
             return;
         };
-        if let Some(session) = self.session.upgrade()
-            && session.read(cx).project().tool_of(&played) == Some(timeline::NAME)
-        {
-            return self.launch_on(id, &played, (name, value), &session, cx);
+        if let Some(session) = self.session.upgrade() {
+            let tool = session.read(cx).project().tool_of(&played);
+            if tool == Some(timeline::NAME) {
+                return self.launch_on(id, &played, (name, value), &session, cx);
+            }
+            if tool == Some(recorder::RECORDER) {
+                return self.record_on(id, &played, (name, value), &session, cx);
+            }
         }
         if let Err(error) = self.control(&played, name, value, at, cx) {
             let problem = format!("a performer plays the child {child:?}, which {error}");
@@ -933,6 +938,34 @@ impl Live {
         session.update(cx, |session, cx| {
             let sent = session.background(cx, |project| {
                 project.send::<Timeline>(played, timeline::PROCESSOR, update)
+            });
+            if let Err(error) = sent {
+                session.report(error, cx);
+            }
+        });
+    }
+
+    /// Turns the input `record` of the recorder `played`, a child of `id`, on or off as `value`
+    /// says, as a performer does: nothing is saved.
+    fn record_on(
+        &mut self,
+        id: &InstanceId,
+        played: &InstanceId,
+        (name, value): (&str, Option<f32>),
+        session: &Entity<Session>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(value) = value.filter(|_| name == recorder::RECORD) else {
+            let problem = format!(
+                "a performer plays {name:?} of the recorder {:?}, which takes only the number input `record`",
+                played.name()
+            );
+            return self.tool_problem(id, problem, cx);
+        };
+        let update = RecorderUpdate::Record(value > 0.0);
+        session.update(cx, |session, cx| {
+            let sent = session.background(cx, |project| {
+                project.send::<Recorder>(played, recorder::PROCESSOR, update)
             });
             if let Err(error) = sent {
                 session.report(error, cx);

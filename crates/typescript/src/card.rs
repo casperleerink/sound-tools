@@ -23,7 +23,7 @@ use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
 use sound_media::AudioAsset;
-use sound_ui::{ActiveTheme, ControlEdit, Session, Waveforms, typography};
+use sound_ui::{ActiveTheme, ControlEdit, LiveBody, Session, Waveforms, typography};
 
 use crate::bun::{EventKind, PageSize};
 use crate::feeds::Feeds;
@@ -1395,6 +1395,9 @@ impl Placing<'_> {
                 feeds.history(key, *frames, self.sources.number(of))
             }
             Some(List::File { asset, from, to }) => feeds.wave(asset, *from, *to).to_vec(),
+            Some(List::Take { name }) => (feeds.takes.get(name))
+                .map(|wave| wave.to_vec())
+                .unwrap_or_default(),
             None => Vec::new(),
         }
     }
@@ -2180,6 +2183,16 @@ impl Render for TypeScriptCard {
                 self.feeds.files.insert(file.clone(), overview);
             }
         }
+        let recording = self.session.read(cx).recording().read(cx);
+        self.feeds.takes = (uses.takes.iter())
+            .filter_map(|name| {
+                let recorder = self.id.child(name).ok()?;
+                let LiveBody::Audio(Some(sound)) = &recording.take_of(&recorder)?.body else {
+                    return None;
+                };
+                Some((name.clone(), sound.overview.read(Feeds::take)))
+            })
+            .collect();
         let session = self.session.read(cx);
         (self.feeds).read(session, &self.id, &state, &uses, playhead.tick);
         let body = match tree {

@@ -23,6 +23,7 @@ mod feeds;
 mod live;
 mod lane;
 mod meter;
+mod recorder;
 mod region;
 #[cfg(test)]
 mod performance;
@@ -44,6 +45,7 @@ use sound_notes::{Amount, Bend, Controller, NoteEvent, Pitch, Velocity};
 pub use behaviours::{asked_behaviours, take_declared, wait_for_behaviours};
 pub use bun::{heard_batches, heard_bytes, last_batch, sent_bytes, sent_updates_and_events};
 pub use feeds::{live_frames, shown_by_live_values};
+pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use window::start_window;
 
 use crate::bun::{Bun, LoadFailure, Loaded, LoadedTool, Skipped};
@@ -345,22 +347,24 @@ fn define(
 }
 
 /// The built-in children a parent of the project plays with.
-fn built_in() -> [JsonTool; 4] {
+fn built_in() -> [JsonTool; 5] {
     [
         timeline::json_tool(),
         meter::json_tool(),
         lane::json_tool(),
         region::json_tool(),
+        recorder::json_tool(),
     ]
 }
 
 /// The records of the built-in children, for `sdk.ts`.
-pub(crate) fn built_in_schemas() -> [ToolSchema; 4] {
+pub(crate) fn built_in_schemas() -> [ToolSchema; 5] {
     [
         timeline::schema(),
         meter::schema(),
         lane::schema(),
         region::schema(),
+        recorder::schema(),
     ]
 }
 

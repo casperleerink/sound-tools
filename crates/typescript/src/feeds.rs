@@ -77,6 +77,8 @@ pub(crate) struct Feeds {
     pub clock: Option<Clock>,
     /// The overviews of the audio files it draws, by file name, once they are made.
     pub files: HashMap<String, Arc<Overview>>,
+    /// The takes of recorders as they grow, by the path the tree names the recorder by.
+    pub takes: HashMap<String, Rc<[f32]>>,
     /// Waveforms as drawn, by file name and the seconds of it, which stay until it changes.
     pub waves: RefCell<HashMap<(String, u64, u64), (u64, Rc<[f32]>)>>,
 }
@@ -150,6 +152,12 @@ impl Feeds {
         (self.eased.borrow_mut()).retain(|_, eased| frame - eased.frame < 60);
         (self.histories.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
         (self.waves.borrow_mut()).retain(|_, (last, _)| frame - *last < 60);
+    }
+
+    /// The waveform of a take as it is now, in the form of [`Self::wave`].
+    pub(crate) fn take(overview: &Overview) -> Rc<[f32]> {
+        let peaks = overview.columns(0.0, overview.seconds(), WAVE_COLUMNS);
+        peaks.iter().flat_map(|peak| [*peak, -*peak]).collect()
     }
 
     /// The waveform of `file` from `from` to `to` seconds: the peak of each of

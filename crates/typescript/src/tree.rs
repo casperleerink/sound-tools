@@ -260,6 +260,8 @@ pub(crate) struct Uses {
     pub inside: BTreeSet<String>,
     /// The audio files whose waveforms it draws.
     pub files: BTreeSet<String>,
+    /// The recorders whose takes it draws as they grow.
+    pub takes: BTreeSet<String>,
 }
 
 /// How many nodes of a table use each thing, so a node that goes takes its use with it.
@@ -279,6 +281,7 @@ enum Named {
     Scope,
     Inside,
     File,
+    Take,
 }
 
 impl UseCounts {
@@ -302,6 +305,7 @@ impl UseCounts {
             (Named::Scope, &uses.scopes),
             (Named::Inside, &uses.inside),
             (Named::File, &uses.files),
+            (Named::Take, &uses.takes),
         ];
         for (kind, names) in named {
             for name in names {
@@ -332,6 +336,7 @@ impl UseCounts {
             scopes: names(Named::Scope),
             inside: names(Named::Inside),
             files: names(Named::File),
+            takes: names(Named::Take),
         }
     }
 }
@@ -600,6 +605,10 @@ impl ShapeProps {
             Some(List::File { asset, .. }) => {
                 uses.files.insert(asset.clone());
             }
+            Some(List::Take { name }) => {
+                uses.takes.insert(name.clone());
+                uses.animates = true;
+            }
             None => {}
         }
         uses
@@ -797,6 +806,9 @@ pub(crate) enum List {
         from: Option<f64>,
         to: Option<f64>,
     },
+    /// The waveform of the take a `recorder` at the path `name` inside records, as it grows,
+    /// in the form of [`List::File`].
+    Take { name: String },
 }
 
 /// An end of a line, a point, or of an arc, a turn.

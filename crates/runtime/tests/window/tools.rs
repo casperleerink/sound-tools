@@ -28,6 +28,7 @@ mod mixer;
 mod nested;
 mod performance;
 mod piano_roll;
+mod recorder;
 mod song;
 mod transport;
 
@@ -298,6 +299,16 @@ fn open_with_test_plugins<'a>(
 }
 
 fn open_with(cx: &mut TestAppContext, folder: TempDir, plugins: Plugins) -> Option<Window<'_>> {
+    open_with_device(cx, folder, plugins, DeviceAccess::default())
+}
+
+/// [`open_with`] with what the window may open of the machine, such as an audio input.
+fn open_with_device(
+    cx: &mut TestAppContext,
+    folder: TempDir,
+    plugins: Plugins,
+    device: DeviceAccess,
+) -> Option<Window<'_>> {
     if !sound_typescript::has_bun() {
         eprintln!("skipped: Bun is not installed");
         return None;
@@ -317,7 +328,6 @@ fn open_with(cx: &mut TestAppContext, folder: TempDir, plugins: Plugins) -> Opti
             let (mut views, mut devices) = views(plugins.downgrade());
             let extensions = extensions.unwrap();
             sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
-            let device = DeviceAccess::default();
             Shell::with_device(session, (views, devices), "Test".into(), device, window, cx)
         }
     });

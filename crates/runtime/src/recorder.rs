@@ -15,7 +15,7 @@ use std::sync::Arc;
 use sound_core::{
     Assets, CaptureReader, Clock, EngineStatus, Frames, InstanceId, StreamTiming, Ticks,
 };
-use sound_media::{AudioAsset, Imported, MediaError, TakeFile, TakeOverview};
+use sound_media::{AudioAsset, Imported, Info, MediaError, TakeFile, TakeOverview};
 
 /// One armed track of a recording: which channels of the input it records, and the name its
 /// file is made from, such as `voice-take`, which becomes `voice-take-1.wav`.
@@ -360,6 +360,36 @@ fn take_head(first_heard: i64, playing: PlayingAt) -> i128 {
 /// The seconds into a take at which the composer heard project frame `frame`, from its head.
 pub fn take_seconds_at(head: i128, frame: Frames, clock: &Clock) -> f64 {
     (i128::from(frame.0) - head) as f64 / f64::from(clock.sample_rate())
+}
+
+/// Where a take file plays in the song, heard from `start` to `end`: its start, and the part
+/// of the file that plays from there, in seconds of the file, to the end of the file with
+/// `None`. `head` is the project frame its first frame was heard at, see [`Placement::head`].
+/// What the file holds before `start` is trimmed away, and so is what came after `end`, so it
+/// plays what was heard in the recording and nothing else. `None` when the file holds nothing
+/// of that stretch.
+///
+/// A take that began before `start` was heard starts at `start`. One whose first frame came
+/// later starts at the first tick of its sound. Either way the frame of the file that plays at
+/// its start is the one captured when that frame was heard.
+pub fn take_place(
+    file: &Info,
+    head: i128,
+    (start, end): (Ticks, Ticks),
+    clock: &Clock,
+) -> Option<(Ticks, f64, Option<f64>)> {
+    let start_frame = i128::from(clock.frame_of(start).0);
+    let start = match head <= start_frame {
+        true => start,
+        false => clock.tick_at(Frames(u64::try_from(head).ok()?)),
+    };
+    let file_start = take_seconds_at(head, clock.frame_of(start), clock);
+    let file_end = take_seconds_at(head, clock.frame_of(end), clock);
+    let seconds = file.seconds();
+    if start >= end || file_start >= seconds.min(file_end) {
+        return None;
+    }
+    Some((start, file_start, (file_end < seconds).then_some(file_end)))
 }
 
 /// A recording on the thread that draws: where it began, the clock it began under, and what

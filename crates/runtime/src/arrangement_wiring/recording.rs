@@ -9,14 +9,14 @@ use anyhow::Result;
 use arrangement::{AudioClip, TrackKind, TrackState};
 use midi::Take;
 use sound_core::{
-    Changes, Clock, Frames, InputEndpoint, Instance, InstanceId, Project, ProjectError,
+    Changes, Clock, InputEndpoint, Instance, InstanceId, Project, ProjectError,
     StreamTiming, Ticks,
 };
 use sound_media::{AudioAsset, Imported, Info};
 use sound_notes::NOTES_INPUT;
 
 use super::main_arrangement;
-use crate::recorder::{Placement, take_seconds_at};
+use crate::recorder::{Placement, take_place};
 
 /// The label of the undo step a recording makes.
 pub const LABEL: &str = "Record";
@@ -121,13 +121,7 @@ pub fn add_audio_take_clips(
 }
 
 /// The clip of a take: where the composer heard it, from `start`, the playhead the recording
-/// began at, up to `end`, where it ended. What the file holds before `start` and after `end`
-/// is trimmed away, so the clip plays what was heard in the recording and nothing else.
-/// `None` when the file holds nothing of that stretch.
-///
-/// A take that began before `start` was heard starts at `start`. One whose first frame came
-/// later starts at the first tick of its sound. Either way the frame of the file that the
-/// clip plays at its start is the one captured when that frame was heard.
+/// began at, up to `end`, where it ended. See [`take_place`].
 pub fn take_clip(
     asset: AudioAsset,
     file: &Info,
@@ -135,20 +129,10 @@ pub fn take_clip(
     (start, end): (Ticks, Ticks),
     clock: &Clock,
 ) -> Option<AudioClip> {
-    let start_frame = i128::from(clock.frame_of(start).0);
-    let start = match head <= start_frame {
-        true => start,
-        false => clock.tick_at(Frames(u64::try_from(head).ok()?)),
-    };
-    let file_start = take_seconds_at(head, clock.frame_of(start), clock);
-    let file_end = take_seconds_at(head, clock.frame_of(end), clock);
-    let seconds = file.seconds();
-    if start >= end || file_start >= seconds.min(file_end) {
-        return None;
-    }
+    let (start, file_start, file_end) = take_place(file, head, (start, end), clock)?;
     let mut clip = AudioClip::new(asset, start);
     clip.file_start_seconds = file_start;
-    clip.file_end_seconds = (file_end < seconds).then_some(file_end);
+    clip.file_end_seconds = file_end;
     Some(clip)
 }
 
