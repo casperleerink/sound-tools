@@ -156,3 +156,45 @@ Branch `spike/native-ui-solid`. The question: does a Solid-style model beat redr
 
 **Verdict.** The model works and the protocol is simpler: no versions, no handler cache, no read/unchanged dance, no render requests. A discrete event now costs what it changes on the wire (a click is 0.7 KB, not 1 MB) and under a millisecond on the main thread. At 2,000 notes the end-to-end win is small (click 23 to 16 ms, release 25 to 23 ms), and a big selection change is slower (12 to 23 ms). Phase 2's off-thread tree read was already cheap at that size. At 20,000 notes everything discrete is faster (click 178 to 106 ms). What then limits is not the UI model but the record round trip and native culling. The cost: an 800-line runtime, and agents must wrap what changes in functions, made safe by an error at load. For an arrangement (10,000+ clips) I'd adopt it, together with list-item record edits, culling before placing, a compact live-value format and stable item ids for selection.
 
+
+### Round 4
+
+Goal: realistic DAW-shaped examples. A song is many small records (tracks of clips), not one 20,000-note field; 20,000 notes in one clip may be slow, it is the exception. Branch `spike/native-ui-solid`. Casper's rule for this round and after: every new block is a general concept (tree ownership, events in time), never a DAW one.
+
+**Decided: no compiled Rust extensions.** We considered letting a project add Rust (rebuilding the app locally, wasm, dylibs) and rejected it: rebuilding needs the Xcode tools or MSVC and a build when a project opens. TS tools run unchanged on any OS with no build, which is a selling point.
+
+**4a: what was built.**
+- *Children at any depth, as plain tree ownership.* Bun is told every record inside a tool of the project. A child carries its own `children`, typed by the `children` its tool names, and `update` edits, adds (with their children) and takes out records at any depth; the core deletes what a removed record owns. `"*"` in `children` stands for any other name, so `{ "*": track }` is any number of children of one tool, checked in Rust too. Watches of descendants read as `<path>.<watch>`. The core needed no change. Tests: `crates/runtime/tests/window/tools/nested.rs` (a page reads a grandchild, its edit is one undo step, a removed child takes its subtree, an added one comes with its own).
+- *`timeline`: events at positions in the song.* A built-in child like `sequencer`: notes at song positions, played once as the transport passes, out of `notes`. `start` and `length` are optional, so it is a clip, a cue or a whole part. Each is its own record, so moving one changes one file. One `NotePlayer` each, so offs survive moves and deletes. Rendered to the frame in `crates/runtime/tests/projects/song.rs` (a song of tracks of timelines, nested two deep). Out of scope: expression lanes (bend, pedal, wheels: one owner per instrument needs one player per track), audio, other event kinds.
+- *`moves` and `grows` on shapes.* A shape names the drags it moves and grows with; native code adds the drag's `dx`/`dy`. A selection then changes one small prop per note instead of a live expression per note: the general form of phase 1's "group transform" idea, without moving nodes between groups.
+- *A card reads its record once per change, not once per frame.* This was the real cost of a big page: every frame wrote and parsed the whole record (1 MB at 20,000 notes). Shapes outside the shown part of a space are also skipped before placing; that alone saved little.
+- *A store skips a frozen value it was last made from*, so an edit of one clip leaves other records' store objects unwalked.
+- *Selection needed no fix:* `selector` already reruns only the notes whose membership changed. The piano roll keeps index keys: notes have no ids in the record format, and every edit that shifts indexes sets the selection.
+
+**Numbers** (M1 Max, release-fast, piano roll harness, "until drawn" includes the test's own frames):
+
+| Piano roll | 2,000 notes: before / after | 20,000 notes: before / after |
+| --- | --- | --- |
+| Idle frame | 3.1 / 1.9 ms | 21.1 / 5.2 ms |
+| Frame dragging 512 selected | 4.1 / 2.8 ms | 22.8 / 7.4 ms |
+| Click that selects a note | 16 ms, 0.7 KB / 12 ms, 0.3 KB | 106 / 40 ms |
+| Marquee of 512, released | 23 ms, 457 KB / 15 ms, 141 KB | 78 / 36 ms |
+| Release that moves 512 | 23 ms, 314 KB / 20 ms, 101 KB | 152 / 129 ms |
+| Open | 97 / ~100 ms | 564 / ~570 ms |
+
+**Open time, not fixed.** The Bun mount is the cost: 34 ms at 2,000 notes, 260 ms at 20,000, about 0.8 µs per binding across ~40,000 bindings, plus 5 ms to write the ops. Phase 2 called one function per shape. Fixing it means a cheaper reactive core (no computation for a binding that read nothing, lighter dependency sets), not a quick change. At 20,000 notes a release is still 41 ms in Bun, mostly the whole `notes` field crossing both ways: realistic songs keep fields small, so list-item edits stay unbuilt.
+
+**Too specific (to revisit).** SDK concepts tied to one idea, found on the way; not changed now:
+- `kind: "effect" | "instrument" | "source"` describes a place in an arrangement track, not what a tool is (ports would say it).
+- A card is at most 144 points tall because of the rack under the tracks.
+- `transport: true` turns on one fixed transport bar; showing transport controls should be blocks a page places.
+- `sequencer` and now `timeline` are special built-in children; both are "events in time", one looping, one at song positions.
+- Notes are the only event a timeline, `onNotes`, `play` and `send` know; `notes()` is a field kind of its own.
+- Every tool of the project gets a `notes` input in its type (`ProjectEntry`).
+- `devices` offers only effects registered as in-code devices.
+- Docs place tools by `state/arrangement/<track>/...` paths, and the computer keys play "the selected track".
+
+**4b plan.**
+1. Port round 3a's feeds and mixer from `spike/native-ui` by hand (engine peaks, scope/waveform lists, time and smoothing ops, live colours, the mixer example and its tests).
+2. A TS mini-arrangement example, built only from general blocks: about 12 tracks, about 150 timelines of 30 to 150 notes, an instrument and an effect per track; a timeline page with the clips, click a clip to edit its notes in the piano roll, meters in the track headers.
+3. Measure: select and move a clip, edit notes in one clip, scroll and zoom, play with meters. Compare with the Rust arrangement where `snapshots.rs` has numbers.

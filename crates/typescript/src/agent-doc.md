@@ -205,7 +205,6 @@ What moves on a space moves in the window with no code running, so it keeps up w
 const roll = { unit: { x: 0.1, y: 12 }, extent: { x: [0, 38400], y: [0, 128] }, zoom: { x: [0.1, 10] }, scroll: { y: 40 } } as const;
 
 page: ({ state, memory, update, now }) => {
-  const move = now.drag("move");
   const isPicked = selector(() => memory.selected);
   // One drag for every note: a drag many shapes share crosses once.
   const drag: Drag = {
@@ -218,8 +217,8 @@ page: ({ state, memory, update, now }) => {
     <Space key="roll" width={800} height={400} {...roll}>
       <For each={() => state.notes}>
         {(note, index) => (
-          <Rect x={() => (isPicked(index()) ? move.dx.plus(note.start) : note.start)} y={() => 127 - note.pitch} width={() => note.length}
-            height={1} color="#a9b1ff" drag={drag} onPress={() => { memory.selected = new Set([index()]); }} />
+          <Rect x={() => note.start} y={() => 127 - note.pitch} width={() => note.length} height={1} color="#a9b1ff"
+            moves={() => (isPicked(index()) ? ["move"] : undefined)} drag={drag} onPress={() => { memory.selected = new Set([index()]); }} />
         )}
       </For>
       <Line from={[now.tick, 0]} to={[now.tick, 128]} color="#7ee0a0" width={2} />
@@ -228,7 +227,7 @@ page: ({ state, memory, update, now }) => {
 },
 ```
 
-- A `<Group x y>` moves its shapes by one live value.
+- `moves` names the drags a shape moves with, `grows` those that make it wider and taller, as the selected notes above: one small change when the selection does. A `<Group x y>` moves its shapes by one live value.
 - `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. Escape lets go of a drag, and its code hears nothing.
 - `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts.
 - A drag can also turn a field or a live control as it goes, with no code, as a knob does: a drag of `{ y: { field: "cutoff" } }`; for a field the whole drag is one undo step. `onPress` hears a `Press`: where in units, the button, the clicks and the modifiers. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
@@ -348,6 +347,7 @@ tool({
 
 - It gets `state`, every field at its default where the record leaves it out, and `children`, each `{ name, tool, state }`. A child's `state` is its record as the file holds it, so a field it leaves out may be missing. It returns `{ connections }`. Give it the return type `Declaration`, as here: without it TypeScript lets a misspelled key through and blames the whole behaviour, not the wrong connection.
 - A parent whose children are fixed names them and their tools in `children`, as `loops` below does: a `const` with `as const`, and the return type `Declaration<typeof children>`. TypeScript then checks each connection, `set`, `fire`, `play`, `send` and child `state` against the child's tool. For a tool of this project, name what `tool` returns: `export const drone = tool({ ... })` in its file, then `import { drone } from "./drone"` and `{ lead: drone, fx: "utility" }`. Its `state`, knobs, live controls, triggers and `notes` input are then checked; its outputs are not, as its `sound` makes them. A child of another tool, a missing one or one it does not name is a problem of the parent's record; `children: {}` allows none.
+- A child may be a parent too, at `state/<name>/<child>/instance.json`. Each child's `children` holds its own, at any depth, typed by the `children` its tool names, and `update` edits, adds (with their `children`) and takes out records at any depth; one taken out takes all it holds. `"*"` in `children` stands for any other name: `{ "*": track }` is any number of tracks.
 - A port of a child is `audio` when left out. Leave out `child` for a port of the parent itself: from `{ port: "audio" }` comes what reaches its audio input, from `{ notes: "notes" }` what reaches its `notes`; to `{ port: "audio" }` goes what it plays, through its own `sound` as `input`; to `{ number }`, `{ bang }` or `{ notes }` an output of that name, which its own parent connects as any port of a child.
 - Put the parent at the top of a project that is one tool, or in a track's `effects`, at `state/arrangement/<track>/<name>/instance.json`, where it hears the track's sound and notes and plays into its mixer.
 - The behaviour runs in Bun when the record or a child changes; its answer plays a moment later, the last one until then. `--render` and `--analyze` wait for it.
@@ -357,6 +357,7 @@ tool({
   - `{ from: { child: "ears", notes: "hits" }, to: { child: "synth", notes: "notes" } }` plays an instrument; `notes` is the input of each. `{ from: { notes: "notes" }, to: { child: "piano", notes: "notes" } }` plays it from the keyboard.
 - A parent plays its children by name: `play` and `send` with `{ child: "synth" }` reach its `notes`, without `child` its own sound; `set({ child: "lfo", live: "rate" }, 2)` and `fire({ child: "drop", trigger: "hit" })` a live control and a trigger of a tool of this project. A knob of a child is its record: a cable moves it.
 - A `sequencer` child loops note patterns in time with the bars, also in a render, out of its output `notes` (`agent-docs/sequencer.md`). `set({ child: "bass", live: "launch" }, 1)` launches its second pattern at the next bar. A parent's card and page see the watches of each child as `<child>.<watch>`: a sequencer's `playing` and `queued` are a pattern's index, -1 for none, -2 for a stop that waits.
+- A `timeline` child plays notes once at their positions in the song, out of its output `notes` (`agent-docs/timeline.md`): one per clip, so moving a clip changes one file.
 - A missing child or port, or a behaviour that throws, is a problem of the parent's record; one a performer names, of its tool. The rest plays.
 
 A clip launcher, with a sequencer `bass`, an instrument `synth` and a utility `fx` as its children:
