@@ -251,7 +251,7 @@ function readsInput(graph: Graph): boolean {
 }
 
 /** What `make` gives, or why it failed, as the runtime reads a `Result`. */
-function made(make: () => unknown) {
+function made<T>(make: () => T): { Ok: T } | { Err: string } {
   try {
     return { Ok: make() };
   } catch (error) {
@@ -310,7 +310,7 @@ function sound(spec: Spec, choices: Choices): Graph {
  * names and tools of its children always count. The runtime asks again only when one of these
  * changed, so a fader dragged on a child does not ask a behaviour that reads only names.
  */
-type Reads = { state: string[] | null; children: string[] | null };
+type BehaviourReads = { state: string[] | null; children: string[] | null };
 
 /** `source` as a behaviour reads it, which notes each field it reads in `into`. */
 function noting<T extends object>(source: T, into: { fields: Set<string> | null }): T {
@@ -384,7 +384,7 @@ function declare({ question, tool, instance }: Extract<Request, { type: "behavio
     return JSON.parse(JSON.stringify(answer));
   });
   const list = (read: { fields: Set<string> | null }) => (read.fields ? [...read.fields].sort() : null);
-  const reads: Reads = { state: list(own), children: list(inside) };
+  const reads: BehaviourReads = { state: list(own), children: list(inside) };
   say({ type: "declared", question, declaration, reads });
 }
 
@@ -786,9 +786,9 @@ function childChanges(parent: string, children: OwnedChild[], edited: unknown, c
       }
     }
     // A draft's children, when the change read them; the children of a plain object as they are.
-    const nested: [OwnedChild[], unknown] | [] = drafted ? drafted.children() : "children" in child ? [was.children, child.children] : [];
-    if (nested.length > 0) {
-      childChanges(id, nested[0], nested[1], changes);
+    const [owned, changed]: [OwnedChild[] | undefined, unknown] | [] = drafted ? drafted.children() : "children" in child ? [was.children ?? [], child.children] : [];
+    if (owned) {
+      childChanges(id, owned, changed, changes);
     }
   }
   for (const name of old.keys()) {
@@ -1243,7 +1243,7 @@ function run<Extra extends object>(
   instances: Played[],
   what: string,
   extra: Extra,
-  call: (spec: Spec, tool: Context<State, Controls, unknown> & Extra) => unknown,
+  call: (spec: Spec, tool: Context<State, Inputs, unknown> & Extra) => unknown,
 ) {
   const clock = { time, transport };
   setClock(clock);

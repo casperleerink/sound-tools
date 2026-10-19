@@ -214,6 +214,9 @@ fn the_types_of_the_sdk_refuse_what_an_agent_gets_wrong() {
     let schemas = runtime::tool_schemas().unwrap();
     assert!(sound_typescript::Extensions::load(project.path(), &schemas).is_some());
     write(&extensions, "types.ts", include_str!("sdk-types.ts"));
+    // The host checks with the SDK it runs next to.
+    write(&extensions, "host.ts", sound_typescript::HOST);
+    write(&extensions, "node.d.ts", sound_typescript::HOST_TYPES);
     let checked = sound_core::process::background_command(bun)
         .args(["check", "-p", "extensions"])
         .current_dir(project.path())

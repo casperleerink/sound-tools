@@ -138,7 +138,9 @@ impl NoteMessage {
 }
 
 const SDK: &str = include_str!("sdk.ts");
-const HOST: &str = include_str!("host.ts");
+pub const HOST: &str = include_str!("host.ts");
+/// What [`HOST`] uses of Node and Bun, for a check of its types.
+pub const HOST_TYPES: &str = include_str!("node.d.ts");
 const BUN_TYPES: &str = include_str!("bun.d.ts");
 /// What the runtime writes in `extensions/` and owns there.
 const OWNED: [&str; 3] = ["sdk.ts", "tsconfig.json", "bun.d.ts"];
