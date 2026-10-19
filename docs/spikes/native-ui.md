@@ -63,7 +63,7 @@ M1 Max, release-fast. Repeat with `projects/render_cost.rs` and the ignored test
 
 "Until drawn" includes about 10 ms of the test's polling. `tooling/perf` and the agent evals now build DAW-template projects, so their numbers start a new baseline.
 
-**Agent eval** (round 12): `daw-arp-builder` (an arpeggiator before a track's synth, $1.90), `daw-return` (a return with a long reverb, $0.18), `ui-chords` (a chord player card, $0.75): all passed. Round 14c's run on the trimmed docs is under "Round 14c".
+**Agent eval** (round 12): `daw-arp-builder` (an arpeggiator before a track's synth, $1.90), `daw-return` (a return with a long reverb, $0.18), `ui-chords` (a chord player card, $0.75): all passed. Round 14c ran them again on the trimmed docs.
 
 ## Open gaps
 
@@ -80,3 +80,9 @@ M1 Max, release-fast. Repeat with `projects/render_cost.rs` and the ignored test
 - `now` is exported untyped and on the context; they are one object.
 - Two new-project flows (restart on a folder, open from the start window) share one write.
 - A recorder test failed once in a parallel run and passed in reruns.
+
+## Round 14c
+
+Docs cut to decisions and matched to the code. Words before → after: the spike doc 15,289 → 1,400; the TS agent doc 6,040 → 5,826; DESIGN 1,535 → 1,402; ARCHITECTURE 4,383 → 4,762 (it took the spike's decisions); README 2,438 → 2,422. Device docs place records where the DAW template keeps them. Nine unreferenced mockups and about 30 comments and fixtures naming the arrangement went.
+
+**Agent eval on the trimmed docs**, one run each, all passed: `daw-arp-builder` (33 turns, $2.19), `daw-return` (9 turns, $0.23), `ui-chords` (17 turns, $0.80).
