@@ -663,7 +663,11 @@ function updater(instance: string) {
     unheard.push({ number: edits, changes });
     writeSync(1, line);
     // What its cards show follows at once, before the runtime answers.
-    refresh([instance, ...changes.map((change) => parentOf(change.id)?.[0] ?? change.id)]);
+    refresh([instance, ...changes.map((change) => parentOf(change.id)?.[0] ?? change.id)], {
+      instance,
+      state: part.state,
+      children: children.length > 0,
+    });
   };
 }
 
@@ -736,16 +740,22 @@ function storesOf(instance: string, spec: Spec, record: Entry): Stores {
   return known;
 }
 
-/** Brings the stores of each of `instances` to the records as code knows them now. */
-function refresh(instances: Iterable<string>) {
+/**
+ * Brings the stores of each of `instances` to the records as code knows them now; `edited` is
+ * the state an `update` just made, which is that already.
+ */
+function refresh(instances: Iterable<string>, edited?: { instance: string; state: unknown; children: boolean }) {
   sdk.host.batch(() => {
-    for (const instance of instances) {
+    for (const instance of new Set(instances)) {
       const known = stores.get(instance);
       const record = recordOf(instance);
       const spec = sdk.host.tools.get(known?.tool ?? "");
       if (!known || !record || !spec || record.tool !== known.tool) continue;
-      sdk.host.reconcile(known.state, filledState(spec, record) as Record<string, unknown>);
-      sdk.host.reconcile(known.children as never, childrenOf(instance) as never);
+      const own = edited?.instance === instance ? edited : undefined;
+      sdk.host.reconcile(known.state, (own?.state ?? filledState(spec, record)) as Record<string, unknown>);
+      if (!own || own.children) {
+        sdk.host.reconcile(known.children as never, childrenOf(instance) as never);
+      }
     }
   });
   later();

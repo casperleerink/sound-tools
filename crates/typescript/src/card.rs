@@ -860,13 +860,14 @@ impl Drawing<'_, '_> {
         }
     }
 
-    /// Draws the node `id`. `index` tells siblings apart, so every element that needs an id
-    /// gets its own.
-    fn draw(&mut self, id: u64, index: &[usize]) -> AnyElement {
+    /// Draws the node in `slot`. `index` tells siblings apart, so every element that needs an
+    /// id gets its own.
+    fn draw(&mut self, slot: usize, index: &[usize]) -> AnyElement {
         let table = self.table;
-        let Some(entry) = table.get(id) else {
+        let Some(entry) = table.get(slot) else {
             return div().into_any_element();
         };
+        let id = entry.id;
         match &entry.props {
             Props::Text(TextProps { text }) => {
                 SharedString::from(text.clone().unwrap_or_default()).into_any_element()
@@ -967,7 +968,7 @@ impl Drawing<'_, '_> {
 
     /// The shapes of a space with their numbers worked out, each in the colour it shows, those
     /// of its groups among them, moved by the group.
-    fn place(&self, children: &[u64], key: &str) -> (Vec<Placed>, Vec<Option<Pointer>>) {
+    fn place(&self, children: &[usize], key: &str) -> (Vec<Placed>, Vec<Option<Pointer>>) {
         let mut placing = Placing {
             sources: self.sources(),
             table: self.table,
@@ -985,7 +986,7 @@ impl Drawing<'_, '_> {
         &mut self,
         id: u64,
         space: &SpaceProps,
-        children: &[u64],
+        children: &[usize],
         index: &[usize],
     ) -> AnyElement {
         let key = element_name("space", space.key.as_deref(), index);
@@ -1081,10 +1082,10 @@ impl Placing<'_> {
             .map_or(0.0, |number| self.sources.number(number))
     }
 
-    fn shapes(&mut self, children: &[u64], (left, top): (f64, f64)) {
+    fn shapes(&mut self, children: &[usize], (left, top): (f64, f64)) {
         let table = self.table;
-        for id in children {
-            let Some(entry) = table.get(*id) else {
+        for slot in children {
+            let Some(entry) = table.get(*slot) else {
                 continue;
             };
             let Props::Shape(shape) = &entry.props else {
@@ -1094,7 +1095,7 @@ impl Placing<'_> {
                 let offset = (left + self.number(&shape.x), top + self.number(&shape.y));
                 self.shapes(&entry.children, offset);
             } else {
-                self.shape(*id, shape, (left, top));
+                self.shape(entry.id, shape, (left, top));
             }
         }
     }

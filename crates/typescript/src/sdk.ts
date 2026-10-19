@@ -1754,15 +1754,10 @@ function send(made: Made) {
   made.sent = true;
 }
 
-function same(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 function setProp(made: Made, name: string, value: unknown) {
   const wired = value === undefined ? null : value;
-  if (same(made.props[name] ?? null, wired)) return;
+  // An object, such as a live value, is new each time its binding runs: it goes as it is.
+  if (Object.is(made.props[name] ?? null, wired)) return;
   made.props[name] = wired;
   if (!made.sent) return;
   const pending = made.card.changes.get(made) ?? {};

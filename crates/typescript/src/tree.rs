@@ -252,20 +252,27 @@ impl Uses {
     }
 }
 
-/// A node of a card and its children, in order.
+/// A node of a card and its children, in order, by their slots.
 #[derive(Clone, Debug)]
 pub(crate) struct Entry {
+    /// The id its code knows it by, which an event names.
+    pub id: u64,
     pub props: Props,
-    pub children: Vec<u64>,
-    parent: Option<u64>,
+    pub children: Vec<usize>,
+    parent: Option<usize>,
     uses: Uses,
 }
 
-/// The nodes of a card as the window keeps them, by id.
+/// The nodes of a card as the window keeps them. A node keeps the slot it was made in, so the
+/// rows of a list made one after another lie side by side, and a frame walks them in order
+/// without looking an id up.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeTable {
-    nodes: HashMap<u64, Entry>,
-    root: Option<u64>,
+    /// Gone nodes leave their slot empty: a slot is never given again, so a list of children
+    /// never names another node.
+    slots: Vec<Option<Entry>>,
+    ids: HashMap<u64, usize>,
+    root: Option<usize>,
     drags: HashMap<u64, Drag>,
     /// How many nodes read the playhead and the watches.
     tick: usize,
@@ -273,12 +280,12 @@ pub(crate) struct NodeTable {
 }
 
 impl NodeTable {
-    pub(crate) fn root(&self) -> Option<u64> {
+    pub(crate) fn root(&self) -> Option<usize> {
         self.root
     }
 
-    pub(crate) fn get(&self, id: u64) -> Option<&Entry> {
-        self.nodes.get(&id)
+    pub(crate) fn get(&self, slot: usize) -> Option<&Entry> {
+        self.slots.get(slot)?.as_ref()
     }
 
     pub(crate) fn drag(&self, id: Option<u64>) -> Option<&Drag> {
@@ -287,7 +294,20 @@ impl NodeTable {
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.nodes.len()
+        self.ids.len()
+    }
+
+    #[cfg(test)]
+    fn children_of(&self, id: u64) -> Vec<u64> {
+        let entry = self.get(self.ids[&id]).unwrap();
+        (entry.children.iter())
+            .filter_map(|slot| self.get(*slot).map(|child| child.id))
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn props_of(&self, id: u64) -> &Props {
+        &self.get(self.ids[&id]).unwrap().props
     }
 
     pub(crate) fn uses(&self) -> Uses {
@@ -295,6 +315,17 @@ impl NodeTable {
             watches: self.watches > 0,
             tick: self.tick > 0,
         }
+    }
+
+    fn slot(&self, id: u64) -> Result<usize, String> {
+        self.ids
+            .get(&id)
+            .copied()
+            .ok_or_else(|| format!("no node {id}"))
+    }
+
+    fn entry_mut(&mut self, slot: usize) -> Option<&mut Entry> {
+        self.slots.get_mut(slot)?.as_mut()
     }
 
     /// Applies the ops of one batch, or says what is wrong with them.
@@ -311,20 +342,29 @@ impl NodeTable {
                     let uses = uses_of(&props);
                     self.count(uses, true);
                     let entry = Entry {
+                        id,
                         props,
                         children: Vec::new(),
                         parent: None,
                         uses,
                     };
-                    if let Some(old) = self.nodes.insert(id, entry) {
-                        self.count(old.uses, false);
+                    match self.ids.get(&id) {
+                        Some(&slot) => {
+                            if let Some(old) = self.slots[slot].replace(entry) {
+                                self.count(old.uses, false);
+                            }
+                        }
+                        None => {
+                            self.ids.insert(id, self.slots.len());
+                            self.slots.push(Some(entry));
+                        }
                     }
                 }
                 Op::Set(id, change) => {
-                    let entry = self
-                        .nodes
-                        .get_mut(&id)
-                        .ok_or_else(|| format!("no node {id}"))?;
+                    let slot = self.slot(id)?;
+                    let Some(entry) = self.entry_mut(slot) else {
+                        return Err(format!("no node {id}"));
+                    };
                     match (&mut entry.props, change) {
                         (Props::Div(props), Change::Div(change)) => props.apply(change),
                         (Props::Text(props), Change::Text(change)) => props.apply(change),
@@ -344,13 +384,14 @@ impl NodeTable {
                     node,
                     before,
                 } => {
-                    let Some(entry) = self.nodes.get_mut(&node) else {
-                        return Err(format!("no node {node} to put in {parent}"));
+                    let (parent, node) = (self.slot(parent)?, self.slot(node)?);
+                    let before = before.and_then(|before| self.ids.get(&before).copied());
+                    let Some(entry) = self.entry_mut(node) else {
+                        return Err(format!("no node to put in {parent}"));
                     };
                     let old = entry.parent.replace(parent);
                     // A move: out of where it was first.
-                    if let Some(old) = old
-                        && let Some(old) = self.nodes.get_mut(&old)
+                    if let Some(old) = old.and_then(|old| self.entry_mut(old))
                         && let Some(at) = old.children.iter().rposition(|child| *child == node)
                     {
                         old.children.remove(at);
@@ -358,8 +399,8 @@ impl NodeTable {
                     if emptied.remove(&parent) {
                         self.tidy(parent);
                     }
-                    let Some(siblings) = self.nodes.get_mut(&parent) else {
-                        return Err(format!("no node {parent} to put {node} in"));
+                    let Some(siblings) = self.entry_mut(parent) else {
+                        return Err(format!("no node to put {node} in"));
                     };
                     let at = before.and_then(|before| {
                         siblings.children.iter().rposition(|child| *child == before)
@@ -370,15 +411,18 @@ impl NodeTable {
                     }
                 }
                 Op::Remove(id) => {
-                    let parent = self.nodes.get(&id).and_then(|entry| entry.parent);
-                    self.remove(id);
+                    let Some(&slot) = self.ids.get(&id) else {
+                        continue;
+                    };
+                    let parent = self.get(slot).and_then(|entry| entry.parent);
+                    self.remove(slot);
                     // Taken out of its parent once for the whole batch: a list of thousands loses
                     // hundreds of rows at once.
                     if let Some(parent) = parent {
                         emptied.insert(parent);
                     }
                 }
-                Op::Root(id) => self.root = Some(id),
+                Op::Root(id) => self.root = Some(self.slot(id)?),
                 Op::Drag(id, drag) => {
                     self.drags.insert(id, drag);
                 }
@@ -391,22 +435,23 @@ impl NodeTable {
     }
 
     /// Takes the children that are gone out of the list of `parent`.
-    fn tidy(&mut self, parent: u64) {
-        let Some(entry) = self.nodes.get(&parent) else {
+    fn tidy(&mut self, parent: usize) {
+        let Some(entry) = self.get(parent) else {
             return;
         };
-        let kept: Vec<u64> = (entry.children.iter().copied())
-            .filter(|child| self.nodes.contains_key(child))
+        let kept: Vec<usize> = (entry.children.iter().copied())
+            .filter(|child| self.get(*child).is_some())
             .collect();
-        if let Some(entry) = self.nodes.get_mut(&parent) {
+        if let Some(entry) = self.entry_mut(parent) {
             entry.children = kept;
         }
     }
 
-    fn remove(&mut self, id: u64) {
-        let Some(entry) = self.nodes.remove(&id) else {
+    fn remove(&mut self, slot: usize) {
+        let Some(entry) = self.slots.get_mut(slot).and_then(Option::take) else {
             return;
         };
+        self.ids.remove(&entry.id);
         self.count(entry.uses, false);
         for child in entry.children {
             self.remove(child);
@@ -949,7 +994,7 @@ mod tests {
             ["insert", 1, 4, null], ["insert", 1, 2, 4], ["insert", 1, 3, 4], ["root", 1],
         ]));
         table.apply(made.unwrap()).unwrap();
-        assert_eq!(table.get(1).unwrap().children, [2, 3, 4]);
+        assert_eq!(table.children_of(1), [2, 3, 4]);
         assert!(table.uses().tick);
         let changed = ops(serde_json::json!([
             ["set", 2, "shape", { "x": 5, "hover": null }],
@@ -957,9 +1002,9 @@ mod tests {
             ["remove", 3],
         ]));
         table.apply(changed.unwrap()).unwrap();
-        assert_eq!(table.get(1).unwrap().children, [2, 4]);
+        assert_eq!(table.children_of(1), [2, 4]);
         assert!(!table.uses().tick);
-        let Props::Shape(shape) = &table.get(2).unwrap().props else {
+        let Props::Shape(shape) = table.props_of(2) else {
             panic!("a shape");
         };
         assert!(matches!(shape.x, Some(Num::Fixed(5.0))));

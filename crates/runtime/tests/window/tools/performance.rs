@@ -265,7 +265,7 @@ fn performance_of_the_piano_roll_of_2000_notes(cx: &mut TestAppContext) {
 #[gpui::test]
 #[ignore = "a measurement, not a check; run it locally and read the printed times"]
 fn performance_of_the_piano_roll_of_20000_notes(cx: &mut TestAppContext) {
-    measure_roll(cx, 20_000, 64);
+    measure_roll(cx, 20_000, 32);
 }
 
 impl Window<'_> {
