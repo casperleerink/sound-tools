@@ -4,7 +4,9 @@
 
 use std::time::{Duration, Instant};
 
-use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px};
+use gpui::{
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
+};
 
 use super::{ONLY_THE_TOOL, Window, open};
 
@@ -68,7 +70,8 @@ impl Window<'_> {
     }
 
     fn down(&mut self, position: Point<Pixels>) {
-        self.cx.simulate_mouse_move(position, None, Modifiers::default());
+        self.cx
+            .simulate_mouse_move(position, None, Modifiers::default());
         self.cx.simulate_event(MouseDownEvent {
             position,
             modifiers: Modifiers::default(),
@@ -96,8 +99,18 @@ impl Window<'_> {
 }
 
 fn open_grid(cx: &mut TestAppContext, count: usize, canvas: bool) -> Option<Window<'_>> {
-    let record = format!(r#"{{"tool": "grid", "state": {{"count": {count}, "canvas": {}}}}}"#, u8::from(canvas));
-    open(cx, &[ONLY_THE_TOOL[0], ("state/grid.json", &record), ("extensions/grid.ts", GRID)])
+    let record = format!(
+        r#"{{"tool": "grid", "state": {{"count": {count}, "canvas": {}}}}}"#,
+        u8::from(canvas)
+    );
+    open(
+        cx,
+        &[
+            ONLY_THE_TOOL[0],
+            ("state/grid.json", &record),
+            ("extensions/grid.ts", GRID),
+        ],
+    )
 }
 
 #[gpui::test]
@@ -143,26 +156,47 @@ fn measure(cx: &mut TestAppContext, count: usize) {
     };
     let roll = window.origin("space-roll");
     // The first note, and a place between notes.
-    let (note, empty) = (roll + point(px(12.), px(146.)), roll + point(px(1190.), px(10.)));
+    let (note, empty) = (
+        roll + point(px(12.), px(146.)),
+        roll + point(px(1190.), px(10.)),
+    );
     // Each move goes on or off a note, so each draws the whole page again.
     let hovering: Vec<Duration> = (0..MOVES)
         .map(|step| {
             let to = if step % 2 == 0 { note } else { empty };
-            window.timed(|window| window.cx.simulate_mouse_move(to, None, Modifiers::default()))
+            window.timed(|window| {
+                window
+                    .cx
+                    .simulate_mouse_move(to, None, Modifiers::default())
+            })
         })
         .collect();
-    print(&format!("{count} shapes: a frame with no drag, drawn again"), hovering);
+    print(
+        &format!("{count} shapes: a frame with no drag, drawn again"),
+        hovering,
+    );
     let asked = sound_typescript::sent_renders_and_events();
     window.down(note);
     let dragging: Vec<Duration> = (1..=MOVES)
         .map(|step| {
             let to = note + point(px(step as f32 * 3.), px(step as f32));
-            window.timed(|window| window.cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::default()))
+            window.timed(|window| {
+                window
+                    .cx
+                    .simulate_mouse_move(to, MouseButton::Left, Modifiers::default())
+            })
         })
         .collect();
     let (renders, events) = sound_typescript::sent_renders_and_events();
-    print(&format!("{count} shapes: a frame while every shape moves with the drag"), dragging);
-    println!("{count} shapes: {} renders and {} events asked of Bun in {MOVES} moves", renders - asked.0, events - asked.1);
+    print(
+        &format!("{count} shapes: a frame while every shape moves with the drag"),
+        dragging,
+    );
+    println!(
+        "{count} shapes: {} renders and {} events asked of Bun in {MOVES} moves",
+        renders - asked.0,
+        events - asked.1
+    );
     window.up(note + point(px(MOVES as f32 * 3.), px(MOVES as f32)));
 }
 
@@ -180,20 +214,29 @@ fn measure_old(cx: &mut TestAppContext, count: usize) {
         let heard = sound_typescript::heard_trees();
         let started = Instant::now();
         let to = at + point(px(step as f32 * 3.), px(0.));
-        window.cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
+        window
+            .cx
+            .simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
         // Until the tree of this move is drawn: Bun answers on a thread of its own.
         while sound_typescript::heard_trees() == heard {
             window.cx.run_until_parked();
             if started.elapsed() > Duration::from_secs(5) {
                 let problems = window.problems();
-                panic!("no tree came: {:?} {:?} {problems:?}", asked, sound_typescript::sent_renders_and_events());
+                panic!(
+                    "no tree came: {:?} {:?} {problems:?}",
+                    asked,
+                    sound_typescript::sent_renders_and_events()
+                );
             }
         }
         window.cx.run_until_parked();
         latencies.push(started.elapsed());
     }
     let (renders, events) = sound_typescript::sent_renders_and_events();
-    print(&format!("{count} shapes, canvas: a move until its tree is drawn"), latencies);
+    print(
+        &format!("{count} shapes, canvas: a move until its tree is drawn"),
+        latencies,
+    );
     println!(
         "{count} shapes, canvas: {} renders and {} events asked of Bun in {MOVES} moves",
         renders - asked.0,

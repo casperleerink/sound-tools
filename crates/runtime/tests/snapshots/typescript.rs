@@ -96,7 +96,14 @@ pub(crate) fn snapshots(
         sound_typescript::start_window(extensions, &session, &mut views, &mut devices, cx);
         cx.new(|cx| {
             let name = "MacBook Pro Speakers".into();
-            Shell::with_device(session, (views, devices), name, DeviceAccess::default(), window, cx)
+            Shell::with_device(
+                session,
+                (views, devices),
+                name,
+                DeviceAccess::default(),
+                window,
+                cx,
+            )
         })
     })?;
     // Bun answers in real time, on a thread of its own.

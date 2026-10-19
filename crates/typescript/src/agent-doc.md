@@ -177,16 +177,44 @@ tool({
 
 | Element | Does |
 | --- | --- |
-| `<div style onClick>` | A box; `Style` in `sdk.ts` lists every style. Text goes inside. |
+| `<div style onClick>` | A box; `Style` in `sdk.ts` lists every style. Text goes inside. `onClick` gets a `Press`. |
 | `<Knob path label min max default unit?>` | Turns the field `path` of the record: a drag is one undo step. With `live="name"` instead of `path` it plays a live control. |
 | `<Steps path max? playing?>` | A row of steps on a pattern: a click turns a step on (to `max`, the pattern's max by default) or off (to its min). `playing` names a watch whose value is the step that lights up. |
 | `<SampleChooser path label?>` | The file of a sample field, and a button that opens one and copies it into `assets/audio/`. |
 | `<Meter watch label?>` | A bar that shows a watch from 0 to 1. |
 | `<Pad x y size?>` | A square for the pointer: across moves the live control `x`, up moves `y`. |
 
-All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `watches`, the last value of each watch, and a card draws again as they move; `time` and `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`); `memory`; `update`, see "Changing records"; and `set`, `fire`, `play` and `send`, which play its live controls, triggers and voices as a performer would.
+All code of a tool gets the same (`Context` in `sdk.ts`): `state`, the record with every field it leaves out at its default; `children`, the records of its children; `watches`, the last value of each watch; `time` and `transport` (`playing`, `tick`, `bar`, `beat`, `bpm`); `memory`; `now`, see "Shapes that move"; `update`, see "Changing records"; and `set`, `fire`, `play` and `send`, which play its live controls, triggers and voices as a performer would. A card draws again when what its code read changed: a field it read, its children, the watches.
 
-## A control loop, a canvas, the keys
+## Shapes that move
+
+A `<Space>` draws shapes: `<Rect>`, `<Circle>`, `<Line>`, `<Arc>` and `<Label>` (text). It has units of its own, such as ticks across and notes down (`unit` is points per unit), scrolls over `extent` and zooms in `zoom` by itself, and draws only what shows. The knob, steps, meter and pad above are spaces.
+
+What moves on a space moves in the window with no code running, so it keeps up with the pointer and the playhead: give a number a live value from `now` in place of a number. `now.tick` is where the piece plays, `now.watch(name)` a watch, `now.field(name)` a number of the record as a drag turns it, and `now.drag(id)` how far the drag `id` went, rounded to its `snap`. Combine them with `.plus`, `.times`, `.snap` and the rest. Code hears a drag once, at `onEnd`, and what moved stays where it is until the tree its code draws then arrives:
+
+```tsx
+const ticks = { unit: { x: 0.1, y: 12 }, extent: { x: [0, 38400], y: [0, 128] }, zoom: { x: [0.1, 10] } } as const;
+
+page: ({ state, update, now }) => {
+  const move = (index: number): Drag => ({
+    id: "move", snap: { x: 240 }, axis: "x",
+    onEnd: ({ dx }) => update("Move a note", ({ state }) => { state.notes[index].start += dx; }),
+  });
+  return (
+    <Space key="roll" grow {...ticks}>
+      {state.notes.map((note, index) => (
+        <Rect key={String(index)} x={now.drag("move").dx.plus(note.start)} y={127 - note.pitch}
+          width={note.length} height={1} color="#a9b1ff" drag={move(index)} />
+      ))}
+      <Line from={[now.tick, 0]} to={[now.tick, 128]} color="#7ee0a0" width={2} />
+    </Space>
+  );
+},
+```
+
+A drag can also turn a field or a live control as it goes, with no code, as a knob does: a drag of `{ y: { field: "cutoff" } }`; for a field the whole drag is one undo step. `onPress` hears a `Press`: where in units, the button, the clicks and the modifiers. `onMove` runs code at every move, a moment behind the pointer: only for drawing with the pointer.
+
+## A control loop, the keys
 
 For more than knobs, a tool keeps a `memory` and runs a control loop:
 
@@ -205,8 +233,8 @@ For more than knobs, a tool keeps a `memory` and runs a control loop:
   ```
 
 - `send(event, { at, child })` sends a note event (`NoteEvent` in `sdk.ts`), such as `{ type: "cc", controller: 64, value: 1 }`, the pedal down. Values are 0 to 1, the bend -1 to 1; a plugin gets any controller, 0 to 119. At most 256 wait, up to 10 s ahead: send a recording as the loop plays. `play(pitch, { hold: true })` sends only the `noteOn`.
-- `onKey: (tool, { key, down }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; an instrument's or source's sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The MIDI keyboard plays `notes`, and in a track its clips too.
-- `<Canvas width height shapes background? onPress? onDrag?>` draws `shapes` (`{ kind: "circle", x, y, radius, color }`, `{ kind: "rect", x, y, width, height, color, radius? }`, `{ kind: "line", from: [x, y], to: [x, y], color, width? }`, in points from its top left) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. A card or page draws again after every tick.
+- `onKey: (tool, { key, down, shift, cmd, alt, ctrl }) => { ... }` hears each key of the computer keyboard going down and up, by name (`"a"`, `"1"`, `"space"`, `"left"`), after a click on its page or card, or at once on a page that opens with the window; plain keys are then the tool's, so space does not play. A key with cmd, ctrl or alt only goes down, and one the window uses, such as cmd-z, stays the window's. `onNotes: (tool, event) => { ... }` hears what reaches the tool's `notes`, not its own `send`; an instrument's or source's sound plays it too. `event.at` is the `time` it sounded, to the sample, so a recording sent again with `{ at }` plays as played. The MIDI keyboard plays `notes`, and in a track its clips too.
+- `<Canvas width height shapes background? onPress? onDrag?>` is a space in points that draws `shapes` (`{ kind: "circle", x, y, radius, color }` and the other kinds of `Shape`) and hears the pointer: `onPress(x, y)` and `onDrag(x, y)` from 0 to 1 across and down. A card or page draws again after every tick.
 
 ## Changing records
 

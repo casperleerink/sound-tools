@@ -1305,9 +1305,9 @@ export interface SpaceProps {
   /** Points per unit at zoom 1. */
   unit?: { x?: number; y?: number };
   /** What it scrolls over, in units; an axis without one does not scroll, and shows from 0. */
-  extent?: { x?: [number, number]; y?: [number, number] };
+  extent?: { x?: readonly [number, number]; y?: readonly [number, number] };
   /** How far it zooms in and out, as a factor; an axis without one does not zoom. Cmd and scroll, or a pinch. */
-  zoom?: { x?: [number, number]; y?: [number, number] };
+  zoom?: { x?: readonly [number, number]; y?: readonly [number, number] };
   background?: Color;
   radius?: number;
   /** A press where no shape that hears the pointer is. */

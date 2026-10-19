@@ -437,7 +437,10 @@ pub fn sent_bytes() -> u64 {
 /// How many trees this process asked every Bun for, and how many presses and drags it told,
 /// for a test that a drag does not cross to Bun.
 pub fn sent_renders_and_events() -> (u64, u64) {
-    (SENT_RENDERS.load(Ordering::Relaxed), SENT_EVENTS.load(Ordering::Relaxed))
+    (
+        SENT_RENDERS.load(Ordering::Relaxed),
+        SENT_EVENTS.load(Ordering::Relaxed),
+    )
 }
 
 /// How many new trees the windows of this process heard from every Bun, for a measurement of

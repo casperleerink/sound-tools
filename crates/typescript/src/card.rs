@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, FocusHandle, Hitbox,
-    HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent, Keystroke, ModifiersChangedEvent, Modifiers,
+    HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
     ScrollWheelEvent, SharedString, StyleRefinement, TextAlign, TextRun, WeakEntity, Window,
     canvas, div, fill, outline, point, prelude::*, px, size,
@@ -266,8 +266,9 @@ impl TypeScriptCard {
     /// Moves a live control.
     fn control(&mut self, name: &str, value: f32, cx: &mut Context<Self>) {
         let id = self.id.clone();
-        let controlled =
-            (self.live).update(cx, |live, cx| live.control(&id, name, Some(value), None, cx));
+        let controlled = (self.live).update(cx, |live, cx| {
+            live.control(&id, name, Some(value), None, cx)
+        });
         if let Err(error) = controlled {
             eprintln!("error: {id} {error}");
         }
@@ -276,7 +277,9 @@ impl TypeScriptCard {
     /// Runs a handler of the tree of `version` with what it hears. The number of the event.
     fn event(&mut self, version: u64, handler: usize, payload: Value, cx: &mut App) -> u64 {
         let card = self.card;
-        (self.live).update(cx, |live, cx| live.event(card, version, handler, payload, cx))
+        (self.live).update(cx, |live, cx| {
+            live.event(card, version, handler, payload, cx)
+        })
     }
 
     /// The record with each field it leaves out at its default, and its tool.
@@ -301,7 +304,11 @@ impl TypeScriptCard {
     ) {
         let (on_press, drag, target) = match target {
             Some(index) => match frame.pointed.get(index).and_then(Option::as_ref) {
-                Some(pointer) => (pointer.on_press, pointer.drag.clone(), Some(pointer.key.clone())),
+                Some(pointer) => (
+                    pointer.on_press,
+                    pointer.drag.clone(),
+                    Some(pointer.key.clone()),
+                ),
                 None => return,
             },
             None => (frame.on_press, frame.drag.clone(), None),
@@ -369,7 +376,11 @@ impl TypeScriptCard {
             ended: None,
         };
         // What turns by where the pointer is turns at the press already, as on a pad.
-        if [&held.drag.x, &held.drag.y].into_iter().flatten().any(|turns| turns.absolute) {
+        if [&held.drag.x, &held.drag.y]
+            .into_iter()
+            .flatten()
+            .any(|turns| turns.absolute)
+        {
             self.turn_held(&held, cx);
         }
         self.held = Some(held);
@@ -377,8 +388,18 @@ impl TypeScriptCard {
     }
 
     /// The pointer moved while it holds a drag of the space of `frame`.
-    fn drag_to(&mut self, frame: &SpaceFrame, position: Point<Pixels>, modifiers: Modifiers, cx: &mut Context<Self>) {
-        let Some(held) = self.held.as_mut().filter(|held| held.space == frame.key && held.ended.is_none()) else {
+    fn drag_to(
+        &mut self,
+        frame: &SpaceFrame,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(held) = self
+            .held
+            .as_mut()
+            .filter(|held| held.space == frame.key && held.ended.is_none())
+        else {
             return;
         };
         held.follow(frame);
@@ -398,7 +419,11 @@ impl TypeScriptCard {
 
     /// The pointer let go of the drag it held, over the space of `frame`.
     fn drag_ends(&mut self, frame: &SpaceFrame, cx: &mut Context<Self>) {
-        let Some(mut held) = self.held.clone().filter(|held| held.space == frame.key && held.ended.is_none()) else {
+        let Some(mut held) = self
+            .held
+            .clone()
+            .filter(|held| held.space == frame.key && held.ended.is_none())
+        else {
             return;
         };
         held.follow(frame);
@@ -406,14 +431,27 @@ impl TypeScriptCard {
             self.held = None;
             return;
         }
-        let fields = [&held.drag.x, &held.drag.y].into_iter().flatten().any(|turns| turns.field.is_some());
+        let fields = [&held.drag.x, &held.drag.y]
+            .into_iter()
+            .flatten()
+            .any(|turns| turns.field.is_some());
         if fields {
-            self.edit.apply_json(&self.session, &self.id, "", ValueChange::<f32>::DragEnd, |_, _| {}, cx);
+            self.edit.apply_json(
+                &self.session,
+                &self.id,
+                "",
+                ValueChange::<f32>::DragEnd,
+                |_, _| {},
+                cx,
+            );
         }
         self.held = match held.drag.on_end {
             Some(handler) => {
                 let number = self.event(held.version, handler, held.result(), cx);
-                Some(Held { ended: Some((number, Instant::now())), ..held })
+                Some(Held {
+                    ended: Some((number, Instant::now())),
+                    ..held
+                })
             }
             None => None,
         };
@@ -457,7 +495,8 @@ impl TypeScriptCard {
     fn turn(&mut self, turns: &tree::Turns, change: ValueChange<f32>, cx: &mut Context<Self>) {
         match (&turns.field, &turns.control) {
             (Some(field), _) => {
-                let label = (turns.label.clone()).unwrap_or_else(|| format!("Change {}", field.replace('_', " ")));
+                let label = (turns.label.clone())
+                    .unwrap_or_else(|| format!("Change {}", field.replace('_', " ")));
                 let field = field.clone();
                 self.edit.apply_json(
                     &self.session,
@@ -584,7 +623,11 @@ impl SpaceFrame {
 
     fn point_at(&self, bounds: Bounds<Pixels>, (x, y): (f64, f64)) -> Point<Pixels> {
         let (across, down) = self.view.scale();
-        bounds.origin + point(px(((x - self.view.left) * across) as f32), px(((y - self.view.top) * down) as f32))
+        bounds.origin
+            + point(
+                px(((x - self.view.left) * across) as f32),
+                px(((y - self.view.top) * down) as f32),
+            )
     }
 
     /// The view after a wheel: it scrolls over the extent, and zooms with cmd.
@@ -623,7 +666,10 @@ impl SpaceFrame {
     }
 
     fn scrolls(&self) -> bool {
-        self.extent.x.is_some() || self.extent.y.is_some() || self.zoom.x.is_some() || self.zoom.y.is_some()
+        self.extent.x.is_some()
+            || self.extent.y.is_some()
+            || self.zoom.x.is_some()
+            || self.zoom.y.is_some()
     }
 }
 
@@ -658,7 +704,10 @@ enum PaintedShape {
 impl PaintedShape {
     fn bounds(&self) -> Bounds<Pixels> {
         let square = |centre: Point<Pixels>, radius: f32| {
-            Bounds::new(centre - point(px(radius), px(radius)), size(px(radius * 2.), px(radius * 2.)))
+            Bounds::new(
+                centre - point(px(radius), px(radius)),
+                size(px(radius * 2.), px(radius * 2.)),
+            )
         };
         match self {
             Self::Rect(bounds, ..) => *bounds,
@@ -668,7 +717,10 @@ impl PaintedShape {
                 let (left, top) = (from.x.min(to.x), from.y.min(to.y));
                 let (right, bottom) = (from.x.max(to.x), from.y.max(to.y));
                 let pad = px(width / 2. + 2.);
-                Bounds::from_corners(point(left - pad, top - pad), point(right + pad, bottom + pad))
+                Bounds::from_corners(
+                    point(left - pad, top - pad),
+                    point(right + pad, bottom + pad),
+                )
             }
             Self::Text(origin, text, font, align) => {
                 let width = px(text.len() as f32 * font * 0.6);
@@ -685,7 +737,10 @@ impl PaintedShape {
     fn contains(&self, position: Point<Pixels>) -> bool {
         match self {
             Self::Circle(centre, radius) => {
-                let (dx, dy) = (f32::from(position.x - centre.x), f32::from(position.y - centre.y));
+                let (dx, dy) = (
+                    f32::from(position.x - centre.x),
+                    f32::from(position.y - centre.y),
+                );
                 dx * dx + dy * dy <= radius * radius
             }
             _ => self.bounds().contains(&position),
@@ -747,16 +802,20 @@ impl Drawing<'_, '_> {
                 };
                 let version = self.version;
                 element
-                    .id(ElementId::Name(element_name("div", key.as_deref(), index).into()))
+                    .id(ElementId::Name(
+                        element_name("div", key.as_deref(), index).into(),
+                    ))
                     .cursor_pointer()
-                    .on_click((self.cx).listener(move |view, event: &gpui::ClickEvent, _, cx| {
-                        let mut press = json!({
-                            "x": 0, "y": 0, "button": "left",
-                            "clicks": event.click_count(),
-                        });
-                        add_modifiers(&mut press, event.modifiers());
-                        view.event(version, handler, press, cx);
-                    }))
+                    .on_click(
+                        (self.cx).listener(move |view, event: &gpui::ClickEvent, _, cx| {
+                            let mut press = json!({
+                                "x": 0, "y": 0, "button": "left",
+                                "clicks": event.click_count(),
+                            });
+                            add_modifiers(&mut press, event.modifiers());
+                            view.event(version, handler, press, cx);
+                        }),
+                    )
                     .into_any_element()
             }
         }
@@ -810,23 +869,36 @@ impl Drawing<'_, '_> {
     /// The shapes of a space with their numbers worked out, each in the colour it shows.
     fn place(&self, space: &SpaceNode, key: &str) -> (Vec<Placed>, Vec<Option<Pointer>>) {
         let sources = self.sources();
-        let number = |number: &Option<tree::Num>| number.as_ref().map_or(0.0, |number| sources.number(number));
+        let number = |number: &Option<tree::Num>| {
+            number.as_ref().map_or(0.0, |number| sources.number(number))
+        };
         let mut placed = Vec::with_capacity(space.children.len());
         let mut pointed = Vec::with_capacity(space.children.len());
         for (index, shape) in space.children.iter().enumerate() {
             let shape_key = shape.key.clone().unwrap_or_else(|| index.to_string());
-            let hovered = self.hovered.as_ref().is_some_and(|(space, hovered)| space == key && *hovered == shape_key);
+            let hovered = self
+                .hovered
+                .as_ref()
+                .is_some_and(|(space, hovered)| space == key && *hovered == shape_key);
             pointed.push(shape.is_pointed().then(|| Pointer {
                 key: shape_key,
                 on_press: shape.on_press,
                 drag: shape.drag.clone(),
                 cursor: shape.cursor,
             }));
-            let opacity = shape.opacity.as_ref().map_or(1.0, |opacity| sources.number(opacity).clamp(0.0, 1.0)) as f32;
+            let opacity = shape
+                .opacity
+                .as_ref()
+                .map_or(1.0, |opacity| sources.number(opacity).clamp(0.0, 1.0))
+                as f32;
             if opacity <= 0.0 {
                 continue;
             }
-            let shown = if hovered { shape.hover.or(shape.color) } else { shape.color };
+            let shown = if hovered {
+                shape.hover.or(shape.color)
+            } else {
+                shape.color
+            };
             let mut color = shown.map_or(gpui::white(), |color| color.0);
             color.a *= opacity;
             let reach = |reach: &Option<Reach>| match reach {
@@ -870,14 +942,20 @@ impl Drawing<'_, '_> {
                     y: number(&shape.y),
                     text: match &shape.text {
                         Some(Words::Fixed(text)) => text.clone().into(),
-                        Some(Words::Live(live)) => readout(sources.number(live) as f32, shape.unit).into(),
+                        Some(Words::Live(live)) => {
+                            readout(sources.number(live) as f32, shape.unit).into()
+                        }
                         None => SharedString::default(),
                     },
                     size: shape.size.unwrap_or(12.0),
                     align: shape.align.unwrap_or(Align::Left),
                 },
             };
-            placed.push(Placed { index, geometry, color });
+            placed.push(Placed {
+                index,
+                geometry,
+                color,
+            });
         }
         (placed, pointed)
     }
@@ -886,8 +964,14 @@ impl Drawing<'_, '_> {
         let key = element_name("space", space.key.as_deref(), index);
         let (unit_x, unit_y) = space.unit();
         let mut view = self.spaces.get(&key).copied().unwrap_or(SpaceView {
-            left: space.extent.and_then(|extent| extent.x).map_or(0.0, |[low, _]| f64::from(low)),
-            top: space.extent.and_then(|extent| extent.y).map_or(0.0, |[low, _]| f64::from(low)),
+            left: space
+                .extent
+                .and_then(|extent| extent.x)
+                .map_or(0.0, |[low, _]| f64::from(low)),
+            top: space
+                .extent
+                .and_then(|extent| extent.y)
+                .map_or(0.0, |[low, _]| f64::from(low)),
             ..SpaceView::default()
         });
         (view.unit_x, view.unit_y) = (unit_x, unit_y);
@@ -914,9 +998,14 @@ impl Drawing<'_, '_> {
         let element = canvas(
             {
                 let frame = frame.clone();
-                move |bounds: Bounds<Pixels>, window: &mut Window, _: &mut App| prepaint(&frame, bounds, window)
+                move |bounds: Bounds<Pixels>, window: &mut Window, _: &mut App| {
+                    prepaint(&frame, bounds, window)
+                }
             },
-            move |bounds: Bounds<Pixels>, (hitbox, painted): (Hitbox, Rc<Vec<Painted>>), window: &mut Window, cx: &mut App| {
+            move |bounds: Bounds<Pixels>,
+                  (hitbox, painted): (Hitbox, Rc<Vec<Painted>>),
+                  window: &mut Window,
+                  cx: &mut App| {
                 // The size it was laid out at, for live values of what shows and the next scroll.
                 if let Some(view) = spaces.borrow_mut().get_mut(&frame.key) {
                     view.width = f64::from(f32::from(bounds.size.width));
@@ -926,7 +1015,9 @@ impl Drawing<'_, '_> {
                 listen(&frame, &card, bounds, hitbox, painted, window);
             },
         );
-        let holder = div().debug_selector(move || selector).child(element.size_full());
+        let holder = div()
+            .debug_selector(move || selector)
+            .child(element.size_full());
         let holder = match space.width {
             Some(width) => holder.w(px(width)),
             None => holder.w_full(),
@@ -935,7 +1026,11 @@ impl Drawing<'_, '_> {
             Some(height) => holder.h(px(height)),
             None => holder.h_full(),
         };
-        let holder = if space.grow { holder.flex_grow(1.).min_h_0() } else { holder.flex_none() };
+        let holder = if space.grow {
+            holder.flex_grow(1.).min_h_0()
+        } else {
+            holder.flex_none()
+        };
         holder.into_any_element()
     }
 }
@@ -963,7 +1058,11 @@ fn readout(value: f32, unit: Option<Unit>) -> String {
 }
 
 /// The shapes of a frame in points, those that show, with a hitbox for each that shows a cursor.
-fn prepaint(frame: &SpaceFrame, bounds: Bounds<Pixels>, window: &mut Window) -> (Hitbox, Rc<Vec<Painted>>) {
+fn prepaint(
+    frame: &SpaceFrame,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+) -> (Hitbox, Rc<Vec<Painted>>) {
     let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
     let mut frame_view = frame.view;
     frame_view.width = f64::from(f32::from(bounds.size.width));
@@ -973,15 +1072,34 @@ fn prepaint(frame: &SpaceFrame, bounds: Bounds<Pixels>, window: &mut Window) -> 
     let mut painted = Vec::new();
     for placed in &frame.placed {
         let shape = match &placed.geometry {
-            Geometry::Rect { x, y, width, height, radius, border } => {
+            Geometry::Rect {
+                x,
+                y,
+                width,
+                height,
+                radius,
+                border,
+            } => {
                 let origin = at((*x, *y));
                 let size = size(px((width * across) as f32), px((height * down) as f32));
                 PaintedShape::Rect(Bounds::new(origin, size), *radius, *border)
             }
             Geometry::Circle { x, y, radius } => PaintedShape::Circle(at((*x, *y)), *radius),
             Geometry::Line { from, to, width } => PaintedShape::Line(at(*from), at(*to), *width),
-            Geometry::Arc { x, y, radius, turns, width } => PaintedShape::Arc(at((*x, *y)), *radius, *turns, *width),
-            Geometry::Text { x, y, text, size, align } => PaintedShape::Text(at((*x, *y)), text.clone(), *size, *align),
+            Geometry::Arc {
+                x,
+                y,
+                radius,
+                turns,
+                width,
+            } => PaintedShape::Arc(at((*x, *y)), *radius, *turns, *width),
+            Geometry::Text {
+                x,
+                y,
+                text,
+                size,
+                align,
+            } => PaintedShape::Text(at((*x, *y)), text.clone(), *size, *align),
         };
         // What does not show is not painted and not found.
         if !shape.bounds().intersects(&bounds) {
@@ -990,8 +1108,18 @@ fn prepaint(frame: &SpaceFrame, bounds: Bounds<Pixels>, window: &mut Window) -> 
         let cursor = (frame.pointed.get(placed.index))
             .and_then(Option::as_ref)
             .and_then(|pointer| pointer.cursor);
-        let hitbox = cursor.map(|cursor| (window.insert_hitbox(shape.bounds(), HitboxBehavior::Normal), cursor));
-        painted.push(Painted { index: placed.index, shape, color: placed.color, hitbox });
+        let hitbox = cursor.map(|cursor| {
+            (
+                window.insert_hitbox(shape.bounds(), HitboxBehavior::Normal),
+                cursor,
+            )
+        });
+        painted.push(Painted {
+            index: placed.index,
+            shape,
+            color: placed.color,
+            hitbox,
+        });
     }
     (hitbox, Rc::new(painted))
 }
@@ -1030,7 +1158,10 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
             }
         }
         PaintedShape::Circle(centre, radius) => {
-            let bounds = Bounds::new(*centre - point(px(*radius), px(*radius)), size(px(radius * 2.), px(radius * 2.)));
+            let bounds = Bounds::new(
+                *centre - point(px(*radius), px(*radius)),
+                size(px(radius * 2.), px(radius * 2.)),
+            );
             window.paint_quad(fill(bounds, color).corner_radii(px(*radius)));
         }
         PaintedShape::Line(from, to, width) => {
@@ -1053,7 +1184,13 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
             path.move_to(on_circle(*from));
             // Clockwise on the screen is the positive way round of SVG, with y down.
             let radii = point(px(*radius), px(*radius));
-            path.arc_to(radii, px(0.), (to - from).abs() > 0.5, to > from, on_circle(*to));
+            path.arc_to(
+                radii,
+                px(0.),
+                (to - from).abs() > 0.5,
+                to > from,
+                on_circle(*to),
+            );
             if let Ok(path) = path.build() {
                 window.paint_path(path, color);
             }
@@ -1067,14 +1204,24 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 underline: None,
                 strikethrough: None,
             };
-            let shaped = window.text_system().shape_line(text.clone(), px(*font_size), &[run], None);
+            let shaped =
+                window
+                    .text_system()
+                    .shape_line(text.clone(), px(*font_size), &[run], None);
             let left = match align {
                 Align::Left => origin.x,
                 Align::Center => origin.x - shaped.width / 2.,
                 Align::Right => origin.x - shaped.width,
             };
             let line_height = px(font_size * 1.3);
-            if let Err(error) = shaped.paint(point(left, origin.y), line_height, TextAlign::Left, None, window, cx) {
+            if let Err(error) = shaped.paint(
+                point(left, origin.y),
+                line_height,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            ) {
                 eprintln!("error: a label of a card: {error}");
             }
         }
@@ -1099,7 +1246,8 @@ fn listen(
     window: &mut Window,
 ) {
     window.on_mouse_event({
-        let (frame, card, painted, hitbox) = (frame.clone(), card.clone(), painted.clone(), hitbox.clone());
+        let (frame, card, painted, hitbox) =
+            (frame.clone(), card.clone(), painted.clone(), hitbox.clone());
         move |event: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                 return;
@@ -1109,7 +1257,12 @@ fn listen(
                 return;
             }
             card.update(cx, |card, cx| {
-                if card.live.read(cx).info(card.card).is_some_and(|info| info.keys) {
+                if card
+                    .live
+                    .read(cx)
+                    .info(card.card)
+                    .is_some_and(|info| info.keys)
+                {
                     window.focus(&card.focus, cx);
                 }
                 card.press(&frame, target, bounds, event, cx);
@@ -1119,7 +1272,7 @@ fn listen(
         }
     });
     window.on_mouse_event({
-        let (frame, card, painted, hitbox) = (frame.clone(), card.clone(), painted.clone(), hitbox.clone());
+        let (frame, card, hitbox) = (frame.clone(), card.clone(), hitbox.clone());
         move |event: &MouseMoveEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
@@ -1134,7 +1287,10 @@ fn listen(
                     .filter(|_| over)
                     .and_then(|index| frame.pointed.get(index).cloned().flatten())
                     .map(|pointer| (frame.key.clone(), pointer.key));
-                let hovered_here = card.hovered.as_ref().is_some_and(|(space, _)| *space == frame.key);
+                let hovered_here = card
+                    .hovered
+                    .as_ref()
+                    .is_some_and(|(space, _)| *space == frame.key);
                 if hovered.is_some() || hovered_here {
                     card.hover(hovered, cx);
                 }
@@ -1160,7 +1316,8 @@ fn listen(
                 return;
             }
             let view = frame_now(&frame, &card, bounds, cx).scrolled(event, bounds);
-            card.update(cx, |card, cx| card.moved_space(&frame.key, view, cx)).ok();
+            card.update(cx, |card, cx| card.moved_space(&frame.key, view, cx))
+                .ok();
             cx.stop_propagation();
         }
     });
@@ -1171,14 +1328,20 @@ fn listen(
         }
         let factor = f64::from(1.0 + event.delta);
         let view = frame_now(&frame, &card, bounds, cx).zoomed(factor, bounds, event.position);
-        card.update(cx, |card, cx| card.moved_space(&frame.key, view, cx)).ok();
+        card.update(cx, |card, cx| card.moved_space(&frame.key, view, cx))
+            .ok();
         cx.stop_propagation();
     });
 }
 
 /// The frame with its view as the card has it now: several wheel events may come before the
 /// next draw.
-fn frame_now(frame: &SpaceFrame, card: &WeakEntity<TypeScriptCard>, bounds: Bounds<Pixels>, cx: &App) -> SpaceFrame {
+fn frame_now(
+    frame: &SpaceFrame,
+    card: &WeakEntity<TypeScriptCard>,
+    bounds: Bounds<Pixels>,
+    cx: &App,
+) -> SpaceFrame {
     let mut view = (card.upgrade())
         .and_then(|card| card.read(cx).spaces.borrow().get(&frame.key).copied())
         .unwrap_or(frame.view);
@@ -1207,7 +1370,10 @@ impl Render for TypeScriptCard {
         };
         // An ended drag lets go once the tree after its end arrived.
         let answered = self.live.read(cx).events_answered(self.card);
-        if let Some(Held { ended: Some((number, at)), .. }) = &self.held
+        if let Some(Held {
+            ended: Some((number, at)),
+            ..
+        }) = &self.held
             && (answered >= *number || at.elapsed() > ENDED_DRAG)
         {
             self.held = None;
@@ -1312,7 +1478,11 @@ impl Render for TypeScriptCard {
                 )
                 .absolute()
                 .size_full();
-                let room = div().relative().size_full().child(measure).child(body.size_full());
+                let room = div()
+                    .relative()
+                    .size_full()
+                    .child(measure)
+                    .child(body.size_full());
                 takes_keys(div().size_full().p(px(24.)).bg(background).child(room))
                     .into_any_element()
             }
@@ -1352,22 +1522,43 @@ mod tests {
             height: 200.0,
             ..SpaceView::default()
         };
-        let extent = tree::Ranges { x: Some([0.0, 38_400.0]), y: Some([0.0, 128.0]) };
-        let zoom = tree::Ranges { x: Some([0.25, 8.0]), y: None };
+        let extent = tree::Ranges {
+            x: Some([0.0, 38_400.0]),
+            y: Some([0.0, 128.0]),
+        };
+        let zoom = tree::Ranges {
+            x: Some([0.25, 8.0]),
+            y: None,
+        };
         let frame = frame(view, extent, zoom);
         let pointer = point(px(300.), px(150.));
         assert_eq!(frame.units_at(bounds, pointer), (2960.0, 10.0));
         let zoomed = frame.zoomed(2.0, bounds, pointer);
         assert_eq!(zoomed.zoom_x, 2.0);
         assert_eq!(zoomed.zoom_y, 1.0);
-        let after = SpaceFrame { view: zoomed, ..frame };
+        let after = SpaceFrame {
+            view: zoomed,
+            ..frame
+        };
         assert_eq!(after.units_at(bounds, pointer), (2960.0, 10.0));
     }
 
     #[test]
     fn a_space_scrolls_inside_its_extent_and_not_along_an_axis_without_one() {
-        let view = SpaceView { left: 100.0, top: 3.0, width: 400.0, height: 200.0, ..SpaceView::default() };
-        let held = clamped(view, &tree::Ranges { x: Some([0.0, 450.0]), y: None });
+        let view = SpaceView {
+            left: 100.0,
+            top: 3.0,
+            width: 400.0,
+            height: 200.0,
+            ..SpaceView::default()
+        };
+        let held = clamped(
+            view,
+            &tree::Ranges {
+                x: Some([0.0, 450.0]),
+                y: None,
+            },
+        );
         assert_eq!((held.left, held.top), (50.0, 0.0));
     }
 }

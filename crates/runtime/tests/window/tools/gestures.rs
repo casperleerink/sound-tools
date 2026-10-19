@@ -1,13 +1,16 @@
 //! What moves on a page moves in the window, with no Bun: a knob turns its field as one undo
 //! step, and a drag moves what binds to it; Bun hears the drag once, at its end.
 
-use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px};
+use gpui::{
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point, TestAppContext, point, px,
+};
 
 use super::{ONLY_THE_TOOL, Window, open};
 
 impl Window<'_> {
     fn press(&mut self, position: Point<Pixels>) {
-        self.cx.simulate_mouse_move(position, None, Modifiers::default());
+        self.cx
+            .simulate_mouse_move(position, None, Modifiers::default());
         self.cx.simulate_event(MouseDownEvent {
             position,
             modifiers: Modifiers::default(),
@@ -37,7 +40,9 @@ impl Window<'_> {
     /// The top left of the space of `key`, once it shows.
     fn space(&mut self, key: &str) -> Point<Pixels> {
         let selector: &'static str = format!("space-{key}").leak();
-        self.until(&format!("the space {key}"), |window| window.find(selector).is_some());
+        self.until(&format!("the space {key}"), |window| {
+            window.find(selector).is_some()
+        });
         self.cx.debug_bounds(selector).unwrap().origin
     }
 }
@@ -45,13 +50,19 @@ impl Window<'_> {
 fn project(name: &str, code: &str) -> [(String, String); 3] {
     [
         (ONLY_THE_TOOL[0].0.into(), ONLY_THE_TOOL[0].1.into()),
-        (format!("state/{name}.json"), format!(r#"{{"tool": "{name}", "state": {{}}}}"#)),
+        (
+            format!("state/{name}.json"),
+            format!(r#"{{"tool": "{name}", "state": {{}}}}"#),
+        ),
         (format!("extensions/{name}.ts"), code.into()),
     ]
 }
 
 fn open_project<'a>(cx: &'a mut TestAppContext, files: &[(String, String)]) -> Option<Window<'a>> {
-    let files: Vec<(&str, &str)> = files.iter().map(|(path, text)| (path.as_str(), text.as_str())).collect();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
     open(cx, &files)
 }
 
@@ -141,13 +152,22 @@ fn a_drag_moves_what_binds_to_it_and_bun_hears_it_once_at_its_end(cx: &mut TestA
         window.drag_to(block + point(px(step as f32 * 5.15), px(step as f32)));
     }
     // Twenty moves, and not one request to Bun.
-    assert_eq!(sound_typescript::sent_renders_and_events(), (renders, events));
+    assert_eq!(
+        sound_typescript::sent_renders_and_events(),
+        (renders, events)
+    );
     window.release(block + point(px(103.), px(20.)));
-    window.until("the block to move", |window| window.record("mover")["x"] == 200);
+    window.until("the block to move", |window| {
+        window.record("mover")["x"] == 200
+    });
     let (renders_after, events_after) = sound_typescript::sent_renders_and_events();
     assert_eq!(events_after, events + 1);
     // The new `x` it read draws once more.
-    assert!(renders_after - renders <= 1, "{} renders", renders_after - renders);
+    assert!(
+        renders_after - renders <= 1,
+        "{} renders",
+        renders_after - renders
+    );
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move the block"));
 }
@@ -212,7 +232,9 @@ fn a_drawing_drag_reaches_its_code_at_every_move_through_many_trees(cx: &mut Tes
     window.press(canvas + point(px(10.), px(0.)));
     for step in 1..=30 {
         window.drag_to(canvas + point(px(10. + step as f32 * 10.), px(0.)));
-        window.until("the move to land", |window| window.record("sketch")["x"] == (10. + step as f64 * 10.) / 400.);
+        window.until("the move to land", |window| {
+            window.record("sketch")["x"] == (10. + step as f64 * 10.) / 400.
+        });
     }
     window.release(canvas + point(px(310.), px(0.)));
 }

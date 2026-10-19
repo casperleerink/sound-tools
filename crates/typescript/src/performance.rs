@@ -81,8 +81,13 @@ fn next_tree(bun: &Bun, sent: Instant) -> (Duration, Value, u64) {
     let events = bun.events();
     loop {
         match smol::block_on(events.recv()) {
-            Ok(Event::Tree { tree: Ok((version, tree)), .. }) => return (sent.elapsed(), tree, version),
-            Ok(Event::Tree { tree: Err(error), .. }) => panic!("{error}"),
+            Ok(Event::Tree {
+                tree: Ok((version, tree)),
+                ..
+            }) => return (sent.elapsed(), tree, version),
+            Ok(Event::Tree {
+                tree: Err(error), ..
+            }) => panic!("{error}"),
             Ok(Event::Unchanged { .. }) => panic!("the same tree again: nothing to measure"),
             Ok(Event::Ended { why, .. }) => panic!("Bun ended: {why}"),
             Ok(_) => {}
@@ -101,8 +106,13 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
     write_sdk(folder.path(), &[]).unwrap();
     std::fs::write(folder.path().join("grid.ts"), GRID).unwrap();
     let host = host_script().unwrap();
-    let (bun, _) = Bun::start(&program, &host, (folder.path(), new_opening()), &["grid.ts"])
-        .unwrap_or_else(|failure| panic!("{}", failure.why));
+    let (bun, _) = Bun::start(
+        &program,
+        &host,
+        (folder.path(), new_opening()),
+        &["grid.ts"],
+    )
+    .unwrap_or_else(|failure| panic!("{}", failure.why));
     let id = InstanceId::new("grid").unwrap();
     let page = Some(PageSize {
         width: 1400,
@@ -139,8 +149,14 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
             }
             let kind = if canvas == 1 { "canvas" } else { "space" };
             println!("{count} shapes, {kind}: a tree is {bytes} bytes");
-            print(&format!("{count} shapes, {kind}: render asked to tree here"), trips);
-            print(&format!("{count} shapes, {kind}: the tree parsed in Rust"), parses);
+            print(
+                &format!("{count} shapes, {kind}: render asked to tree here"),
+                trips,
+            );
+            print(
+                &format!("{count} shapes, {kind}: the tree parsed in Rust"),
+                parses,
+            );
             if canvas == 1 {
                 // What one drag step cost before live values: Bun runs `onDrag` and draws again.
                 let (tree, mut version) = tree;
@@ -159,7 +175,12 @@ fn performance_of_bun_and_live_values_for_many_shapes() {
                     version = drawn;
                     steps.push(trip);
                 }
-                print(&format!("{count} shapes, canvas: one drag step through Bun, move to tree here"), steps);
+                print(
+                    &format!(
+                        "{count} shapes, canvas: one drag step through Bun, move to tree here"
+                    ),
+                    steps,
+                );
             }
         }
     }

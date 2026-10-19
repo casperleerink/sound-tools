@@ -27,7 +27,7 @@ pub(crate) enum Node {
         path: String,
         label: Option<String>,
     },
-    Space(SpaceNode),
+    Space(Box<SpaceNode>),
 }
 
 /// What of the window a tree moves with, without asking for a new tree.
@@ -162,10 +162,13 @@ pub(crate) struct Shape {
 
 impl Shape {
     fn numbers(&self) -> impl Iterator<Item = &Num> {
-        let reaches = [&self.from, &self.to].into_iter().flatten().flat_map(|reach| match reach {
-            Reach::Point([x, y]) => vec![x, y],
-            Reach::Turn(turn) => vec![turn],
-        });
+        let reaches = [&self.from, &self.to]
+            .into_iter()
+            .flatten()
+            .flat_map(|reach| match reach {
+                Reach::Point([x, y]) => vec![x, y],
+                Reach::Turn(turn) => vec![turn],
+            });
         let words = match &self.text {
             Some(Words::Live(live)) => Some(live),
             _ => None,
@@ -187,7 +190,10 @@ impl Shape {
 
     /// Whether the pointer can do something with it, so it is found under the pointer.
     pub(crate) fn is_pointed(&self) -> bool {
-        self.on_press.is_some() || self.drag.is_some() || self.hover.is_some() || self.cursor.is_some()
+        self.on_press.is_some()
+            || self.drag.is_some()
+            || self.hover.is_some()
+            || self.cursor.is_some()
     }
 }
 

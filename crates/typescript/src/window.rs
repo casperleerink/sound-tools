@@ -610,7 +610,11 @@ impl Live {
         if self.host.send(&request) {
             entry.asked = true;
             entry.transport = Some(clock.transport);
-            entry.asked_record = session.read(cx).project().state_json(&entry.id).and_then(|text| serde_json::from_str(&text).ok());
+            entry.asked_record = session
+                .read(cx)
+                .project()
+                .state_json(&entry.id)
+                .and_then(|text| serde_json::from_str(&text).ok());
         }
     }
 
@@ -691,12 +695,16 @@ impl Live {
 
     /// How many presses and drags of the card its code answered with a tree.
     pub(crate) fn events_answered(&self, card: u64) -> u64 {
-        self.cards.get(&card).map_or(0, |entry| entry.events_answered)
+        self.cards
+            .get(&card)
+            .map_or(0, |entry| entry.events_answered)
     }
 
     /// What the live values of the card's tree move with.
     pub(crate) fn uses(&self, card: u64) -> Uses {
-        self.cards.get(&card).map_or(Uses::default(), |entry| entry.uses)
+        self.cards
+            .get(&card)
+            .map_or(Uses::default(), |entry| entry.uses)
     }
 
     /// Where each live control of the instance was put last.
@@ -717,8 +725,12 @@ impl Live {
                 (Some(names), Some(drawn)) => {
                     let now = (session.read(cx).project().state_json(id))
                         .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-                    let field = |record: Option<&Value>, name: &String| record.and_then(|record| record.get(name)).cloned();
-                    names.iter().any(|name| field(now.as_ref(), name) != field(Some(drawn), name))
+                    let field = |record: Option<&Value>, name: &String| {
+                        record.and_then(|record| record.get(name)).cloned()
+                    };
+                    names
+                        .iter()
+                        .any(|name| field(now.as_ref(), name) != field(Some(drawn), name))
                 }
                 _ => true,
             }

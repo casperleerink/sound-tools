@@ -140,7 +140,12 @@ impl Sources<'_> {
                 Some((held, numbers)) if held == id => numbers.part(*part),
                 _ => DragNumbers::default().part(*part),
             },
-            Live::Space { key, part } => self.spaces.get(key).copied().unwrap_or_default().part(*part),
+            Live::Space { key, part } => self
+                .spaces
+                .get(key)
+                .copied()
+                .unwrap_or_default()
+                .part(*part),
             Live::Plus { a, b } => self.number(a) + self.number(b),
             Live::Minus { a, b } => self.number(a) - self.number(b),
             Live::Times { a, b } => self.number(a) * self.number(b),
