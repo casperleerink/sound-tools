@@ -638,11 +638,7 @@ Seven, as cut. What was a concept and is now a child or a helper: the sequencer 
 
 **Rust blocks** a project composes: `timeline`, `lane`, `region`, `recorder`, `fader`, `meter`; the instruments `instrument.synth`, `wavetable`, `sampler`, `drum-pad`; the effects `filter`, `eq`, `compressor`, `gate`, `limiter`, `reverb`, `delay`, `saturator`, `modulation`, `utility`, `analyzer`, `tone`; `plugin`. None names a track or a clip.
 
-**What still names the arrangement**, as `tooling/workspace-rules` lists it: its registration calls, the default template, its chrome, and `--solo` (which plays its tracks). A TS project needs none of it.
-
-**Open decisions for Casper:**
-- The default template (above).
-- `devices` in a `sound` next to device children: two roads to a built-in effect. Kept until an eval says which agents use well.
+**Open decisions for Casper** (the first two decided in round 13):
 - Notes are the only event kind; the timeline's lanes are what a clip needed. A second kind waits for a tool that needs one.
 
 **Known gaps:**
@@ -654,3 +650,27 @@ Seven, as cut. What was a concept and is now a child or a helper: the sequencer 
 - Copied notes and copied clips are two clipboards: cmd-V pastes notes while the editor is open.
 - `"*"` children and named children cannot be optional.
 - A view's child records are not filled with defaults as an update's are.
+
+### Round 13
+
+Casper's three decisions: templates behind one "New project…", the Rust arrangement deleted, one road to a built-in effect.
+
+**Templates.** "New project…" (menu, cmd-N, the start window) opens a small window of templates, one row each with what its `template.json` says; a pick asks where the project goes. A template is a folder of `templates/`: `build.rs` embeds every one, so a new template is a new folder and no line of code. Bare is a folder with only its `template.json`: the core's empty project. An empty folder opened directly is Bare too.
+
+**The arrangement is gone**: `extensions/arrangement`, `extensions/fit-tempo`, `arrangement_wiring`, the window's `Chrome` (the title row shows the live input), `--solo`, the main tool's take in `LiveInput` and the keyboard's recording in `midi` (the `recorder` block records), arm levels and MIDI takes in `Recording`, the summary hook of the core, the sidechain picker and drag grip of `CardFrame`, the lane names and takes of plugin numbers, and the workspace rule that listed where the runtime named it. 283 files, about 54,000 lines out, 2,400 in.
+
+**One road to a built-in effect.** `devices.reverb(...)` inside a `sound` is gone, and with it stages, `Program`, the device and import nodes of a graph, stage ports of `Signals`, `in_code` and the parts of a behaviour (`BehaviourContext::part`). A built-in effect is a child; the DSP functions for writing one's own stay.
+
+**Tests that hosted devices in the arrangement** now put them in a `rack`, a TS tool of 40 lines the tests share (`tests/shared/rack.rs`): a chain of children after an `instrument`, timelines into it, lanes onto numbers, a card per child. Device cards (window), device sound (projects), plugins, latency, export, the summary and the agent sidebar run on it; the snapshots render every built-in card in it (`cards-*.png`, the Wavetable pages, the templates window). Tests whose point was the arrangement itself went: clips, editing, track panel, returns, fit, its transport and recording. A test reads the view of a card a page shows with `sound_typescript::embedded_view`. Window and project tests now need Bun, as the app ships it.
+
+**Two bugs the move found:** a page's `size` threw on a window resize (the host reconciled through the read-only store; a test now resizes), and a knob a cable moves showed its lane only once the playhead moved: `Lanes` now looks once per poll.
+
+**Checks:** 1589 tests pass (nextest, workspace), clippy with `-D warnings`, `cargo shear`, `typos`, workspace-rules; `bun check` of the SDK types runs inside the tests.
+
+**Left for the cleanup round:**
+- `tooling/agent-eval` scenarios before round 12 and `tooling/perf` (`bench.py`, `projects.py`) still write arrangement projects: port them to the DAW template or retire them.
+- The core's `derive` hook has no user left but its own test (fit tempo was it).
+- The DAW template has no instrument picker: a track's `synth` is typed `instrument.synth`, so a Sampler or a plugin there is a problem of the track.
+- Headless snapshots show no meter motion: card meters poll on timers the snapshot loop does not run.
+- Two window harnesses (`support::Opened`, `tools::Window`) do the same work.
+
