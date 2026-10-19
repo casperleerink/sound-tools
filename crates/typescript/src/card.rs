@@ -887,6 +887,7 @@ impl Drawing<'_, '_> {
             extent: space.extent.unwrap_or_default(),
             zoom: space.zoom.unwrap_or_default(),
         });
+        let selector = format!("space-{}", frame.key);
         let card = self.cx.entity().downgrade();
         let spaces = self.laid_out.clone();
         let element = canvas(
@@ -904,16 +905,17 @@ impl Drawing<'_, '_> {
                 listen(&frame, &card, bounds, hitbox, painted, window);
             },
         );
-        let element = match space.width {
-            Some(width) => element.w(px(width)),
-            None => element.w_full(),
+        let holder = div().debug_selector(move || selector).child(element.size_full());
+        let holder = match space.width {
+            Some(width) => holder.w(px(width)),
+            None => holder.w_full(),
         };
-        let element = match space.height {
-            Some(height) => element.h(px(height)),
-            None => element.h_full(),
+        let holder = match space.height {
+            Some(height) => holder.h(px(height)),
+            None => holder.h_full(),
         };
-        let element = if space.grow { element.flex_grow(1.).min_h_0() } else { element.flex_none() };
-        element.into_any_element()
+        let holder = if space.grow { holder.flex_grow(1.).min_h_0() } else { holder.flex_none() };
+        holder.into_any_element()
     }
 }
 

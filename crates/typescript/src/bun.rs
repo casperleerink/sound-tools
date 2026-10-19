@@ -425,10 +425,18 @@ static NEXT_BUN: AtomicU64 = AtomicU64::new(0);
 static NEXT_OPENING: AtomicU64 = AtomicU64::new(0);
 
 static SENT_BYTES: AtomicU64 = AtomicU64::new(0);
+static SENT_RENDERS: AtomicU64 = AtomicU64::new(0);
+static SENT_EVENTS: AtomicU64 = AtomicU64::new(0);
 
 /// How many bytes this process told every Bun, for a test of what a frame costs.
 pub fn sent_bytes() -> u64 {
     SENT_BYTES.load(Ordering::Relaxed)
+}
+
+/// How many trees this process asked every Bun for, and how many presses and drags it told,
+/// for a test that a drag does not cross to Bun.
+pub fn sent_renders_and_events() -> (u64, u64) {
+    (SENT_RENDERS.load(Ordering::Relaxed), SENT_EVENTS.load(Ordering::Relaxed))
 }
 
 /// A number for one opening of a project, which every Bun of it runs for: the first, and those
@@ -559,6 +567,11 @@ impl Bun {
         let sent = self.lines.try_send(line).is_ok();
         if sent {
             SENT_BYTES.fetch_add(length, Ordering::Relaxed);
+            match request {
+                Request::Render { .. } => SENT_RENDERS.fetch_add(1, Ordering::Relaxed),
+                Request::Event { .. } => SENT_EVENTS.fetch_add(1, Ordering::Relaxed),
+                _ => 0,
+            };
         } else {
             let mut busy = lock();
             busy.pending = busy.pending.saturating_sub(1);

@@ -16,7 +16,7 @@ impl Window<'_> {
     }
 
     /// Polls once the runs of edits went quiet, so they are written and undoable.
-    fn after_the_runs(&mut self) {
+    pub(super) fn after_the_runs(&mut self) {
         std::thread::sleep(RUN_QUIET + Duration::from_millis(50));
         self.poll();
     }
@@ -29,7 +29,7 @@ impl Window<'_> {
             .read(|cx| session.read(cx).project().redo_label().map(String::from))
     }
 
-    fn undo_label(&mut self) -> Option<String> {
+    pub(super) fn undo_label(&mut self) -> Option<String> {
         let session = self.session.clone();
         self.cx
             .read(|cx| session.read(cx).project().undo_label().map(String::from))

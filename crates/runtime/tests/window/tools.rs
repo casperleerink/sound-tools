@@ -23,6 +23,7 @@ use crate::plugin_hosts::scanner;
 use crate::support::{id, peak};
 
 mod edits;
+mod gestures;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
