@@ -30,7 +30,8 @@ impl Project {
     /// run is one undo step, written once when it finishes. The poll finishes a run once it is
     /// quiet for [`RUN_QUIET`] or older than [`RUN_LONGEST`] (see
     /// [`Self::finish_quiet_runs_at`]); so do an undo and a redo, so undo takes back what the
-    /// composer just saw happen, and the first publish of another edit.
+    /// composer just saw happen, the first publish of another edit, and a run of another label
+    /// of the same editor.
     pub fn publish_run(
         &mut self,
         by: &InstanceId,
@@ -49,6 +50,11 @@ impl Project {
         at: Instant,
     ) -> Result<(), ProjectError> {
         let open = (self.runs.iter()).position(|run| run.by == *by && run.label == label);
+        if open.is_none() {
+            // Another label of the same editor ends its run first, so each is its own undo
+            // step, in order, even when both change one record.
+            self.finish_runs_where(|run| run.by == *by)?;
+        }
         let mut run = match open {
             Some(index) => self.runs.swap_remove(index),
             None => Run {
