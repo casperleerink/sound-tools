@@ -10,24 +10,24 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity,
-    ExternalPaths, FocusHandle, Focusable, Hitbox,
-    HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
-    ScrollWheelEvent, SharedString, StyleRefinement, TextAlign, TextRun, WeakEntity, Window,
-    canvas, div, fill, outline, point, prelude::*, px, size,
+    ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement,
+    TextAlign, TextRun, WeakEntity, Window, canvas, div, fill, outline, point, prelude::*, px,
+    size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
+use sound_media::AudioAsset;
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
-use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
-use sound_media::AudioAsset;
+use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::{
     ActiveTheme, ControlEdit, Devices, LiveBody, Session, Views, Waveforms, typography,
 };
@@ -392,7 +392,11 @@ impl TypeScriptCard {
         let focus = input.focus_handle(cx);
         // What was typed counts when the field loses the keys too.
         cx.on_blur(&focus, window, move |view, _, cx| {
-            if let Some(text) = view.inputs.get(&node).map(|(input, _)| input.read(cx).text().to_string()) {
+            if let Some(text) = view
+                .inputs
+                .get(&node)
+                .map(|(input, _)| input.read(cx).text().to_string())
+            {
                 view.commit(node, &text, cx);
             }
         })
@@ -438,7 +442,12 @@ impl TypeScriptCard {
         let path = props.instance.as_deref()?;
         let instance = (path.split('/')).try_fold(self.id.clone(), |id, name| id.child(name));
         let instance = instance.ok()?;
-        let tool = self.session.read(cx).project().tool_of(&instance)?.to_string();
+        let tool = self
+            .session
+            .read(cx)
+            .project()
+            .tool_of(&instance)?
+            .to_string();
         let on = props.on.unwrap_or(true);
         let icons = (props.on_power == Some(true), props.on_close == Some(true));
         if let Some(old) = self.embedded.remove(&node)
@@ -504,7 +513,8 @@ impl TypeScriptCard {
         let menu = match self.menu.take() {
             Some((menu, waiting)) => {
                 if let Some(waiting) = waiting {
-                    self.live.update(cx, |live, _| live.menu_picked(waiting, None));
+                    self.live
+                        .update(cx, |live, _| live.menu_picked(waiting, None));
                 }
                 menu
             }
@@ -1360,7 +1370,9 @@ impl Drawing<'_, '_> {
             Props::Input(_) => match self.inputs.get(&id) {
                 Some((input, _)) => {
                     let width = match &entry.props {
-                        Props::Input(InputProps { width: Some(width), .. }) => *width,
+                        Props::Input(InputProps {
+                            width: Some(width), ..
+                        }) => *width,
                         _ => 160.0,
                     };
                     div().w(px(width)).child(input.clone()).into_any_element()
@@ -1368,7 +1380,9 @@ impl Drawing<'_, '_> {
                 None => div().into_any_element(),
             },
             Props::Card(_) => match self.embedded.get(&id) {
-                Some(Embedded { view: Some(view), .. }) => view.clone().into_any_element(),
+                Some(Embedded {
+                    view: Some(view), ..
+                }) => view.clone().into_any_element(),
                 // A tool with no card shows its frame with its name.
                 Some(Embedded { frame, .. }) => frame.card().into_any_element(),
                 None => div().into_any_element(),
@@ -1460,21 +1474,25 @@ impl Drawing<'_, '_> {
                             )
                     });
                 let element = match carry {
-                    Some(carry) => element.on_drag(
-                        Carried(carry.clone()),
-                        |carried: &Carried, _, _, cx| cx.new(|_| carried.clone()),
-                    ),
+                    Some(carry) => element
+                        .on_drag(Carried(carry.clone()), |carried: &Carried, _, _, cx| {
+                            cx.new(|_| carried.clone())
+                        }),
                     None => element,
                 };
                 if *on_drop != Some(true) {
                     return element.into_any_element();
                 }
                 element
-                    .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
+                    .drag_over::<ExternalPaths>(move |style, _, _, _| {
+                        style.bg(lavender.opacity(0.2))
+                    })
                     .drag_over::<Carried>(move |style, _, _, _| style.bg(lavender.opacity(0.2)))
-                    .on_drop((self.cx).listener(move |view, paths: &ExternalPaths, _, cx| {
-                        view.drop_files(id, paths.paths().to_vec(), (0.0, 0.0), cx);
-                    }))
+                    .on_drop(
+                        (self.cx).listener(move |view, paths: &ExternalPaths, _, cx| {
+                            view.drop_files(id, paths.paths().to_vec(), (0.0, 0.0), cx);
+                        }),
+                    )
                     .on_drop((self.cx).listener(move |view, carried: &Carried, _, cx| {
                         let dropped = json!({ "files": [], "carried": carried.0, "x": 0, "y": 0 });
                         view.event(id, EventKind::Drop, dropped, cx);
@@ -1566,20 +1584,20 @@ impl Drawing<'_, '_> {
                 }
             },
             {
-            let (frame, painted_at) = (frame.clone(), painted_at.clone());
-            move |bounds: Bounds<Pixels>,
-                  (hitbox, painted): (Hitbox, Rc<Vec<Painted>>),
-                  window: &mut Window,
-                  cx: &mut App| {
-                painted_at.set(Some(bounds));
-                // The size it was laid out at, for live values of what shows and the next scroll.
-                if let Some(view) = spaces.borrow_mut().get_mut(&frame.key) {
-                    view.width = f64::from(f32::from(bounds.size.width));
-                    view.height = f64::from(f32::from(bounds.size.height));
+                let (frame, painted_at) = (frame.clone(), painted_at.clone());
+                move |bounds: Bounds<Pixels>,
+                      (hitbox, painted): (Hitbox, Rc<Vec<Painted>>),
+                      window: &mut Window,
+                      cx: &mut App| {
+                    painted_at.set(Some(bounds));
+                    // The size it was laid out at, for live values of what shows and the next scroll.
+                    if let Some(view) = spaces.borrow_mut().get_mut(&frame.key) {
+                        view.width = f64::from(f32::from(bounds.size.width));
+                        view.height = f64::from(f32::from(bounds.size.height));
+                    }
+                    paint(&frame, bounds, &hitbox, &painted, window, cx);
+                    listen(&frame, &card, bounds, hitbox, painted, window);
                 }
-                paint(&frame, bounds, &hitbox, &painted, window, cx);
-                listen(&frame, &card, bounds, hitbox, painted, window);
-            }
             },
         );
         let holder = div()
@@ -1612,15 +1630,19 @@ impl Drawing<'_, '_> {
         holder
             .id(element_id)
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(lavender.opacity(0.1)))
-            .on_drop((self.cx).listener(move |view, paths: &ExternalPaths, window, cx| {
-                let at = dropped_files(window);
-                view.drop_files(id, paths.paths().to_vec(), at, cx);
-            }))
-            .on_drop((self.cx).listener(move |view, carried: &Carried, window, cx| {
-                let (x, y) = units(window);
-                let dropped = json!({ "files": [], "carried": carried.0, "x": x, "y": y });
-                view.event(id, EventKind::Drop, dropped, cx);
-            }))
+            .on_drop(
+                (self.cx).listener(move |view, paths: &ExternalPaths, window, cx| {
+                    let at = dropped_files(window);
+                    view.drop_files(id, paths.paths().to_vec(), at, cx);
+                }),
+            )
+            .on_drop(
+                (self.cx).listener(move |view, carried: &Carried, window, cx| {
+                    let (x, y) = units(window);
+                    let dropped = json!({ "files": [], "carried": carried.0, "x": x, "y": y });
+                    view.event(id, EventKind::Drop, dropped, cx);
+                }),
+            )
             .into_any_element()
     }
 }

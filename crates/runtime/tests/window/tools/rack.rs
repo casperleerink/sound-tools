@@ -17,7 +17,10 @@ fn open_rack(cx: &mut TestAppContext) -> Option<Window<'_>> {
     let mut files = song_files(2, 2);
     files.retain(|(path, _)| path != "state/song/t00/chain/instance.json");
     for (path, record) in [
-        ("chain/instance.json", r#"{"tool": "chain", "state": {"order": ["room", "trim"]}}"#),
+        (
+            "chain/instance.json",
+            r#"{"tool": "chain", "state": {"order": ["room", "trim"]}}"#,
+        ),
         ("chain/room.json", r#"{"tool": "reverb", "state": {}}"#),
         ("chain/trim.json", r#"{"tool": "utility", "state": {}}"#),
     ] {
@@ -107,9 +110,15 @@ fn an_effect_picked_from_the_menu_of_offers_joins_the_chain_as_one_undo_step(
     let item = window.until_found(item);
     window.click(item);
     window.until("the reverb added", |window| {
-        window.chain_order().as_array().is_some_and(|order| order.len() == 3)
+        window
+            .chain_order()
+            .as_array()
+            .is_some_and(|order| order.len() == 3)
     });
-    assert_eq!(window.chain_order(), serde_json::json!(["room", "trim", "reverb"]));
+    assert_eq!(
+        window.chain_order(),
+        serde_json::json!(["room", "trim", "reverb"])
+    );
     assert!(window.has("song/t00/chain/reverb"));
     window.after_the_runs();
     window.undo();
@@ -130,7 +139,9 @@ fn the_icons_of_an_effect_card_turn_it_off_and_take_it_out(cx: &mut TestAppConte
     });
     let close = window.until_found("card-song/t00/chain/trim-close");
     window.click(close);
-    window.until("the trim taken out", |window| !window.has("song/t00/chain/trim"));
+    window.until("the trim taken out", |window| {
+        !window.has("song/t00/chain/trim")
+    });
     assert_eq!(window.chain_order(), serde_json::json!(["room"]));
     window.after_the_runs();
     assert_eq!(window.undo().as_deref(), Some("Remove an effect"));
@@ -170,7 +181,10 @@ fn a_track_is_renamed_in_a_text_field_and_space_types_there(cx: &mut TestAppCont
     window.double_click(name);
     window.cx.simulate_input("Bass");
     window.cx.simulate_keystrokes("space");
-    assert!(!window.playing(), "space plays nothing while a field has the keys");
+    assert!(
+        !window.playing(),
+        "space plays nothing while a field has the keys"
+    );
     window.cx.simulate_input("line");
     window.cx.simulate_keystrokes("enter");
     window.until("the title changed", |window| {

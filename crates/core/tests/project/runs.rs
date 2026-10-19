@@ -170,7 +170,13 @@ fn another_label_ends_the_run_before_it() {
     let dc = connected_dc(&mut harness);
     let start = Instant::now();
     edit_each_frame(&mut harness, &dc, ("One", 1), start, 1);
-    edit_each_frame(&mut harness, &dc, ("Two", 2), start + Duration::from_millis(100), 1);
+    edit_each_frame(
+        &mut harness,
+        &dc,
+        ("Two", 2),
+        start + Duration::from_millis(100),
+        1,
+    );
     assert_eq!(harness.project.undo().unwrap().as_deref(), Some("Two"));
     assert_eq!(harness.level(), 0.001);
     assert_eq!(harness.project.undo().unwrap().as_deref(), Some("One"));

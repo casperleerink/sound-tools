@@ -150,7 +150,10 @@ pub(crate) fn snapshots(
     // The fourth track, whose devices show, has a reverb in its chain and a utility turned off.
     files.retain(|(path, _)| path != "state/song/t03/chain/instance.json");
     for (path, record) in [
-        ("chain/instance.json", r#"{"tool": "chain", "state": {"order": ["room", "trim"], "off": ["trim"]}}"#),
+        (
+            "chain/instance.json",
+            r#"{"tool": "chain", "state": {"order": ["room", "trim"], "off": ["trim"]}}"#,
+        ),
         ("chain/room.json", r#"{"tool": "reverb", "state": {}}"#),
         ("chain/trim.json", r#"{"tool": "utility", "state": {}}"#),
     ] {

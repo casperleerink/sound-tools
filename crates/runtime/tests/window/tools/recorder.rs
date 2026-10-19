@@ -186,7 +186,9 @@ fn the_song_records_its_voice_into_a_region_on_its_row(cx: &mut TestAppContext) 
     window.wait_for_bun();
     let record = window.until_found("div-record");
     window.cx.simulate_click(record, Modifiers::default());
-    window.until("the input opens", |_| input.openings.load(Ordering::Relaxed) == 1);
+    window.until("the input opens", |_| {
+        input.openings.load(Ordering::Relaxed) == 1
+    });
     window.record_for(&input, 48_000);
     window.cx.simulate_click(record, Modifiers::default());
     window.until("a region of the voice", |window| {
