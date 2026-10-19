@@ -167,7 +167,7 @@ tool({
   transport: true,
   page: ({ size, update }) =>
     h("div", {
-      style: { width: size.width, height: size.height },
+      style: () => ({ width: size.width, height: size.height }),
       onClick: () => update("Write a bass line", ({ children }) => {
         const bass = children.find((child) => child.name === "bass")!.state as SequencerState;
         bass.patterns = [{ length: 3840, notes: [{ start: 0, length: 3840, pitch: 45, velocity: 100 }] }];

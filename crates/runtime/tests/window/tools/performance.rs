@@ -14,8 +14,8 @@ use super::{ONLY_THE_TOOL, Window, open};
 
 /// `count` notes of a piano roll, all in a group the drag `move` moves, as selected notes are,
 /// with a colour of their own under the pointer; or with `canvas`, the same notes on a canvas
-/// whose drag moves the first one through the code, as a drag did before live values.
-const GRID: &str = r##"import { Canvas, Group, h, number, Rect, Space, tool, type Drag, type Shape } from "./sdk";
+/// whose drag moves the first one through the code, which makes every shape again.
+const GRID: &str = r##"import { Canvas, For, Group, h, number, Rect, Space, tool, type Drag, type ShapeLiteral } from "./sdk";
 
 tool({
   name: "grid",
@@ -27,29 +27,22 @@ tool({
   memory: () => ({ x: 0 }),
   sound: () => 0,
   page: ({ state, memory, now }) => {
-    const notes = Array.from({ length: state.count }, (_, index) => ({ start: (index % 64) * 240, pitch: 36 + (index % 48) }));
-    if (state.canvas === 1) {
-      const shapes: Shape[] = notes.map((note, index) => ({
-        kind: "rect", x: (index === 0 ? memory.x : note.start) / 10, y: note.pitch * 4, width: 24, height: 4, color: "#a9b1ff",
-      }));
-      return h(Canvas, { width: 1200, height: 600, shapes, onDrag: (x) => { memory.x = x * 12000; } });
-    }
+    const notes = () => Array.from({ length: state.count }, (_, index) => ({ start: (index % 64) * 240, pitch: 36 + (index % 48) }));
+    const canvas = () => state.canvas === 1;
+    const shapes = (): ShapeLiteral[] => notes().map((note, index) => ({
+      kind: "rect", x: (index === 0 ? memory.x : note.start) / 10, y: note.pitch * 4, width: 24, height: 4, color: "#a9b1ff",
+    }));
     const move = now.drag("move");
     const drag: Drag = { id: "move", snap: { x: 240, y: 1 }, onEnd: () => {} };
-    return h(Space, { key: "roll", width: 1200, height: 600, unit: { x: 0.1, y: 4 } },
-      h(Group, { x: move.dx, y: move.dy },
-        notes.map((note, index) => h(Rect, {
-          key: String(index),
-          x: note.start,
-          y: note.pitch,
-          width: 240,
-          height: 1,
-          color: "#a9b1ff",
-          hover: "#e9ebef",
-          drag,
-        })),
-      ),
-    );
+    return () => canvas()
+      ? h(Canvas, { width: 1200, height: 600, shapes, onDrag: (x) => { memory.x = x * 12000; } })
+      : h(Space, { key: "roll", width: 1200, height: 600, unit: { x: 0.1, y: 4 } },
+          h(Group, { x: move.dx, y: move.dy },
+            h(For<{ start: number; pitch: number }>, { each: notes }, (note) => h(Rect, {
+              x: note.start, y: note.pitch, width: 240, height: 1, color: "#a9b1ff", hover: "#e9ebef", drag,
+            })),
+          ),
+        );
   },
 });
 "##;
@@ -180,7 +173,7 @@ fn measure(cx: &mut TestAppContext, count: usize) {
         &format!("{count} shapes: a frame with no drag, drawn again"),
         hovering,
     );
-    let asked = sound_typescript::sent_renders_and_events();
+    let asked = sound_typescript::sent_updates_and_events();
     window.down(note);
     let dragging: Vec<Duration> = (1..=MOVES)
         .map(|step| {
@@ -192,92 +185,127 @@ fn measure(cx: &mut TestAppContext, count: usize) {
             })
         })
         .collect();
-    let (renders, events) = sound_typescript::sent_renders_and_events();
+    let (updates, events) = sound_typescript::sent_updates_and_events();
     print(
         &format!("{count} shapes: a frame while every shape moves with the drag"),
         dragging,
     );
     println!(
-        "{count} shapes: {} renders and {} events asked of Bun in {MOVES} moves",
-        renders - asked.0,
+        "{count} shapes: {} updates and {} events told Bun in {MOVES} moves",
+        updates - asked.0,
         events - asked.1
     );
     window.up(note + point(px(MOVES as f32 * 3.), px(MOVES as f32)));
 }
 
-/// The old road: every move runs the code, which draws a new tree.
+/// The old road: every move runs the code, which makes the canvas again.
 fn measure_old(cx: &mut TestAppContext, count: usize) {
     let Some(mut window) = open_grid(cx, count, true) else {
         return;
     };
-    let canvas = window.origin("space-space-");
+    let canvas = window.origin("space-space-0");
     let at = canvas + point(px(100.), px(100.));
     window.down(at);
-    let asked = sound_typescript::sent_renders_and_events();
+    let asked = sound_typescript::sent_updates_and_events();
     let mut latencies = Vec::new();
     for step in 1..=MOVES {
-        let heard = sound_typescript::heard_trees();
+        let heard = sound_typescript::heard_batches();
         let started = Instant::now();
         let to = at + point(px(step as f32 * 3.), px(0.));
         window
             .cx
             .simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
-        // Until the tree of this move is drawn: Bun answers on a thread of its own.
-        while sound_typescript::heard_trees() == heard {
+        // Until the ops of this move are drawn: Bun answers on a thread of its own.
+        while sound_typescript::heard_batches() == heard {
             window.cx.run_until_parked();
             if started.elapsed() > Duration::from_secs(5) {
                 let problems = window.problems();
                 panic!(
-                    "no tree came: {:?} {:?} {problems:?}",
+                    "no ops came: {:?} {:?} {problems:?}",
                     asked,
-                    sound_typescript::sent_renders_and_events()
+                    sound_typescript::sent_updates_and_events()
                 );
             }
         }
         window.cx.run_until_parked();
         latencies.push(started.elapsed());
     }
-    let (renders, events) = sound_typescript::sent_renders_and_events();
+    let (updates, events) = sound_typescript::sent_updates_and_events();
     print(
-        &format!("{count} shapes, canvas: a move until its tree is drawn"),
+        &format!("{count} shapes, canvas: a move until its ops are drawn"),
         latencies,
     );
     println!(
-        "{count} shapes, canvas: {} renders and {} events asked of Bun in {MOVES} moves",
-        renders - asked.0,
+        "{count} shapes, canvas: {} updates and {} events told Bun in {MOVES} moves",
+        updates - asked.0,
         events - asked.1
     );
     window.up(at);
 }
 
-/// 2,000 notes of the piano roll of `tooling/agent-eval/examples`: 16 pitches from 56 on every
-/// sixteenth for 125 sixteenths.
-fn many_notes() -> serde_json::Value {
-    let notes: Vec<serde_json::Value> = (0..2_000)
+/// `count` notes of the piano roll of `tooling/agent-eval/examples`: `rows` pitches from 56 on
+/// every sixteenth.
+fn many_notes(count: usize, rows: usize) -> serde_json::Value {
+    let notes: Vec<serde_json::Value> = (0..count)
         .map(|index| {
             serde_json::json!({
-                "start": (index / 16) * 240, "length": 200, "pitch": 56 + index % 16, "velocity": 40 + index % 80,
+                "start": (index / rows) * 240, "length": 200, "pitch": 40 + index % rows, "velocity": 40 + index % 80,
             })
         })
         .collect();
     serde_json::Value::Array(notes)
 }
 
-/// The piano roll with 2,000 notes: frames as the pointer hovers, as it scrolls, as it zooms
-/// and as it drags 512 selected notes, and how long a release takes to come back as a tree.
 #[gpui::test]
 #[ignore = "a measurement, not a check; run it locally and read the printed times"]
 fn performance_of_the_piano_roll_of_2000_notes(cx: &mut TestAppContext) {
-    let heard = sound_typescript::heard_tree_bytes();
-    let Some(mut window) = open_roll(cx, &many_notes()) else {
+    measure_roll(cx, 2_000, 16);
+}
+
+#[gpui::test]
+#[ignore = "a measurement, not a check; run it locally and read the printed times"]
+fn performance_of_the_piano_roll_of_20000_notes(cx: &mut TestAppContext) {
+    measure_roll(cx, 20_000, 64);
+}
+
+impl Window<'_> {
+    /// Waits for the next batch of ops and its frame: how long from `started`, and what it cost.
+    fn next_batch(&mut self, what: &str, started: Instant, batches: u64, bytes: u64) {
+        while sound_typescript::heard_batches() == batches {
+            self.cx.run_until_parked();
+            assert!(started.elapsed() < Duration::from_secs(10), "no ops came");
+        }
+        let heard = started.elapsed();
+        let frame = self.timed(|window| window.cx.update(|window, _| window.refresh()));
+        let (bun, apply) = sound_typescript::last_batch();
+        println!(
+            "{what}: {:?} until drawn; Bun {bun:.2} ms, {} bytes, apply {apply:.2} ms, frame {frame:?}",
+            heard + frame,
+            sound_typescript::heard_bytes() - bytes,
+        );
+    }
+}
+
+/// The piano roll with `count` notes on `rows` pitches: how long it takes to open, frames as the
+/// pointer hovers, as it scrolls, as it zooms and as it drags 512 selected notes, and what a
+/// click and a release cost until they are drawn.
+fn measure_roll(cx: &mut TestAppContext, count: usize, rows: usize) {
+    let bytes = sound_typescript::heard_bytes();
+    let opened = Instant::now();
+    let Some(mut window) = open_roll(cx, &many_notes(count, rows)) else {
         return;
     };
     let roll = window.space_at("roll");
     println!(
-        "piano roll: the first tree is {} bytes",
-        sound_typescript::heard_tree_bytes() - heard
+        "{count} notes: opened and drawn in {:?}, its first ops are {} bytes",
+        opened.elapsed(),
+        sound_typescript::heard_bytes() - bytes
     );
-    let (note, empty) = (window.on_roll(100.0, 60), window.on_roll(20_000.0, 80));
+    let idle: Vec<Duration> = (0..MOVES)
+        .map(|_| window.timed(|window| window.cx.update(|window, _| window.refresh())))
+        .collect();
+    print(&format!("{count} notes: an idle frame"), idle);
+    let (note, empty) = (window.on_roll(100.0, 50), window.on_roll(100_000.0, 120));
     let hovering: Vec<Duration> = (0..MOVES)
         .map(|step| {
             let to = if step % 2 == 0 { note } else { empty };
@@ -289,7 +317,7 @@ fn performance_of_the_piano_roll_of_2000_notes(cx: &mut TestAppContext) {
         })
         .collect();
     print(
-        "piano roll: a frame as the pointer hovers on and off a note",
+        &format!("{count} notes: a frame as the pointer hovers on and off a note"),
         hovering,
     );
     let wheel = |delta: Point<Pixels>, modifiers: Modifiers| ScrollWheelEvent {
@@ -305,7 +333,7 @@ fn performance_of_the_piano_roll_of_2000_notes(cx: &mut TestAppContext) {
             window.timed(|window| window.cx.simulate_event(event))
         })
         .collect();
-    print("piano roll: a frame as it scrolls", scrolling);
+    print(&format!("{count} notes: a frame as it scrolls"), scrolling);
     let zooming: Vec<Duration> = (0..MOVES)
         .map(|step| {
             let sign = if step < MOVES / 2 { 1. } else { -1. };
@@ -313,22 +341,51 @@ fn performance_of_the_piano_roll_of_2000_notes(cx: &mut TestAppContext) {
             window.timed(|window| window.cx.simulate_event(event))
         })
         .collect();
-    print("piano roll: a frame as it zooms", zooming);
+    print(&format!("{count} notes: a frame as it zooms"), zooming);
 
-    // A marquee over the first 32 sixteenths: 512 notes.
-    let from = window.on_roll(0.0, 72) + point(px(1.), px(-ROW));
-    let to = window.on_roll(7_500.0, 55);
+    // A click on one note selects it.
+    let pressed = window.on_roll(10.0, 50);
+    let (batches, bytes) = (
+        sound_typescript::heard_batches(),
+        sound_typescript::heard_bytes(),
+    );
+    let clicked = Instant::now();
+    window.down(pressed);
+    window.up(pressed);
+    window.next_batch(
+        &format!("{count} notes: a click that selects a note"),
+        clicked,
+        batches,
+        bytes,
+    );
+    window.wait_for_bun();
+
+    // A marquee over the first sixteenths: 512 notes.
+    let columns = 512 / rows;
+    let top = 40 + rows - 1;
+    let from = window.on_roll(0.0, top as u8) + point(px(1.), px(-ROW));
+    let to = window.on_roll((columns * 240 - 30) as f32, 39);
     window.down(from);
     window
         .cx
         .simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
     window.cx.run_until_parked();
+    let (batches, bytes) = (
+        sound_typescript::heard_batches(),
+        sound_typescript::heard_bytes(),
+    );
+    let released = Instant::now();
     window.up(to);
+    window.next_batch(
+        &format!("{count} notes: a marquee that selects 512 notes, released"),
+        released,
+        batches,
+        bytes,
+    );
     window.wait_for_bun();
-    let pressed = window.on_roll(10.0, 60);
     window.down(pressed);
     window.wait_for_bun();
-    let asked = sound_typescript::sent_renders_and_events();
+    let asked = sound_typescript::sent_updates_and_events();
     let dragging: Vec<Duration> = (1..=MOVES)
         .map(|step| {
             let to = pressed + point(px(step as f32 * 2.), px(step as f32 * 0.5));
@@ -339,30 +396,31 @@ fn performance_of_the_piano_roll_of_2000_notes(cx: &mut TestAppContext) {
             })
         })
         .collect();
-    let (renders, events) = sound_typescript::sent_renders_and_events();
+    let (updates, events) = sound_typescript::sent_updates_and_events();
     print(
-        "piano roll: a frame as 512 selected notes move with the drag",
+        &format!("{count} notes: a frame as 512 selected notes move with the drag"),
         dragging,
     );
     println!(
-        "piano roll: {} renders and {} events asked of Bun in {MOVES} moves",
-        renders - asked.0,
+        "{count} notes: {} updates and {} events told Bun in {MOVES} moves",
+        updates - asked.0,
         events - asked.1
     );
-    let (trees, bytes) = (
-        sound_typescript::heard_trees(),
-        sound_typescript::heard_tree_bytes(),
+    let (batches, bytes) = (
+        sound_typescript::heard_batches(),
+        sound_typescript::heard_bytes(),
     );
     let released = Instant::now();
     window.up(pressed + point(px(MOVES as f32 * 2.), px(MOVES as f32 * 0.5)));
-    while sound_typescript::heard_trees() == trees {
-        window.cx.run_until_parked();
-        assert!(released.elapsed() < Duration::from_secs(5), "no tree came");
-    }
-    window.cx.run_until_parked();
+    window.next_batch(
+        &format!("{count} notes: a release that moves 512 notes"),
+        released,
+        batches,
+        bytes,
+    );
+    window.wait_for_bun();
     println!(
-        "piano roll: release until its new tree is drawn: {:?}, a tree of {} bytes",
-        released.elapsed(),
-        sound_typescript::heard_tree_bytes() - bytes
+        "{count} notes: the window told Bun {} bytes in all",
+        sound_typescript::sent_bytes()
     );
 }

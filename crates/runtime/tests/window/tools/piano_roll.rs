@@ -157,10 +157,10 @@ fn a_drag_moves_the_selected_notes_on_the_grid_as_one_undo_step_and_bun_hears_it
     window.click_at(b, Modifiers::shift(), 1);
     window.pointer_down(a, Modifiers::none(), 1);
     window.wait_for_bun();
-    let asked = sound_typescript::sent_renders_and_events();
+    let asked = sound_typescript::sent_updates_and_events();
     // 520 ticks right and a row down: a lands on the sixteenth at 480.
     let to = window.pointer_drag(a, point(px(52.), px(ROW)), 20, Modifiers::none());
-    assert_eq!(sound_typescript::sent_renders_and_events(), asked);
+    assert_eq!(sound_typescript::sent_updates_and_events(), asked);
     window.pointer_up(to, Modifiers::none());
     window.notes_become(
         "the selected notes to move",
@@ -273,12 +273,12 @@ fn escape_lets_go_of_a_drag_and_its_code_hears_nothing(cx: &mut TestAppContext) 
     let a = window.on_roll(100.0, 86);
     window.pointer_down(a, Modifiers::none(), 1);
     window.wait_for_bun();
-    let asked = sound_typescript::sent_renders_and_events();
+    let asked = sound_typescript::sent_updates_and_events();
     let to = window.pointer_drag(a, point(px(100.), px(0.)), 8, Modifiers::none());
     window.cx.simulate_keystrokes("escape");
     window.pointer_up(to, Modifiers::none());
     window.wait_for_bun();
     assert_eq!(window.notes(), three_notes());
     // Escape reached the page, and no drag ended: no event went to Bun.
-    assert_eq!(sound_typescript::sent_renders_and_events().1, asked.1);
+    assert_eq!(sound_typescript::sent_updates_and_events().1, asked.1);
 }

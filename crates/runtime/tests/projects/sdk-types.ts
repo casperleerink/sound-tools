@@ -181,7 +181,7 @@ tool({
   doc: "Saves each take as a child, and edits its sequencer.",
   state: { count: number({ min: 0, max: 100 }) },
   behaviour: (): Declaration => ({ connections: [] }),
-  card: ({ time, transport, children }) => h("div", {}, `${children.length} at ${time} s, ${transport.bpm} bpm`),
+  card: ({ time, transport, children }) => h("div", {}, () => `${children.length} at ${time} s, ${transport.bpm} bpm`),
   onNotes: async ({ update, children, state, transport }, event) => {
     const beats: number = (event.at * transport.bpm) / 60;
     const taken: number = children.length;

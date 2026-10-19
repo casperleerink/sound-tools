@@ -1,7 +1,7 @@
 import {
   Canvas,
   type Color,
-  type Shape,
+  type ShapeLiteral,
   type Style,
   type TriggerControl,
   Knob,
@@ -160,31 +160,35 @@ tool({
   },
 
   page: ({ state, memory, update }) => {
-    const shapes: Shape[] = [];
-    strings.forEach((string, i) => {
-      // A plucked string wobbles, its middle the most, and calms down as it rings out.
-      const segments = 24;
-      const wobble = memory.shake[i] * Math.sin(memory.time * (40 + i * 9));
-      let last: [number, number] = [string.x0, string.y];
-      for (let k = 1; k <= segments; k++) {
-        const x = string.x0 + ((string.x1 - string.x0) * k) / segments;
-        const point: [number, number] = [x, string.y + wobble * Math.sin((Math.PI * k) / segments)];
-        shapes.push({ kind: "line", from: last, to: point, color: string.color, width: 2 });
-        last = point;
+    // Made again whole each tick, as the balls fall.
+    const shapes = () => {
+      const shapes: ShapeLiteral[] = [];
+      strings.forEach((string, i) => {
+        // A plucked string wobbles, its middle the most, and calms down as it rings out.
+        const segments = 24;
+        const wobble = memory.shake[i] * Math.sin(memory.time * (40 + i * 9));
+        let last: [number, number] = [string.x0, string.y];
+        for (let k = 1; k <= segments; k++) {
+          const x = string.x0 + ((string.x1 - string.x0) * k) / segments;
+          const point: [number, number] = [x, string.y + wobble * Math.sin((Math.PI * k) / segments)];
+          shapes.push({ kind: "line", from: last, to: point, color: string.color, width: 2 });
+          last = point;
+        }
+        shapes.push({ kind: "circle", x: string.x0, y: string.y, radius: 3, color: "#9ca3af" });
+        shapes.push({ kind: "circle", x: string.x1, y: string.y, radius: 3, color: "#9ca3af" });
+      });
+      for (const ball of memory.balls) {
+        shapes.push({ kind: "circle", x: ball.x, y: ball.y, radius: RADIUS, color: ball.color });
       }
-      shapes.push({ kind: "circle", x: string.x0, y: string.y, radius: 3, color: "#9ca3af" });
-      shapes.push({ kind: "circle", x: string.x1, y: string.y, radius: 3, color: "#9ca3af" });
-    });
-    for (const ball of memory.balls) {
-      shapes.push({ kind: "circle", x: ball.x, y: ball.y, radius: RADIUS, color: ball.color });
-    }
+      return shapes;
+    };
 
-    const options = <T extends string | number>(label: string, field: "root" | "scale" | "octave", values: readonly T[], current: T) => (
+    const options = <T extends string | number>(label: string, field: "root" | "scale" | "octave", values: readonly T[], current: () => T) => (
       <div style={row}>
         <div style={{ color: "#9ca3af" }}>{label}</div>
         {values.map((value) => (
           <div
-            style={value === current ? picked : button}
+            style={() => (value === current() ? picked : button)}
             onClick={() => update(`${label} ${value}`, ({ state: s }) => void ((s as Record<string, unknown>)[field] = value))}
           >
             {value}
@@ -212,9 +216,9 @@ tool({
           }
         />
         <div style={row}>
-          {options("Root", "root", ["C", "D", "E", "F", "G", "A"], state.root ?? "D")}
-          {options("Scale", "scale", ["major", "minor"], state.scale ?? "minor")}
-          {options("Octave", "octave", [3, 4, 5], state.octave ?? 4)}
+          {options("Root", "root", ["C", "D", "E", "F", "G", "A"], () => state.root ?? "D")}
+          {options("Scale", "scale", ["major", "minor"], () => state.scale ?? "minor")}
+          {options("Octave", "octave", [3, 4, 5], () => state.octave ?? 4)}
         </div>
         <div style={row}>
           <Knob path="decay" label="Decay" min={0.3} max={12} default={4} />

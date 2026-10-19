@@ -52,7 +52,7 @@ tool({
       h(Space, { key: "roll", width: 640, height: 320, background: "#121317", radius: 6, unit: { x: 0.15, y: 12 }, extent: { x: [0, 3840], y: [0, 36] } },
         Array.from({ length: 4 }, (_, beat) => h(Line, { from: [beat * 960, 0], to: [beat * 960, 36], color: "#292c34", width: 1 })),
         notes.map(([start, pitch], index) => h(Rect, {
-          key: String(index), x: start, y: 84 - pitch, width: 440, height: 0.85, radius: 3,
+          x: start, y: 84 - pitch, width: 440, height: 0.85, radius: 3,
           color: index === 2 ? "#e9ebef" : "#a9b1ff", hover: "#e9ebef", cursor: "grab",
         })),
         notes.map(([start, pitch], index) => h(Label, { x: start + 30, y: 84 - pitch + 0.05, text: String(pitch), size: 9, color: "#121317" })),

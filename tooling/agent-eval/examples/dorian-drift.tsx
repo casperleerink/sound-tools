@@ -1,4 +1,5 @@
 import {
+  memo,
   abs,
   adsr,
   feedback,
@@ -93,17 +94,19 @@ tool({
     return tone.times(env).times(level);
   },
   card: ({ watches }) => {
-    const pitch = Math.round(watches.note ?? 62);
-    const degree = (((pitch - ROOT) % 12) + 12) % 12;
-    const name = DEGREES[[0, 2, 3, 5, 7, 9, 10].indexOf(degree)] ?? "?";
-    const octave = Math.floor(pitch / 12) - 1;
+    const pitch = () => Math.round(watches.note ?? 62);
+    const name = memo(() => {
+      const degree = (((pitch() - ROOT) % 12) + 12) % 12;
+      return DEGREES[[0, 2, 3, 5, 7, 9, 10].indexOf(degree)] ?? "?";
+    });
+    const octave = () => Math.floor(pitch() / 12) - 1;
     return (
       <div style={column}>
         <div style={row}>
-          <div style={{ fontSize: 28, width: 64, color: "#5eead4" }}>{`${name}${octave}`}</div>
+          <div style={{ fontSize: 28, width: 64, color: "#5eead4" }}>{() => `${name()}${octave()}`}</div>
           <div style={row}>
             {DEGREES.map((degreeName) => (
-              <div style={degreeName === name ? lit : cell}>{degreeName}</div>
+              <div style={() => (degreeName === name() ? lit : cell)}>{degreeName}</div>
             ))}
           </div>
         </div>

@@ -88,7 +88,7 @@ fn a_knob_of_a_page_turns_its_field_as_it_drags_as_one_undo_step_and_asks_bun_fo
         return;
     };
     let dial = window.space("knob-level") + point(px(28.), px(20.));
-    let asked = sound_typescript::sent_renders_and_events();
+    let asked = sound_typescript::sent_updates_and_events();
     window.press(dial);
     for step in 1..=10 {
         window.drag_to(dial - point(px(0.), px(step as f32 * 10.)));
@@ -101,8 +101,8 @@ fn a_knob_of_a_page_turns_its_field_as_it_drags_as_one_undo_step_and_asks_bun_fo
     window.wait_for_bun();
     assert_eq!(window.record("dial")["level"], 1.0);
     assert_eq!(window.undo_label().as_deref(), Some("Change level"));
-    // Its code read no field as it drew: the knob moved without a tree.
-    assert_eq!(sound_typescript::sent_renders_and_events(), asked);
+    // No binding reads the field: the knob moved without telling Bun.
+    assert_eq!(sound_typescript::sent_updates_and_events(), asked);
     let session = window.session.clone();
     window
         .cx
@@ -123,8 +123,7 @@ tool({
   page: ({ state, update, now }) =>
     h(Space, { key: "board", width: 400, height: 100, background: "#000000" },
       h(Rect, {
-        key: "block",
-        x: now.drag("move").dx.plus(state.x),
+        x: () => now.drag("move").dx.plus(state.x),
         y: 0,
         width: 50,
         height: 50,
@@ -146,27 +145,27 @@ fn a_drag_moves_what_binds_to_it_and_bun_hears_it_once_at_its_end(cx: &mut TestA
         return;
     };
     let block = window.space("board") + point(px(125.), px(25.));
-    let (renders, events) = sound_typescript::sent_renders_and_events();
+    let (updates, events) = sound_typescript::sent_updates_and_events();
     window.press(block);
     for step in 1..=20 {
         window.drag_to(block + point(px(step as f32 * 5.15), px(step as f32)));
     }
     // Twenty moves, and not one request to Bun.
     assert_eq!(
-        sound_typescript::sent_renders_and_events(),
-        (renders, events)
+        sound_typescript::sent_updates_and_events(),
+        (updates, events)
     );
     window.release(block + point(px(103.), px(20.)));
     window.until("the block to move", |window| {
         window.record("mover")["x"] == 200
     });
-    let (renders_after, events_after) = sound_typescript::sent_renders_and_events();
+    let (updates_after, events_after) = sound_typescript::sent_updates_and_events();
     assert_eq!(events_after, events + 1);
-    // The new `x` it read draws once more.
+    // The new `x` a binding reads is told once.
     assert!(
-        renders_after - renders <= 1,
-        "{} renders",
-        renders_after - renders
+        updates_after - updates <= 1,
+        "{} updates",
+        updates_after - updates
     );
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move the block"));
@@ -215,16 +214,15 @@ tool({
     h(Canvas, {
       width: 400,
       height: 100,
-      shapes: [{ kind: "circle", x: state.x * 400, y: 50, radius: 4, color: "#ffffff" }],
+      shapes: () => [{ kind: "circle", x: state.x * 400, y: 50, radius: 4, color: "#ffffff" }],
       onDrag: (x) => update("Draw", ({ state }) => { state.x = x; }),
     }),
 });
 "##;
 
-/// Each move draws a new tree, many more than Bun keeps the handlers of: the drag runs the
-/// handler of the newest.
+/// Each move changes the shapes, which are made again: the drag still reaches its handler.
 #[gpui::test]
-fn a_drawing_drag_reaches_its_code_at_every_move_through_many_trees(cx: &mut TestAppContext) {
+fn a_drawing_drag_reaches_its_code_at_every_move_while_its_shapes_change(cx: &mut TestAppContext) {
     let Some(mut window) = open_project(cx, &project("sketch", SKETCH)) else {
         return;
     };

@@ -1,4 +1,4 @@
-import { adsr, Canvas, h, Knob, knob, note, sin, phasor, TAU, tool, type Shape, type Style } from "./sdk";
+import { adsr, Canvas, h, Knob, knob, note, sin, phasor, TAU, tool, type ShapeLiteral, type Style } from "./sdk";
 
 const COLUMNS = 16;
 const ROWS = 8;
@@ -84,25 +84,29 @@ tool({
     for (const r of living) play(SCALE[r], { seconds: 0.3, velocity });
   },
   page: ({ memory }) => {
-    const shapes: Shape[] = [];
-    const column = Math.floor(memory.cursor);
-    shapes.push({ kind: "rect", x: column * CELL, y: 0, width: CELL, height: HEIGHT, color: "#1e293b" });
-    memory.cells.forEach((cells, c) =>
-      cells.forEach((alive, r) => {
-        const lit = alive && c === column;
-        shapes.push({
-          kind: "rect",
-          x: c * CELL + GAP / 2,
-          y: (ROWS - 1 - r) * CELL + GAP / 2,
-          width: CELL - GAP,
-          height: CELL - GAP,
-          radius: 5,
-          color: lit ? "#fde68a" : alive ? "#38bdf8" : "#1f2937",
-        });
-      }),
-    );
-    const x = memory.cursor * CELL;
-    shapes.push({ kind: "line", from: [x, 0], to: [x, HEIGHT], color: "#fbbf24", width: 2 });
+    // Made again whole each tick: a canvas of a few hundred cells.
+    const shapes = () => {
+      const shapes: ShapeLiteral[] = [];
+      const column = Math.floor(memory.cursor);
+      shapes.push({ kind: "rect", x: column * CELL, y: 0, width: CELL, height: HEIGHT, color: "#1e293b" });
+      memory.cells.forEach((cells, c) =>
+        cells.forEach((alive, r) => {
+          const lit = alive && c === column;
+          shapes.push({
+            kind: "rect",
+            x: c * CELL + GAP / 2,
+            y: (ROWS - 1 - r) * CELL + GAP / 2,
+            width: CELL - GAP,
+            height: CELL - GAP,
+            radius: 5,
+            color: lit ? "#fde68a" : alive ? "#38bdf8" : "#1f2937",
+          });
+        }),
+      );
+      const x = memory.cursor * CELL;
+      shapes.push({ kind: "line", from: [x, 0], to: [x, HEIGHT], color: "#fbbf24", width: 2 });
+      return shapes;
+    };
 
     const toggle = (x: number, y: number) => {
       const c = Math.min(COLUMNS - 1, Math.floor(x * COLUMNS));
@@ -119,11 +123,11 @@ tool({
         <Canvas width={WIDTH} height={HEIGHT} background="#0f172a" shapes={shapes} onPress={toggle} />
         <div style={row}>
           <div style={button} onClick={() => (memory.running = !memory.running)}>
-            {memory.running ? "Pause" : "Play"}
+            {() => (memory.running ? "Pause" : "Play")}
           </div>
           <div style={button} onClick={() => ((memory.cells = empty()), (memory.generation = 0))}>Clear</div>
           <div style={button} onClick={randomize}>Random</div>
-          <div style={{ color: "#94a3b8", fontSize: 12 }}>Generation {memory.generation}</div>
+          <div style={{ color: "#94a3b8", fontSize: 12 }}>{() => `Generation ${memory.generation}`}</div>
         </div>
         <div style={row}>
           <Knob path="speed" label="Columns / s" min={0.5} max={16} default={4} unit="hz" />

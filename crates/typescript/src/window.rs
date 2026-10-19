@@ -63,8 +63,9 @@ pub(crate) struct Live {
     telling: bool,
     /// What the bindings of the cards of each instance read, as Bun said last.
     reads: HashMap<InstanceId, Reads>,
-    /// The transport Bun was told last.
+    /// The transport and the watches of each instance Bun was told last.
     told_transport: Option<Transport>,
+    told_watches: HashMap<InstanceId, BTreeMap<String, f32>>,
     /// The tap of what reaches the notes of each instance whose tool hears them, and how far
     /// it was read.
     taps: HashMap<InstanceId, (EventTap<NoteEvent>, u64)>,
@@ -357,6 +358,7 @@ impl Live {
                 telling: false,
                 reads: HashMap::new(),
                 told_transport: None,
+                told_watches: HashMap::new(),
                 taps: HashMap::new(),
                 last_frame: Instant::now(),
                 problems,
@@ -589,6 +591,10 @@ impl Live {
         };
         // One that did not go is asked again by the next Bun.
         entry.mounted = self.host.send(&request);
+        if entry.mounted {
+            self.told_watches
+                .insert(entry.id.clone(), entry.watches.clone());
+        }
     }
 
     /// Tells Bun soon the records that changed: once for all that change together.
@@ -678,10 +684,28 @@ impl Live {
         let Some(session) = self.session.upgrade() else {
             return 0;
         };
-        if self.cards.get(&card).is_none_or(|entry| entry.stale) {
+        let Some(instance) = (self.cards.get(&card))
+            .filter(|entry| !entry.stale)
+            .map(|entry| entry.id.clone())
+        else {
             return 0;
-        }
+        };
         self.tell(cx);
+        // Its handler reads the watches and the transport as they are now.
+        let watches = watches_of(session.read(cx).project(), &instance);
+        if self.told_watches.get(&instance) != Some(&watches)
+            && self.host.send(&Request::Watches {
+                instance: &instance,
+                watches: &watches,
+            })
+        {
+            self.told_watches.insert(instance, watches);
+        }
+        let clock = clock_of(&session, cx);
+        if self.told_transport != Some(clock.transport) && self.host.send(&Request::Clock { clock })
+        {
+            self.told_transport = Some(clock.transport);
+        }
         let request = Request::Event {
             card,
             node,
@@ -1069,13 +1093,20 @@ impl Live {
         let dt = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = Instant::now();
         let clock = clock_of(&session, cx);
-        self.tell(cx);
+        let ticks =
+            |tools: &[ToolInfo], tool: &str| find(tools, tool).is_some_and(|info| info.tick);
+        // Only for code that runs now: a knob turned on a card tells Bun nothing.
+        if (session.read(cx).project().instances())
+            .any(|(_, tool)| ticks(&self.tools.borrow(), tool))
+        {
+            self.tell(cx);
+        }
         let tools = self.tools.borrow();
         let project = session.read(cx).project();
         // An instance that is gone, which an undo may bring back at its defaults.
         self.played.retain(|id, _| project.tool_of(id).is_some());
         let instances: Vec<Played> = (project.instances())
-            .filter(|(_, tool)| find(&tools, tool).is_some_and(|info| info.tick))
+            .filter(|(_, tool)| ticks(&tools, tool))
             .map(|(id, _)| played(project, id))
             .collect();
         if !instances.is_empty() {
@@ -1122,8 +1153,13 @@ impl Live {
             shows_transport |= info.is_some_and(|info| info.transport) && reads.transport;
         }
         drop(tools);
-        for (instance, watches) in &moved {
-            self.host.send(&Request::Watches { instance, watches });
+        for (instance, watches) in moved {
+            if self.host.send(&Request::Watches {
+                instance: &instance,
+                watches: &watches,
+            }) {
+                self.told_watches.insert(instance, watches);
+            }
         }
         let transport = transport_of(session.read(cx), cx);
         if shows_transport && self.told_transport != Some(transport) {
@@ -1438,6 +1474,7 @@ impl Live {
         // The new Bun knows no card and has read nothing yet.
         self.reads.clear();
         self.told_transport = None;
+        self.told_watches.clear();
         let cards: Vec<u64> = self.cards.keys().copied().collect();
         for card in cards {
             if let Some(entry) = self.cards.get_mut(&card) {

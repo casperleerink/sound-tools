@@ -1526,6 +1526,8 @@ function raw<T>(value: T): T {
 
 /** A store over `target`: reads are tracked; writes go through only when `writable`. */
 function store<T extends object>(target: T, writable: boolean): T {
+  // Already a store, such as a note of the record kept in memory.
+  if ((target as Record<symbol, unknown>)[RAW]) return target;
   const known = proxies.get(target);
   if (known) return known as T;
   const proxy = new Proxy(target, {

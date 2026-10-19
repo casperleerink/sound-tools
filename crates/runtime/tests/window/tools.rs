@@ -94,10 +94,10 @@ tool({
     h(
       "div",
       {
-        style: { width: size.width, height: size.height },
+        style: () => ({ width: size.width, height: size.height }),
         onClick: () => update("Keep the tick", ({ state }) => { state.tick = transport.tick; }),
       },
-      `${transport.bar}.${transport.beat}`,
+      () => `${transport.bar}.${transport.beat}`,
     ),
 });
 "#,
@@ -126,7 +126,7 @@ tool({
     h(
       "div",
       {
-        style: { width: size.width, height: size.height },
+        style: () => ({ width: size.width, height: size.height }),
         onClick: () => update("Count", ({ state: next }) => { next.count = state.count + 1; }),
       },
       "Count",
@@ -163,7 +163,7 @@ tool({
     h(
       "div",
       {
-        style: { width: size.width, height: size.height },
+        style: () => ({ width: size.width, height: size.height }),
         onClick: () => update("Keep the count", ({ state }) => { state.heard = memory.heard; }),
       },
       "Listen",
@@ -464,7 +464,7 @@ fn a_page_that_asks_for_the_transport_plays_it_and_draws_as_it_moves(cx: &mut Te
     window.poll();
     assert!(window.playing());
 
-    // A click keeps the tick of the tree it clicked: the page drew again as the playhead moved.
+    // A click keeps a tick its code heard: the text of the page followed the playhead.
     let middle = window.cx.update(|window, _| window.viewport_size()) / 2.;
     let middle = point(middle.width, middle.height);
     window.until("a draw at a later tick", |window| {
@@ -475,7 +475,7 @@ fn a_page_that_asks_for_the_transport_plays_it_and_draws_as_it_moves(cx: &mut Te
     });
 }
 
-/// The tree stays the same, so a click runs the handler of the last draw, with the new record.
+/// A click runs the handler the page made once, which reads the record as it is now.
 #[gpui::test]
 fn a_click_on_a_page_that_drew_the_same_tree_again_sees_the_record_it_drew_with(
     cx: &mut TestAppContext,
@@ -1113,7 +1113,7 @@ tool({
   transport: true,
   page: ({ size, watches, set }) =>
     h("div", {
-      style: { width: size.width, height: size.height },
+      style: () => ({ width: size.width, height: size.height }),
       onClick: () => set({ child: "bass", live: "launch" }, watches["bass.playing"] === 0 ? -1 : 0),
     }, "Launch"),
 });
@@ -1211,7 +1211,7 @@ tool({
   behaviour: () => ({ connections: ["synth", "keys", "drop"].map((child) => ({ from: { child }, to: { port: "audio" } })) }),
   page: ({ size, memory, play, set, fire }) =>
     h("div", {
-      style: { width: size.width, height: size.height },
+      style: () => ({ width: size.width, height: size.height }),
       onClick: () => {
         memory.clicks += 1;
         if (memory.clicks === 1) play(45, { child: "synth", seconds: 0.1 });
@@ -1429,7 +1429,7 @@ tool({
       state.at = at;
     });
   },
-  page: ({ size }) => h("div", { style: { width: size.width, height: size.height } }, "Conduct"),
+  page: ({ size }) => h("div", { style: () => ({ width: size.width, height: size.height }) }, "Conduct"),
 });
 "#;
 
