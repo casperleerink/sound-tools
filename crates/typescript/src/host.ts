@@ -1038,7 +1038,8 @@ function clockFor(instance: string): SdkClock {
 /** The stores of `instance`, made from the record as code knows it, with its edits not heard. */
 function storesOf(instance: string, spec: Spec, record: Entry): Stores {
   let known = stores.get(instance);
-  if (!known) {
+  // A record of another tool now is another instance to its code.
+  if (!known || known.tool !== spec.name) {
     known = {
       tool: spec.name,
       state: sdk.host.adopted(filledState(spec, record)) as Record<string, unknown>,
@@ -1060,6 +1061,7 @@ function refresh(instances: Iterable<string>, edited?: { instance: string; state
       const known = stores.get(instance);
       const record = recordOf(instance);
       const spec = sdk.host.tools.get(known?.tool ?? "");
+      if (known && (!record || record.tool !== known.tool)) stores.delete(instance);
       if (!known || !record || !spec || record.tool !== known.tool) continue;
       const own = edited?.instance === instance ? edited : undefined;
       sdk.host.reconcile(known.state, (own?.state ?? filledState(spec, record)) as Record<string, unknown>);

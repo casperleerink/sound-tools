@@ -533,3 +533,54 @@ fn a_child_swapped_for_another_gets_a_row_of_its_own(cx: &mut TestAppContext) {
     assert!(window.find("div-a").is_none());
     assert!(window.find("div-b").is_some());
 }
+
+/// Two tools whose page is a box as wide as a field of each: one of 200, one of 100.
+const WIDE_AND_NARROW: &str = r#"import { h, number, tool } from "./sdk";
+
+tool({
+  name: "wide",
+  title: "Wide",
+  when: "Never",
+  doc: "A wide box.",
+  state: { w: number({ min: 0, max: 400, default: 200 }) },
+  view: ({ state }) => h("div", { key: "box", style: () => ({ width: state.w, height: 40 }) }, "Box"),
+});
+
+tool({
+  name: "narrow",
+  title: "Narrow",
+  when: "Never",
+  doc: "A narrow box.",
+  state: { n: number({ min: 0, max: 400, default: 100 }) },
+  view: ({ state }) => h("div", { key: "box", style: () => ({ width: state.n, height: 40 }) }, "Box"),
+});
+"#;
+
+#[gpui::test]
+fn a_record_of_another_tool_shows_as_that_tool(cx: &mut TestAppContext) {
+    let project = at_the_top("shape", "");
+    let files = [
+        ("project.json", project.as_str()),
+        ("state/shape.json", r#"{"tool": "wide", "state": {}}"#),
+        ("extensions/shapes.ts", WIDE_AND_NARROW),
+    ];
+    let Some(mut window) = open(cx, &files) else {
+        return;
+    };
+    let wide = window.until_found("div-box");
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut edit = project.begin("Narrow");
+                let mut changes = sound_core::Changes::new();
+                project.set_json(&mut changes, id("shape"), "narrow", serde_json::json!({}))?;
+                project.publish(&mut edit, changes)?;
+                project.finish(edit)
+            })
+        })
+    });
+    window.until("the narrow box", |window| window.find("div-box").is_some_and(|at| at != wide));
+    let narrow = window.find("div-box").unwrap();
+    assert_eq!(wide.x - narrow.x, gpui::px(50.));
+}

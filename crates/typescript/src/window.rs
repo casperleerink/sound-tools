@@ -636,6 +636,29 @@ impl Live {
         }
     }
 
+    /// Makes again the cards of each instance whose record is of another tool now: its code is
+    /// another's.
+    fn mount_replaced(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.session.upgrade() else {
+            return;
+        };
+        let project = session.read(cx).project();
+        let replaced: Vec<(u64, String)> = (self.cards.iter())
+            .filter_map(|(card, entry)| {
+                let tool = project.tool_of(&entry.id)?;
+                (tool != entry.tool).then(|| (*card, tool.to_string()))
+            })
+            .collect();
+        for (card, tool) in replaced {
+            if let Some(entry) = self.cards.get_mut(&card) {
+                entry.tool = tool;
+                entry.tree = None;
+            }
+            self.host.send(&Request::Drop { card });
+            self.mount(card, cx);
+        }
+    }
+
     /// Tells Bun soon the records that changed: once for all that change together.
     fn tell_soon(&mut self, cx: &mut Context<Self>) {
         if std::mem::replace(&mut self.telling, true) {
@@ -645,6 +668,7 @@ impl Live {
             live.update(cx, |live, cx| {
                 live.telling = false;
                 live.tell(cx);
+                live.mount_replaced(cx);
             })
             .ok();
         })
