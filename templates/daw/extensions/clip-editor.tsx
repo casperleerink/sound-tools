@@ -66,6 +66,25 @@ function moved(notes: readonly Note[], chosen: ReadonlySet<number>, ticks: numbe
   return { notes: [...notes, ...copies], chosen: new Set(copies.map((_, index) => notes.length + index)) };
 }
 
+/**
+ * Changes the notes of the clip as `next` says, as one undo step, and chooses what it chose. A
+ * note that would start at or past the end of the clip is left out: the timeline plays none there.
+ */
+function changer(memory: Memory<EditorMemory>, edit: EditorProps["edit"]) {
+  return (label: string, next: (notes: Note[]) => { notes: Note[]; chosen: ReadonlySet<number> }) =>
+    edit(label, (draft) => {
+      const result = next(draft.notes);
+      const end = draft.length ?? Infinity;
+      const kept = new Map<number, number>();
+      draft.notes = result.notes.filter((note, index) => {
+        if (note.start >= end) return false;
+        kept.set(index, kept.size);
+        return true;
+      });
+      memory.notes = new Set([...result.chosen].flatMap((index) => (kept.has(index) ? [kept.get(index)!] : [])));
+    });
+}
+
 export interface EditorProps {
   clip: Accessor<Frozen<Clip> | undefined>;
   title: Accessor<string>;
@@ -92,13 +111,9 @@ function spanOf(notes: readonly Note[]) {
  */
 export function editorKey(key: Key, clip: Frozen<Clip> | undefined, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
   if (!clip || !key.down) return false;
-  const chosen = memory.notes;
-  const change = (label: string, next: (notes: Note[]) => { notes: Note[]; chosen: ReadonlySet<number> }) =>
-    edit(label, (draft) => {
-      const result = next(draft.notes);
-      draft.notes = result.notes;
-      memory.notes = new Set(result.chosen);
-    });
+  // An undo may have taken chosen notes away.
+  const chosen = new Set([...memory.notes].filter((index) => index < clip.notes.length));
+  const change = changer(memory, edit);
   const picked = () => [...chosen].map((index) => clip.notes[index]!);
   if (key.cmd && key.key === "a") {
     memory.notes = new Set(clip.notes.map((_, index) => index));
@@ -140,12 +155,7 @@ export function ClipEditor({ clip, title, memory, edit, preview, openMenu, onClo
   const marquee = now.drag("note-marquee");
   const roll = height - 28 - LANE;
 
-  const change = (label: string, next: (notes: Note[]) => { notes: Note[]; chosen: ReadonlySet<number> }) =>
-    edit(label, (draft) => {
-      const result = next(draft.notes);
-      draft.notes = result.notes;
-      memory.notes = new Set(result.chosen);
-    });
+  const change = changer(memory, edit);
   // A drag is made once: the notes are drawn again with new ones when the grid changes.
   const moveDrag = (snap: number): Drag => ({
     id: "note-move",

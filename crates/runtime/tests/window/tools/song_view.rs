@@ -543,3 +543,33 @@ fn the_editor_of_a_clip_whose_file_has_no_notes_takes_its_keys(cx: &mut TestAppC
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
+
+/// Notes the editor would put at or past the end of the clip are left out, and notes an undo
+/// took away are no longer chosen: neither is a problem.
+#[gpui::test]
+fn the_editor_keeps_notes_inside_the_clip_and_forgets_what_an_undo_took(cx: &mut TestAppContext) {
+    let Some(mut window) = open_song(cx, 1, 1) else {
+        return;
+    };
+    let notes = |window: &mut Window| {
+        window.record("song/t00/c00")["notes"]
+            .as_array()
+            .map_or(0, Vec::len)
+    };
+    let count = notes(&mut window);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR / 2, 0);
+    window.double_click(clip);
+    window.space_at("editor");
+    // A copy of every note a span on starts past the end of the clip.
+    window.cx.simulate_keystrokes("cmd-a cmd-d");
+    window.wait_for_bun();
+    assert_eq!(notes(&mut window), count);
+    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window.until("the notes pasted", |window| notes(window) == 2 * count);
+    window.cx.simulate_keystrokes("cmd-z");
+    window.until("the paste undone", |window| notes(window) == count);
+    window.cx.simulate_keystrokes("cmd-c cmd-d");
+    window.wait_for_bun();
+    assert_eq!(window.problems(), []);
+}
