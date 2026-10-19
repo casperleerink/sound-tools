@@ -1619,7 +1619,14 @@ function sameShallow(a: unknown, b: unknown): boolean {
  * same note; one that grew or shrank keeps the items that did not change by what they hold, so
  * a note deleted before others leaves them be.
  */
+/** The value each part of a store was last made like: one given again is the same, and is not walked. */
+const madeFrom = new WeakMap<object, object>();
+
 function reconcile(target: Record<PropertyKey, unknown>, next: Record<PropertyKey, unknown>) {
+  // Frozen values are kept as they are, so a record that did not change, and all it holds, is
+  // the same object as last time: the clips of the tracks an edit left alone.
+  if (madeFrom.get(target) === next) return;
+  if (Object.isFrozen(next)) madeFrom.set(target, next);
   if (Array.isArray(target) && Array.isArray(next)) {
     reconcileList(target, next);
     return;

@@ -21,7 +21,7 @@ impl Window<'_> {
         self.poll();
     }
 
-    fn undo(&mut self) -> Option<String> {
+    pub(super) fn undo(&mut self) -> Option<String> {
         let session = self.session.clone();
         self.cx
             .update(|_, cx| session.update(cx, |session, cx| session.undo(cx)));
