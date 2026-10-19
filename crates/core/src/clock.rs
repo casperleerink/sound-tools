@@ -587,15 +587,6 @@ impl TempoMap {
         &self.time_signatures
     }
 
-    /// The same tempo changes with other time signatures. The ticks of the tempo changes stay,
-    /// so what plays stays where it is and the bar lines move.
-    pub fn with_time_signatures(&self, time_signatures: TimeSignatures) -> Self {
-        Self {
-            time_signatures,
-            tempo_changes: self.tempo_changes.clone(),
-        }
-    }
-
     pub fn tempo_changes(&self) -> &[TempoChange] {
         &self.tempo_changes
     }

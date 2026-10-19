@@ -422,14 +422,6 @@ impl Project {
             .filter_map(|(id, record)| Some((Instance::new(id.clone()), record.state::<S>()?)))
     }
 
-    /// How the tool of `id` describes the instance and what it owns, as lines of text. `None`
-    /// when the instance does not exist or its tool registered no summary.
-    pub fn summary(&self, id: &InstanceId) -> Option<String> {
-        let record = self.instances.get(id)?;
-        let summary = self.registry.definition(record.tool)?.summary.as_ref()?;
-        Some(summary(self, id))
-    }
-
     /// Where the project ends: the latest end that a tool gives for one of its instances, see
     /// [`ToolRegistration::end`]. `None` for a project that runs without a set end.
     pub fn end(&self) -> Option<Ticks> {

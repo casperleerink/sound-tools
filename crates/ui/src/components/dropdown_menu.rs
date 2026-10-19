@@ -1005,11 +1005,6 @@ impl DropdownMenu {
         self.open
     }
 
-    /// Whether the trigger has the focus, as tab gives it.
-    pub fn trigger_is_focused(&self, window: &Window) -> bool {
-        self.trigger_focus.is_focused(window)
-    }
-
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
         match &self.search {

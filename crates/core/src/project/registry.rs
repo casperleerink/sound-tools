@@ -151,10 +151,6 @@ impl RegisteredDoc {
 type ErasedBehaviour =
     Box<dyn Fn(&dyn Any, &mut BehaviourContext<'_>) -> Result<(), BehaviourError>>;
 
-/// Not `Send`, for the same reason a behaviour is not: it may read something the tool
-/// keeps on the thread the project lives on, such as a cache of a file it parsed.
-type ErasedSummary = Box<dyn Fn(&Project, &InstanceId) -> String>;
-
 type ErasedEnd = Box<dyn Fn(&Project, &InstanceId) -> Option<Ticks>>;
 
 /// Not `Send`, like a behaviour: it may keep control-side state, such as a cache of a big file
@@ -190,7 +186,6 @@ pub(crate) struct ToolDefinition {
     pub decode: Box<dyn Fn(serde_json::Value) -> Result<Record, String>>,
     pub behaviour: Option<ErasedBehaviour>,
     pub derive: Option<ErasedDerive>,
-    pub summary: Option<ErasedSummary>,
     pub end: Option<ErasedEnd>,
     pub owns_children: bool,
     /// Folders under `assets/` whose changes run the behaviour of an instance with a problem
@@ -247,7 +242,6 @@ impl Registry {
             decode: Box::new(decode::<S>),
             behaviour: None,
             derive: None,
-            summary: None,
             end: None,
             owns_children: S::OWNS_CHILDREN,
             asset_folders: Vec::new(),
@@ -364,7 +358,6 @@ impl Registry {
                 decode: Box::new(decode),
                 behaviour: Some(Box::new(behaviour)),
                 derive: None,
-                summary: None,
                 end: end.map(|end| -> ErasedEnd {
                     Box::new(move |project, id| end(project, project.json_state(id)?))
                 }),
@@ -486,21 +479,6 @@ impl<S: State> ToolRegistration<'_, S> {
             // Only called for a live instance of this tool.
             if let Some(instance) = project.resolve::<S>(id) {
                 derive(project, &instance, was, derived);
-            }
-        }));
-        self
-    }
-
-    /// How an instance of this tool describes itself and what it owns in a project summary,
-    /// as lines of plain text. [`Project::summary`] calls it. Without one, a summary lists the
-    /// instance and everything inside it as plain records. An owner of many small records
-    /// gives one here, so that an agent reads one summary and not every record.
-    pub fn summary(self, summary: impl Fn(&Project, &Instance<S>) -> String + 'static) -> Self {
-        self.definition.summary = Some(Box::new(move |project, id| {
-            match project.resolve::<S>(id) {
-                Some(instance) => summary(project, &instance),
-                // Only called for an instance of this tool.
-                None => String::new(),
             }
         }));
         self

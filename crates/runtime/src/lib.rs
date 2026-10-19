@@ -58,7 +58,7 @@ sound-tools . --analyze
 sound-tools . --render <wav>
 ```
 
-- `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every track in order, every clip with its bar range, note count and pitch range, and the problems.
+- `--inspect` prints where each time signature starts, the tempo, the bars and ticks of each section, every instance with its record, the connections and the problems.
 - `--analyze` plays the piece and its tail offline and prints what it measures, of the whole and in up to 32 rows. Use it after a change, to check that it sounds as you meant.
 - `--render` writes the piece as a 48 kHz stereo 32-bit float WAV and prints its peak.
 
@@ -376,18 +376,6 @@ pub fn open_or_create_with(
     Ok(project)
 }
 
-/// [`open_or_create_with`], where a new folder, one with nothing in it but hidden files such as
-/// `.git`, becomes `template`.
-pub fn open_or_create_from(
-    folder: &Path,
-    control: EngineControl,
-    plugins: Plugins,
-    template: &Template,
-) -> Result<Project> {
-    templates::write(folder, template)?;
-    open_or_create_with(folder, control, plugins)
-}
-
 /// [`open_or_create_with`], and the project's own tools in `extensions/` for a window to keep
 /// running: it defines them again when their code is saved. Without the window they play on
 /// as long as the project lives.
@@ -474,8 +462,8 @@ pub fn open_read_only_with(folder: &Path, plugins: Plugins) -> Result<(Project, 
     Ok((project, engine))
 }
 
-/// What `--inspect` prints. A tool with a summary of its own, such as the arrangement, tells
-/// what it owns. Every other instance is one line with its record.
+/// What `--inspect` prints: the time, the sections, every instance with its record, the
+/// connections and the problems.
 pub fn summary(project: &Project) -> String {
     let project_file = project.project_file();
     let tempo_map = &project_file.tempo_map;
@@ -505,21 +493,10 @@ pub fn summary(project: &Project) -> String {
     }
     lines.extend(sections(project));
 
-    let mut summarised: Vec<&InstanceId> = Vec::new();
     for (id, tool) in project.instances() {
-        // Ids sort as text, so `arrangement-2` comes between `arrangement` and what is inside
-        // it: every summarised owner is checked, not only the last.
-        if summarised.iter().any(|owner| id.is_inside(owner)) {
-            continue;
-        }
-        if let Some(summary) = project.summary(id) {
-            lines.push(summary);
-            summarised.push(id);
-        } else {
-            let indent = "  ".repeat(id.as_str().matches('/').count());
-            let state = project.state_json(id).unwrap_or_default();
-            lines.push(format!("{indent}instance `{id}` [{tool}] {state}"));
-        }
+        let indent = "  ".repeat(id.as_str().matches('/').count());
+        let state = project.state_json(id).unwrap_or_default();
+        lines.push(format!("{indent}instance `{id}` [{tool}] {state}"));
     }
 
     lines.push(format!("connections: {}", project_file.connections.len()));

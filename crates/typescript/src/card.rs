@@ -28,9 +28,7 @@ use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, percent_readout, short,
 };
 use sound_ui::components::text_input::{self, TextInput};
-use sound_ui::{
-    ActiveTheme, ControlEdit, Devices, Session, Views, Waveforms, typography,
-};
+use sound_ui::{ActiveTheme, ControlEdit, Devices, Session, Views, Waveforms, typography};
 
 use crate::bun::{EventKind, MenuItemSpec, PageSize};
 use crate::feeds::Feeds;

@@ -432,10 +432,17 @@ fn a_page_follows_its_room_when_the_window_resizes(cx: &mut TestAppContext) {
     window.until_found("div-room");
     let width = |window: &mut Window| {
         window.find("div-room");
-        window.cx.debug_bounds("div-room").map(|bounds| bounds.size.width)
+        window
+            .cx
+            .debug_bounds("div-room")
+            .map(|bounds| bounds.size.width)
     };
     let before = width(&mut window);
-    window.cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(700.)));
-    window.until("the page follows the window", |window| width(window) != before);
+    window
+        .cx
+        .simulate_resize(gpui::size(gpui::px(900.), gpui::px(700.)));
+    window.until("the page follows the window", |window| {
+        width(window) != before
+    });
     assert_eq!(window.problems(), []);
 }

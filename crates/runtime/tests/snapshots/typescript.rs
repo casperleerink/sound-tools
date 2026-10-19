@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use gpui::{
-    AppContext, HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformInput, Point, point, px,
+    HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, PlatformInput, Point, point, px,
 };
 use sound_core::Ticks;
 

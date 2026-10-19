@@ -338,8 +338,7 @@ pub(crate) fn registry() -> Registry {
     registry
         .tool::<Bank>(EXTENSION)
         .unwrap()
-        .behaviour(apply_bank)
-        .summary(summarize_bank);
+        .behaviour(apply_bank);
     registry.tool::<Shelf>(EXTENSION).unwrap();
     registry.tool::<Book>(EXTENSION).unwrap();
     registry.agent_doc(EXTENSION, TEST_AGENT_DOC).unwrap();
@@ -374,12 +373,6 @@ pub(crate) const TEST_AGENT_DOC: AgentDoc = AgentDoc {
     when: "You work on a test record",
     markdown: "# Test tools\n\nA record of a test tool.\n",
 };
-
-/// A bank tells what it owns in one line, so a summary does not list every level.
-fn summarize_bank(project: &Project, bank: &sound_core::Instance<Bank>) -> String {
-    let levels = project.children::<Level>(bank.id()).count();
-    format!("bank {} with {levels} levels", bank.id())
-}
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 

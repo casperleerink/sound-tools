@@ -178,17 +178,6 @@ impl Session {
         }
     }
 
-    /// The first of the clips the composer has selected, next to [`Self::selected`], which is
-    /// a track. It is interface state too, and the view that owns the selection publishes it
-    /// here.
-    ///
-    /// Two fields and not one, because the two are read for different things and both are
-    /// wanted at once: a keyboard plays into the instrument of the selected track while the
-    /// Clip card of that track shows the selected clip.
-    pub fn selected_clip(&self) -> Option<&InstanceId> {
-        self.selected_clips.first()
-    }
-
     /// Every selected clip, the first one first. The project menu exports the time they cover.
     pub fn selected_clips(&self) -> &[InstanceId] {
         &self.selected_clips
@@ -242,11 +231,6 @@ impl Session {
     /// Gives the session the click of the window. It starts off.
     pub fn attach_click(&mut self, click: ClickSwitch) {
         self.click = Some(click);
-    }
-
-    /// Whether there is a click to turn on.
-    pub fn has_click(&self) -> bool {
-        self.click.is_some()
     }
 
     pub fn click_on(&self) -> bool {

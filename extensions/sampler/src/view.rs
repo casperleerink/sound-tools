@@ -345,11 +345,6 @@ impl SamplerView {
         cx.notify();
     }
 
-    /// The Instrument select, for a test that opens it.
-    pub fn instrument_list(&self) -> &Entity<DropdownMenu> {
-        &self.instruments
-    }
-
     /// Where the green line is now, in seconds of the file.
     pub fn playing_at(&self) -> Option<f32> {
         self.playing_at

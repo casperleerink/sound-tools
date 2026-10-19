@@ -217,26 +217,9 @@ type DescribeInstance = Rc<dyn Fn(&Project, &InstanceId) -> Option<DeviceLabel>>
 ///
 /// Each may call into a plugin, so they are asked when something changes, never while drawing.
 pub trait Numbers<S> {
-    /// What a person reads for the number `field`: `Cutoff`.
-    fn name(&self, project: &Project, id: &InstanceId, state: &S, field: &str) -> Option<String>;
-
-    /// What a person reads for `value` of the number `field`: the plugin's own `-6 dB`.
-    fn text(
-        &self,
-        project: &Project,
-        id: &InstanceId,
-        state: &S,
-        field: &str,
-        value: f32,
-    ) -> Option<String>;
-
     /// Every number a lane can be added for, in the device's own order, also one the device
     /// takes only once its record says so, such as a parameter of a plugin that is not pinned.
     fn lane_numbers(&self, project: &Project, id: &InstanceId, state: &S) -> Vec<LaneNumber>;
-
-    /// The record that lets a lane move `field`, which it does not yet, with the value the lane
-    /// starts at: what the device plays now. `None` when the record already does, or cannot.
-    fn take(&self, project: &Project, id: &InstanceId, state: &S, field: &str) -> Option<(S, f32)>;
 }
 
 /// A number a lane can be added for, see [`Numbers::lane_numbers`].
@@ -249,48 +232,16 @@ pub struct LaneNumber {
 
 /// [`Numbers`] of one tool, with the state looked up.
 trait ToolNumbers {
-    fn name(&self, project: &Project, id: &InstanceId, field: &str) -> Option<String>;
-    fn text(&self, project: &Project, id: &InstanceId, field: &str, value: f32) -> Option<String>;
     fn lane_numbers(&self, project: &Project, id: &InstanceId) -> Vec<LaneNumber>;
-    fn take(
-        &self,
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        changes: &mut Changes,
-    ) -> Option<f32>;
 }
 
 struct Typed<S, N>(N, std::marker::PhantomData<S>);
 
 impl<S: State, N: Numbers<S>> ToolNumbers for Typed<S, N> {
-    fn name(&self, project: &Project, id: &InstanceId, field: &str) -> Option<String> {
-        let state = project.state(&project.resolve::<S>(id)?)?;
-        self.0.name(project, id, state, field)
-    }
-
-    fn text(&self, project: &Project, id: &InstanceId, field: &str, value: f32) -> Option<String> {
-        let state = project.state(&project.resolve::<S>(id)?)?;
-        self.0.text(project, id, state, field, value)
-    }
-
     fn lane_numbers(&self, project: &Project, id: &InstanceId) -> Vec<LaneNumber> {
         let state = project.resolve::<S>(id).and_then(|it| project.state(&it));
         let numbers = state.map(|state| self.0.lane_numbers(project, id, state));
         numbers.unwrap_or_default()
-    }
-
-    fn take(
-        &self,
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        changes: &mut Changes,
-    ) -> Option<f32> {
-        let instance = project.resolve::<S>(id)?;
-        let (record, value) = self.0.take(project, id, project.state(&instance)?, field)?;
-        changes.set(&instance, record);
-        Some(value)
     }
 }
 
@@ -443,14 +394,6 @@ impl Devices {
         sources.fold(0, |total, generation| total.wrapping_add(generation()))
     }
 
-    /// Every quiet line under the offers, from the installed registry.
-    pub fn offer_notes(cx: &App) -> Vec<SharedString> {
-        let Some(devices) = cx.try_global::<Self>() else {
-            return Vec::new();
-        };
-        devices.notes.iter().flat_map(|list| list()).collect()
-    }
-
     /// What a rack says about what is in `id`. `None` when the instance is gone or its tool
     /// registered nothing, and then the caller shows the tool name or that the slot is empty.
     pub fn label_of(session: &Entity<Session>, id: &InstanceId, cx: &App) -> Option<DeviceLabel> {
@@ -470,45 +413,10 @@ impl Devices {
         devices.numbers.get(project.tool_of(id)?).cloned()
     }
 
-    /// What a person reads for the number `field` of `id`, when its tool names it, see
-    /// [`Numbers::name`].
-    pub fn number_name(
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        cx: &App,
-    ) -> Option<String> {
-        Self::numbers_of(project, id, cx)?.name(project, id, field)
-    }
-
-    /// What a person reads for `value` of the number `field` of `id`, when its tool says, see
-    /// [`Numbers::text`].
-    pub fn number_text(
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        value: f32,
-        cx: &App,
-    ) -> Option<String> {
-        Self::numbers_of(project, id, cx)?.text(project, id, field, value)
-    }
-
     /// Every number of `id` a lane can be added for, when its tool says, see
     /// [`Numbers::lane_numbers`]. `None` when it does not, and its behaviour names them.
     pub fn lane_numbers(project: &Project, id: &InstanceId, cx: &App) -> Option<Vec<LaneNumber>> {
         Some(Self::numbers_of(project, id, cx)?.lane_numbers(project, id))
-    }
-
-    /// Puts the record of `id` that lets a lane move `field` into `changes`, and gives the
-    /// value the lane starts at, see [`Numbers::take`].
-    pub fn take_number(
-        project: &Project,
-        id: &InstanceId,
-        field: &str,
-        changes: &mut Changes,
-        cx: &App,
-    ) -> Option<f32> {
-        Self::numbers_of(project, id, cx)?.take(project, id, field, changes)
     }
 }
 
