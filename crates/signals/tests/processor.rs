@@ -553,7 +553,7 @@ fn new_code_fades_in_without_a_jump() {
     assert_eq!(output[1_919], -0.5);
 }
 
-/// Sends one lane of automation, as an arrangement does, for its first `blocks` blocks.
+/// Sends one lane of automation, as a `lane` child does, for its first `blocks` blocks.
 struct Lane {
     value: f32,
     blocks: usize,

@@ -361,7 +361,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                 "tones",
                 cx,
                 [
-                    Notice::new("n-error", "instance arrangement/bass-2 does not exist")
+                    Notice::new("n-error", "instance song/bass-2 does not exist")
                         .on_dismiss(|_, _, _| {})
                         .into_any_element(),
                     Notice::new("n-warning", "2 files are not live, see problems.txt")
@@ -378,7 +378,7 @@ pub fn section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                         .into_any_element(),
                     Notice::new(
                         "n-long",
-                        "instance arrangement/warm-pad/verse-b: notes[3].start must be less than \
+                        "instance song/warm-pad/verse-b: notes[3].start must be less than \
                          the clip length 3840, not 5760. A note start counts from the start of \
                          its clip, not from the start of the project",
                     )

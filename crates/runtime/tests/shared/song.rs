@@ -50,7 +50,7 @@ pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
     })
 }
 
-/// The scale project of the Rust arrangement's measurement as a song: 100 tracks of 100 clips of
+/// The scale project, as the deleted Rust arrangement measured it: 100 tracks of 100 clips of
 /// one bar and four notes, clip `c` of track `t` at bar `8c + t mod 8`.
 pub(crate) fn scale_files() -> Vec<(String, String)> {
     song_with(100, false, |track| {
@@ -96,7 +96,7 @@ fn song_with(
             "state/song/master.json".to_string(),
             r#"{"tool": "fader", "state": {}}"#.to_string(),
         ),
-        // The limiter of the arrangement's master: full scale, no lookahead.
+        // A master limiter: full scale, no lookahead.
         (
             "state/song/limit.json".to_string(),
             r#"{"tool": "limiter", "state": {"ceiling_db": 0, "lookahead_ms": 0}}"#.to_string(),

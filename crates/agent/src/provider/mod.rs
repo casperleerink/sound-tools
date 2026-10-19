@@ -235,7 +235,7 @@ pub enum AgentEvent {
     },
     StepStarted {
         id: StepId,
-        /// One line in the past tense, such as "Edited state/arrangement/bass/verse-a.json" or
+        /// One line in the past tense, such as "Edited state/song/bass/verse-a.json" or
         /// "Ran \`cargo build\`". Text between backticks shows as code, here and in the
         /// title of an approval.
         title: String,

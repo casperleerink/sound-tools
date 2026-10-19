@@ -5,7 +5,7 @@
 //! thin line with a hollow handle 8 pt under the top. A green line is where the sound plays. A curve over it, such as gain and fades or an envelope,
 //! and its handles follow the rules of every display.
 //!
-//! The Clip card of the arrangement and the Sampler share it. It knows no clip and no sampler:
+//! The Sampler uses it. It knows no clip and no sampler:
 //! the owner gives the overview of the file, where it starts and ends in seconds, and hears the
 //! start and end handles. A value a handle moves also has a knob, as on every display.
 //!

@@ -1,6 +1,6 @@
 //! Automation: an owner moves the numbers of a device over time, block by block.
 //!
-//! The owner, such as the arrangement, plays its lanes on the audio thread and sends each
+//! The owner, such as a parent wiring `lane` children, plays its lanes on the audio thread and sends each
 //! device the values of this block as [`Automation`] events, to the [`AutomationInput`] the
 //! device names with [`BehaviourContext::automation`](crate::BehaviourContext::automation).
 //! The device keeps an [`Automated`] in place of its record, and aims at the [`Targets`] it

@@ -9,8 +9,8 @@
 //! - `test.chain`: two gains in a row, connected by its behaviour. With `feedback` it also
 //!   connects the last to the side input of the first, which closes a cycle.
 //! - `test.pair`: an owner that plays a constant through its children `a` and `b`, two chains.
-//!   With `feedback` it also connects `b` back into `a`, which closes a cycle, as an
-//!   arrangement does whose tracks each listen to the other.
+//!   With `feedback` it also connects `b` back into `a`, which closes a cycle, as
+//!   two tracks do that each listen to the other.
 //! - `test.reporter`: reports its message as a problem; "fail" fails its behaviour.
 
 use std::path::{Path, PathBuf};

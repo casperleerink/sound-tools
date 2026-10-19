@@ -193,8 +193,7 @@ pub fn tool_schemas() -> Result<Vec<ToolSchema>> {
 /// and what a composer can pick. The window names no view type and no instrument: it takes
 /// both registries and installs them, see `Shell::new`.
 ///
-/// This is the one place that knows the built-in synth and the plugin host at once. The
-/// arrangement, which owns the track panel, depends on neither.
+/// This is the one place that knows the built-in synth and the plugin host at once.
 pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     let mut views = Views::new();
     let mut devices = Devices::new();

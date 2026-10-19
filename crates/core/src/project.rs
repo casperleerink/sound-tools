@@ -325,14 +325,14 @@ impl Project {
 
     /// The number `field` that `instance` takes automation for, as its behaviour named it the
     /// last time it ran. `None` while it takes none of that name. For an owner that edits its
-    /// lanes, such as the arrangement when a clip takes the automation under it along.
+    /// lanes, such as a view that shows what a lane plays.
     pub fn automation(&self, instance: &InstanceId, field: &str) -> Option<AutomatedNumber> {
         self.bindings.automation(instance, field)
     }
 
     /// The names of every number `instance` takes automation for, in the order its behaviour
     /// named them the last time it ran, each of which [`Self::automation`] gives. For an owner
-    /// that offers to automate them, such as the arrangement when a lane is added.
+    /// that offers to automate them, such as a menu that adds a lane.
     pub fn automatable(&self, instance: &InstanceId) -> impl Iterator<Item = &str> + '_ {
         self.bindings.automatable(instance)
     }

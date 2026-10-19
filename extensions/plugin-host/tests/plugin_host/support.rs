@@ -158,8 +158,8 @@ impl Played {
     }
 }
 
-/// A tool that plays a fixed list of note events at engine frames. It stands in for a track's
-/// sequencer, so these tests need no arrangement.
+/// A tool that plays a fixed list of note events at engine frames. It stands in for a
+/// `timeline`, so these tests need no TypeScript.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Keys {
@@ -368,8 +368,7 @@ impl State for Rack {
 /// What a track does: the sender into the instrument, the instrument through the effect it has,
 /// and the last of them to the device.
 ///
-/// The chain is the one the arrangement builds, in miniature: one fixed effect slot named
-/// `effect`. A slot with no record is left out, as a track leaves one out.
+/// One fixed effect slot named `effect`, after the instrument. A slot with no record is left out.
 fn apply_rack(state: &Rack, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     play_lanes(state, context)?;
     if let Some(played) = context.child_output("keys", PLAYED_OUTPUT)

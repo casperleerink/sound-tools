@@ -1,4 +1,4 @@
-//! The song of the DAW template (`templates/daw`) as the arrangement's views are used: tracks added,
+//! The song of the DAW template (`templates/daw`) as a composer uses it: tracks added,
 //! coloured, moved and deleted; a clip renamed, copied, pasted and nudged; automation lanes
 //! added and their points edited; the note editor's lanes and grid; the ruler's tempo changes,
 //! sections and repeat; a region chosen and deleted. Each gesture is one undo step.
@@ -419,8 +419,8 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     assert_eq!(window.problems(), []);
 }
 
-/// A clip moved on its own track takes the line of its automation along, as the arrangement's
-/// clips do: the line under it lands where it lands, and the move is one undo step.
+/// A clip moved on its own track takes the line of its automation along: the line under it
+/// lands where it lands, and the move is one undo step.
 #[gpui::test]
 fn a_clip_moved_on_its_track_takes_its_automation_along(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 4, 12);

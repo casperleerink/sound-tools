@@ -1,6 +1,6 @@
 //! The composite test tool: a parent that reads its children into one snapshot and routes
-//! through an owned child, with no connection in `project.json`. The arrangement needs this
-//! shape for tracks, clips and instruments.
+//! through an owned child, with no connection in `project.json`. A song needs this shape
+//! for tracks, clips and instruments.
 
 use sound_core::{Changes, ProjectEvent};
 

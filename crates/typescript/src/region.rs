@@ -1,5 +1,5 @@
 //! The `region`: a child of a parent of the project that plays a stretch of an audio file at its
-//! place in the song, out of its output `audio`, as an audio clip of the arrangement plays.
+//! place in the song, out of its output `audio`.
 
 use std::path::PathBuf;
 use std::sync::Arc;

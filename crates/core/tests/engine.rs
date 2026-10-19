@@ -1026,7 +1026,7 @@ fn snapshot(value: f32) -> Arc<Snapshot> {
     })
 }
 
-/// A tiny stand-in for the arrangement processor: it plays from an immutable snapshot that
+/// A tiny stand-in for a timeline processor: it plays from an immutable snapshot that
 /// the control side replaces by message.
 struct SnapshotReader {
     snapshot: Arc<Snapshot>,

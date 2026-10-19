@@ -1,6 +1,6 @@
 //! The `lane`: a child of a parent of the project that moves a number over the song, out of its
 //! output `value`. Its parent connects that to a number of another child, such as the cutoff of
-//! a filter, and the number follows the line as a lane of the arrangement moves a knob.
+//! a filter, and the number follows the line.
 
 use std::sync::Arc;
 

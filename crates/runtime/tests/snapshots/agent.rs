@@ -79,9 +79,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("read"),
-                        title: "Read state/arrangement/piano/verse.json".to_string(),
-                        request_title: "Read state/arrangement/piano/verse.json".to_string(),
-                        running_title: "Reading state/arrangement/piano/verse.json".to_string(),
+                        title: "Read state/song/piano/verse.json".to_string(),
+                        request_title: "Read state/song/piano/verse.json".to_string(),
+                        running_title: "Reading state/song/piano/verse.json".to_string(),
                     },
                     AgentEvent::StepDone {
                         id: step("read"),
@@ -89,9 +89,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     },
                     AgentEvent::StepStarted {
                         id: step("write"),
-                        title: "Wrote state/arrangement/bass/clip-005.json".to_string(),
-                        request_title: "Write state/arrangement/bass/clip-005.json".to_string(),
-                        running_title: "Writing state/arrangement/bass/clip-005.json".to_string(),
+                        title: "Wrote state/song/bass/clip-005.json".to_string(),
+                        request_title: "Write state/song/bass/clip-005.json".to_string(),
+                        running_title: "Writing state/song/bass/clip-005.json".to_string(),
                     },
                     AgentEvent::StepDone {
                         id: step("write"),
@@ -170,7 +170,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
         .checked_sub(Duration::from_secs(47))
         .context("a clock this early")?;
     let root = cx.update(|cx| opened.session.read(cx).project().root().to_path_buf());
-    let broken: Vec<PathBuf> = ["state/arrangement/drums/swing.json", "state/tone/kick.json"]
+    let broken: Vec<PathBuf> = ["state/song/drums/swing.json", "state/tone/kick.json"]
         .into_iter()
         .map(|file| root.join(file))
         .collect();
@@ -182,9 +182,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &Save) -> Result<()> 
                     AgentEvent::TurnStarted,
                     AgentEvent::StepStarted {
                         id: step("edit"),
-                        title: "Edited state/arrangement/drums/clip-001.json".to_string(),
-                        request_title: "Edit state/arrangement/drums/clip-001.json".to_string(),
-                        running_title: "Editing state/arrangement/drums/clip-001.json".to_string(),
+                        title: "Edited state/song/drums/clip-001.json".to_string(),
+                        request_title: "Edit state/song/drums/clip-001.json".to_string(),
+                        running_title: "Editing state/song/drums/clip-001.json".to_string(),
                     },
                     AgentEvent::StepDone {
                         id: step("edit"),

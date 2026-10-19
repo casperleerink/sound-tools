@@ -88,9 +88,9 @@ fn a_thread_reads_back_as_the_conversation_it_was() {
             },
             AgentEvent::StepStarted {
                 id: step.clone(),
-                title: "Wrote state/arrangement/bass/clip.json".to_string(),
-                request_title: "Write state/arrangement/bass/clip.json".to_string(),
-                running_title: "Writing state/arrangement/bass/clip.json".to_string(),
+                title: "Wrote state/song/bass/clip.json".to_string(),
+                request_title: "Write state/song/bass/clip.json".to_string(),
+                running_title: "Writing state/song/bass/clip.json".to_string(),
             },
             AgentEvent::StepDone {
                 id: step,
