@@ -524,6 +524,11 @@ impl Live {
     }
 
     /// The tool of a card, as it last loaded.
+    /// Goes up each time the tools load.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
     pub(crate) fn info(&self, card: u64) -> Option<ToolInfo> {
         find(&self.tools.borrow(), &self.cards.get(&card)?.tool).cloned()
     }

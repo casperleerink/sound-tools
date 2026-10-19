@@ -55,6 +55,8 @@ pub(crate) struct TypeScriptCard {
     /// The scroll and zoom of each space, by its key, and the size it was last laid out at,
     /// which its paint writes.
     spaces: Rc<RefCell<HashMap<String, SpaceView>>>,
+    /// The record as last read, with the load of the tools it was read for.
+    state: Option<(u64, Rc<Value>)>,
     /// The drag of the pointer, from its press until the answer to its end arrives.
     held: Option<Held>,
     /// The shape the pointer is over: the key of its space and its node.
@@ -202,10 +204,17 @@ impl TypeScriptCard {
         cx.on_focus_out(&focus, window, |view, _, _, cx| view.let_go_of_keys(cx))
             .detach();
         cx.subscribe(&session, |view, _, event, cx| match event {
-            ProjectEvent::Deleted(id) if *id == view.id => view.edit.finish(&view.session, cx),
+            ProjectEvent::Deleted(id) if *id == view.id => {
+                view.state = None;
+                view.edit.finish(&view.session, cx);
+            }
+            ProjectEvent::Created(id) if *id == view.id => view.state = None,
             // Its code reads the records of its children too.
             // Its live values read the record.
-            ProjectEvent::Changed(id) if *id == view.id => cx.notify(),
+            ProjectEvent::Changed(id) if *id == view.id => {
+                view.state = None;
+                cx.notify();
+            }
             _ => {}
         })
         .detach();
@@ -232,6 +241,7 @@ impl TypeScriptCard {
             frame,
             edit: ControlEdit::default(),
             spaces: Rc::default(),
+            state: None,
             held: None,
             hovered: None,
             focus,
@@ -303,6 +313,21 @@ impl TypeScriptCard {
             None => state,
         };
         (state, info)
+    }
+
+    /// The record as `record` gives it, read again only when it or the tools changed: a page
+    /// draws every frame while something moves, and a record of many notes is long to read.
+    fn state(&mut self, cx: &App) -> Option<Rc<Value>> {
+        let generation = self.live.read(cx).generation();
+        if let Some((made, state)) = &self.state
+            && *made == generation
+        {
+            return Some(state.clone());
+        }
+        state_of(self.session.read(cx).project(), &self.id)?;
+        let state = Rc::new(self.record(cx).0);
+        self.state = Some((generation, state.clone()));
+        Some(state)
     }
 
     /// A press on a space, on a shape that hears the pointer or on the space itself.
@@ -834,7 +859,7 @@ struct Drawing<'a, 'b> {
     /// The tool, as it last loaded.
     info: Option<ToolInfo>,
     /// The record, with each field it leaves out at its default.
-    state: Value,
+    state: Rc<Value>,
     watches: BTreeMap<String, f32>,
     played: Option<BTreeMap<String, f32>>,
     tick: f64,
@@ -968,10 +993,16 @@ impl Drawing<'_, '_> {
 
     /// The shapes of a space with their numbers worked out, each in the colour it shows, those
     /// of its groups among them, moved by the group.
-    fn place(&self, children: &[usize], key: &str) -> (Vec<Placed>, Vec<Option<Pointer>>) {
+    fn place(
+        &self,
+        children: &[usize],
+        key: &str,
+        view: &SpaceView,
+    ) -> (Vec<Placed>, Vec<Option<Pointer>>) {
         let mut placing = Placing {
             sources: self.sources(),
             table: self.table,
+            shown: Shown::of(view),
             hovered: (self.hovered.as_ref())
                 .filter(|(space, _)| space == key)
                 .map(|(_, shape)| *shape),
@@ -1005,7 +1036,7 @@ impl Drawing<'_, '_> {
         let follow = space.follow.clone().unwrap_or_default();
         let view = followed(clamped(view, &extent), &follow, &self.spaces);
         self.spaces.insert(key.clone(), view);
-        let (placed, pointed) = self.place(children, &key);
+        let (placed, pointed) = self.place(children, &key, &view);
         let frame = Rc::new(SpaceFrame {
             key,
             node: id,
@@ -1064,10 +1095,72 @@ impl Drawing<'_, '_> {
     }
 }
 
+/// What of a space shows, in its units, as it was last laid out; with points per unit, to
+/// reach as far as a shape sized in points does.
+struct Shown {
+    left: f64,
+    right: f64,
+    top: f64,
+    bottom: f64,
+    per_point: (f64, f64),
+}
+
+impl Shown {
+    /// `None` before the space was laid out: then everything is placed.
+    fn of(view: &SpaceView) -> Option<Self> {
+        let (across, down) = view.scale();
+        (view.width > 0.0 && across > 0.0 && down > 0.0).then(|| Self {
+            left: view.left,
+            right: view.left + view.width / across,
+            top: view.top,
+            bottom: view.top + view.height / down,
+            per_point: (1.0 / across, 1.0 / down),
+        })
+    }
+
+    /// Whether what spans `left..right` and `top..bottom`, and `reach` points further each way,
+    /// may show.
+    fn reaches(&self, (left, right): (f64, f64), (top, bottom): (f64, f64), reach: (f32, f32)) -> bool {
+        let (x, y) = (
+            f64::from(reach.0) * self.per_point.0,
+            f64::from(reach.1) * self.per_point.1,
+        );
+        left.min(right) - x <= self.right
+            && left.max(right) + x >= self.left
+            && top.min(bottom) - y <= self.bottom
+            && top.max(bottom) + y >= self.top
+    }
+
+    fn shows(&self, geometry: &Geometry) -> bool {
+        match *geometry {
+            Geometry::Rect {
+                x,
+                y,
+                width,
+                height,
+                ..
+            } => self.reaches((x, x + width), (y, y + height), (1.0, 1.0)),
+            Geometry::Circle { x, y, radius } | Geometry::Arc { x, y, radius, .. } => {
+                self.reaches((x, x), (y, y), (radius + 2.0, radius + 2.0))
+            }
+            Geometry::Line { from, to, width } => {
+                self.reaches((from.0, to.0), (from.1, to.1), (width, width))
+            }
+            // A line of text is as wide as its words: a long label far off to the left may
+            // still reach in.
+            Geometry::Text { x, y, size, .. } => {
+                self.reaches((x, x), (y, y), (size * 40.0, size * 2.0))
+            }
+        }
+    }
+}
+
 /// The shapes of a space as they are placed, in the order they paint.
 struct Placing<'a> {
     sources: Sources<'a>,
     table: &'a NodeTable,
+    /// Shapes outside it are not placed, so a long piece costs what shows.
+    shown: Option<Shown>,
     /// The node of the shape of this space the pointer is over.
     hovered: Option<u64>,
     placed: Vec<Placed>,
@@ -1160,6 +1253,9 @@ impl Placing<'_> {
             },
             ShapeKind::Group => return,
         };
+        if self.shown.as_ref().is_some_and(|shown| !shown.shows(&geometry)) {
+            return;
+        }
         let origin = match &geometry {
             Geometry::Line { from, .. } => *from,
             _ => (x, y),
@@ -1539,7 +1635,7 @@ fn frame_now(
 
 impl Render for TypeScriptCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(state) = state_of(self.session.read(cx).project(), &self.id) else {
+        let Some(state) = self.state(cx) else {
             return div().into_any_element();
         };
         // An ended drag lets go once the answer to its end arrived.
@@ -1555,10 +1651,6 @@ impl Render for TypeScriptCard {
         let live = self.live.read(cx);
         let info = live.info(self.card);
         let hears_keys = info.as_ref().is_some_and(|info| info.keys);
-        let state = match &info {
-            Some(info) => info.with_defaults(state),
-            None => state,
-        };
         let tree = live.tree(self.card).cloned();
         let uses = live.uses(self.card);
         let watches = live.watches(self.card).cloned().unwrap_or_default();
