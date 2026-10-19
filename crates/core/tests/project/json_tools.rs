@@ -37,6 +37,7 @@ fn wobble(max: f64, version: u32, seen: &Seen) -> JsonTool {
         }),
         asset_folders: Vec::new(),
         owns_children: false,
+        end: None,
     }
 }
 
@@ -57,6 +58,7 @@ fn band(version: u32, seen: &Seen) -> JsonTool {
         doc: None,
         asset_folders: Vec::new(),
         owns_children: true,
+        end: None,
     }
 }
 

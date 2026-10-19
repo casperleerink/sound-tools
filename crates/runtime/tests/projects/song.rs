@@ -2,7 +2,10 @@
 //! whose children are a synth and `timeline`s, the clips, each a record of its own that plays its
 //! notes at their positions in the song.
 
+use sound_core::Ticks;
+
 use crate::owners::{closed, rendered_frames};
+use crate::plugin_hosts::open_read_only;
 use crate::support::{BAR, Harness, first_sound, write};
 
 const TOOLS: &str = r#"import { tool, type Declaration } from "./sdk";
@@ -171,4 +174,55 @@ fn a_note_that_ends_where_another_clip_starts_it_again_sounds_on() {
             "{first} then {second}"
         );
     }
+}
+
+/// The song ends where its last clip stops, which is what a render and an export play to. A
+/// loop and a cue that waits for a launch play for as long as someone lets them, so neither
+/// makes the song longer.
+#[test]
+fn the_song_ends_where_its_last_clip_stops_and_a_loop_or_a_cue_adds_nothing() {
+    let Some(mut harness) = song() else {
+        return;
+    };
+    assert_eq!(harness.project.end(), Some(Ticks(2 * 3840)));
+    let looped = r#"{"tool": "timeline", "state": {"start": 38400, "length": 3840, "loop": true}}"#;
+    harness.write_and_apply("state/song/piano/groove.json", looped);
+    let cue = r#"{"tool": "timeline", "state": {"start": 38400, "length": 3840, "plays": false}}"#;
+    harness.write_and_apply("state/song/piano/cue.json", cue);
+    assert_eq!(harness.project.end(), Some(Ticks(2 * 3840)));
+    // With no length, as long as its notes.
+    let free = r#"{"tool": "timeline", "state": {"start": 7680, "notes": [{"start": 960, "length": 480, "pitch": 60, "velocity": 100}]}}"#;
+    harness.write_and_apply("state/song/piano/tail.json", free);
+    assert_eq!(harness.project.end(), Some(Ticks(7680 + 1440)));
+}
+
+/// `--only song/bass` plays the bass alone: the piano, which plays in the second bar, is not
+/// heard, and no file changes.
+#[test]
+fn only_one_track_of_the_song_is_heard_and_no_file_changes() {
+    let Some(mut harness) = song() else {
+        return;
+    };
+    harness.write_and_apply(
+        "state/song/bass/instance.json",
+        r#"{"tool": "track", "state": {}}"#,
+    );
+    let synth = r#"{"tool": "instrument.synth", "state": {"release_seconds": 0.01}}"#;
+    harness.write_and_apply("state/song/bass/synth.json", synth);
+    harness.write_and_apply("state/song/bass/line.json", &clip(0, 1920));
+    let folder = closed(harness);
+    let project_file = std::fs::read_to_string(folder.path().join("project.json")).unwrap();
+
+    let (mut project, mut engine, plugins) = open_read_only(folder.path());
+    runtime::listen_only(&mut project, "song/bass").unwrap();
+    project.engine().play();
+    let played = runtime::render(&mut project, &mut engine, &plugins, 2 * BAR).unwrap();
+    // The bass on the third beat of the first bar, and nothing in the second bar.
+    let first = first_sound(&played, 0).unwrap();
+    assert_eq!(first / 48, 1000);
+    assert_eq!(first_sound(&played, first + 12_000), None);
+    assert!(runtime::listen_only(&mut project, "song/drums").is_err());
+    drop((project, engine));
+    let after = std::fs::read_to_string(folder.path().join("project.json")).unwrap();
+    assert_eq!(after, project_file);
 }

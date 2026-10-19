@@ -49,7 +49,7 @@ pub use watcher::GROUPING_WINDOW;
 use binding::{BindError, Bindings};
 use editing::{Change, RecordChange};
 use history::History;
-use instance::Record;
+use instance::{JsonState, Record};
 use live::LiveSources;
 use outside::NotApplied;
 use storage::{Form, Locked, RecordOnDisk, Storage};
@@ -458,6 +458,12 @@ impl Project {
             number += 1;
             candidate = InstanceId::numbered(wanted, number);
         }
+    }
+
+    /// The `state` of an instance of a JSON tool, as its file holds it.
+    pub(crate) fn json_state(&self, id: &InstanceId) -> Option<&serde_json::Value> {
+        let state = self.instances.get(id)?.state.as_any();
+        Some(&state.downcast_ref::<JsonState>()?.value)
     }
 
     /// The state of any instance as compact JSON, for summaries.

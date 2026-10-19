@@ -22,6 +22,8 @@ Plays notes in time, to the sample, out of its output `notes`: a child of a pare
 | `plays` | whether it plays from `start` before any launch, so a render plays it | `true` |
 | `quantize` | where a launch lands while the piece plays: `"bar"`, `"beat"` or `"now"`. While it is stopped, at once | `"bar"` |
 
+The piece ends where the last timeline that plays once stops: a render and an export play to there, and the transport shows that length. A loop and one with `"plays": false` add nothing.
+
 Its parent connects it to what plays it: `{ from: { child: "verse", notes: "notes" }, to: { child: "piano", notes: "notes" } }`.
 
 A number into its input `launch` starts it at its next `quantize` point, from there: above 0 starts it, 0 or below stops it. What plays goes on until it lands. From a performer, `send({ child: "bass", number: "launch" }, 1)`; nothing saves it and a render does not hear it. A number cable to `{ child: "bass", number: "launch" }` launches each time its number changes, in a render too. A clip launcher is a set of looping timelines with `"plays": false`: start one and stop the others at the same bar.

@@ -51,6 +51,8 @@ pub struct JsonTool {
     pub asset_folders: Vec<&'static str>,
     /// What [`State::OWNS_CHILDREN`] is for a typed tool.
     pub owns_children: bool,
+    /// What [`ToolRegistration::end`] is for a typed tool. It gets the `state`.
+    pub end: Option<Box<dyn Fn(&serde_json::Value) -> Option<Ticks>>>,
 }
 
 /// A built-in tool as the code of a tool of the project sees it, see
@@ -308,6 +310,7 @@ impl Registry {
             doc,
             asset_folders,
             owns_children,
+            end,
         } = tool;
         let name = match self.tools.get_key_value(name.as_str()) {
             Some((existing, definition)) if definition.extension.is_some() => {
@@ -362,7 +365,9 @@ impl Registry {
                 behaviour: Some(Box::new(behaviour)),
                 derive: None,
                 summary: None,
-                end: None,
+                end: end.map(|end| -> ErasedEnd {
+                    Box::new(move |project, id| end(project.json_state(id)?))
+                }),
                 owns_children,
                 asset_folders,
                 schema: None,

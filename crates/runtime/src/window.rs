@@ -237,7 +237,9 @@ impl Shell {
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&session, window, |shell, _, event, window, cx| {
             let at_top = |id: &InstanceId| id.parent().is_none();
+            // `main` in `project.json` may name another one.
             if matches!(event, ProjectEvent::Created(id) | ProjectEvent::Deleted(id) if at_top(id))
+                || matches!(event, ProjectEvent::ProjectFileChanged)
             {
                 shell.show_main_instance(window, cx);
             }
@@ -941,7 +943,7 @@ impl Opened {
         // up: the tick below runs its behaviour again.
         let plugins = crate::plugins(false)?;
         plugins.start_scanning();
-        let (mut project, extensions) = open_with_loaded(folder, control, plugins.clone(), tools)?;
+        let (mut project, extensions) = open_with_loaded(folder, control, plugins.clone(), tools, crate::NEW_PROJECT)?;
         project.watch()?;
         // From here only the project holds the plugins, so that dropping the project ends them
         // and saves the state of every one. A handle kept here would outlive the project: the

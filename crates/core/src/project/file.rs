@@ -26,6 +26,9 @@ pub struct ProjectFile {
     /// Core-owned connections. Routing that a tool makes by itself, such as a parent to its
     /// children or to the device, is not listed here.
     pub connections: Vec<SavedConnection>,
+    /// The instance at the top whose view the window shows. Left out, the first one with a view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main: Option<InstanceId>,
 }
 
 impl ProjectFile {
@@ -36,6 +39,7 @@ impl ProjectFile {
             tempo_map: TempoMap::default(),
             sections: Sections::default(),
             connections: Vec::new(),
+            main: None,
         }
     }
 }

@@ -13,7 +13,11 @@ use plugin_host::Plugins;
 use sound_core::{Changes, Engine, Instance, InstanceId, Project, ProjectError, State, Ticks};
 use sound_ui::extension_is_enabled;
 
-pub(crate) use arrangement::create_default_project;
+/// A new project with one arrangement and no track, see [`crate::Template`].
+pub(crate) const TEMPLATE: crate::Template = crate::Template {
+    name: "Arrangement",
+    create: arrangement::create_default_project,
+};
 
 use crate::render_into;
 

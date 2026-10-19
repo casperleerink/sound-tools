@@ -38,6 +38,7 @@ pub(crate) fn json_tool() -> JsonTool {
         behaviour: Box::new(apply),
         asset_folders: Vec::new(),
         owns_children: false,
+        end: None,
     }
 }
 

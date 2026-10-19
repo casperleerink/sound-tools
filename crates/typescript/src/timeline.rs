@@ -74,7 +74,26 @@ pub(crate) fn json_tool() -> JsonTool {
         behaviour: Box::new(apply),
         asset_folders: Vec::new(),
         owns_children: false,
+        end: Some(Box::new(end)),
     }
+}
+
+/// Where it stops playing in the song, which a render and the transport count as the end of
+/// the piece: none for a loop, or for one that waits for a launch. Read from the JSON as it is,
+/// with no copy of the notes, as every timeline of a long song is asked after each edit.
+fn end(state: &Value) -> Option<Ticks> {
+    let flag = |name: &str, default: bool| state.get(name).and_then(Value::as_bool).unwrap_or(default);
+    if flag("loop", false) || !flag("plays", true) {
+        return None;
+    }
+    let ticks = |value: &Value, name: &str| value.get(name).and_then(Value::as_u64);
+    let start = ticks(state, "start").unwrap_or(0);
+    let length = ticks(state, "length").or_else(|| {
+        let notes = state.get("notes").and_then(Value::as_array)?;
+        let ends = notes.iter().filter_map(|note| Some(ticks(note, "start")? + ticks(note, "length")?));
+        ends.max()
+    })?;
+    Some(Ticks(start + length))
 }
 
 /// The record of the timeline, for the SDK.

@@ -23,6 +23,18 @@ fn the_default_project_is_an_arrangement_with_no_tracks() {
 }
 
 #[test]
+fn a_bare_project_is_a_project_file_and_nothing_in_state() {
+    let folder = tempfile::tempdir().unwrap();
+    let (control, _engine) = sound_core::Engine::new(runtime::OFFLINE);
+    let plugins = crate::plugin_hosts::test_plugin_host(folder.path());
+    let project = runtime::open_or_create_from(folder.path(), control, plugins, runtime::BARE)
+        .unwrap();
+    assert_eq!(project.instances().count(), 0);
+    assert!(folder.path().join("project.json").exists());
+    assert_eq!(project.undo_label(), None);
+}
+
+#[test]
 fn a_folder_without_a_project_file_becomes_the_default_project_whatever_else_is_in_it() {
     let folder = tempfile::tempdir().unwrap();
     std::fs::create_dir(folder.path().join(".git")).unwrap();

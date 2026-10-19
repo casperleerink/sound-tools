@@ -146,17 +146,22 @@ impl Views {
         create(session, id, window, cx)
     }
 
-    /// The first instance at the top of the project whose tool has a view. The window shows
-    /// it in its main area.
+    /// The instance at the top of the project that `main` in `project.json` names, else the
+    /// first one whose tool has a view. The window shows it in its main area.
     pub fn main_instance(session: &Entity<Session>, cx: &App) -> Option<InstanceId> {
         let views = cx.try_global::<Self>()?;
         let project = session.read(cx).project();
-        let mut instances = project.instances();
         let other = |tool: &str| views.other_views.as_ref().is_some_and(|(has, _)| has(tool));
+        let shown = |id: &InstanceId, tool: &str| {
+            id.parent().is_none() && (views.by_tool.contains_key(tool) || other(tool))
+        };
+        let named = project.project_file().main.as_ref();
+        if let Some(main) = named.filter(|main| project.tool_of(main).is_some_and(|tool| shown(main, tool))) {
+            return Some(main.clone());
+        }
+        let mut instances = project.instances();
         instances
-            .find(|(id, tool)| {
-                id.parent().is_none() && (views.by_tool.contains_key(tool) || other(tool))
-            })
+            .find(|(id, tool)| shown(id, tool))
             .map(|(id, _)| id.clone())
     }
 }
