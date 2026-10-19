@@ -37,11 +37,11 @@ fn open_rack(cx: &mut TestAppContext) -> Option<Window<'_>> {
 }
 
 impl Window<'_> {
-    fn click(&mut self, position: Point<Pixels>) {
+    pub(super) fn click(&mut self, position: Point<Pixels>) {
         self.click_with(position, MouseButton::Left);
     }
 
-    fn click_with(&mut self, position: Point<Pixels>, button: MouseButton) {
+    pub(super) fn click_with(&mut self, position: Point<Pixels>, button: MouseButton) {
         self.cx
             .simulate_mouse_move(position, None, Modifiers::default());
         let modifiers = Modifiers::default();
@@ -65,7 +65,7 @@ impl Window<'_> {
         self.record("song/t00/chain")["order"].clone()
     }
 
-    fn has(&mut self, instance: &str) -> bool {
+    pub(super) fn has(&mut self, instance: &str) -> bool {
         let session = self.session.clone();
         let id = crate::support::id(instance);
         self.cx
@@ -207,7 +207,8 @@ fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
     let clip = window.on_lane(BAR / 2, 1);
     window.wait_for_bun();
     window.click_with(clip, MouseButton::Right);
-    let delete = window.until_found("menu-2");
+    // Edit notes, rename, copy, duplicate, delete.
+    let delete = window.until_found("menu-4");
     window.click(delete);
     window.until("the clip deleted", |window| !window.has("song/t01/c00"));
     assert_eq!(window.problems(), []);

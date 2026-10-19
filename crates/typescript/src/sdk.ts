@@ -1594,6 +1594,7 @@ export function batch<T>(change: () => T): T {
 }
 
 function flush() {
+  if (queue.length === 0) return;
   batching += 1;
   try {
     while (queue.length > 0) {
@@ -1607,6 +1608,8 @@ function flush() {
   } finally {
     batching -= 1;
   }
+  // Bindings ran again: their ops go out, also when code changed memory after an `await`.
+  host.changed();
 }
 
 function clean(node: Owner) {
@@ -2888,6 +2891,8 @@ export const host = {
   readFields,
   isRead,
   batch,
+  /** Called once bindings ran again; the host sends their ops. */
+  changed: () => {},
   /** Whether a binding runs now, or a component is made: what reads there is followed. */
   binding: () => listener !== null || settingUp > 0,
 };

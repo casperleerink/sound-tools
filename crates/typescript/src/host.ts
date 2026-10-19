@@ -695,6 +695,14 @@ function draft(child: OwnedChild): OwnedChild {
   return copy;
 }
 
+/**
+ * A copy of what code put in a record, as JSON: a record holds JSON, and a value read from
+ * `memory` or another store is a proxy, which `structuredClone` refuses.
+ */
+function plain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -715,7 +723,7 @@ function fieldsChanged(before: unknown, after: unknown, what: string) {
     }
   }
   removed.push(...Object.keys(was).filter((name) => !(name in after)));
-  return Object.keys(set).length > 0 || removed.length > 0 ? { set: structuredClone(set), removed } : null;
+  return Object.keys(set).length > 0 || removed.length > 0 ? { set: plain(set), removed } : null;
 }
 
 /**
@@ -793,7 +801,7 @@ function childChanges(parent: string, children: OwnedChild[], edited: unknown, c
 
 /** A new record at `id` and the children it comes with, parents first. */
 function created(id: string, child: OwnedChild, changes: Change[]) {
-  changes.push({ type: "record", id, tool: child.tool, state: structuredClone(child.state ?? {}) });
+  changes.push({ type: "record", id, tool: child.tool, state: plain(child.state ?? {}) });
   const inner: unknown = (child as { children?: unknown }).children;
   if (inner === undefined) return;
   if (!Array.isArray(inner)) {
@@ -1339,6 +1347,8 @@ function handle(request: Request) {
       break;
   }
 }
+
+sdk.host.changed = later;
 
 await load();
 

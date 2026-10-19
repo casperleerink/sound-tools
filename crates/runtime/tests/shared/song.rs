@@ -8,6 +8,7 @@ const TRACK: &str = include_str!("../../../../tooling/agent-eval/examples/track.
 const TAPE: &str = include_str!("../../../../tooling/agent-eval/examples/tape.ts");
 const CHAIN: &str = include_str!("../../../../tooling/agent-eval/examples/chain.ts");
 const BUS: &str = include_str!("../../../../tooling/agent-eval/examples/bus.ts");
+const CLIP_EDITOR: &str = include_str!("../../../../tooling/agent-eval/examples/clip-editor.tsx");
 
 pub(crate) const BAR: u64 = 3840;
 /// The page's sizes, as `song.tsx` has them: a track's row and its header, and points per tick.
@@ -94,6 +95,7 @@ fn song_with(
         ("extensions/tape.ts".to_string(), TAPE.to_string()),
         ("extensions/chain.ts".to_string(), CHAIN.to_string()),
         ("extensions/bus.ts".to_string(), BUS.to_string()),
+        ("extensions/clip-editor.tsx".to_string(), CLIP_EDITOR.to_string()),
         (
             "state/song/instance.json".to_string(),
             r#"{"tool": "song", "state": {}}"#.to_string(),
@@ -158,7 +160,7 @@ fn song_with(
         let colour = colours[track % colours.len()];
         files.push((
             format!("{folder}/instance.json"),
-            json!({ "tool": "track", "state": { "colour": colour } }).to_string(),
+            json!({ "tool": "track", "state": { "colour": colour, "automation": [{ "lane": "lane-cutoff", "target": "fx.cutoff_hz" }] } }).to_string(),
         ));
         files.push((
             format!("{folder}/synth.json"),
@@ -184,7 +186,7 @@ fn song_with(
         ));
         // The cutoff closes from 6 kHz to 1.5 kHz over 64 bars.
         let cutoff = r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": 6000}, {"tick": 245760, "value": 1500}], "scale": "log"}}"#;
-        files.push((format!("{folder}/cutoff.json"), cutoff.to_string()));
+        files.push((format!("{folder}/lane-cutoff.json"), cutoff.to_string()));
         files.push((
             format!("{folder}/rec.json"),
             r#"{"tool": "recorder", "state": {}}"#.to_string(),
