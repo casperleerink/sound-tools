@@ -45,74 +45,66 @@ type Taker = Rc<dyn Fn(&GlobalKey<'_>, &mut App) -> bool>;
 
 #[derive(Default)]
 pub struct GlobalKeys {
-    takers: Vec<(u64, Taker)>,
-    next: u64,
-    /// Which taker holds each key that went down, by the key without modifiers: its up comes
+    taker: Option<Taker>,
+    /// Each key the taker took as it went down, by the key without modifiers: its up comes
     /// there, whatever is held by then.
-    held: HashMap<String, (u64, Keystroke)>,
+    held: HashMap<String, Keystroke>,
 }
 
 impl Global for GlobalKeys {}
 
 impl GlobalKeys {
-    /// Adds a taker, asked after those added before it. Gives what [`Self::remove`] takes.
-    pub fn add(taker: impl Fn(&GlobalKey<'_>, &mut App) -> bool + 'static, cx: &mut App) -> u64 {
+    /// Sets what takes the keys, in place of what took them before.
+    pub fn set(taker: impl Fn(&GlobalKey<'_>, &mut App) -> bool + 'static, cx: &mut App) {
         let keys = cx.default_global::<Self>();
-        keys.next += 1;
-        keys.takers.push((keys.next, Rc::new(taker)));
-        keys.next
+        keys.taker = Some(Rc::new(taker));
+        keys.held.clear();
     }
 
-    pub fn remove(id: u64, cx: &mut App) {
-        let keys = cx.default_global::<Self>();
-        keys.takers.retain(|(taker, _)| *taker != id);
-        keys.held.retain(|_, (taker, _)| *taker != id);
-    }
-
-    /// A key went down. Gives whether a taker took it.
+    /// A key went down. Gives whether the taker took it.
     pub fn key_down(keystroke: &Keystroke, cx: &mut App) -> bool {
-        let takers: Vec<(u64, Taker)> = cx.default_global::<Self>().takers.clone();
-        let key = GlobalKey::new(keystroke, true);
-        let Some(id) = (takers.into_iter()).find_map(|(id, taker)| taker(&key, cx).then_some(id))
-        else {
+        let Some(taker) = cx.default_global::<Self>().taker.clone() else {
             return false;
         };
-        (cx.default_global::<Self>().held).insert(keystroke.key.clone(), (id, keystroke.clone()));
+        if !taker(&GlobalKey::new(keystroke, true), cx) {
+            return false;
+        }
+        (cx.default_global::<Self>().held).insert(keystroke.key.clone(), keystroke.clone());
         true
     }
 
-    /// A key came up. Gives whether it was a taker's, which hears it.
+    /// A key came up. Gives whether the taker took it, which hears it.
     pub fn key_up(keystroke: &Keystroke, cx: &mut App) -> bool {
-        let Some((id, _)) = cx.default_global::<Self>().held.remove(&keystroke.key) else {
+        if cx
+            .default_global::<Self>()
+            .held
+            .remove(&keystroke.key)
+            .is_none()
+        {
             return false;
-        };
-        Self::up(id, keystroke, cx);
+        }
+        Self::up(keystroke, cx);
         true
     }
 
-    /// Every key a taker holds comes up: cmd went down, which macOS sends no key up under, or the
-    /// window lost the keys.
+    /// Every key the taker holds comes up: cmd went down, which macOS sends no key up under, or
+    /// the window lost the keys.
     pub fn let_go(cx: &mut App) {
-        let held: Vec<(u64, Keystroke)> = cx
+        let held: Vec<Keystroke> = cx
             .default_global::<Self>()
             .held
             .drain()
             .map(|(_, held)| held)
             .collect();
-        for (id, keystroke) in held {
-            Self::up(id, &keystroke, cx);
+        for keystroke in held {
+            Self::up(&keystroke, cx);
         }
     }
 
-    fn up(id: u64, keystroke: &Keystroke, cx: &mut App) {
-        let takers = &cx.default_global::<Self>().takers;
-        let Some(taker) = (takers.iter())
-            .find(|(taker, _)| *taker == id)
-            .map(|(_, taker)| taker.clone())
-        else {
-            return;
-        };
-        taker(&GlobalKey::new(keystroke, false), cx);
+    fn up(keystroke: &Keystroke, cx: &mut App) {
+        if let Some(taker) = cx.default_global::<Self>().taker.clone() {
+            taker(&GlobalKey::new(keystroke, false), cx);
+        }
     }
 }
 
@@ -125,46 +117,33 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn the_first_taker_that_takes_a_key_hears_it_come_up_and_a_let_go_ends_what_it_holds(
+    fn a_key_the_taker_took_comes_up_to_it_and_a_let_go_ends_what_it_holds(
         cx: &mut TestAppContext,
     ) {
         let heard = Rc::new(RefCell::new(Vec::new()));
         cx.update(|cx| {
-            let first = heard.clone();
-            GlobalKeys::add(
+            let taker = heard.clone();
+            GlobalKeys::set(
                 move |key, _| {
-                    let took = key.name == "space";
+                    let took = key.name == "space" || key.name == "a";
                     if took {
-                        first.borrow_mut().push(("first", key.down));
+                        taker.borrow_mut().push((key.name.clone(), key.down));
                     }
                     took
                 },
                 cx,
             );
-            let second = heard.clone();
-            GlobalKeys::add(
-                move |key, _| {
-                    second.borrow_mut().push(("second", key.down));
-                    true
-                },
-                cx,
-            );
-            let space = Keystroke::parse("space").unwrap();
-            let a = Keystroke::parse("a").unwrap();
+            let [space, a, b] = ["space", "a", "b"].map(|key| Keystroke::parse(key).unwrap());
             assert!(GlobalKeys::key_down(&space, cx));
             assert!(GlobalKeys::key_down(&a, cx));
+            assert!(!GlobalKeys::key_down(&b, cx));
             assert!(GlobalKeys::key_up(&space, cx));
             assert!(!GlobalKeys::key_up(&space, cx));
+            assert!(!GlobalKeys::key_up(&b, cx));
             GlobalKeys::let_go(cx);
         });
-        assert_eq!(
-            *heard.borrow(),
-            [
-                ("first", true),
-                ("second", true),
-                ("first", false),
-                ("second", false)
-            ]
-        );
+        let expected = [("space", true), ("a", true), ("space", false), ("a", false)];
+        let expected = expected.map(|(name, down)| (name.to_string(), down));
+        assert_eq!(*heard.borrow(), expected);
     }
 }

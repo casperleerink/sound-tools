@@ -172,7 +172,7 @@ pub fn start_window(
     let generation = Rc::new(Cell::new(0));
     let live = Live::start(extensions, session, &tools, &generation, cx);
     // The keys the tool of the main view takes wherever the focus is.
-    let keys = GlobalKeys::add(
+    GlobalKeys::set(
         {
             let (live, session, tools) = (live.downgrade(), session.downgrade(), tools.clone());
             move |key, cx| {
@@ -204,8 +204,6 @@ pub fn start_window(
         },
         cx,
     );
-    cx.observe_release(&live, move |_, cx| GlobalKeys::remove(keys, cx))
-        .detach();
 
     views.set_other_cards({
         let (tools, live) = (tools.clone(), live.clone());

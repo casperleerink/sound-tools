@@ -386,7 +386,7 @@ fn the_playhead_follows_the_engine_without_notifying_the_session(cx: &mut TestAp
 
     opened
         .session
-        .update(cx, |session, cx| session.toggle_playback(cx));
+        .update(cx, |session, _| session.engine().play());
     let mut buffer = [0.0_f32; 512 * 2];
     opened.engine.process_block(&mut buffer);
     cx.executor().advance_clock(POLL_INTERVAL);

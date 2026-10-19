@@ -42,10 +42,11 @@ pub struct Loop {
     pub on: bool,
 }
 
-/// Turns the click in the engine on or off. The window attaches it; the session holds it, so
-/// every view that shows the click shows the same one.
 /// What stretch of the piece a selection covers in a project, see [`Session::selected_span`].
 pub type SpanOf = std::rc::Rc<dyn Fn(&Project) -> Option<(Ticks, Ticks)>>;
+
+/// Turns the click in the engine on or off. The window attaches it; the session holds it, so
+/// every view that shows the click shows the same one.
 
 pub type ClickSwitch = Box<dyn FnMut(&mut EngineControl, bool) -> Result<(), GraphError>>;
 
@@ -71,14 +72,10 @@ pub struct Session {
     gesture: Option<ProjectEdit>,
     /// What the composer is working on, see [`Self::select`].
     selected: Option<InstanceId>,
-    /// The clips the composer is working on, see [`Self::select_clips`].
-    selected_clips: Vec<InstanceId>,
     /// See [`Self::selected_span`].
     span: Option<SpanOf>,
     /// A stopped engine fails every poll. It is reported once.
     engine_stopped: bool,
-    /// See [`Self::history_moves`].
-    history_moves: u64,
     /// See [`Self::looped`].
     looped: Entity<Loop>,
     /// What the device plays, for every view that shows its level.
@@ -123,10 +120,8 @@ impl Session {
             notice: None,
             gesture: None,
             selected: None,
-            selected_clips: Vec::new(),
             span: None,
             engine_stopped: false,
-            history_moves: 0,
             output,
             click: None,
             click_on: false,
@@ -174,18 +169,6 @@ impl Session {
     pub fn select(&mut self, instance: Option<InstanceId>, cx: &mut Context<Self>) {
         if self.selected != instance {
             self.selected = instance;
-            cx.notify();
-        }
-    }
-
-    /// Every selected clip, the first one first. The project menu exports the time they cover.
-    pub fn selected_clips(&self) -> &[InstanceId] {
-        &self.selected_clips
-    }
-
-    pub fn select_clips(&mut self, clips: Vec<InstanceId>, cx: &mut Context<Self>) {
-        if self.selected_clips != clips {
-            self.selected_clips = clips;
             cx.notify();
         }
     }
@@ -250,14 +233,6 @@ impl Session {
             Err(error) => self.report(error, cx),
         }
         cx.notify();
-    }
-
-    pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
-        if self.playhead.read(cx).playing {
-            self.engine().pause();
-        } else {
-            self.engine().play();
-        }
     }
 
     /// Runs one project operation, such as a `commit`. Observers hear what it changed. An
@@ -329,15 +304,15 @@ impl Session {
     /// Undo for keys and menus. Ignored while a gesture is open: undo in the middle of a drag
     /// would be overwritten by the next mouse move and leave a step that ends nowhere.
     pub fn undo(&mut self, cx: &mut Context<Self>) {
-        if self.gesture.is_none() && self.edit(cx, Project::undo).flatten().is_some() {
-            self.history_moves += 1;
+        if self.gesture.is_none() {
+            self.edit(cx, Project::undo);
         }
     }
 
     /// Redo, ignored while a gesture is open, like [`Self::undo`].
     pub fn redo(&mut self, cx: &mut Context<Self>) {
-        if self.gesture.is_none() && self.edit(cx, Project::redo).flatten().is_some() {
-            self.history_moves += 1;
+        if self.gesture.is_none() {
+            self.edit(cx, Project::redo);
         }
     }
 
@@ -351,15 +326,6 @@ impl Session {
     /// [`Project::end_request`].
     pub fn end_request(&mut self) {
         self.project.end_request();
-    }
-
-    /// How many times undo or redo was asked for in this session. A view that keeps the last
-    /// value knows that the events it hears now come from one, so it can select what the undo
-    /// brought back: the project events do not say where a change came from. It counts only a
-    /// step that applied. Views hear the events of an update when it is over, so the events of
-    /// the step already see the new count.
-    pub fn history_moves(&self) -> u64 {
-        self.history_moves
     }
 
     /// Runs the behaviours of these instances again, with the records they already have.
