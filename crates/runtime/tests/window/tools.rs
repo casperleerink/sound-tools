@@ -24,6 +24,7 @@ use crate::support::{id, peak};
 
 mod edits;
 mod gestures;
+mod mixer;
 mod performance;
 mod piano_roll;
 
