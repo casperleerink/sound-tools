@@ -448,6 +448,11 @@ impl Project {
         Some(&state.downcast_ref::<JsonState>()?.value)
     }
 
+    /// What changes when the record of `id` does, to keep what was made of it until then.
+    pub fn stamp(&self, id: &InstanceId) -> Option<RecordStamp> {
+        Some(RecordStamp::of(&self.instances.get(id)?.state))
+    }
+
     /// The state of any instance as compact JSON, for summaries.
     pub fn state_json(&self, id: &InstanceId) -> Option<String> {
         self.instances.get(id)?.state.to_json().ok()

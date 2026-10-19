@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use sound_core::{Clock, InstanceId, Project, Scope, Ticks, ValueRange};
+use sound_core::{Clock, InstanceId, Project, RecordStamp, Scope, Ticks, ValueRange};
 use sound_media::Overview;
 use sound_ui::{PeaksReader, Session};
 
@@ -78,6 +78,34 @@ pub(crate) struct Feeds {
     pub takes: HashMap<String, Rc<[f32]>>,
     /// Waveforms as drawn, by file name and the seconds of it, which stay until it changes.
     pub waves: RefCell<HashMap<(String, u64, u64), (u64, Rc<[f32]>)>>,
+    records: Records,
+}
+
+/// The records of the instances a card reads fields of, each read once for every change of it,
+/// not every frame: those of the last frame, and those read in this one.
+#[derive(Default)]
+struct Records {
+    last: HashMap<InstanceId, (RecordStamp, Value)>,
+    now: HashMap<InstanceId, (RecordStamp, Value)>,
+}
+
+impl Records {
+    fn next_frame(&mut self) {
+        self.last = std::mem::take(&mut self.now);
+    }
+
+    fn of(&mut self, project: &Project, id: &InstanceId) -> Option<&Value> {
+        let stamp = project.stamp(id)?;
+        if !self.now.contains_key(id) {
+            let kept = (self.last.remove(id)).filter(|(kept, _)| *kept == stamp);
+            let record = match kept {
+                Some(kept) => kept,
+                None => (stamp, serde_json::from_str(&project.state_json(id)?).ok()?),
+            };
+            self.now.insert(id.clone(), record);
+        }
+        self.now.get(id).map(|(_, record)| record)
+    }
 }
 
 /// What an easing keeps from frame to frame.
@@ -125,11 +153,16 @@ impl Feeds {
                 (false, _) => self.output_reader = None,
             }
         }
+        self.records.next_frame();
+        let records = &mut self.records;
         self.inside = (uses.inside.iter())
-            .filter_map(|name| Some((name.clone(), child_field(project, id, name)?)))
+            .filter_map(|name| Some((name.clone(), child_field(project, id, name, records)?)))
             .collect();
         self.played = (uses.played.iter())
-            .filter_map(|name| Some((name.clone(), played(project, id, state, name, tick)?)))
+            .filter_map(|name| {
+                let value = played(project, (id, state), name, tick, records)?;
+                Some((name.clone(), value))
+            })
             .collect();
         self.scopes.retain(|name, _| uses.scopes.contains(name));
         for name in &uses.scopes {
@@ -285,12 +318,15 @@ fn child_field(
     project: &Project,
     id: &InstanceId,
     name: &str,
+    records: &mut Records,
 ) -> Option<(f32, Option<ValueRange>)> {
     let (child, field) = name.split_once('.')?;
     let child = id.child(child).ok()?;
     let range = project.automation(&child, field).map(|number| number.range);
-    let record: Value = serde_json::from_str(&project.state_json(&child)?).ok()?;
-    let value = record.get(field).and_then(Value::as_f64);
+    let value = records
+        .of(project, &child)?
+        .get(field)
+        .and_then(Value::as_f64);
     let value = value.map(|value| value as f32).or_else(|| {
         let number = project.automation(&child, field)?;
         number.record
@@ -303,10 +339,10 @@ fn child_field(
 /// record.
 fn played(
     project: &Project,
-    id: &InstanceId,
-    state: &Value,
+    (id, state): (&InstanceId, &Value),
     name: &str,
     tick: Ticks,
+    records: &mut Records,
 ) -> Option<(f32, Option<ValueRange>)> {
     let lane = |instance: &InstanceId, number: &str| {
         let lanes = project.lanes(instance)?;
@@ -332,7 +368,7 @@ fn played(
         .find(|(each, _)| *each == played_name(&format!("{}.{number}", inner.name())))
         .map(|(_, watch)| watch.get())
         .filter(|value| value.is_finite());
-    let (record, range) = child_field(project, id, name)?;
+    let (record, range) = child_field(project, id, name, records)?;
     Some((
         cable.or_else(|| lane(&inner, number)).unwrap_or(record),
         range,

@@ -191,6 +191,10 @@ impl PartialEq for RecordStamp {
 }
 
 impl RecordStamp {
+    pub(crate) fn of(state: &Arc<dyn super::instance::ErasedState>) -> Self {
+        Self(state.clone())
+    }
+
     /// The state as compact JSON.
     pub fn state_json(&self) -> Result<String, serde_json::Error> {
         self.0.to_json()
