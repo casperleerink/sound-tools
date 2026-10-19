@@ -64,7 +64,9 @@ fn a_track_in_the_middle_leaves_every_sample_as_its_instrument_made_it() {
     assert_eq!(peak(&left), LEVEL);
     assert_eq!(left, right);
     assert_eq!(
-        TrackState::new("piano", Default::default(), 0).mix().gains(),
+        TrackState::new("piano", Default::default(), 0)
+            .mix()
+            .gains(),
         [1.0, 1.0]
     );
 }

@@ -67,9 +67,9 @@ pub use clip_moves::{AnyClip, ClipMove, move_clips};
 pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};
+pub use slot::{EffectSlot, Sidechain, Tap};
 pub use sound_core::mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
 pub use sound_media::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
-pub use slot::{EffectSlot, Sidechain, Tap};
 
 /// The name to enable in `project.json`.
 pub const EXTENSION: &str = "arrangement";

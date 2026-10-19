@@ -95,9 +95,16 @@ fn rust_arrangement() -> Harness {
             write(root, &format!("{folder}/{name}"), &record.to_string());
         }
     }
-    for (order, name, pre_fader, effects) in [(TRACKS + 1, "ret-a", false, vec!["verb"]), (TRACKS + 2, "ret-b", true, vec![])] {
+    for (order, name, pre_fader, effects) in [
+        (TRACKS + 1, "ret-a", false, vec!["verb"]),
+        (TRACKS + 2, "ret-b", true, vec![]),
+    ] {
         let record = json!({ "tool": "arrangement.track", "state": { "name": name, "kind": "return", "order": order, "pre_fader": pre_fader, "effects": effects } });
-        write(root, &format!("state/arrangement/{name}/instance.json"), &record.to_string());
+        write(
+            root,
+            &format!("state/arrangement/{name}/instance.json"),
+            &record.to_string(),
+        );
     }
     write(
         root,
@@ -156,7 +163,10 @@ fn render_cost_of_the_song_alone() {
     if !sound_typescript::has_bun() {
         return;
     }
-    let seconds: f64 = std::env::var("RENDER_COST_SECONDS").ok().and_then(|text| text.parse().ok()).unwrap_or(10.0);
+    let seconds: f64 = std::env::var("RENDER_COST_SECONDS")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(10.0);
     let mut typescript = typescript_song();
     let started = Instant::now();
     while started.elapsed().as_secs_f64() < seconds {

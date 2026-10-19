@@ -323,5 +323,8 @@ fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
     window.release(fader + point(px(0.), px(40.)));
     window.wait_for_bun();
     assert_eq!(window.undo_label().as_deref(), Some("Change the volume"));
-    assert_eq!(window.record("song/t00/mix")["gain_db"], serde_json::Value::Null);
+    assert_eq!(
+        window.record("song/t00/mix")["gain_db"],
+        serde_json::Value::Null
+    );
 }
