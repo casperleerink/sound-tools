@@ -1395,17 +1395,55 @@ impl Drawing<'_, '_> {
                 carry,
                 on_drop,
             }) => {
-                let children: Vec<AnyElement> = (entry.children.iter())
+                let style = style.clone().unwrap_or_default();
+                let shown: Vec<usize> = (entry.children.iter())
                     .filter(|child| {
                         !matches!(
                             table.get(**child).map(|child| &child.props),
                             Some(Props::Marker)
                         )
                     })
-                    .enumerate()
-                    .map(|(position, child)| self.draw(*child, &[index, &[position]].concat()))
+                    .copied()
                     .collect();
-                let style = style.clone().unwrap_or_default();
+                // Rows of fixed heights that follow a space down are drawn only where they show:
+                // the heads of a hundred tracks cost what the dozen on screen cost.
+                let rows = (follow.as_ref().and_then(|follow| follow.y.as_ref()))
+                    .and_then(|key| self.spaces.get(key))
+                    .zip(style.stacks_down())
+                    .and_then(|(view, gap)| {
+                        let heights: Option<Vec<f32>> = (shown.iter())
+                            .map(|child| match table.get(*child).map(|child| &child.props) {
+                                Some(Props::Div(child)) => {
+                                    child.style.as_ref().and_then(tree::Style::fixed_height)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        let top = (view.top * view.scale().1) as f32;
+                        Some((heights?, gap, top..top + view.height as f32))
+                    });
+                let mut children: Vec<AnyElement> = Vec::new();
+                let mut hidden = None::<f32>;
+                let mut at = 0.0;
+                for (position, child) in shown.iter().enumerate() {
+                    if let Some((heights, gap, showing)) = &rows {
+                        let height = heights.get(position).copied().unwrap_or_default();
+                        let shows = at < showing.end && at + height > showing.start;
+                        at += height + gap;
+                        if !shows {
+                            // Their room, gaps between them included, as one spacer.
+                            hidden = Some(hidden.map_or(height, |room| room + gap + height));
+                            continue;
+                        }
+                    }
+                    if let Some(room) = hidden.take() {
+                        children.push(div().flex_none().h(px(room)).into_any_element());
+                    }
+                    children.push(self.draw(*child, &[index, &[position]].concat()));
+                }
+                if let Some(room) = hidden {
+                    children.push(div().flex_none().h(px(room)).into_any_element());
+                }
                 let element = match follow {
                     // Its children move with the scroll of the spaces it follows, cut off at its
                     // edges: the heads of the rows of a timeline that scrolls. They lie over it,

@@ -148,6 +148,9 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
     };
     let timeline = window.space_at("timeline");
     window.wait_for_bun();
+    // Only the heads that show are drawn.
+    assert!(window.find("div-name-t00").is_some());
+    assert!(window.find("div-name-t35").is_none());
     window.cx.simulate_event(ScrollWheelEvent {
         position: timeline + point(px(200.), px(100.)),
         delta: ScrollDelta::Pixels(point(px(0.), px(-10. * ROW))),
@@ -155,6 +158,8 @@ fn the_heads_of_the_tracks_scroll_with_the_timeline(cx: &mut TestAppContext) {
         touch_phase: TouchPhase::Moved,
     });
     window.cx.run_until_parked();
+    assert!(window.find("div-name-t00").is_none());
+    assert!(window.find("div-name-t10").is_some());
     // The M on the top row is the eleventh track's now.
     let mute = timeline + point(px(80.) - px(HEADER), px(ROW / 2.));
     window.press(mute);

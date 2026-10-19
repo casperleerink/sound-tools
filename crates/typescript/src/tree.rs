@@ -1355,6 +1355,19 @@ impl Style {
         lines.apply(element)
     }
 
+    /// The height its style fixes, if any.
+    pub(crate) fn fixed_height(&self) -> Option<f32> {
+        self.height
+    }
+
+    /// Whether it stacks its children down, and the room between them.
+    pub(crate) fn stacks_down(&self) -> Option<f32> {
+        match self.direction {
+            Some(Direction::Row) => None,
+            Some(Direction::Column) | None => Some(self.gap.unwrap_or(0.0)),
+        }
+    }
+
     pub(crate) fn apply(&self, element: Div) -> Div {
         let mut element = element.flex();
         element = match self.direction {
