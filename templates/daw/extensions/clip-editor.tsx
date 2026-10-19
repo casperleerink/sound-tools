@@ -27,12 +27,13 @@ const COLOR = {
 
 export type Lane = (typeof LANES)[number];
 export type Clip = FilledStateOfTool<"timeline">;
-/** What the editor keeps in the song's memory: the chosen notes, the grid, the lane shown and the last note's length. */
+/** What the editor keeps in the song's memory: the chosen notes, the grid, the lane shown, the last note's length and the copied notes, from 0. */
 export interface EditorMemory {
   notes: Set<number>;
   snap: number;
   lane: Lane;
   length: number;
+  copied: Note[] | null;
 }
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
@@ -78,8 +79,18 @@ export interface EditorProps {
   height: number;
 }
 
-/** What a key does to the chosen notes of `clip`; whether it did something. */
-export function editorKey(key: Key, clip: Clip | undefined, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
+/** From the earliest start of `notes` to their latest end, and their earliest start. */
+function spanOf(notes: readonly Note[]) {
+  const start = Math.min(...notes.map((note) => note.start));
+  return { start, span: Math.max(...notes.map((note) => note.start + note.length)) - start };
+}
+
+/**
+ * What a key does to the chosen notes of `clip`, which starts at `clip.start` in the song with
+ * the playhead at `playhead`; whether it did something. A paste goes to the playhead when it is
+ * inside the clip, else right after the chosen notes, else to the start of the clip.
+ */
+export function editorKey(key: Key, clip: Clip | undefined, playhead: number, memory: Memory<EditorMemory>, edit: EditorProps["edit"]): boolean {
   if (!clip || !key.down) return false;
   const chosen = memory.notes;
   const change = (label: string, next: (notes: Note[]) => { notes: Note[]; chosen: ReadonlySet<number> }) =>
@@ -88,15 +99,25 @@ export function editorKey(key: Key, clip: Clip | undefined, memory: Memory<Edito
       draft.notes = result.notes;
       memory.notes = new Set(result.chosen);
     });
+  const picked = () => [...chosen].map((index) => clip.notes[index]!);
   if (key.cmd && key.key === "a") {
     memory.notes = new Set(clip.notes.map((_, index) => index));
+  } else if (key.cmd && key.key === "v" && memory.copied) {
+    const length = clip.length ?? 0;
+    const inside = playhead >= clip.start && playhead < clip.start + length;
+    const at = inside ? playhead - clip.start : chosen.size > 0 ? (({ start, span }) => start + span)(spanOf(picked())) : 0;
+    const pasted = memory.copied.map((note) => ({ ...note, start: note.start + at })).filter((note) => note.start < length);
+    change("Paste notes", (notes) => ({ notes: [...notes, ...pasted], chosen: new Set(pasted.map((_, index) => notes.length + index)) }));
   } else if (chosen.size === 0) {
     return false;
   } else if (key.key === "delete" || key.key === "backspace") {
     change("Delete notes", (notes) => ({ notes: notes.filter((_, index) => !chosen.has(index)), chosen: new Set() }));
+  } else if (key.cmd && (key.key === "c" || key.key === "x")) {
+    const { start } = spanOf(picked());
+    memory.copied = picked().map((note) => ({ ...note, start: note.start - start }));
+    if (key.key === "x") change("Cut notes", (notes) => ({ notes: notes.filter((_, index) => !chosen.has(index)), chosen: new Set() }));
   } else if (key.cmd && key.key === "d") {
-    const picked = [...chosen].map((index) => clip.notes[index]!);
-    const span = Math.max(...picked.map((note) => note.start + note.length)) - Math.min(...picked.map((note) => note.start));
+    const { span } = spanOf(picked());
     change("Duplicate notes", (notes) => moved(notes, chosen, Math.ceil(span / BEAT) * BEAT, 0, true));
   } else if (["left", "right", "up", "down"].includes(key.key)) {
     const step = memory.snap || BEAT / 4;

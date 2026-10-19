@@ -1,4 +1,4 @@
-//! The song of `tooling/agent-eval/examples` as the arrangement's views are used: tracks added,
+//! The song of the DAW template (`templates/daw`) as the arrangement's views are used: tracks added,
 //! coloured, moved and deleted; a clip renamed, copied, pasted and nudged; automation lanes
 //! added and their points edited; the note editor's lanes and grid; the ruler's tempo changes,
 //! sections and repeat; a region chosen and deleted. Each gesture is one undo step.
@@ -44,6 +44,28 @@ impl Window<'_> {
     pub(super) fn pick(&mut self, item: &'static str) {
         let item = self.until_found(item);
         self.click(item);
+    }
+
+    /// Drops a second of a sine from the system on bar 3 of the audio track, the third row.
+    fn drop_sine(&mut self) {
+        let files = tempfile::tempdir().unwrap();
+        write_sine(files.path(), 0.5);
+        let file = files.path().join("assets/audio/sine.wav");
+        let to = self.on_lane(2 * BAR, 2);
+        self.cx.simulate_event(FileDropEvent::Entered {
+            position: to - point(px(20.), px(0.)),
+            paths: ExternalPaths(vec![file].into()),
+        });
+        for step in [10., 0.] {
+            self.cx.update(|window, _| window.refresh());
+            self.cx.run_until_parked();
+            self.cx.simulate_event(FileDropEvent::Pending {
+                position: to - point(px(step), px(0.)),
+            });
+        }
+        self.cx
+            .simulate_event(FileDropEvent::Submit { position: to });
+        self.until("the region added", |window| window.has("song/voice/region"));
     }
 
     fn project_file(&mut self) -> serde_json::Value {
@@ -366,25 +388,7 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
         return;
     };
     window.wait_for_bun();
-    let files = tempfile::tempdir().unwrap();
-    write_sine(files.path(), 0.5);
-    let file = files.path().join("assets/audio/sine.wav");
-    let to = window.on_lane(2 * BAR, 2);
-    window.cx.simulate_event(FileDropEvent::Entered {
-        position: to - point(px(20.), px(0.)),
-        paths: ExternalPaths(vec![file].into()),
-    });
-    for step in [10., 0.] {
-        window.cx.update(|window, _| window.refresh());
-        window.cx.run_until_parked();
-        window.cx.simulate_event(FileDropEvent::Pending {
-            position: to - point(px(step), px(0.)),
-        });
-    }
-    window
-        .cx
-        .simulate_event(FileDropEvent::Submit { position: to });
-    window.until("the region added", |window| window.has("song/voice/region"));
+    window.drop_sine();
     // Its waveform shows once its length is known: a click on it chooses it.
     let inside = window.on_lane(2 * BAR + 960, 2);
     window.until_found("div-mixer-toggle");
@@ -397,4 +401,122 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Remove a region"));
     assert_eq!(window.problems(), []);
+}
+
+/// A clip moved on its own track takes the line of its automation along, as the arrangement's
+/// clips do: the line under it lands where it lands, and the move is one undo step.
+#[gpui::test]
+fn a_clip_moved_on_its_track_takes_its_automation_along(cx: &mut TestAppContext) {
+    let Some(mut window) = open_song(cx, 4, 12) else {
+        return;
+    };
+    let before = window.record("song/t00/lane-cutoff");
+    // The cutoff starts at 6 kHz on tick 0, under the first clip of the first track.
+    assert_eq!(before["points"][0]["tick"], 0);
+    let at = window.on_lane(BAR / 2, 0);
+    window.wait_for_bun();
+    window.press(at);
+    window.drag_to(at + point(px(10.), px(0.)));
+    window.drag_to(at + point(px(96. * 2.), px(0.)));
+    window.release(at + point(px(96. * 2.), px(0.)));
+    window.until("the clip moved", |window| {
+        window.record("song/t00/c00")["start"] != 0
+    });
+    let start = window.record("song/t00/c00")["start"].as_u64().unwrap();
+    let points = window.record("song/t00/lane-cutoff")["points"].clone();
+    let at_tick = |tick: u64| {
+        (points.as_array().unwrap().iter()).find(|point| point["tick"].as_u64() == Some(tick))
+    };
+    assert_eq!(
+        at_tick(start).map(|point| point["value"].clone()),
+        Some(6000.into())
+    );
+    assert!(at_tick(0).is_none(), "{points}");
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Move clips"));
+    assert!(window.undo().is_some());
+    assert_eq!(window.record("song/t00/lane-cutoff"), before);
+    assert_eq!(window.record("song/t00/c00")["start"], 0);
+}
+
+/// The end of a region trims as its start does: a beat in from the end of a second of a sine at
+/// 120 bpm leaves half a second, read from what the region says it plays.
+#[gpui::test]
+fn a_region_trims_from_its_end(cx: &mut TestAppContext) {
+    let Some(mut window) = open_song(cx, 2, 2) else {
+        return;
+    };
+    window.wait_for_bun();
+    window.drop_sine();
+    // A second at 120 bpm is two beats: its end, a little inside.
+    let end = window.on_lane(2 * BAR + 1920, 2) - point(px(2.), px(0.));
+    window.until_found("div-mixer-toggle");
+    window.press(end);
+    window.drag_to(end - point(px(5.), px(0.)));
+    window.drag_to(end - point(px(960. * ACROSS), px(0.)));
+    window.release(end - point(px(960. * ACROSS), px(0.)));
+    window.until("the end trimmed", |window| {
+        window.record("song/voice/region")["file_end_seconds"]
+            .as_f64()
+            .is_some()
+    });
+    let trimmed = window.record("song/voice/region")["file_end_seconds"]
+        .as_f64()
+        .unwrap();
+    assert!((trimmed - 0.5).abs() < 1e-3, "{trimmed}");
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Trim a region"));
+}
+
+/// A drag over empty space chooses the clips it covers, on the rows it covers: delete removes
+/// those and only those.
+#[gpui::test]
+fn a_marquee_over_the_timeline_chooses_the_clips_under_it(cx: &mut TestAppContext) {
+    let Some(mut window) = open_song(cx, 4, 12) else {
+        return;
+    };
+    window.wait_for_bun();
+    // Between the first and second clips of each track (every clip is one or two bars), down
+    // to the middle of the third track: the second clips of the first three tracks.
+    let from = window.on_lane(2 * BAR + BAR / 2, 0) - point(px(0.), px(10.));
+    let to = window.on_lane(3 * BAR + BAR / 2, 2);
+    window.press(from);
+    window.drag_to(from + point(px(10.), px(10.)));
+    window.drag_to(to);
+    window.release(to);
+    let session = window.session.clone();
+    window.until("the clips chosen", |window| {
+        (window.cx)
+            .read(|cx| session.read(cx).selected_span())
+            .is_some()
+    });
+    window.cx.simulate_keystrokes("backspace");
+    window.until("the clips removed", |window| !window.has("song/t00/c01"));
+    for (track, gone) in [("t00", true), ("t01", true), ("t02", true), ("t03", false)] {
+        assert_eq!(!window.has(&format!("song/{track}/c01")), gone, "{track}");
+        assert!(window.has(&format!("song/{track}/c00")), "{track}");
+    }
+}
+
+/// Notes chosen in the editor are copied with cmd-c and pasted with cmd-v at the playhead, the
+/// start of the clip here, as one undo step.
+#[gpui::test]
+fn notes_are_copied_and_pasted_in_the_editor(cx: &mut TestAppContext) {
+    let Some(mut window) = open_song(cx, 4, 12) else {
+        return;
+    };
+    let notes = |window: &mut Window| {
+        window.record("song/t00/c00")["notes"]
+            .as_array()
+            .map_or(0, Vec::len)
+    };
+    let count = notes(&mut window);
+    window.wait_for_bun();
+    let clip = window.on_lane(BAR / 2, 0);
+    window.double_click(clip);
+    window.space_at("editor");
+    window.cx.simulate_keystrokes("cmd-a cmd-c cmd-v");
+    window.until("the notes pasted", |window| notes(window) == 2 * count);
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Paste notes"));
 }

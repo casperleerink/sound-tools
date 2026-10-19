@@ -1,7 +1,7 @@
 import { Arc, DeviceCard, For, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Key, type Live, type MovedNumber, type Part, type Press } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
-import { ClipEditor, editorKey, type Lane } from "./clip-editor";
+import { ClipEditor, editorKey, type EditorMemory, type Lane } from "./clip-editor";
 import { tape } from "./tape";
 import { preFader, splitTarget, track } from "./track";
 
@@ -24,7 +24,7 @@ const [LOW, HIGH] = [36, 96];
 
 const COLOR = {
   back: "#121317", lane: "#17191e", bar: "#2a2d35", text: "#7c808c", chosen: "#e9ebef", playhead: "#7ee0a0",
-  note: "#00000080", off: "#2a2d35", mute: "#f0b44c", solo: "#7ee0a0", meter: "#7ee0a0", clear: "#00000000",
+  note: "#00000080", marquee: "#a9b1ff33", off: "#2a2d35", mute: "#f0b44c", solo: "#7ee0a0", meter: "#7ee0a0", clear: "#00000000",
   edit: "#a9b1ff", record: "#ff6b6b", head: "#1c1e24", repeat: "#a9b1ff55", section: "#f0b44c", automation: "#7cc7ff",
 } as const;
 const PALETTE = [
@@ -57,12 +57,7 @@ type Memory = {
   lanes: Set<string>;
   ranges: Record<string, MovedNumber>;
   editing: Editing;
-  // The note editor's.
-  notes: Set<number>;
-  snap: number;
-  lane: Lane;
-  length: number;
-};
+} & EditorMemory;
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 // Where a level sits on a meter, 0 to 1: 0 dB at 0.8.
@@ -155,13 +150,13 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child, and the audio track `voice` when there is one, plays into the fader `master`; `order` is the order of the tracks, `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of `voice`. Drag a clip to move it (alt copies it, up and down moves it to another track), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below; right-click it to rename, copy or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane's point: double-click to add, drag to move, alt-click to remove. The ruler: click to play from there, right-click to add a tempo change, a time signature or a section; drag under it to repeat a range. A region: drag to move it, its left edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child, and the audio track `voice` when there is one, plays into the fader `master`; `order` is the order of the tracks, `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of `voice`. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below, drag over empty space to choose the clips there; right-click it to rename, copy or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane's point: double-click to add, drag to move, alt-click to remove. The ruler: click to play from there, right-click to add a tempo change, a time signature or a section; drag under it to repeat a range. A region: drag to move it, an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
   state: { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }) },
   children: parts,
   memory: (): Memory => ({
     selected: new Set(), region: null, open: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
     mixer: false, clipboard: null, lanes: new Set(), ranges: {}, editing: null,
-    notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2,
+    notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
   keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "escape"],
   globalKeys: ["space"],
@@ -184,7 +179,9 @@ export const song = tool({
           const draft = owner?.tool === "track" ? owner.children.find((child) => child.name === key2.split("/")[1]) : undefined;
           if (draft?.tool === "timeline") change(draft.state);
         });
-      if ((memory.notes.size > 0 || (key.cmd && key.key === "a")) && editorKey(key, clip?.tool === "timeline" ? (clip.state as FilledStateOfTool<"timeline">) : undefined, memory, edit)) return;
+      const forNotes = memory.notes.size > 0 || (key.cmd && (key.key === "a" || (key.key === "v" && memory.copied !== null)));
+      const state = clip?.tool === "timeline" ? (clip.state as FilledStateOfTool<"timeline">) : undefined;
+      if (forNotes && editorKey(key, state, clock.tick, memory, edit)) return;
     }
     if (memory.region && (key.key === "delete" || key.key === "backspace")) {
       const [owner, name] = memory.region.split("/");
@@ -234,7 +231,7 @@ export const song = tool({
     }
     return { connections };
   },
-  view: ({ state, children, memory, update, clock, select, send, play, openMenu, offers, addOffer, numbers }) => {
+  view: ({ state, children, memory, update, clock, select, send, play, openMenu, offers, addOffer, numbers, outputs }) => {
     type Child = (typeof children)[number];
     const rank = (name: string) => {
       const at = state.order.indexOf(name);
@@ -323,6 +320,22 @@ export const song = tool({
       id: "move",
       snap: { x: BEAT, y: 1, grid: true },
       onEnd: ({ dx, dy, alt }) => choose(moveClips(update, layout(), memory.selected, dx, Math.round(dy), alt)),
+    };
+    const marquee = now.drag("clip-marquee");
+    const marqueeDrag: Drag = {
+      id: "clip-marquee",
+      onEnd: ({ startX, startY, x, y, shift }) => {
+        const [left, right] = [Math.min(startX, x), Math.max(startX, x)];
+        const [top, bottom] = [Math.min(startY, y), Math.max(startY, y)];
+        const inside = layout().flatMap(({ each, lane }, row) =>
+          lane || row + 1 <= top || row >= bottom
+            ? []
+            : clipsOf(each)
+                .filter(({ state }) => (state.start ?? 0) < right && (state.start ?? 0) + (state.length ?? BAR) > left)
+                .map((clip) => `${each.name}/${clip.name}`),
+        );
+        choose(new Set([...(shift ? memory.selected : []), ...inside]));
+      },
     };
     const resizeDrag: Drag = {
       id: "resize",
@@ -803,7 +816,7 @@ export const song = tool({
       );
     };
 
-    /** A region of an audio track on row `row`: its file's waveform; drag it to move it, its left edge to trim it. */
+    /** A region of an audio track on row `row`: its file's waveform; drag it to move it, an edge to trim it. */
     const RegionShapes = ({ each, region, row }: { each: Child; region: ReturnType<typeof regionsOf>[number]; row: Accessor<number> }) => {
       const key = `${each.name}/${region.name}`;
       const chosen = () => memory.region === key;
@@ -828,6 +841,19 @@ export const song = tool({
             state.file_start_seconds = Math.max(state.file_start_seconds + secondsOf(ticks, clock.bpm), 0);
           }),
       };
+      // How long it plays, which the region tells: the end of its file unless it ends before.
+      const trimEnd: Drag = {
+        id: "end",
+        axis: "x",
+        snap: { x: BEAT / 4 },
+        onEnd: ({ dx }) =>
+          editRegion("Trim a region", (state) => {
+            const plays = outputs[`${key}.seconds`] ?? 0;
+            // Its whole file plays already: there is nothing after its end.
+            if (plays <= 0 || (state.file_end_seconds === undefined && dx >= 0)) return;
+            state.file_end_seconds = state.file_start_seconds + Math.max(plays + secondsOf(dx, clock.bpm), 0.05);
+          }),
+      };
       const press = ({ button }: Press) => {
         memory.region = key;
         memory.selected = new Set();
@@ -839,6 +865,8 @@ export const song = tool({
           <Wave x={0} y={0.12} width={width} height={0.76} list={sound} band low={-1} high={1} color={COLOR.note} />
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={press} cursor="ew-resize"
             moves={() => (chosen() ? ["trim"] : undefined)} />
+          <Rect x={width.minus(handle)} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={press} cursor="ew-resize"
+            moves={() => (chosen() ? ["end"] : undefined)} />
         </Group>
       );
     };
@@ -1022,7 +1050,7 @@ export const song = tool({
               <Rect x={loop.startX.min(loop.x)} y={1} width={loop.dx.abs()} height={8} radius={2} color={COLOR.edit} opacity={loop.active} />
             </Space>
             <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [0, END], y: [0, Math.max(layout().length, 1)] })} zoom={{ x: [0.1, 8] }}
-              background={COLOR.lane} onPress={pressTimeline} onDrop={dropOnTimeline}>
+              background={COLOR.lane} drag={marqueeDrag} onPress={pressTimeline} onDrop={dropOnTimeline}>
               <For each={() => starts().slice(0, BARS)}>{(tick) => <Line from={[tick, 0]} to={[tick, 1000]} color={COLOR.bar} width={1} />}</For>
               <For each={layout}>
                 {({ each, lane }, row) =>
@@ -1042,6 +1070,8 @@ export const song = tool({
                   )
                 }
               </For>
+              <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
+                color={COLOR.marquee} opacity={marquee.active} />
               <Line from={[now.tick, 0]} to={[now.tick, 1000]} color={COLOR.playhead} width={2} />
             </Space>
           </div>
@@ -1109,6 +1139,16 @@ function moveClips(update: (label: string, change: (part: Part<unknown, typeof p
       const clip = source.children.find((child) => child.name === clipName);
       if (clip?.tool !== "timeline") continue;
       const start = Math.max(clip.state.start + dx, 0);
+      // The automation under it goes along, on its own track: another track may have no such device.
+      if (to === source && start !== clip.state.start) {
+        const range = { start: clip.state.start, end: clip.state.start + (clip.state.length ?? BAR) };
+        for (const { lane } of source.state.automation) {
+          const points = source.children.find((child) => child.name === lane);
+          if (points?.tool !== "lane") continue;
+          const moved = carried(points.state.points, points.state.scale === "log", range, start, copy);
+          if (moved) points.state.points = moved;
+        }
+      }
       if (!copy && to === source) {
         clip.state.start = start;
         after.add(key);
@@ -1121,6 +1161,44 @@ function moveClips(update: (label: string, change: (part: Part<unknown, typeof p
     }
   });
   return after;
+}
+
+type LanePoint = { tick: number; value: number };
+
+/** The value of a lane at `tick`: a straight line between its points on the knob's travel, as it plays. */
+function laneAt(points: readonly LanePoint[], tick: number, log: boolean): number {
+  const after = points.findIndex((point) => point.tick >= tick);
+  if (after <= 0) return (after === 0 ? points[0] : points[points.length - 1])?.value ?? 0;
+  const [a, b] = [points[after - 1]!, points[after]!];
+  const part = b.tick === a.tick ? 1 : (tick - a.tick) / (b.tick - a.tick);
+  return log ? a.value * Math.pow(b.value / a.value, part) : a.value + (b.value - a.value) * part;
+}
+
+/**
+ * A lane after a clip over `range` moved, or was copied, to start at `to`: the line under it goes
+ * along and replaces the line where it lands. The values just outside the place it leaves and the
+ * place it lands stay as they were, by a point on each edge, so nothing jumps there. A lane with
+ * no point under the clip is not the clip's: `null`, it stays as it is.
+ */
+function carried(points: readonly LanePoint[], log: boolean, range: { start: number; end: number }, to: number, copy: boolean): LanePoint[] | null {
+  const sorted = [...points].sort((a, b) => a.tick - b.tick);
+  const { start, end } = range;
+  if (!sorted.some(({ tick }) => tick >= start && tick < end)) return null;
+  const at = (list: readonly LanePoint[], tick: number) => ({ tick, value: laneAt(list, tick, log) });
+  const line = [at(sorted, start), ...sorted.filter(({ tick }) => tick > start && tick < end - 1), at(sorted, end - 1)]
+    .map(({ tick, value }) => ({ tick: tick - start + to, value }));
+  // A place emptied of its line, with what plays just outside it kept.
+  const emptied = (list: LanePoint[], from: number, until: number) => [
+    ...list.filter(({ tick }) => tick < from || tick >= until),
+    ...(from > 0 ? [at(list, from - 1)] : []),
+    at(list, until),
+  ];
+  const left = copy ? sorted : emptied(sorted, start, end);
+  const landed = [...emptied(left.sort((a, b) => a.tick - b.tick), to, to + end - start), ...line];
+  // One point a tick; the line it carries wins over an edge.
+  const byTick = new Map(landed.map((point) => [point.tick, point]));
+  for (const point of line) byTick.set(point.tick, point);
+  return [...byTick.values()].sort((a, b) => a.tick - b.tick);
 }
 
 /** What a key does to the chosen clips: copy, cut, paste, duplicate, delete, nudge. `tracks` are in their order. */

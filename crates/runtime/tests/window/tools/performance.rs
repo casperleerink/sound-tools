@@ -545,7 +545,7 @@ fn performance_of_a_song_of_100_tracks_of_100_clips(cx: &mut TestAppContext) {
     );
 }
 
-/// The song of `tooling/agent-eval/examples`: how long it takes to open, frames idle, as it
+/// The song of the DAW template (`templates/daw`): how long it takes to open, frames idle, as it
 /// scrolls, zooms and plays with every meter, and what a click on a clip, a move of one and a
 /// note added in the editor cost until they are drawn.
 fn measure_song(cx: &mut TestAppContext, tracks: usize, clips: usize) {

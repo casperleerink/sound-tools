@@ -5,7 +5,7 @@
 //! - `typescript-song-mixer.png`: the same song with its mixer open.
 //! - `typescript-song-lanes.png`: the same song with the automation lane of its first track
 //!   showing under it.
-//! - `typescript-song.png`: the song of `tooling/agent-eval/examples`, 12 tracks of 150 clips,
+//! - `typescript-song.png`: the song of the DAW template (`templates/daw`), 12 tracks of 150 clips,
 //!   as it plays: the SDK's transport on top, a clip selected, the cards of its track's devices
 //!   under the timeline, another clip open in the note editor, the meters of the tracks.
 //! - `typescript-page.png`: the knob, steps, meter and pad of the SDK, made of shapes, beside

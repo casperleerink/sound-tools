@@ -1,4 +1,4 @@
-//! The song of `tooling/agent-eval/examples`: tracks of clips written in TypeScript, as an
+//! The song of the DAW template (`templates/daw`): tracks of clips written in TypeScript, as an
 //! agent writes them. A clip moves as one file, a clip's notes are edited below it, a track
 //! mutes, and its meter follows the engine with nothing from Bun.
 
