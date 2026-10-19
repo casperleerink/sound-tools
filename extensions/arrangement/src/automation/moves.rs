@@ -57,7 +57,7 @@ impl Carried {
         range: Range<Ticks>,
         travel: &Travel<'_>,
     ) -> Self {
-        let mix = Mix::of(state);
+        let mix = state.mix();
         let lanes = state.automation.iter().filter(|lane| {
             let mut points = lane.points.iter();
             let inside = points.clone().any(|point| range.contains(&point.tick));
@@ -108,7 +108,7 @@ impl Carried {
         travel: &Travel<'_>,
     ) {
         let range = start..start + self.length();
-        let mix = Mix::of(state);
+        let mix = state.mix();
         for carried in self.lanes.iter().filter(|lane| self.takes(lane, to)) {
             let number = number(to, &mix, carried, travel);
             let travel = number.map(|number| number.range);
@@ -152,7 +152,7 @@ pub(crate) fn clear(
     taken: &[(&Carried, &InstanceId)],
     travel: &Travel<'_>,
 ) {
-    let mix = Mix::of(state);
+    let mix = state.mix();
     for lane in &mut state.automation {
         let left = taken
             .iter()
@@ -335,7 +335,7 @@ impl AutomationLane {
         state: &TrackState,
         travel: &Travel<'_>,
     ) -> Option<AutomatedNumber> {
-        number(track, &Mix::of(state), self, travel)
+        number(track, &state.mix(), self, travel)
     }
 
     /// Whether this lane and `other` move the same number.
@@ -566,7 +566,7 @@ mod tests {
 
     /// Where a lane of the first track stands at `tick`, on the line that plays.
     fn line(lane: &AutomationLane, tick: u64) -> f32 {
-        let mix = Mix::of(&track(Vec::new()));
+        let mix = track(Vec::new()).mix();
         let range = range_of(&id("a/one"), &mix, lane, &travel);
         let points = on_travel(&lane.points, range);
         value_at(&points, Ticks(tick)).unwrap().value

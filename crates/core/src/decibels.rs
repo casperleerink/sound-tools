@@ -84,7 +84,7 @@ pub mod by_name {
 }
 
 /// The factor a gain multiplies the samples by: 0 dB is exactly 1 and `-inf` exactly 0.
-pub use sound_core::amplitude;
+pub use crate::amplitude;
 
 /// Whether a gain can be saved and played: at most `max`, and a number or `-inf`.
 pub fn check(field: &str, db: f32, max: f32) -> Result<(), String> {

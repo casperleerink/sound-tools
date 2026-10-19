@@ -35,10 +35,10 @@
 mod audio;
 mod automation;
 mod clip_moves;
-pub mod decibels;
+pub use sound_core::decibels;
 mod input;
 mod master;
-mod mixer;
+pub use sound_core::mixer;
 mod slot;
 mod summary;
 pub mod view;
@@ -67,7 +67,7 @@ pub use clip_moves::{AnyClip, ClipMove, move_clips};
 pub use input::InputChannels;
 use master::Master;
 pub use master::{LimiterState, MasterState};
-pub use mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
+pub use sound_core::mixer::{ChannelGains, Mix, Mixer, RAMP_SECONDS};
 pub use sound_media::{AudioPlayer, AudioSnapshot, AudioUpdate, DECLICK_SECONDS};
 pub use slot::{EffectSlot, Sidechain, Tap};
 
@@ -260,9 +260,18 @@ pub struct TrackState {
 impl TrackState {
     /// The highest gain in decibels. Anything under it is a gain too, down to `-inf`. Written
     /// here and nowhere else: `validate`, the volume of the track panel and the docs read it.
-    pub const MAX_GAIN_DB: f32 = 6.0;
+    pub const MAX_GAIN_DB: f32 = sound_core::mixer::MAX_GAIN_DB;
     /// Hard left to hard right.
     pub const PAN: (f32, f32) = (-1.0, 1.0);
+
+    /// What the track sends its mixer. Its owner silences it when a solo leaves it out.
+    pub fn mix(&self) -> Mix {
+        Mix {
+            gain_db: self.gain_db,
+            pan: self.pan,
+            silent: self.mute,
+        }
+    }
 
     /// A track of this name, with the mixer where a record that says nothing puts it.
     pub fn new(name: impl Into<String>, colour: Colour, order: u32) -> Self {
@@ -607,7 +616,7 @@ fn apply_arrangement(
                 name.to_string(),
                 Mix {
                     silent,
-                    ..Mix::of(track)
+                    ..track.mix()
                 },
             )
         })

@@ -1,19 +1,18 @@
-//! The mixer of a track: gain, pan, mute and solo, after the effects and before the master.
+//! A mixer stage: gain on a fader's scale, pan and silence, with the peaks of what it sends on.
+//! The track mixer of the arrangement and the `fader` of the SDK both play one.
 //!
-//! The record holds units an agent can reason about (decibels, -1 to 1, on or off). The
-//! behaviour of the arrangement sends the volume and the pan, and whether mute or solo silence
-//! the track. The volume and the pan are automatable like the numbers of a device: lanes of the
-//! track reach the mixer as automation events. The processor works out one gain per channel
-//! when something moves and ramps to the new pair, so no change clicks, and keeps the peaks of
-//! what it sends on, which is the meter of the track.
+//! The volume and the pan are automatable like the numbers of a device. The processor works out
+//! one gain per channel when something moves and ramps to the new pair, so no change clicks.
 
-use sound_core::{
+use crate::{
     AudioInput, AudioOutput, Automated, AutomationInput, CHANNELS, Parameter, Peaks, Ports,
     PrepareConfig, ProcessContext, Processor, Scale, Smoothed, Targets, all_positive_zero,
     amplitude, pan_gains,
 };
 
-use crate::TrackState;
+/// The highest gain of a mixer stage, in decibels. Anything under it is a gain too, down to
+/// `-inf`.
+pub const MAX_GAIN_DB: f32 = 6.0;
 
 /// How long a change of gain, pan or mute takes to arrive. A jump would click.
 pub const RAMP_SECONDS: f32 = 0.02;
@@ -21,30 +20,20 @@ pub const RAMP_SECONDS: f32 = 0.02;
 /// The gain of each channel, left first.
 pub type ChannelGains = [f32; CHANNELS];
 
-/// What a track sends its mixer.
+/// What a mixer stage plays.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Mix {
     pub gain_db: f32,
     pub pan: f32,
-    /// Muted, or left out by a solo. A track that solo leaves out sounds as a muted one does.
+    /// Muted, or left out by a solo.
     pub silent: bool,
 }
 
 impl Mix {
-    /// The mix of a track record. Its owner silences it when a solo leaves it out.
-    pub fn of(track: &TrackState) -> Self {
-        Self {
-            gain_db: track.gain_db,
-            pan: track.pan,
-            silent: track.mute,
-        }
-    }
-
     /// The gain of each channel.
     ///
-    /// The pan law is the equal power law of the SDK, [`pan_gains`]: a track keeps its
-    /// loudness wherever it is panned, and in the middle it is untouched, so a project from
-    /// before this existed sounds the same.
+    /// The pan law is the equal power law of the SDK, [`pan_gains`]: a sound keeps its
+    /// loudness wherever it is panned, and in the middle it is untouched.
     pub fn gains(&self) -> ChannelGains {
         pan_gains(f64::from(self.level()), self.pan)
     }
@@ -58,33 +47,33 @@ impl Mix {
     }
 }
 
-/// The volume of a track, as a lane of the track moves it: on the scale of its fader.
-pub(crate) const GAIN: Parameter<Mix> = Parameter {
+/// The volume, as a lane moves it: on the scale of a fader.
+pub const GAIN: Parameter<Mix> = Parameter {
     field: "gain_db",
     min: f32::NEG_INFINITY,
-    max: TrackState::MAX_GAIN_DB,
+    max: MAX_GAIN_DB,
     default: 0.0,
     scale: Scale::Fader,
     get: |mix| mix.gain_db,
     set: |mix, value| mix.gain_db = value,
 };
-pub(crate) const PAN: Parameter<Mix> = Parameter {
+pub const PAN: Parameter<Mix> = Parameter {
     field: "pan",
-    min: TrackState::PAN.0,
-    max: TrackState::PAN.1,
+    min: -1.0,
+    max: 1.0,
     default: 0.0,
     scale: Scale::Linear,
     get: |mix| mix.pan,
     set: |mix, value| mix.pan = value,
 };
 
-/// One per track. It multiplies each channel by its gain and ramps to a new one.
+/// One stage. It multiplies each channel by its gain and ramps to a new one.
 ///
 /// The volume and the pan glide apart, each with its own ramp, and the gains of the channels
 /// are worked out from where both are at the end of each block. So a pan lane that moves does
 /// not cut short the glide of a volume lane that just took over.
 pub struct Mixer {
-    /// The record, with the values of the lanes of the track.
+    /// The record, with the values of its lanes.
     mix: Automated<Mix, 2>,
     /// The factor of the volume, 0 when silent.
     level: Smoothed,
@@ -93,17 +82,17 @@ pub struct Mixer {
     gains: ChannelGains,
     /// The frames a change takes. One until `prepare` runs.
     ramp_frames: f32,
-    /// What the track sends on, for its meter.
+    /// What it sends on, for a meter.
     peaks: Peaks,
 }
 
 impl Mixer {
     pub const INPUT: AudioInput = AudioInput::new(0);
     pub const OUTPUT: AudioOutput = AudioOutput::new(0);
-    /// What a lane of the track itself moves.
+    /// What a lane moves.
     pub const AUTOMATION: AutomationInput<Mix, 2> = AutomationInput::new(0, [&GAIN, &PAN]);
 
-    /// Starts at this mix, so a track that opens or is added is not faded in.
+    /// Starts at this mix, so a stage that opens or is added is not faded in.
     pub fn new(mix: Mix, peaks: Peaks) -> Self {
         Self {
             mix: Automated::new(Self::AUTOMATION, mix),
@@ -151,7 +140,7 @@ impl Processor for Mixer {
             self.aim(&targets);
         }
         if !self.level.is_moving() && self.level.current() == 0.0 {
-            // A muted track that has finished its fade touches nothing.
+            // A silent stage that has finished its fade touches nothing.
             self.gains = [0.0; CHANNELS];
             return;
         }
