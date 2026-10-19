@@ -208,7 +208,11 @@ impl Processor for Recorder {
             if self.taking && (!playing || (offset == 0 && transport.jumped) || !self.record) {
                 // It ends where the song last played to, which a stop or a jump left behind.
                 self.taking = false;
-                let end = if offset == 0 { self.played_to } else { frame_at(offset) };
+                let end = if offset == 0 {
+                    self.played_to
+                } else {
+                    frame_at(offset)
+                };
                 self.heard.write(std::iter::once((end, Heard::Ended)));
             }
             if !self.taking && self.record && playing {
@@ -225,9 +229,16 @@ impl Processor for Recorder {
             let heard = &heard[..heard.partition_point(|timed| timed.offset < next)];
             read += heard.len();
             if self.taking {
-                self.heard
-                    .write(heard.iter().map(|timed| (frame_at(timed.offset), Heard::Note(timed.event))));
-                self.played_to = if next >= frames { range.end } else { frame_at(next) };
+                self.heard.write(
+                    heard
+                        .iter()
+                        .map(|timed| (frame_at(timed.offset), Heard::Note(timed.event))),
+                );
+                self.played_to = if next >= frames {
+                    range.end
+                } else {
+                    frame_at(next)
+                };
             }
             if next >= frames {
                 break;
@@ -350,7 +361,9 @@ mod tests {
         let launch = TimelineUpdate::Launch(true, Some(512 + 32));
         rig.control.update(rig.timeline, launch).unwrap();
         let heard = rig.render(2_048);
-        let on = heard.iter().find(|(_, heard)| matches!(heard, Heard::Note(_)));
+        let on = heard
+            .iter()
+            .find(|(_, heard)| matches!(heard, Heard::Note(_)));
         // On the first tick from that frame: a tick is 25 frames at 120 bpm.
         let frame = on.map(|(frame, _)| *frame).unwrap();
         assert!((544..569).contains(&frame), "{frame}");

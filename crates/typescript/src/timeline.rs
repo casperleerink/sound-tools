@@ -320,7 +320,9 @@ impl Processor for Timeline {
 
     fn rests_until(&self) -> Option<Ticks> {
         // A launch sent for later needs the blocks until it lands.
-        self.waiting.next().map_or(self.player.rests_until(), |_| None)
+        self.waiting
+            .next()
+            .map_or(self.player.rests_until(), |_| None)
     }
 
     fn update(&mut self, update: &mut TimelineUpdate) {
@@ -351,7 +353,9 @@ impl Processor for Timeline {
         self.waiting.playing(first, frames);
         let end = first + frames as u64;
         while let Some((at, start)) = self.waiting.take(end - 1) {
-            let after = context.transport.tick_at_offset(at.saturating_sub(first) as usize);
+            let after = context
+                .transport
+                .tick_at_offset(at.saturating_sub(first) as usize);
             self.launch(start, after);
         }
         // The last of the block: two cables would launch each other again every block.

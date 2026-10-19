@@ -13,7 +13,7 @@ use std::sync::Arc;
 use gpui::{Context, Entity, Task};
 use serde_json::{Value, json};
 use sound_core::{Clock, EventTap, Frames, InstanceId, Project, Ticks};
-use sound_notes::{NoteEvent, RawEvent, RawTake};
+use sound_notes::{NoteEvent, Pedal, RawEvent, RawTake};
 use sound_typescript::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 use sound_ui::{FinishedTake, LiveSound, LiveTake, Session, every_poll};
 
@@ -31,9 +31,12 @@ pub struct Recorders {
     session: Entity<Session>,
     live: Entity<LiveInput>,
     followed: HashMap<InstanceId, Followed>,
-    audio: Option<AudioTake>,
-    /// Takes of sound that start while another records: each starts once that one is done.
-    queued: Vec<(InstanceId, Vec<usize>, u64)>,
+    /// The takes of sound that run, each a recording of the input of its own, by number.
+    audio: Vec<AudioTake>,
+    /// The number of the next recording of the input.
+    next: u64,
+    /// How many waveforms of takes of sound the window shows.
+    shown: usize,
     _polling: Task<()>,
 }
 
@@ -55,17 +58,121 @@ struct NotesTake {
     notes: Vec<(u64, NoteEvent)>,
 }
 
-/// A recording of the audio input that runs: one file for each recorder that started with it.
+/// A take of sound that runs: a recording of the input with one file, for one recorder.
 struct AudioTake {
+    id: u64,
+    recorder: InstanceId,
     placement: Placement,
-    /// Its recorders, each with where its take ended, once it did.
-    recorders: BTreeMap<InstanceId, Option<Ticks>>,
+    /// Where it ended, once it did.
+    end: Option<Ticks>,
     started: Vec<StartedTake>,
-    shown: bool,
     /// Polls since a finish was asked for, which waits for the input to bring the end.
     finishing: Option<u32>,
-    /// The notes of its recorders that ended, written with its sound as one undo step.
-    notes: Vec<(InstanceId, Finished)>,
+    /// The notes of the same take, written with its sound.
+    notes: Option<Finished>,
+}
+
+/// What the takes of a recorder did, in order: a take of sound starts at a frame of the song,
+/// or a take ends at a tick with its notes.
+enum Step {
+    Start(InstanceId, Vec<usize>, u64),
+    End(InstanceId, Ticks, Finished),
+}
+
+impl Followed {
+    fn new(heard: EventTap<Heard>) -> Self {
+        Self {
+            heard,
+            next: 0,
+            armed: false,
+            take: None,
+        }
+    }
+
+    /// Reads what its tap heard since the last poll into its take. Says whether some of it was
+    /// lost.
+    fn hear(
+        &mut self,
+        id: &InstanceId,
+        channels: &[usize],
+        clock: &Arc<Clock>,
+        steps: &mut Vec<Step>,
+    ) -> bool {
+        let mut read = Vec::new();
+        let tapped = self.heard.read(self.next, &mut read);
+        self.next = tapped.next;
+        let missed = tapped.missed > 0 && (self.take.is_some() || !read.is_empty());
+        for (frame, heard) in read {
+            match heard {
+                Heard::Started => {
+                    // A start while a take runs ends that one there first.
+                    self.end(id, frame, steps);
+                    self.take = Some(NotesTake {
+                        start: frame,
+                        clock: clock.clone(),
+                        notes: Vec::new(),
+                    });
+                    if !channels.is_empty() {
+                        steps.push(Step::Start(id.clone(), channels.to_vec(), frame));
+                    }
+                }
+                Heard::Note(NoteEvent::AllOff) => {
+                    if let Some(take) = &mut self.take {
+                        let ends = all_off(&take.notes);
+                        take.notes
+                            .extend(ends.into_iter().map(|event| (frame, event)));
+                    }
+                }
+                Heard::Note(event) => {
+                    if let Some(take) = &mut self.take {
+                        take.notes.push((frame, event));
+                    }
+                }
+                Heard::Ended => self.end(id, frame, steps),
+            }
+        }
+        missed
+    }
+
+    /// Ends the take that runs at `frame` of the song, under the clock it began with.
+    fn end(&mut self, id: &InstanceId, frame: u64, steps: &mut Vec<Step>) {
+        if let Some(take) = self.take.take() {
+            let tick = take.clock.tick_at(Frames(frame));
+            steps.push(Step::End(id.clone(), tick, Finished::Notes(take, frame)));
+        }
+    }
+}
+
+/// What ends what `notes` holds: an off for each key down, and the pedal up when it is down.
+fn all_off(notes: &[(u64, NoteEvent)]) -> Vec<NoteEvent> {
+    let mut down = BTreeMap::new();
+    let mut pedal = false;
+    for (_, event) in notes {
+        match event {
+            NoteEvent::On { pitch, .. } => *down.entry(pitch.number()).or_insert(0) += 1,
+            NoteEvent::Off { pitch } => {
+                if let Some(count) = down.get_mut(&pitch.number()) {
+                    *count -= 1;
+                    if *count == 0 {
+                        down.remove(&pitch.number());
+                    }
+                }
+            }
+            NoteEvent::Pedal(value) => pedal = value.is_down(),
+            _ => {}
+        }
+    }
+    let offs = notes.iter().filter_map(|(_, event)| match event {
+        NoteEvent::On { pitch, .. } if down.remove(&pitch.number()).is_some() => {
+            Some(NoteEvent::Off { pitch: *pitch })
+        }
+        _ => None,
+    });
+    let mut ends: Vec<NoteEvent> = offs.collect();
+    if pedal {
+        ends.push(NoteEvent::Pedal(Pedal::UP));
+    }
+    ends
 }
 
 impl Recorders {
@@ -79,18 +186,16 @@ impl Recorders {
             session,
             live,
             followed: HashMap::new(),
-            audio: None,
-            queued: Vec::new(),
+            audio: Vec::new(),
+            next: 0,
+            shown: 0,
             _polling: polling,
         }
     }
 
-    /// Follows every recorder: what it heard since the last poll, and the take of sound. The
+    /// Follows every recorder: what it heard since the last poll, and the takes of sound. The
     /// timer calls it; tests call it to skip the wait.
     pub fn poll(&mut self, cx: &mut Context<Self>) {
-        let mut records = Vec::new();
-        let mut starting = Vec::new();
-        let mut ended = Vec::new();
         let recorders: Vec<(InstanceId, EventTap<Heard>, bool, Vec<usize>)> = {
             let project = self.session.read(cx).project();
             let ids = project.instances().filter(|(_, tool)| *tool == RECORDER);
@@ -108,39 +213,34 @@ impl Recorders {
         };
         let clock = Arc::new(self.session.read(cx).project().clock().clone());
         let playhead = self.session.read(cx).playhead().read(cx).tick;
-        // A recorder that is gone ends its take where the playhead is: what it heard is kept.
-        let gone: Vec<InstanceId> = (self.followed.keys())
-            .filter(|id| !recorders.iter().any(|(each, ..)| each == *id))
-            .cloned()
+        let mut steps = Vec::new();
+        let mut missed = Vec::new();
+        // A recorder that is gone, or built again with a new tap, ends its take where the
+        // playhead is, after what its tap still holds: what it heard is kept.
+        let gone: Vec<InstanceId> = (self.followed.iter())
+            .filter(|(id, followed)| {
+                let now = recorders.iter().find(|(each, ..)| each == *id);
+                now.is_none_or(|(_, heard, ..)| !followed.heard.is(heard))
+            })
+            .map(|(id, _)| id.clone())
             .collect();
         for id in gone {
-            let recording = self.session.read(cx).recording().clone();
-            recording.update(cx, |recording, cx| {
-                recording.set_armed(id.clone(), false, cx)
-            });
-            if let Some(take) = self.followed.remove(&id).and_then(|followed| followed.take) {
+            let Some(mut followed) = self.followed.remove(&id) else {
+                continue;
+            };
+            if followed.hear(&id, &[], &clock, &mut steps) {
+                missed.push(id.clone());
+            }
+            if let Some(take) = &followed.take {
                 let frame = take.clock.frame_of(playhead).0;
-                records.push((id.clone(), Finished::Notes(take, frame)));
-                ended.push((id, playhead));
+                followed.end(&id, frame, &mut steps);
             }
+            let recording = self.session.read(cx).recording().clone();
+            recording.update(cx, |recording, cx| recording.set_armed(id, false, cx));
         }
-        let mut missed = Vec::new();
         for (id, heard, armed, channels) in recorders {
-            let followed = self.followed.entry(id.clone()).or_insert(Followed {
-                heard: heard.clone(),
-                next: 0,
-                armed: false,
-                take: None,
-            });
-            // Built again with a new tap: what it heard starts over.
-            if !followed.heard.is(&heard) {
-                *followed = Followed {
-                    heard,
-                    next: 0,
-                    armed: false,
-                    take: None,
-                };
-            }
+            let followed =
+                (self.followed.entry(id.clone())).or_insert_with(|| Followed::new(heard));
             let arms = armed && !channels.is_empty();
             if followed.armed != arms {
                 followed.armed = arms;
@@ -149,56 +249,25 @@ impl Recorders {
                     recording.set_armed(id.clone(), arms, cx)
                 });
             }
-            let mut read = Vec::new();
-            let tapped = followed.heard.read(followed.next, &mut read);
-            followed.next = tapped.next;
-            if tapped.missed > 0 && followed.take.is_some() {
-                missed.push(id.clone());
-            }
             // A change of the tempo map ends a take where the playhead is, as it was heard
             // under the old one. It goes on in a new one from there, sound too.
             if let Some(take) = &followed.take
                 && take.clock.tempo_map() != clock.tempo_map()
             {
-                if let Some(take) = followed.take.take() {
-                    let end = take.clock.frame_of(playhead).0;
-                    records.push((id.clone(), Finished::Notes(take, end)));
-                }
+                let end = take.clock.frame_of(playhead).0;
+                followed.end(&id, end, &mut steps);
                 let frame = clock.frame_of(playhead).0;
                 followed.take = Some(NotesTake {
                     start: frame,
                     clock: clock.clone(),
                     notes: Vec::new(),
                 });
-                ended.push((id.clone(), playhead));
                 if !channels.is_empty() {
-                    starting.push((id.clone(), channels.clone(), frame));
+                    steps.push(Step::Start(id.clone(), channels.clone(), frame));
                 }
             }
-            for (frame, heard) in read {
-                match heard {
-                    Heard::Started => {
-                        followed.take = Some(NotesTake {
-                            start: frame,
-                            clock: clock.clone(),
-                            notes: Vec::new(),
-                        });
-                        if !channels.is_empty() {
-                            starting.push((id.clone(), channels.clone(), frame));
-                        }
-                    }
-                    Heard::Note(event) => {
-                        if let Some(take) = &mut followed.take {
-                            take.notes.push((frame, event));
-                        }
-                    }
-                    Heard::Ended => {
-                        if let Some(take) = followed.take.take() {
-                            ended.push((id.clone(), take.clock.tick_at(Frames(frame))));
-                            records.push((id.clone(), Finished::Notes(take, frame)));
-                        }
-                    }
-                }
+            if followed.hear(&id, &channels, &clock, &mut steps) {
+                missed.push(id.clone());
             }
         }
         for id in missed {
@@ -208,37 +277,43 @@ impl Recorders {
             self.session
                 .update(cx, |session, cx| session.report(notice, cx));
         }
-        for (id, end) in ended {
-            if let Some(audio) = &mut self.audio
-                && let Some(ended) = audio.recorders.get_mut(&id)
-            {
-                ended.get_or_insert(end);
+        let mut records = Vec::new();
+        for step in steps {
+            match step {
+                Step::Start(id, channels, frame) => {
+                    self.start_audio(id, &channels, frame, &clock, cx)
+                }
+                // The notes of a take that records sound too wait for its sound.
+                Step::End(id, end, notes) => {
+                    let audio = (self.audio.iter_mut())
+                        .find(|audio| audio.recorder == id && audio.end.is_none());
+                    match audio {
+                        Some(audio) => {
+                            audio.end = Some(end);
+                            audio.notes = Some(notes);
+                        }
+                        None => records.push((id, notes)),
+                    }
+                }
             }
         }
-        // The notes of a recorder that records sound too wait for its sound.
-        let (waiting, records): (Vec<_>, Vec<_>) = records.into_iter().partition(|(id, _)| {
-            (self.audio.as_ref()).is_some_and(|audio| audio.recorders.contains_key(id))
-        });
-        if let Some(audio) = &mut self.audio {
-            audio.notes.extend(waiting);
-        }
-        // After the ends: a take that starts where another of the same recorder ends waits
-        // for it.
-        self.queued.extend(starting);
-        self.start_audio(&clock, cx);
         self.poll_audio(cx);
         self.write(records, cx);
+        self.follow_hold(cx);
     }
 
-    /// Starts one recording of the audio input for the recorders whose take of sound waits.
-    /// One runs at a time: those that start while one records wait for it to be done, as at a
-    /// loop or a jump, where one take ends and the next starts.
-    fn start_audio(&mut self, clock: &Arc<Clock>, cx: &mut Context<Self>) {
-        if self.audio.is_some() {
-            return;
-        }
-        let starting = std::mem::take(&mut self.queued);
-        let Some((_, _, frame)) = starting.first() else {
+    /// Starts a recording of the audio input for the take of sound of `recorder`, from `frame`
+    /// of the song. It runs beside the others: a take that starts where another ends, at a loop
+    /// or a jump, has its sound from its first frame.
+    fn start_audio(
+        &mut self,
+        recorder: InstanceId,
+        channels: &[usize],
+        frame: u64,
+        clock: &Arc<Clock>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(first) = channels.first() else {
             return;
         };
         if !self.live.read(cx).can_open_input() {
@@ -247,175 +322,187 @@ impl Recorders {
             });
             return;
         }
-        let start = clock.tick_at(Frames(*frame));
-        let requests: Vec<TakeRequest> = (starting.iter())
-            .filter_map(|(id, channels, _)| {
-                let first = *channels.first()?;
-                Some(TakeRequest {
-                    track: id.clone(),
-                    name: format!("{}-sound", id.name()),
-                    channels: first..first + channels.len(),
-                })
-            })
-            .collect();
-        let recorders = requests.iter().map(|request| (request.track.clone(), None));
-        self.audio = Some(AudioTake {
-            placement: Placement::new(start, clock.clone()),
-            recorders: recorders.collect(),
+        let id = self.next;
+        self.next += 1;
+        let request = TakeRequest {
+            track: recorder.clone(),
+            name: format!("{}-sound", recorder.name()),
+            channels: *first..first + channels.len(),
+        };
+        self.audio.push(AudioTake {
+            id,
+            recorder,
+            placement: Placement::new(clock.tick_at(Frames(frame)), clock.clone()),
+            end: None,
             started: Vec::new(),
-            shown: false,
             finishing: None,
-            notes: Vec::new(),
+            notes: None,
         });
         self.live.update(cx, |live, cx| {
             live.open_input(cx);
-            live.record(RecorderCommand::Start(requests));
-            live.hold(
-                Hold {
-                    notes: false,
-                    audio: true,
-                },
-                cx,
-            );
+            live.record(RecorderCommand::Start(id, vec![request]));
         });
     }
 
-    /// Ties the recording to the timeline while it runs, and asks for its end once every
-    /// recorder of it ended.
+    /// What the takes hold while they run: the input stays open while one records sound, and
+    /// the live notes stay where they went while one takes notes.
+    fn follow_hold(&mut self, cx: &mut Context<Self>) {
+        let hold = Hold {
+            notes: self
+                .followed
+                .values()
+                .any(|followed| followed.take.is_some()),
+            audio: !self.audio.is_empty(),
+        };
+        self.live.update(cx, |live, cx| live.hold(hold, cx));
+    }
+
+    /// Ties each recording to the timeline while it runs, and asks for its end once its take
+    /// ended.
     fn poll_audio(&mut self, cx: &mut Context<Self>) {
         let status = self.session.read(cx).engine_status();
         let timing = self.live.read(cx).timing();
         let input_rate = self.live.read(cx).input_rate();
-        let Some(audio) = &mut self.audio else {
-            return;
-        };
-        let ends: Vec<Ticks> = audio.recorders.values().flatten().copied().collect();
-        if ends.len() < audio.recorders.len() {
-            audio.placement.observe(status);
-        }
-        let finish = match &mut audio.finishing {
-            None if ends.len() == audio.recorders.len() => {
-                audio.finishing = Some(0);
-                let end = ends.into_iter().max().unwrap_or(audio.placement.start);
-                let frames = input_rate.and_then(|rate| {
-                    let placement = &audio.placement;
-                    placement.input_frames_until(end, timing.as_deref(), rate)
+        let mut finishes = Vec::new();
+        for audio in &mut self.audio {
+            let finish = match (audio.end, &mut audio.finishing) {
+                (None, _) => {
+                    audio.placement.observe(status);
+                    None
+                }
+                (Some(end), finishing @ None) => {
+                    *finishing = Some(0);
+                    let frames = input_rate.and_then(|rate| {
+                        (audio.placement).input_frames_until(end, timing.as_deref(), rate)
+                    });
+                    Some(frames)
+                }
+                // The input never brought the end: the file closes with what it has.
+                (Some(_), Some(polls)) => {
+                    *polls += 1;
+                    (*polls == FINISH_POLLS).then_some(None)
+                }
+            };
+            if let Some(frames) = finish {
+                finishes.push(RecorderCommand::Finish {
+                    id: audio.id,
+                    frames,
                 });
-                Some(RecorderCommand::Finish { frames })
             }
-            // The input never brought the end: the files close with what they have.
-            Some(polls) => {
-                *polls += 1;
-                (*polls == FINISH_POLLS).then_some(RecorderCommand::Finish { frames: None })
-            }
-            None => None,
-        };
-        if let Some(finish) = finish {
-            self.live.update(cx, |live, _| live.record(finish));
         }
+        self.live.update(cx, |live, _| {
+            for finish in finishes {
+                live.record(finish);
+            }
+        });
         self.show_audio(cx);
     }
 
-    /// The waveforms of the takes of sound as they grow, for `now.take`, once the first frames
-    /// came and the recording is tied to the timeline.
+    /// The waveforms of the takes of sound as they grow, for `now.take`, once their first
+    /// frames came and they are tied to the timeline.
     fn show_audio(&mut self, cx: &mut Context<Self>) {
         let timing = self.live.read(cx).timing();
-        let Some(audio) = self.audio.as_mut().filter(|audio| !audio.shown) else {
-            return;
-        };
-        let clock = audio.placement.clock().clone();
-        let (Some(head), false) = (
-            audio.placement.head(timing.as_deref()),
-            audio.started.is_empty(),
-        ) else {
-            return;
-        };
-        audio.shown = true;
-        let start = audio.placement.start;
-        let start_seconds = take_seconds_at(head, clock.frame_of(start), &clock);
-        let shown = audio.started.iter().map(|started| LiveTake {
-            track: started.track.clone(),
-            start,
-            sound: LiveSound {
-                overview: started.overview.clone(),
-                start_seconds,
-            },
+        let shown = self.audio.iter().flat_map(|audio| {
+            let clock = audio.placement.clock();
+            let head = audio.placement.head(timing.as_deref());
+            let start = audio.placement.start;
+            let start_seconds =
+                head.map(|head| take_seconds_at(head, clock.frame_of(start), clock));
+            audio.started.iter().filter_map(move |started| {
+                Some(LiveTake {
+                    recorder: started.track.clone(),
+                    start,
+                    sound: LiveSound {
+                        overview: started.overview.clone(),
+                        start_seconds: start_seconds?,
+                    },
+                })
+            })
         });
-        let shown = shown.collect();
-        let recording = self.session.read(cx).recording().clone();
-        recording.update(cx, |recording, cx| recording.set_takes(shown, cx));
+        let shown: Vec<LiveTake> = shown.collect();
+        if self.shown != shown.len() {
+            self.shown = shown.len();
+            let recording = self.session.read(cx).recording().clone();
+            recording.update(cx, |recording, cx| recording.set_takes(shown, cx));
+        }
     }
 
-    /// What the recorder of the input reported: about the recording of the recorders, when one
-    /// runs.
+    /// What the recorder of the input reported about the recordings.
     fn on_reports(&mut self, reports: &[RecorderReport], cx: &mut Context<Self>) {
-        let Some(audio) = &mut self.audio else {
-            return;
-        };
-        let ours = |track: &InstanceId| audio.recorders.contains_key(track);
-        let mut finished = None;
         let mut notices = Vec::new();
+        let mut finished = Vec::new();
         for report in reports {
             match report {
-                RecorderReport::Started { first_nanos, takes } => {
-                    if takes.iter().any(|take| ours(&take.track)) {
+                RecorderReport::Started {
+                    id,
+                    first_nanos,
+                    takes,
+                } => {
+                    if let Some(audio) = self.audio.iter_mut().find(|audio| audio.id == *id) {
                         audio.placement.first_nanos = Some(*first_nanos);
                         audio.started = takes.clone();
                     }
                 }
-                RecorderReport::Failed { track, error } if ours(track) => {
-                    notices.push(format!(
-                        "The take of {track} stopped: {error}. What was recorded before is kept."
-                    ));
-                }
-                RecorderReport::Finished { first_nanos, takes }
-                    if takes.iter().any(|(track, _)| ours(track)) || takes.is_empty() =>
-                {
+                RecorderReport::Failed { track, error, .. } => notices.push(format!(
+                    "The take of {track} stopped: {error}. What was recorded before is kept."
+                )),
+                RecorderReport::Behind { frames } => notices.push(format!(
+                    "Recording fell behind the input: the takes hold {frames} frames of silence where it could not keep up."
+                )),
+                RecorderReport::Finished {
+                    id,
+                    first_nanos,
+                    takes,
+                } => {
+                    let Some(index) = self.audio.iter().position(|audio| audio.id == *id) else {
+                        continue;
+                    };
+                    let mut audio = self.audio.remove(index);
                     if first_nanos.is_some() {
                         audio.placement.first_nanos = *first_nanos;
                     }
-                    finished = Some(takes.clone());
+                    finished.push((audio, takes.clone()));
                 }
-                _ => {}
+                // No sound comes: every take ends with its notes.
+                RecorderReport::NoInput => {
+                    finished.extend(self.audio.drain(..).map(|audio| (audio, Vec::new())));
+                }
             }
         }
         for notice in notices {
             self.session
                 .update(cx, |session, cx| session.report(notice, cx));
         }
-        let Some(takes) = finished else {
+        if finished.is_empty() {
             return;
-        };
-        let Some(audio) = self.audio.take() else {
-            return;
-        };
+        }
         let timing = self.live.read(cx).timing();
-        let head = audio.placement.head(timing.as_deref());
-        let clock = audio.placement.clock().clone();
-        let start = audio.placement.start;
-        let records = takes.into_iter().filter_map(|(id, imported)| {
-            let end = audio.recorders.get(&id).copied().flatten()?;
-            let file = imported.audio.info();
-            let (start, file_start, file_end) = take_place(&file, head?, (start, end), &clock)?;
-            let mut state = json!({
-                "asset": imported.asset.to_string(),
-                "start": start.0,
-                "file_start_seconds": file_start,
+        let mut records = Vec::new();
+        for (audio, takes) in finished {
+            let head = audio.placement.head(timing.as_deref());
+            let clock = audio.placement.clock().clone();
+            let start = audio.placement.start;
+            records.extend(audio.notes.map(|notes| (audio.recorder.clone(), notes)));
+            let sound = takes.into_iter().filter_map(|(id, imported)| {
+                let file = imported.audio.info();
+                let (start, file_start, file_end) =
+                    take_place(&file, head?, (start, audio.end?), &clock)?;
+                let mut state = json!({
+                    "asset": imported.asset.to_string(),
+                    "start": start.0,
+                    "file_start_seconds": file_start,
+                });
+                if let (Some(end), Some(fields)) = (file_end, state.as_object_mut()) {
+                    fields.insert("file_end_seconds".to_string(), json!(end));
+                }
+                let name = imported.asset.asset_name().name().to_string();
+                Some((id, Finished::Sound(name, state)))
             });
-            if let (Some(end), Some(fields)) = (file_end, state.as_object_mut()) {
-                fields.insert("file_end_seconds".to_string(), json!(end));
-            }
-            let name = imported.asset.asset_name().name().to_string();
-            Some((id, Finished::Sound(name, state)))
-        });
-        let records: Vec<_> = audio.notes.into_iter().chain(records).collect();
+            records.extend(sound);
+        }
         self.write(records, cx);
-        self.live
-            .update(cx, |live, cx| live.hold(Hold::default(), cx));
-        let recording = self.session.read(cx).recording().clone();
-        recording.update(cx, |recording, cx| recording.set_takes(Vec::new(), cx));
-        let clock = Arc::new(self.session.read(cx).project().clock().clone());
-        self.start_audio(&clock, cx);
+        self.show_audio(cx);
+        self.follow_hold(cx);
     }
 
     /// Gives what the takes made to the code of the parents of their recorders, which keeps
@@ -548,4 +635,34 @@ fn raw(event: NoteEvent, at: u64) -> Option<RawEvent> {
         },
         NoteEvent::Control { .. } | NoteEvent::AllOff => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use sound_notes::{Pedal, Pitch, Velocity};
+
+    use super::*;
+
+    #[test]
+    fn all_off_ends_the_keys_still_down_and_the_pedal() {
+        let pitch = |number| Pitch::new(number).unwrap();
+        let on = |number| NoteEvent::On {
+            pitch: pitch(number),
+            velocity: Velocity::new(100).unwrap(),
+        };
+        let notes = [
+            (0, on(60)),
+            (1, on(62)),
+            (2, NoteEvent::Off { pitch: pitch(60) }),
+            (3, NoteEvent::Pedal(Pedal::new(127).unwrap())),
+        ];
+        assert_eq!(
+            all_off(&notes),
+            [
+                NoteEvent::Off { pitch: pitch(62) },
+                NoteEvent::Pedal(Pedal::UP)
+            ]
+        );
+    }
 }

@@ -4,10 +4,12 @@
 //! `region` and a `timeline` next to it, where it was heard, in one undo step.
 
 use gpui::{Modifiers, TestAppContext};
+use midi::Played;
 use plugin_host::{Plugins, ScanCache};
 use runtime::window::DeviceAccess;
 use serde_json::Value;
 use sound_core::InstanceId;
+use sound_notes::{Amount, Bend};
 use std::sync::atomic::Ordering;
 
 use super::{Opened, write};
@@ -36,6 +38,8 @@ tool({
     h("div", { style: { direction: "row", gap: 8 } },
       h("div", { key: "arm", onPress: () => send({ child: "rec", number: "record" }, 1) }, "Arm"),
       h("div", { key: "done", onPress: () => send({ child: "rec", number: "record" }, 0) }, "Done"),
+      h("div", { key: "arm-2", onPress: () => send({ child: "rec-2", number: "record" }, 1) }, "Arm 2"),
+      h("div", { key: "done-2", onPress: () => send({ child: "rec-2", number: "record" }, 0) }, "Done 2"),
     ),
   onTake: ({ update }, take) =>
     update("Record", ({ children }) => {
@@ -50,7 +54,19 @@ fn tone(_: u64) -> [f32; 2] {
 }
 
 fn open_studio(cx: &mut TestAppContext) -> (Opened<'_>, SimulatedInput) {
+    open_studio_of(cx, &[])
+}
+
+/// The studio with more recorders: `rec-2` and on, of the right channel.
+fn open_studio_of<'a>(cx: &'a mut TestAppContext, more: &[&str]) -> (Opened<'a>, SimulatedInput) {
     let folder = tempfile::tempdir().unwrap();
+    for name in more {
+        write(
+            folder.path(),
+            &format!("state/studio/{name}.json"),
+            r#"{"tool": "recorder", "state": {"channels": [1]}}"#,
+        );
+    }
     let project = r#"{"format": 1, "extensions": [],
   "tempo_map": {"time_signature": "4/4", "tempo_changes": [{"tick": 0, "bpm": 120.0}]},
   "connections": [{"from": {"instance": "studio", "port": "audio"}, "to": {"device_output": 0}}]}"#;
@@ -263,4 +279,131 @@ fn a_recorder_deleted_while_it_takes_lets_go_of_the_input(cx: &mut TestAppContex
         window.record_for(&input, 2_048);
         !window.made("timeline").is_empty() && input.closings() == 1
     });
+}
+
+impl Opened<'_> {
+    fn press_found(&mut self, selector: &str) {
+        let at = self.until_found(selector);
+        self.cx.simulate_click(at, Modifiers::default());
+    }
+}
+
+/// A second recorder that starts while the first records gets a take of its own, of the sound
+/// from where it started.
+#[gpui::test]
+fn a_recorder_that_starts_while_another_records_keeps_its_own_take(cx: &mut TestAppContext) {
+    let (mut window, input) = open_studio_of(cx, &["rec-2"]);
+    window.press_found("div-arm");
+    window.start_playing();
+    window.record_for(&input, 24_000);
+    window.press_found("div-arm-2");
+    window.record_for(&input, 24_000);
+    window.press_found("div-done");
+    window.press_found("div-done-2");
+    window.until("two regions", |window| {
+        window.record_for(&input, 2_048);
+        window.made("region").len() == 2
+    });
+    let regions = window.made("region");
+    let start = |name: &str| {
+        let (_, region) = regions
+            .iter()
+            .find(|(each, _)| each.starts_with(name))
+            .unwrap();
+        region["start"].as_u64().unwrap()
+    };
+    // Half a second later at 120 bpm is a beat later.
+    assert!(
+        start("rec-2-sound") >= start("rec-sound") + 900,
+        "{regions:?}"
+    );
+    window.until("the input let go", |window| {
+        window.record_for(&input, 2_048);
+        input.closings() == 1
+    });
+}
+
+/// At a loop, a take ends and the next starts: one region for each round, and the input is let
+/// go once recording stops, even when it stops before the round before was written.
+#[gpui::test]
+fn a_take_across_a_loop_is_a_region_for_each_round(cx: &mut TestAppContext) {
+    let (mut window, input) = open_studio(cx);
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, _| {
+            session
+                .engine()
+                .set_loop(Some(sound_core::Ticks(0)..sound_core::Ticks(1_920)))
+        })
+    });
+    window.press_found("div-arm");
+    window.start_playing();
+    // One round is a second; stop just after the loop.
+    window.record_for(&input, 50_000);
+    window.press_found("div-done");
+    window.until("a region for each round", |window| {
+        window.record_for(&input, 2_048);
+        window.made("region").len() == 2
+    });
+    window.until("the input let go", |window| {
+        window.record_for(&input, 2_048);
+        input.closings() == 1
+    });
+}
+
+/// What a recorder heard just before it was deleted, and no poll read yet, is in its take.
+#[gpui::test]
+fn a_recorder_deleted_keeps_what_it_heard_since_the_last_poll(cx: &mut TestAppContext) {
+    let (mut window, input) = open_studio(cx);
+    window.press_found("div-arm");
+    window.start_playing();
+    window.record_for(&input, 24_000);
+    window.play_midi(64);
+    window.loudest(2_048);
+    let session = window.session.clone();
+    window.cx.update(|_, cx| {
+        session.update(cx, |session, cx| {
+            session.edit(cx, |project| {
+                let mut changes = sound_core::Changes::new();
+                changes.delete(&InstanceId::new("studio/rec").unwrap());
+                project.commit("Delete the recorder", changes)
+            })
+        })
+    });
+    window.until("the notes kept", |window| {
+        window.record_for(&input, 2_048);
+        !window.made("timeline").is_empty()
+    });
+    let (_, timeline) = &window.made("timeline")[0];
+    assert_eq!(timeline["notes"][0]["pitch"], 64, "{timeline}");
+}
+
+/// A take keeps how the keys were played, not only which: the bend and the mod wheel.
+#[gpui::test]
+fn a_take_keeps_the_bend_and_the_mod_wheel(cx: &mut TestAppContext) {
+    let (mut window, input) = open_studio(cx);
+    window.press_found("div-arm");
+    window.start_playing();
+    window.record_for(&input, 24_000);
+    window.play_midi(60);
+    let shell = window.shell.clone();
+    let live = window.cx.read(|cx| shell.read(cx).live_input().clone());
+    let midi = window.cx.read(|cx| live.read(cx).midi_input()).unwrap();
+    assert!(midi.send(Played::Bend(Bend::new(4_000).unwrap())));
+    assert!(midi.send(Played::ModWheel(Amount::new(64).unwrap())));
+    window.record_for(&input, 24_000);
+    window.press_found("div-done");
+    window.until("the notes kept", |window| {
+        window.record_for(&input, 2_048);
+        !window.made("timeline").is_empty()
+    });
+    let (_, timeline) = &window.made("timeline")[0];
+    assert!(
+        !timeline["bend"].as_array().unwrap().is_empty(),
+        "{timeline}"
+    );
+    assert!(
+        !timeline["mod_wheel"].as_array().unwrap().is_empty(),
+        "{timeline}"
+    );
 }

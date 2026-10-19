@@ -14,7 +14,7 @@ use sound_media::TakeOverview;
 /// An audio take while it records: from where the recording began to the playhead.
 #[derive(Clone, Debug)]
 pub struct LiveTake {
-    pub track: InstanceId,
+    pub recorder: InstanceId,
     pub start: Ticks,
     pub sound: LiveSound,
 }
@@ -69,8 +69,12 @@ impl Recording {
         }
     }
 
-    pub fn take_of(&self, track: &InstanceId) -> Option<&LiveTake> {
-        self.takes.iter().find(|take| take.track == *track)
+    /// The newest take of `recorder`: at a loop the one before may still wait for its end.
+    pub fn take_of(&self, recorder: &InstanceId) -> Option<&LiveTake> {
+        self.takes
+            .iter()
+            .rev()
+            .find(|take| take.recorder == *recorder)
     }
 
     pub fn set_takes(&mut self, takes: Vec<LiveTake>, cx: &mut Context<Self>) {

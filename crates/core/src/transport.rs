@@ -67,7 +67,8 @@ impl Transport<'_> {
     /// The tick the frame `offset` into this block plays, for what lands inside a block.
     pub fn tick_at_offset(&self, offset: usize) -> Ticks {
         let frame = (self.block_start + offset as i128).max(i128::from(self.frame_range.start.0));
-        self.clock.tick_at(Frames(u64::try_from(frame).unwrap_or(u64::MAX)))
+        self.clock
+            .tick_at(Frames(u64::try_from(frame).unwrap_or(u64::MAX)))
     }
 
     /// Where the first frame of this block is in quarter notes from the project start, with
