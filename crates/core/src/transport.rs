@@ -87,8 +87,12 @@ impl Transport<'_> {
 pub(crate) enum TransportCommand {
     Play,
     Pause,
-    Stop,
     Seek(Ticks),
+    /// Once playback reaches `at`, it goes on from `to`. Replaces one that waits; a seek drops it.
+    JumpAt {
+        at: Ticks,
+        to: Ticks,
+    },
     Loop(Option<Range<Ticks>>),
 }
 
@@ -120,6 +124,8 @@ pub(crate) struct TransportState {
     heard_tick: Ticks,
     /// When the device reaches the end of this range, playback seeks to its start. Never empty.
     looped: Option<Range<Ticks>>,
+    /// Where playback goes on from once it reaches a tick, once.
+    jump_at: Option<(Ticks, Ticks)>,
     clock: Arc<Clock>,
 }
 
@@ -137,6 +143,7 @@ impl TransportState {
             latency: 0,
             heard_tick: Ticks(0),
             looped: None,
+            jump_at: None,
             clock,
         }
     }
@@ -148,11 +155,18 @@ impl TransportState {
                 self.playing = true;
             }
             TransportCommand::Pause => self.playing = false,
-            TransportCommand::Stop => {
-                self.playing = false;
-                self.jump_to(Frames(0));
+            TransportCommand::Seek(tick) => {
+                self.jump_at = None;
+                self.jump_to(self.clock.frame_of(*tick));
             }
-            TransportCommand::Seek(tick) => self.jump_to(self.clock.frame_of(*tick)),
+            // A tick playback has already passed jumps at once.
+            TransportCommand::JumpAt { at, to } => match self.clock.frame_of(*at) <= self.position {
+                true => {
+                    self.jump_at = None;
+                    self.jump_to(self.clock.frame_of(*to));
+                }
+                false => self.jump_at = Some((*at, *to)),
+            },
             TransportCommand::Loop(range) => {
                 self.looped = range.clone().filter(|range| !range.is_empty());
             }
@@ -182,16 +196,22 @@ impl TransportState {
         self.latency
     }
 
-    /// Frames the device plays before playback reaches the end of the loop, so a sub-block can
-    /// end there. `None` with no loop, while stopped, and from the end of the loop on: a seek
-    /// past it plays on. Call after [`Self::begin_block`], which sets the preroll.
-    pub(crate) fn frames_to_loop_end(&self) -> Option<u64> {
-        let looped = self.looped.as_ref().filter(|_| self.playing)?;
-        let end = self.clock.frame_of(looped.end);
-        let left = end
-            .0
-            .checked_sub(self.position.0)
-            .filter(|left| *left > 0)?;
+    /// Frames the device plays before playback reaches the end of the loop or the tick of a
+    /// jump, so a sub-block can end there. `None` with neither, while stopped, and from such a
+    /// tick on: a seek past it plays on. Call after [`Self::begin_block`], which sets the preroll.
+    pub(crate) fn frames_to_jump(&self) -> Option<u64> {
+        if !self.playing {
+            return None;
+        }
+        let ends = (self.looped.as_ref().map(|looped| looped.end))
+            .into_iter()
+            .chain(self.jump_at.map(|(at, _)| at));
+        let left = ends
+            .filter_map(|end| {
+                let end = self.clock.frame_of(end);
+                end.0.checked_sub(self.position.0).filter(|left| *left > 0)
+            })
+            .min()?;
         Some(left.saturating_add(self.preroll))
     }
 
@@ -295,11 +315,15 @@ impl TransportState {
         self.was_playing = self.playing;
         self.jumped = false;
         self.resumed = false;
-        if let Some(looped) = &self.looped {
-            let end = self.clock.frame_of(looped.end);
-            if before <= end && self.position >= end && self.position > before {
-                self.jump_to(self.clock.frame_of(looped.start));
-            }
+        let reached = |tick: Ticks| {
+            let end = self.clock.frame_of(tick);
+            before <= end && self.position >= end && self.position > before
+        };
+        if let Some((at, to)) = self.jump_at.filter(|(at, _)| reached(*at)) {
+            self.jump_at = None;
+            self.jump_to(self.clock.frame_of(to));
+        } else if let Some(looped) = self.looped.clone().filter(|looped| reached(looped.end)) {
+            self.jump_to(self.clock.frame_of(looped.start));
         }
         waited
     }

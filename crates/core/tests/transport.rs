@@ -226,6 +226,44 @@ fn a_loop_goes_back_on_the_frame_of_its_end_for_every_device_buffer_size() {
 }
 
 #[test]
+fn a_jump_lands_on_the_frame_of_its_tick_once_for_every_device_buffer_size() {
+    for device_buffer in [1, 63, 64, 65, 480, 513] {
+        let mut beats = BeatEngine::new(48_000, 960);
+        // At quarter note 2, 48000 frames at 120 bpm, playback goes on from quarter note 5.
+        beats.control.jump_at(Ticks(1920), Ticks(4800));
+        beats.control.play();
+        beats.render(110_000, &[device_buffer]);
+
+        let expected = [(0, 0), (24_000, 1), (48_000, 5), (72_000, 6), (96_000, 7)];
+        let expected: Vec<_> = (expected.into_iter())
+            .map(|(frame, beat)| (frame, impulse(beat)))
+            .collect();
+        assert_eq!(beats.impulses(), expected, "device buffer {device_buffer}");
+        assert_eq!(beats.broken_promises.load(Ordering::Relaxed), 0);
+        assert_eq!(beats.control.poll().unwrap().jumps, 1);
+    }
+}
+
+#[test]
+fn a_jump_to_a_tick_already_passed_goes_at_once_and_a_seek_drops_one_that_waits() {
+    let mut beats = BeatEngine::new(48_000, 960);
+    beats.control.play();
+    beats.render(30_000, &[64]);
+    // Quarter note 1 has passed: playback goes on from quarter note 4 now.
+    beats.control.jump_at(Ticks(960), Ticks(3840));
+    beats.render(10_000, &[64]);
+    assert_eq!(beats.impulses().last(), Some(&(30_000, impulse(4))));
+
+    beats.control.jump_at(Ticks(5760), Ticks(0));
+    beats.control.seek(Ticks(0));
+    beats.render(150_000, &[64]);
+    // Quarter note 6 plays at 6 x 24000 frames after the seek: no jump took it back.
+    let frames: Vec<_> = beats.impulses().iter().map(|(frame, _)| *frame).collect();
+    assert!(frames.contains(&(40_000 + 6 * 24_000)), "{frames:?}");
+    assert_eq!(beats.control.poll().unwrap().jumps, 2);
+}
+
+#[test]
 fn a_tempo_change_that_puts_the_position_on_the_loop_end_still_goes_back() {
     let mut beats = BeatEngine::new(48_000, 960);
     beats.control.set_loop(Some(Ticks(960)..Ticks(2880)));

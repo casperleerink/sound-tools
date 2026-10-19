@@ -249,10 +249,11 @@ impl Engine {
                         self.find_leads();
                     }
                     self.transport.begin_block();
-                    // A sub-block ends where the loop does, so playback goes back on its frame.
+                    // A sub-block ends where the loop or a jump does, so playback goes on from
+                    // there on its frame.
                     let length = self
                         .transport
-                        .frames_to_loop_end()
+                        .frames_to_jump()
                         .map_or(MAX_BLOCK, |left| left.min(MAX_BLOCK as u64) as usize);
                     let split = (length * channels).min(rest.len());
                     let (sub_block, after) = std::mem::take(&mut rest).split_at_mut(split);
