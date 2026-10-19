@@ -6,6 +6,8 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
 
+use crate::PROJECT_FILE;
+
 pub struct Template {
     pub name: &'static str,
     pub description: &'static str,
@@ -39,10 +41,26 @@ pub fn write(folder: &Path, template: &Template) -> Result<()> {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("could not make {}", parent.display()))?;
         }
+        let contents = match *path == PROJECT_FILE {
+            true => with_extensions(contents)?,
+            false => (*contents).to_string(),
+        };
         std::fs::write(&target, contents)
             .with_context(|| format!("could not write {}", target.display()))?;
     }
     Ok(())
+}
+
+/// The `project.json` of a template, with every bundled extension enabled where it names none.
+fn with_extensions(contents: &str) -> Result<String> {
+    let mut file: serde_json::Value =
+        serde_json::from_str(contents).context("the project.json of a template is no JSON")?;
+    if let Some(file) = file.as_object_mut()
+        && !file.contains_key("extensions")
+    {
+        file.insert("extensions".into(), crate::bundled_extensions()?.into());
+    }
+    Ok(serde_json::to_string_pretty(&file)?)
 }
 
 /// Whether `folder` holds nothing but hidden files.
@@ -63,13 +81,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_template_writes_into_a_new_folder_only() {
+    fn a_template_writes_into_a_new_folder_only_with_every_extension() {
         let daw = named("DAW").unwrap();
         let folder = tempfile::tempdir().unwrap();
         let new = folder.path().join("new");
         write(&new, daw).unwrap();
         assert!(new.join("extensions/song.tsx").exists());
         assert!(!new.join("template.json").exists());
+        let file = std::fs::read_to_string(new.join(PROJECT_FILE)).unwrap();
+        let file: serde_json::Value = serde_json::from_str(&file).unwrap();
+        let enabled: Vec<&str> = (file["extensions"].as_array().unwrap().iter())
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert_eq!(enabled, crate::bundled_extensions().unwrap());
 
         // A project, or someone's files: nothing is written, and the error says why.
         let error = write(&new, daw).unwrap_err();
