@@ -326,7 +326,7 @@ fn define(
 ) -> Vec<ToolInfo> {
     let mut infos: Vec<ToolInfo> = sounds.iter().map(|sounds| sounds.info().clone()).collect();
     // First, so a tool of the project of its name is the one refused.
-    let tools = [timeline::json_tool()].into_iter();
+    let tools = [timeline::json_tool(), meter::json_tool()].into_iter();
     let refused = define(
         tools
             .chain(sounds.into_iter().map(Sounds::json_tool))

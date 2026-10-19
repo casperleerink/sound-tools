@@ -28,8 +28,7 @@ use sound_signals::{
 
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
-use crate::feeds::{meter_name, played_name};
-use crate::meter::Meter;
+use crate::feeds::played_name;
 use crate::{FOLDER, samples};
 
 /// A tool as `host.ts` sends it.
@@ -1402,19 +1401,10 @@ enum Carries {
 impl Key {
     fn carries(self) -> Carries {
         match self {
-            Key::Port | Key::Meter => Carries::Sound,
+            Key::Port => Carries::Sound,
             Key::Notes => Carries::Notes,
             Key::Number => Carries::Number,
             Key::Bang => Carries::Bang,
-        }
-    }
-
-    /// Whether it may name an output, as a child's `from` and the owner's own `to` do, or an
-    /// input otherwise. A meter is only the owner's own.
-    fn fits(self, output: bool) -> bool {
-        match self {
-            Key::Meter => output,
-            Key::Port | Key::Notes | Key::Number | Key::Bang => true,
         }
     }
 }
@@ -1449,7 +1439,7 @@ fn own_ports(
 }
 
 /// What a connection may name, for a problem that says so.
-const ENDS: &str = "a sound goes from { child, port? } or { port: \"audio\" } to the same or to { meter }, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child?, number }, a bang from { child, bang } to { child?, bang }";
+const ENDS: &str = "a sound goes from { child, port? } or { port: \"audio\" } to the same, notes from { child, notes } or { notes: \"notes\" } to { child?, notes }, a number from { child, number } to { child?, number }, a bang from { child, bang } to { child?, bang }";
 
 /// Makes the connections of `declaration`, between the children and the `own` ports of the
 /// owner, with the tool of each child that is a tool of this project in `child_tools`. A
@@ -1488,10 +1478,7 @@ fn wire(
         };
         let from_child = connection.from.child.as_deref();
         let to_child = connection.to.child.as_deref();
-        let fits = from_key.fits(from_child.is_some())
-            && to_key.fits(to_child.is_none())
-            && from_key != Key::Meter;
-        if from_key.carries() != to_key.carries() || !fits {
+        if from_key.carries() != to_key.carries() {
             let (from, to) = (&connection.from, &connection.to);
             context.problem(format!(
                 "its behaviour declares {at} from {from} to {to}, which do not connect: {ENDS}"
@@ -1535,14 +1522,6 @@ fn wire(
             (Some(child), Key::Port | Key::Notes) => {
                 input_of(&feeds, (child, to_name), &at, context)
             }
-            (None, Key::Meter) => {
-                let (peaks, scope) = (
-                    context.peaks(&meter_name(to_name)),
-                    context.scope(&meter_name(to_name)),
-                );
-                let meter = context.processor(&meter_name(to_name), || Meter::new(peaks, scope))?;
-                Some((InputEndpoint::new(meter, Meter::INPUT), None))
-            }
             // A number input plays the number; else a lane's input moves the field.
             (Some(child), Key::Number) if takes_number(child, to_name, child_tools, context) => {
                 let number = (child, to_name, true);
@@ -1571,8 +1550,6 @@ fn wire(
                 (control::<Bang>(name, bang, child_tools, &mut cables, &at, context)?)
                     .map(|input| (input, None))
             }
-            // Refused by `fits`.
-            (Some(_), Key::Meter) => None,
         };
         let Some((input, feed)) = into else {
             continue;

@@ -445,7 +445,7 @@ fn measure_mixer(cx: &mut TestAppContext, count: usize) {
     window.space_at("fader-master");
     window.until("the master meter to show a level", |window| {
         window.play_and_draw(800);
-        sound_typescript::shown_by_live_values("peak:master").is_some_and(|peak| peak > 0.1)
+        sound_typescript::shown_by_live_values("peak:master-meter").is_some_and(|peak| peak > 0.1)
     });
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();

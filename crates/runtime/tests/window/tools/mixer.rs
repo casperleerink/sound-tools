@@ -9,6 +9,7 @@ use super::{Window, open};
 
 const MIXER: &str = include_str!("../../../../../tooling/agent-eval/examples/mixer.tsx");
 const SWAY: &str = include_str!("../../../../../tooling/agent-eval/examples/sway.ts");
+const METER: &str = r#"{"tool": "meter", "state": {}}"#;
 
 /// The names of `count` strips.
 pub(super) fn strip_names(count: usize) -> Vec<String> {
@@ -57,7 +58,12 @@ pub(super) fn open_mixer(cx: &mut TestAppContext, count: usize) -> Option<Window
             format!("state/mixer/{name}-mix.json"),
             r#"{"tool": "utility", "state": {}}"#.to_string(),
         ));
+        files.push((format!("state/mixer/{name}-meter.json"), METER.to_string()));
     }
+    files.push((
+        "state/mixer/master-meter.json".to_string(),
+        METER.to_string(),
+    ));
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
@@ -84,10 +90,10 @@ fn a_meter_shows_the_level_of_its_strip_as_it_plays_and_asks_bun_for_nothing(
     let asked = sound_typescript::sent_updates_and_events();
     window.until("the meter of the kick to show its tone", |window| {
         window.play_and_draw(2_400);
-        sound_typescript::shown_by_live_values("peak:kick").is_some_and(|peak| peak > 0.2)
+        sound_typescript::shown_by_live_values("peak:kick-meter").is_some_and(|peak| peak > 0.2)
     });
     // A tone at 0.3 through a utility at 0 dB.
-    let master = sound_typescript::shown_by_live_values("peak:master").unwrap();
+    let master = sound_typescript::shown_by_live_values("peak:master-meter").unwrap();
     assert!(master > 0.3, "{master}");
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
 }

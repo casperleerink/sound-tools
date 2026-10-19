@@ -13,12 +13,8 @@ use serde_json::Value;
 use sound_core::{InstanceId, Project, Scope, Ticks, ValueRange};
 use sound_ui::{PeaksReader, Session};
 
+use crate::meter;
 use crate::tree::{Ease, Uses};
-
-/// The name a behaviour keeps the peaks and the scope of a meter under, see `tools.rs`.
-pub(crate) fn meter_name(name: &str) -> String {
-    format!("meter:{name}")
-}
 
 /// The name an owner keeps the watch of what a cable plays into the number of a child under,
 /// `child.number`.
@@ -205,24 +201,19 @@ impl Feeds {
     }
 }
 
-/// The peaks the tree reads as `name`: of a meter of the instance, or `path.name` of one inside it.
+/// The peaks the tree reads as `name`: of the `meter` at that path inside the instance, or
+/// `path.name`, peaks an instance inside it keeps, such as a built-in device.
 fn peaks_of(project: &Project, id: &InstanceId, name: &str) -> [f32; 2] {
-    let peaks = match name.split_once('.') {
-        Some((path, peaks)) => (id.child(path).ok()).and_then(|inner| {
-            (project.peaks(&inner, &meter_name(peaks))).or_else(|| project.peaks(&inner, peaks))
-        }),
-        None => project.peaks(id, &meter_name(name)),
+    let peaks = match name.rsplit_once('.') {
+        Some((path, peaks)) => (id.child(path).ok()).and_then(|inner| project.peaks(&inner, peaks)),
+        None => (id.child(name).ok()).and_then(|meter| project.peaks(&meter, meter::LEVEL)),
     };
     peaks.map_or([0.0; 2], |peaks| peaks.take())
 }
 
-/// The scope of the meter the tree reads as `name`: of the instance, or `path.name` of one
-/// inside it.
+/// The last sound of the `meter` at the path `name` inside the instance.
 fn scope_of(project: &Project, id: &InstanceId, name: &str) -> Option<Scope> {
-    match name.split_once('.') {
-        Some((path, meter)) => project.scope(&id.child(path).ok()?, &meter_name(meter)),
-        None => project.scope(id, &meter_name(name)),
-    }
+    project.scope(&id.child(name).ok()?, meter::LEVEL)
 }
 
 /// The field `path.field` of the record of an instance inside `id`, with how its knob turns.

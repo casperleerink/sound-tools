@@ -1,6 +1,6 @@
 import { text, tool, type Connection, type Declaration } from "./sdk";
 
-const parts = { synth: "instrument.synth", fx: "filter", mix: "utility", "*": "timeline" } as const;
+const parts = { synth: "instrument.synth", fx: "filter", mix: "utility", level: "meter", "*": "timeline" } as const;
 
 export const track = tool({
   name: "track",
@@ -19,7 +19,7 @@ export const track = tool({
         { from: { child: "synth" }, to: { child: "fx" } },
         { from: { child: "fx" }, to: { child: "mix" } },
         { from: { child: "mix" }, to: { port: "audio" } },
-        { from: { child: "mix" }, to: { meter: "level" } },
+        { from: { child: "mix" }, to: { child: "level" } },
       ],
     };
   },

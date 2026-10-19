@@ -88,7 +88,6 @@ export const song = tool({
           .filter((name) => soloed.length === 0 || soloed.includes(name))
           .map((name) => ({ from: { child: name }, to: { child: "master" } })),
         { from: { child: "master" }, to: { port: "audio" } },
-        { from: { child: "master" }, to: { meter: "master" } },
       ],
     };
   },
@@ -218,7 +217,7 @@ export const song = tool({
         <Button label="M" on={() => muted(each)} color={COLOR.mute} onPress={() => toggleMute(each.name)} />
         <Button label="S" on={() => state.solo.includes(each.name)} color={COLOR.solo} onPress={() => toggleSolo(each.name)} />
         <Space key={`meter-${each.name}`} width={40} height={6} background={COLOR.lane} radius={2}>
-          <Rect x={0} y={0} width={place(now.peak(`${each.name}.level`)).fall(0.6).times(40)} height={6} radius={2} color={COLOR.meter} />
+          <Rect x={0} y={0} width={place(now.peak(`${each.name}/level`)).fall(0.6).times(40)} height={6} radius={2} color={COLOR.meter} />
         </Space>
       </>
     );

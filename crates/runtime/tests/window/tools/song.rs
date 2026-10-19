@@ -211,7 +211,7 @@ fn space_plays_the_song_and_the_meters_follow_with_nothing_from_bun(cx: &mut Tes
     window.until("the meter of the first track to show its synth", |window| {
         window.loudest(2_400);
         window.find("space-meter-t00");
-        sound_typescript::shown_by_live_values("peak:t00.level").is_some_and(|peak| peak > 0.01)
+        sound_typescript::shown_by_live_values("peak:t00/level").is_some_and(|peak| peak > 0.01)
     });
     assert_eq!(sound_typescript::sent_updates_and_events(), asked);
     assert_eq!(sound_typescript::heard_batches(), batches);

@@ -21,7 +21,7 @@ fn noise(seed: &mut u64) -> u64 {
 }
 
 /// The files of a song of `tracks` tracks with `clips` clips in all, each of 30 to 150 notes: a
-/// synth, a filter and a utility per track, and a utility `master`.
+/// synth, a filter, a utility and a meter per track, and a utility `master`.
 pub(crate) fn song_files(tracks: usize, clips: usize) -> Vec<(String, String)> {
     let mut seed = 7;
     song_with(tracks, |track| {
@@ -111,6 +111,10 @@ fn song_with(
         files.push((
             format!("{folder}/mix.json"),
             r#"{"tool": "utility", "state": {}}"#.to_string(),
+        ));
+        files.push((
+            format!("{folder}/level.json"),
+            r#"{"tool": "meter", "state": {}}"#.to_string(),
         ));
         for (clip, state) in clips(track) {
             let record = json!({ "tool": "timeline", "state": state });

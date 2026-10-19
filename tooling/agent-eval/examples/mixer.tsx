@@ -1,7 +1,7 @@
 import { Arc, blend, Circle, For, Group, h, Label, Line, list, now, Rect, Space, text, tool, Wave, type Connection, type Declaration, type Live, type UtilityState } from "./sdk";
 
 // Each `tone` child is a strip: it plays through the utility `<name>-mix`, whose gain, pan and
-// mute the strip turns, into the utility `master`.
+// mute the strip turns, into the utility `master`. The meter `<name>-meter` hears the mix.
 const HEIGHT = 220;
 const STRIP = 64;
 const COLOR = {
@@ -63,7 +63,7 @@ export const mixer = tool({
   name: "mixer",
   title: "Mixer",
   when: "You change the mixer page: its strips, meters, faders and what it shows of the master",
-  doc: "A mixer of the `tone` children: each plays through the utility `<name>-mix` into the utility `master`. A strip turns the volume and the pan of its utility and mutes it; `solo` names the strips that play alone. A child `sway` moves the pan of the first strip.",
+  doc: "A mixer of the `tone` children: each plays through the utility `<name>-mix` into the utility `master`, and the meter `<name>-meter` hears the mix, as `master-meter` hears the master. A strip turns the volume and the pan of its utility and mutes it; `solo` names the strips that play alone. A child `sway` moves the pan of the first strip.",
   state: { solo: list(text(), { max: 64 }) },
   behaviour: ({ state, children }): Declaration => {
     const strips = children.filter((child) => child.tool === "tone").map((child) => child.name);
@@ -71,13 +71,13 @@ export const mixer = tool({
     const connections: Connection[] = [];
     for (const name of strips) {
       connections.push({ from: { child: name }, to: { child: `${name}-mix` } });
-      connections.push({ from: { child: `${name}-mix` }, to: { meter: name } });
+      connections.push({ from: { child: `${name}-mix` }, to: { child: `${name}-meter` } });
       if (soloed.length === 0 || soloed.includes(name)) {
         connections.push({ from: { child: `${name}-mix` }, to: { child: "master" } });
       }
     }
     connections.push({ from: { child: "master" }, to: { port: "audio" } });
-    connections.push({ from: { child: "master" }, to: { meter: "master" } });
+    connections.push({ from: { child: "master" }, to: { child: "master-meter" } });
     if (strips.length > 0 && children.some((child) => child.name === "sway")) {
       connections.push({ from: { child: "sway", number: "pan" }, to: { child: `${strips[0]}-mix`, number: "pan" } });
     }
@@ -102,7 +102,7 @@ export const mixer = tool({
             {(name) => (
               <div style={{ width: STRIP, gap: 6, align: "center" }}>
                 <Pan name={name} child={`${name}-mix`} />
-                <Fader name={name} child={`${name}-mix`} level={(channel) => now.peak(name, channel)} />
+                <Fader name={name} child={`${name}-mix`} level={(channel) => now.peak(`${name}-meter`, channel)} />
                 <Space width={STRIP} height={14}>
                   <Label x={STRIP / 2} y={0} text={now.value(`${name}-mix.gain_db`)} unit="db" size={10} color={COLOR.text} align="center" />
                 </Space>
@@ -117,7 +117,7 @@ export const mixer = tool({
         </div>
         <div style={{ width: STRIP, gap: 6, align: "center" }}>
           <div style={{ height: 36 }} />
-          <Fader name="master" child="master" level={(channel) => now.peak("master", channel)} />
+          <Fader name="master" child="master" level={(channel) => now.peak("master-meter", channel)} />
           <div style={{ fontSize: 11, color: COLOR.text }}>master</div>
         </div>
         <div style={{ gap: 10 }}>
@@ -130,11 +130,11 @@ export const mixer = tool({
           <div style={{ fontSize: 11, color: COLOR.text }}>Master, the last 20 ms</div>
           <Space width={260} height={80} background={COLOR.track} radius={4}>
             <Line from={[0, 40]} to={[260, 40]} color={COLOR.off} width={1} />
-            <Wave x={0} y={0} width={260} height={80} list={now.scope("master", { frames: 960 })} color={COLOR.green} size={1.5} />
+            <Wave x={0} y={0} width={260} height={80} list={now.scope("master-meter", { frames: 960 })} color={COLOR.green} size={1.5} />
           </Space>
           <div style={{ fontSize: 11, color: COLOR.text }}>Master level, the last 4 s</div>
           <Space width={260} height={60} background={COLOR.track} radius={4}>
-            <Wave x={0} y={0} width={260} height={60} list={now.history(place(now.peak("master")).fall(0.5), 240)} low={0} high={1} color={COLOR.cap} />
+            <Wave x={0} y={0} width={260} height={60} list={now.history(place(now.peak("master-meter")).fall(0.5), 240)} low={0} high={1} color={COLOR.cap} />
           </Space>
           <div style={{ fontSize: 11, color: COLOR.text }}>Device out</div>
           <Space width={30} height={HEIGHT}>

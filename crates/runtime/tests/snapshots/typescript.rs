@@ -67,6 +67,7 @@ tool({
 
 const PIANO_ROLL: &str = include_str!("../../../../tooling/agent-eval/examples/piano-roll.tsx");
 const MIXER: &str = include_str!("../../../../tooling/agent-eval/examples/mixer.tsx");
+const METER: &str = r#"{"tool": "meter", "state": {}}"#;
 const SWAY: &str = include_str!("../../../../tooling/agent-eval/examples/sway.ts");
 
 pub(crate) fn snapshots(
@@ -234,7 +235,9 @@ fn open_mixer(cx: &mut HeadlessAppContext) -> Result<super::Opened> {
             format!("state/mixer/{name}-mix.json"),
             format!(r#"{{"tool": "utility", "state": {mix}}}"#),
         ));
+        files.push((format!("state/mixer/{name}-meter.json"), METER.to_string()));
     }
+    files.push(("state/mixer/master-meter.json".into(), METER.to_string()));
     let files: Vec<(&str, &str)> = (files.iter())
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();

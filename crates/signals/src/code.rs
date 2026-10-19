@@ -12,9 +12,12 @@ pub(crate) const MAX_PARAMETERS: usize = 32;
 pub(crate) const MAX_LIVES: usize = 32;
 /// The most watches.
 pub(crate) const MAX_WATCHES: usize = 16;
-/// The most numbers, bangs and notes a sound sends out, of each: each is an event port of
-/// every processor.
+/// The most bangs and notes a sound sends out, of each: each is an event port of every
+/// processor.
 pub(crate) const MAX_OUTPUTS: usize = 8;
+/// The most numbers a sound sends out: each is an event port of every processor, and a watch a
+/// view reads.
+pub(crate) const MAX_NUMBERS: usize = MAX_WATCHES;
 /// The longest a `delay` can be.
 pub(crate) const MAX_DELAY_MS: f32 = 4000.0;
 /// Each delay holds up to [`MAX_DELAY_MS`] per channel and voice, so their number is held too.

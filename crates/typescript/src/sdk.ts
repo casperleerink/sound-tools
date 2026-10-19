@@ -871,7 +871,7 @@ export type NewChild<K extends ChildTools = ChildTools> = {
 }[keyof K & string];
 
 /** The keys that name a port, one for each kind of what it carries. */
-type PortKey = "port" | "notes" | "number" | "bang" | "meter";
+type PortKey = "port" | "notes" | "number" | "bang";
 
 /** A port named under the key `K` and no other, so a connection joins two of one kind. */
 type Keyed<K extends PortKey, Name extends string = string> = Record<K, Name> & { [Other in Exclude<PortKey, K>]?: never };
@@ -910,8 +910,6 @@ export type ChildBang<K extends ChildTools = ChildTools, Out extends boolean = f
 export type OwnAudio = OwnOf<"port", "audio">;
 /** What reaches the parent's own `notes`: the MIDI keyboard at the top, its track's notes in a track. */
 export type OwnNotes = OwnOf<"notes", "notes">;
-/** A meter of the parent, which keeps the level and the last sound of what reaches it, for `now.peak` and `now.scope`. */
-export type OwnMeter = OwnOf<"meter">;
 
 /**
  * Joins an output of a child, or what reaches an input of the parent, to an input of a child or
@@ -919,7 +917,7 @@ export type OwnMeter = OwnOf<"meter">;
  * is an output of the parent of that name, which passes what reaches it on to its parent.
  */
 export type Connection<K extends ChildTools = ChildTools> =
-  | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio | OwnMeter }
+  | { from: ChildPort<K> | OwnAudio; to: ChildPort<K> | OwnAudio }
   | { from: ChildNotes<K, true> | OwnNotes; to: ChildNotes<K> | OwnOf<"notes"> }
   | { from: ChildNumber<K, true>; to: ChildNumber<K> | OwnOf<"number"> }
   | { from: ChildBang<K, true>; to: ChildBang<K> | OwnOf<"bang"> };
@@ -1244,14 +1242,14 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
    */
   value(name: ValueNames<State, I>, options?: { played?: boolean; fraction?: boolean }): Live;
   /**
-   * The loudest sample since the last frame, 0 to 1 and above when it clips: of a meter the
-   * behaviour declares, `{ from: { child: "bass" }, to: { meter: "bass" } }`, of a meter a
-   * child declares, as `"child.meter"`, or of peaks a child keeps. The louder channel unless `channel` says.
+   * The loudest sample since the last frame, 0 to 1 and above when it clips: of a `meter` child
+   * by its path, `"bass-meter"` or `"bass/meter"`, or of peaks a child keeps, as `"child.name"`.
+   * The louder channel unless `channel` says.
    */
   peak(name: string, channel?: Channel): Live;
   /** The same, of what the device plays. */
   devicePeak(channel?: Channel): Live;
-  /** The last sound of a meter, as `peak` names it, for a `Wave`: -1 to 1, `frames` long (at most 8192). */
+  /** The last sound of a `meter` child by its path, for a `Wave`: -1 to 1, `frames` long (at most 8192). */
   scope(name: string, options?: { channel?: Channel; frames?: number }): WaveList;
   /** The last `frames` values of a live value, one a frame, for a `Wave`. */
   history(of: Num, frames: number): WaveList;

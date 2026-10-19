@@ -22,7 +22,7 @@ use sound_notes::{
 
 use crate::cable::{Bang, Control, Number};
 use crate::code::{
-    Code, MAX_DEVICE_NUMBERS, MAX_LIVES, MAX_OUTPUTS, MAX_PARAMETERS, MAX_STAGE_PORTS,
+    Code, MAX_DEVICE_NUMBERS, MAX_LIVES, MAX_NUMBERS, MAX_OUTPUTS, MAX_PARAMETERS, MAX_STAGE_PORTS,
 };
 use crate::machine::{Block, Frames, Inputs, LIMIT, Machine, Note, QUIET, Values, held};
 
@@ -215,17 +215,17 @@ impl Signals {
 
     /// The port of the bang at `index` of [`Code::bangs`].
     pub const fn bang(index: usize) -> EventOutput<Bang> {
-        EventOutput::new(MAX_OUTPUTS + index)
+        EventOutput::new(MAX_NUMBERS + index)
     }
 
     /// The port of the notes at `index` of [`Code::notes`].
     pub const fn notes(index: usize) -> EventOutput<NoteEvent> {
-        EventOutput::new(2 * MAX_OUTPUTS + index)
+        EventOutput::new(MAX_NUMBERS + MAX_OUTPUTS + index)
     }
 
     /// The port of the number of a device at `index` of what a stage moves.
     pub const fn device_number(index: usize) -> EventOutput<Number> {
-        EventOutput::new(3 * MAX_OUTPUTS + index)
+        EventOutput::new(MAX_NUMBERS + 2 * MAX_OUTPUTS + index)
     }
 
     /// The port of a stage that takes the signal at `index` from before.
@@ -740,7 +740,7 @@ impl Processor for Signals {
             .event_input(Self::NOTES)
             .event_input(Self::AUTOMATION)
             .event_input(Self::CONTROLS);
-        let ports = (0..MAX_OUTPUTS).fold(ports, |ports, index| {
+        let ports = (0..MAX_NUMBERS).fold(ports, |ports, index| {
             ports.event_output(Self::number(index))
         });
         let ports =

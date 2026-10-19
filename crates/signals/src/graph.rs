@@ -12,8 +12,9 @@ use serde::Deserialize;
 
 use crate::code::{
     ArraySpec, Binary, Code, FilterKind, MAX_ARRAY_LENGTH, MAX_BUFFER_SECONDS, MAX_DELAY_MS,
-    MAX_DELAYS, MAX_DEVICE_NUMBERS, MAX_LIVES, MAX_OPERATIONS, MAX_OUTPUTS, MAX_PARAMETERS,
-    MAX_STAGE_PORTS, MAX_WATCHES, Operation, Output, ParameterSpec, Register, Slots, Table, Unary,
+    MAX_DELAYS, MAX_DEVICE_NUMBERS, MAX_LIVES, MAX_NUMBERS, MAX_OPERATIONS, MAX_OUTPUTS,
+    MAX_PARAMETERS, MAX_STAGE_PORTS, MAX_WATCHES, Operation, Output, ParameterSpec, Register,
+    Slots, Table, Unary,
 };
 
 /// A sound as the SDK sends it.
@@ -311,7 +312,7 @@ impl Graph {
         let (watches, watch_registers) =
             lowering.named(&self.watches, MAX_WATCHES, ("watch", "watches"))?;
         let (numbers, number_registers) =
-            lowering.named(&self.numbers, MAX_OUTPUTS, ("number", "numbers"))?;
+            lowering.named(&self.numbers, MAX_NUMBERS, ("number", "numbers"))?;
         let (bangs, mut event_registers) =
             lowering.named(&self.bangs, MAX_OUTPUTS, ("bang", "bangs"))?;
         if self.notes.len() > MAX_OUTPUTS {

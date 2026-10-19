@@ -68,7 +68,7 @@ Inside `sound` only:
 
 - `feedback()`: a value that feeds back. Read it as a signal; it gives what it was `.set(...)` to one sample before. Set it once.
 - `buffer(seconds)`: memory to `.write(index, value)` every sample and read with `.at` or `lookup`, for loops and grains.
-- `output(name, ...)`: sends out what a parent connects to another child (see "Children"): a signal as a number, once per 64 samples, which its view also reads as `now.value(name)`: a meter, a step light; `{ bang: when }`, a bang on the sample `when` goes above 0, such as an onset; `{ gate, pitch, velocity? }`, notes: one starts where `gate` goes above 0, at the MIDI `pitch` and the `velocity` (0 to 1) of that sample, and ends where the gate falls or the pitch moves. Up to 8 of each; a sound of more voices than one sends only numbers, its newest note's.
+- `output(name, ...)`: sends out what a parent connects to another child (see "Children"): a signal as a number, once per 64 samples, which its view also reads as `now.value(name)`: a meter, a step light; `{ bang: when }`, a bang on the sample `when` goes above 0, such as an onset; `{ gate, pitch, velocity? }`, notes: one starts where `gate` goes above 0, at the MIDI `pitch` and the `velocity` (0 to 1) of that sample, and ends where the gate falls or the pitch moves. Up to 16 numbers and 8 of the others; a sound of more voices than one sends only numbers, its newest note's.
 
 A sound is held to 4, about 12 dB over full scale, and a value that is not a number is 0, so a feedback that runs away is loud, not dangerous. Keep feedback gains under 1. With more voices than one, a voice ends when its gate is 0 and it has been silent for 50 ms with nothing left in its `delay`s, so multiply it by an `adsr` of `note.gate`.
 
@@ -234,11 +234,11 @@ view: ({ state, memory, update, now }) => {
 
 Levels, the clock and easing are live values too, so a meter or a light moves on every frame with no code. Paths such as `"bass/synth"` reach a record deeper down:
 
-- `now.peak(name, channel?)`: the loudest sample since the last frame of a meter the behaviour declares, `{ from: { child: "bass" }, to: { meter: "bass" } }`, or of one a child declares or keeps, `"child.name"`. `now.devicePeak()` is the device's.
+- `now.peak(path, channel?)`: the loudest sample since the last frame of a `meter` child (`agent-docs/meter.md`) by its path, `"bass-meter"` or `"bass/meter"`, which hears what its parent connects to it; `"child.name"`, peaks a child keeps. `now.devicePeak()` is the device's.
 - `now.value(name, { played: true })`: a field as it plays, what a lane or a cable plays into it, else its record. A drag of `{ y: { value: "bass-mix.gain_db" } }` turns a child's.
 - `now.elapsed`, seconds, and `.mod`, `.pow`, `.decibels()`. `.smooth(ms)`, `.fall(perSecond)` and `.hold(seconds)` follow a value over frames: a meter's bar is `level.fall(0.5)`, its peak line `level.hold(1.5).fall(0.5)`.
 - `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.elapsed.mod(1).lt(0.5))` blinks.
-- `<Wave list>` draws a list across its box: `now.scope(name)`, the last sound of a meter, or `now.history(value, frames)`, the last values of any live value. `band` draws a waveform.
+- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter, or `now.history(value, frames)`, the last values of any live value. `band` draws a waveform.
 
 ## A control loop, the keys
 

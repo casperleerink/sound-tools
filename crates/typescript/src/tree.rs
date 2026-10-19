@@ -882,7 +882,7 @@ pub(crate) enum Live {
         played: bool,
         fraction: bool,
     },
-    /// The loudest sample since the last frame: of a meter its behaviour declares, or of peaks
+    /// The loudest sample since the last frame: of a `meter` at a path inside, or of peaks
     /// an instance inside it keeps, as `path.name`.
     Peak {
         name: String,
