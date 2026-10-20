@@ -75,6 +75,9 @@ fn a_knob_on_the_card_of_an_effect_turns_its_record_as_one_undo_step(cx: &mut Te
     window.press(knob);
     window.drag_to(knob - point(px(0.), px(20.)));
     window.drag_to(knob - point(px(0.), px(40.)));
+    // The knob has the mouse: the card's effect, which drags to another place in the chain,
+    // does not go along.
+    assert!(!window.cx.update(|_, cx| cx.has_active_drag()));
     window.release(knob - point(px(0.), px(40.)));
     let after = window.record("song/t00/chain/room");
     assert_ne!(after["size"], before["size"]);
