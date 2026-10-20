@@ -1,6 +1,6 @@
 // Types an agent's tool must get right. A test checks this file with `bun check` next to the
 // SDK of the built-in tools: every `@ts-expect-error` line must be an error, and nothing else.
-import { h, input, number, list, notes, output, rise, text, tool, bang, type Declaration, type HeardEvent, type TimelineState } from "./sdk";
+import { h, input, number, list, notes, output, rise, Select, text, tool, bang, type Declaration, type HeardEvent, type TimelineState } from "./sdk";
 
 const rows = list({ name: text(), steps: number({ min: 0, max: 8 }) }, { default: [{ name: "a" }] });
 
@@ -412,3 +412,10 @@ tool({
   // @ts-expect-error: tab and cmd-z are the app's.
   globalKeys: ["tab", "cmd-z"],
 });
+
+// A select's value is typed by its options.
+const lanes = [{ value: "velocity", label: "Velocity" }, { value: "pedal", label: "Pedal" }] as const;
+const lane = (): "velocity" | "pedal" => "velocity";
+Select({ value: lane, options: lanes, onChange: (picked: "velocity" | "pedal") => picked });
+// @ts-expect-error: no option is "bend".
+Select({ value: lane, options: lanes, onChange: (picked: "bend") => picked });

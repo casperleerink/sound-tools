@@ -14,7 +14,7 @@
 use anyhow::Result;
 use gpui::{
     HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PlatformInput, Point, Pixels, point, px,
+    Pixels, PlatformInput, Point, point, px,
 };
 use serde_json::{Value, json};
 
@@ -23,7 +23,10 @@ use crate::song::{ACROSS, BAR, HEADER, LEAD};
 
 /// Where `tick` is in the ruler, `right` points after it.
 fn in_ruler(tick: u64, right: f32) -> Point<Pixels> {
-    point(px(HEADER + LEAD + tick as f32 * ACROSS + right), px(48. + 16.))
+    point(
+        px(HEADER + LEAD + tick as f32 * ACROSS + right),
+        px(48. + 16.),
+    )
 }
 
 fn press(

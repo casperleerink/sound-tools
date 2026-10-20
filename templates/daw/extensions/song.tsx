@@ -1,9 +1,10 @@
-import { Arc, boolean, Button, choice, type CardSelect, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, Notes, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type ValuesOf, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
+import { boolean, Button, choice, type CardSelect, Circle, Path, DeviceCard, Fader, For, TitleBar, Toggle, Icon, Knob, NumberBox, PeakMeter, positionOf, Select, valueAt, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, untrack, Wave, Notes, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type ValuesOf, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Peaks, type Part, type Press, type TextPart } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
 import { tape } from "./tape";
 import { freeName, splitTarget, track } from "./track";
+import { secondsBetween, ticksAcross, Transport } from "./transport";
 
 // A song: tracks of clips in time, with their automation, a mixer strip per track, the devices
 // of the chosen track, and a note editor for one clip.
@@ -51,6 +52,7 @@ const [MOVES, RESIZES, START_MOVES] = [["move"], ["resize"], ["resize-start"]];
 const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tape, "ret-*": bus, "*": track } as const;
 /** Where on a track a sidechain takes its sound, and what its select says, as the arrangement's. */
 const TAPS = [["pre_fx", "Pre FX"], ["post_fx", "Post FX"], ["post_fader", "Post mixer"]] as const;
+type Tap = (typeof TAPS)[number][0];
 const fields = { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text(), tap: choice({ options: ["pre_fx", "post_fx", "post_fader"], default: "post_fader" }) }, { max: 64 }), limit_off: boolean({ default: false }) };
 /** What the song's code outside its view gets. */
 type Song = Context<ValuesOf<typeof fields>, Inputs, Memory, typeof parts>;
@@ -98,8 +100,6 @@ type Memory = {
 type Mark = { kind: "section" | "signature" | "tempo"; bar: number; tick: number };
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
-// Where a level sits on a meter or a fader, 0 to 1: its amplitude to this power, 0 dB at 0.8.
-const [CURVE, ZERO_DB] = [20 / 61.94, 0.8];
 
 // Bars: the time signatures are runs of bars, and the last run goes on.
 type Runs = readonly { readonly signature: string; readonly bars: number }[];
@@ -137,71 +137,16 @@ function barStarts(runs: Runs, end: number): number[] {
   return starts;
 }
 
-/** Ticks as seconds of a file at `bpm`. */
-const secondsOf = (ticks: number, bpm: number) => (ticks / BEAT) * (60 / bpm);
-
-type TempoChanges = readonly { tick: number; bpm: number }[];
-
-/** The tempo at `tick`, and the tick of the next change after it. */
-function tempoAt(changes: TempoChanges, tick: number): { bpm: number; next: number } {
-  const bpm = [...changes].reverse().find((change) => change.tick <= tick)?.bpm ?? 120;
-  return { bpm, next: changes.find((change) => change.tick > tick)?.tick ?? Infinity };
-}
-
-/** The seconds from `from` to `to`, through each tempo between: below 0 when `to` is before. */
-function secondsBetween(changes: TempoChanges, from: number, to: number): number {
-  if (to < from) return -secondsBetween(changes, to, from);
-  let seconds = 0;
-  for (let tick = from; tick < to; ) {
-    const { bpm, next } = tempoAt(changes, tick);
-    const end = Math.min(next, to);
-    seconds += secondsOf(end - tick, bpm);
-    tick = end;
-  }
-  return seconds;
-}
-
-/** The ticks `seconds` take from `from`, through each tempo after it. */
-function ticksAcross(changes: TempoChanges, from: number, seconds: number): number {
-  let [tick, left] = [from, seconds];
-  while (left > 0) {
-    const { bpm, next } = tempoAt(changes, tick);
-    const fits = secondsOf(next - tick, bpm);
-    if (left <= fits) return tick + (left * bpm * BEAT) / 60 - from;
-    [tick, left] = [next, left - fits];
-  }
-  return tick - from;
-}
-
 
 /** A child's name from any text: lowercase letters, digits and `-`. */
 const nameFrom = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
 
-/** Where a value sits on a lane, 0 to 1, as its knob travels its range, and back. */
-function upOf(range: MovedNumber, value: number): number {
-  if (range.scale === "log") return Math.log(value / range.min) / Math.log(range.max / range.min);
-  if (range.scale === "fader") return value <= -100 ? 0 : clamp(Math.pow(Math.pow(10, value / 20), CURVE) * ZERO_DB, 0, 1);
-  return (value - range.min) / (range.max - range.min);
-}
-function valueAt(range: MovedNumber, up: number): number {
-  const at = clamp(up, 0, 1);
-  if (range.scale === "log") return range.min * Math.pow(range.max / range.min, at);
-  if (range.scale === "fader") return at <= 0 ? -100 : Math.min(20 * Math.log10(Math.pow(at / ZERO_DB, 1 / CURVE)), range.max);
-  return range.min + at * (range.max - range.min);
+/** The value a lane holds `up` its row, 0 to 1: a lane holds no -inf, so a volume's bottom is -100 dB. */
+function laneValue(range: MovedNumber, up: number): number {
+  const value = valueAt(range, clamp(up, 0, 1));
+  return value === -Infinity ? -100 : value;
 }
 
-function Dial({ path, min, max, label, travel }: { path: string; min: number; max: number; label: string; travel?: number }) {
-  const angle = now.value(path, { played: true }).minus(min).over(max - min).max(0).min(1).minus(0.5).times(0.75);
-  return (
-    <div style={{ width: 52, gap: 2, align: "center" }}>
-      <Space key={`dial-${path}`} width={28} height={28} cursor="ns-resize" drag={{ y: { value: path, min, max, travel: travel ?? 200, label: `Change ${label.toLowerCase()}` } }}>
-        <Arc x={14} y={14} radius={10} from={-0.375} to={0.375} color={COLOR.lane} width={3} />
-        <Arc x={14} y={14} radius={10} from={-0.375} to={angle} color={COLOR.edit} width={3} />
-      </Space>
-      <div style={{ fontSize: 9, color: COLOR.text }}>{label}</div>
-    </div>
-  );
-}
 
 export const song = tool({
   name: "song",
@@ -724,7 +669,7 @@ export const song = tool({
       const chosen = picked === null ? undefined : found[picked];
       if (!chosen) return;
       const target = `${chosen.path}.${chosen.number.name}`;
-      const value = chosen.number.value ?? valueAt(chosen.number, 0.5);
+      const value = chosen.number.value ?? laneValue(chosen.number, 0.5);
       update("Add a lane", ({ children }) => {
         const owner = children.find((child) => child.name === each.name);
         if (owner?.tool !== "track" && owner?.tool !== "tape") return;
@@ -761,7 +706,7 @@ export const song = tool({
       const points = child?.tool === "lane" ? child.state.points : [];
       const grid = free || memory.snap <= 0 ? 1 : memory.snap;
       const tick = Math.max(Math.round(x / grid) * grid, 0);
-      editPoints("Add a point", track, lane, (all) => [...all, { tick, value: valueAt(rangeOf(track, target, points), up) }]);
+      editPoints("Add a point", track, lane, (all) => [...all, { tick, value: laneValue(rangeOf(track, target, points), up) }]);
       memory.selected = new Set();
       memory.point = { track, lane, tick };
     };
@@ -829,30 +774,28 @@ export const song = tool({
       };
       /** The sidechain picker of an effect, as the arrangement's: Off or a track, and where on another track. */
       const sidechainOf = (effect: string): CardSelect[] => {
-        const keyed = state.sidechains.find((each) => each.effect === `${name}/chain/${effect}`);
-        const source = keyed && rows().find((each) => each.name === keyed.from);
-        const picker = { label: "Sidechain", value: keyed ? (source ? titleOf(source) : keyed.from) : "Off", options: ["Off", ...rows().map(titleOf)] };
-        // Its own track keys it only before its effects, else it would key itself.
-        if (!keyed || keyed.from === name) return [picker];
-        return [picker, { label: "Tap", value: TAPS.find(([tap]) => tap === keyed.tap)?.[1] ?? "", options: TAPS.map(([, label]) => label) }];
-      };
-      const pickSidechain = (effect: string, select: number, option: number) => {
         const path = `${name}/chain/${effect}`;
         const keyed = state.sidechains.find((each) => each.effect === path);
-        if (select === 1) {
-          const tap = TAPS[option]?.[0];
-          if (tap) update("Change sidechain tap", (song) => (song.state.sidechains = song.state.sidechains.map((each) => (each.effect === path ? { ...each, tap } : each))));
-          return;
-        }
-        const from = option === 0 ? null : rows()[option - 1]?.name;
-        if (from === undefined) return;
-        const label = from === null ? "Turn off sidechain" : keyed ? "Change sidechain" : "Turn on sidechain";
-        update(label, (song) => {
-          const rest = song.state.sidechains.filter((each) => each.effect !== path);
-          // Another track keeps the tap, or starts after its effects.
-          const tap = from === name ? "pre_fx" : (keyed?.tap ?? "post_fx");
-          song.state.sidechains = from === null ? rest : [...rest, { effect: path, from, tap }];
-        });
+        const source: CardSelect<string | null> = {
+          label: "Sidechain",
+          value: keyed?.from ?? null,
+          options: [{ value: null, label: "Off" }, ...rows().map((each) => ({ value: each.name, label: titleOf(each) }))],
+          onChange: (from) =>
+            update(from === null ? "Turn off sidechain" : keyed ? "Change sidechain" : "Turn on sidechain", (song) => {
+              const rest = song.state.sidechains.filter((each) => each.effect !== path);
+              // Its own track keys it before its effects, else it would key itself; another keeps the tap, or starts after its effects.
+              const tap = from === name ? "pre_fx" : (keyed?.tap ?? "post_fx");
+              song.state.sidechains = from === null ? rest : [...rest, { effect: path, from, tap }];
+            }),
+        };
+        if (!keyed || keyed.from === name) return [source];
+        const tap: CardSelect<Tap> = {
+          label: "Tap",
+          value: keyed.tap,
+          options: TAPS.map(([value, label]) => ({ value, label })),
+          onChange: (tap) => update("Change sidechain tap", (song) => (song.state.sidechains = song.state.sidechains.map((each) => (each.effect === path ? { ...each, tap } : each)))),
+        };
+        return [source, tap];
       };
       const toggle = (effect: string) =>
         editChain(isOff(effect) ? "Turn an effect on" : "Turn an effect off", (effects) => {
@@ -878,8 +821,7 @@ export const song = tool({
             </div>
             <div style={{ direction: "row", paddingLeft: 8, gap: 20 }}>
               <div style={{ align: "center", gap: 8, paddingTop: 5 }}>
-                {() => <Volume path={`${name}/mix`} height={PANEL_FADER} input={memory.armed.has(name) ? inputOf(row()) : undefined} />}
-                <GainText path={`${name}/mix`} />
+                {() => <Volume path={`${name}/mix`} length={PANEL_FADER} meter={memory.armed.has(name) ? { input: inputOf(row()) } : { of: `${name}/mix` }} />}
               </div>
               <div style={{ align: "start" }}>
                 <Knob value={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
@@ -916,7 +858,7 @@ export const song = tool({
               <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && moveBefore(carried, effect)}>
                 <DeviceCard path={`${name}/chain/${effect}`} on={() => !isOff(effect)} onPower={() => toggle(effect)} onClose={() => remove(effect)}
                   onTitle={() => replace("audio", `${name}/chain/${effect}`, "Change an effect")}
-                  sidechain={() => sidechainOf(effect)} onSidechain={(select, option) => pickSidechain(effect, select, option)} />
+                  sidechain={() => sidechainOf(effect)} />
               </div>
             )}
           </For>
@@ -955,57 +897,26 @@ export const song = tool({
         const rec = owner?.tool === "tape" ? owner.children.find((child) => child.name === "rec") : undefined;
         return rec?.tool === "recorder" ? rec.state.channels : [];
       };
-      const label = () => INPUTS.find((each) => each.channels.join() === channels().join())?.label ?? "In 1";
-      const pickInput = async () => {
-        const picked = await openMenu(INPUTS.map((each) => ({ label: each.label, group: "Input", checked: each.label === label() })), { width: 160 });
-        if (picked === null) return;
-        update("Change input", ({ children }) => {
-          const owner = children.find((child) => child.name === name);
-          const rec = owner?.tool === "tape" ? owner.children.find((child) => child.name === "rec") : undefined;
-          if (rec?.tool === "recorder") rec.state.channels = INPUTS[picked]!.channels;
-        });
-      };
       return (
-        <div key={`input-${name}`} style={{ direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: "alpha/10" }}
-          onPress={pickInput}>
-          <div style={{ fontSize: 12, weight: "medium", color: "gray-950" }}>{label}</div>
-          <Icon name="chevron-down" size={12} color="gray-700" />
-        </div>
+        <Select key={`input-${name}`} title="Input" value={() => Math.max(INPUTS.findIndex((each) => each.channels.join() === channels().join()), 0)}
+          options={INPUTS.map(({ label }, index) => ({ value: index, label }))}
+          onChange={(index) =>
+            update("Change input", ({ children }) => {
+              const owner = children.find((child) => child.name === name);
+              const rec = owner?.tool === "tape" ? owner.children.find((child) => child.name === "rec") : undefined;
+              if (rec?.tool === "recorder") rec.state.channels = INPUTS[index]!.channels;
+            })
+          } />
       );
     };
 
     const sendsOf = (each: Child) => (each.tool === "track" || each.tool === "tape" ? each.children.filter((child) => child.name.startsWith("send-")).map((child) => child.name) : []);
-    /** A fader as the window drew one: a drag up and down turns `gain_db` of the fader `path`, natively. */
-    /** A fader over its meter, as the window drew a strip's volume: two bars, green up to -6 dB and yellow above, with a peak line held 1.5 s, and the handle on them, which a drag up and down turns natively. With `device`, the meter is of what the device plays; with `input`, of those channels of the audio input, as while the track is armed. */
-    const Volume = ({ path, height, device, input }: { path: string; height: number; device?: boolean; input?: readonly number[] }) => {
-      const place = (amplitude: Live) => amplitude.pow(CURVE).times(ZERO_DB).min(1);
-      const hot = Math.pow(Math.pow(10, -6 / 20), CURVE) * ZERO_DB;
-      const at = now.value(`${path}.gain_db`, { played: true, fraction: true });
-      return (
-        <Space key={`volume-${path}`} width={28} height={height} cursor="ns-resize"
-          drag={{ y: { value: `${path}.gain_db`, travel: height, default: 0, label: "Change the volume" } }}>
-          {([0, 1] as const).flatMap((channel) => {
-            const heard = input?.[channel] ?? input?.[0];
-            const level = heard !== undefined ? now.input(heard) : device ? now.devicePeak(channel) : now.peak(path, channel);
-            const bar = place(level).fall(0.5);
-            const peak = place(level).hold(1.5).fall(0.5);
-            const x = 8 + channel * 7;
-            return [
-              <Rect x={x} y={0} width={5} height={height} color="alpha/5" />,
-              <Rect x={x} y={bar.min(hot).times(-height).plus(height)} width={5} height={bar.min(hot).times(height)} color="green" />,
-              <Rect x={x} y={bar.times(-height).plus(height)} width={5} height={bar.minus(hot).max(0).times(height)} color="yellow" />,
-              <Rect x={x} y={peak.times(-height).plus(height)} width={5} height={1} color="gray-950" opacity={peak.gt(0.01)} />,
-            ];
-          })}
-          <Rect x={0} y={at.times(-height).plus(height - 3)} width={28} height={6} radius={3} color="gray-950" />
-        </Space>
-      );
-    };
-    /** The gain of the fader `path` as it plays, in dB. */
-    const GainText = ({ path }: { path: string }) => (
-      <Space key={`gain-${path}`} width={56} height={16}>
-        <Label x={28} y={0} text={now.value(`${path}.gain_db`, { played: true })} unit="db" size={12} color="gray-950" align="center" />
-      </Space>
+    /** The volume of the fader `path` over `meter`, as the window drew a strip's, and under it its gain, to drag or type. */
+    const Volume = ({ path, length, meter }: { path: string; length: number; meter: Peaks }) => (
+      <>
+        <Fader value={`${path}.gain_db`} length={length} default={0} label="Change the volume" played meter={meter} />
+        <NumberBox key={`gain-${path}`} value={`${path}.gain_db`} unit="db" played max={6} label="Change the volume" width={56} height={16} size={12} align="center" />
+      </>
     );
     /**
      * A strip of the mixer, as the track panel's: a knob per send, its pan, its volume over its
@@ -1027,8 +938,7 @@ export const song = tool({
           <div style={() => ({ height: (mostSends() - sends().length) * KNOB, keep: true })} />
           <Knob value={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
           <div style={{ align: "center", gap: 7, paddingTop: 4 }}>
-            <Volume path={path} height={MIXER_FADER} device={master} />
-            <GainText path={path} />
+            <Volume path={path} length={MIXER_FADER} meter={master ? "device" : { of: path }} />
           </div>
           <div style={{ height: 32, direction: "row", align: "center", gap: 4 }}>
             {each ? <Toggle key={`strip-mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onPress={() => toggleMute(each.name)} /> : null}
@@ -1183,8 +1093,7 @@ export const song = tool({
           </div>
           <div style={{ direction: "row", paddingLeft: 8 }}>
             <div style={{ align: "center", gap: 7, paddingTop: 5 }}>
-              <Volume path="master" height={PANEL_FADER} device />
-              <GainText path="master" />
+              <Volume path="master" length={PANEL_FADER} meter="device" />
             </div>
           </div>
         </div>
@@ -1249,7 +1158,7 @@ export const song = tool({
         return child?.tool === "lane" ? child.state.points : [];
       };
       const range = () => rangeOf(track, lane.target, points());
-      const yOf = (value: number) => topOf(row()) + 0.1 + (1 - upOf(range(), value)) * 0.8;
+      const yOf = (value: number) => topOf(row()) + 0.1 + (1 - positionOf(range(), value)) * 0.8;
       const [pressed, press] = signal<number | null>(null);
       const pointDrag: Drag = {
         id: "point",
@@ -1259,7 +1168,7 @@ export const song = tool({
           if (!moved) return;
           const tick = Math.max(moved.tick + Math.round(dx), 0);
           editPoints("Move a point", track, lane.lane, (all) =>
-            all.map((point, index) => (index === pressed() ? { tick, value: valueAt(range(), upOf(range(), point.value) - dy / 0.8) } : point)),
+            all.map((point, index) => (index === pressed() ? { tick, value: laneValue(range(), positionOf(range(), point.value) - dy / 0.8) } : point)),
           );
           memory.point = { track, lane: lane.lane, tick };
           press(null);
@@ -1548,11 +1457,6 @@ export const song = tool({
     const roomFor = (index: number) => (index === 0 ? 1 : timeline.pointX.times(labelWidth(index - 1) + 4).plus(starts()[index - 1] ?? 0).lt(starts()[index] ?? 0));
     // A tempo change in a box after what its bar shows, as the arrangement had it.
     const tempoParts = (bpm: number, chosen?: Color): TextPart[] => [{ text: "   " }, { text: String(bpm), color: "gray-950", border: chosen ?? "alpha/10" }, { text: " bpm", border: chosen ?? "alpha/10" }];
-    const pickSnap = async () => {
-      const snaps = snapsOf(4 * BEAT);
-      const picked = await openMenu(snaps.map(({ label, ticks }) => ({ label, group: "Snap", checked: ticks === memory.snap })), { width: 160 });
-      if (picked !== null) memory.snap = snaps[picked]!.ticks;
-    };
     /** A section at the bar line nearest `tick`, named by how many there are, its name open to change. */
     /** The tick nearest `tick` on the grid of the snap in the corner. */
     const snapped = (tick: number) => Math.max(memory.snap > 0 ? Math.round(tick / memory.snap) * memory.snap : Math.round(tick), 0);
@@ -1679,7 +1583,6 @@ export const song = tool({
           edit={(label, change) => editClips(label, [key], change)}
           preview={(pitch) => play(pitch, { child: trackName as `audio-${string}`, seconds: 0.3 })}
           seek={(tick) => clock.jump((open()?.state.start ?? 0) + tick)}
-          openMenu={openMenu}
           onClose={() => (memory.below = { kind: "track", name: trackName ?? "" })}
           height={EDITOR}
         />
@@ -1724,11 +1627,8 @@ export const song = tool({
           <div style={{ width: HEADER - 1, keep: true }}>
             <div style={{ height: RULER, direction: "row", align: "center", paddingLeft: 36, paddingRight: 8 }}>
               <div style={{ grow: true, fontSize: 12, color: "gray-700" }}>Snap</div>
-              <div key="song-snap" style={{ direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: "alpha/10" }}
-                onPress={pickSnap}>
-                <div style={{ fontSize: 12, weight: "medium", color: "gray-950" }}>{() => snapsOf(4 * BEAT).find((each) => each.ticks === memory.snap)?.label ?? "Off"}</div>
-                <Icon name="chevron-down" size={12} color="gray-700" />
-              </div>
+              <Select key="song-snap" title="Snap" value={() => memory.snap} options={snapsOf(4 * BEAT).map(({ label, ticks }) => ({ value: ticks, label }))}
+                onChange={(snap) => (memory.snap = snap)} />
             </div>
             <div style={{ grow: true }} follow={{ y: "timeline" }}>
               <For each={layout}>
@@ -1978,21 +1878,16 @@ function lengths({ children, outputs, clock }: Pick<Tool, "children" | "outputs"
 
 type LanePoint = { tick: number; value: number };
 type Scale = FilledStateOfTool<"lane">["scale"];
-/** Where a value of a lane sits on its travel, and back: a lane is straight there between its points, as it plays. */
-const TRAVEL: Record<Scale, { to: (value: number) => number; from: (at: number) => number }> = {
-  linear: { to: (value) => value, from: (at) => at },
-  log: { to: Math.log, from: Math.exp },
-  fader: { to: (value) => (value <= -100 ? 0 : Math.pow(Math.pow(10, value / 20), CURVE) * ZERO_DB), from: (at) => (at <= 0 ? -100 : 20 * Math.log10(Math.pow(at / ZERO_DB, 1 / CURVE))) },
-};
 
-/** The value of a lane at `tick`, as it plays. */
+/** The value of a lane at `tick`, as it plays: straight between its points along its travel, whose ends change nothing of that. */
 function laneAt(points: readonly LanePoint[], tick: number, scale: Scale): number {
   const after = points.findIndex((point) => point.tick >= tick);
   if (after <= 0) return (after === 0 ? points[0] : points[points.length - 1])?.value ?? 0;
   const [a, b] = [points[after - 1]!, points[after]!];
-  const { to, from } = TRAVEL[scale];
+  const travel = { min: 1, max: 2, scale };
   const part = b.tick === a.tick ? 1 : (tick - a.tick) / (b.tick - a.tick);
-  return from(to(a.value) + (to(b.value) - to(a.value)) * part);
+  const [from, to] = [positionOf(travel, a.value), positionOf(travel, b.value)];
+  return valueAt(travel, from + (to - from) * part);
 }
 
 /** Sorted, one a tick: the last given wins. */

@@ -27,10 +27,10 @@ mod rack;
 mod recorder;
 mod song;
 mod song_view;
+mod takes_and_notes;
 mod template;
 mod timeline;
 mod transport;
-mod takes_and_notes;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
@@ -76,8 +76,9 @@ const EXPERIMENT: [(&str, &str); 3] = [
     ("extensions/keys.ts", KEYS),
 ];
 
-/// A page with the transport of the SDK, at the top, and space as its key. A click keeps the
-/// tick of the clock where it was clicked.
+/// A page with a transport made of the SDK's blocks, at the top, and space as its key: play,
+/// the tempo as a number box, the click and the computer keys. A click keeps the tick of the
+/// clock where it was clicked.
 const BEAT: [(&str, &str); 3] = [
     ONLY_THE_TOOL[0],
     (
@@ -86,7 +87,7 @@ const BEAT: [(&str, &str); 3] = [
     ),
     (
         "extensions/beat.ts",
-        r#"import { h, input, number, tool, Transport } from "./sdk";
+        r#"import { Button, h, input, now, number, NumberBox, tool } from "./sdk";
 
 tool({
   name: "beat",
@@ -101,7 +102,22 @@ tool({
   },
   view: ({ size, clock, update }) =>
     h("div", { style: () => ({ width: size.width, height: size.height }) },
-      h(Transport, { clock }),
+      h("div", { style: { direction: "row", gap: 8 } },
+        h(Button, { key: "play", icon: () => (clock.playing ? "pause" : "play"), onPress: () => (clock.playing ? clock.pause() : clock.play()) }),
+        h(NumberBox, {
+          key: "tempo", width: 32, per: 2, min: 10, max: 1000,
+          value: {
+            show: now.bpm.round(),
+            get: () => clock.bpm,
+            set: (bpm) => clock.update("Change the tempo", ({ tempo_map }) => {
+              const first = tempo_map.tempo_changes[0];
+              if (first) first.bpm = bpm;
+            }),
+          },
+        }),
+        h(Button, { key: "click", icon: "metronome", onPress: () => clock.setClick(!clock.click) }),
+        h(Button, { key: "computer-keys", icon: "keyboard-music", onPress: () => clock.setComputerKeys(!clock.computerKeys) }),
+      ),
       h("div", {
         key: "keep",
         style: { grow: true },
@@ -364,7 +380,7 @@ fn a_key_on_a_page_holds_a_note_until_it_comes_up_and_space_does_not_play(cx: &m
 }
 
 #[gpui::test]
-fn the_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
+fn a_transport_of_the_sdk_follows_and_moves_the_clock_and_a_handler_reads_it(
     cx: &mut TestAppContext,
 ) {
     let mut window = open(cx, &BEAT);

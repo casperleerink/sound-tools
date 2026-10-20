@@ -56,7 +56,10 @@ fn a_clip_moves_on_the_grid_as_one_file_and_one_undo_step(cx: &mut TestAppContex
     window.until("the clip moved", |window| {
         window.record("song/t01/c01")["start"] != 3 * BAR
     });
-    assert_eq!(window.record("song/t01/c01")["start"], 3 * BAR + BAR + 5 * 240);
+    assert_eq!(
+        window.record("song/t01/c01")["start"],
+        3 * BAR + BAR + 5 * 240
+    );
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move clips"));
     let after = window.clips();
@@ -175,7 +178,7 @@ fn space_plays_the_song_with_nothing_from_bun(cx: &mut TestAppContext) {
     // The first track chosen: its panel shows its meter.
     let name = window.until_found("div-name-t00");
     window.click(name);
-    window.space_at("volume-t00/mix");
+    window.space_at("fader-t00/mix.gain_db");
     window.wait_for_bun();
     window.focus_the_window();
     window.cx.simulate_keystrokes("space");
@@ -277,7 +280,7 @@ fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
     let toggle = window.until_found("button-mixer-toggle");
     window.press(toggle);
     window.release(toggle);
-    let fader = window.space_at("volume-t01/mix") + point(px(20.), px(80.));
+    let fader = window.space_at("fader-t01/mix.gain_db") + point(px(20.), px(80.));
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let questions = sound_typescript::asked_behaviours();

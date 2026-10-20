@@ -162,6 +162,8 @@ pub(crate) enum EventKind {
     Click,
     /// Text a field tells.
     Commit,
+    /// Escape in a field.
+    Cancel,
     /// Files, or what a drag of a node carried, let go on a node.
     Drop,
     /// The power icon of an embedded card.

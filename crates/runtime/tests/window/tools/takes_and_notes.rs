@@ -71,7 +71,10 @@ fn r_with_nothing_chosen_records_the_keyboard_on_the_first_track(cx: &mut TestAp
         !window.takes().is_empty()
     });
     let takes = window.takes();
-    assert!(takes.iter().all(|take| take.starts_with("song/t00/")), "{takes:?}");
+    assert!(
+        takes.iter().all(|take| take.starts_with("song/t00/")),
+        "{takes:?}"
+    );
     assert_eq!(window.problems(), []);
 }
 
@@ -91,7 +94,14 @@ fn a_take_shows_its_notes_while_it_records(cx: &mut TestAppContext) {
             let recording = session.read(cx).recording().read(cx);
             recording.notes_of(&recorder).map(|take| take.notes.clone())
         });
-        matches!(notes.as_deref(), Some([LiveNote { pitch: 60, end: None, .. }]))
+        matches!(
+            notes.as_deref(),
+            Some([LiveNote {
+                pitch: 60,
+                end: None,
+                ..
+            }])
+        )
     });
 }
 
@@ -137,7 +147,10 @@ fn the_editor_steps_velocities_duplicates_after_and_closes_on_escape(cx: &mut Te
     // Two notes in the middle rows, which the editor shows as it opens.
     let mut notes = window.notes_of("song/t00/c00");
     notes.sort_by_key(|note| note["pitch"].as_u64());
-    let (a, b) = (notes[notes.len() / 2].clone(), notes[notes.len() / 2 + 1].clone());
+    let (a, b) = (
+        notes[notes.len() / 2].clone(),
+        notes[notes.len() / 2 + 1].clone(),
+    );
     let middle = |note: &Value| {
         editor.at(
             note["start"].as_f64().unwrap() as f32 + 20.,
@@ -159,7 +172,11 @@ fn the_editor_steps_velocities_duplicates_after_and_closes_on_escape(cx: &mut Te
     for note in [&a, &b] {
         let now = at(&stepped, &note["start"], &note["pitch"]);
         let was = note["velocity"].as_u64().unwrap();
-        assert_eq!(now["velocity"].as_u64(), Some((was + 10).min(127)), "{note}");
+        assert_eq!(
+            now["velocity"].as_u64(),
+            Some((was + 10).min(127)),
+            "{note}"
+        );
     }
 
     // A click on one of the two, which does not move it, chooses it alone.
@@ -197,7 +214,10 @@ fn the_editor_ruler_seeks_and_a_line_draws_velocities(cx: &mut TestAppContext) {
     window.click(point(editor.at(970., 60).x, ruler.y + px(16.)));
     let session = window.session.clone();
     window.until("the playhead on the beat", |window| {
-        window.cx.read(|cx| session.read(cx).playhead().read(cx).tick) == sound_core::Ticks(960)
+        window
+            .cx
+            .read(|cx| session.read(cx).playhead().read(cx).tick)
+            == sound_core::Ticks(960)
     });
 
     // From the bottom before the first note to the top half way through the clip.
@@ -214,12 +234,23 @@ fn the_editor_ruler_seeks_and_a_line_draws_velocities(cx: &mut TestAppContext) {
     let drawn = window.notes_of("song/t00/c00");
     let mut passed: Vec<(u64, u64)> = (drawn.iter())
         .filter(|note| note["start"].as_u64() < Some(BAR / 2))
-        .map(|note| (note["start"].as_u64().unwrap(), note["velocity"].as_u64().unwrap()))
+        .map(|note| {
+            (
+                note["start"].as_u64().unwrap(),
+                note["velocity"].as_u64().unwrap(),
+            )
+        })
         .collect();
     passed.sort_unstable();
     assert!(passed.len() > 2, "{passed:?}");
-    assert!(passed.windows(2).all(|pair| pair[0].1 <= pair[1].1), "{passed:?}");
-    assert!(passed[0].1 < 20 && passed.last().unwrap().1 > 100, "{passed:?}");
+    assert!(
+        passed.windows(2).all(|pair| pair[0].1 <= pair[1].1),
+        "{passed:?}"
+    );
+    assert!(
+        passed[0].1 < 20 && passed.last().unwrap().1 > 100,
+        "{passed:?}"
+    );
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Draw velocities"));
 }
@@ -247,7 +278,9 @@ fn a_regions_handles_drag_its_fade_in_and_its_gain(cx: &mut TestAppContext) {
     window.until("the fade in", |window| {
         window.record("song/audio-voice/region")["fade_in_ms"].as_f64() > Some(0.)
     });
-    let ms = window.record("song/audio-voice/region")["fade_in_ms"].as_f64().unwrap();
+    let ms = window.record("song/audio-voice/region")["fade_in_ms"]
+        .as_f64()
+        .unwrap();
     assert!((ms - 250.).abs() < 10., "{ms}");
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Change fade in"));
@@ -260,7 +293,9 @@ fn a_regions_handles_drag_its_fade_in_and_its_gain(cx: &mut TestAppContext) {
     window.until("the gain", |window| {
         window.record("song/audio-voice/region")["gain_db"].as_f64() > Some(0.)
     });
-    let db = window.record("song/audio-voice/region")["gain_db"].as_f64().unwrap();
+    let db = window.record("song/audio-voice/region")["gain_db"]
+        .as_f64()
+        .unwrap();
     assert!((db - 18.).abs() < 0.5, "{db}");
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Change gain"));

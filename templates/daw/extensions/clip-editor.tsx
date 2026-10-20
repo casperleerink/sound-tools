@@ -1,4 +1,4 @@
-import { blend, Button, For, Fragment, h, Icon, Label, Line, memo, now, Rect, selector, signal, Space, untrack, type Accessor, type Color, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type MenuItem, type Note, type Press } from "./sdk";
+import { blend, Button, For, Fragment, h, Label, Line, memo, now, Rect, Select, selector, signal, Space, untrack, type Accessor, type Color, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type Note, type Press } from "./sdk";
 
 // The note editor of one timeline, as the window drew it: a header with its track and a ruler,
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
@@ -110,7 +110,6 @@ export interface EditorProps {
   preview: (pitch: number) => void;
   /** Plays from a tick of the clip. */
   seek: (tick: number) => void;
-  openMenu: (items: readonly MenuItem[], options?: { width?: number }) => Promise<number | null>;
   onClose: () => void;
   height: number;
 }
@@ -168,7 +167,7 @@ export function editorKey(key: Key, clip: Frozen<Clip> | undefined, playhead: nu
 }
 
 /** The editor: a header with the track and the ruler, the notes, and the lane under them. */
-export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview, seek, openMenu, onClose, height }: EditorProps) {
+export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview, seek, onClose, height }: EditorProps) {
   const isPicked = selector(() => memory.notes);
   const notes = () => clip()?.notes ?? [];
   const length = () => {
@@ -267,10 +266,6 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
         chosen,
       }));
     },
-  };
-  const chooseLane = async () => {
-    const picked = await openMenu(LANES.map((lane) => ({ label: LANE_NAMES[lane], group: "Lane", checked: memory.lane === lane })), { width: 160 });
-    if (picked !== null) memory.lane = LANES[picked]!;
   };
 
   /** 1 while the rectangle being dragged touches `note`, as it chooses it when let go. */
@@ -406,11 +401,8 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
       <div style={{ height: 1, background: "alpha/5", keep: true }} />
       <div style={{ height: LANE, direction: "row", keep: true }}>
         <div style={{ width: HEADER - 1, paddingLeft: 16, justify: "center", align: "start", keep: true }}>
-          <div key="editor-lane-pick" style={{ direction: "row", align: "center", gap: 6, height: 24, paddingLeft: 9, paddingRight: 8, radius: 6, background: "alpha/5", hover: "alpha/10" }}
-            onPress={chooseLane}>
-            <div style={{ fontSize: 13, weight: "medium", color: "gray-950" }}>{() => LANE_NAMES[memory.lane]}</div>
-            <Icon name="chevron-down" size={12} color="gray-700" />
-          </div>
+          <Select key="editor-lane-pick" size="md" title="Lane" value={() => memory.lane} options={LANES.map((lane) => ({ value: lane, label: LANE_NAMES[lane] }))}
+            onChange={(lane) => (memory.lane = lane)} />
         </div>
         <Rule />
         <Space key={`${key}-lane`} grow height={LANE} {...across} unit={{ x: ACROSS, y: LANE }} follow={{ x: key }} onPress={pressLane} drag={velocityDraw}>

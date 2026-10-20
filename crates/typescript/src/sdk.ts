@@ -1345,9 +1345,7 @@ function sources(): Now<Record<string, number>> {
     bpm: new Live({ op: "bpm" }),
     elapsed: new Live({ op: "elapsed" }),
     value: (path, options) => {
-      // `bass/synth.cutoff_hz` is the field `cutoff_hz` of the child at `bass/synth`.
-      const dot = path.lastIndexOf(".");
-      const [child, name] = dot < 0 ? [undefined, path] : [path.slice(0, dot), path.slice(dot + 1)];
+      const { child, name } = splitPath(path);
       return new Live({ op: "value", name, ...(child === undefined ? {} : { child }), played: options?.played ?? false, fraction: options?.fraction ?? false });
     },
     peak: (name, channel) => new Live({ op: "peak", name, channel }),
@@ -2046,6 +2044,7 @@ interface Made {
   onPress?: (press: Press) => void;
   onDrop?: (drop: Dropped) => void;
   onCommit?: (text: string) => void;
+  onCancel?: () => void;
   onPower?: () => void;
   onClose?: () => void;
   onTitle?: () => void;
@@ -2066,6 +2065,8 @@ interface CardRoot {
   /** Props changed since the last ops, by node: sent as one `set` each. */
   changes: Map<Made, Wired>;
   drags: Map<Drag, number>;
+  /** What its components read: its record, its fields and what changes them. */
+  drawn: Drawing;
   error?: string;
   dispose: () => void;
 }
@@ -2131,7 +2132,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
-const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onPower", "onClose", "onTitle", "onSidechain"]);
+const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onCancel", "onPower", "onClose", "onTitle", "onSidechain"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {
@@ -2520,7 +2521,7 @@ export interface SpaceProps {
 /** A space, see `SpaceProps`. */
 export const Space = ({ children, ...props }: SpaceProps): UiNode => element("space", props, [children]);
 
-/** A text field: it shows `value` until it is typed in, and calls `onCommit` with its text on enter or when it loses the keys. Escape shows `value` again. */
+/** A text field: it shows `value` until it is typed in, and calls `onCommit` with its text on enter or when it loses the keys. Escape shows `value` again and calls `onCancel`. */
 export interface InputProps {
   key?: string;
   value: Bind<string>;
@@ -2530,6 +2531,7 @@ export interface InputProps {
   /** It takes the keys when it is made, with its text selected. */
   focus?: boolean;
   onCommit: (text: string) => void;
+  onCancel?: () => void;
 }
 
 /** A text field, see `InputProps`. */
@@ -2553,20 +2555,35 @@ export interface DeviceCardProps {
    * selects behind its expand, as the window's cards had them. A device without the input
    * shows none.
    */
-  sidechain?: Bind<CardSelect[]>;
-  /** A pick in a select of `sidechain`: its place, and the place of the option in its `options`. */
-  onSidechain?: (select: number, option: number) => void;
+  sidechain?: Bind<readonly CardSelect[]>;
 }
 
-/** A select of a card: it shows `value`, with `label` under it, and lists `options`. */
-export interface CardSelect {
+/** A select of a card, which shows `label` under it: as a `Select`, typed by the values of its options. */
+export interface CardSelect<T = unknown> {
   label: string;
-  value: string;
-  options: string[];
+  value: T;
+  options: readonly SelectOption<T>[];
+  onChange(value: T): void;
 }
 
 /** The card of an instance, see `DeviceCardProps`. */
-export const DeviceCard = ({ path, ...props }: DeviceCardProps): UiNode => element("card", { instance: path, ...props }, []);
+export const DeviceCard = ({ path, sidechain, ...props }: DeviceCardProps): UiNode => {
+  if (sidechain === undefined) return element("card", { instance: path, ...props }, []);
+  const selects = () => (typeof sidechain === "function" ? sidechain() : sidechain);
+  // The window shows each select by the labels of its options, and tells a pick by its places.
+  const shown = () =>
+    selects().map(({ label, value, options }) => ({
+      label,
+      value: options.find((option) => option.value === value)?.label ?? String(value),
+      options: options.map((option) => option.label),
+    }));
+  const onSidechain = (select: number, option: number) => {
+    const picked = untrack(selects)[select];
+    const chosen = picked?.options[option];
+    if (picked && chosen) picked.onChange(chosen.value);
+  };
+  return element("card", { instance: path, ...props, sidechain: shown, onSidechain }, []);
+};
 
 /** An icon of the app, by its name. */
 export type IconName =
@@ -2729,12 +2746,8 @@ export namespace h {
 // Components made of the blocks above.
 
 /** The view that draws now, for the components below, which read its record and fields. */
-function drawing() {
-  const drawing = host.drawing;
-  if (!drawing) {
-    throw new Error("a component of a view is drawn outside a view");
-  }
-  return drawing;
+function drawing(): Drawing {
+  return currentCard().drawn;
 }
 
 /** The arc of a knob runs from -135 to +135 degrees, in turns. */
@@ -2745,32 +2758,334 @@ const SWEEP = 0.75;
  * is smooth and one undo step, or a number input, which nothing saves. `value` names it as
  * `now.value` does. With `played`, it shows the field as it plays, so it moves with a lane. A
  * double click puts it at `default`. A `bipolar` one, such as a pan, draws its arc from the top;
- * `unit: "pan"` reads `C`, `25L`, `100R`.
+ * `unit: "pan"` reads `C`, `25L`, `100R`. It shows `label` and the value under it; `size: "sm"`
+ * is a 28-point dial alone.
  */
-export function Knob(props: { value: string; label: string; min: number; max: number; default: number; unit?: Unit | "pan"; played?: boolean; bipolar?: boolean }): UiNode {
+export function Knob(props: { value: string; label?: string; min: number; max: number; default: number; unit?: Unit | "pan"; played?: boolean; bipolar?: boolean; size?: "sm" | "md" }): UiNode {
   const { value: name, label, min, max, unit, played, bipolar } = props;
+  const small = props.size === "sm";
   const value = now.value(name, { played });
   const fraction = now.value(name, { played, fraction: true });
-  const turns: DragTurns = { value: name, min, max, unit: unit === "pan" ? undefined : unit, default: props.default, label: `Change ${label.toLowerCase()}` };
+  const turns: DragTurns = { value: name, min, max, unit: unit === "pan" ? undefined : unit, default: props.default, label: label && `Change ${label.toLowerCase()}` };
   const angle = fraction.times(SWEEP).minus(SWEEP / 2);
   const radians = angle.times(2 * Math.PI);
-  const [centreX, centreY, radius] = [28, 18, 16.75];
+  const [centreX, centreY, radius, cap] = small ? [14, 14, 11, 7] : [28, 18, 16.75, 10.5];
   const along = (distance: number) => [radians.sin().times(distance).plus(centreX), radians.cos().times(-distance).plus(centreY)] as const;
+  const texts = small ? [] : [
+    ...(label === undefined ? [] : [Label({ x: centreX, y: 38, text: label, color: "gray-800", size: 12, align: "center" })]),
+    Label({ x: centreX, y: label === undefined ? 38 : 54, text: value, unit, color: "gray-950", size: 12, align: "center" }),
+  ];
   return Space({
     key: `knob-${name}`,
-    width: 56,
-    height: 72,
+    width: small ? 28 : 56,
+    height: small ? 28 : label === undefined ? 56 : 72,
     cursor: "ns-resize",
     drag: { y: turns },
     children: [
       Arc({ x: centreX, y: centreY, radius, from: -SWEEP / 2, to: SWEEP / 2, color: "alpha/10", width: 2.5 }),
       Arc({ x: centreX, y: centreY, radius, from: bipolar ? 0 : -SWEEP / 2, to: angle, color: "gray-950", width: 2.5 }),
-      Circle({ x: centreX, y: centreY, radius: 10.5, color: "gray-300" }),
-      Line({ from: along(3.5), to: along(8), color: "gray-950", width: 2 }),
-      Label({ x: centreX, y: 38, text: label, color: "gray-800", size: 12, align: "center" }),
-      Label({ x: centreX, y: 54, text: value, unit, color: "gray-950", size: 12, align: "center" }),
+      Circle({ x: centreX, y: centreY, radius: cap, color: "gray-300" }),
+      Line({ from: along(cap / 3), to: along(cap * 0.76), color: "gray-950", width: 2 }),
+      ...texts,
     ],
   });
+}
+
+/** How a number spreads over the travel of a knob, a fader or a lane, as `numbers` and a lane's `scale` say. */
+export interface Travel {
+  min: number;
+  max: number;
+  scale: "linear" | "log" | "fader";
+}
+
+/** The fader's scale, as the window's: 0 dB at 0.8 of the travel and +6 dB at the top, a power law on the amplitude. */
+const FADER = { unity: 0.8, decade: 61.94, top: 6 } as const;
+
+/**
+ * Where `value` sits along `travel`: 0 at `min` and 1 at `max`, past them outside. A `"fader"`
+ * travel is a volume in dB whatever its ends: -inf at 0, 0 dB at 0.8 and +6 dB at 1.
+ */
+export function positionOf({ min, max, scale }: Travel, value: number): number {
+  if (scale === "log") return Math.log(value / min) / Math.log(max / min);
+  if (scale === "fader") return Math.min(FADER.unity * 10 ** (value / FADER.decade), 1);
+  return (value - min) / (max - min);
+}
+
+/** The value at `position` along `travel`, as `positionOf` puts it: a fader gives -Infinity at 0. */
+export function valueAt({ min, max, scale }: Travel, position: number): number {
+  if (scale === "log") return min * (max / min) ** position;
+  if (scale === "fader") return position <= 0 ? -Infinity : Math.min(FADER.decade * Math.log10(position / FADER.unity), FADER.top);
+  return min + position * (max - min);
+}
+
+/** Where a level, an amplitude, sits along a fader. */
+const faderLevel = (amplitude: Live) => amplitude.pow(20 / FADER.decade).times(FADER.unity).min(1);
+
+/** What a meter shows: the peaks a child keeps as `now.peak` names them, channels of the audio input, or what the device plays. */
+export type Peaks = { of: string } | { input: readonly number[] } | "device";
+
+/**
+ * A fader on a number, as the app's volumes look: a handle a drag moves along `length` points,
+ * up or, `horizontal`, to the right, over two bars of `meter` when given, green up to -6 dB and
+ * yellow above with a peak line that holds, on the fader's scale. `value` names the number as a
+ * `Knob` does, which turns as the drag goes and is one undo step; it takes the number's range and
+ * scale unless `min` and `max` say, so a `gain_db` of a `fader` moves on the fader's scale. A
+ * double click puts it at `default`.
+ */
+export function Fader(props: { value: string; length: number; horizontal?: boolean; default?: number; label?: string; min?: number; max?: number; unit?: Unit; played?: boolean; meter?: Peaks }): UiNode {
+  const { value: name, length, horizontal, meter } = props;
+  const turns: DragTurns = { value: name, min: props.min, max: props.max, unit: props.unit, travel: length, default: props.default, label: props.label };
+  /** A box `size` long from `from` along the travel, from its foot, and `thickness` across from `side`. */
+  const box = (from: Num, size: Num, side: number, thickness: number) => {
+    if (horizontal) return { x: from, y: side, width: size, height: thickness };
+    const end = typeof from === "number" && typeof size === "number" ? from + size : typeof from === "number" ? (size as Live).plus(from) : from.plus(size);
+    return { x: side, y: typeof end === "number" ? length - end : end.negate().plus(length), width: thickness, height: size };
+  };
+  const hot = positionOf({ min: 0, max: 0, scale: "fader" }, -6) * length;
+  const bars = meter === undefined ? [] : ([0, 1] as const).flatMap((channel) => {
+    const level =
+      meter === "device" ? now.devicePeak(channel)
+      : "of" in meter ? now.peak(meter.of, channel)
+      : now.input(meter.input[channel] ?? meter.input[0] ?? 0);
+    const bar = faderLevel(level).fall(0.5).times(length);
+    const peak = faderLevel(level).hold(1.5).fall(0.5).times(length);
+    const side = 8 + channel * 7;
+    return [
+      Rect({ ...box(0, length, side, 5), color: "alpha/5" }),
+      Rect({ ...box(0, bar.min(hot), side, 5), color: "green" }),
+      Rect({ ...box(hot, bar.minus(hot).max(0), side, 5), color: "yellow" }),
+      Rect({ ...box(peak.minus(1), 1, side, 5), color: "gray-950", opacity: peak.gt(0.01 * length) }),
+    ];
+  });
+  const at = now.value(name, { played: props.played, fraction: true }).times(length).minus(3);
+  return Space({
+    key: `fader-${name}`,
+    width: horizontal ? length : 28,
+    height: horizontal ? 28 : length,
+    cursor: horizontal ? "ew-resize" : "ns-resize",
+    drag: horizontal ? { x: turns } : { y: turns },
+    children: [...bars, Rect({ ...box(at, 6, 0, 28), radius: 3, color: "gray-950" })],
+  });
+}
+
+/** What a `NumberBox` that is no field shows and changes: what it shows, such as `now.bpm`, its value as code reads it, and what takes a new one. */
+export interface NumberSource {
+  show: Num;
+  get: () => number;
+  set: (value: number) => void;
+}
+
+/** The units of a `Label` that show a tick of the clock, not a number. */
+const TICK_UNITS = ["position", "time", "signature", "beats", "note"] as const;
+type TickUnit = (typeof TICK_UNITS)[number];
+
+export interface NumberBoxProps {
+  /** Names its space and its drag, as `now.drag(key)`. */
+  key: string;
+  /**
+   * A field as `now.value` names it, such as `"bass/mix.gain_db"`, which a drag turns as it goes
+   * as a `Knob` does; or a `NumberSource`, which hears the value once, when the drag ends.
+   */
+  value: string | NumberSource;
+  min?: number;
+  max?: number;
+  /** What a drag of a `NumberSource` moves by, and what a typed value rounds to: 1 when left out. */
+  step?: number;
+  /** The only values it takes, in order, such as note values: a drag steps through them, and a typed value goes to the nearest. */
+  values?: readonly number[];
+  /** Points of a drag for one step of a `NumberSource`: 10 when left out. */
+  per?: number;
+  /** How it shows the number, as a `Label` does. */
+  unit?: Unit | "pan" | TickUnit;
+  /** A field as it plays, see `now.value`. */
+  played?: boolean;
+  /** The undo step of a field: "Change <field>" when left out. */
+  label?: string;
+  width: number;
+  /** 18 points when left out. */
+  height?: number;
+  /** Of its text, 14 points when left out. */
+  size?: number;
+  color?: Color;
+  align?: "left" | "center" | "right";
+}
+
+/** A number that `text` says, or `null`: `-6 dB`, `2k` for 2000 in Hz, `-inf`. */
+function typedNumber(text: string, unit: NumberBoxProps["unit"]): number | null {
+  const plain = text.trim().replace("−", "-");
+  if (/^-\s*inf/i.test(plain)) return -Infinity;
+  const value = Number.parseFloat(plain);
+  if (!Number.isFinite(value)) return null;
+  return unit === "hz" && /\dk/i.test(plain.replace(/\s/g, "")) ? value * 1000 : value;
+}
+
+/**
+ * A number to drag up and down, or double-click and type, as the transport's tempo is: a field,
+ * or what code keeps, such as the tempo map, as `value` says. A field's drag and a typed value
+ * are one undo step each; a `NumberSource` hears a value once, at the end of a drag.
+ */
+export function NumberBox(props: NumberBoxProps): h.JSX.Element {
+  const { key, value, unit, width, values } = props;
+  const height = props.height ?? 18;
+  const per = props.per ?? 10;
+  const step = props.step ?? 1;
+  const source = typeof value === "string" ? sourceOfField(value, props) : value;
+  const [typing, type] = signal(false);
+  const clamped = (number: number) => Math.min(Math.max(number, props.min ?? -Infinity), props.max ?? Infinity);
+  /** A typed or dragged value as it takes it: one of `values`, or on the grid of `step`. */
+  const taken = (number: number) =>
+    values ? values.reduce((best, each) => (Math.abs(each - number) < Math.abs(best - number) ? each : best), values[0] ?? number)
+    : typeof value === "string" ? clamped(number) : clamped(Math.round(number / step) * step);
+  const x = props.align === "center" ? width / 2 : props.align === "right" ? width : 0;
+  const text = { x, y: 0, size: props.size ?? 14, color: props.color ?? "gray-950", align: props.align } as const;
+  const shown = { ...text, text: typeof source.show === "number" ? String(source.show) : source.show, unit };
+  const valueUnit = unit === undefined || TICK_UNITS.includes(unit as TickUnit) ? undefined : (unit as Unit | "pan");
+  const onPress = ({ clicks, button }: Press) => {
+    if (button === "left" && clicks === 2) type(true);
+  };
+  const box = (): UiNode => {
+    if (typeof value === "string") {
+      return Space({
+        key, width, height, cursor: "ns-resize", onPress,
+        drag: { y: { value, min: props.min, max: props.max, unit: valueUnit === "pan" ? undefined : valueUnit, label: props.label } },
+        children: [Label(shown)],
+      });
+    }
+    // Steps from where it was pressed, of `values` or of `step`.
+    const [pressed, press] = signal(0);
+    const drag = now.drag(key);
+    const steps = drag.dy.over(-per);
+    const dragged = (): Live => {
+      if (values) {
+        const index = steps.plus(pressed()).clamp(0, values.length - 1);
+        return values.reduce<Live>((sum, each, at) => sum.plus(index.eq(at).times(each)), index.times(0));
+      }
+      const moved = steps.times(step).plus(pressed());
+      const above = props.min === undefined ? moved : moved.max(props.min);
+      return props.max === undefined ? above : above.min(props.max);
+    };
+    return Space({
+      key, width, height, cursor: "ns-resize",
+      onPress: (pointer) => {
+        press(values ? Math.max(values.indexOf(taken(value.get())), 0) : value.get());
+        onPress(pointer);
+      },
+      drag: {
+        id: key, axis: "y", snap: { y: per },
+        onEnd: ({ dy }) => {
+          const moved = -Math.round(dy / per);
+          const next = values ? values[Math.min(Math.max(pressed() + moved, 0), values.length - 1)] : clamped(pressed() + moved * step);
+          if (next !== undefined && next !== value.get()) value.set(next);
+        },
+      },
+      children: [
+        Label({ ...shown, opacity: drag.active.negate().plus(1) }),
+        Label({ ...text, text: dragged, unit: valueUnit, opacity: drag.active }),
+      ],
+    });
+  };
+  return Show({
+    when: typing,
+    children: () => {
+      const before = untrack(source.get);
+      const done = (typed: string | null) => {
+        type(false);
+        const number = typed === null ? null : typedNumber(typed, unit);
+        if (number !== null && taken(number) !== before) source.set(taken(number));
+      };
+      const field = Input({ value: Number.isFinite(before) ? String(Number(before.toFixed(3))) : "-inf", width, focus: true, onCommit: done, onCancel: () => done(null) });
+      return h("div", { key: `${key}-typed` }, field);
+    },
+    fallback: box,
+  });
+}
+
+/** A field of the view's record, or of a child's as `"bass/mix.gain_db"`, as a `NumberBox` reads and sets it: -inf as `"-inf"`, as a fader holds it. */
+function sourceOfField(path: string, { played, label }: Pick<NumberBoxProps, "played" | "label">): NumberSource {
+  const { state, children, update } = drawing();
+  const { child, name } = splitPath(path);
+  return {
+    show: now.value(path, { played }),
+    get: () => {
+      const found = recordAt({ state, children }, child)?.state[name];
+      return found === "-inf" ? -Infinity : typeof found === "number" ? found : Number.NaN;
+    },
+    set: (number) =>
+      update(label ?? `Change ${name.replaceAll("_", " ")}`, (part) => {
+        const record = recordAt(part, child);
+        if (record) record.state[name] = number === -Infinity ? "-inf" : Number(number.toFixed(3));
+      }),
+  };
+}
+
+/** `"bass/synth.cutoff_hz"` as the child `bass/synth` and its field `cutoff_hz`. */
+function splitPath(path: string): { child: string | undefined; name: string } {
+  const dot = path.lastIndexOf(".");
+  return dot < 0 ? { child: undefined, name: path } : { child: path.slice(0, dot), name: path.slice(dot + 1) };
+}
+
+/** The record of the child at `path` below `top`, or `top` itself. */
+function recordAt(top: { state: unknown; children: unknown }, path: string | undefined): { state: Record<string, unknown> } | undefined {
+  let at = top as { state: Record<string, unknown>; children: readonly { name: string; state: Record<string, unknown>; children: unknown }[] };
+  for (const name of path?.split("/") ?? []) {
+    const next = at.children.find((child) => child.name === name);
+    if (!next) return undefined;
+    at = next as typeof at;
+  }
+  return at;
+}
+
+/** An option of a `Select`: its value, and what its list says of it. */
+export interface SelectOption<T> {
+  value: T;
+  label: string;
+  detail?: string;
+  icon?: IconName;
+  disabled?: boolean;
+}
+
+export interface SelectProps<T> {
+  /** Names it for tests: `div-<key>`. */
+  key?: string;
+  value: Bind<T>;
+  options: Bind<readonly SelectOption<T>[]>;
+  /** A pick of another option than `value`. */
+  onChange: (value: T) => void;
+  /** The heading over its list. */
+  title?: string;
+  /** What it says while `value` is none of the options: the value when left out. */
+  placeholder?: string;
+  /** Of its list, in points: 160 when left out. */
+  menuWidth?: number;
+  /** `"md"` says it in 13 points; 12 when left out, as a select of a card. */
+  size?: "sm" | "md";
+}
+
+const TRIGGER = {
+  sm: { style: { direction: "row", align: "center", gap: 4, height: 24, paddingLeft: 8, paddingRight: 6, radius: 6, background: "alpha/5", hover: "alpha/10" }, text: 12 },
+  md: { style: { direction: "row", align: "center", gap: 6, height: 24, paddingLeft: 9, paddingRight: 8, radius: 6, background: "alpha/5", hover: "alpha/10" }, text: 13 },
+} as const satisfies Record<string, { style: Style; text: number }>;
+
+/** Shows the option `value` is and opens the list of `options` under it, as the window's selects; a pick calls `onChange`. */
+export function Select<const T extends string | number | boolean | null>(props: SelectProps<T>): UiNode {
+  const { openMenu } = drawing();
+  const read = <V,>(bound: Bind<V>): V => (typeof bound === "function" ? (bound as Accessor<V>)() : bound);
+  const look = TRIGGER[props.size ?? "sm"];
+  const said = () => {
+    const value = read(props.value);
+    return read(props.options).find((option) => option.value === value)?.label ?? props.placeholder ?? String(value);
+  };
+  const open = async () => {
+    const [value, options] = [read(props.value), read(props.options)];
+    const items = options.map(({ label, detail, icon, disabled, value: each }) => ({ label, detail, icon, disabled, checked: each === value, group: props.title }));
+    const picked = await openMenu(items, { width: props.menuWidth ?? 160 });
+    const option = picked === null ? undefined : options[picked];
+    if (option && option.value !== value) props.onChange(option.value);
+  };
+  return h("div", { key: props.key, style: look.style, onPress: open },
+    h("div", { style: { fontSize: look.text, weight: "medium", color: "gray-950" } }, said),
+    Icon({ name: "chevron-down", size: 12, color: "gray-700" }),
+  );
 }
 
 const STEP = { size: 14, gap: 3, on: "#a9b1ff", off: "#292c34", light: "#e9ebef" } as const;
@@ -2851,180 +3166,6 @@ export function Pad(props: { x: string; y: string; size?: number }): UiNode {
       }),
     ],
   });
-}
-
-/** Points of a drag up for one beat per minute more. */
-const TEMPO_DRAG = 2;
-/** The width of the position strip, and of its knob. */
-const STRIP = { width: 200, knob: 8 } as const;
-
-/** A readout of a tick of the clock as it moves, in the pill's text. */
-function clockText(key: string, width: number, unit: "position" | "time", color: Color = "gray-950", text: Live = now.tick): UiNode {
-  return Space({ key, width, height: 18, children: [Label({ x: 0, y: 0, text, unit, color, size: 14 })] });
-}
-
-/** Points of a drag up for the next number of a time signature. */
-const SIGNATURE_DRAG = 10;
-
-/** The run of `runs` that plays at `tick`, the last going on, with its beats and note value. */
-function signatureAt(runs: Frozen<TempoMap>["time_signatures"], tick: number): { run: number; beats: number; note: number } {
-  let start = 0;
-  for (const [run, { signature, bars }] of runs.entries()) {
-    const [beats = 4, note = 4] = signature.split("/").map(Number);
-    start += (bars * beats * 4 * 960) / note;
-    if (tick < start || run === runs.length - 1) return { run, beats, note };
-  }
-  return { run: 0, beats: 4, note: 4 };
-}
-
-/**
- * One number of the time signature that plays at the playhead, which a drag up or down steps as
- * one undo step: the beats from 1 to 32, or the note value from a whole note to a thirty-second.
- */
-function signaturePart(clock: Clock, part: "beats" | "note"): UiNode {
-  const id = `transport-${part}`;
-  const drag = now.drag(id);
-  const [pressed, press] = signal<ReturnType<typeof signatureAt> | null>(null);
-  const [low, high] = part === "beats" ? [1, 32] : [0, 5];
-  // The note value steps by its power of two.
-  const from = (at: ReturnType<typeof signatureAt>) => (part === "beats" ? at.beats : Math.log2(at.note));
-  const steps = drag.dy.over(-SIGNATURE_DRAG);
-  const dragged = () => {
-    const at = pressed();
-    const value = steps.plus(at ? from(at) : 0).clamp(low, high);
-    return part === "beats" ? value : steps.times(0).plus(2).pow(value);
-  };
-  return Space({
-    key: id, width: 14, height: 18, cursor: "ns-resize",
-    onPress: () => press(signatureAt(clock.tempo_map.time_signatures, clock.tick)),
-    drag: {
-      id, axis: "y", snap: { y: SIGNATURE_DRAG },
-      onEnd: ({ dy }) => {
-        const at = pressed();
-        if (!at) return;
-        const value = Math.min(Math.max(from(at) - Math.round(dy / SIGNATURE_DRAG), low), high);
-        const [beats, note] = part === "beats" ? [value, at.note] : [at.beats, 2 ** value];
-        if (beats === at.beats && note === at.note) return;
-        clock.update("Change the time signature", ({ tempo_map }) => {
-          const run = tempo_map.time_signatures[at.run];
-          if (run) run.signature = `${beats}/${note}`;
-          else tempo_map.time_signatures = [{ signature: `${beats}/${note}`, bars: 1 }];
-        });
-      },
-    },
-    children: [
-      Label({ x: 0, y: 0, text: now.tick, unit: part, color: "gray-950", size: 14, opacity: drag.active.negate().plus(1) }),
-      Label({ x: 0, y: 0, text: dragged, color: "gray-950", size: 14, opacity: drag.active }),
-    ],
-  });
-}
-
-/** What `Transport` records with: whether it records, what a press does, and whether it can. */
-export interface TransportRecord {
-  on: Accessor<boolean>;
-  press: () => void;
-  disabled?: Accessor<boolean>;
-}
-
-/**
- * The window's transport, a pill: play and pause, stop, `record` when given, where the piece
- * plays as a bar and a beat and as a time, a strip to move through the piece up to `end` when
- * given, the tempo, which a drag up or down changes as one undo step, the time signature, the
- * computer keys, the click and the meter of what the device plays. A drag up or down on a number of
- * the time signature steps the one that plays at the playhead. Put it in a `TitleBar` to
- * show it where the window's own was. Everything that moves moves without code.
- */
-export function Transport(props: { clock: Clock; record?: TransportRecord; end?: Accessor<number | null> }): UiNode {
-  const { clock, record } = props;
-  const tempo = now.drag("transport-tempo");
-  const end = () => props.end?.() ?? null;
-  const pill: Style = {
-    direction: "row", align: "center", gap: 12, height: 36, paddingLeft: 4, paddingRight: 16,
-    radius: 18, background: "#292b30", borderColor: "alpha/10", borderWidth: 1, keep: true,
-  };
-  return h("div", { key: "transport", style: pill },
-    h("div", { style: { direction: "row", align: "center", gap: 4 } },
-      Button({
-        key: "play", icon: () => (clock.playing ? "pause" : "play"), variant: () => (clock.playing ? "subtle" : "ghost"),
-        color: "green", size: "sm", rounded: true, onPress: () => (clock.playing ? clock.pause() : clock.play()),
-      }),
-      Button({ key: "stop", icon: "square", variant: "ghost", size: "sm", rounded: true, onPress: () => clock.stop() }),
-      record && Button({
-        key: "record", icon: "circle", variant: () => (record.on() ? "solid" : "ghost"), color: "red", size: "sm", rounded: true,
-        disabled: () => record.disabled?.() ?? false, onPress: record.press,
-      }),
-    ),
-    clockText("transport-position", 28, "position"),
-    clockText("transport-time", 34, "time", "gray-700"),
-    () => {
-      const last = end();
-      if (last === null || last <= 0) return null;
-      const seconds = secondsOf(clock.tempo_map, last);
-      const knob = now.tick.over(last).clamp(0, 1).times(STRIP.width - STRIP.knob);
-      return [
-        Space({
-          key: "transport-strip", width: STRIP.width, height: 16, cursor: "pointer",
-          onPress: ({ x }) => clock.jump(Math.round((Math.min(Math.max(x, 0), STRIP.width) / STRIP.width) * last)),
-          children: [
-            Rect({ x: 0, y: 7.5, width: STRIP.width, height: 1, color: "alpha/10" }),
-            Rect({ x: 0, y: 7.5, width: knob.plus(STRIP.knob / 2), height: 1, color: "gray-950" }),
-            Rect({ x: knob, y: 4, width: STRIP.knob, height: STRIP.knob, radius: STRIP.knob / 2, color: "gray-950" }),
-          ],
-        }),
-        h("div", { style: { font: "tabular", color: "gray-700" } }, `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`),
-      ];
-    },
-    Space({
-      key: "transport-tempo",
-      width: 64,
-      height: 18,
-      cursor: "ns-resize",
-      drag: {
-        id: "transport-tempo",
-        axis: "y",
-        onEnd: ({ dy }) => {
-          const at = clock.tick;
-          const bpm = Math.min(Math.max(Math.round(clock.bpm - dy / TEMPO_DRAG), 10), 1000);
-          clock.update("Change the tempo", ({ tempo_map }) => {
-            const change = tempo_map.tempo_changes.findLast((change) => change.tick <= at);
-            if (change) change.bpm = bpm;
-          });
-        },
-      },
-      children: [
-        Label({ x: 0, y: 0, text: now.bpm.minus(tempo.dy.over(TEMPO_DRAG)).round(), color: "gray-950", size: 14 }),
-        Label({ x: 32, y: 2, text: "bpm", color: "gray-700", size: 12 }),
-      ],
-    }),
-    h("div", { style: { direction: "row", align: "center" } },
-      signaturePart(clock, "beats"),
-      Space({ key: "transport-slash", width: 14, height: 18, children: [Label({ x: 3, y: 2, text: "/", color: "gray-700", size: 12 })] }),
-      signaturePart(clock, "note"),
-    ),
-    Button({
-      key: "computer-keys", icon: "keyboard-music", variant: () => (clock.computerKeys ? "primary" : "ghost"),
-      color: () => (clock.computerKeys ? undefined : "gray-700") as Color, size: "sm", rounded: true,
-      onPress: () => clock.setComputerKeys(!clock.computerKeys),
-    }),
-    Button({
-      key: "click", icon: "metronome", variant: () => (clock.click ? "primary" : "ghost"),
-      color: () => (clock.click ? undefined : "gray-700") as Color, size: "sm", rounded: true,
-      onPress: () => clock.setClick(!clock.click),
-    }),
-    PeakMeter({ key: "transport-meter", horizontal: true }),
-  );
-}
-
-/** The seconds from the start to `tick` through the tempo changes of `map`. */
-export function secondsOf(map: Frozen<TempoMap>, tick: number): number {
-  const changes = [...map.tempo_changes].sort((a, b) => a.tick - b.tick);
-  let seconds = 0;
-  for (const [index, change] of changes.entries()) {
-    const next = changes[index + 1]?.tick ?? Infinity;
-    if (tick <= change.tick) break;
-    seconds += ((Math.min(tick, next) - change.tick) / 960) * (60 / change.bpm);
-  }
-  return seconds;
 }
 
 /** `tone_hz` is `Tone hz`. */
@@ -3122,18 +3263,17 @@ export function defaultView(fields: Fields, inputs: Inputs = {}) {
 // For the host.
 
 /** What the components of a card read while it is made. */
-type Drawing = { state: Record<string, unknown>; fields: Fields; update: Context<Record<string, unknown>>["update"] };
+type Drawing = { fields: Fields } & Pick<Context<Record<string, unknown>>, "state" | "children" | "update" | "openMenu">;
 
 /** Makes the nodes of a card: `draw` runs once. The window gets them with `takeOps`. */
 function mount(id: number, draw: () => Child, drawn: Drawing): CardRoot {
-  const card: CardRoot = { id, ops: [], changes: new Map(), drags: new Map(), dispose: () => {} };
+  const card: CardRoot = { id, ops: [], changes: new Map(), drags: new Map(), drawn, dispose: () => {} };
   root((dispose) => {
     let top: Made | undefined;
     card.dispose = () => {
       dispose();
       if (top) forget(top);
     };
-    host.drawing = drawn;
     try {
       const made: UiNode[] = [];
       materialize(setup(draw), made, "div");
@@ -3151,8 +3291,6 @@ function mount(id: number, draw: () => Child, drawn: Drawing): CardRoot {
     } catch (error) {
       card.dispose();
       throw error;
-    } finally {
-      host.drawing = undefined;
     }
   }, card);
   return card;
@@ -3169,12 +3307,14 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
 }
 
 /** A press, the end of a drag, a drop, a field's text or a card's icon, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "drop" | "power" | "close" | "title" | "sidechain", payload: never) {
+function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
   switch (kind) {
     case "commit":
       return made.onCommit?.((payload as { text: string }).text);
+    case "cancel":
+      return made.onCancel?.();
     case "power":
       return made.onPower?.();
     case "close":
@@ -3199,8 +3339,6 @@ export const host = {
   tools: new Map<string, ToolSpec<Fields, Inputs, unknown>>(),
   /** The call stack of each tool's `tool`, which tells the file that made it. */
   stacks: new Map<string, string>(),
-  /** The view that draws now: its record, its fields and its `update`. */
-  drawing: undefined as Drawing | undefined,
   mount,
   takeOps,
   nodeEvent,

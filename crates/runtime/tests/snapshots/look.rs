@@ -39,10 +39,10 @@ use crate::song::{ACROSS, ARM, BAR, HEADER, LEAD, ROW, TOGGLES, daw};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use sound_core::CaptureWriter;
 
-#[path = "look_timeline.rs"]
-pub(crate) mod timeline;
 #[path = "look_takes.rs"]
 pub(crate) mod takes;
+#[path = "look_timeline.rs"]
+pub(crate) mod timeline;
 
 /// Where a song's rows start: under the title row and the ruler, whose line is its last point.
 const TOP: f32 = 48.0 + 32.0;
@@ -307,17 +307,24 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     let bus = |title: &str, colour: &str| json!({ "tool": "bus", "state": { "title": title, "colour": colour } });
     let send = |gain_db: f32| json!({ "tool": "fader", "state": { "gain_db": gain_db } });
     let fader = json!({ "tool": "fader", "state": {} });
-    let reverb = json!({ "tool": "reverb", "state": { "decay_seconds": 2.4, "size": 0.6, "mix": 1.0 } });
+    let reverb =
+        json!({ "tool": "reverb", "state": { "decay_seconds": 2.4, "size": 0.6, "mix": 1.0 } });
     let opened = open(
         cx,
         &[
             ("ret-a/instance.json", bus("Space", "teal")),
             ("ret-a/mix.json", fader.clone()),
-            ("ret-a/chain/instance.json", json!({ "tool": "chain", "state": { "order": ["reverb"] } })),
+            (
+                "ret-a/chain/instance.json",
+                json!({ "tool": "chain", "state": { "order": ["reverb"] } }),
+            ),
             ("ret-a/chain/reverb.json", reverb),
             ("ret-b/instance.json", bus("Echo", "mauve")),
             ("ret-b/mix.json", fader),
-            ("ret-b/chain/instance.json", json!({ "tool": "chain", "state": {} })),
+            (
+                "ret-b/chain/instance.json",
+                json!({ "tool": "chain", "state": {} }),
+            ),
             ("bass/send-ret-a.json", send(-12.)),
             ("bass/send-ret-b.json", send(-18.)),
         ],
