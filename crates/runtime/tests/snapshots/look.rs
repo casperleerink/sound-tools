@@ -75,6 +75,19 @@ fn click(
     Ok(())
 }
 
+/// The pointer off what a snapshot shows, as the arrangement's snapshots opened their menus
+/// without one.
+fn away(opened: &super::Opened, cx: &mut HeadlessAppContext) -> Result<()> {
+    let moved = MouseMoveEvent {
+        position: point(px(1400.), px(80.)),
+        pressed_button: None,
+        modifiers: Modifiers::default(),
+    };
+    opened.event(PlatformInput::MouseMove(moved), cx)?;
+    settle(cx);
+    Ok(())
+}
+
 /// Bun answers in real time, on a thread of its own.
 fn settle(cx: &mut HeadlessAppContext) {
     for _ in 0..15 {
@@ -173,7 +186,7 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
         plugin_host::PluginFormat::Clap,
         "test-tone",
     ))?;
-    let files: Vec<(String, String)> = piece_files(&[("track-1/synth.json", plugin)])
+    let files: Vec<(String, String)> = piece_files(&[("track-1/synth.json", plugin.clone())])
         .into_iter()
         .filter(|(path, _)| {
             !path.starts_with("state/song/bass") && !path.starts_with("state/song/melody")
@@ -190,8 +203,25 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, header(0.), 1, cx)?;
     click(&opened, point(px(PICKER.0), px(PICKER.1)), 1, cx)?;
     save(cx, opened.window.into(), "look-picker")?;
-    opened.key("escape", cx)?;
-    click(&opened, point(px(ADD_EFFECT.0), px(ADD_EFFECT.1)), 1, cx)?;
+    drop(opened);
+
+    // The same track with the test plugin twice after it, Warmth and Space, Space turned off.
+    let chain = json!({ "tool": "chain", "state": { "order": ["warmth", "space"], "off": ["space"] } });
+    let effects = [
+        ("track-1/chain/instance.json", chain),
+        ("track-1/chain/warmth.json", plugin.clone()),
+        ("track-1/chain/space.json", plugin.clone()),
+    ];
+    let files: Vec<(String, String)> = files
+        .into_iter()
+        .filter(|(path, _)| !path.starts_with("state/song/track-1/chain/"))
+        .chain(effects.into_iter().map(|(path, record)| (format!("state/song/{path}"), record.to_string())))
+        .collect();
+    let opened = super::Opened::open(cx, &files)?;
+    click(&opened, header(0.), 1, cx)?;
+    // Add effect after three cards of a plugin, 200 points each and 12 apart.
+    click(&opened, point(px(ADD_EFFECT.0 + 2. * 212.), px(ADD_EFFECT.1)), 1, cx)?;
+    away(&opened, cx)?;
     save(cx, opened.window.into(), "look-effect-picker")?;
     drop(opened);
 

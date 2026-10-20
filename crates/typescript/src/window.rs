@@ -1501,6 +1501,7 @@ impl Live {
                 items,
                 notes,
                 width,
+                max_height,
             } => match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
                 Some(card) => {
                     card.menu = Some(OpenedMenu {
@@ -1508,6 +1509,7 @@ impl Live {
                         items,
                         notes,
                         width,
+                        max_height,
                     });
                     cx.notify();
                 }
@@ -2136,4 +2138,5 @@ pub(crate) struct OpenedMenu {
     pub items: Vec<MenuItemSpec>,
     pub notes: Vec<String>,
     pub width: Option<f32>,
+    pub max_height: Option<f32>,
 }

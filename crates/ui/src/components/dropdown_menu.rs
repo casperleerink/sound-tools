@@ -921,8 +921,10 @@ impl DropdownMenu {
         self
     }
 
-    pub fn set_width(&mut self, width: f32) {
+    /// How wide it is and how tall its groups go before they scroll, for a menu filled again.
+    pub fn set_size(&mut self, width: f32, max_height: Option<f32>) {
         self.width = width;
+        self.max_height = max_height;
     }
 
     /// Scrolls the groups past this height, for a list that may be long, such as the plugins

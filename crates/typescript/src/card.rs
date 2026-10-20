@@ -163,6 +163,7 @@ impl Render for CardTitle {
                 move || format!("card-title-{instance}")
             })
             .flex()
+            .min_w_0()
             .items_center()
             .gap(px(4.))
             .h(px(24.))
@@ -637,6 +638,7 @@ impl TypeScriptCard {
             items,
             notes,
             width,
+            max_height,
         } = menu;
         // A group a run of items of one `group`, under its heading.
         let mut entries: Vec<(Option<String>, MenuGroup)> = Vec::new();
@@ -704,7 +706,7 @@ impl TypeScriptCard {
         let under = self.anchor.take();
         menu.update(cx, |menu, cx| {
             menu.set_entries(entries, cx);
-            menu.set_width(width.unwrap_or(MENU_WIDTH));
+            menu.set_size(width.unwrap_or(MENU_WIDTH), max_height);
             match under {
                 Some(position) => menu.open_under(position, window, cx),
                 None => menu.open_at(window.mouse_position(), window, cx),

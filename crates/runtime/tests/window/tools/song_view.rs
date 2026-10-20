@@ -468,7 +468,8 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
     let inside = window.on_lane(2 * BAR + 960, 2);
     window.until_found("button-mixer-toggle");
     window.click(inside);
-    window.until_found("div-region-panel");
+    // Its card opens in the panel of the audio track.
+    window.until_found("card-song/audio-voice/region-header");
     window.cx.simulate_keystrokes("backspace");
     window.until("the region deleted", |window| {
         !window.has("song/audio-voice/region")
@@ -904,4 +905,45 @@ pub(super) fn free_pitch(clip: &serde_json::Value, tick: f32) -> u8 {
         .map(f32::round)
         .find(|pitch| !taken(*pitch))
         .unwrap_or(middle) as u8
+}
+
+/// A menu a div opens hangs under it, as a select's list: the snap's list starts under the
+/// snap, from its left edge.
+#[gpui::test]
+fn a_menu_opens_under_the_div_that_opened_it(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.until_found("div-song-snap");
+    let snap = window.bounds("div-song-snap").unwrap();
+    // The pointer is in the middle of it; the menu is not.
+    window.click(snap.center());
+    window.until_found("menu-0");
+    let first = window.bounds("menu-0").unwrap();
+    assert!(first.top() > snap.bottom(), "{first:?} under {snap:?}");
+    assert!(
+        (first.left() - snap.left()).abs() < px(24.),
+        "{first:?} from the left of {snap:?}"
+    );
+}
+
+/// The card of a chosen region turns its fades: a drag of Fade in is one undo step of the
+/// region's record.
+#[gpui::test]
+fn the_card_of_a_chosen_region_turns_its_fade_in(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.drop_sine();
+    let inside = window.on_lane(2 * BAR + 960, 2);
+    window.until_found("button-mixer-toggle");
+    window.click(inside);
+    let knob = window.control("knob-fade-in");
+    window.drag(knob, knob - point(px(0.), px(60.)));
+    window.until("the fade in turned", |window| {
+        window.record("song/audio-voice/region")["fade_in_ms"]
+            .as_f64()
+            .is_some_and(|ms| ms > 0.)
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change fade in"));
+    assert_eq!(window.problems(), []);
 }

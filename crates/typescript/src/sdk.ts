@@ -1064,9 +1064,10 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    * Opens a menu of `items` after a press: under the div, button or card title pressed, as a
    * select's list, or where the pointer is after a right press or a press of a space. Answers
    * the place of the item the composer picked, or `null` when they picked none. `notes` are
-   * quiet lines under the items; `width` is in points, 320 when left out.
+   * quiet lines under the items; `width` is in points, 320 when left out; past `maxHeight`
+   * points the items scroll.
    */
-  openMenu(items: readonly MenuItem[], options?: { notes?: readonly string[]; width?: number }): Promise<number | null>;
+  openMenu(items: readonly MenuItem[], options?: { notes?: readonly string[]; width?: number; maxHeight?: number }): Promise<number | null>;
   /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. With `at`, a child's path, `here` says which of them is there. */
   offers(takes: "notes" | "audio", options?: { at?: string }): Promise<Offers>;
   /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */

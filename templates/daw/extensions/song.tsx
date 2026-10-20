@@ -676,7 +676,7 @@ export const song = tool({
     const pick = async (takes: "notes" | "audio", at?: string) => {
       const { offers: offered, notes, here } = await offers(takes, { at });
       const items = offered.map(({ key, name, detail, group, icon, unavailable }) => ({ label: name, detail: detail ?? undefined, group, icon, checked: key === here, disabled: unavailable !== null }));
-      const picked = await openMenu(items, { notes, width: 280 });
+      const picked = await openMenu(items, { notes, width: 280, maxHeight: 540 });
       return picked === null ? undefined : offered[picked];
     };
 

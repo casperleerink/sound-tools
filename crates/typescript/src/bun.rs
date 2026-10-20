@@ -422,9 +422,11 @@ pub(crate) enum Event {
         /// Quiet lines under the items.
         #[serde(default)]
         notes: Vec<String>,
-        /// How wide it is, in points, where its code says.
+        /// How wide it is, and how tall its items go before they scroll, in points.
         #[serde(default)]
         width: Option<f32>,
+        #[serde(default, rename = "maxHeight")]
+        max_height: Option<f32>,
     },
     /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
     /// With `at`, the answer says which offer is at that child of `instance` now.
