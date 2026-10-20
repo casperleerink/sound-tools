@@ -26,13 +26,14 @@
 //! escape closes. It shows at most a hundred rows: drawing thousands of them on every frame
 //! the menu is open would cost more than typing a few letters.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
     App, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     HoverListenerMode, Hsla, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent,
     Pixels, Point, Render, RenderOnce, SharedString, Stateful, StyleRefinement, Styled, Window,
-    anchored, deferred, div, point, prelude::*, px,
+    anchored, canvas, deferred, div, point, prelude::*, px,
 };
 
 use crate::components::icon::Icon;
@@ -50,6 +51,8 @@ const ICON_TILE: f32 = 24.;
 const SUBMENU_WIDTH: f32 = 280.;
 /// How wide a menu is unless it says.
 pub const MENU_WIDTH: f32 = 320.;
+/// The key context of an open menu. Its search field leaves up and down to it.
+pub const KEY_CONTEXT: &str = "DropdownMenu";
 /// How tall a menu's rows go before they scroll, unless it says: twelve rows and a heading.
 pub const MENU_MAX_HEIGHT: f32 = 420.;
 
@@ -794,6 +797,9 @@ struct Search {
     query: String,
     /// The rows it keeps, worked out when the text or the rows change and not every frame.
     found: Vec<MenuEntry>,
+    /// How tall the rows and the field were when the menu opened. They stay as tall while the
+    /// search drops rows, so in a menu that opened upward the field does not move as one types.
+    opened_height: Rc<Cell<Option<Pixels>>>,
 }
 
 impl DropdownMenu {
@@ -861,6 +867,7 @@ impl DropdownMenu {
             input,
             query: String::new(),
             found: found(&self.entries, ""),
+            opened_height: Rc::default(),
         });
         self
     }
@@ -1027,6 +1034,7 @@ impl DropdownMenu {
         match &self.search {
             // A search starts empty each time, with the keys in its field.
             Some(search) => {
+                search.opened_height.set(None);
                 let input = search.input.clone();
                 input.update(cx, |input, cx| input.set_text("", cx));
                 window.focus(&input.focus_handle(cx), cx);
@@ -1243,7 +1251,27 @@ impl DropdownMenu {
                 .pb(px(4.))
                 .child(search.input.clone())
         });
+        let opened_height = (self.search.as_ref()).map(|search| search.opened_height.clone());
+        let held_height = opened_height.as_ref().and_then(|height| height.get());
+        let measure = opened_height.map(|opened_height| {
+            canvas(
+                move |bounds, _, _| {
+                    if opened_height.get().is_none() {
+                        opened_height.set(Some(bounds.size.height));
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full()
+        });
+        let body = div()
+            .relative()
+            .when_some(held_height, |body, height| body.min_h(height))
+            .children(measure)
+            .children(search);
         surface(cx)
+            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .w(px(self.width))
             .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
@@ -1258,30 +1286,33 @@ impl DropdownMenu {
             .on_key_down(
                 cx.listener(|this, ev: &KeyDownEvent, window, cx| this.on_key(ev, window, cx)),
             )
-            .children(search)
             .child(
-                MenuList::new(self.shown().to_vec())
-                    .selected(self.selected.clone())
-                    .highlighted(self.highlighted)
-                    .max_height(self.max_height)
-                    .submenu(OpenSubmenu {
-                        value: self.submenu.clone(),
-                        highlighted: self.submenu_highlighted,
-                        on_open: Rc::new(cx.processor(
-                            |this, value: Option<SharedString>, _, cx| this.set_submenu(value, cx),
-                        )),
-                        on_hover: Rc::new(cx.processor(|this, hovered: bool, _, _| {
-                            this.pointer_in_submenu = hovered
+                body.child(
+                    MenuList::new(self.shown().to_vec())
+                        .selected(self.selected.clone())
+                        .highlighted(self.highlighted)
+                        .max_height(self.max_height)
+                        .submenu(OpenSubmenu {
+                            value: self.submenu.clone(),
+                            highlighted: self.submenu_highlighted,
+                            on_open: Rc::new(cx.processor(
+                                |this, value: Option<SharedString>, _, cx| {
+                                    this.set_submenu(value, cx)
+                                },
+                            )),
+                            on_hover: Rc::new(cx.processor(|this, hovered: bool, _, _| {
+                                this.pointer_in_submenu = hovered
+                            })),
+                        })
+                        .on_point(Rc::new(cx.processor(
+                            |this, (value, hovered): (SharedString, bool), _, cx| {
+                                this.point(value, hovered, cx)
+                            },
+                        )))
+                        .on_select(cx.processor(|this, value: SharedString, window, cx| {
+                            this.pick(value, window, cx)
                         })),
-                    })
-                    .on_point(Rc::new(cx.processor(
-                        |this, (value, hovered): (SharedString, bool), _, cx| {
-                            this.point(value, hovered, cx)
-                        },
-                    )))
-                    .on_select(cx.processor(|this, value: SharedString, window, cx| {
-                        this.pick(value, window, cx)
-                    })),
+                ),
             )
     }
 }

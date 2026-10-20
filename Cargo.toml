@@ -105,6 +105,8 @@ smol = "2"
 tempfile = "3"
 thiserror = "2"
 triple_buffer = "9"
+# Grapheme boundaries, so the caret steps over an emoji as one character. The version gpui uses.
+unicode-segmentation = "1.13"
 # Claude session ids, which the app picks.
 uuid = { version = "1", features = ["v4", "v5"] }
 # Windows: the job object that ends the agent with every program it started, and hidden

@@ -6289,6 +6289,7 @@ dependencies = [
  "sound-core",
  "sound-media",
  "tempfile",
+ "unicode-segmentation",
 ]
 
 [[package]]

@@ -1,16 +1,22 @@
 //! Editable text field. GPUI ships no input widget, so this is the standard pattern: an
 //! `Entity` implementing `EntityInputHandler` plus a custom `Element` that shapes the text and
-//! paints selection and cursor. Heights 28/32/40 px, disabled renders at 40% opacity. Create
+//! paints selection and cursor. Heights 28/32 px, disabled renders at 40% opacity. Create
 //! with `cx.new(|cx| TextInput::new(cx))`.
 //!
-//! One line by default. `multi_line(n)` wraps at the width of the box, grows up to `n` rows and
-//! then scrolls, for the agent composer: enter submits, shift-enter adds a newline, up and down
-//! move by rows, and cmd-z undoes. `fill()` is a multi-line input as tall as its box, where
-//! enter adds a newline too, for a text that is the whole view.
+//! It behaves as a browser's input does on macOS. One line by default, which scrolls sideways
+//! to keep the caret in view. `multi_line(n)` wraps at the width of the box, grows up to `n`
+//! rows and then scrolls, for the agent composer: enter submits and shift-enter adds a newline.
+//! `fill()` is a multi-line input as tall as its box, where enter adds a newline too, for a
+//! text that is the whole view.
 //!
 //! The editing keys follow macOS text fields: option moves and deletes by words, cmd by rows
-//! (and cmd-up and down to the ends of a multi-line text), shift with any of them selects,
-//! and a double or triple click selects a word or a line.
+//! and to the ends of the text, shift with any of them selects, and the ctrl keys of macOS
+//! (ctrl-a, ctrl-e, ctrl-k...) work. Up and down past the first or last row go to the ends of
+//! the text, except in a menu's search, whose rows take them. cmd-z undoes the field's own
+//! edits, never the project's. A double or triple click selects a word or a line, and a drag
+//! after it goes on by words or lines. A right click shows Cut, Copy, Paste and Select All. A
+//! press outside the field takes the focus from it, also where nothing else takes it, such as
+//! a clip under a rename.
 //!
 //! Known limit: where a word too long for a row is broken inside, end stops one character
 //! before the break, because the offset at the break belongs to the next row.
@@ -23,14 +29,18 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AvailableSpace, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, ElementId,
-    ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, Global,
+    App, AvailableSpace, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, DispatchPhase,
+    ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, Global,
     GlobalElementId, Hsla, KeyBinding, KeyContext, LayoutId, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollWheelEvent, SharedString, Style,
     Task, TextAlign, TextRun, TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine,
     actions, div, fill, point, prelude::*, px, relative, size,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
+use crate::components::dropdown_menu::{
+    self, DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
+};
 use crate::theme::ActiveTheme;
 use rows::Row;
 
@@ -128,24 +138,41 @@ fn install_bindings(cx: &mut App) {
         KeyBinding::new("shift-cmd-right", SelectToEnd, ctx),
         KeyBinding::new("enter", Submit, ctx),
         KeyBinding::new("escape", Cancel, ctx),
+        KeyBinding::new("secondary-z", Undo, ctx),
+        KeyBinding::new("shift-secondary-z", Redo, ctx),
     ]);
-    // Only a multi-line input takes these, so a one-line field (a rename) leaves up, down and
-    // cmd-z to the views around it, as before.
     let multi_line = format!("{KEY_CONTEXT} && multi_line");
-    let multi_line = Some(multi_line.as_str());
+    let one_line = format!("{KEY_CONTEXT} && !multi_line");
     cx.bind_keys([
-        KeyBinding::new("up", Up, multi_line),
-        KeyBinding::new("down", Down, multi_line),
-        KeyBinding::new("shift-up", SelectUp, multi_line),
-        KeyBinding::new("shift-down", SelectDown, multi_line),
-        KeyBinding::new("cmd-up", TextStart, multi_line),
-        KeyBinding::new("cmd-down", TextEnd, multi_line),
-        KeyBinding::new("shift-cmd-up", SelectToTextStart, multi_line),
-        KeyBinding::new("shift-cmd-down", SelectToTextEnd, multi_line),
-        KeyBinding::new("shift-enter", Newline, multi_line),
-        KeyBinding::new("secondary-z", Undo, multi_line),
-        KeyBinding::new("shift-secondary-z", Redo, multi_line),
+        KeyBinding::new("shift-enter", Newline, Some(multi_line.as_str())),
+        KeyBinding::new("shift-enter", Submit, Some(one_line.as_str())),
     ]);
+    let arrows = format!("{KEY_CONTEXT} && !{}", dropdown_menu::KEY_CONTEXT);
+    let arrows = Some(arrows.as_str());
+    cx.bind_keys([
+        KeyBinding::new("up", Up, arrows),
+        KeyBinding::new("down", Down, arrows),
+        KeyBinding::new("shift-up", SelectUp, arrows),
+        KeyBinding::new("shift-down", SelectDown, arrows),
+        KeyBinding::new("cmd-up", TextStart, arrows),
+        KeyBinding::new("cmd-down", TextEnd, arrows),
+        KeyBinding::new("shift-cmd-up", SelectToTextStart, arrows),
+        KeyBinding::new("shift-cmd-down", SelectToTextEnd, arrows),
+    ]);
+    // Elsewhere ctrl with a letter is the secondary modifier: ctrl-a selects all.
+    if cfg!(target_os = "macos") {
+        cx.bind_keys([
+            KeyBinding::new("ctrl-a", Home, ctx),
+            KeyBinding::new("ctrl-e", End, ctx),
+            KeyBinding::new("ctrl-b", Left, ctx),
+            KeyBinding::new("ctrl-f", Right, ctx),
+            KeyBinding::new("ctrl-h", Backspace, ctx),
+            KeyBinding::new("ctrl-d", Delete, ctx),
+            KeyBinding::new("ctrl-k", DeleteToEnd, ctx),
+            KeyBinding::new("ctrl-p", Up, arrows),
+            KeyBinding::new("ctrl-n", Down, arrows),
+        ]);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -180,6 +207,9 @@ impl InputSize {
 
 /// The height of one row of text.
 const ROW_HEIGHT: f32 = 20.;
+/// As drawn by macOS.
+const CARET_WIDTH: Pixels = px(2.);
+const CONTEXT_MENU_WIDTH: f32 = 200.;
 
 type SubmitHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 type ArrowHandler = Rc<dyn Fn(&str, Arrow, &mut Window, &mut App)>;
@@ -198,6 +228,21 @@ enum EditKind {
     Deleting,
 }
 
+/// A press and the drag after it: the range the press selected, which the drag keeps, and what
+/// the drag selects by.
+#[derive(Clone)]
+struct Drag {
+    anchor: Range<usize>,
+    unit: DragUnit,
+}
+
+#[derive(Clone, Copy)]
+enum DragUnit {
+    Character,
+    Word,
+    Line,
+}
+
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
@@ -207,14 +252,14 @@ pub struct TextInput {
     marked_range: Option<Range<usize>>,
     last_layout: Option<TextLayout>,
     last_bounds: Option<Bounds<Pixels>>,
-    is_selecting: bool,
+    drag: Option<Drag>,
     size: InputSize,
     /// `Some(n)` wraps, grows up to `n` rows and then scrolls. `None` is one line.
     max_rows: Option<usize>,
     /// As tall as its box, see [`Self::fill`].
     fills: bool,
-    /// How far the rows are scrolled up, in a multi-line input.
-    scroll_top: Pixels,
+    /// How far the text is scrolled: up in a multi-line input, left in a one-line one.
+    scroll: Point<Pixels>,
     /// Set by every edit and caret move, so the next frame scrolls to the caret. The wheel
     /// clears it, so the rows stay where the composer scrolled them.
     follow_caret: bool,
@@ -229,10 +274,13 @@ pub struct TextInput {
     on_submit: Option<SubmitHandler>,
     on_cancel: Option<SubmitHandler>,
     on_arrow_past_edge: Option<ArrowHandler>,
-    /// The caret blinks from here, so it shows solid right after a move or an edit.
+    /// The caret blinks from here, so it shows solid right after a move, an edit or a focus.
     blink_start: Instant,
-    /// Repaints the caret at its next blink, while focused.
+    /// Repaints the caret at its next blink, while it shows.
     blink: Option<Task<()>>,
+    /// Whether the field had the focus at the last paint.
+    had_focus: bool,
+    context_menu: Option<Entity<DropdownMenu>>,
 }
 
 /// How long the caret stays on, and then off.
@@ -250,11 +298,11 @@ impl TextInput {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
-            is_selecting: false,
+            drag: None,
             size: InputSize::default(),
             max_rows: None,
             fills: false,
-            scroll_top: px(0.),
+            scroll: Point::default(),
             follow_caret: false,
             goal_x: None,
             undo_stack: Vec::new(),
@@ -267,6 +315,8 @@ impl TextInput {
             on_arrow_past_edge: None,
             blink_start: Instant::now(),
             blink: None,
+            had_focus: false,
+            context_menu: None,
         }
     }
 
@@ -311,10 +361,13 @@ impl TextInput {
         &self.content
     }
 
-    /// Replace the text, with the caret at its end. In a multi-line input this is an undo
-    /// step, so a message cleared after sending comes back with cmd-z.
+    /// Replace the text, with the caret at its end. This is an undo step, so a message cleared
+    /// after sending comes back with cmd-z. Filling an empty field is none, so cmd-z never
+    /// empties a field its host filled.
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.record_undo(None, 0..0, 0);
+        if !self.content.is_empty() {
+            self.record_undo(None, 0..0, 0);
+        }
         self.content = text.into();
         self.selected_range = self.content.len()..self.content.len();
         self.selection_reversed = false;
@@ -556,11 +609,10 @@ impl TextInput {
         cx.notify();
     }
 
-    /// Keep the text before an edit of `range`, unless the edit joins the last one. Only a
-    /// multi-line input keeps a history: a one-line field leaves cmd-z alone. While the IME
-    /// composes, the text from before the composition is already kept.
+    /// Keep the text before an edit of `range`, unless the edit joins the last one. While the
+    /// IME composes, the text from before the composition is already kept.
     fn record_undo(&mut self, kind: Option<EditKind>, range: Range<usize>, inserted: usize) {
-        if self.max_rows.is_none() || self.marked_range.is_some() {
+        if self.marked_range.is_some() {
             return;
         }
         let joins = matches!(
@@ -703,9 +755,15 @@ impl TextInput {
             .map(str::to_string)
     }
 
+    /// A one-line field drops the line break at the end of a copied line.
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text.replace("\r\n", "\n"), window, cx);
+            let text = text.replace("\r\n", "\n");
+            let text = match self.max_rows {
+                Some(_) => &text,
+                None => text.trim_end_matches('\n'),
+            };
+            self.replace_text_in_range(None, text, window, cx);
         }
     }
 
@@ -733,26 +791,148 @@ impl TextInput {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle, cx);
-        let offset = self.offset_at(event.position).unwrap_or(0);
-        // A double click selects the word and a triple click the line. Those don't drag, so a
-        // twitch of the mouse keeps them.
-        self.is_selecting = event.click_count < 2;
-        match event.click_count {
-            2 => self.select_range(words::word_at(&self.content, offset), cx),
-            3.. => self.select_range(words::line_at(&self.content, offset), cx),
-            _ if event.modifiers.shift => self.select_to(offset, cx),
-            _ => self.move_to(offset, cx),
+        let Some(offset) = self.offset_at(event.position) else {
+            return;
+        };
+        let (anchor, unit) = match event.click_count {
+            2 => (words::word_at(&self.content, offset), DragUnit::Word),
+            3.. => (words::line_at(&self.content, offset), DragUnit::Line),
+            _ if event.modifiers.shift => {
+                let anchor = match self.selection_reversed {
+                    true => self.selected_range.end,
+                    false => self.selected_range.start,
+                };
+                (anchor..anchor, DragUnit::Character)
+            }
+            _ => (offset..offset, DragUnit::Character),
+        };
+        self.drag = Some(Drag { anchor, unit });
+        self.drag_to(offset, cx);
+    }
+
+    /// Selects from what the press selected to the character, word or line at `offset`.
+    fn drag_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let Some(Drag { anchor, unit }) = self.drag.clone() else {
+            return;
+        };
+        let under = match unit {
+            DragUnit::Character => offset..offset,
+            DragUnit::Word => words::word_at(&self.content, offset),
+            DragUnit::Line => words::line_at(&self.content, offset),
+        };
+        self.selected_range = anchor.start.min(under.start)..anchor.end.max(under.end);
+        self.selection_reversed = under.start < anchor.start;
+        self.caret_moved();
+        cx.notify();
+    }
+
+    /// A drag selects past the edges of the field too, and the text scrolls after the caret.
+    fn on_drag_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if !event.dragging() {
+            // Let go outside the window.
+            self.drag = None;
+        } else if let Some(offset) = self.offset_at(event.position) {
+            self.drag_to(offset, cx);
         }
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
-        self.is_selecting = false;
+    /// A right click inside the selection keeps it, elsewhere it moves the caret there first.
+    fn on_right_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        window.focus(&self.focus_handle, cx);
+        if let Some(offset) = self.offset_at(event.position)
+            && !(self.selected_range.start..=self.selected_range.end).contains(&offset)
+        {
+            self.move_to(offset, cx);
+        }
+        let entries = self.context_menu_entries(cx);
+        let menu = match self.context_menu.clone() {
+            Some(menu) => menu,
+            None => {
+                let menu = cx.new(|cx| {
+                    DropdownMenu::new("", Vec::new(), cx)
+                        .trigger(Trigger::Pointer)
+                        .width(CONTEXT_MENU_WIDTH)
+                });
+                cx.subscribe_in(&menu, window, Self::on_context_menu_pick)
+                    .detach();
+                self.context_menu = Some(menu.clone());
+                menu
+            }
+        };
+        menu.update(cx, |menu, cx| {
+            menu.set_entries(entries, cx);
+            menu.open_at(event.position, window, cx);
+        });
+        cx.notify();
     }
 
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.is_selecting {
-            self.select_to(self.offset_at(event.position).unwrap_or(0), cx);
+    /// What macOS offers in the menu of a text field, each disabled where it would do nothing.
+    fn context_menu_entries(&self, cx: &App) -> Vec<MenuEntry> {
+        let selected = !self.selected_range.is_empty();
+        let can_paste = (cx.read_from_clipboard().and_then(|item| item.text()))
+            .is_some_and(|text| !text.is_empty());
+        let all_selected = self.selected_range == (0..self.content.len());
+        let command = |value: &'static str, label: &'static str, keys: &'static str, can: bool| {
+            (MenuItem::new(value, label).shortcut(keys))
+                .selectable(false)
+                .disabled(!can)
+        };
+        vec![
+            MenuEntry::Group(MenuGroup::new().items([
+                command("cut", "Cut", "mod+x", selected),
+                command("copy", "Copy", "mod+c", selected),
+                command("paste", "Paste", "mod+v", can_paste),
+            ])),
+            MenuEntry::Separator,
+            MenuEntry::Group(MenuGroup::new().item(command(
+                "select-all",
+                "Select All",
+                "mod+a",
+                !all_selected,
+            ))),
+        ]
+    }
+
+    fn on_context_menu_pick(
+        &mut self,
+        _: &Entity<DropdownMenu>,
+        picked: &MenuPicked,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match picked.0.as_ref() {
+            "cut" => self.cut(&Cut, window, cx),
+            "copy" => self.copy(&Copy, window, cx),
+            "paste" => self.paste(&Paste, window, cx),
+            "select-all" => self.select_all_text(cx),
+            _ => {}
         }
+    }
+
+    /// GPUI moves the focus only to what takes it, and a view may keep a press from the views
+    /// around it, as a clip of the arrangement does. So when nothing took the focus by the end
+    /// of the press, the field lets go of it, as a browser's input does: a rename commits.
+    fn on_press_outside(
+        &mut self,
+        _: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        let focus = self.focus_handle.clone();
+        window.defer(cx, move |window, cx| {
+            if focus.is_focused(window) {
+                window.blur(cx);
+            }
+        });
     }
 
     fn on_scroll_wheel(
@@ -764,16 +944,29 @@ impl TextInput {
         let (Some(layout), Some(bounds)) = (self.last_layout.as_ref(), self.last_bounds) else {
             return;
         };
-        let delta = event.delta.pixel_delta(layout.line_height).y;
-        let scroll_top = rows::clamp_scroll(
-            self.scroll_top - delta,
-            bounds.size.height,
-            layout.content_height(),
-        );
-        // Only rows that can scroll take the wheel, so over a short composer the panel
+        let delta = event.delta.pixel_delta(layout.line_height);
+        let scroll = match self.max_rows {
+            Some(_) => point(
+                px(0.),
+                rows::clamp_scroll(
+                    self.scroll.y - delta.y,
+                    bounds.size.height,
+                    layout.content_height(),
+                ),
+            ),
+            None => point(
+                rows::clamp_scroll(
+                    self.scroll.x - delta.x,
+                    bounds.size.width,
+                    layout.content_width(),
+                ),
+                px(0.),
+            ),
+        };
+        // Only text that can scroll takes the wheel, so over a short composer the panel
         // around it scrolls.
-        if scroll_top != self.scroll_top {
-            self.scroll_top = scroll_top;
+        if scroll != self.scroll {
+            self.scroll = scroll;
             self.follow_caret = false;
             cx.stop_propagation();
             cx.notify();
@@ -795,15 +988,15 @@ impl TextInput {
         }
     }
 
-    /// The caret offset at a point in the window, `None` above the text.
+    /// The caret offset nearest to a point in the window, `None` before the first frame.
     fn offset_at(&self, position: Point<Pixels>) -> Option<usize> {
         let bounds = self.last_bounds?;
         let layout = self.last_layout.as_ref()?;
-        let y = position.y - bounds.top() + self.scroll_top;
+        let at = position - bounds.origin + self.scroll;
         let row = layout
             .rows
-            .get(rows::row_at(y, layout.line_height, layout.rows.len())?)?;
-        Some(self.clamp_offset(layout.offset_for_x(row, position.x - bounds.left())))
+            .get(rows::row_at(at.y, layout.line_height, layout.rows.len()))?;
+        Some(self.clamp_offset(layout.offset_for_x(row, at.x)))
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -889,10 +1082,10 @@ impl TextInput {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
     }
 
-    /// Char boundaries, not graphemes: combining marks move one code point at a time.
+    /// Grapheme boundaries, as a browser steps: an emoji of several code points is one step.
     fn previous_boundary(&self, offset: usize) -> usize {
         self.content
-            .char_indices()
+            .grapheme_indices(true)
             .rev()
             .find_map(|(idx, _)| (idx < offset).then_some(idx))
             .unwrap_or(0)
@@ -900,7 +1093,7 @@ impl TextInput {
 
     fn next_boundary(&self, offset: usize) -> usize {
         self.content
-            .char_indices()
+            .grapheme_indices(true)
             .find_map(|(idx, _)| (idx > offset).then_some(idx))
             .unwrap_or(self.content.len())
     }
@@ -1008,13 +1201,11 @@ impl EntityInputHandler for TextInput {
         let row = layout.rows.get(index)?;
         // A range over more rows is placed by its first row.
         let end = range.end.min(row.range.end);
-        let top = bounds.top() - self.scroll_top + layout.line_height * index;
+        let origin = bounds.origin - self.scroll;
+        let top = origin.y + layout.line_height * index;
         Some(Bounds::from_corners(
-            point(bounds.left() + layout.x_for(row, range.start), top),
-            point(
-                bounds.left() + layout.x_for(row, end),
-                top + layout.line_height,
-            ),
+            point(origin.x + layout.x_for(row, range.start), top),
+            point(origin.x + layout.x_for(row, end), top + layout.line_height),
         ))
     }
 
@@ -1049,6 +1240,8 @@ struct TextLayout {
     lines: Vec<WrappedLine>,
     rows: Vec<Row>,
     line_height: Pixels,
+    /// Of the widest hard line, unwrapped.
+    text_width: Pixels,
 }
 
 impl TextLayout {
@@ -1066,15 +1259,31 @@ impl TextLayout {
             .map(|lines| lines.into_vec())
             .unwrap_or_default();
         let wraps: Vec<Vec<usize>> = lines.iter().map(wrap_offsets).collect();
+        let text_width = (lines.iter())
+            .map(|line| line.unwrapped_layout.width)
+            .fold(px(0.), Pixels::max);
         Self {
             rows: rows::rows(&text, &wraps),
             lines,
             line_height,
+            text_width,
         }
+    }
+
+    /// The caret math works on the text, not on the placeholder shown when it is empty.
+    fn of_empty_text(mut self) -> Self {
+        self.rows = rows::rows("", &[]);
+        self.text_width = px(0.);
+        self
     }
 
     fn content_height(&self) -> Pixels {
         self.line_height * self.rows.len()
+    }
+
+    /// How far a one-line field scrolls: to a caret after the last character.
+    fn content_width(&self) -> Pixels {
+        self.text_width + CARET_WIDTH
     }
 
     /// The x of `offset` from the left of its row.
@@ -1117,7 +1326,7 @@ struct TextElement {
 
 struct PrepaintState {
     layout: Option<TextLayout>,
-    scroll_top: Pixels,
+    scroll: Point<Pixels>,
     cursor: Option<PaintQuad>,
     selections: Vec<PaintQuad>,
 }
@@ -1195,54 +1404,72 @@ impl Element for TextElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let theme = cx.theme();
-        let (cursor_color, selection_color) = (theme.blue, theme.blue.opacity(0.25));
         let input = self.input.read(cx);
+        let focused = input.focus_handle.is_focused(window);
+        let theme = cx.theme();
+        let cursor_color = theme.blue;
+        // As macOS shows the selection of a field that lost the focus.
+        let selection_color = match focused {
+            true => theme.blue.opacity(0.25),
+            false => theme.alpha_at(0.10),
+        };
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = window.line_height();
         let wrap_width = input.max_rows.map(|_| bounds.size.width);
         let (text, runs) = input.display(&style, placeholder_color(cx));
         let mut layout = TextLayout::shape(text, &runs, font_size, wrap_width, line_height, window);
-        // The caret math works on the text, not on the placeholder it shows when empty.
         if input.content.is_empty() {
-            layout.rows = rows::rows("", &[]);
+            layout = layout.of_empty_text();
         }
 
         let caret = input.cursor_offset();
         let caret_row = rows::row_of(&layout.rows, caret);
-        let scroll_top = if input.follow_caret {
-            rows::scroll_to_show(
-                input.scroll_top,
-                caret_row,
-                line_height,
-                bounds.size.height,
-                layout.content_height(),
-            )
-        } else {
-            rows::clamp_scroll(
-                input.scroll_top,
-                bounds.size.height,
-                layout.content_height(),
-            )
+        let caret_x = layout
+            .rows
+            .get(caret_row)
+            .map_or(px(0.), |row| layout.x_for(row, caret));
+        let scroll_axis = |scroll, caret_start, caret_size, view, content| match input.follow_caret
+        {
+            true => {
+                rows::scroll_to_show(scroll, caret_start, caret_start + caret_size, view, content)
+            }
+            false => rows::clamp_scroll(scroll, view, content),
         };
-        let left = bounds.left();
-        let row_top = |index: usize| bounds.top() - scroll_top + line_height * index;
+        let scroll = match input.max_rows {
+            Some(_) => point(
+                px(0.),
+                scroll_axis(
+                    input.scroll.y,
+                    line_height * caret_row,
+                    line_height,
+                    bounds.size.height,
+                    layout.content_height(),
+                ),
+            ),
+            None => point(
+                scroll_axis(
+                    input.scroll.x,
+                    caret_x,
+                    CARET_WIDTH,
+                    bounds.size.width,
+                    layout.content_width(),
+                ),
+                px(0.),
+            ),
+        };
+        let left = bounds.left() - scroll.x;
+        let row_top = |index: usize| bounds.top() - scroll.y + line_height * index;
 
         let selected_range = input.selected_range.clone();
         let (selections, cursor) = if selected_range.is_empty() {
-            let x = layout
-                .rows
-                .get(caret_row)
-                .map_or(px(0.), |row| layout.x_for(row, caret));
             (
                 Vec::new(),
-                // As drawn by macOS: 2 px wide, rounded, in the accent color.
                 Some(
                     fill(
                         Bounds::new(
-                            point(left + x, row_top(caret_row)),
-                            size(px(2.), line_height),
+                            point(left + caret_x, row_top(caret_row)),
+                            size(CARET_WIDTH, line_height),
                         ),
                         cursor_color,
                     )
@@ -1274,7 +1501,7 @@ impl Element for TextElement {
 
         PrepaintState {
             layout: Some(layout),
-            scroll_top,
+            scroll,
             cursor,
             selections,
         }
@@ -1292,33 +1519,58 @@ impl Element for TextElement {
     ) {
         let input = self.input.read(cx);
         let focus_handle = input.focus_handle.clone();
-        let multi_line = input.max_rows.is_some();
         let focused = focus_handle.is_focused(window);
-        let blinked = input.blink_start.elapsed().as_nanos();
+        let blink_start = match focused && !input.had_focus {
+            true => Instant::now(),
+            false => input.blink_start,
+        };
+        let blinked = blink_start.elapsed().as_nanos();
         let caret_on = (blinked / BLINK.as_nanos()).is_multiple_of(2);
         let next_blink = BLINK - Duration::from_nanos((blinked % BLINK.as_nanos()) as u64);
+        // A multi-line input leaves room at the right for a caret at the very end of a full
+        // row. A one-line input scrolls to show it.
+        let caret_room = match input.max_rows {
+            Some(_) => CARET_WIDTH,
+            None => px(0.),
+        };
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
+        // Not on the field's own element, which hears the mouse only while it is over it.
+        window.on_mouse_event({
+            let input = self.input.clone();
+            move |event: &MouseMoveEvent, phase, _, cx| {
+                if phase == DispatchPhase::Bubble && input.read(cx).drag.is_some() {
+                    input.update(cx, |input, cx| input.on_drag_move(event, cx));
+                }
+            }
+        });
+        window.on_mouse_event({
+            let input = self.input.clone();
+            move |_: &MouseUpEvent, phase, _, cx| {
+                if phase == DispatchPhase::Bubble && input.read(cx).drag.is_some() {
+                    input.update(cx, |input, _| input.drag = None);
+                }
+            }
+        });
         let Some(layout) = prepaint.layout.take() else {
             return;
         };
-        let scroll_top = prepaint.scroll_top;
-        // A multi-line input shows only the rows in its box. The mask leaves room at the
-        // sides for a caret at the very end of a row.
-        let mask = multi_line.then(|| ContentMask {
+        let scroll = prepaint.scroll;
+        let mask = ContentMask {
             bounds: Bounds::from_corners(
-                point(bounds.left() - px(2.), bounds.top()),
-                point(bounds.right() + px(2.), bounds.bottom()),
+                bounds.origin,
+                point(bounds.right() + caret_room, bounds.bottom()),
             ),
-        });
-        window.with_content_mask(mask, |window| {
+        };
+        let caret = prepaint.cursor.take().filter(|_| focused);
+        window.with_content_mask(Some(mask), |window| {
             for selection in prepaint.selections.drain(..) {
                 window.paint_quad(selection);
             }
-            let mut origin = point(bounds.left(), bounds.top() - scroll_top);
+            let mut origin = bounds.origin - scroll;
             for line in &layout.lines {
                 line.paint(
                     origin,
@@ -1331,23 +1583,22 @@ impl Element for TextElement {
                 .ok();
                 origin.y += line.size(layout.line_height).height;
             }
-            if focused
-                && caret_on
-                && let Some(cursor) = prepaint.cursor.take()
-            {
-                window.paint_quad(cursor);
+            if caret_on && let Some(caret) = caret.clone() {
+                window.paint_quad(caret);
             }
         });
         self.input.update(cx, |input, cx| {
-            input.blink = focused.then(|| {
+            input.blink = caret.is_some().then(|| {
                 cx.spawn(async move |input, cx| {
                     cx.background_executor().timer(next_blink).await;
                     input.update(cx, |_, cx| cx.notify()).ok();
                 })
             });
+            input.blink_start = blink_start;
+            input.had_focus = focused;
             input.last_layout = Some(layout);
             input.last_bounds = Some(bounds);
-            input.scroll_top = scroll_top;
+            input.scroll = scroll;
             input.follow_caret = false;
         });
     }
@@ -1372,15 +1623,12 @@ impl Render for TextInput {
         if multi_line {
             key_context.add("multi_line");
         }
-        // A multi-line box takes its height from its rows. Its padding leaves room for the
-        // border, so one row is as tall as a one-line field.
-        let pad_y = if multi_line {
-            (size.height() - ROW_HEIGHT - 2.) / 2.
-        } else {
-            (size.height() - ROW_HEIGHT) / 2.
-        };
+        // The padding leaves room for the border, so the row fits the box exactly: a row taller
+        // than its box scrolled 2 px at every key. A multi-line box takes its height from its
+        // rows, so one row is as tall as a one-line field.
+        let pad_y = (size.height() - ROW_HEIGHT - 2.) / 2.;
 
-        div()
+        let field = div()
             .w_full()
             .when(self.fills, |d| d.h_full())
             .when(!multi_line, |d| {
@@ -1442,13 +1690,16 @@ impl Render for TextInput {
                     .on_action(cx.listener(Self::submit))
                     .on_action(cx.listener(Self::cancel))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-                    .on_mouse_move(cx.listener(Self::on_mouse_move))
-                    .when(multi_line, |d| {
-                        d.on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
-                    })
+                    .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_mouse_down))
+                    .on_mouse_down_out(cx.listener(Self::on_press_outside))
+                    .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             })
-            .child(TextElement { input: cx.entity() })
+            .child(TextElement { input: cx.entity() });
+        // The menu is outside the field's key context, so enter and escape are the menu's.
+        div()
+            .w_full()
+            .when(self.fills, |d| d.h_full())
+            .child(field)
+            .children(self.context_menu.clone())
     }
 }

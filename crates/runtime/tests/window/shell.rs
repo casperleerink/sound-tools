@@ -127,7 +127,7 @@ fn a_focused_text_field_gets_cmd_z_before_the_window(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(
         field.read_with(cx, |field, _| field.text().to_string()),
-        "a b"
+        "a "
     );
     assert_eq!(undo_label(cx).as_deref(), Some("Add reverb"));
 

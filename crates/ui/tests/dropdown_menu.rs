@@ -3,9 +3,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gpui::{Modifiers, SharedString, TestAppContext};
+use gpui::{Modifiers, SharedString, TestAppContext, point, px};
 use sound_ui::components::dropdown_menu::{
-    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked,
+    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 
 fn entries(undo_label: &str, values: &[&'static str]) -> Vec<MenuEntry> {
@@ -143,4 +143,48 @@ fn a_row_in_a_submenu_is_picked_with_the_pointer_and_with_the_keys(cx: &mut Test
     cx.simulate_keystrokes("down down enter left");
     assert!(cx.debug_bounds("menu-night").is_none());
     assert!(menu.read_with(cx, |menu, _| menu.is_open()));
+}
+
+/// Up and down in the search field move the highlight, not the caret.
+#[gpui::test]
+fn up_and_down_in_a_search_move_through_the_rows_it_keeps(cx: &mut TestAppContext) {
+    cx.update(sound_ui::init);
+    let (menu, cx) = cx.add_window_view(|_, cx| {
+        DropdownMenu::new("Tracks", entries("track", &["bass", "drums", "keys"]), cx)
+            .searchable("Search", cx)
+    });
+    let picked: Rc<RefCell<Vec<SharedString>>> = Rc::default();
+    cx.update(|_, cx| {
+        let picked = picked.clone();
+        cx.subscribe(&menu, move |_, event: &MenuPicked, _| {
+            picked.borrow_mut().push(event.0.clone())
+        })
+        .detach();
+    });
+    menu.update_in(cx, |menu, window, cx| menu.open(window, cx));
+    cx.run_until_parked();
+    // Typing highlights the first row it keeps, bass.
+    cx.simulate_keystrokes("s down enter");
+    assert_eq!(*picked.borrow(), ["drums"]);
+}
+
+/// A menu at the bottom of the window opens upward, from its bottom edge. Rows the search drops
+/// must not pull the field and the rows above them down.
+#[gpui::test]
+fn a_search_that_opened_upward_stays_put_as_it_drops_rows(cx: &mut TestAppContext) {
+    cx.update(sound_ui::init);
+    let (menu, cx) = cx.add_window_view(|_, cx| {
+        DropdownMenu::new("Tracks", entries("track", &["bass", "drums", "keys"]), cx)
+            .trigger(Trigger::Pointer)
+            .searchable("Search", cx)
+    });
+    let bottom = cx.update(|window, _| window.viewport_size().height);
+    menu.update_in(cx, |menu, window, cx| {
+        menu.open_at(point(px(20.), bottom - px(10.)), window, cx)
+    });
+    cx.run_until_parked();
+    let before = cx.debug_bounds("menu-bass").unwrap().origin;
+    cx.simulate_keystrokes("b");
+    assert!(cx.debug_bounds("menu-keys").is_none());
+    assert_eq!(cx.debug_bounds("menu-bass").unwrap().origin, before);
 }
