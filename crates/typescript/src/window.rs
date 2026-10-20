@@ -100,6 +100,8 @@ pub(crate) struct Live {
     _tasks: [Task<()>; 2],
     /// The card that heard the last press or drag: a menu its code opens shows there.
     last_event_card: Option<u64>,
+    /// A `confirm` of code that no card asked yet.
+    asked: Option<Asked>,
 }
 
 /// The Bun of the window.
@@ -412,6 +414,7 @@ impl Live {
                 changed,
                 _tasks: [hearing_changes, framing],
                 last_event_card: None,
+                asked: None,
             };
             // Only the watcher's problem is new.
             if live.watch_problem.is_some() {
@@ -1496,6 +1499,20 @@ impl Live {
                 self.perform_note(&instance, child.as_deref(), performed, cx);
             }
             Event::OpenFile { question, title } => self.open_file(question, title, cx),
+            Event::Confirm {
+                question,
+                message,
+                detail,
+                confirm,
+            } => {
+                self.asked = Some(Asked {
+                    question,
+                    message,
+                    detail,
+                    confirm,
+                });
+                cx.notify();
+            }
             Event::OpenMenu {
                 question,
                 items,
@@ -1780,6 +1797,19 @@ impl Live {
             .ok();
         })
         .detach();
+    }
+
+    /// The question of code a card asks next, in its window: see [`Asked`].
+    pub(crate) fn take_asked(&mut self) -> Option<Asked> {
+        self.asked.take()
+    }
+
+    /// Answers a `confirm` with whether the composer said its `confirm`.
+    pub(crate) fn confirmed(&mut self, question: u64, said: bool) {
+        self.host.send(&Request::Answer {
+            question,
+            answer: Answer::Confirmed(said),
+        });
     }
 
     /// What the code of `instance` changed, as one edit called `label`, on the records as they
@@ -2186,6 +2216,16 @@ fn offered(takes: Takes, session: Option<Entity<Session>>, cx: &App) -> Vec<Offe
 }
 
 /// A menu the code of a card opened, which the card shows when it draws next.
+/// A yes-or-no question of code, with the system's question: the first card that draws asks it
+/// in its window, which is the project's.
+pub(crate) struct Asked {
+    pub question: u64,
+    pub message: String,
+    pub detail: Option<String>,
+    /// What the button that says yes says. The other is Cancel.
+    pub confirm: String,
+}
+
 pub(crate) struct OpenedMenu {
     pub question: u64,
     pub items: Vec<MenuItemSpec>,

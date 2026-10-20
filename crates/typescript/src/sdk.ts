@@ -1066,6 +1066,11 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    * the place of the item the composer picked, or `null` when they picked none.
    */
   openMenu(items: readonly MenuItem[], options?: MenuOptions): Promise<number | null>;
+  /**
+   * Asks the composer `message` with the system's question, its buttons `confirm` and Cancel,
+   * such as before what a stray key should not do: whether they said `confirm`.
+   */
+  confirm(question: { message: string; detail?: string; confirm: string }): Promise<boolean>;
   /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. With `at`, a child's path, `here` says which of them is there. */
   offers(takes: "notes" | "audio", options?: { at?: string }): Promise<Offers>;
   /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */

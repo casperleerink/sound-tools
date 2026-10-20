@@ -1209,3 +1209,27 @@ fn the_keys_choose_move_and_name_the_track_whose_panel_shows(cx: &mut TestAppCon
         window.record("song/t01")["title"] == "Keys"
     });
 }
+
+/// Delete on the track whose panel shows asks first, as the arrangement did: with no clip chosen
+/// the keys go to the track, so one delete too many after a clip's would take the whole track.
+#[gpui::test]
+fn delete_asks_before_it_deletes_the_track_whose_panel_shows(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let head = window.until_found("div-head-t01");
+    window.click(head);
+    window.until_found("space-knob-t01/send-ret-a.gain_db");
+    window.cx.simulate_keystrokes("backspace");
+    window.until("the question", |window| window.cx.has_pending_prompt());
+    window.cx.simulate_prompt_answer("Cancel");
+    window.after_the_runs();
+    assert!(window.has("song/t01"));
+
+    window.cx.simulate_keystrokes("backspace");
+    window.until("the question", |window| window.cx.has_pending_prompt());
+    window.cx.simulate_prompt_answer("Delete");
+    window.until("the track deleted", |window| !window.has("song/t01"));
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Delete a track"));
+    assert_eq!(window.problems(), []);
+}

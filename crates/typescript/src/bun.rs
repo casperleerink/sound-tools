@@ -138,7 +138,7 @@ pub(crate) enum Request<'a> {
     Drop {
         card: u64,
     },
-    /// The answer to a question of a tool: `openFile`, `openMenu`, `offers` or `numbers`.
+    /// The answer to a question of a tool: `openFile`, `openMenu`, `confirm`, `offers` or `numbers`.
     Answer {
         question: u64,
         answer: Answer<'a>,
@@ -205,6 +205,8 @@ pub(crate) enum Answer<'a> {
     },
     /// What a lane or a cable can move of the child asked about.
     Numbers(Vec<Moved>),
+    /// Whether the composer said yes to a question.
+    Confirmed(bool),
 }
 
 /// A device the window offers, as code gets it: what `addOffer` names it by.
@@ -424,6 +426,15 @@ pub(crate) enum Event {
     },
     /// Code asks the composer for a file, with `title`: the answer goes to its `question`.
     OpenFile { question: u64, title: String },
+    /// Code asks the composer `message` with the system's question, its buttons `confirm` and
+    /// Cancel: the answer goes to its `question`.
+    Confirm {
+        question: u64,
+        message: String,
+        #[serde(default)]
+        detail: Option<String>,
+        confirm: String,
+    },
     /// Code opens a menu of `items` where the pointer is: the answer goes to its `question`.
     OpenMenu {
         question: u64,

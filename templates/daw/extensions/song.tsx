@@ -1,4 +1,4 @@
-import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, Notes, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
+import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, Notes, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type ValuesOf, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -49,6 +49,9 @@ const PALETTE = [
 
 const [MOVES, RESIZES, START_MOVES] = [["move"], ["resize"], ["resize-start"]];
 const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tape, "ret-*": bus, "*": track } as const;
+const fields = { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }), limit_off: boolean({ default: false }) };
+/** What the song's code outside its view gets. */
+type Song = Context<ValuesOf<typeof fields>, Inputs, Memory, typeof parts>;
 const STRIP = 72;
 const MIXER_FADER = 140;
 /** A knob with its name and value under it. */
@@ -207,8 +210,8 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag either end to resize it, double-click empty space to add one and a clip (or enter) to edit its notes below, drag over empty space to choose the clips there, shift- or cmd-click to add one; right-click it to cut, copy, duplicate, rename or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane: click to add a point, chosen, drag one to move it, delete removes the chosen one and alt-click any. The returns sit over the master row, each with a panel of its effects; a track's panel ends with a knob per send. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change, a time signature or a section, T adds a tempo change at the playhead, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it (alt copies it, up and down to another audio track), an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
-  state: { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }), limit_off: boolean({ default: false }) },
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag either end to resize it, double-click empty space to add one and a clip (or enter) to edit its notes below, drag over empty space to choose the clips there, shift- or cmd-click to add one; right-click it to cut, copy, duplicate, rename or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there; delete on a track whose panel shows asks, then deletes it. A lane: click to add a point, chosen, drag one to move it, delete removes the chosen one and alt-click any. The returns sit over the master row, each with a panel of its effects; a track's panel ends with a knob per send. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change, a time signature or a section, T adds a tempo change at the playhead, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it (alt copies it, up and down to another audio track), an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
+  state: fields,
   children: parts,
   memory: (): Memory => ({
     selected: new Set(), region: null, below: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
@@ -647,26 +650,11 @@ export const song = tool({
       });
       if (picked === 2) memory.returnsOpen = true;
     };
-    const deleteTrack = (name: string) => {
-      update("Delete a track", ({ state, children }) => {
-        state.order = state.order.filter((each) => each !== name);
-        state.solo = state.solo.filter((each) => each !== name);
-        state.sidechains = state.sidechains.filter(({ effect, from }) => from !== name && !effect.startsWith(`${name}/`));
-        for (const each of children) {
-          if (each.tool === "track") each.children = each.children.filter((child) => child.name !== `send-${name}`);
-          if (each.tool === "tape") each.children = each.children.filter((child) => child.name !== `send-${name}`);
-        }
-        children.splice(0, children.length, ...children.filter((child) => child.name !== name));
-      });
-      if (memory.track === name) memory.track = null;
-      const below = memory.below;
-      if ((below?.kind === "track" && below.name === name) || (below?.kind === "editor" && below.clip.startsWith(`${name}/`))) memory.below = null;
-      memory.selected = new Set([...memory.selected].filter((key) => !key.startsWith(`${name}/`)));
-    };
+    const deleteTrack = (name: string) => deleteRow({ update, memory }, name);
     const trackMenu = async (each: Child) => {
       const lanesShown = memory.lanes.has(each.name);
       const items = [{ label: "Rename" }, { label: "Colour…" }, { label: lanesShown ? "Hide automation" : "Show automation" },
-        { label: "Add automation…" }, { label: "Delete" }];
+        { label: "Add automation…" }, { label: "Delete", shortcut: "backspace" as const }];
       const picked = await openMenu(items);
       if (picked === 0) memory.renaming = each.name;
       else if (picked === 1) {
@@ -2126,11 +2114,16 @@ function toggleRecordingOf({ memory, send, clock, children }: Pick<Context<unkno
  * keys did: enter names it, up and down choose the track above or below, alt-up and alt-down
  * move it there. Whether it was one of them.
  */
-function trackKey(key: Key, order: readonly string[], { children, memory, select }: Context<unknown, Inputs, Memory, typeof parts>, reorder: (names: string[]) => void): boolean {
+function trackKey(key: Key, order: readonly string[], tool: Song, reorder: (names: string[]) => void): boolean {
+  const { children, memory, select } = tool;
   const name = memory.below?.kind === "track" ? memory.below.name : null;
-  if (!name || key.cmd || !["enter", "up", "down"].includes(key.key)) return false;
+  if (!name || key.cmd || !["enter", "up", "down", "delete", "backspace"].includes(key.key)) return false;
   if (key.key === "enter") {
     memory.renaming = name;
+    return true;
+  }
+  if (key.key === "delete" || key.key === "backspace") {
+    void askToDelete(tool, name);
     return true;
   }
   const rank = (each: string) => (order.includes(each) ? order.indexOf(each) : order.length);
@@ -2153,6 +2146,40 @@ function trackKey(key: Key, order: readonly string[], { children, memory, select
   memory.track = other;
   select(other);
   return true;
+}
+
+/**
+ * Deletes the track or return `name` once the composer says yes, as the arrangement asked: with
+ * no clip chosen the keys go to the track, so one delete too many after a clip's would take it.
+ */
+async function askToDelete(tool: Song, name: string) {
+  const row = tool.children.find((child) => child.name === name);
+  if (row?.tool !== "track" && row?.tool !== "tape" && row?.tool !== "bus") return;
+  const title = row.state.title || name;
+  const said = await tool.confirm(
+    row.tool === "bus"
+      ? { message: `Delete the return "${title}"?`, detail: "Its effects, automation and the sends into it go with it. Undo brings it back.", confirm: "Delete" }
+      : { message: `Delete the track "${title}"?`, detail: "Its clips, devices and automation go with it. Undo brings it back.", confirm: "Delete" },
+  );
+  if (said) deleteRow(tool, name);
+}
+
+/** Deletes the track, audio track or return `name`, with the sends into it and what chose it. */
+function deleteRow({ update, memory }: Pick<Song, "update" | "memory">, name: string) {
+  update("Delete a track", ({ state, children }) => {
+    state.order = state.order.filter((each) => each !== name);
+    state.solo = state.solo.filter((each) => each !== name);
+    state.sidechains = state.sidechains.filter(({ effect, from }) => from !== name && !effect.startsWith(`${name}/`));
+    for (const each of children) {
+      if (each.tool === "track") each.children = each.children.filter((child) => child.name !== `send-${name}`);
+      if (each.tool === "tape") each.children = each.children.filter((child) => child.name !== `send-${name}`);
+    }
+    children.splice(0, children.length, ...children.filter((child) => child.name !== name));
+  });
+  if (memory.track === name) memory.track = null;
+  const below = memory.below;
+  if ((below?.kind === "track" && below.name === name) || (below?.kind === "editor" && below.clip.startsWith(`${name}/`))) memory.below = null;
+  memory.selected = new Set([...memory.selected].filter((key) => !key.startsWith(`${name}/`)));
 }
 
 /** What a key does to the chosen clips: copy, cut, paste, duplicate, delete, nudge. `tracks` are in their order. */

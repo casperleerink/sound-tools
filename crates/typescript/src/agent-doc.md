@@ -157,7 +157,7 @@ tool({
 | `<DeviceCard path>` | The card of a child, or a deeper one, by its path: a built-in device's own card, a plugin's, or a tool's view. |
 | `<Knob>`, `<Steps>`, `<Meter>`, `<Pad>` | A knob, a row of steps, a level, a square for the pointer, on numbers named as `now.value` names them. |
 
-All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`: `state` and `children`, every field at its default where a record leaves it out; `outputs`; `time`; `clock`; `memory`; `now`; `update`; `send` and `play`; and what reaches the window: `openFile`, `openMenu`, `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
+All code of a tool gets the same `Context`, each member with its doc in `sdk.ts`: `state` and `children`, every field at its default where a record leaves it out; `outputs`; `time`; `clock`; `memory`; `now`; `update`; `send` and `play`; and what reaches the window: `openFile`, `openMenu`, `confirm` (the system's yes-or-no question), `select` (what the MIDI keyboard plays), `offers` and `addOffer` (the devices that fit a child), `numbers` (what a lane can move).
 
 ### Values that change
 

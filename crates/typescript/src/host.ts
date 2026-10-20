@@ -928,7 +928,7 @@ function selector(instance: string) {
   };
 }
 
-/** Questions to the window, by number, which its answers settle: `openFile`, `openMenu`, `offers`, `numbers`. */
+/** Questions to the window, by number, which its answers settle: `openFile`, `openMenu`, `confirm`, `offers`, `numbers`. */
 const asked = new Map<number, (answer: unknown) => void>();
 let questions = Number(bunNumber) * 2 ** 32;
 function ask<Answer>(message: { type: string } & Record<string, unknown>): Promise<Answer> {
@@ -946,6 +946,7 @@ function askers(instance: string) {
     numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
     /** The runtime opens the file and copies it under `assets/audio/`. */
     openFile: ({ title = "Choose a file" }: { title?: string } = {}) => ask<string | null>({ type: "open_file", title }),
+    confirm: ({ message, detail, confirm }: { message: string; detail?: string; confirm: string }) => ask<boolean>({ type: "confirm", message, detail, confirm }),
   };
 }
 
@@ -1202,7 +1203,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, openMenu: async () => null, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {} };
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, openMenu: async () => null, confirm: async () => false, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {} };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };

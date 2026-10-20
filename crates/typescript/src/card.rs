@@ -12,9 +12,9 @@ use gpui::{
     AnyElement, AnyView, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, EventEmitter,
     ExternalPaths, FocusHandle, Focusable, Hitbox, HitboxBehavior, Hsla, KeyDownEvent, KeyUpEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, StyleRefinement,
-    TextAlign, TextRun, WeakEntity, Window, canvas, div, fill, outline, point, prelude::*, px,
-    size,
+    MouseUpEvent, PinchEvent, Pixels, Point, PromptLevel, ScrollWheelEvent, SharedString,
+    StyleRefinement, TextAlign, TextRun, WeakEntity, Window, canvas, div, fill, outline, point,
+    prelude::*, px, size,
 };
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
@@ -476,6 +476,20 @@ impl TypeScriptCard {
         let card = self.card;
         if let Some(menu) = self.live.update(cx, |live, _| live.take_menu(card)) {
             self.open_menu(menu, window, cx);
+        }
+        if let Some(asked) = self.live.update(cx, |live, _| live.take_asked()) {
+            // The question takes the keys, and the key that asked comes up there.
+            self.let_go_of_keys(cx);
+            let buttons = [asked.confirm.as_str(), "Cancel"];
+            let detail = asked.detail.as_deref();
+            let answer = window.prompt(PromptLevel::Warning, &asked.message, detail, &buttons, cx);
+            let live = self.live.downgrade();
+            cx.spawn(async move |_, cx| {
+                let said = answer.await == Ok(0);
+                live.update(cx, |live, _| live.confirmed(asked.question, said))
+                    .ok();
+            })
+            .detach();
         }
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
