@@ -1027,7 +1027,7 @@ export const song = tool({
                   color={colour} width={1.5} />,
                 <Rect x={() => timeline.pointX.times(-3.5).plus(point.tick)} y={() => timeline.pointY.times(-3.5).plus(yOf(point.value))}
                   width={timeline.pointX.times(7)} height={timeline.pointY.times(7)} radius={3.5} color={colour} cursor="grab"
-                  drag={pointDrag} moves={() => (pressed() === index() ? ["point"] : undefined)}
+                  drag={pointDrag} anchor={() => ({ x: point.tick })} moves={() => (pressed() === index() ? ["point"] : undefined)}
                   onPress={({ alt }) => (alt ? points().length > 1 && editPoints("Remove a point", track, lane.lane, (all) => all.filter((_, each) => each !== index())) : press(index()))} />,
               ];
             }}

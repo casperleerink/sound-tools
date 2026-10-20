@@ -131,13 +131,7 @@ pub(crate) fn schema() -> ToolSchema {
 
 /// The record of `state`, or what is wrong with it, by its path.
 fn record(state: &Value) -> Result<Record, String> {
-    serde_path_to_error::deserialize(state).map_err(|error| {
-        let path = error.path().to_string();
-        match path.as_str() {
-            "." => format!("state: {}", error.inner()),
-            _ => format!("state.{path}: {}", error.inner()),
-        }
-    })
+    sound_core::parse_state(state)
 }
 
 /// One round of its notes, or what is wrong with them.

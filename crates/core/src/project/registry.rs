@@ -441,17 +441,52 @@ impl<S: State> ToolRegistration<'_, S> {
 }
 
 fn decode<S: State>(value: serde_json::Value) -> Result<Record, String> {
-    let state: S = serde_path_to_error::deserialize(value).map_err(|error| {
-        let path = error.path().to_string();
-        let field = if path == "." {
-            "state".to_string()
-        } else {
-            format!("state.{path}")
-        };
-        format!("{field}: {}", error.inner())
-    })?;
+    let state: S = parse_state(&value)?;
     state
         .validate()
         .map_err(|message| format!("state: {message}"))?;
     Ok(Record::new(state))
+}
+
+/// A record's `state` read as `S`, or what is wrong with it at its path, such as
+/// `state.points[2].tick: …`.
+pub fn parse_state<S: serde::de::DeserializeOwned>(value: &serde_json::Value) -> Result<S, String> {
+    serde_path_to_error::deserialize(value).map_err(|error| {
+        let path = error.path().to_string();
+        let field = match path.as_str() {
+            "." => "state".to_string(),
+            _ => format!("state.{path}"),
+        };
+        let inner = error.inner().to_string();
+        // JavaScript numbers are all floats: say the fix where a whole number was wanted.
+        let whole = inner.starts_with("invalid type: floating point")
+            && [", expected u", ", expected i"]
+                .iter()
+                .any(|kind| inner.contains(kind));
+        match whole {
+            true => {
+                format!("{field}: {inner}; it must be a whole number, so round it (Math.round)")
+            }
+            false => format!("{field}: {inner}"),
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_state;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Point {
+        #[allow(dead_code)]
+        tick: u64,
+    }
+
+    #[test]
+    fn a_float_where_a_whole_number_goes_says_to_round_it() {
+        let error = parse_state::<Vec<Point>>(&serde_json::json!([{ "tick": 0 }, { "tick": 1.5 }]))
+            .unwrap_err();
+        assert!(error.starts_with("state.[1].tick: invalid type"), "{error}");
+        assert!(error.ends_with("so round it (Math.round)"), "{error}");
+    }
 }

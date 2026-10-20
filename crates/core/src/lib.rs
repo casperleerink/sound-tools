@@ -85,7 +85,7 @@ pub use project::{
     OutputEndpoint, PROBLEMS_FILE, Place, PortReference, Problem, Project, ProjectError,
     ProjectEvent, ProjectFile, RUN_LONGEST, RUN_QUIET, RecordSchema, RecordStamp, Registry,
     RegistryError, SavedConnection, SavedDestination, SavedSource, State, StorageError,
-    ToolRegistration, ToolSchema, ranges, type_doc, unit_of,
+    ToolRegistration, ToolSchema, parse_state, ranges, type_doc, unit_of,
 };
 pub use saturation::soft_clip;
 pub use scope::Scope;

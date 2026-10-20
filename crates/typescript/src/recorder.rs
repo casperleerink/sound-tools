@@ -101,13 +101,7 @@ pub(crate) fn schema() -> ToolSchema {
 
 /// The record of `state`, or what is wrong with it.
 fn record(state: &Value) -> Result<RecorderState, String> {
-    let record: RecorderState = serde_path_to_error::deserialize(state).map_err(|error| {
-        let path = error.path().to_string();
-        match path.as_str() {
-            "." => format!("state: {}", error.inner()),
-            _ => format!("state.{path}: {}", error.inner()),
-        }
-    })?;
+    let record: RecorderState = sound_core::parse_state(state)?;
     match record.channels.as_slice() {
         [] | [_] => Ok(record),
         [left, right] if *right == left + 1 => Ok(record),

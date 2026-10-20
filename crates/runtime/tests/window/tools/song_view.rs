@@ -320,6 +320,17 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     assert_eq!(window.undo_label().as_deref(), Some("Add a point"));
     let added = window.record("song/t00/lane-cutoff")["points"][1].clone();
     assert_eq!(added["tick"], 2 * BAR, "{added}");
+    // Dragged off the grid, it lands on a sixteenth: a whole tick the lane takes.
+    window.drag(at, at + point(px(37.), px(0.)));
+    window.until("the point moved", |window| {
+        window.record("song/t00/lane-cutoff")["points"][1]["tick"] != 2 * BAR
+    });
+    let tick = window.record("song/t00/lane-cutoff")["points"][1]["tick"].as_u64();
+    assert!(tick.is_some_and(|tick| tick % (BAR / 16) == 0), "{tick:?}");
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Move a point"));
+    assert_eq!(window.problems(), []);
+    let at = window.on_lane(tick.unwrap_or_default(), 1);
     window.alt_click(at);
     window.until("the point removed", |window| points(window) == Some(2));
     window.after_the_runs();

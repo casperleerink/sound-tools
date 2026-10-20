@@ -92,13 +92,7 @@ pub(crate) fn schema() -> ToolSchema {
 
 /// The record of `state`, or what is wrong with it, by its path.
 fn record(state: &Value) -> Result<Record, String> {
-    let record: Record = serde_path_to_error::deserialize(state).map_err(|error| {
-        let path = error.path().to_string();
-        match path.as_str() {
-            "." => format!("state: {}", error.inner()),
-            _ => format!("state.{path}: {}", error.inner()),
-        }
-    })?;
+    let record: Record = sound_core::parse_state(state)?;
     if record.points.is_empty() {
         return Err("state.points must hold at least one point".to_string());
     }
