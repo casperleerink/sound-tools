@@ -86,6 +86,16 @@ impl Opened {
         files: &[(String, String)],
         prepare: impl FnOnce(&Path) -> Result<()>,
     ) -> Result<Self> {
+        Self::open_with_input(cx, files, prepare, None)
+    }
+
+    /// [`Self::open_with`], with an audio input the window opens through `open_input`.
+    fn open_with_input(
+        cx: &mut HeadlessAppContext,
+        files: &[(String, String)],
+        prepare: impl FnOnce(&Path) -> Result<()>,
+        open_input: Option<runtime::window::audio_input::OpenInput>,
+    ) -> Result<Self> {
         // The folder name is the project name in the window.
         let folder = tempfile::tempdir()?;
         let root = folder.path().join("Night Study");
@@ -112,7 +122,10 @@ impl Opened {
             }
             cx.new(|cx| {
                 let name = "MacBook Pro Speakers".into();
-                let device = DeviceAccess::default();
+                let device = DeviceAccess {
+                    open_input,
+                    ..DeviceAccess::default()
+                };
                 Shell::with_device(session, (views, devices), name, device, window, cx)
             })
         })?;
@@ -152,6 +165,20 @@ impl Opened {
             cx.update(|cx| sound_typescript::run_frame(&page, cx));
         }
         cx.run_until_parked();
+    }
+
+    /// What the timers of the input and of the recorders do, which a headless window runs not:
+    /// the level of the input, and the takes as they grow.
+    fn poll_recording(&self, cx: &mut HeadlessAppContext) -> Result<()> {
+        cx.update(|cx| {
+            let shell = self.window.read(cx)?;
+            let (live, recorders) = (shell.live_input().clone(), shell.recorders().clone());
+            live.update(cx, |live, cx| live.poll_input(cx));
+            recorders.update(cx, |recorders, cx| recorders.poll(cx));
+            anyhow::Ok(())
+        })?;
+        cx.run_until_parked();
+        Ok(())
     }
 
     /// Seeks and plays, then plays half a second in frames of the window, so meters and what

@@ -12,7 +12,13 @@
 //! - `look-audio.png`: the piece with a voice and a guitar as audio, playing at 6.3, the second
 //!   region of the voice chosen, and the panel of the voice: its region's card, a compressor and
 //!   a reverb.
+//! - `look-armed.png`: the voice armed, its input level in its header and on the meter of its
+//!   panel, stopped.
+//! - `look-recording.png`: the voice and the guitar armed and recording from bar 5 over their
+//!   regions, the takes growing to the playhead at 7.2 with their sound.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -23,7 +29,9 @@ use gpui::{
 use serde_json::{Value, json};
 use sound_core::Ticks;
 
-use crate::song::{ACROSS, BAR, HEADER, LEAD, ROW, daw};
+use crate::song::{ACROSS, ARM, BAR, HEADER, LEAD, ROW, TOGGLES, daw};
+use runtime::window::audio_input::{OpenInput, OpenedInput};
+use sound_core::CaptureWriter;
 
 /// Where a song's rows start: under the title row and the ruler, whose line is its last point.
 const TOP: f32 = 48.0 + 32.0;
@@ -103,6 +111,90 @@ fn open(cx: &mut HeadlessAppContext, more: &[(&str, serde_json::Value)]) -> Resu
 /// A track header's name, `row` from the top.
 fn header(row: f32) -> Point<Pixels> {
     point(px(60.), px(TOP + row * ROW + 18.))
+}
+
+/// The arm toggle of the audio track `row` from the top.
+fn arm(row: f32) -> Point<Pixels> {
+    point(px(ARM), px(TOP + row * ROW + TOGGLES))
+}
+
+/// The record button of the transport in the title bar.
+const RECORD: (f32, f32) = (555., 24.);
+
+/// What the input brings, as the arrangement's snapshots had it: the voice on the left and the
+/// guitar on the right, at half.
+#[derive(Clone, Default)]
+struct SimulatedInput {
+    writer: Arc<Mutex<Option<CaptureWriter>>>,
+    written: Arc<AtomicU64>,
+}
+
+impl SimulatedInput {
+    fn opener(&self) -> OpenInput {
+        let input = self.clone();
+        Arc::new(move || {
+            let (writer, reader) = sound_core::capture(48_000, 2);
+            *input.writer.lock().expect("the writer") = Some(writer);
+            input.written.store(0, Ordering::Relaxed);
+            Ok(OpenedInput {
+                stream: None,
+                reader,
+                live: sound_core::live_input(48_000, 2).1,
+                notice: None,
+            })
+        })
+    }
+
+    /// Writes the input up to engine frame `until`, captured as that frame sounds.
+    fn write_until(&self, until: u64) {
+        let mut writer = self.writer.lock().expect("the writer");
+        let Some(writer) = writer.as_mut() else {
+            return;
+        };
+        let first = self.written.load(Ordering::Relaxed);
+        if until <= first {
+            return;
+        }
+        let samples: Vec<f32> = (first..until)
+            .flat_map(|frame| {
+                let time = frame as f64 / 48_000.;
+                [(voice(time) * 0.5) as f32, (strum(time) * 0.5) as f32]
+            })
+            .collect();
+        writer.write(&samples, first * 1_000_000_000 / 48_000, 0);
+        self.written.store(until, Ordering::Relaxed);
+    }
+}
+
+/// `seconds` of polls of the window, the input arriving as the engine plays.
+fn run_input(
+    opened: &mut super::Opened,
+    input: &SimulatedInput,
+    seconds: f32,
+    cx: &mut HeadlessAppContext,
+) -> Result<()> {
+    let poll = (48_000. * sound_ui::POLL_INTERVAL.as_secs_f32()) as usize;
+    let step = |opened: &mut super::Opened, cx: &mut HeadlessAppContext| {
+        opened.advance(poll, cx);
+        input.write_until(opened.engine.frames());
+        opened.poll_recording(cx)
+    };
+    let polls = (seconds * 1000. / 16.) as usize;
+    for _ in 0..polls.saturating_sub(4) {
+        step(opened, cx)?;
+    }
+    // The recorder writes on a thread of its own: its takes catch up, then the last polls show
+    // the level of the input as it arrives.
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(10));
+        opened.poll_recording(cx)?;
+    }
+    for _ in 0..polls.min(4) {
+        step(opened, cx)?;
+    }
+    cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    Ok(())
 }
 
 pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Result<()> {
@@ -244,6 +336,33 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     opened.play_from(Ticks(5 * BAR + 1510), cx)?;
     wait_for_waveforms(&mut opened, cx)?;
     save(cx, opened.window.into(), "look-audio")?;
+    drop(opened);
+
+    // The voice armed, stopped, with its panel open: the level of its input.
+    let input = SimulatedInput::default();
+    let mut opened =
+        super::Opened::open_with_input(cx, &audio_files(), write_audio, Some(input.opener()))?;
+    wait_for_waveforms(&mut opened, cx)?;
+    click(&opened, arm(3.), 1, cx)?;
+    click(&opened, header(3.), 1, cx)?;
+    run_input(&mut opened, &input, 0.5, cx)?;
+    save(cx, opened.window.into(), "look-armed")?;
+    drop(opened);
+
+    // Both armed, recording from bar 5 to 7.2 over their regions.
+    let input = SimulatedInput::default();
+    let mut opened =
+        super::Opened::open_with_input(cx, &audio_files(), write_audio, Some(input.opener()))?;
+    wait_for_waveforms(&mut opened, cx)?;
+    click(&opened, arm(3.), 1, cx)?;
+    click(&opened, arm(4.), 1, cx)?;
+    click(&opened, header(3.), 1, cx)?;
+    cx.update(|cx| (opened.session).update(cx, |session, _| session.engine().seek(Ticks(4 * BAR))));
+    opened.advance(64, cx);
+    settle(cx);
+    click(&opened, point(px(RECORD.0), px(RECORD.1)), 1, cx)?;
+    run_input(&mut opened, &input, 4.6, cx)?;
+    save(cx, opened.window.into(), "look-recording")?;
     drop(opened);
 
     let limiter = json!({ "tool": "limiter", "state": { "ceiling_db": 0, "lookahead_ms": 0, "gain_db": 18 } });
@@ -453,7 +572,7 @@ fn audio_files() -> Vec<(String, String)> {
             "file_end_seconds": to, "gain_db": gain_db, "fade_in_ms": fades.0, "fade_out_ms": fades.1,
         } })
     };
-    let tape = |title: &str, colour: &str, order: &[&str]| {
+    let tape = |title: &str, colour: &str, order: &[&str], channel: u32| {
         [
             (
                 "instance.json",
@@ -461,7 +580,7 @@ fn audio_files() -> Vec<(String, String)> {
             ),
             (
                 "rec.json",
-                json!({ "tool": "recorder", "state": { "channels": [0] } }),
+                json!({ "tool": "recorder", "state": { "channels": [channel] } }),
             ),
             (
                 "chain/instance.json",
@@ -471,10 +590,11 @@ fn audio_files() -> Vec<(String, String)> {
         ]
     };
     let mut more: Vec<(String, Value)> = Vec::new();
-    for (file, record) in tape("Voice", "mauve", &["compressor", "reverb"]) {
+    for (file, record) in tape("Voice", "mauve", &["compressor", "reverb"], 0) {
         more.push((format!("audio-voice/{file}"), record));
     }
-    for (file, record) in tape("Guitar", "teal", &[]) {
+    // The guitar on the right channel of the input, as the arrangement's recorded it.
+    for (file, record) in tape("Guitar", "teal", &[], 1) {
         more.push((format!("audio-guitar/{file}"), record));
     }
     more.extend([

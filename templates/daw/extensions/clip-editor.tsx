@@ -330,7 +330,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
         <div style={{ width: HEADER - 1, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8, keep: true }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: colour() })} />
           <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-900" }}>{name}</div>
-          <Button key="close-editor" icon="x" variant="ghost" size="xs" onPress={onClose} />
+          <Button key="close-editor" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={onClose} />
         </div>
         <Rule />
         <Space key={`${key}-ruler`} grow height={RULER} {...across} follow={{ x: key }}>
@@ -356,11 +356,11 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
         <Rule />
         <Space key={key} grow height={roll} {...across} unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-BEAT, end()] as const, y: [0, 128] as const })}
           fit={{ x: [0, opening], before: 8, after: 96 }} scroll={{ y: middleRow }} drag={marqueeDrag} onPress={pressEmpty}>
-          {pitches.filter((pitch) => !isBlack(pitch)).map((pitch) => <Rect x={-1e6} y={rowOf(pitch)} width={2e6} height={1} color="alpha/2" />)}
+          {pitches.filter(isBlack).map((pitch) => <Rect x={-1e6} y={rowOf(pitch)} width={2e6} height={1} color="alpha/2" />)}
           <For each={beats}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="alpha/5" width={1} />}</For>
           <For each={lines}>{(tick) => <Line from={[tick, 0]} to={[tick, 128]} color="alpha/7" width={1} />}</For>
-          <Rect x={length} y={0} width={1e6} height={128} color="#00000030" />
-          <Rect x={-1e6} y={0} width={1e6} height={128} color="#00000030" />
+          <Rect x={length} y={0} width={1e6} height={128} color="gray-100" />
+          <Rect x={-1e6} y={0} width={1e6} height={128} color="gray-100" />
           {() => {
             const snap = memory.snap;
             return <For each={notes}>{NoteShapes({ move: moveDrag(snap), resize: resizeDrag(snap) })}</For>;

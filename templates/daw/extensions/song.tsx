@@ -1,4 +1,4 @@
-import { Arc, boolean, Button, Circle, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
+import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -21,7 +21,9 @@ const MASTER_ROW = 40;
 const ADD_LANE = 40;
 const EDITOR = 352;
 // The panel of the chosen track, as tall as a card and the room around it.
-const RACK = 192 + 24;
+/** A device card's height, and the panel's: its cards, 11 points above them and 12 under. */
+const CARD = 192;
+const RACK = CARD + 23;
 // Points per tick at zoom 1: a bar is 96 points.
 const ACROSS = 0.025;
 // The ticks left of bar 1, eight points at zoom 1.
@@ -46,7 +48,7 @@ const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tap
 const STRIP = 64;
 const FADER = 160;
 // The fader of the chosen track's panel.
-const PANEL_FADER = 114;
+const PANEL_FADER = 113;
 
 type Clipboard = { from: number; clips: { track: string; state: FilledStateOfTool<"timeline"> }[] };
 /** A track of the song as code reads it. */
@@ -311,6 +313,11 @@ export const song = tool({
     /** The row at `y`, as its place in the layout. */
     const rowAt = (y: number) => Math.max(tops().findIndex((top) => top > y) - 1, 0);
     const regionsOf = (each: Child) => (each.tool === "tape" ? each.children.filter((child) => child.tool === "region") : []);
+    /** The channels of the audio input the recorder of an audio track records. */
+    const inputOf = (each: Child | undefined): readonly number[] => {
+      const rec = each?.tool === "tape" ? each.children.find((child) => child.name === "rec") : undefined;
+      return rec?.tool === "recorder" ? [...rec.state.channels] : [];
+    };
     const clipsOf = (each: Child) => (each.tool === "track" ? each.children.filter((child) => child.tool === "timeline") : []);
     const recordable = (each: Child) => (each.tool === "track" || each.tool === "tape") && each.children.some((child) => child.name === "rec");
     const runs = () => clock.tempo_map.time_signatures;
@@ -670,6 +677,8 @@ export const song = tool({
 
     // Clips' keys
     const timeline = now.space("timeline");
+    // The playhead's line covers the point right of where it is, as the window's did.
+    const playhead = now.tick.plus(timeline.pointX.times(0.5));
     const handle = timeline.pointX.times(6);
 
     /** A device the composer picks from what the window offers that takes `takes`, as the window's pickers list them. */
@@ -729,15 +738,15 @@ export const song = tool({
       const row = () => rows().find((each) => each.name === name);
       return (
         <div style={{ height: RACK, direction: "row", keep: true }}>
-          <div style={{ width: HEADER - 1, keep: true, paddingTop: 13 }}>
+          <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
             <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
               <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
               <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-950" }}>{() => (row() ? titleOf(row()!) : name)}</div>
-              <Button key="close-panel" icon="x" variant="ghost" size="xs" onPress={() => (memory.panel = null)} />
+              <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={() => (memory.panel = null)} />
             </div>
             <div style={{ direction: "row", paddingLeft: 8, gap: 20 }}>
-              <div style={{ align: "center", gap: 9, paddingTop: 5 }}>
-                <Volume path={`${name}/mix`} height={PANEL_FADER} />
+              <div style={{ align: "center", gap: 8, paddingTop: 5 }}>
+                {() => <Volume path={`${name}/mix`} height={PANEL_FADER} input={memory.armed.has(name) ? inputOf(row()) : undefined} />}
                 <GainText path={`${name}/mix`} />
               </div>
               <div style={{ align: "start" }}>
@@ -751,7 +760,7 @@ export const song = tool({
             </div>
           </div>
           <div style={{ width: 1, background: "alpha/5", keep: true }} />
-        <div key="rack" style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 12, paddingRight: 16, align: "start", scroll: "x" }}>
+        <div key="rack" style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 11, paddingRight: 16, align: "start", scroll: "x" }}>
           {() =>
             row()?.tool === "tape" ? (
               <>
@@ -759,7 +768,7 @@ export const song = tool({
                   const chosen = memory.region;
                   return chosen?.startsWith(`${name}/`) ? <DeviceCard key={`clip-${chosen}`} path={chosen} /> : <EmptyClip />;
                 }}
-                <div style={{ width: 1, height: RACK - 24, background: "alpha/6", keep: true }} />
+                <div style={{ width: 1, height: CARD, background: "alpha/6", keep: true }} />
               </>
             ) : (
               <DeviceCard path={`${name}/synth`} onTitle={() => replace("notes", `${name}/synth`, "Change the instrument")} />
@@ -784,11 +793,11 @@ export const song = tool({
 
     /** The first card of an audio track while none of its regions is chosen, as a device card looks. */
     const EmptyClip = () => (
-      <div key="clip-empty" style={{ width: 88, height: 192, radius: 10, background: "gray-200", borderColor: "alpha/6", borderWidth: 1, keep: true }}>
+      <div key="clip-empty" style={{ width: 88, height: CARD, radius: 10, background: "gray-200", borderColor: "alpha/6", borderWidth: 1, keep: true }}>
         <div style={{ height: 32, direction: "row", align: "center", paddingLeft: 15 }}>
           <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Clip</div>
         </div>
-        <div style={{ paddingX: 15, fontSize: 12, color: "gray-800" }}>Select a clip.</div>
+        <div style={{ paddingX: 15, fontSize: 12, lineHeight: 14, color: "gray-800" }}>Select a clip.</div>
       </div>
     );
     /** The channels of the input an audio track records, each alone and then the pair. */
@@ -830,8 +839,8 @@ export const song = tool({
         </Space>
       );
     };
-    /** A fader over its meter, as the window drew a strip's volume: two bars, green up to -6 dB and yellow above, with a peak line held 1.5 s, and the handle on them, which a drag up and down turns natively. With `device`, the meter is of what the device plays. */
-    const Volume = ({ path, height, device }: { path: string; height: number; device?: boolean }) => {
+    /** A fader over its meter, as the window drew a strip's volume: two bars, green up to -6 dB and yellow above, with a peak line held 1.5 s, and the handle on them, which a drag up and down turns natively. With `device`, the meter is of what the device plays; with `input`, of those channels of the audio input, as while the track is armed. */
+    const Volume = ({ path, height, device, input }: { path: string; height: number; device?: boolean; input?: readonly number[] }) => {
       const place = (amplitude: Live) => amplitude.pow(CURVE).times(ZERO_DB).min(1);
       const hot = Math.pow(Math.pow(10, -6 / 20), CURVE) * ZERO_DB;
       const at = now.value(`${path}.gain_db`, { played: true, fraction: true });
@@ -839,7 +848,8 @@ export const song = tool({
         <Space key={`volume-${path}`} width={28} height={height} cursor="ns-resize"
           drag={{ y: { value: `${path}.gain_db`, travel: height, default: 0, label: "Change the volume" } }}>
           {([0, 1] as const).flatMap((channel) => {
-            const level = device ? now.devicePeak(channel) : now.peak(path, channel);
+            const heard = input?.[channel] ?? input?.[0];
+            const level = heard !== undefined ? now.input(heard) : device ? now.devicePeak(channel) : now.peak(path, channel);
             const bar = place(level).fall(0.5);
             const peak = place(level).hold(1.5).fall(0.5);
             const x = 8 + channel * 7;
@@ -903,21 +913,21 @@ export const song = tool({
     /** The master's panel: its fader and meter, and its limiter. */
     const MasterPanel = () => (
       <div style={{ height: RACK, direction: "row", keep: true }}>
-        <div style={{ width: HEADER - 1, keep: true, paddingTop: 13 }}>
+        <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
           <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
             <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
             <div style={{ grow: true, fontSize: 14, weight: "medium", color: "gray-950" }}>Master</div>
-            <Button key="close-master" icon="x" variant="ghost" size="xs" onPress={() => (memory.master = false)} />
+            <Button key="close-master" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={() => (memory.master = false)} />
           </div>
           <div style={{ direction: "row", paddingLeft: 8 }}>
-            <div style={{ align: "center", gap: 6, paddingTop: 5 }}>
+            <div style={{ align: "center", gap: 7, paddingTop: 5 }}>
               <Volume path="master" height={PANEL_FADER} device />
               <GainText path="master" />
             </div>
           </div>
         </div>
         <div style={{ width: 1, background: "alpha/5", keep: true }} />
-        <div style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 12, paddingRight: 16, align: "start" }}>
+        <div style={{ grow: true, direction: "row", gap: 12, paddingLeft: 16, paddingTop: 11, paddingRight: 16, align: "start" }}>
           <DeviceCard path="limit" on={() => !state.limit_off} onPower={() => update(state.limit_off ? "Turn the limiter on" : "Turn the limiter off", (song) => (song.state.limit_off = !song.state.limit_off))} />
         </div>
       </div>
@@ -926,13 +936,13 @@ export const song = tool({
     /** A track's header as the window drew it: its dot and name, and under them its automation, arm, mute and solo. */
     const TrackHead = ({ each }: { each: Child }) => (
       <div style={() => ({ height: ROW - 8, radius: 6, background: memory.panel === each.name && !memory.region?.startsWith(`${each.name}/`) ? "alpha/5" : COLOR.clear })}>
-        <div style={{ height: 25, paddingTop: 3, paddingLeft: 12, direction: "row", align: "center", gap: 8 }}>
+        <div style={{ height: 25, paddingTop: 3, paddingLeft: 12, paddingRight: 9, direction: "row", align: "center", gap: 8 }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
           {() =>
             memory.renaming === each.name ? (
               <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(each.name, title)} />
             ) : (
-              <div key={`name-${each.name}`} style={() => ({ width: 124, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}
+              <div key={`name-${each.name}`} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}
                 onPress={({ clicks, button }) =>
                   button === "right" ? trackMenu(each) : clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name)
                 }>
@@ -940,6 +950,7 @@ export const song = tool({
               </div>
             )
           }
+          {() => (memory.armed.has(each.name) ? <PeakMeter key={`input-${each.name}`} input={inputOf(each)} horizontal /> : null)}
         </div>
         <div style={{ height: 24, direction: "row", align: "center", paddingLeft: 4, paddingRight: 4, gap: 4 }}>
           <Toggle key={`lanes-${each.name}`} icon="automation" label="Automation" on={() => memory.lanes.has(each.name)}
@@ -1032,7 +1043,7 @@ export const song = tool({
       return (
         <Group x={() => clip.state.start} y={() => topOf(row())} clip={() => ({ width: length(), height: 1 })}
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
-          <Rect x={0} y={4 / ROW} width={() => timeline.pointX.negate().plus(length())} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
+          <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
             color="alpha/5" border={() => (picked() ? "gray-950" : "alpha/10")} borderWidth={1} opacity={dim}
             grows={resizes} drag={moveDrag} onPress={pressClip(key)} cursor="grab" />
           <For each={() => clip.state.notes}>
@@ -1060,14 +1071,32 @@ export const song = tool({
         <Circle x={x} y={top} radius={5} color={hollow ? "gray-950" : "gray-50"} />,
         <Circle x={x} y={top} radius={3.5} color={hollow ? "gray-50" : "gray-950"} />,
       ];
+      const edge = 4 / ROW;
       return (
         <>
+          <Show when={() => region.state.fade_in_ms > 0}>
+            {() => <Path points={() => [[0, bottom], [0, edge], [fadeIn(), edge], [fadeIn(), top]]} color="gray-50/50" />}
+          </Show>
+          <Show when={() => region.state.fade_out_ms > 0}>
+            {() => <Path points={() => [[width(), bottom], [width(), edge], [fadeOut(), edge], [fadeOut(), top]]} color="gray-50/50" />}
+          </Show>
           <Show when={() => region.state.fade_in_ms > 0}>{() => <Line from={[0, bottom]} to={() => [fadeIn(), top]} color="gray-950" width={1.5} />}</Show>
           <Show when={() => region.state.fade_out_ms > 0}>{() => <Line from={() => [width(), bottom]} to={() => [fadeOut(), top]} color="gray-950" width={1.5} />}</Show>
           {dot(fadeIn, false)}
           {dot(fadeOut, false)}
           {dot(() => point.times(0).plus(width() / 2), true)}
         </>
+      );
+    };
+    /** An audio take while it records, as a region looks: over what it lies on, with a red border, its sound so far, from `from` to the playhead. */
+    const TakeShapes = ({ each, row, from }: { each: Child; row: Accessor<number>; from: number }) => {
+      const width = now.tick.minus(from).max(1);
+      return (
+        <Group x={from} y={() => topOf(row())}>
+          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="gray-100" />
+          <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border="red" borderWidth={1} />
+          <Wave x={0} y={(ROW / 2 - 22) / ROW} width={width} height={44 / ROW} list={now.take(`${each.name}/rec`)} band low={-1} high={1} color={() => `${colourOf(each)}/85` as Color} />
+        </Group>
       );
     };
     /** A region of an audio track on row `row`: its file's waveform; drag it to move it, an edge to trim it. */
@@ -1077,6 +1106,18 @@ export const song = tool({
       // Seconds of its file, as ticks through the tempo map from where it starts.
       const width = () => ticksAcross(clock.tempo_map.tempo_changes, region.state.start, outputs[`${key}.seconds`] ?? 0);
       const sound = () => now.file(region.state.asset, { from: region.state.file_start_seconds, to: region.state.file_end_seconds });
+      // Drawn as it sounds: its gain, and its fades straight from silence at its ends.
+      const level = (): [number, number][] => {
+        const gain = Math.pow(10, region.state.gain_db / 20);
+        const across = width();
+        const fade = (ms: number) => Math.min(ticksAcross(clock.tempo_map.tempo_changes, region.state.start, ms / 1000), across);
+        const [into, out] = [fade(region.state.fade_in_ms), fade(region.state.fade_out_ms)];
+        if (into + out > across && into > 0 && out > 0) {
+          const meet = (across * into) / (into + out);
+          return [[0, 0], [meet, (gain * meet) / into], [across, 0]];
+        }
+        return [[0, into > 0 ? 0 : gain], [into, gain], [across - out, gain], [across, out > 0 ? 0 : gain]];
+      };
       const editRegion = (label: string, change: (state: FilledStateOfTool<"region">) => void) =>
         update(label, ({ children }) => {
           const owner = children.find((child) => child.name === each.name);
@@ -1121,7 +1162,7 @@ export const song = tool({
         <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? ["region"] : undefined)}>
           <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
             drag={moveRegion} onPress={press} cursor="grab" />
-          <Wave x={0} y={(ROW / 2 - 22) / ROW} width={width} height={44 / ROW} list={sound} band low={-1} high={1} color={() => `${colourOf(each)}/85` as Color} />
+          <Wave x={0} y={(ROW / 2 - 22) / ROW} width={width} height={44 / ROW} list={sound} band low={-1} high={1} level={level} color={() => `${colourOf(each)}/85` as Color} />
           <Show when={chosen}>{() => <RegionHandles region={region} width={width} />}</Show>
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={press} cursor="ew-resize"
             moves={() => (chosen() ? ["trim"] : undefined)} />
@@ -1349,8 +1390,8 @@ export const song = tool({
                 return <Rect x={range.from} y={RULER - 10} width={range.to - range.from} height={8} radius={2} color={clock.repeat ? "gray-900" : "alpha/15"} />;
               }}
               <Rect x={loop.startX.min(loop.x)} y={RULER - 10} width={loop.dx.abs()} height={8} radius={2} color="gray-900" opacity={loop.active} />
-              <Line from={[now.tick, RULER / 2]} to={[now.tick, RULER - 1]} color="gray-950" width={1} />
-              <Circle x={now.tick} y={RULER / 2} radius={3.5} color="gray-950" />
+              <Line from={[playhead, RULER / 2]} to={[playhead, RULER - 1]} color="gray-950" width={1} />
+              <Circle x={playhead} y={RULER / 2} radius={3.5} color="gray-950" />
             </Space>
             <div style={{ height: 1, background: "alpha/5", keep: true }} />
             <Space key="timeline" grow unit={{ x: ACROSS, y: ROW }} extent={() => ({ x: [-LEAD, end()], y: [0, Math.max(tops().at(-1) ?? 0, 1)] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }}
@@ -1362,12 +1403,10 @@ export const song = tool({
                   ) : (
                     <>
                       <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} />}</For>
-                      <Show when={() => memory.recording !== null && memory.armed.has(each.name) && each.tool === "tape"}>
-                        {() => (
-                          <Wave x={() => memory.recording ?? 0} y={() => topOf(row()) + 0.12} width={() => now.tick.minus(memory.recording ?? 0).max(1)}
-                            height={0.76} list={now.take(`${each.name}/rec`)} band low={-1} high={1} color="red" />
-                        )}
-                      </Show>
+                      {() => {
+                        const from = memory.recording;
+                        return from !== null && memory.armed.has(each.name) && each.tool === "tape" ? <TakeShapes each={each} row={row} from={from} /> : null;
+                      }}
                       <For each={() => clipsOf(each)}>{(clip) => <ClipShapes each={each} clip={clip} row={row} />}</For>
                     </>
                   )
@@ -1375,7 +1414,7 @@ export const song = tool({
               </For>
               <Rect x={marquee.startX.min(marquee.x)} y={marquee.startY.min(marquee.y)} width={marquee.dx.abs()} height={marquee.dy.abs()}
                 color="alpha/5" border="alpha/20" borderWidth={1} radius={2} opacity={marquee.active} />
-              <Line from={[now.tick, 0]} to={[now.tick, 1000]} color="gray-950" width={1} />
+              <Line from={[playhead, 0]} to={[playhead, 1000]} color="gray-950" width={1} />
             </Space>
           </div>
         </div>
@@ -1393,13 +1432,16 @@ export const song = tool({
           <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" onPress={() => ([memory.mixer, memory.master, memory.panel, memory.open] = [!memory.mixer, false, null, null])} />
           <div style={{ width: 8 }} />
         </div>
-        <div style={{ height: 1, background: "alpha/5", keep: true }} />
         {() => {
-          if (memory.open) return openEditor();
-          if (memory.mixer) return <Mixer />;
-          if (memory.master) return <MasterPanel />;
           const shown = memory.panel;
-          return shown !== null && rows().some((each) => each.name === shown) ? <Rack name={shown} /> : null;
+          const below = memory.open ? openEditor() : memory.mixer ? <Mixer /> : memory.master ? <MasterPanel /> : shown !== null && rows().some((each) => each.name === shown) ? <Rack name={shown} /> : null;
+          // The hairline under the master row is the top of what opens under it.
+          return below === null ? null : (
+            <>
+              <div style={{ height: 1, background: "alpha/5", keep: true }} />
+              {below}
+            </>
+          );
         }}
       </div>
     );
