@@ -522,6 +522,7 @@ impl Engine {
                         && !view.stopped_playing
                         && view.playing == played
                         && view.tick_range.end <= until
+                        && self.transport.frames_to_wrap(0, frames, lead).is_none()
                 };
                 if still {
                     let outputs = event_outputs.get_mut(step.event_outputs.clone());
@@ -601,7 +602,10 @@ impl Engine {
                         .filter_map(|index| step_event_inputs.get(*index))
                         .filter_map(EventPort::next_bend)
                         .min();
-                    let length = bend.map_or(rest, |bend| bend.min(rest));
+                    // And where it reaches the next jump of the device, from which it goes on
+                    // before the device does when it is ahead.
+                    let wrap = self.transport.frames_to_wrap(start, rest, lead);
+                    let length = [bend, wrap].into_iter().flatten().fold(rest, usize::min);
                     let transport = match (lead, *moved, *resume_from) {
                         (0, false, None) if length == frames => heard.clone(),
                         (_, false, None) => match &led {

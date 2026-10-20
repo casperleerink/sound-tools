@@ -109,6 +109,10 @@ pub(crate) struct TransportState {
     /// a play that land in the same block are no stop: that block goes on where the last ended.
     was_playing: bool,
     jumped: bool,
+    /// The device reached the end of the loop or the tick of a jump since the last block. The
+    /// processors ahead of it went on from there on their own frame already, so only those
+    /// that are not ahead see a jump.
+    wrapped: bool,
     /// The project frame the device plays next. While the device waits after a play or a seek
     /// (`preroll`), the frame playback starts from.
     position: Frames,
@@ -142,6 +146,7 @@ impl TransportState {
             playing: false,
             was_playing: false,
             jumped: false,
+            wrapped: false,
             position: Frames(0),
             preroll: 0,
             preroll_due: false,
@@ -227,7 +232,76 @@ impl TransportState {
     /// A seek, a stop or a loop back since the last block: what the engine status counts as a
     /// jump.
     pub(crate) fn seek_or_stop(&self) -> bool {
-        self.jumped
+        self.jumped || self.wrapped
+    }
+
+    /// The next jump the device makes without a seek, while playing: the frame it is at, the
+    /// frame it goes on from, and for the loop its length, as it goes back again and again.
+    fn next_jump(&self) -> Option<(u64, u64, Option<u64>)> {
+        if !self.playing {
+            return None;
+        }
+        let ahead = |at: Ticks| {
+            let at = self.clock.frame_of(at).0;
+            (at > self.position.0).then_some(at)
+        };
+        let jump =
+            (self.jump_at).and_then(|(at, to)| Some((ahead(at)?, self.clock.frame_of(to).0, None)));
+        let looped = self.looped.as_ref().and_then(|looped| {
+            let (at, to) = (ahead(looped.end)?, self.clock.frame_of(looped.start).0);
+            Some((at, to, at.checked_sub(to).filter(|length| *length > 0)))
+        });
+        [jump, looped]
+            .into_iter()
+            .flatten()
+            .min_by_key(|(at, ..)| *at)
+    }
+
+    /// Where the frame `frame` of a processor ahead of the device plays: past the next jump
+    /// of the device it goes on from where the device will, as the device will when it gets
+    /// there. `end` keeps a frame right on the jump before it, for the end of a range.
+    fn played_at(&self, frame: u64, end: bool) -> u64 {
+        let Some((at, to, length)) = self.next_jump() else {
+            return frame;
+        };
+        let over = match frame.checked_sub(at) {
+            Some(over) if !(end && over == 0) => over,
+            _ => return frame,
+        };
+        match length {
+            Some(length) if end && over % length == 0 => to + length,
+            Some(length) => to + over % length,
+            None => to + over,
+        }
+    }
+
+    /// Whether a processor ahead of the device that starts a block at `frame` goes on from
+    /// where the device will jump to, right there.
+    fn on_jump(&self, frame: u64) -> bool {
+        let Some((at, _, length)) = self.next_jump() else {
+            return false;
+        };
+        match (frame.checked_sub(at), length) {
+            (Some(0), _) => true,
+            (Some(over), Some(length)) => over % length == 0,
+            _ => false,
+        }
+    }
+
+    /// Frames from `from` into the next block of a processor `lead` frames ahead until it
+    /// reaches the next jump of the device, when that is inside `frames`: its block ends
+    /// there, so the rest plays from where the device goes on.
+    pub(crate) fn frames_to_wrap(&self, from: usize, frames: usize, lead: u64) -> Option<usize> {
+        let (at, _, length) = self.next_jump()?;
+        let lead = lead.saturating_add(from as u64);
+        let frame = self.position.0 + lead.saturating_sub(self.preroll);
+        let left = match frame.checked_sub(at) {
+            None => at - frame,
+            Some(over) => length? - over % length?,
+        };
+        usize::try_from(left)
+            .ok()
+            .filter(|left| *left > 0 && *left < frames)
     }
 
     /// Call once per sub-block, before any [`Self::view`].
@@ -288,9 +362,16 @@ impl TransportState {
             let past_preroll = frames.saturating_sub(self.preroll);
             Frames(self.position.0.saturating_add(past_preroll))
         };
-        let start = ahead(lead);
-        let end = ahead(lead.saturating_add(advance));
-        let jumped = first && (self.jumped || self.resumed || moved);
+        let (start, end) = (ahead(lead), ahead(lead.saturating_add(advance)));
+        // Right on the next jump of the device, a processor ahead of it goes on from there.
+        let wraps = self.on_jump(start.0);
+        let (start, end) = (
+            Frames(self.played_at(start.0, false)),
+            Frames(self.played_at(end.0, true)),
+        );
+        let led = lead.saturating_sub(self.preroll) > 0;
+        let jumped = (first && (self.jumped || self.resumed || moved || (self.wrapped && !led)))
+            || (wraps && self.playing);
         // Both ends come from the same function, so the end of this block is the start of the
         // next, whatever the block sizes and tempo changes are.
         let mut tick_range = self.clock.tick_at(start)..self.clock.tick_at(end);
@@ -305,16 +386,17 @@ impl TransportState {
             frame_range: start..end,
             heard_tick: self.heard_tick,
             clock: &self.clock,
-            block_start: i128::from(self.position.0) + i128::from(lead) - i128::from(self.preroll),
+            block_start: i128::from(start.0) - i128::from(self.preroll.saturating_sub(lead)),
         }
     }
 
     /// Call after the block ran, with the frames it had. Returns how many of them the device
     /// played while it waited after a play or a seek.
     ///
-    /// A block that reaches the end of the loop seeks to its start, also one that starts right
-    /// on it, where a tempo change can put the position. With latency that waits like any
-    /// seek, so the loop has a gap as long as the latency.
+    /// A block that reaches the end of the loop goes on from its start, also one that starts
+    /// right on it, where a tempo change can put the position; the same for the tick of a
+    /// jump. The processors ahead of the device went on from there on their own frame, so
+    /// nothing waits and nothing is played twice.
     pub(crate) fn finish_block(&mut self, frames: usize) -> u64 {
         let advance = if self.playing { frames as u64 } else { 0 };
         let waited = advance.min(self.preroll);
@@ -323,16 +405,20 @@ impl TransportState {
         self.position = Frames(self.position.0.saturating_add(advance - waited));
         self.was_playing = self.playing;
         self.jumped = false;
+        self.wrapped = false;
         self.resumed = false;
         let reached = |tick: Ticks| {
             let end = self.clock.frame_of(tick);
             before <= end && self.position >= end && self.position > before
         };
+        // The processors ahead of the device went on from there already: no seek, no wait.
         if let Some((_, to)) = self.jump_at.filter(|(at, _)| reached(*at)) {
             self.jump_at = None;
-            self.jump_to(self.clock.frame_of(to));
+            self.position = self.clock.frame_of(to);
+            self.wrapped = true;
         } else if let Some(looped) = self.looped.clone().filter(|looped| reached(looped.end)) {
-            self.jump_to(self.clock.frame_of(looped.start));
+            self.position = self.clock.frame_of(looped.start);
+            self.wrapped = true;
         }
         waited
     }

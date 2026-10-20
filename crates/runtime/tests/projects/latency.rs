@@ -187,6 +187,43 @@ fn a_plugin_with_latency_in_an_effect_slot_plays_in_time_with_one_without() {
     }
 }
 
+/// A loop in a project with latency goes back as one without: every pass starts on the frame
+/// of the loop's start, on the track ahead of the device as on the one that is not.
+#[test]
+fn a_loop_in_a_project_with_latency_plays_as_one_without() {
+    let tracks = |latency| {
+        [
+            Track {
+                name: "late",
+                instrument_latency: latency,
+                effect_latency: None,
+                notes: &NOTES,
+            },
+            Track {
+                name: "plain",
+                instrument_latency: 0,
+                effect_latency: None,
+                notes: &NOTES,
+            },
+        ]
+    };
+    let looped = |latency| {
+        let mut harness = project(PluginFormat::Clap, &tracks(latency));
+        let engine = harness.project.engine();
+        engine.set_loop(Some(sound_core::Ticks(0)..sound_core::Ticks(960)));
+        harness.play(3 * 960 * TICK + 4_000)
+    };
+    let heard = looped(LATENCY);
+    assert_eq!(heard, looped(0));
+    // Every pass starts on the frame of the loop's start.
+    for pass in 1..3 {
+        assert_eq!(
+            onset(&heard, pass * 960 * TICK - 10),
+            Some(pass * 960 * TICK)
+        );
+    }
+}
+
 /// Latency on both, in the instrument and in the effect of one track, and on the other track:
 /// the longest way to the device sets the wait, and each track is led by its own. The notes of
 /// the track reach the effect on the frame they reach the instrument, so what the effect plays

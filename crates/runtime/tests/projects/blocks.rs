@@ -28,6 +28,24 @@ export const keys = tool({
   }),
 });
 
+const drums = { drums: "drum-pad", late: "filter", line: "timeline" } as const;
+
+export const beat = tool({
+  name: "beat",
+  title: "Beat",
+  when: "Never",
+  doc: "Plays its timeline on its drums, through a filter.",
+  state: {},
+  children: drums,
+  behaviour: (): Declaration<typeof drums> => ({
+    connections: [
+      { from: { child: "line", notes: "notes" }, to: { child: "drums", notes: "notes" } },
+      { from: { child: "drums" }, to: { child: "late" } },
+      { from: { child: "late" }, to: { port: "audio" } },
+    ],
+  }),
+});
+
 export const pure = tool({
   name: "pure",
   title: "Pure",
@@ -78,7 +96,7 @@ fn project(name: &str, records: &[(&str, String)]) -> Harness {
     let folder = tempfile::tempdir().unwrap();
     let root = folder.path();
     let project = format!(
-        r#"{{"format": 1, "extensions": ["instrument", "utility", "filter"],
+        r#"{{"format": 1, "extensions": ["instrument", "utility", "filter", "drum-pad"],
   "tempo_map": {{"time_signature": "4/4", "tempo_changes": [{{"tick": 0, "bpm": 120.0}}]}},
   "connections": [{{"from": {{"instance": "{name}", "port": "audio"}}, "to": {{"device_output": 0}}}}]}}"#
     );
@@ -304,4 +322,49 @@ fn a_region_waits_for_its_file_and_plays_once_it_arrives() {
     assert_eq!(harness.project.problems(), []);
     let played = harness.play_from_the_start(2 * BAR);
     assert!((played[2 * (BAR + 1_000)] - 0.5).abs() < 1e-4);
+}
+
+/// A beat on the drums, a kick on every beat for `beats` beats.
+fn beat(beats: u64) -> Harness {
+    let notes: Vec<String> = (0..beats)
+        .map(|beat| {
+            format!(
+                r#"{{"start": {}, "length": 240, "pitch": 36, "velocity": 120}}"#,
+                beat * 960
+            )
+        })
+        .collect();
+    let line = format!(
+        r#"{{"tool": "timeline", "state": {{"length": {}, "notes": [{}]}}}}"#,
+        beats * 960,
+        notes.join(", ")
+    );
+    let drums =
+        r#"{"tool": "drum-pad", "state": {"pads": {"36": {"sound": "kick", "decay_ms": 600}}}}"#;
+    let records = [
+        ("drums.json", drums.to_string()),
+        (
+            "late.json",
+            r#"{"tool": "filter", "state": {}}"#.to_string(),
+        ),
+        ("line.json", line),
+    ];
+    let harness = project("beat", &records);
+    assert_eq!(harness.project.problems(), []);
+    harness
+}
+
+/// A bar of kicks on a loop sounds, up to where it goes back, as two bars of kicks with no
+/// loop. The filter after the drums has latency, so the drums are ahead of the device: they go
+/// back on their own frame. Before, they played on past the end of the bar, where the kick
+/// that still rang was cut, one latency before the device went back: a click on every repeat.
+#[test]
+fn a_loop_sounds_up_to_its_end_as_what_it_repeats() {
+    let mut looped = beat(4);
+    let engine = looped.project.engine();
+    engine.set_loop(Some(sound_core::Ticks(0)..sound_core::Ticks(BAR_TICKS)));
+    let looped = looped.play_from_the_start(BAR + BAR / 4);
+    let twice = beat(8).play_from_the_start(BAR + BAR / 4);
+    let differ = crate::support::difference(&looped[..2 * BAR], &twice[..2 * BAR]);
+    assert_eq!(differ, None);
 }
