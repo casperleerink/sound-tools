@@ -28,6 +28,7 @@ mod recorder;
 mod song;
 mod song_view;
 mod template;
+mod timeline;
 mod transport;
 mod takes_and_notes;
 

@@ -145,7 +145,7 @@ impl Opened<'_> {
         self.wait_for_bun();
     }
 
-    fn project_file(&mut self) -> serde_json::Value {
+    pub(super) fn project_file(&mut self) -> serde_json::Value {
         let session = self.session.clone();
         self.cx.read(|cx| {
             serde_json::to_value(session.read(cx).project().project_file()).unwrap_or_default()
@@ -257,10 +257,10 @@ fn a_clip_is_renamed_copied_pasted_and_nudged(cx: &mut TestAppContext) {
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Paste clips"));
 
-    // The pasted clip is the chosen one: an arrow nudges it a beat on.
+    // The pasted clip is the chosen one: an arrow nudges it a step of the grid on.
     window.cx.simulate_keystrokes("right");
     window.until("the clip nudged", |window| {
-        window.record("song/t01/clip")["start"] == 960
+        window.record("song/t01/clip")["start"] == 240
     });
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move clips"));
@@ -406,7 +406,7 @@ fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppCo
     // A grid of bars: a note added half way into the second bar starts at the bar.
     let snap = window.until_found("div-song-snap");
     window.click(snap);
-    window.pick("menu-0");
+    window.pick("menu-1");
     let notes = window.record("song/t01/c00")["notes"]
         .as_array()
         .map(Vec::len)
@@ -442,7 +442,7 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
             .is_some_and(|changes| {
                 changes
                     .iter()
-                    .any(|change| change["tick"] == 2 * BAR && change["bpm"] == 90.0)
+                    .any(|change| change["tick"] == 2 * BAR + 240 && change["bpm"] == 90.0)
             })
     });
     window.after_the_runs();
@@ -955,7 +955,7 @@ fn a_chosen_note_stays_chosen_when_the_notes_move_in_the_list(cx: &mut TestAppCo
 
 /// In 3/4, a double-click in the second bar adds a clip from its start, a bar of 3/4 long.
 #[gpui::test]
-fn a_clip_added_in_three_four_fills_its_bar(cx: &mut TestAppContext) {
+fn a_clip_added_in_three_four_is_as_long_as_its_bar(cx: &mut TestAppContext) {
     let files = files_with(1, 0, "project.json", |project| {
         project["tempo_map"]["time_signature"] = "3/4".into();
     });
@@ -967,7 +967,8 @@ fn a_clip_added_in_three_four_fills_its_bar(cx: &mut TestAppContext) {
     let clip = window.record("song/t00/clip");
     assert_eq!(
         (clip["start"].as_u64(), clip["length"].as_u64()),
-        (Some(2880), Some(2880))
+        // In the sixteenth under the pointer, as the arrangement's.
+        (Some(3 * 960 + 480), Some(2880))
     );
 }
 

@@ -13,9 +13,9 @@
 //! - `agent-*.png`: the agent sidebar, open and closed, see `snapshots/agent.rs`.
 //! - `typescript-*.png`: pages of tools of the project, see `snapshots/typescript.rs`.
 //! - `look-*.png`: the DAW template with the content of the deleted arrangement's snapshots,
-//!   see `snapshots/look.rs`.
+//!   see `snapshots/look.rs` and `snapshots/look_timeline.rs`.
 //!
-//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent` or `=typescript` renders the default
+//! `WINDOW_SNAPSHOT_ONLY=cards`, `=wavetable`, `=agent`, `=typescript`, `=look` or `=timeline` renders the default
 //! project and those alone.
 
 // The shared helpers of the tests unwrap, as the other test crates allow.
@@ -282,6 +282,9 @@ fn main() -> Result<()> {
     }
     if runs("look") {
         look::snapshots(&mut cx, &save)?;
+    }
+    if runs("timeline") {
+        look::timeline::snapshots(&mut cx, &save)?;
     }
     if runs("takes") {
         look::takes::snapshots(&mut cx, &save)?;

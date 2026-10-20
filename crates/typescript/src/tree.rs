@@ -1024,6 +1024,8 @@ pub(crate) struct Part {
     pub text: String,
     pub color: Option<Color>,
     pub weight: Option<Weight>,
+    /// A rounded box around it, of this colour, filled a little.
+    pub border: Option<Color>,
 }
 
 /// The size of a group's box, in the units of its space.

@@ -37,6 +37,8 @@ use crate::song::{ACROSS, ARM, BAR, HEADER, LEAD, ROW, TOGGLES, daw};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use sound_core::CaptureWriter;
 
+#[path = "look_timeline.rs"]
+pub(crate) mod timeline;
 #[path = "look_takes.rs"]
 pub(crate) mod takes;
 

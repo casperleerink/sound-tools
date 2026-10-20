@@ -406,6 +406,15 @@ impl TypeScriptCard {
             _ => {}
         })
         .detach();
+        // A seek while stopped moves the playhead with no frame to draw it.
+        let playhead = session.read(cx).playhead().clone();
+        cx.observe(&playhead, |view, playhead, cx| {
+            let uses = view.live.read(cx).uses(view.card);
+            if uses.tick && !playhead.read(cx).playing {
+                cx.notify();
+            }
+        })
+        .detach();
         cx.observe_in(&live, window, |view, _, window, cx| {
             view.sync(window, cx);
             cx.notify();
@@ -513,7 +522,7 @@ impl TypeScriptCard {
             input.set_on_submit({
                 let card = card.clone();
                 move |text, _, cx| {
-                    card.update(cx, |view, cx| view.commit(node, text, cx)).ok();
+                    card.update(cx, |view, cx| view.commit(node, text, true, cx)).ok();
                 }
             });
             // Escape shows the text it had again, once the field's own update is over.
@@ -533,7 +542,7 @@ impl TypeScriptCard {
                 .get(&node)
                 .map(|(input, _)| input.read(cx).text().to_string())
             {
-                view.commit(node, &text, cx);
+                view.commit(node, &text, false, cx);
             }
         })
         .detach();
@@ -544,12 +553,13 @@ impl TypeScriptCard {
         (input, value)
     }
 
-    /// Tells the code of the field `node` its text, unless it shows what it last told.
-    fn commit(&mut self, node: u64, text: &str, cx: &mut Context<Self>) {
+    /// Tells the code of the field `node` its text: on enter always, so a field the code shows
+    /// to type in closes with its text as it was; on blur unless it shows what it last told.
+    fn commit(&mut self, node: u64, text: &str, entered: bool, cx: &mut Context<Self>) {
         let Some((_, shown)) = self.inputs.get_mut(&node) else {
             return;
         };
-        if shown == text {
+        if shown == text && !entered {
             return;
         }
         *shown = text.to_string();
@@ -1513,6 +1523,7 @@ struct TextPart {
     len: usize,
     color: Option<Hsla>,
     weight: Option<Weight>,
+    border: Option<Hsla>,
 }
 
 enum PaintedShape {
@@ -2637,6 +2648,7 @@ impl Placing<'_> {
                             len: part.text.len(),
                             color: part.color.as_ref().map(|color| color.0),
                             weight: part.weight,
+                            border: part.border.as_ref().map(|color| color.0),
                         })
                         .collect(),
                     _ => Rc::new([]),
@@ -2971,6 +2983,29 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 Align::Right => origin.x - shaped.width,
             };
             let line_height = px(font_size * 1.3);
+            // Parts next to each other with one border share a box.
+            let mut boxes: Vec<(usize, usize, Hsla)> = Vec::new();
+            let mut start = 0;
+            for part in parts.iter() {
+                let end = start + part.len;
+                match (part.border, boxes.last_mut()) {
+                    (Some(border), Some(last)) if last.1 == start && last.2 == border => last.1 = end,
+                    (Some(border), _) => boxes.push((start, end, border)),
+                    (None, _) => {}
+                }
+                start = end;
+            }
+            for (start, end, border) in boxes {
+                let (from, to) = (shaped.x_for_index(start), shaped.x_for_index(end));
+                let bounds = Bounds::from_corners(
+                    point(left + from - px(BOXED.0), origin.y - px(BOXED.1)),
+                    point(left + to + px(BOXED.0), origin.y + line_height + px(BOXED.1)),
+                );
+                let back = border.alpha(border.a * 0.15);
+                window.paint_quad(fill(bounds, back).corner_radii(px(4.)));
+                let quad = outline(bounds, border, gpui::BorderStyle::Solid);
+                window.paint_quad(quad.corner_radii(px(4.)).border_widths(px(1.)));
+            }
             if let Err(error) = shaped.paint(
                 point(left, origin.y),
                 line_height,
@@ -3571,6 +3606,9 @@ mod tests {
         assert_eq!(plain.level_at(0.5), 1.0);
     }
 }
+
+/// How far a boxed part's box reaches past its text, across and down.
+const BOXED: (f32, f32) = (5., 2.);
 
 /// A key as the SDK names it, `cmd-alt-c`, as a menu draws it: `mod+alt+c`.
 fn shortcut_of(mut keys: &str) -> String {

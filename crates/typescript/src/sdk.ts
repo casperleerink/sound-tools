@@ -2453,7 +2453,8 @@ export const Circle = shape("circle");
 export const Line = shape("line");
 export const Arc = shape("arc");
 /** A part of a `Label`'s line: in the label's colour and weight unless it names its own. */
-export type TextPart = { text: string; color?: Color; weight?: "normal" | "medium" | "semibold" };
+/** A run of a label's text; with `border`, in a rounded box of that colour, as a mark in a ruler: give it room with spaces around. */
+export type TextPart = { text: string; color?: Color; weight?: "normal" | "medium" | "semibold"; border?: Color };
 export const Label = shape("text");
 export const Wave = shape("wave");
 export const Path = shape("path");

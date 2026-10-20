@@ -1,4 +1,4 @@
-import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
+import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -61,7 +61,8 @@ type Clipboard = { from: number; clips: { row: number; track: string; state: Fil
 type TrackRow = Extract<Frozen<OwnedChild<typeof parts>>, { tool: typeof track }>;
 /** A copy of a clip's state to change, from a view's record or a key's. */
 const copyOf = (state: Frozen<FilledStateOfTool<"timeline">>) => JSON.parse(JSON.stringify(state)) as FilledStateOfTool<"timeline">;
-type Editing = { kind: "tempo" | "signature" | "section"; bar: number } | null;
+/** A tempo, a time signature or a section being typed: its bar, and the tick a tempo change lands on. */
+type Editing = { kind: "tempo" | "signature" | "section"; bar: number; tick: number } | null;
 /** What shows under the timeline, one at a time: a track's panel, the master's, a clip's notes or the mixer. */
 type Below = { kind: "track"; name: string } | { kind: "master" } | { kind: "editor"; clip: string } | { kind: "mixer" } | null;
 
@@ -89,7 +90,11 @@ type Memory = {
   names: Record<string, string>;
   /** The chosen point of an automation lane, by its tick, which delete removes. */
   point: { track: string; lane: string; tick: number } | null;
+  /** The chosen mark of the ruler, which delete removes. */
+  mark: Mark | null;
 } & EditorMemory;
+/** What starts at a bar of the ruler: a section, a time signature change or a tempo change, at `tick`. */
+type Mark = { kind: "section" | "signature" | "tempo"; bar: number; tick: number };
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 // Where a level sits on a meter or a fader, 0 to 1: its amplitude to this power, 0 dB at 0.8.
@@ -211,10 +216,10 @@ export const song = tool({
   children: parts,
   memory: (): Memory => ({
     selected: new Set(), region: null, below: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
-    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, names: {},
+    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, mark: null, names: {},
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
-  keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r", "enter"],
+  keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r", "enter", "cmd-down", "t"],
   globalKeys: ["space"],
   onKey: (tool, key) => {
     const { state, memory, update, clock, children } = tool;
@@ -248,6 +253,17 @@ export const song = tool({
       const forNotes = memory.notes.size > 0 || (key.cmd && (key.key === "a" || (key.key === "v" && memory.copied !== null)));
       const state = clip?.tool === "timeline" ? clip.state : undefined;
       if (forNotes && editorKey(key, state, clock.tick, memory, edit)) return;
+    }
+    if (key.key === "t" && !key.cmd) {
+      addTempoAtPlayhead(clock, memory);
+      return;
+    }
+    if (memory.mark && ["delete", "backspace", "escape", "enter"].includes(key.key) && !key.cmd) {
+      const mark = memory.mark;
+      memory.mark = null;
+      if (key.key === "enter") memory.editing = mark.kind === "section" ? { ...mark, kind: "section" } : null;
+      else if (key.key !== "escape") removeMark(clock, mark);
+      return;
     }
     if (memory.point && (key.key === "delete" || key.key === "backspace" || key.key === "escape")) {
       const { track: owner, lane, tick } = memory.point;
@@ -424,6 +440,7 @@ export const song = tool({
       memory.selected = keys;
       memory.region = null;
       memory.point = null;
+      memory.mark = null;
       memory.track = ([...keys][0] ?? track)?.split("/")[0] ?? null;
       const clips = [...keys].flatMap((key) => clipAt(key) ?? []);
       const starts = clips.map((clip) => clip.state.start);
@@ -453,10 +470,12 @@ export const song = tool({
       });
 
     // The clips' drags land on the grid of the snap in the corner, a tick apart while it is off.
-    const moveDrag = (snap: number): Drag => ({
+    // A click that did not move on one of several chosen clips chooses it alone.
+    const moveDrag = (snap: number, key: string): Drag => ({
       id: "move",
       snap: { x: snap || 1, y: 1, grid: snap > 0 },
       onEnd: ({ dx, dy, alt }) => choose(moveClips(update, layout(), memory.selected, dx, Math.round(dy), alt)),
+      onClick: ({ shift, cmd }) => !shift && !cmd && memory.selected.size > 1 && choose(new Set([key])),
     });
     const marquee = now.drag("clip-marquee");
     const marqueeDrag: Drag = {
@@ -522,7 +541,7 @@ export const song = tool({
         choose(new Set([key]));
       }
     };
-    const pressTimeline = ({ clicks, x, y }: Press) => {
+    const pressTimeline = ({ clicks, x, y, cmd }: Press) => {
       const index = rowAt(y);
       const row = layout()[index];
       if (row?.lane) {
@@ -534,7 +553,7 @@ export const song = tool({
         return;
       }
       // A bar long, in the cell of the grid under the pointer.
-      const start = Math.max(memory.snap > 0 ? Math.floor(x / memory.snap) * memory.snap : Math.round(x), 0);
+      const start = Math.max(memory.snap > 0 ? Math.floor(Math.round(x) / memory.snap) * memory.snap : Math.round(x), 0);
       const bar = barOf(start);
       const length = (starts()[bar] ?? 0) - (starts()[bar - 1] ?? 0) || 4 * BEAT;
       let added: string | undefined;
@@ -1296,7 +1315,7 @@ export const song = tool({
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
           <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
             color="alpha/5" border={() => (picked() ? "gray-950" : "alpha/10")} borderWidth={1} opacity={dim}
-            grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressClip(key)} cursor="grab" />
+            grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap, key)} onPress={pressClip(key)} cursor="grab" />
           <For each={() => clip.state.notes}>
             {(note) => (
               <Rect x={() => note.start} y={() => { const m = miniature(); return (m.bottom - (note.pitch - m.lowest + 0.5) * m.step - m.height / 2) / ROW; }}
@@ -1475,51 +1494,96 @@ export const song = tool({
     const rulerLabel = (index: number): TextPart[] => {
       const here = barSignatures()[index];
       const section = clock.sections.find((each) => each.bar === index + 1);
-      const bar = index === 0 || here !== barSignatures()[index - 1] ? `${index + 1}  ${here}` : String(index + 1);
-      return section ? [{ text: bar }, { text: `  ${section.name}`, color: "gray-950", weight: "medium" }] : [{ text: bar }];
+      const changes = index === 0 || here !== barSignatures()[index - 1];
+      const tempo = clock.tempo_map.tempo_changes.find((change) => change.tick > 0 && change.tick === starts()[index]);
+      // The chosen mark in a light box.
+      const chosen = (kind: Mark["kind"]) => (memory.mark?.kind === kind && memory.mark.bar === index + 1 ? ("gray-800" as const) : undefined);
+      return [
+        { text: String(index + 1) },
+        ...(changes ? [{ text: "  " }, { text: here ?? "4/4", border: chosen("signature") }] : []),
+        ...(section ? [{ text: "   " }, { text: section.name, color: "gray-950" as const, weight: "medium" as const, border: chosen("section") }] : []),
+        ...(tempo ? tempoParts(tempo.bpm, chosen("tempo")) : []),
+      ];
     };
+    /** The mark a press on the label of bar `index` takes: its section, then its time signature change, then its tempo change, as the arrangement's did. */
+    const markAt = (index: number): Mark | null => {
+      const [bar, tick] = [index + 1, starts()[index] ?? 0];
+      if (clock.sections.some((each) => each.bar === bar)) return { kind: "section", bar, tick };
+      if (index > 0 && barSignatures()[index] !== barSignatures()[index - 1]) return { kind: "signature", bar, tick };
+      if (tick > 0 && clock.tempo_map.tempo_changes.some((each) => each.tick === tick)) return { kind: "tempo", bar, tick };
+      return null;
+    };
+    /** A press on a mark chooses it and plays from it; a double click on a section names it. */
+    const pressMark = (mark: Mark) => ({ clicks }: Press) => {
+      choose(new Set());
+      memory.mark = mark;
+      clock.jump(mark.tick);
+      if (clicks === 2 && mark.kind === "section") memory.editing = mark;
+    };
+    /** About how many points the label of bar `index` takes, 8 after its line, its box too. */
+    const labelWidth = (index: number) => 8 + rulerLabel(index).reduce((width, part) => width + part.text.length * 5.6 + (part.border ? 2.5 : 0), 0);
+    /** 1 while the label of the bar before leaves room for the label of bar `index`, which hides under it, as the arrangement's did. */
+    const roomFor = (index: number) => (index === 0 ? 1 : timeline.pointX.times(labelWidth(index - 1) + 4).plus(starts()[index - 1] ?? 0).lt(starts()[index] ?? 0));
+    // A tempo change in a box after what its bar shows, as the arrangement had it.
+    const tempoParts = (bpm: number, chosen?: Color): TextPart[] => [{ text: "   " }, { text: String(bpm), color: "gray-950", border: chosen ?? "alpha/10" }, { text: " bpm", border: chosen ?? "alpha/10" }];
     const pickSnap = async () => {
       const snaps = snapsOf(4 * BEAT);
       const picked = await openMenu(snaps.map(({ label, ticks }) => ({ label, group: "Snap", checked: ticks === memory.snap })), { width: 160 });
       if (picked !== null) memory.snap = snaps[picked]!.ticks;
     };
     /** A section at the bar line nearest `tick`, named by how many there are, its name open to change. */
-    const addSection = (tick: number) => {
+    /** The tick nearest `tick` on the grid of the snap in the corner. */
+    const snapped = (tick: number) => Math.max(memory.snap > 0 ? Math.round(tick / memory.snap) * memory.snap : Math.round(tick), 0);
+    /** The bar whose line is nearest `tick`, from 1. */
+    const nearestBar = (tick: number) => {
       const lines = starts();
-      const nearest = lines.reduce((best, start, index) => (Math.abs(start - tick) < Math.abs((lines[best] ?? 0) - tick) ? index : best), 0);
-      const bar = nearest + 1;
+      return lines.reduce((best, start, index) => (Math.abs(start - tick) < Math.abs((lines[best] ?? 0) - tick) ? index : best), 0) + 1;
+    };
+    /** A section at the bar line nearest `tick`, named by how many there are, its name open to change. */
+    const addSection = (tick: number) => {
+      const bar = nearestBar(tick);
       if (!clock.sections.some((each) => each.bar === bar)) {
         clock.update("Add a section", (song) => {
           song.sections = [...song.sections, { bar, name: `Section ${song.sections.length + 1}` }].sort((a, b) => a.bar - b.bar);
         });
       }
-      memory.editing = { kind: "section", bar };
+      memory.editing = { kind: "section", bar, tick: starts()[bar - 1] ?? 0 };
     };
+    // As the arrangement's: a click plays from the grid, a double click adds a section. The menu
+    // adds a tempo change on the grid, and a time signature or a section on the nearest bar line;
+    // it removes the mark there.
     const pressRuler = async ({ button, x, clicks }: Press) => {
-      const bar = barOf(x);
       if (button !== "right") {
+        memory.mark = null;
         if (clicks === 2) addSection(x);
-        else clock.jump(Math.max(Math.round(x / BEAT) * BEAT, 0));
+        else clock.jump(snapped(x));
         return;
       }
-      const tick = starts()[bar - 1] ?? 0;
+      const [tick, bar] = [snapped(x), nearestBar(x)];
+      const line = starts()[bar - 1] ?? 0;
       const section = clock.sections.find((each) => each.bar === bar);
-      const tempo = clock.tempo_map.tempo_changes.find((each) => each.tick === tick && tick > 0);
+      const signature = bar > 1 && signaturesOf(runs(), bar).at(-1) !== signaturesOf(runs(), bar - 1).at(-1);
+      const tempo = clock.tempo_map.tempo_changes.find((each) => each.tick > 0 && (each.tick === tick || each.tick === line));
+      const marked = section !== undefined || signature || tempo !== undefined;
       const picked = await openMenu([
-        { label: `Tempo change at bar ${bar}…` }, { label: `Time signature from bar ${bar}…` }, { label: section ? `Rename section "${section.name}"…` : `Section at bar ${bar}…` },
-        { label: "Remove the tempo change", disabled: !tempo }, { label: "Remove the section", disabled: !section },
-      ], { width: 200 });
-      if (picked === 0) memory.editing = { kind: "tempo", bar };
-      else if (picked === 1) memory.editing = { kind: "signature", bar };
-      else if (picked === 2) memory.editing = { kind: "section", bar };
-      else if (picked === 3) clock.update("Remove a tempo change", (song) => (song.tempo_map.tempo_changes = song.tempo_map.tempo_changes.filter((each) => each.tick !== tick)));
-      else if (picked === 4) clock.update("Remove a section", (song) => (song.sections = song.sections.filter((each) => each.bar !== bar)));
+        { label: "Tempo", icon: "tempo-change", disabled: clock.tempo_map.tempo_changes.some((each) => each.tick === tick) },
+        { label: "Time signature", icon: "time-signature", disabled: bar === 1 || signature },
+        { label: "Section", icon: "section", disabled: section !== undefined },
+        ...(marked ? [{ label: "Remove", icon: "trash-2" as const, shortcut: "backspace" as const, separator: true }] : []),
+      ]);
+      if (picked === 0) memory.editing = { kind: "tempo", bar: barOf(tick), tick };
+      else if (picked === 1) memory.editing = { kind: "signature", bar, tick: line };
+      else if (picked === 2) addSection(line);
+      else if (picked === 3) {
+        const mark = section ? { kind: "section" as const, bar, tick: line } : signature ? { kind: "signature" as const, bar, tick: line } : tempo ? { kind: "tempo" as const, bar, tick: tempo.tick } : null;
+        if (mark) removeMark(clock, mark);
+      }
     };
     const commitEdit = (value: string) => {
       const editing = memory.editing;
       memory.editing = null;
       if (!editing) return;
-      const tick = starts()[editing.bar - 1] ?? 0;
+      const tick = editing.tick;
       if (editing.kind === "tempo") {
         const bpm = Number(value);
         if (!(bpm > 0)) return;
@@ -1548,7 +1612,7 @@ export const song = tool({
     const editedValue = () => {
       const editing = memory.editing;
       if (!editing) return "";
-      const tick = starts()[editing.bar - 1] ?? 0;
+      const tick = editing.tick;
       if (editing.kind === "tempo") return String([...clock.tempo_map.tempo_changes].reverse().find((each) => each.tick <= tick)?.bpm ?? 120);
       if (editing.kind === "signature") return signaturesOf(runs(), editing.bar)[editing.bar - 1] ?? "4/4";
       return clock.sections.find((each) => each.bar === editing.bar)?.name ?? "";
@@ -1709,11 +1773,19 @@ export const song = tool({
               <For each={starts}>
                 {(tick, bar) => [
                   <Rect x={tick} y={RULER - 8} width={timeline.pointX} height={8} color="alpha/10" />,
-                  <Label x={() => tick + 8 / ACROSS} y={8} text={() => rulerLabel(bar())} size={12} color="gray-700" />,
+                  <Label x={timeline.pointX.times(8).plus(tick)} y={8} text={() => rulerLabel(bar())} size={12} color="gray-700" opacity={() => roomFor(bar())} />,
+                  () => {
+                    const mark = markAt(bar());
+                    return mark ? <Rect x={timeline.pointX.times(4).plus(tick)} y={2} width={() => timeline.pointX.times(labelWidth(bar()))} height={RULER - 16} color={COLOR.clear} cursor="pointer" onPress={pressMark(mark)} /> : null;
+                  },
                 ]}
               </For>
               <For each={() => clock.tempo_map.tempo_changes.filter((change) => change.tick > 0)}>
-                {(change) => <Label x={() => change.tick + 40 / ACROSS} y={8} text={() => `${change.bpm} bpm`} size={12} color="gray-700" />}
+                {(change) => [
+                  <Rect x={() => change.tick} y={0} width={timeline.pointX} height={RULER - 1} color="alpha/20" />,
+                  // One off a bar line is labelled here; one on it, after its bar.
+                  () => (starts().includes(change.tick) ? null : <Label x={timeline.pointX.times(2).plus(change.tick)} y={8} text={tempoParts(change.bpm)} size={12} color="gray-700" />),
+                ]}
               </For>
               <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 10}
                 width={() => ending!.dx.minus(starting!.dx).plus(repeat().to - repeat().from)} height={8} radius={2} color={() => (clock.repeat ? "gray-900" : "alpha/15")} />
@@ -1723,7 +1795,7 @@ export const song = tool({
                 color={COLOR.clear} cursor="ew-resize" drag={repeatStart!} />
               <Rect x={() => ending!.dx.plus(repeat().to).minus(handle)} y={RULER - 14} width={handle} height={14}
                 anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} />
-              <Rect x={loop.startX.min(loop.x)} y={RULER - 10} width={loop.dx.abs()} height={8} radius={2} color="gray-900" opacity={loop.active} />
+              <Rect x={loop.startX.min(loop.x)} y={RULER - 10} width={loop.dx.abs()} height={8} radius={2} color="gray-900" opacity={loop.active.times(loop.dx.abs().gt(0))} />
               <Line from={[playhead, RULER / 2]} to={[playhead, RULER - 1]} color="gray-950" width={1} />
               <Circle x={playhead} y={RULER / 2} radius={3.5} color="gray-950" />
             </Space>
@@ -1811,6 +1883,36 @@ function startMoved(clip: FilledStateOfTool<"timeline">, dx: number, unit: numbe
     const kept = points.filter((point) => point.tick >= by).map((point) => ({ ...point, tick: point.tick - by }));
     const cut = points.some((point) => point.tick < by) && kept[0]?.tick !== 0;
     clip[lane] = cut ? [{ tick: 0, value: Math.round(laneAt(points, by, false)) }, ...kept] : kept;
+  }
+}
+
+/**
+ * T: a tempo change at the playhead with the tempo that plays there, chosen. While it plays, on
+ * the grid; stopped, where a click on the ruler put it.
+ */
+function addTempoAtPlayhead(clock: Clock, memory: { snap: number; mark: Mark | null }) {
+  const tick = clock.playing && memory.snap > 0 ? Math.round(clock.tick / memory.snap) * memory.snap : Math.round(clock.tick);
+  const changes = clock.tempo_map.tempo_changes;
+  if (!changes.some((change) => change.tick === tick)) {
+    const bpm = [...changes].reverse().find((change) => change.tick <= tick)?.bpm ?? 120;
+    clock.update("Add a tempo change", (song) => (song.tempo_map.tempo_changes = [...song.tempo_map.tempo_changes, { tick, bpm }].sort((a, b) => a.tick - b.tick)));
+  }
+  const starts = barStarts(clock.tempo_map.time_signatures, tick + 1);
+  memory.mark = { kind: "tempo", bar: Math.max(starts.findIndex((start) => start > tick), 1), tick };
+}
+
+/** Removes a mark of the ruler as one undo step: a time signature change gives its bars the signature before it. */
+function removeMark(clock: Clock, { kind, bar, tick }: Mark) {
+  if (kind === "section") clock.update("Remove a section", (song) => (song.sections = song.sections.filter((each) => each.bar !== bar)));
+  else if (kind === "tempo") clock.update("Remove a tempo change", (song) => (song.tempo_map.tempo_changes = song.tempo_map.tempo_changes.filter((each) => each.tick !== tick)));
+  else {
+    clock.update("Remove a time signature change", (song) => {
+      const runs = song.tempo_map.time_signatures;
+      const each = signaturesOf(runs, Math.max(bar, runs.reduce((sum, run) => sum + run.bars, 0)) + 1);
+      const [before, old] = [each[bar - 2] ?? "4/4", each[bar - 1]];
+      for (let at = bar - 1; at < each.length && each[at] === old; at++) each[at] = before;
+      song.tempo_map.time_signatures = runsOf(each);
+    });
   }
 }
 
@@ -2010,6 +2112,10 @@ function clipKey(key: Key, tracks: readonly TrackRow[], tool: Context<unknown, I
     : !key.cmd ? null : key.key === "x" ? "cut" : key.key === "c" ? "copy" : key.key === "d" ? "duplicate" : null;
   if (command) {
     clipCommand(command, tracks, tool);
+  } else if ((key.key === "enter" || (key.cmd && key.key === "down")) && memory.selected.size > 0) {
+    // Its notes below, as a double click does.
+    memory.below = { kind: "editor", clip: [...memory.selected][0]! };
+    memory.notes = new Set();
   } else if (key.key === "escape") {
     memory.selected = new Set();
   } else if (key.cmd && key.key === "a") {

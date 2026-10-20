@@ -16,14 +16,14 @@ const ACROSS = 0.025;
 const VELOCITY_STEP = 10;
 // The top of a velocity of 127, and the bottom of every one, in the lane.
 const [VELOCITY_TOP, VELOCITY_BOTTOM] = [8, LANE - 4];
-/** The grids a note snaps to: a bar is as long as the bar the clip starts in. */
+/** The grids a note snaps to, as the arrangement's menu: a bar is as long as the bar the clip starts in. */
 export const snapsOf = (bar: number) => [
+  { label: "Off", ticks: 0 },
   { label: "Bar", ticks: bar },
-  { label: "1/4", ticks: BEAT },
+  { label: "Beat", ticks: BEAT },
   { label: "1/8", ticks: BEAT / 2 },
   { label: "1/16", ticks: BEAT / 4 },
   { label: "1/32", ticks: BEAT / 8 },
-  { label: "Off", ticks: 0 },
 ];
 const LANES = ["velocity", "pedal", "bend", "mod_wheel", "pressure"] as const;
 const LANE_NAMES: Record<Lane, string> = { velocity: "Velocity", pedal: "Pedal", bend: "Bend", mod_wheel: "Mod wheel", pressure: "Pressure" };
