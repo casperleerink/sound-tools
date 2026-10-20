@@ -19,6 +19,9 @@
 //!   the end of one note releases the next note of the same pitch.
 //! - A sender whose notes can change while they sound keeps a fixed list of what it started,
 //!   and sends the offs from that list, as [`NotePlayer`] does.
+//! - Send an off for every on, also for two notes of one pitch at once. An off releases every
+//!   note of its pitch, so the [`NoteFeed`] in front of an instrument passes it on only when it
+//!   ends the last on of that pitch, from any sender.
 //!
 //! A known limit, accepted: `AllOff` releases everything an instrument holds, also the keys
 //! held on a MIDI keyboard, because live input plays into the same port, and it puts the wheels

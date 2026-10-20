@@ -1,9 +1,10 @@
 //! The song of the DAW template (`templates/daw`) sounds as main's arrangement did: a muted or
 //! soloed-out track sends nothing, before its fader either; a solo silences a track whose
-//! volume a lane moves; an audio track sends into a return.
+//! volume a lane moves; an audio track sends into a return; a pitch two clips hold sounds until
+//! both end.
 
 use crate::shared_song::song_files;
-use crate::support::{BAR, Harness, write, write_samples};
+use crate::support::{BAR, Harness, clip, write, write_samples};
 
 const SILENT: &str = r#"{"tool": "fader", "state": {"gain_db": "-inf"}}"#;
 const PRE_FADER: &str = r#"{"tool": "bus", "state": {"title": "Room", "pre_fader": true}}"#;
@@ -141,4 +142,23 @@ fn a_volume_lane_moves_along_the_faders_travel() {
     let ratio = (energy(&fade[middle.clone()]) / energy(&steady[middle])).sqrt();
     let decibels = 20.0 * ratio.log10();
     assert!((-20.0..-17.0).contains(&decibels), "{decibels} dB");
+}
+
+/// Two clips of a track that hold one pitch at once hold it until the later note ends, as main's
+/// arrangement did: the end of the first note does not cut the second.
+#[test]
+fn a_pitch_two_clips_hold_sounds_until_both_notes_end() {
+    let mut harness = song(&[
+        ("state/song/t00/c00.json", &clip(0, 3840, &[(0, 1920, 60)])),
+        (
+            "state/song/t00/c01.json",
+            &clip(960, 2880, &[(0, 2880, 60)]),
+        ),
+        ("state/song/t01/mix.json", SILENT),
+        ("state/song/ret-a/mix.json", SILENT),
+    ]);
+    let samples = play(&mut harness, BAR);
+    // From three quarters of the bar on only the second clip's note holds the pitch.
+    let held = loudest(&samples[2 * BAR * 3 / 4..2 * BAR * 15 / 16]);
+    assert!(held > 1e-2, "{held}");
 }

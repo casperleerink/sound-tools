@@ -396,7 +396,6 @@ impl NotePlayer {
             previewed,
             *preview_frames,
             context.frames,
-            held,
             &mut sender,
         );
 
@@ -594,25 +593,18 @@ fn cut_patterns(
 
 /// The preview note, in engine time, so it sounds while the project does not play. It goes out
 /// at the start of the block, before the notes of the timeline.
-///
-/// A preview and a note of the timeline may share a pitch, and an off releases every note of
-/// its pitch. So the preview sends no off while the timeline holds its pitch: the off of that
-/// note ends both. The other way round, a note of the timeline that ends cuts a preview of its
-/// pitch short, which nobody hears as a fault.
 fn preview(
     wanted: &mut Option<(Pitch, Velocity)>,
     previewed: &mut Option<Previewed>,
     preview_frames: usize,
     frames: usize,
-    held: &[Held],
     sender: &mut Sender<'_, '_>,
 ) {
     let end = |previewed: &mut Option<Previewed>, sender: &mut Sender<'_, '_>| {
         let Some(note) = *previewed else {
             return true;
         };
-        let shared = held.iter().any(|held| held.pitch == note.pitch);
-        let ended = shared || sender.send(0, NoteEvent::Off { pitch: note.pitch });
+        let ended = sender.send(0, NoteEvent::Off { pitch: note.pitch });
         if ended {
             *previewed = None;
         }
@@ -667,11 +659,8 @@ impl Sender<'_, '_> {
     }
 }
 
-/// Ends the held note at `index` and takes it off the list. While another held note has the
-/// same pitch, no off is sent: an off releases every note of its pitch, so it goes out with
-/// the last holder. The pitch then sounds until its last note ends, in any order of ends and
-/// with or without a snapshot swap in between. Returns false when the off did not fit: the
-/// note stays listed and ends in a later block.
+/// Ends the held note at `index` and takes it off the list. Returns false when the off did not
+/// fit: the note stays listed and ends in a later block.
 fn end_note(
     held: &mut Vec<Held>,
     index: usize,
@@ -681,17 +670,14 @@ fn end_note(
     let Some(note) = held.get(index).copied() else {
         return false;
     };
-    let mut others = held.iter().enumerate().filter(|(other, _)| *other != index);
-    let shared = others.any(|(_, other)| other.pitch == note.pitch);
-    if shared || sender.send(offset, NoteEvent::Off { pitch: note.pitch }) {
+    if sender.send(offset, NoteEvent::Off { pitch: note.pitch }) {
         held.swap_remove(index);
         return true;
     }
     false
 }
 
-/// Ends every held note that ends before `limit`, the earliest end first, so that of two
-/// notes of one pitch the later end sends the off.
+/// Ends every held note that ends before `limit`, the earliest end first.
 fn release_before(
     held: &mut Vec<Held>,
     limit: Ticks,
