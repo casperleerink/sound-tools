@@ -1038,3 +1038,27 @@ fn a_clip_added_after_the_song_opened_is_drawn_once_after_its_track_lays_out_aga
     window.wait_for_bun();
     assert_eq!(nodes(&mut window), before);
 }
+
+#[gpui::test]
+fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let toggle = window.until_found("button-mixer-toggle");
+    window.click(toggle);
+    window.until_found("div-strip-name-t01");
+    // A track's head shows its panel in the mixer's place.
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.until_found("button-close-panel");
+    window.wait_for_bun();
+    assert!(window.find("div-strip-name-t01").is_none());
+    // The button shows the mixer again, and a second press shows nothing there.
+    let toggle = window.until_found("button-mixer-toggle");
+    window.click(toggle);
+    window.until_found("div-strip-name-t01");
+    let toggle = window.until_found("button-mixer-toggle");
+    window.click(toggle);
+    window.wait_for_bun();
+    assert!(window.find("div-strip-name-t01").is_none());
+    assert!(window.find("button-close-panel").is_none());
+}

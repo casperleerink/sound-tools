@@ -1,4 +1,4 @@
-import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
+import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -49,8 +49,10 @@ const PALETTE = [
 
 const [MOVES, RESIZES] = [["move"], ["resize"]];
 const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tape, "ret-*": bus, "*": track } as const;
-const STRIP = 64;
-const FADER = 160;
+const STRIP = 72;
+const MIXER_FADER = 140;
+/** A knob with its name and value under it. */
+const KNOB = 72;
 // The fader of the chosen track's panel.
 const PANEL_FADER = 113;
 
@@ -60,22 +62,20 @@ type TrackRow = Extract<Frozen<OwnedChild<typeof parts>>, { tool: typeof track }
 /** A copy of a clip's state to change, from a view's record or a key's. */
 const copyOf = (state: Frozen<FilledStateOfTool<"timeline">>) => JSON.parse(JSON.stringify(state)) as FilledStateOfTool<"timeline">;
 type Editing = { kind: "tempo" | "signature" | "section"; bar: number } | null;
+/** What shows under the timeline, one at a time: a track's panel, the master's, a clip's notes or the mixer. */
+type Below = { kind: "track"; name: string } | { kind: "master" } | { kind: "editor"; clip: string } | { kind: "mixer" } | null;
 
 type Memory = {
   /** The chosen clips, `track/clip`, and the chosen region. */
   selected: Set<string>;
   region: string | null;
-  open: string | null;
+  below: Below;
   armed: Set<string>;
   recording: number | null;
-  /** The track the keyboard plays, the one whose panel shows under the timeline, and the one whose name is typed. */
+  /** The track the keyboard plays, and the one whose name is typed. */
   track: string | null;
-  panel: string | null;
   renaming: string | null;
   renamingClip: string | null;
-  /** What shows under the timeline in place of a track's panel: the master's, or the mixer. */
-  master: boolean;
-  mixer: boolean;
   clipboard: Clipboard | null;
   /** The tracks whose automation lanes show under them, and each lane's range by `track/target`. */
   lanes: Set<string>;
@@ -204,8 +204,8 @@ export const song = tool({
   state: { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }), limit_off: boolean({ default: false }) },
   children: parts,
   memory: (): Memory => ({
-    selected: new Set(), region: null, open: null, armed: new Set(), recording: null, track: null, panel: null, renaming: null, renamingClip: null,
-    master: false, mixer: false, clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT },
+    selected: new Set(), region: null, below: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
+    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT },
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
   keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "escape"],
@@ -219,11 +219,12 @@ export const song = tool({
     }
     if (!key.down) return;
     // The editor's notes first, while it has some chosen.
-    if (memory.open) {
-      const [trackName, clipName] = memory.open.split("/");
+    const opened = memory.below?.kind === "editor" ? memory.below.clip : null;
+    if (opened) {
+      const [trackName, clipName] = opened.split("/");
       const row = children.find((each) => each.name === trackName);
       const clip = row?.tool === "track" ? row.children.find((child) => child.name === clipName) : undefined;
-      const key2 = memory.open;
+      const key2 = opened;
       const edit = (label: string, change: (clip: FilledStateOfTool<"timeline">) => void) =>
         update(label, ({ children }) => {
           const owner = children.find((each) => each.name === key2.split("/")[0]);
@@ -374,7 +375,12 @@ export const song = tool({
       const clip = tracks().find((each) => each.name === trackName)?.children.find((child) => child.name === clipName);
       return clip?.tool === "timeline" ? clip : undefined;
     };
-    const open = () => (memory.open ? clipAt(memory.open) : undefined);
+    const openKey = () => (memory.below?.kind === "editor" ? memory.below.clip : null);
+    const panelOf = () => (memory.below?.kind === "track" ? memory.below.name : null);
+    const open = () => {
+      const key = openKey();
+      return key ? clipAt(key) : undefined;
+    };
     /** Chooses the clips `keys` names, `track/clip`: the keyboard plays the track of the first, or `track`, and Export selection exports their bars. */
     const choose = (keys: Set<string>, track: string | null = null) => {
       memory.selected = keys;
@@ -389,10 +395,10 @@ export const song = tool({
     /** Shows the panel of the track `name` under the timeline, and gives it the keyboard. */
     const openPanel = (name: string) => {
       choose(new Set(), name);
-      [memory.panel, memory.master, memory.open] = [name, false, null];
+      memory.below = { kind: "track", name };
     };
     const openClip = (key: string) => {
-      [memory.open, memory.mixer, memory.master] = [key, false, false];
+      memory.below = { kind: "editor", clip: key };
       memory.notes = new Set();
     };
 
@@ -589,9 +595,9 @@ export const song = tool({
         children.splice(0, children.length, ...children.filter((child) => child.name !== name));
       });
       if (memory.track === name) memory.track = null;
-      if (memory.panel === name) memory.panel = null;
+      const below = memory.below;
+      if ((below?.kind === "track" && below.name === name) || (below?.kind === "editor" && below.clip.startsWith(`${name}/`))) memory.below = null;
       memory.selected = new Set([...memory.selected].filter((key) => !key.startsWith(`${name}/`)));
-      if (memory.open?.startsWith(`${name}/`)) memory.open = null;
     };
     const trackMenu = async (each: Child) => {
       const lanesShown = memory.lanes.has(each.name);
@@ -749,7 +755,7 @@ export const song = tool({
             <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
               <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: row() ? colourOf(row()!) : "blue" })} />
               <div style={{ grow: true, fontSize: 14, weight: "medium", truncate: true, color: "gray-950" }}>{() => (row() ? titleOf(row()!) : name)}</div>
-              <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={() => (memory.panel = null)} />
+              <Button key="close-panel" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={() => (memory.below = null)} />
             </div>
             <div style={{ direction: "row", paddingLeft: 8, gap: 20 }}>
               <div style={{ align: "center", gap: 8, paddingTop: 5 }}>
@@ -836,16 +842,6 @@ export const song = tool({
 
     const sendsOf = (each: Child) => (each.tool === "track" ? each.children.filter((child) => child.name.startsWith("send-")).map((child) => child.name) : []);
     /** A fader as the window drew one: a drag up and down turns `gain_db` of the fader `path`, natively. */
-    const Fader = ({ path, height = FADER }: { path: string; height?: number }) => {
-      const at = now.value(`${path}.gain_db`, { played: true, fraction: true });
-      return (
-        <Space key={`fader-${path}`} width={28} height={height} cursor="ns-resize"
-          drag={{ y: { value: `${path}.gain_db`, travel: height, default: 0, label: "Change the volume" } }}>
-          <Rect x={13} y={0} width={2} height={height} radius={1} color="alpha/10" />
-          <Rect x={0} y={at.times(-(height - 6)).plus(height - 6)} width={28} height={6} radius={3} color="gray-900" />
-        </Space>
-      );
-    };
     /** A fader over its meter, as the window drew a strip's volume: two bars, green up to -6 dB and yellow above, with a peak line held 1.5 s, and the handle on them, which a drag up and down turns natively. With `device`, the meter is of what the device plays; with `input`, of those channels of the audio input, as while the track is armed. */
     const Volume = ({ path, height, device, input }: { path: string; height: number; device?: boolean; input?: readonly number[] }) => {
       const place = (amplitude: Live) => amplitude.pow(CURVE).times(ZERO_DB).min(1);
@@ -877,43 +873,51 @@ export const song = tool({
         <Label x={28} y={0} text={now.value(`${path}.gain_db`, { played: true })} unit="db" size={12} color="gray-950" align="center" />
       </Space>
     );
-    /** A knob on a number of the fader `path`: its pan, or the gain of a send. */
-    const Turn = ({ path, field, label }: { path: string; field: "pan" | "gain_db"; label: string }) => {
-      const angle = now.value(`${path}.${field}`, { played: true, fraction: true }).minus(0.5).times(0.75);
+    /**
+     * A strip of the mixer, as the track panel's: a knob per send, its pan, its volume over its
+     * meter, then mute and solo and its name. Every strip keeps the room of the most sends a
+     * strip has and of mute and solo, so the faders line up.
+     */
+    const Strip = ({ each, master }: { each?: Child; master?: true }) => {
+      const path = each ? `${each.name}/mix` : "master";
+      const sends = () => (each ? sendsOf(each) : []);
+      // A knob's name is read once, as it opens.
+      const returnTitle = (send: string) =>
+        untrack(() => {
+          const target = returns().find((one) => `send-${one.name}` === send);
+          return target ? titleOf(target) : send.replace(/^send-/, "");
+        });
       return (
-        <Space key={`${field}-${path}`} width={28} height={28} cursor="ns-resize" drag={{ y: { value: `${path}.${field}`, default: 0, label } }}>
-          <Arc x={14} y={14} radius={10} from={-0.375} to={0.375} color={COLOR.lane} width={3} />
-          <Arc x={14} y={14} radius={10} from={field === "pan" ? 0 : -0.375} to={angle} color={COLOR.edit} width={3} />
-        </Space>
+        <div style={{ width: STRIP, align: "center" }}>
+          <For each={sends}>{(send) => <Knob value={`${each!.name}/${send}.gain_db`} label={returnTitle(send)} min={-60} max={6} default={0} unit="db" />}</For>
+          <div style={() => ({ height: (mostSends() - sends().length) * KNOB, keep: true })} />
+          <Knob value={`${path}.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
+          <div style={{ align: "center", gap: 7, paddingTop: 4 }}>
+            <Volume path={path} height={MIXER_FADER} device={master} />
+            <GainText path={path} />
+          </div>
+          <div style={{ height: 32, direction: "row", align: "center", gap: 4 }}>
+            {each ? <Toggle key={`strip-mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onPress={() => toggleMute(each.name)} /> : null}
+            {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onPress={() => toggleSolo(each.name)} /> : null}
+          </div>
+          <div key={each ? `strip-name-${each.name}` : "strip-name-master"} style={{ width: STRIP - 8, fontSize: 12, color: "gray-800", align: "center", truncate: true }}
+            onPress={() => (each && each.tool !== "bus" ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
+            {() => (each ? titleOf(each) : "Master")}
+          </div>
+        </div>
       );
     };
-    const Strip = ({ each }: { each: Child }) => (
-      <div style={{ width: STRIP, gap: 6, align: "center" }}>
-        <For each={() => sendsOf(each)}>{(send) => <Turn path={`${each.name}/${send}`} field="gain_db" label="Change a send" />}</For>
-        <Turn path={`${each.name}/mix`} field="pan" label="Change the pan" />
-        <div style={{ direction: "row", gap: 2 }}>
-          <Fader path={`${each.name}/mix`} />
-          <PeakMeter of={`${each.name}/mix`} length={FADER} />
-        </div>
-        <div style={{ direction: "row", gap: 4 }}>
-          <Toggle key={`strip-mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onPress={() => toggleMute(each.name)} />
-          {each.tool === "bus" ? null : <Toggle key={`strip-solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onPress={() => toggleSolo(each.name)} />}
-        </div>
-        <div style={{ fontSize: 11, color: COLOR.text }}>{() => titleOf(each)}</div>
-      </div>
-    );
-    /** A strip per track and return, the master's fader and its limiter. */
+    const mostSends = memo(() => Math.max(0, ...rows().map((each) => sendsOf(each).length)));
+    /** A strip per track and return, and the master's strip on the right; its limiter is in the master's panel. */
     const Mixer = () => (
-      <div key="mixer" style={{ height: 320, direction: "row", gap: 4, padding: 8, align: "end", scroll: "x" }}>
-        <For each={() => [...rows(), ...returns()]}>{(each) => <Strip each={each} />}</For>
-        <div style={{ width: STRIP, gap: 6, align: "center" }}>
-          <div style={{ direction: "row", gap: 2 }}>
-            <Fader path="master" />
-            <PeakMeter of="master" length={FADER} />
-          </div>
-          <div style={{ fontSize: 11, color: COLOR.text }}>master</div>
+      <div key="mixer" style={{ direction: "row", keep: true }}>
+        <div style={{ grow: true, direction: "row", gap: 4, paddingLeft: 8, paddingTop: 12, paddingBottom: 8, scroll: "x" }}>
+          <For each={() => [...rows(), ...returns()]}>{(each) => <Strip each={each} />}</For>
         </div>
-        <DeviceCard path="limit" />
+        <div style={{ width: 1, background: "alpha/5", keep: true }} />
+        <div style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 12, paddingBottom: 8, keep: true }}>
+          <Strip master />
+        </div>
       </div>
     );
 
@@ -924,7 +928,7 @@ export const song = tool({
           <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
             <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
             <div style={{ grow: true, fontSize: 14, weight: "medium", color: "gray-950" }}>Master</div>
-            <Button key="close-master" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={() => (memory.master = false)} />
+            <Button key="close-master" icon="x" variant="ghost" size="xs" opacity={0.6} onPress={() => (memory.below = null)} />
           </div>
           <div style={{ direction: "row", paddingLeft: 8 }}>
             <div style={{ align: "center", gap: 7, paddingTop: 5 }}>
@@ -942,7 +946,7 @@ export const song = tool({
 
     /** A track's header as the window drew it: its dot and name, and under them its automation, arm, mute and solo. */
     const TrackHead = ({ each }: { each: Child }) => (
-      <div style={() => ({ height: ROW - 8, radius: 6, background: memory.panel === each.name && !memory.region?.startsWith(`${each.name}/`) ? "alpha/5" : COLOR.clear })}>
+      <div style={() => ({ height: ROW - 8, radius: 6, background: panelOf() === each.name && !memory.region?.startsWith(`${each.name}/`) ? "alpha/5" : COLOR.clear })}>
         <div style={{ height: 25, paddingTop: 3, paddingLeft: 12, paddingRight: 9, direction: "row", align: "center", gap: 8 }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
           {() =>
@@ -1162,7 +1166,7 @@ export const song = tool({
       const press = ({ button }: Press) => {
         memory.region = key;
         memory.selected = new Set();
-        [memory.panel, memory.master, memory.mixer, memory.open] = [each.name, false, false, null];
+        memory.below = { kind: "track", name: each.name };
         if (button === "right") openMenu([{ label: "Delete" }]).then((picked) => picked === 0 && removeRegion(each.name, region.name));
       };
       return (
@@ -1307,7 +1311,7 @@ export const song = tool({
     const [moving, starting, ending] = (["move", "start", "end"] as const).map((part) => now.drag(`repeat-${part}`));
 
     const openEditor = () => {
-      const key = memory.open;
+      const key = openKey();
       const clip = open();
       if (!key || !clip) return null;
       const [trackName] = key.split("/");
@@ -1328,7 +1332,7 @@ export const song = tool({
           edit={(label, change) => editClips(label, [key], change)}
           preview={(pitch) => play(pitch, { child: trackName as `audio-${string}`, seconds: 0.3 })}
           openMenu={openMenu}
-          onClose={() => (memory.open = null)}
+          onClose={() => (memory.below = { kind: "track", name: trackName ?? "" })}
           height={EDITOR}
         />
       );
@@ -1473,20 +1477,25 @@ export const song = tool({
         <div style={{ height: 1, background: "alpha/5", keep: true }} />
         <div style={{ height: MASTER_ROW - 1, direction: "row", align: "center", keep: true }}>
           <div style={{ width: HEADER - 1, height: MASTER_ROW - 1, paddingX: 8, paddingY: 4, keep: true }}>
-            <div key="master-row" style={() => ({ grow: true, direction: "row", align: "center", gap: 12, paddingLeft: 16, radius: 6, background: memory.master ? "alpha/5" : COLOR.clear })}
-              onPress={() => ([memory.master, memory.panel, memory.mixer, memory.open] = [true, null, false, null])}>
+            <div key="master-row" style={() => ({ grow: true, direction: "row", align: "center", gap: 12, paddingLeft: 16, radius: 6, background: memory.below?.kind === "master" ? "alpha/5" : COLOR.clear })}
+              onPress={() => (memory.below = { kind: "master" })}>
               <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
               <div style={{ fontSize: 14, weight: "medium", color: "gray-900" }}>Master</div>
             </div>
           </div>
           <div style={{ width: 1, height: MASTER_ROW - 1, background: "alpha/5" }} />
           <div style={{ grow: true }} />
-          <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" onPress={() => ([memory.mixer, memory.master, memory.panel, memory.open] = [!memory.mixer, false, null, null])} />
+          <Button key="mixer-toggle" icon="sliders-horizontal" variant="ghost" size="xs" onPress={() => (memory.below = memory.below?.kind === "mixer" ? null : { kind: "mixer" })} />
           <div style={{ width: 8 }} />
         </div>
         {() => {
-          const shown = memory.panel;
-          const below = memory.open ? openEditor() : memory.mixer ? <Mixer /> : memory.master ? <MasterPanel /> : shown !== null && rows().some((each) => each.name === shown) ? <Rack name={shown} /> : null;
+          const shown = memory.below;
+          const below =
+            shown?.kind === "editor" ? openEditor()
+            : shown?.kind === "mixer" ? <Mixer />
+            : shown?.kind === "master" ? <MasterPanel />
+            : shown?.kind === "track" && rows().some((each) => each.name === shown.name) ? <Rack name={shown.name} />
+            : null;
           // The hairline under the master row is the top of what opens under it.
           return below === null ? null : (
             <>

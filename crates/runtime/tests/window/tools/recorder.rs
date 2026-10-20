@@ -172,11 +172,14 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut 
     let session = window.session.clone();
     (window.cx).update(|_, cx| session.update(cx, |session, cx| session.redo(cx)));
     assert_eq!(window.problems(), []);
-    // The region plays what was recorded, the left side of the tone, from the start.
+    // The region plays what was recorded, the left side of the tone, from the start, once its
+    // file is read in the background.
     let session = window.session.clone();
-    (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().stop()));
-    window.start_playing();
-    assert!(window.loudest(24_000) > 0.4);
+    window.until("the region plays its take", |window| {
+        (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().stop()));
+        window.start_playing();
+        window.loudest(24_000) > 0.4
+    });
 }
 
 /// While a recorder is armed the input is open, and a meter of its channels shows their level

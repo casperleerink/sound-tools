@@ -201,13 +201,13 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, cx, lane(3 * crate::song::BAR + 960, 4.5), 1)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song")?;
-    // A strip per track and return, and the master.
-    // Master, between the rows and the devices of the track and the editor under them.
-    click(&opened, cx, point(px(60.), px(380.)), 1)?;
+    // The mixer's button at the right of the master's row, over the editor: a strip per track
+    // and return, and the master's on the right, in place of the editor.
+    click(&opened, cx, point(px(1449.), px(547.)), 1)?;
     play(&mut opened, cx)?;
     save(cx, opened.window.into(), "typescript-song-mixer")?;
-    // The mixer closed again, and the automation of the first track's head: its lane of the
-    // cutoff shows under it, closing over the song.
+    // A track's head shows its panel in place of the mixer, and the automation of the first
+    // track's head: its lane of the cutoff shows under it.
     click(&opened, cx, point(px(60.), px(280.)), 1)?;
     click(
         &opened,

@@ -277,7 +277,7 @@ fn a_fader_of_the_mixer_turns_its_track_as_one_undo_step_with_nothing_from_bun(
     let toggle = window.until_found("button-mixer-toggle");
     window.press(toggle);
     window.release(toggle);
-    let fader = window.space_at("fader-t01/mix") + point(px(20.), px(80.));
+    let fader = window.space_at("volume-t01/mix") + point(px(20.), px(80.));
     window.wait_for_bun();
     let asked = sound_typescript::sent_updates_and_events();
     let questions = sound_typescript::asked_behaviours();
