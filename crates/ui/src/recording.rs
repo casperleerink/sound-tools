@@ -41,6 +41,7 @@ pub struct FinishedTake {
 pub struct Recording {
     armed: BTreeSet<InstanceId>,
     takes: Vec<LiveTake>,
+    input: Vec<f32>,
 }
 
 impl Recording {
@@ -80,6 +81,17 @@ impl Recording {
     pub fn set_takes(&mut self, takes: Vec<LiveTake>, cx: &mut Context<Self>) {
         self.takes = takes;
         cx.notify();
+    }
+
+    /// The loudest sample of each channel of the audio input at the last poll; none while it is
+    /// closed.
+    pub fn input_levels(&self) -> &[f32] {
+        &self.input
+    }
+
+    /// Set at every poll, with no notify: what draws a level draws on every frame anyway.
+    pub fn set_input_levels(&mut self, levels: Vec<f32>) {
+        self.input = levels;
     }
 
     /// A take ended: the window gives it to the code of its recorder's parent.

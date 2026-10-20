@@ -66,6 +66,8 @@ struct Open {
     _stream: Option<Box<dyn Send>>,
     /// Polls in a row whose level was exactly zero on every channel, and whether that was told.
     silent_polls: u32,
+    /// The loudest sample of each channel at the last poll.
+    levels: Vec<f32>,
     /// The input went away, and that was told.
     gone_told: bool,
     status: CaptureStatus,
@@ -183,6 +185,7 @@ impl AudioInput {
         self.open = Some(Open {
             generation,
             silent_polls: 0,
+            levels: Vec::new(),
             gone_told: false,
             _stream: stream,
             status,
@@ -218,12 +221,17 @@ impl AudioInput {
         let Some(open) = self.open.as_mut() else {
             return false;
         };
-        let levels = open.status.take_levels();
-        match levels.iter().all(|level| *level == 0.0) {
+        open.levels = open.status.take_levels();
+        match open.levels.iter().all(|level| *level == 0.0) {
             true => open.silent_polls = open.silent_polls.saturating_add(1),
             false => open.silent_polls = u32::MAX,
         }
         open.silent_polls == SILENT_POLLS
+    }
+
+    /// The loudest sample of each channel at the last poll; none while it is closed.
+    pub(crate) fn levels(&self) -> &[f32] {
+        self.open.as_ref().map_or(&[], |open| &open.levels)
     }
 
     /// Whether the device just went away or stopped: true once, on the poll that sees it.

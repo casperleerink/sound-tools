@@ -378,13 +378,17 @@ impl LiveInput {
         }
     }
 
-    /// One poll of the audio input: a silence that says what is wrong, and a device that went
-    /// away.
+    /// One poll of the audio input: its level for the views, a silence that says what is wrong,
+    /// and a device that went away.
     fn poll_audio(&mut self, cx: &mut Context<Self>) {
         if self.audio.poll_silence() {
             let notice = "The audio input gives nothing but silence. If it is a microphone, allow Sound Tools, or the terminal it runs from, in System Settings, Privacy & Security, Microphone, then open the project again.";
             self.session
                 .update(cx, |session, cx| session.report(notice, cx));
+        }
+        let levels = self.audio.levels().to_vec();
+        if !(levels.is_empty() && self.recording.read(cx).input_levels().is_empty()) {
+            (self.recording).update(cx, |recording, _| recording.set_input_levels(levels));
         }
         if self.audio.went_away() {
             self.input_gone(cx);
