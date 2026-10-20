@@ -374,12 +374,16 @@ impl Held {
                 false => live::snap(moved, step),
             }
         };
-        DragNumbers {
         // Cmd held is off the grid in time, as the arrangement's drags were.
         let free = self.modifiers.platform;
+        DragNumbers {
             start_x: self.start_units.0,
             start_y: self.start_units.1,
-            dx: if free { dx } else { whole(dx, snap.x, self.anchor.0) },
+            dx: if free {
+                dx
+            } else {
+                whole(dx, snap.x, self.anchor.0)
+            },
             dy: whole(dy, snap.y, self.anchor.1),
             active: self.ended.is_none(),
         }
@@ -591,7 +595,8 @@ impl TypeScriptCard {
             input.set_on_submit({
                 let card = card.clone();
                 move |text, _, cx| {
-                    card.update(cx, |view, cx| view.commit(node, text, true, cx)).ok();
+                    card.update(cx, |view, cx| view.commit(node, text, true, cx))
+                        .ok();
                 }
             });
             // Escape shows the text it had again, once the field's own update is over.
@@ -1504,13 +1509,20 @@ impl Notes {
         let span = (tick - start).max(1.0);
         let across = |at: f64| ((at - start) / span).clamp(0.0, 1.0) as f32;
         let pitches = take.notes.iter().map(|note| note.pitch);
-        let (lowest, highest) = (pitches.clone().min().unwrap_or(0), pitches.max().unwrap_or(0));
+        let (lowest, highest) = (
+            pitches.clone().min().unwrap_or(0),
+            pitches.max().unwrap_or(0),
+        );
         let range = f32::from(highest - lowest) + 1.0;
         let shown = range.max(12.0);
         let lines = (take.notes.iter())
             .map(|note| {
                 let end = note.end.map_or(tick, |end| end.0 as f64);
-                (across(note.start.0 as f64), across(end), f32::from(note.pitch - lowest))
+                (
+                    across(note.start.0 as f64),
+                    across(end),
+                    f32::from(note.pitch - lowest),
+                )
             })
             .collect();
         Self {
@@ -2833,7 +2845,9 @@ impl Placing<'_> {
                     y,
                     width: self.number(&shape.width),
                     height: self.number(&shape.height),
-                    notes: Rc::new(take.map_or(Notes::NONE, |take| Notes::of(take, self.sources.tick))),
+                    notes: Rc::new(
+                        take.map_or(Notes::NONE, |take| Notes::of(take, self.sources.tick)),
+                    ),
                 }
             }
             ShapeKind::Path => Geometry::Path {
@@ -3157,7 +3171,9 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
             for part in parts.iter() {
                 let end = start + part.len;
                 match (part.border, boxes.last_mut()) {
-                    (Some(border), Some(last)) if last.1 == start && last.2 == border => last.1 = end,
+                    (Some(border), Some(last)) if last.1 == start && last.2 == border => {
+                        last.1 = end
+                    }
                     (Some(border), _) => boxes.push((start, end, border)),
                     (None, _) => {}
                 }
@@ -3167,7 +3183,10 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 let (from, to) = (shaped.x_for_index(start), shaped.x_for_index(end));
                 let bounds = Bounds::from_corners(
                     point(left + from - px(BOXED.0), origin.y - px(BOXED.1)),
-                    point(left + to + px(BOXED.0), origin.y + line_height + px(BOXED.1)),
+                    point(
+                        left + to + px(BOXED.0),
+                        origin.y + line_height + px(BOXED.1),
+                    ),
                 );
                 let back = border.alpha(border.a * 0.15);
                 window.paint_quad(fill(bounds, back).corner_radii(px(4.)));
@@ -3198,7 +3217,10 @@ fn paint_notes(bounds: Bounds<Pixels>, notes: &Notes, color: Hsla, window: &mut 
         let middle = foot - (above + 0.5) * step;
         let left = bounds.origin.x + px(width * from);
         let length = px((width * (to - from)).max(1.0));
-        let line = Bounds::new(point(left, px(middle - thick / 2.0)), size(length, px(thick)));
+        let line = Bounds::new(
+            point(left, px(middle - thick / 2.0)),
+            size(length, px(thick)),
+        );
         window.paint_quad(gpui::fill(line, color));
     }
 }

@@ -2863,11 +2863,6 @@ function clockText(key: string, width: number, unit: "position" | "time", color:
   return Space({ key, width, height: 18, children: [Label({ x: 0, y: 0, text, unit, color, size: 14 })] });
 }
 
-/** What `Transport` records with: whether it records, what a press does, and whether it can. */
-export interface TransportRecord {
-  on: Accessor<boolean>;
-  press: () => void;
-  disabled?: Accessor<boolean>;
 /** Points of a drag up for the next number of a time signature. */
 const SIGNATURE_DRAG = 10;
 
@@ -2924,6 +2919,11 @@ function signaturePart(clock: Clock, part: "beats" | "note"): UiNode {
   });
 }
 
+/** What `Transport` records with: whether it records, what a press does, and whether it can. */
+export interface TransportRecord {
+  on: Accessor<boolean>;
+  press: () => void;
+  disabled?: Accessor<boolean>;
 }
 
 /**
