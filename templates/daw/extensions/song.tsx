@@ -1219,18 +1219,49 @@ export const song = tool({
       );
     };
 
-    /** The handles of a chosen region at its top, 7 points down: a fade at each corner, the gain hollow in the middle, and each fade a line from its bottom corner to its handle. */
-    const RegionHandles = ({ region, width }: { region: ReturnType<typeof regionsOf>[number]; width: Accessor<number> }) => {
+    /**
+     * The handles of a chosen region at its top, 7 points down: a fade at each corner, the gain
+     * hollow in the middle, and each fade a line from its bottom corner to its handle. A fade's
+     * handle drags across, the gain's up and down, 200 points for its whole range, each with a
+     * readout of what it makes.
+     */
+    const RegionHandles = ({ region, width, plays, edit }: { region: ReturnType<typeof regionsOf>[number]; width: Accessor<number>; plays: Accessor<number>; edit: (label: string, change: (state: FilledStateOfTool<"region">) => void) => void }) => {
       const point = timeline.pointX;
       const [top, bottom] = [(4 + 7) / ROW, (ROW - 4) / ROW];
-      const fade = (ms: number) => ticksAcross(clock.tempo_map.tempo_changes, region.state.start, ms / 1000);
+      const changes = () => clock.tempo_map.tempo_changes;
+      const fade = (ms: number) => ticksAcross(changes(), region.state.start, ms / 1000);
       const inside = (x: Live) => x.max(point.times(5)).min(point.times(-5).plus(width()));
-      const fadeIn = () => inside(point.times(0).plus(fade(region.state.fade_in_ms)));
-      const fadeOut = () => inside(point.times(0).plus(width() - fade(region.state.fade_out_ms)));
-      const dot = (x: Accessor<Live> | Live, hollow: boolean) => [
-        <Circle x={x} y={top} radius={5} color={hollow ? "gray-950" : "gray-50"} />,
-        <Circle x={x} y={top} radius={3.5} color={hollow ? "gray-50" : "gray-950"} />,
+      const [fadingIn, fadingOut, gaining] = [now.drag("fade-in"), now.drag("fade-out"), now.drag("gain")];
+      const fadeIn = () => inside(fadingIn.dx.plus(fade(region.state.fade_in_ms)));
+      const fadeOut = () => inside(fadingOut.dx.plus(width() - fade(region.state.fade_out_ms)));
+      // A fade is a time, not a place on the grid: as long as the region plays, less the other fade.
+      const fadeMs = (ticks: number, other: number) => clamp(Math.round(secondsBetween(changes(), region.state.start, region.state.start + Math.max(ticks, 0)) * 1000), 0, Math.max(plays() * 1000 - other, 0));
+      const fadeDrag = (id: "fade-in" | "fade-out"): Drag => ({
+        id,
+        axis: "x",
+        onEnd: ({ dx }) =>
+          id === "fade-in"
+            ? edit("Change fade in", (state) => (state.fade_in_ms = fadeMs(fade(state.fade_in_ms) + dx, state.fade_out_ms)))
+            : edit("Change fade out", (state) => (state.fade_out_ms = fadeMs(fade(state.fade_out_ms) - dx, state.fade_in_ms))),
+      });
+      const GAIN_RANGE = [-48, 24] as const;
+      const dbPerRow = (ROW * (GAIN_RANGE[1] - GAIN_RANGE[0])) / 200;
+      const gainDrag: Drag = {
+        id: "gain",
+        axis: "y",
+        onEnd: ({ dy }) => edit("Change gain", (state) => (state.gain_db = clamp(Math.round((Math.max(state.gain_db, GAIN_RANGE[0]) - dy * dbPerRow) * 10) / 10, GAIN_RANGE[0], GAIN_RANGE[1]))),
+      };
+      const dot = (x: Accessor<Live> | Live, hollow: boolean, drag: Drag, cursor: "ew-resize" | "ns-resize") => [
+        <Circle x={x} y={top} radius={5} color={hollow ? "gray-950" : "gray-50"} drag={drag} cursor={cursor} />,
+        <Circle x={x} y={top} radius={3.5} color={hollow ? "gray-50" : "gray-950"} drag={drag} cursor={cursor} />,
       ];
+      /** What a handle makes while it is dragged, in a pill right of it. */
+      const Readout = ({ x, title, value, unit, held }: { x: Accessor<Live>; title: string; value: Accessor<Live>; unit: "ms" | "db"; held: Live }) => [
+        <Rect x={() => x().plus(point.times(10))} y={top - 11 / ROW} width={point.times(116)} height={22 / ROW} radius={6} color="gray-100" border="alpha/10" borderWidth={1} opacity={held} />,
+        <Label x={() => x().plus(point.times(18))} y={top - 7 / ROW} text={title} size={12} color="gray-950" opacity={held} />,
+        <Label x={() => x().plus(point.times(118))} y={top - 7 / ROW} text={value} unit={unit} size={12} color="gray-950" align="right" opacity={held} />,
+      ];
+      const msOf = (ticks: Live) => ticks.times(60_000 / BEAT).over(now.bpm).max(0);
       const edge = 4 / ROW;
       return (
         <>
@@ -1242,9 +1273,12 @@ export const song = tool({
           </Show>
           <Show when={() => region.state.fade_in_ms > 0}>{() => <Line from={[0, bottom]} to={() => [fadeIn(), top]} color="gray-950" width={1.5} />}</Show>
           <Show when={() => region.state.fade_out_ms > 0}>{() => <Line from={() => [width(), bottom]} to={() => [fadeOut(), top]} color="gray-950" width={1.5} />}</Show>
-          {dot(fadeIn, false)}
-          {dot(fadeOut, false)}
-          {dot(() => point.times(0).plus(width() / 2), true)}
+          {dot(fadeIn, false, fadeDrag("fade-in"), "ew-resize")}
+          {dot(fadeOut, false, fadeDrag("fade-out"), "ew-resize")}
+          {dot(() => point.times(0).plus(width() / 2), true, gainDrag, "ns-resize")}
+          <Readout x={fadeIn} title="Fade in" value={() => msOf(fadingIn.dx.plus(fade(region.state.fade_in_ms)))} unit="ms" held={fadingIn.active} />
+          <Readout x={fadeOut} title="Fade out" value={() => msOf(fadingOut.dx.negate().plus(fade(region.state.fade_out_ms)))} unit="ms" held={fadingOut.active} />
+          <Readout x={() => point.times(0).plus(width() / 2)} title="Gain" value={() => gaining.dy.times(-dbPerRow).plus(region.state.gain_db).times(10).round().over(10)} unit="db" held={gaining.active} />
         </>
       );
     };
@@ -1323,11 +1357,11 @@ export const song = tool({
           <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
             drag={moveRegion} onPress={press} cursor="grab" />
           <Wave x={0} y={(ROW / 2 - 22) / ROW} width={width} height={44 / ROW} list={sound} band low={-1} high={1} level={level} color={() => `${colourOf(each)}/85` as Color} />
-          <Show when={chosen}>{() => <RegionHandles region={region} width={width} />}</Show>
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={press} cursor="ew-resize"
             moves={() => (chosen() ? ["trim"] : undefined)} />
           <Rect x={() => handle.negate().plus(width())} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={press} cursor="ew-resize"
             moves={() => (chosen() ? ["end"] : undefined)} />
+          <Show when={chosen}>{() => <RegionHandles region={region} width={width} plays={() => outputs[`${key}.seconds`] ?? 0} edit={editRegion} />}</Show>
         </Group>
       );
     };

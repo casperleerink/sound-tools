@@ -113,7 +113,7 @@ impl Opened<'_> {
 
     /// Drops a second of a sine from the system on bar 3 of the audio track, the third row, and
     /// waits for it to be drawn as long as it plays.
-    fn drop_sine(&mut self) {
+    pub(super) fn drop_sine(&mut self) {
         let files = tempfile::tempdir().unwrap();
         write_sine(files.path(), 0.5);
         let file = files.path().join("assets/audio/sine.wav");

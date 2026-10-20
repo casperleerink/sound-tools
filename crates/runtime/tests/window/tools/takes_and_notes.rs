@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::Opened;
 use super::song::open_song;
-use crate::song::BAR;
+use crate::song::{ACROSS, BAR, ROW};
 
 impl Opened<'_> {
     /// A key down and up, as a person presses it, and Bun's answer.
@@ -201,4 +201,47 @@ fn the_editor_ruler_seeks_and_a_line_draws_velocities(cx: &mut TestAppContext) {
     assert!(passed[0].1 < 20 && passed.last().unwrap().1 > 100, "{passed:?}");
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Draw velocities"));
+}
+
+/// A chosen region's handles at its top: the fade in drags across and the gain up, each one
+/// undo step, as on the arrangement's clips.
+#[gpui::test]
+fn a_regions_handles_drag_its_fade_in_and_its_gain(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.drop_sine();
+    window.until_found("button-mixer-toggle");
+    let middle = window.on_lane(2 * BAR + 960, 2);
+    window.click(middle);
+    window.wait_for_bun();
+    // The handles are 7 points under the top of the region, which is 4 under the row's.
+    let top = middle.y - px(ROW / 2.) + px(11.);
+    let start = window.on_lane(2 * BAR, 2).x;
+
+    let fade = point(start + px(5.), top);
+    window.press(fade);
+    window.drag_to(fade + point(px(5.), px(0.)));
+    window.drag_to(fade + point(px(480. * ACROSS), px(0.)));
+    window.release(fade + point(px(480. * ACROSS), px(0.)));
+    window.until("the fade in", |window| {
+        window.record("song/audio-voice/region")["fade_in_ms"].as_f64() > Some(0.)
+    });
+    let ms = window.record("song/audio-voice/region")["fade_in_ms"].as_f64().unwrap();
+    assert!((ms - 250.).abs() < 10., "{ms}");
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change fade in"));
+
+    let gain = point(middle.x, top);
+    window.press(gain);
+    window.drag_to(gain - point(px(0.), px(5.)));
+    window.drag_to(gain - point(px(0.), px(50.)));
+    window.release(gain - point(px(0.), px(50.)));
+    window.until("the gain", |window| {
+        window.record("song/audio-voice/region")["gain_db"].as_f64() > Some(0.)
+    });
+    let db = window.record("song/audio-voice/region")["gain_db"].as_f64().unwrap();
+    assert!((db - 18.).abs() < 0.5, "{db}");
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change gain"));
+    assert_eq!(window.problems(), []);
 }
