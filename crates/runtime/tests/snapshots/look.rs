@@ -9,6 +9,8 @@
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
 //! - `look-point.png`: a point added to the cutoff's lane at bar 7, chosen, with its readout.
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
+//! - `look-sidechain.png`: the panel of the bass with a filter and a compressor keyed by Track 1,
+//!   expanded with its sidechain picker.
 //! - `look-returns.png`, `look-sends.png`: the returns Space, a reverb, and Echo, open over the
 //!   master with the panel of Space; folded, with the panel of the bass and its sends.
 //! - `look-picker.png`, `look-effect-picker.png`: the panel of an empty track whose instrument is
@@ -422,6 +424,40 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     click(&opened, point(px(RECORD.0), px(RECORD.1)), 1, cx)?;
     run_input(&mut opened, &input, 4.6, cx)?;
     save(cx, opened.window.into(), "look-recording")?;
+    drop(opened);
+
+    // The bass's filter and then a compressor under its peaks, keyed by Track 1 after its
+    // effects and expanded, as the arrangement's sidechain snapshot had them.
+    let filter = json!({ "tool": "filter", "state": { "cutoff_hz": 1200.0, "resonance": 0.3 } });
+    let compressor = json!({ "tool": "compressor", "state": { "threshold_db": -30.0, "ratio": 4.0, "attack_ms": 10.0, "release_ms": 120.0 } });
+    let chain = json!({ "tool": "chain", "state": { "order": ["filter", "comp"] } });
+    let song = json!({ "tool": "song", "state": { "order": ["track-1", "bass", "melody"], "sidechains": [
+        { "effect": "bass/chain/comp", "from": "track-1", "tap": "post_fx" },
+    ] } });
+    let mut opened = open(
+        cx,
+        &[
+            ("bass/chain/instance.json", chain),
+            ("bass/chain/filter.json", filter),
+            ("bass/chain/comp.json", compressor),
+            ("instance.json", song),
+        ],
+    )?;
+    click(&opened, header(1.), 1, cx)?;
+    let card = opened.card::<compressor::view::CompressorView>("song/bass/chain/comp", cx)?;
+    // Half a second of the piece, and one look at what the compressor heard and did.
+    opened.play_from(Ticks(0), cx)?;
+    for _ in 0..25 {
+        opened.advance(960, cx);
+    }
+    cx.update(|cx| {
+        card.update(cx, |card, cx| {
+            card.read_meters(cx);
+            card.set_expanded(true, cx);
+        })
+    });
+    away(&opened, cx)?;
+    save(cx, opened.window.into(), "look-sidechain")?;
     drop(opened);
 
     let limiter = json!({ "tool": "limiter", "state": { "ceiling_db": 0, "lookahead_ms": 0, "gain_db": 18 } });
