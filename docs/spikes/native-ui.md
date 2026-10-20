@@ -131,3 +131,8 @@ Round 16d adds the armed and recording scenes of main (`look-armed`, `look-recor
 - `numbers()` gives each number its `label`, as its device names it (a plugin's parameter) or its field in plain words. The template's Add lane menu lists them as main did: Track, then a group per device.
 - A drag's `onClick` hears a press that let go where it was. Why: main's repeat bar is clicked on and off and dragged, and code heard a press only as it went down. The ruler now does what main's did: a click on the repeat's bar turns it on or off, its body moves it, an end moves that end; a double click adds a section.
 - What shows under the timeline is one slot of the song's memory: a track's panel, the master's, a clip's notes or the mixer. A mixer strip has a track panel's knobs and fader; strips keep the room of the most sends, so faders line up; the master's strip is on the right, its limiter in its panel.
+
+## Round 18: updates of a template
+
+- A project from a template keeps its code in `.template/` (see ARCHITECTURE, Templates); a later release updates the files the project never changed and leaves the rest to an agent merge from a notice. A project made before this kept nothing and is left alone: no base tells its edits from an older template's.
+- A tool's `migrate` hook waits for a template change that needs one: children are filled with their defaults, so a field a newer template adds reads as its default in an older record.

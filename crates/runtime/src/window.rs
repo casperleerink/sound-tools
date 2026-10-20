@@ -39,7 +39,7 @@ use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::empty_state::EmptyState;
 use sound_ui::components::indicator::{Indicator, IndicatorSize};
 use sound_ui::components::notice::{Notice, NoticeTone};
-use sound_ui::components::text_input;
+use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::{
     ActiveTheme, Assets, Devices, GlobalKeys, Session, SpareKey, SpareKeys, Views, typography,
 };
@@ -126,10 +126,17 @@ pub struct LeftPanel {
     /// Whether it works or waits on the composer. The icon in the title row says so while the
     /// panel is closed, so a closed panel never hides a question.
     busy: bool,
+    /// Where the window can write words for the agent, such as the merge of a template.
+    composer: Option<Box<dyn Fn(&App) -> Entity<TextInput>>>,
     _observing: Subscription,
 }
 
 impl LeftPanel {
+    pub fn with_composer(mut self, composer: impl Fn(&App) -> Entity<TextInput> + 'static) -> Self {
+        self.composer = Some(Box::new(composer));
+        self
+    }
+
     pub fn new<V: Render + Focusable>(
         view: Entity<V>,
         busy: fn(&V) -> bool,
@@ -151,6 +158,7 @@ impl LeftPanel {
                 Box::new(move |cx| view.read(cx).focus_handle(cx))
             },
             view: view.into(),
+            composer: None,
             _observing: observing,
         }
     }
@@ -194,6 +202,9 @@ pub struct Shell {
     /// The taps of the other apps `project.json` hears, in a window that can open them.
     _other_apps: Option<Entity<OtherApps>>,
     recorders: Entity<Recorders>,
+    /// A newer template's code for files the project changed, until the composer merges or
+    /// dismisses it.
+    template_update: Option<crate::templates::Update>,
 }
 
 impl Shell {
@@ -307,7 +318,16 @@ impl Shell {
             remembering: Task::ready(()),
             _other_apps: other_apps,
             recorders,
+            template_update: None,
         };
+        // Asked again after the open brought the rest up to date, which changes nothing more.
+        let root = shell.session.read(cx).project().root().to_path_buf();
+        match crate::templates::update(&root) {
+            Ok(update) => shell.template_update = update,
+            Err(error) => shell
+                .session
+                .update(cx, |session, cx| session.report(error, cx)),
+        }
         // A plugin's window passes on the keys its plugin does not use, to play the computer
         // keys. The plain keys are always free there: it has no text field and no tool.
         let live = shell.live.downgrade();
@@ -599,6 +619,7 @@ impl Shell {
             .gap(px(8.))
             .children(exporting)
             .children(update)
+            .children(self.template_notice(cx))
             .children(files.map(|files| {
                 Notice::new("problems", files)
                     .tone(NoticeTone::Warning)
@@ -614,6 +635,64 @@ impl Shell {
                             .update(cx, |session, cx| session.dismiss_notice(cx))
                     }))
             }))
+    }
+
+    /// A newer template changes files the project changed: the agent merges them, when there is
+    /// one.
+    fn template_notice(&self, cx: &mut Context<Self>) -> Option<Notice> {
+        let update = self.template_update.as_ref()?;
+        let files = match update.files.len() {
+            1 => "a file".to_string(),
+            count => format!("{count} files"),
+        };
+        let message = format!(
+            "The {} template changes {files} this project changed too",
+            update.template.name
+        );
+        let merge = (self.left_panel.as_ref())
+            .is_some_and(|panel| panel.composer.is_some())
+            .then(|| {
+                Button::new("template-merge", "Merge with the agent")
+                    .on_click(cx.listener(|shell, _, window, cx| shell.merge_template(window, cx)))
+            });
+        let notice = Notice::new("template", message)
+            .tone(NoticeTone::Info)
+            .max_w_full()
+            .on_dismiss(cx.listener(|shell, _, _, cx| {
+                shell.template_update = None;
+                cx.notify();
+            }));
+        Some(match merge {
+            Some(merge) => notice.action(merge),
+            None => notice,
+        })
+    }
+
+    /// Puts the old and new template beside the project's files and writes what to ask in the
+    /// agent's composer, for the composer to send.
+    fn merge_template(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(update) = self.template_update.take() else {
+            return;
+        };
+        let root = self.session.read(cx).project().root().to_path_buf();
+        let ask = match crate::templates::begin_merge(&root, &update) {
+            Ok(ask) => ask,
+            Err(error) => {
+                self.session
+                    .update(cx, |session, cx| session.report(error, cx));
+                return;
+            }
+        };
+        if let Some(composer) = self
+            .left_panel
+            .as_ref()
+            .and_then(|panel| panel.composer.as_ref())
+        {
+            let input = composer(cx);
+            input.update(cx, |input, cx| input.set_text(ask, cx));
+        }
+        self.focus_left_panel(window, cx);
+        cx.notify();
     }
 
     /// The bare parts of the top row move the window, as a title bar does. On Windows they are
@@ -986,7 +1065,7 @@ impl Opened {
         // An experiment: every project the window opens can have tools of its own, written
         // while it runs, so the folder for them is always there.
         std::fs::create_dir_all(folder.join(sound_typescript::FOLDER))?;
-        Ok(Extensions::load(folder, &crate::tool_schemas()?))
+        crate::load_tools(folder)
     }
 
     fn open(folder: &Path, tools: Option<FirstLoad>) -> Result<Self> {

@@ -89,3 +89,20 @@ fn an_empty_project_starts_from_the_daw_template_in_place(cx: &mut TestAppContex
     window.wait_for_bun();
     assert_eq!(window.problems(), []);
 }
+
+#[gpui::test]
+fn a_newer_template_for_code_the_project_changed_shows_a_notice(cx: &mut TestAppContext) {
+    let folder = tempfile::tempdir().unwrap();
+    runtime::templates::write(folder.path(), crate::song::daw()).unwrap();
+    // As an older release kept it, and the project changed it since.
+    let song = "extensions/song.tsx";
+    let kept = folder.path().join(runtime::templates::KEPT).join(song);
+    std::fs::write(&kept, "// an older template").unwrap();
+    let ours = std::fs::read_to_string(folder.path().join(song)).unwrap() + "\n// ours\n";
+    std::fs::write(folder.path().join(song), &ours).unwrap();
+
+    let mut window = open_folder(cx, folder);
+    window.until_found("notice-template");
+    let root = window.folder.path().to_path_buf();
+    assert_eq!(std::fs::read_to_string(root.join(song)).unwrap(), ours);
+}

@@ -279,7 +279,9 @@ pub fn agent_panel(support: Option<PathBuf>, cx: &mut App) -> LeftPanelSlot {
         let bun_folder = bun_folder.clone();
         let sidebar =
             cx.new(|cx| Sidebar::new(session, agents, threads, settings, bun_folder, window, cx));
+        let composer = sidebar.clone();
         LeftPanel::new(sidebar, Sidebar::is_busy, cx)
+            .with_composer(move |cx| composer.read(cx).composer().clone())
     })
 }
 
@@ -370,7 +372,7 @@ pub fn open_or_create_with(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<Project> {
-    let extensions = Extensions::load(folder, &tool_schemas()?);
+    let extensions = load_tools(folder)?;
     let mut project = open_with_loaded(folder, control, plugins, extensions)?.0;
     first(settle_behaviours(&mut project))?;
     Ok(project)
@@ -384,8 +386,17 @@ pub fn open_with_extensions(
     control: EngineControl,
     plugins: Plugins,
 ) -> Result<(Project, Option<Extensions>)> {
-    let extensions = Extensions::load(folder, &tool_schemas()?);
-    open_with_loaded(folder, control, plugins, extensions)
+    open_with_loaded(folder, control, plugins, load_tools(folder)?)
+}
+
+/// The project's own tools, once the code of the template it was made from is this release's
+/// where the project never changed it, see [`templates::update`]. What waits for a merge the
+/// window asks again.
+pub(crate) fn load_tools(folder: &Path) -> Result<Option<FirstLoad>> {
+    if let Err(error) = templates::update(folder) {
+        eprintln!("error: {error:#}");
+    }
+    Ok(Extensions::load(folder, &tool_schemas()?))
 }
 
 /// [`open_with_extensions`] with the tools of the project loaded already, see

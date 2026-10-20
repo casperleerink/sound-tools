@@ -132,6 +132,7 @@ The threads and the audio thread rules are in [ENGINEERING.md](ENGINEERING.md). 
 `templates/`, `crates/runtime/src/templates.rs`.
 
 - A new project starts from a template: a folder of `templates/` copied into it, with what its `template.json` says of it. A new template is a new folder; `build.rs` embeds them. Bare is an empty project.
+- A project keeps the template's code as it wrote it, in a hidden `.template/`, with its name and the release. Opening it in a later release makes each file of `extensions/` the project never changed the newer template's; a file it changed stays, and a notice offers the agent the old template, the new one and the project's, for a merge. Records and `project.json` are the project's from the start: a newer template never touches them. Rejected: the template loaded from the app, which updates by itself but makes a project look different under two releases and needs an "eject" to change one file; hashes of the files, which tell what changed but leave a merge nothing to merge from.
 - The DAW is a template of tools of the project, written with the SDK. The Rust arrangement that was the home of the product is gone: a song, a track, a mixer and a transport are a project's choice, so they can be changed like any tool. Rejected: keeping it next to the template, two DAWs to maintain.
 
 ## Audio files and the Sampler
