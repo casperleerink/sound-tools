@@ -2,8 +2,8 @@ import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, 
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
-import { freeName, tape } from "./tape";
-import { splitTarget, track } from "./track";
+import { tape } from "./tape";
+import { freeName, splitTarget, track } from "./track";
 
 // A song: tracks of clips in time, with their automation, a mixer strip per track, the devices
 // of the chosen track, and a note editor for one clip.
@@ -272,12 +272,12 @@ export const song = tool({
       // The last point takes its lane along.
       update("Remove a point", ({ children }) => {
         const row = children.find((child) => child.name === owner);
-        const points = row?.tool === "track" ? row.children.find((child) => child.name === lane) : undefined;
-        if (row?.tool !== "track" || points?.tool !== "lane") return;
+        const points = row?.tool === "track" || row?.tool === "tape" ? row.children.find((child) => child.name === lane) : undefined;
+        if ((row?.tool !== "track" && row?.tool !== "tape") || points?.tool !== "lane") return;
         const rest = points.state.points.filter((point) => point.tick !== tick);
         if (rest.length > 0) points.state.points = rest;
         else {
-          row.children = row.children.filter((child) => child !== points);
+          row.children.splice(row.children.findIndex((child) => child.name === lane), 1);
           row.state.automation = row.state.automation.filter((each) => each.lane !== lane);
         }
       });
@@ -363,7 +363,7 @@ export const song = tool({
     /** What has a panel: the tracks and the returns. */
     const strips = () => [...rows(), ...returns()];
     const lanesOf = (each: Child) =>
-      each.tool === "track"
+      each.tool === "track" || each.tool === "tape"
         ? each.state.automation.flatMap(({ lane, target }) =>
             each.children.some((child) => child.name === lane && child.tool === "lane") ? [{ lane, target }] : [],
           )
@@ -396,7 +396,7 @@ export const song = tool({
     const end = memo(() => {
       const clips = rows().flatMap((each) => clipsOf(each).map((clip) => clip.state.start + lengthOf(clip.state)));
       const regions = rows().flatMap((each) => regionsOf(each).map((region) => region.state.start));
-      const lanes = rows().flatMap((each) => (each.tool === "track" ? each.children : []).flatMap((child) => (child.tool === "lane" ? child.state.points.map((point) => point.tick) : [])));
+      const lanes = rows().flatMap((each) => (each.tool === "track" || each.tool === "tape" ? each.children : []).flatMap((child) => (child.tool === "lane" ? child.state.points.map((point) => point.tick) : [])));
       return Math.max(SHOWN, ...clips, ...regions, ...lanes, clock.repeat?.to ?? 0) + AFTER;
     });
     // Where what the song holds ends: the strip of the transport goes this far.
@@ -669,8 +669,8 @@ export const song = tool({
     };
     const trackMenu = async (each: Child) => {
       const lanesShown = memory.lanes.has(each.name);
-      const items = [{ label: "Rename" }, { label: "Colour…" }, { label: lanesShown ? "Hide automation" : "Show automation", disabled: each.tool !== "track" },
-        { label: "Add automation…", disabled: each.tool !== "track" }, { label: "Delete" }];
+      const items = [{ label: "Rename" }, { label: "Colour…" }, { label: lanesShown ? "Hide automation" : "Show automation" },
+        { label: "Add automation…" }, { label: "Delete" }];
       const picked = await openMenu(items);
       if (picked === 0) memory.renaming = each.name;
       else if (picked === 1) {
@@ -709,14 +709,14 @@ export const song = tool({
     };
     /** What a lane of a track can move, a group each, as the arrangement offered them: the track's own volume and pan, its instrument, then its chain's effects in order. */
     const devicesOf = (each: Child) => {
-      const effects = each.tool === "track" ? each.children.find((child) => child.name === "chain") : undefined;
+      const effects = each.tool === "track" || each.tool === "tape" ? each.children.find((child) => child.name === "chain") : undefined;
       const order = effects?.tool === "chain" ? effects.state.order : [];
-      const paths = ["synth", ...order.map((effect) => `chain/${effect}`)];
+      const paths = [...(each.tool === "track" ? ["synth"] : []), ...order.map((effect) => `chain/${effect}`)];
       const named = (path: string) => memory.names[`${each.name}/${path}`] ?? words(path.split("/").at(-1) ?? path);
       return [["mix", "Track"], ...paths.map((path) => [path, named(path)])] as [string, string][];
     };
     const addLane = async (each: Child) => {
-      if (each.tool !== "track") return;
+      if (each.tool !== "track" && each.tool !== "tape") return;
       await Promise.all(devicesOf(each).map(([path]) => learnName(each.name, path)));
       const taken = new Set(each.state.automation.map(({ target }) => target));
       const found = (await Promise.all(devicesOf(each).map(async ([path, group]) => (await numbers(`${each.name}/${path}`)).map((number) => ({ path, group, number })))))
@@ -731,7 +731,7 @@ export const song = tool({
       const value = chosen.number.value ?? valueAt(chosen.number, 0.5);
       update("Add a lane", ({ children }) => {
         const owner = children.find((child) => child.name === each.name);
-        if (owner?.tool !== "track") return;
+        if (owner?.tool !== "track" && owner?.tool !== "tape") return;
         const lane = freeName(owner.children.map((child) => child.name), `lane-${nameFrom(target)}`) as `lane-${string}`;
         owner.children.push({ name: lane, tool: "lane", state: { points: [{ tick: 0, value }], scale: chosen.number.scale } });
         owner.state.automation = [...owner.state.automation, { lane, target }];
@@ -742,15 +742,16 @@ export const song = tool({
     const removeLane = (track: string, lane: string) =>
       update("Remove a lane", ({ children }) => {
         const owner = children.find((child) => child.name === track);
-        if (owner?.tool !== "track") return;
+        if (owner?.tool !== "track" && owner?.tool !== "tape") return;
         owner.state.automation = owner.state.automation.filter((each) => each.lane !== lane);
-        owner.children = owner.children.filter((child) => child.name !== lane);
+        const at = owner.children.findIndex((child) => child.name === lane);
+        if (at >= 0) owner.children.splice(at, 1);
       });
     /** Changes the points of the lane `lane` of `track`, sorted, one a tick, at least one. */
     const editPoints = (label: string, track: string, lane: string, change: (points: LanePoint[]) => LanePoint[]) =>
       update(label, ({ children }) => {
         const owner = children.find((child) => child.name === track);
-        const child = owner?.tool === "track" ? owner.children.find((each) => each.name === lane) : undefined;
+        const child = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.find((each) => each.name === lane) : undefined;
         if (child?.tool !== "lane") return;
         const points = [...new Map(change(child.state.points.map((point) => ({ ...point }))).map((point) => [point.tick, point])).values()].sort((a, b) => a.tick - b.tick);
         if (points.length > 0) child.state.points = points;
@@ -759,8 +760,8 @@ export const song = tool({
       memory.ranges[`${track}/${target}`] ?? { name: target, label: words(target), value: null, min: Math.min(0, ...points.map((point) => point.value)), max: Math.max(1, ...points.map((point) => point.value)), scale: "linear" };
     /** A point where a lane was pressed, on the grid of the snap unless cmd is held, chosen. */
     const addPoint = (track: string, { lane, target }: { lane: string; target: string }, x: number, up: number, free: boolean) => {
-      const owner = tracks().find((each) => each.name === track);
-      const child = owner?.tool === "track" ? owner.children.find((each) => each.name === lane) : undefined;
+      const owner = rows().find((each) => each.name === track);
+      const child = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.find((each) => each.name === lane) : undefined;
       const points = child?.tool === "lane" ? child.state.points : [];
       const grid = free || memory.snap <= 0 ? 1 : memory.snap;
       const tick = Math.max(Math.round(x / grid) * grid, 0);
@@ -1211,8 +1212,8 @@ export const song = tool({
     /** The points of a lane on row `row`: lines between them, and a handle per point. */
     const LaneRow = ({ track, lane, row, colour }: { track: string; lane: { lane: string; target: string }; row: Accessor<number>; colour: Accessor<Color> }) => {
       const points = () => {
-        const owner = tracks().find((each) => each.name === track);
-        const child = owner?.tool === "track" ? owner.children.find((each) => each.name === lane.lane) : undefined;
+        const owner = rows().find((each) => each.name === track);
+        const child = owner?.tool === "track" || owner?.tool === "tape" ? owner.children.find((each) => each.name === lane.lane) : undefined;
         return child?.tool === "lane" ? child.state.points : [];
       };
       const range = () => rangeOf(track, lane.target, points());

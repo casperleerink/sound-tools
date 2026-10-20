@@ -358,6 +358,31 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     );
 }
 
+/// An audio track has lanes as a track has, as the arrangement's had: its volume plays from one.
+#[gpui::test]
+fn an_audio_track_has_a_lane_for_its_volume(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let name = window.until_found("div-name-audio-voice");
+    window.click_with(name, MouseButton::Right);
+    window.pick("menu-3");
+    window.pick("menu-0");
+    window.until("the lane added", |window| {
+        window.record("song/audio-voice")["automation"][0]["target"] == "mix.gain_db"
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Add a lane"));
+    assert_eq!(window.problems(), []);
+    window.until_found("div-lane-name-audio-voice-lane-mix-gain-db");
+    let session = window.session.clone();
+    let mix = crate::support::id("song/audio-voice/mix");
+    assert!(
+        window
+            .cx
+            .read(|cx| session.read(cx).project().lanes(&mix).is_some())
+    );
+}
+
 #[gpui::test]
 fn the_note_editor_edits_velocity_and_a_bend_lane_on_its_grid(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
