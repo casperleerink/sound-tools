@@ -115,8 +115,8 @@ fn the_last_region_ends_the_song() {
 
 /// A compressor in the chain of `t00` that turns down anything over -60 dB, hard and fast, or
 /// passed by when `bypassed`, and `t01` at `t01_gain`, with the song keying the compressor by
-/// `t01` when `keyed`.
-fn ducked(keyed: bool, t01_gain: &str, bypassed: bool) -> Vec<f32> {
+/// `t01` at the tap `keyed` names, such as `post_fader`.
+fn ducked(keyed: Option<&str>, t01_gain: &str, bypassed: bool) -> Vec<f32> {
     assert!(
         sound_typescript::has_bun(),
         "these tests run tools in Bun: see tooling/fetch-bun.sh"
@@ -136,8 +136,8 @@ fn ducked(keyed: bool, t01_gain: &str, bypassed: bool) -> Vec<f32> {
     write(folder.path(), "state/song/t00/chain/instance.json", &chain);
     write(folder.path(), "state/song/t01/mix.json", &fader(t01_gain));
     let sidechains = match keyed {
-        true => r#"[{"effect": "t00/chain/comp", "from": "t01"}]"#,
-        false => "[]",
+        Some(tap) => format!(r#"[{{"effect": "t00/chain/comp", "from": "t01", "tap": "{tap}"}}]"#),
+        None => "[]".to_string(),
     };
     let song = format!(r#"{{"tool": "song", "state": {{"sidechains": {sidechains}}}}}"#);
     write(folder.path(), "state/song/instance.json", &song);
@@ -155,21 +155,37 @@ fn energy(samples: &[f32]) -> f32 {
 /// key it hears `t00` and turns it down; keyed by `t01` playing, it turns `t00` down under it.
 #[test]
 fn a_sidechain_from_one_track_keys_a_compressor_of_another() {
-    let silent_key = ducked(true, r#""-inf""#, false);
-    let unkeyed = ducked(false, r#""-inf""#, false);
-    let bypassed = ducked(false, r#""-inf""#, true);
+    let silent_key = ducked(Some("post_fader"), r#""-inf""#, false);
+    let unkeyed = ducked(None, r#""-inf""#, false);
+    let bypassed = ducked(None, r#""-inf""#, true);
     let most =
         (silent_key.iter().zip(&bypassed)).fold(0.0_f32, |most, (a, b)| most.max((a - b).abs()));
     assert!(most < 1e-3 * loudest(&bypassed), "{most}");
     assert!(energy(&unkeyed) < 0.25 * energy(&bypassed));
-    let keyed = ducked(true, "0", false);
-    let both_open = ducked(false, "0", true);
+    let keyed = ducked(Some("post_fader"), "0", false);
+    let both_open = ducked(None, "0", true);
     assert!(
         energy(&keyed) < 0.75 * energy(&both_open),
         "{} {}",
         energy(&keyed),
         energy(&both_open)
     );
+}
+
+/// A key taken before the fader of its track, into its effects or out of them, keys with the
+/// fader all the way down; after the fader, it is silent then.
+#[test]
+fn a_sidechain_before_the_fader_keys_with_the_fader_down() {
+    let silent_key = ducked(Some("post_fader"), r#""-inf""#, false);
+    for tap in ["pre_fx", "post_fx"] {
+        let keyed = ducked(Some(tap), r#""-inf""#, false);
+        assert!(
+            energy(&keyed) < 0.75 * energy(&silent_key),
+            "{tap}: {} {}",
+            energy(&keyed),
+            energy(&silent_key)
+        );
+    }
 }
 
 /// A fader tells a lane or a knob what its record holds, which a lane starts from.
