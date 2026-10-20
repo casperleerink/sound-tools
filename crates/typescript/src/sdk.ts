@@ -1173,6 +1173,7 @@ type LiveNode =
   | { op: "value"; name: string; child?: string; played: boolean; fraction: boolean }
   | { op: "peak"; name: string; channel?: Channel }
   | { op: "device_peak"; channel?: Channel }
+  | { op: "input"; channel: number }
   | { op: "drag"; id: string; part: keyof DragValues }
   | { op: "space"; key: string; part: keyof SpaceValues }
   | { op: "plus" | "minus" | "times" | "over" | "mod" | "pow" | "min" | "max" | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "snap"; a: Num; b: Num }
@@ -1307,6 +1308,11 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
   peak(name: string, channel?: Channel): Live;
   /** The same, of what the device plays. */
   devicePeak(channel?: Channel): Live;
+  /**
+   * The loudest sample of channel `channel` of the audio input, from 0, at the window's last poll:
+   * 0 while the input is closed. It is open while a `recorder` is armed or records.
+   */
+  input(channel: number): Live;
   /** The last sound of a `meter` child by its path, for a `Wave`: -1 to 1, `frames` long (at most 8192). */
   scope(name: string, options?: { channel?: Channel; frames?: number }): WaveList;
   /** The last `frames` values of a live value, one a frame, for a `Wave`. */
@@ -1340,6 +1346,7 @@ function sources(): Now<Record<string, number>> {
     },
     peak: (name, channel) => new Live({ op: "peak", name, channel }),
     devicePeak: (channel) => new Live({ op: "device_peak", channel }),
+    input: (channel) => new Live({ op: "input", channel }),
     scope: (name, options) => ({ source: "scope", name, ...options }),
     history: (of, frames) => ({ source: "history", of, frames, key: liveKey([of, frames]) }),
     file: (asset, options) => ({ source: "file", asset, ...options }),
@@ -2380,9 +2387,12 @@ export type Shape =
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
          * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
-         * the highest under each point, as a waveform.
+         * the highest under each point, as a waveform. `level` scales them about the middle along
+         * it: `[x, factor]` from its left, straight between, so a waveform shows its gain and fades.
          */
-        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number }
+        | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number; level?: Bind<readonly (readonly [Num, Num])[]> }
+        /** A shape filled between `points`, in order: a fade's shade, a triangle, an outline. */
+        | { kind: "path"; points: Bind<readonly (readonly [Num, Num])[]>; color: Bind<Paint> }
       ));
 
 /** A colour, or one between two by a live value: see `blend`. */
@@ -2407,6 +2417,7 @@ export const Line = shape("line");
 export const Arc = shape("arc");
 export const Label = shape("text");
 export const Wave = shape("wave");
+export const Path = shape("path");
 /** Shapes moved together, see `Shape`. */
 export const Group = ({ children, ...props }: ShapeProps<"group"> & { children?: Child }): UiNode => shapeNode("group", props, [children]);
 
@@ -2505,10 +2516,11 @@ export const Icon = (props: { name: Bind<IconName>; size?: number; color?: Bind<
 
 /**
  * A stereo meter as the window draws its own: bars that fall, a peak line that holds, a clip light
- * a click clears. Of the peaks `of` names as `now.peak` does, or of what the device plays. Up the
- * side unless `horizontal`; `length` along its bars, in points.
+ * a click clears. Of the peaks `of` names as `now.peak` does, of the channels of the audio input
+ * `input` names (one shows on both bars), or of what the device plays. Up the side unless
+ * `horizontal`; `length` along its bars, in points.
  */
-export const PeakMeter = (props: { key?: string; of?: string; horizontal?: boolean; length?: number }): UiNode =>
+export const PeakMeter = (props: { key?: string; of?: string; input?: readonly number[]; horizontal?: boolean; length?: number }): UiNode =>
   element("meter", { ...props }, []);
 
 /**
@@ -2543,6 +2555,8 @@ export interface ButtonProps {
   /** A pill, round at its ends. */
   rounded?: boolean;
   disabled?: Bind<boolean>;
+  /** Quieter than its look, 0 to 1: a close button that stays out of the way. */
+  opacity?: number;
   onPress?: (press: Press) => void;
 }
 
@@ -2580,6 +2594,8 @@ export interface Style {
   background?: Color;
   color?: Color;
   fontSize?: number;
+  /** How far apart the lines of its text are, in points: 14 under 12-point text, as a card's note. */
+  lineHeight?: number;
   radius?: number;
   borderColor?: Color;
   borderWidth?: number;

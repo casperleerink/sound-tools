@@ -18,7 +18,7 @@ use crate::song::{ARM, HEADER, LEAD, ROW, TOGGLES, song_files};
 use crate::support::SimulatedInput;
 use crate::support::open_folder_with;
 
-const STUDIO: &str = r#"import { h, tool, type Declaration } from "./sdk";
+const STUDIO: &str = r#"import { h, PeakMeter, tool, type Declaration } from "./sdk";
 
 tool({
   name: "studio",
@@ -40,6 +40,7 @@ tool({
       h("div", { key: "done", onPress: () => send({ child: "rec", number: "record" }, 0) }, "Done"),
       h("div", { key: "arm-2", onPress: () => send({ child: "rec-2", number: "record" }, 1) }, "Arm 2"),
       h("div", { key: "done-2", onPress: () => send({ child: "rec-2", number: "record" }, 0) }, "Done 2"),
+      h(PeakMeter, { key: "input", input: [1] }),
     ),
   onTake: ({ update }, take) =>
     update("Record", ({ children }) => {
@@ -176,6 +177,22 @@ fn a_recorder_records_the_input_and_the_keyboard_where_they_were_heard(cx: &mut 
     (window.cx).update(|_, cx| session.update(cx, |session, _| session.engine().stop()));
     window.start_playing();
     assert!(window.loudest(24_000) > 0.4);
+}
+
+/// While a recorder is armed the input is open, and a meter of its channels shows their level
+/// as the window polls, without its code.
+#[gpui::test]
+fn a_meter_shows_the_level_of_the_input_a_recorder_opened(cx: &mut TestAppContext) {
+    let (mut window, input) = open_studio(cx);
+    let arm = window.until_found("div-arm");
+    window.cx.simulate_click(arm, Modifiers::default());
+    window.until("the meter shows the right side of the tone", |window| {
+        window.record_for(&input, 2_048);
+        // A frame of the view, which reads the level.
+        window.find("div-arm");
+        sound_typescript::shown_by_live_values("input:1")
+            .is_some_and(|level| (level - 0.25).abs() < 0.01)
+    });
 }
 
 /// The song of the examples records its voice: R arms the audio track, which opens its input,

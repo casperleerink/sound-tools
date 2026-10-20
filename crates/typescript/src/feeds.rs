@@ -22,14 +22,15 @@ pub(crate) fn played_name(child_number: &str) -> String {
     format!("played:{child_number}")
 }
 
-/// What live values last read, for tests: `peak:<name>`, the louder channel, and
-/// `played:<name>`.
+/// What live values last read, for tests: `peak:<name>`, the louder channel, `played:<name>`,
+/// and `input:<channel>`.
 #[cfg(feature = "test-support")]
 static SHOWN: std::sync::Mutex<std::collections::BTreeMap<String, f32>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 /// What the live values of a card last read of the peaks `name` (`peak:<name>`, the louder
-/// channel) or of a number as it plays (`played:<name>`), for a test that a meter moves.
+/// channel), of a number as it plays (`played:<name>`) or of a channel of the audio input
+/// (`input:<channel>`), for a test that a meter moves.
 #[cfg(feature = "test-support")]
 pub fn shown_by_live_values(name: &str) -> Option<f32> {
     let shown = SHOWN
@@ -62,6 +63,8 @@ pub(crate) struct Feeds {
     taken: Option<Instant>,
     output_reader: Option<PeaksReader>,
     pub output: [f32; 2],
+    /// The loudest sample of each channel of the audio input at the last poll.
+    pub input: Vec<f32>,
     /// Numbers as they play, by the name the tree reads them by, with how their knob turns.
     pub played: HashMap<String, (f32, Option<ValueRange>)>,
     /// Fields of instances inside it, as `path.field`.
@@ -219,6 +222,9 @@ impl Feeds {
         }
         for (name, (value, _)) in &self.played {
             shown.insert(format!("played:{name}"), *value);
+        }
+        for (channel, level) in self.input.iter().enumerate() {
+            shown.insert(format!("input:{channel}"), *level);
         }
     }
 

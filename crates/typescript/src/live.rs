@@ -197,6 +197,12 @@ impl Sources<'_> {
                 channel(peaks, *which)
             }
             Live::DevicePeak { channel: which } => channel(self.feeds.output, *which),
+            Live::Input { channel } => self
+                .feeds
+                .input
+                .get(*channel)
+                .copied()
+                .map_or(0.0, f64::from),
             Live::Drag { id, part } => match self.drag {
                 Some((held, numbers)) if held == id => numbers.part(*part),
                 _ => DragNumbers::default().part(*part),

@@ -107,14 +107,22 @@ props! {
         /// A pill, round at its ends.
         rounded: bool,
         disabled: bool,
+        /// Quieter than its look, 0 to 1.
+        opacity: f32,
         on_press: bool,
     }
 }
 
 props! {
-    /// A stereo meter of the app: the peaks of `of` as `now.peak` names them, or of what the
-    /// device plays.
-    MeterProps / MeterChange { key: String, of: String, horizontal: bool, length: f32 }
+    /// A stereo meter of the app: the peaks of `of` as `now.peak` names them, of the channels of
+    /// the audio input `input` names, or of what the device plays.
+    MeterProps / MeterChange {
+        key: String,
+        of: String,
+        input: Vec<usize>,
+        horizontal: bool,
+        length: f32,
+    }
 }
 
 props! {
@@ -215,6 +223,11 @@ props! {
         high: f32,
         /// A wave as a band from the lowest to the highest value under each point, else a line.
         band: bool,
+        /// The corners of a path, in order.
+        points: Vec<[Num; 2]>,
+        /// What a wave's values are multiplied by along it: `[x, factor]` from its left, straight
+        /// between them.
+        level: Vec<[Num; 2]>,
     }
 }
 
@@ -374,6 +387,8 @@ pub(crate) struct Uses {
     /// The peaks it reads, by name, and whether it reads the device output.
     pub peaks: BTreeSet<String>,
     pub output: bool,
+    /// It reads the level of the audio input.
+    pub input: bool,
     /// The numbers it reads as they play.
     pub played: BTreeSet<String>,
     /// The scopes it draws.
@@ -393,6 +408,7 @@ struct UseCounts {
     tick: usize,
     animates: usize,
     output: usize,
+    input: usize,
     named: HashMap<(Named, String), usize>,
 }
 
@@ -421,6 +437,7 @@ impl UseCounts {
         step(&mut self.tick, uses.tick);
         step(&mut self.animates, uses.animates);
         step(&mut self.output, uses.output);
+        step(&mut self.input, uses.input);
         let named = [
             (Named::Peak, &uses.peaks),
             (Named::Played, &uses.played),
@@ -453,6 +470,7 @@ impl UseCounts {
             tick: self.tick > 0,
             animates: self.animates > 0,
             output: self.output > 0,
+            input: self.input > 0,
             peaks: names(Named::Peak),
             played: names(Named::Played),
             scopes: names(Named::Scope),
@@ -693,14 +711,15 @@ impl NodeTable {
 fn uses_of(props: &Props) -> Uses {
     match props {
         Props::Shape(shape) => shape.uses(),
-        Props::Meter(MeterProps { of, .. }) => {
+        Props::Meter(MeterProps { of, input, .. }) => {
             let mut uses = Uses {
                 animates: true,
                 ..Uses::default()
             };
-            match of {
-                Some(name) => _ = uses.peaks.insert(name.clone()),
-                None => uses.output = true,
+            match (of, input) {
+                (_, Some(_)) => uses.input = true,
+                (Some(name), None) => _ = uses.peaks.insert(name.clone()),
+                (None, None) => uses.output = true,
             }
             uses
         }
@@ -730,6 +749,7 @@ impl ShapeProps {
         ]
         .into_iter()
         .flatten()
+        .chain(self.points.iter().flatten().flatten())
         .all(|number| number.fixed().is_some());
         self.moves.is_none() && self.grows.is_none() && self.list.is_none() && reaches && numbers
     }
@@ -774,6 +794,11 @@ impl ShapeProps {
             _ => None,
         };
         let clip = (self.clip.iter()).flat_map(|clip| [&clip.width, &clip.height]);
+        let corners = [&self.points, &self.level]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .flatten();
         [
             &self.opacity,
             &self.x,
@@ -788,6 +813,7 @@ impl ShapeProps {
         .chain(reaches)
         .chain(words)
         .chain(clip)
+        .chain(corners)
     }
 
     /// For a group: whether where it puts its shapes never moves, so they may stay too.
@@ -888,6 +914,7 @@ pub(crate) enum ShapeKind {
     Arc,
     Text,
     Wave,
+    Path,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -1081,6 +1108,10 @@ pub(crate) enum Live {
     DevicePeak {
         channel: Option<u8>,
     },
+    /// The loudest sample of a channel of the audio input at the last poll, while it is open.
+    Input {
+        channel: usize,
+    },
     Drag {
         id: String,
         part: DragPart,
@@ -1203,6 +1234,10 @@ impl Live {
             }
             Self::DevicePeak { .. } => {
                 uses.output = true;
+                uses.animates = true;
+            }
+            Self::Input { .. } => {
+                uses.input = true;
                 uses.animates = true;
             }
             Self::Value {
@@ -1411,6 +1446,8 @@ pub(crate) struct Style {
     background: Option<Color>,
     color: Option<Color>,
     font_size: Option<f32>,
+    /// How far apart the lines of its text are, in points.
+    line_height: Option<f32>,
     radius: Option<f32>,
     border_color: Option<Color>,
     border_width: Option<f32>,
@@ -1623,6 +1660,9 @@ impl Style {
         }
         if let Some(size) = self.font_size {
             element = element.text_size(px(size));
+        }
+        if let Some(height) = self.line_height {
+            element = element.line_height(px(height));
         }
         if let Some(radius) = self.radius {
             element = element.rounded(px(radius));

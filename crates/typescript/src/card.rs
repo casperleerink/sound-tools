@@ -178,8 +178,12 @@ impl Render for CardTitle {
             Some(on_press) => {
                 let placed = self.placed.clone();
                 let mark = self.placed.clone();
+                // The border a menu's trigger keeps for its focus ring, so the name sits where
+                // the window's pickers put it.
                 title
                     .relative()
+                    .border_1()
+                    .border_color(gpui::transparent_black())
                     .cursor_pointer()
                     .hover(move |style| style.bg(hover))
                     .child(Icon::new("chevron-down").size(12.).color(muted))
@@ -1274,6 +1278,9 @@ enum Geometry {
         height: f64,
         wave: Rc<Wave>,
     },
+    Path {
+        points: Rc<[(f64, f64)]>,
+    },
 }
 
 impl Geometry {
@@ -1286,6 +1293,7 @@ impl Geometry {
             | Self::Text { x, y, .. }
             | Self::Wave { x, y, .. } => (x, y),
             Self::Line { from, .. } => from,
+            Self::Path { ref points } => points.first().copied().unwrap_or_default(),
         }
     }
 }
@@ -1297,6 +1305,33 @@ struct Wave {
     high: f32,
     band: bool,
     line: f32,
+    /// What the values are multiplied by along it, as `(fraction across, factor)` in order.
+    level: Vec<(f32, f32)>,
+}
+
+impl Wave {
+    /// What the values are multiplied by `fraction` across it: straight between the points of
+    /// its level, and as the nearest one past its ends.
+    fn level_at(&self, fraction: f32) -> f32 {
+        let (Some(first), Some(last)) = (self.level.first(), self.level.last()) else {
+            return 1.0;
+        };
+        if fraction <= first.0 {
+            return first.1;
+        }
+        for pair in self.level.windows(2) {
+            let [(from, start), (to, end)] = [pair[0], pair[1]];
+            if fraction <= to {
+                let along = if to > from {
+                    (fraction - from) / (to - from)
+                } else {
+                    1.0
+                };
+                return start + (end - start) * along;
+            }
+        }
+        last.1
+    }
 }
 
 /// Everything a space paints and hears the pointer with, for one draw.
@@ -1438,6 +1473,7 @@ enum PaintedShape {
     Arc(Point<Pixels>, f32, (f32, f32), f32),
     Text(Point<Pixels>, SharedString, f32, Align),
     Wave(Bounds<Pixels>, Rc<Wave>),
+    Path(Rc<[Point<Pixels>]>),
 }
 
 impl PaintedShape {
@@ -1450,6 +1486,20 @@ impl PaintedShape {
         };
         match self {
             Self::Rect(bounds, ..) | Self::Wave(bounds, _) => *bounds,
+            Self::Path(points) => {
+                let (mut low, mut high) = (
+                    point(px(f32::MAX), px(f32::MAX)),
+                    point(px(f32::MIN), px(f32::MIN)),
+                );
+                for each in points.iter() {
+                    low = point(low.x.min(each.x), low.y.min(each.y));
+                    high = point(high.x.max(each.x), high.y.max(each.y));
+                }
+                match points.is_empty() {
+                    true => Bounds::default(),
+                    false => Bounds::from_corners(low, high),
+                }
+            }
             Self::Circle(centre, radius) => square(*centre, *radius),
             Self::Arc(centre, radius, _, width) => square(*centre, radius + width / 2.),
             Self::Line(from, to, width) => {
@@ -1477,9 +1527,17 @@ impl PaintedShape {
     fn batch_rank(&self) -> u8 {
         match self {
             Self::Rect(..) | Self::Circle(..) => 0,
-            Self::Wave(_, wave) if wave.band => 0,
-            Self::Line(..) | Self::Arc(..) | Self::Wave(..) => 1,
+            Self::Line(..) | Self::Arc(..) | Self::Wave(..) | Self::Path(..) => 1,
             Self::Text(..) => 2,
+        }
+    }
+
+    /// Whether GPUI paints it as a filled path: a band of a wave, or a path.
+    fn is_filled_path(&self) -> bool {
+        match self {
+            Self::Wave(_, wave) => wave.band,
+            Self::Path(_) => true,
+            _ => false,
         }
     }
 
@@ -1570,13 +1628,24 @@ impl Drawing<'_, '_> {
             Props::Toggle(props) => self.toggle(id, props, index),
             Props::Meter(MeterProps {
                 of,
+                input,
                 horizontal,
                 length,
                 ..
             }) => {
-                let amplitudes = match of {
-                    Some(name) => self.feeds.peaks.get(name).copied().unwrap_or_default(),
-                    None => self.feeds.output,
+                let amplitudes = match (of, input) {
+                    // One channel shows on both bars.
+                    (_, Some(channels)) => {
+                        let level = |at: usize| {
+                            let channel = channels.get(at).or(channels.first());
+                            channel
+                                .and_then(|channel| self.feeds.input.get(*channel))
+                                .copied()
+                        };
+                        [level(0).unwrap_or(0.0), level(1).unwrap_or(0.0)]
+                    }
+                    (Some(name), None) => self.feeds.peaks.get(name).copied().unwrap_or_default(),
+                    (None, None) => self.feeds.output,
                 };
                 let mut meters = self.meters.borrow_mut();
                 let metering = meters.entry(id).or_default();
@@ -1811,6 +1880,7 @@ impl Drawing<'_, '_> {
             .size(size)
             .rounded(props.rounded == Some(true))
             .disabled(props.disabled == Some(true))
+            .when_some(props.opacity, |button, opacity| button.opacity(opacity))
             .debug_selector(move || selector)
             .when(props.on_press == Some(true), |button| {
                 button.on_click(
@@ -2149,6 +2219,15 @@ impl Extent {
             }
             Geometry::Line { from, to, width } => {
                 extent((from.0, to.0), (from.1, to.1), (width, width))
+            }
+            Geometry::Path { ref points } => {
+                let fold = |pick: fn(&(f64, f64)) -> f64| {
+                    (points.iter().map(pick))
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| {
+                            (low.min(value), high.max(value))
+                        })
+                };
+                extent(fold(|point| point.0), fold(|point| point.1), (1.0, 1.0))
             }
             // A line of text is as wide as its words: a long label far off to the left may
             // still reach in.
@@ -2500,18 +2579,33 @@ impl Placing<'_> {
                 size: shape.size.unwrap_or(12.0),
                 align: shape.align.unwrap_or(Align::Left),
             },
-            ShapeKind::Wave => Geometry::Wave {
-                x,
-                y,
-                width: self.number(&shape.width),
-                height: self.number(&shape.height),
-                wave: Rc::new(Wave {
-                    values: self.list(shape.list.as_ref()),
-                    low: shape.low.unwrap_or(-1.0),
-                    high: shape.high.unwrap_or(1.0),
-                    band: shape.band == Some(true),
-                    line: shape.size.unwrap_or(1.0),
-                }),
+            ShapeKind::Wave => {
+                let width = self.number(&shape.width);
+                let level = (shape.level.iter().flatten())
+                    .map(|[along, factor]| {
+                        let along = self.sources.number(along) / width.max(f64::MIN_POSITIVE);
+                        (along as f32, self.sources.number(factor) as f32)
+                    })
+                    .collect();
+                Geometry::Wave {
+                    x,
+                    y,
+                    width,
+                    height: self.number(&shape.height),
+                    wave: Rc::new(Wave {
+                        values: self.list(shape.list.as_ref()),
+                        low: shape.low.unwrap_or(-1.0),
+                        high: shape.high.unwrap_or(1.0),
+                        band: shape.band == Some(true),
+                        line: shape.size.unwrap_or(1.0),
+                        level,
+                    }),
+                }
+            }
+            ShapeKind::Path => Geometry::Path {
+                points: (shape.points.iter().flatten())
+                    .map(|[x, y]| (left + self.sources.number(x), top + self.sources.number(y)))
+                    .collect(),
             },
             ShapeKind::Group => return None,
         };
@@ -2632,6 +2726,9 @@ fn prepaint(
                 let size = size(px((width * across) as f32), px((height * down) as f32));
                 PaintedShape::Wave(Bounds::new(at((*x, *y)), size), wave.clone())
             }
+            Geometry::Path { points } => {
+                PaintedShape::Path(points.iter().map(|each| at(*each)).collect())
+            }
         };
         let clip = (placed.clip).map(|Area([left, top, right, bottom])| {
             Bounds::from_corners(at((left, top)), at((right, bottom))).intersect(&bounds)
@@ -2676,16 +2773,20 @@ fn paint(
         // shapes. Inside a layer they share one order and paint as their kinds come: quads, then
         // paths, then text. So a run of shapes whose kinds come in that order is one layer, and a
         // shape of an earlier kind starts the next one, which paints over the run before.
+        // A filled path ends its layer too: GPUI draws the paths of one layer over each other's
+        // boxes, so a path over another one would show the one under it twice.
         let mut runs: Vec<&[Painted]> = Vec::new();
         let mut start = 0;
         let mut latest = 0;
+        let mut filled = false;
         for (index, each) in painted.iter().enumerate() {
             let rank = each.shape.batch_rank();
-            if rank < latest {
+            if rank < latest || filled {
                 runs.extend(painted.get(start..index));
                 start = index;
             }
             latest = rank;
+            filled = each.shape.is_filled_path();
         }
         runs.extend(painted.get(start..));
         for run in runs {
@@ -2759,6 +2860,19 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
             }
         }
         PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
+        PaintedShape::Path(points) => {
+            let mut path = gpui::PathBuilder::fill();
+            for (index, each) in points.iter().enumerate() {
+                match index {
+                    0 => path.move_to(*each),
+                    _ => path.line_to(*each),
+                }
+            }
+            path.close();
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        }
         PaintedShape::Text(origin, text, font_size, align) => {
             let run = TextRun {
                 len: text.len(),
@@ -2821,24 +2935,51 @@ fn paint_wave(bounds: Bounds<Pixels>, wave: &Wave, color: Hsla, window: &mut Win
         values.get(start..end.min(values.len())).unwrap_or_default()
     };
     if wave.band {
-        // A quad a column: GPUI draws quads in a batch, where a filled path is tessellated.
-        let width = (bounds.size.width / columns as f32).max(px(1.0));
-        for column in 0..columns {
-            let under = under(column);
-            let low = under.iter().copied().fold(f32::INFINITY, f32::min);
-            let high = under.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            let top = y_of(high);
-            // At least a point thick, so silence shows as a line.
-            let bottom = y_of(low).max(top + px(1.0));
-            let left = bounds.origin.x + bounds.size.width * (column as f32 / columns as f32);
-            let column = Bounds::new(point(left, top), size(width, bottom - top));
-            window.paint_quad(fill(column, color));
+        // One shape through the middle of each column, top edge then bottom edge back, so its
+        // outline is smooth.
+        let middle = (wave.low + wave.high) / 2.0;
+        let edges: Vec<(Pixels, Pixels, Pixels)> = (0..columns)
+            .map(|column| {
+                let under = under(column);
+                let fraction = (column as f32 + 0.5) / columns as f32;
+                let factor = wave.level_at(fraction);
+                let scaled = |value: f32| middle + (value - middle) * factor;
+                let low = scaled(under.iter().copied().fold(f32::INFINITY, f32::min));
+                let high = scaled(under.iter().copied().fold(f32::NEG_INFINITY, f32::max));
+                let (top, bottom) = (y_of(high), y_of(low));
+                // At least a point thick, so silence shows as a line.
+                let thin = (px(1.0) - (bottom - top)).max(px(0.0)) / 2.0;
+                let x = bounds.origin.x + bounds.size.width * fraction;
+                (x, top - thin, bottom + thin)
+            })
+            .collect();
+        let (Some(first), Some(last)) = (edges.first(), edges.last()) else {
+            return;
+        };
+        let right = bounds.origin.x + bounds.size.width;
+        let mut shape = gpui::PathBuilder::fill();
+        shape.move_to(point(bounds.origin.x, first.1));
+        for (x, top, _) in &edges {
+            shape.line_to(point(*x, *top));
+        }
+        shape.line_to(point(right, last.1));
+        shape.line_to(point(right, last.2));
+        for (x, _, bottom) in edges.iter().rev() {
+            shape.line_to(point(*x, *bottom));
+        }
+        shape.line_to(point(bounds.origin.x, first.2));
+        shape.close();
+        if let Ok(path) = shape.build() {
+            window.paint_path(path, color);
         }
         return;
     }
     let mut path = gpui::PathBuilder::stroke(px(wave.line));
+    let middle = (wave.low + wave.high) / 2.0;
     for column in 0..columns {
         let value = under(column).first().copied().unwrap_or_default();
+        let factor = wave.level_at(column as f32 / (columns - 1).max(1) as f32);
+        let value = middle + (value - middle) * factor;
         let at = point(x_of(column, columns), y_of(value));
         if column == 0 {
             path.move_to(at);
@@ -3130,6 +3271,10 @@ impl Render for TypeScriptCard {
             }
         }
         let recording = self.session.read(cx).recording().read(cx);
+        self.feeds.input = match uses.input {
+            true => recording.input_levels().to_vec(),
+            false => Vec::new(),
+        };
         self.feeds.takes = (uses.takes.iter())
             .filter_map(|name| {
                 let recorder = self.id.child(name).ok()?;
@@ -3322,5 +3467,28 @@ mod tests {
             },
         );
         assert_eq!((held.left, held.top), (50.0, 0.0));
+    }
+
+    #[test]
+    fn a_wave_is_scaled_straight_between_the_points_of_its_level_and_as_the_nearest_past_them() {
+        let wave = Wave {
+            values: Vec::new(),
+            low: -1.0,
+            high: 1.0,
+            band: true,
+            line: 1.0,
+            level: vec![(0.1, 0.0), (0.3, 0.5), (0.9, 0.5), (1.0, 0.0)],
+        };
+        let near =
+            |at: f32, expected: f32| assert!((wave.level_at(at) - expected).abs() < 1e-5, "{at}");
+        near(0.0, 0.0);
+        near(0.2, 0.25);
+        near(0.6, 0.5);
+        near(0.95, 0.25);
+        let plain = Wave {
+            level: Vec::new(),
+            ..wave
+        };
+        assert_eq!(plain.level_at(0.5), 1.0);
     }
 }
