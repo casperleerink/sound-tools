@@ -1329,6 +1329,9 @@ pub(crate) struct Drag {
     /// Its code hears its end.
     #[serde(default)]
     pub on_end: bool,
+    /// Its code hears a press that let go where it was, as a click.
+    #[serde(default)]
+    pub on_click: bool,
 }
 
 /// Whole steps of a drag, in units: of how far it went, or with `grid`, of where the anchor of

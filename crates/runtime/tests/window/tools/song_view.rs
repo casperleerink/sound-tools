@@ -436,8 +436,8 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Name a section"));
 
-    // A drag on the repeat bar at the foot of the ruler repeats bars 2 and 3; it is no edit.
-    let strip = window.space_at("ruler") + point(px(LEAD), px(26.));
+    // A drag over the ruler, away from the repeat's bar, repeats bars 6 and 7; it is no edit.
+    let strip = window.space_at("ruler") + point(px(LEAD + (5 * BAR) as f32 * ACROSS), px(8.));
     let (from, to) = (
         strip + point(px(BAR as f32 * ACROSS), px(0.)),
         strip + point(px(3. * BAR as f32 * ACROSS), px(0.)),
@@ -451,9 +451,71 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
         let looped = window
             .cx
             .read(|cx| session.read(cx).looped().read(cx).clone());
-        looped.on && looped.range == (Ticks(BAR)..Ticks(3 * BAR))
+        looped.on && looped.range == (Ticks(6 * BAR)..Ticks(8 * BAR))
     });
     assert_eq!(window.undo_label().as_deref(), Some("Name a section"));
+}
+
+#[gpui::test]
+fn the_repeat_bar_turns_on_and_off_moves_and_stretches_and_a_double_click_adds_a_section(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let session = window.session.clone();
+    let looped = |window: &mut Opened<'_>| {
+        let looped = window
+            .cx
+            .read(|cx| session.read(cx).looped().read(cx).clone());
+        (
+            looped.on,
+            looped.range.start.0 / BAR,
+            looped.range.end.0 / BAR,
+        )
+    };
+    // The repeat's bar is at the foot of the ruler, over bars 1 to 4 until it moves.
+    let ruler = window.space_at("ruler");
+    let on_bar =
+        |tick: u64, nudge: f32| ruler + point(px(LEAD + tick as f32 * ACROSS + nudge), px(26.));
+    // Each press waits for the bar where the last change put it.
+    let drag = |window: &mut Opened<'_>, from: Point<Pixels>, by: f32| {
+        window.wait_for_bun();
+        window.press(from);
+        window.drag_to(from + point(px(by / 2.), px(0.)));
+        window.drag_to(from + point(px(by), px(0.)));
+        window.release(from + point(px(by), px(0.)));
+    };
+    let bar = BAR as f32 * ACROSS;
+
+    window.click(on_bar(2 * BAR, 0.));
+    window.until("the repeat on", |window| looped(window) == (true, 0, 4));
+    window.click(on_bar(2 * BAR, 0.));
+    window.until("the repeat off", |window| !looped(window).0);
+    window.click(on_bar(2 * BAR, 0.));
+    window.until("the repeat on again", |window| looped(window).0);
+
+    drag(&mut window, on_bar(2 * BAR, 0.), bar);
+    window.until("the repeat moved a bar on", |window| {
+        looped(window) == (true, 1, 5)
+    });
+    drag(&mut window, on_bar(5 * BAR, -3.), bar);
+    window.until("its end a bar later", |window| {
+        looped(window) == (true, 1, 6)
+    });
+    drag(&mut window, on_bar(BAR, 3.), bar);
+    window.until("its start a bar later", |window| {
+        looped(window) == (true, 2, 6)
+    });
+
+    // A double click on the ruler adds a section at the nearest bar line, its name open.
+    window.double_click(ruler + point(px(LEAD + (4 * BAR + 100) as f32 * ACROSS), px(8.)));
+    window.until_found("div-ruler-edit");
+    window.cx.simulate_keystrokes("enter");
+    window.until("a section", |window| {
+        window.project_file()["sections"] == serde_json::json!([{ "bar": 5, "name": "Section 1" }])
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Add a section"));
 }
 
 #[gpui::test]

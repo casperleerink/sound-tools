@@ -158,6 +158,8 @@ pub(crate) enum Request<'a> {
 pub(crate) enum EventKind {
     Press,
     End,
+    /// A drag let go where it was pressed.
+    Click,
     /// Text a field tells.
     Commit,
     /// Files, or what a drag of a node carried, let go on a node.

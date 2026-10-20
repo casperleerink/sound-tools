@@ -1036,6 +1036,9 @@ impl TypeScriptCard {
         };
         held.follow(frame);
         if !held.moved {
+            if held.drag.on_click {
+                self.event(held.node, EventKind::Click, held.result(), cx);
+            }
             self.held = None;
             return;
         }

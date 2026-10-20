@@ -200,7 +200,7 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of the armed audio tracks. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below, drag over empty space to choose the clips there; right-click it to rename, copy or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane's point: double-click to add, drag to move, alt-click to remove. The ruler: click to play from there, right-click to add a tempo change, a time signature or a section; drag under it to repeat a range. A region: drag to move it, an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of the armed audio tracks. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below, drag over empty space to choose the clips there; right-click it to rename, copy or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane's point: double-click to add, drag to move, alt-click to remove. The ruler: click to play from there, double-click to add a section, right-click to add a tempo change, a time signature or a section, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it, an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
   state: { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }), limit_off: boolean({ default: false }) },
   children: parts,
   memory: (): Memory => ({
@@ -1199,10 +1199,23 @@ export const song = tool({
       const picked = await openMenu(snaps.map(({ label, ticks }) => ({ label, group: "Snap", checked: ticks === memory.snap })), { width: 160 });
       if (picked !== null) memory.snap = snaps[picked]!.ticks;
     };
-    const pressRuler = async ({ button, x }: Press) => {
+    /** A section at the bar line nearest `tick`, named by how many there are, its name open to change. */
+    const addSection = (tick: number) => {
+      const lines = starts();
+      const nearest = lines.reduce((best, start, index) => (Math.abs(start - tick) < Math.abs((lines[best] ?? 0) - tick) ? index : best), 0);
+      const bar = nearest + 1;
+      if (!clock.sections.some((each) => each.bar === bar)) {
+        clock.update("Add a section", (song) => {
+          song.sections = [...song.sections, { bar, name: `Section ${song.sections.length + 1}` }].sort((a, b) => a.bar - b.bar);
+        });
+      }
+      memory.editing = { kind: "section", bar };
+    };
+    const pressRuler = async ({ button, x, clicks }: Press) => {
       const bar = barOf(x);
       if (button !== "right") {
-        clock.jump(Math.max(Math.round(x / BEAT) * BEAT, 0));
+        if (clicks === 2) addSection(x);
+        else clock.jump(Math.max(Math.round(x / BEAT) * BEAT, 0));
         return;
       }
       const tick = starts()[bar - 1] ?? 0;
@@ -1264,6 +1277,34 @@ export const song = tool({
         if (to > from) clock.setRepeat({ from, to });
       },
     };
+    // The repeat's bar under the ruler, as the arrangement had it: a click turns it on or off,
+    // its body moves it, an edge moves that end, on the beats. Off, it keeps its range.
+    const repeat = () => clock.repeat ?? memory.repeatRange;
+    const setRepeatRange = (from: number, to: number) => {
+      if (to <= from) return;
+      if (clock.repeat) clock.setRepeat({ from, to });
+      else memory.repeatRange = { from, to };
+    };
+    const toggleRepeat = () => {
+      if (clock.repeat) memory.repeatRange = { ...clock.repeat };
+      clock.setRepeat(clock.repeat ? null : { ...memory.repeatRange });
+    };
+    const repeatDrag = (part: "move" | "start" | "end"): Drag => ({
+      id: `repeat-${part}`,
+      axis: "x",
+      snap: { x: BEAT, grid: true },
+      onClick: toggleRepeat,
+      onEnd: ({ dx }) => {
+        const { from, to } = repeat();
+        if (part === "move") {
+          const moved = Math.max(from + dx, 0) - from;
+          setRepeatRange(from + moved, to + moved);
+        } else if (part === "start") setRepeatRange(Math.min(Math.max(from + dx, 0), to - BEAT), to);
+        else setRepeatRange(from, Math.max(to + dx, from + BEAT));
+      },
+    });
+    const [repeatMove, repeatStart, repeatEnd] = (["move", "start", "end"] as const).map((part) => repeatDrag(part));
+    const [moving, starting, ending] = (["move", "start", "end"] as const).map((part) => now.drag(`repeat-${part}`));
 
     const openEditor = () => {
       const key = memory.open;
@@ -1392,10 +1433,14 @@ export const song = tool({
               <For each={() => clock.tempo_map.tempo_changes.filter((change) => change.tick > 0)}>
                 {(change) => <Label x={() => change.tick + 40 / ACROSS} y={8} text={() => `${change.bpm} bpm`} size={12} color="gray-700" />}
               </For>
-              {() => {
-                const range = clock.repeat ?? memory.repeatRange;
-                return <Rect x={range.from} y={RULER - 10} width={range.to - range.from} height={8} radius={2} color={clock.repeat ? "gray-900" : "alpha/15"} />;
-              }}
+              <Rect x={() => moving!.dx.plus(starting!.dx).plus(repeat().from)} y={RULER - 10}
+                width={() => ending!.dx.minus(starting!.dx).plus(repeat().to - repeat().from)} height={8} radius={2} color={() => (clock.repeat ? "gray-900" : "alpha/15")} />
+              <Rect x={() => moving!.dx.plus(repeat().from)} y={RULER - 14} width={() => repeat().to - repeat().from} height={14}
+                color={COLOR.clear} cursor="pointer" drag={repeatMove!} />
+              <Rect x={() => starting!.dx.plus(repeat().from)} y={RULER - 14} width={handle} height={14}
+                color={COLOR.clear} cursor="ew-resize" drag={repeatStart!} />
+              <Rect x={() => ending!.dx.plus(repeat().to).minus(handle)} y={RULER - 14} width={handle} height={14}
+                anchor={() => ({ x: repeat().to })} color={COLOR.clear} cursor="ew-resize" drag={repeatEnd!} />
               <Rect x={loop.startX.min(loop.x)} y={RULER - 10} width={loop.dx.abs()} height={8} radius={2} color="gray-900" opacity={loop.active} />
               <Line from={[playhead, RULER / 2]} to={[playhead, RULER - 1]} color="gray-950" width={1} />
               <Circle x={playhead} y={RULER / 2} radius={3.5} color="gray-950" />

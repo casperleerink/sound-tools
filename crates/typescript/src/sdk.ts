@@ -1517,6 +1517,8 @@ export interface Drag {
   y?: DragTurns;
   /** At the end of the drag, when the pointer moved. */
   onEnd?: (drag: DragResult) => void;
+  /** When the pointer let go where it pressed: a click on what it would drag. */
+  onClick?: (drag: DragResult) => void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2110,7 +2112,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   if (id === undefined) {
     id = nextNode++;
     card.drags.set(drag, id);
-    card.ops.push(["drag", id, { ...drag, onEnd: drag.onEnd !== undefined }]);
+    card.ops.push(["drag", id, { ...drag, onEnd: drag.onEnd !== undefined, onClick: drag.onClick !== undefined }]);
   }
   return id;
 }
@@ -3068,7 +3070,7 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
 }
 
 /** A press, the end of a drag, a drop, a field's text or a card's icon, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "end" | "commit" | "drop" | "power" | "close" | "title", payload: never) {
+function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "drop" | "power" | "close" | "title", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
   switch (kind) {
@@ -3081,7 +3083,7 @@ function nodeEvent(id: number, kind: "press" | "end" | "commit" | "drop" | "powe
     case "title":
       return made.onTitle?.();
     default: {
-      const handler = { press: made.onPress, end: made.drag?.onEnd, drop: made.onDrop }[kind];
+      const handler = { press: made.onPress, end: made.drag?.onEnd, click: made.drag?.onClick, drop: made.onDrop }[kind];
       return handler?.(payload);
     }
   }

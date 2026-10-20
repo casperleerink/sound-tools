@@ -355,10 +355,13 @@ impl Opened<'_> {
 #[gpui::test]
 fn a_recorder_that_starts_while_another_records_keeps_its_own_take(cx: &mut TestAppContext) {
     let (mut window, input) = open_studio_of(cx, &["rec-2"]);
+    // Each recorder starts when its press has reached the engine, not when Bun gets to it.
     window.press_found("div-arm");
+    window.wait_for_bun();
     window.start_playing();
     window.record_for(&input, 24_000);
     window.press_found("div-arm-2");
+    window.wait_for_bun();
     window.record_for(&input, 24_000);
     window.press_found("div-done");
     window.press_found("div-done-2");
