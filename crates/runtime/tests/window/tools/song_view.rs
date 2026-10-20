@@ -306,11 +306,11 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     assert_eq!(window.undo_label().as_deref(), Some("Add a lane"));
     assert_eq!(window.problems(), []);
 
-    // The lanes show under the track: the cutoff's, then the new one. A double click adds a
-    // point to the cutoff's, and an alt click on it takes it away again.
+    // The lanes show under the track: the cutoff's, then the new one. A click adds a point to
+    // the cutoff's, and an alt click on it takes it away again.
     let at = window.on_lane(2 * BAR, 1);
     window.until_found("div-lane-name-t00-lane-cutoff");
-    window.double_click(at);
+    window.click(at);
     let points = |window: &mut Opened<'_>| {
         window.record("song/t00/lane-cutoff")["points"]
             .as_array()
@@ -336,6 +336,17 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     window.until("the point removed", |window| points(window) == Some(2));
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Remove a point"));
+    // A point added is chosen, and delete takes it away.
+    let at = window.on_lane(3 * BAR, 1);
+    window.click(at);
+    window.until("a point added", |window| points(window) == Some(3));
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("delete");
+    window.until("the chosen point deleted", |window| points(window) == Some(2));
+    assert!(
+        (window.record("song/t00/lane-cutoff")["points"].as_array().unwrap().iter())
+            .all(|point| point["tick"] != 3 * BAR)
+    );
 
     // The filter's card shows what the lane plays into its cutoff.
     let session = window.session.clone();

@@ -85,6 +85,8 @@ type Memory = {
   repeatRange: { from: number; to: number };
   /** Whether the returns show a row each, or fold to one. */
   returnsOpen: boolean;
+  /** The chosen point of an automation lane, by its tick, which delete removes. */
+  point: { track: string; lane: string; tick: number } | null;
 } & EditorMemory;
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
@@ -202,12 +204,12 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below, drag over empty space to choose the clips there; right-click it to rename, copy or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane's point: double-click to add, drag to move, alt-click to remove. The ruler: click to play from there, double-click to add a section, right-click to add a tempo change, a time signature or a section, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it, an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below, drag over empty space to choose the clips there; right-click it to rename, copy or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane: click to add a point, chosen, drag one to move it, delete removes the chosen one and alt-click any. The returns sit over the master row, each with a panel of its effects; a track's panel ends with a knob per send. The ruler: click to play from there, double-click to add a section, right-click to add a tempo change, a time signature or a section, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it, an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
   state: { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }), limit_off: boolean({ default: false }) },
   children: parts,
   memory: (): Memory => ({
     selected: new Set(), region: null, below: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
-    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false,
+    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null,
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
   keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r"],
@@ -244,6 +246,24 @@ export const song = tool({
       const forNotes = memory.notes.size > 0 || (key.cmd && (key.key === "a" || (key.key === "v" && memory.copied !== null)));
       const state = clip?.tool === "timeline" ? clip.state : undefined;
       if (forNotes && editorKey(key, state, clock.tick, memory, edit)) return;
+    }
+    if (memory.point && (key.key === "delete" || key.key === "backspace" || key.key === "escape")) {
+      const { track: owner, lane, tick } = memory.point;
+      memory.point = null;
+      if (key.key === "escape") return;
+      // The last point takes its lane along.
+      update("Remove a point", ({ children }) => {
+        const row = children.find((child) => child.name === owner);
+        const points = row?.tool === "track" ? row.children.find((child) => child.name === lane) : undefined;
+        if (row?.tool !== "track" || points?.tool !== "lane") return;
+        const rest = points.state.points.filter((point) => point.tick !== tick);
+        if (rest.length > 0) points.state.points = rest;
+        else {
+          row.children = row.children.filter((child) => child !== points);
+          row.state.automation = row.state.automation.filter((each) => each.lane !== lane);
+        }
+      });
+      return;
     }
     if (memory.region && (key.key === "delete" || key.key === "backspace")) {
       const [owner, name] = memory.region.split("/");
@@ -389,6 +409,7 @@ export const song = tool({
     const choose = (keys: Set<string>, track: string | null = null) => {
       memory.selected = keys;
       memory.region = null;
+      memory.point = null;
       memory.track = ([...keys][0] ?? track)?.split("/")[0] ?? null;
       const clips = [...keys].flatMap((key) => clipAt(key) ?? []);
       const starts = clips.map((clip) => clip.state.start);
@@ -491,7 +512,7 @@ export const song = tool({
       const index = rowAt(y);
       const row = layout()[index];
       if (row?.lane) {
-        if (clicks === 2) addPoint(row.each.name, row.lane, x, 1 - (y - topOf(index) - 0.1) / 0.8);
+        if (clicks === 1) addPoint(row.each.name, row.lane, x, 1 - (y - topOf(index) - 0.1) / 0.8, cmd);
         return;
       }
       if (clicks !== 2 || row?.add || row?.each.tool !== "track") {
@@ -695,12 +716,16 @@ export const song = tool({
       });
     const rangeOf = (track: string, target: string, points: readonly LanePoint[]): MovedNumber =>
       memory.ranges[`${track}/${target}`] ?? { name: target, label: words(target), value: null, min: Math.min(0, ...points.map((point) => point.value)), max: Math.max(1, ...points.map((point) => point.value)), scale: "linear" };
-    const addPoint = (track: string, { lane, target }: { lane: string; target: string }, x: number, up: number) => {
+    /** A point where a lane was pressed, on the grid of the snap unless cmd is held, chosen. */
+    const addPoint = (track: string, { lane, target }: { lane: string; target: string }, x: number, up: number, free: boolean) => {
       const owner = tracks().find((each) => each.name === track);
       const child = owner?.tool === "track" ? owner.children.find((each) => each.name === lane) : undefined;
       const points = child?.tool === "lane" ? child.state.points : [];
-      const tick = Math.max(Math.round(x / (BEAT / 4)) * (BEAT / 4), 0);
+      const grid = free || memory.snap <= 0 ? 1 : memory.snap;
+      const tick = Math.max(Math.round(x / grid) * grid, 0);
       editPoints("Add a point", track, lane, (all) => [...all, { tick, value: valueAt(rangeOf(track, target, points), up) }]);
+      memory.selected = new Set();
+      memory.point = { track, lane, tick };
     };
 
     // Clips' keys
@@ -1149,31 +1174,71 @@ export const song = tool({
       const pointDrag: Drag = {
         id: "point",
         snap: { x: BEAT / 4, grid: true },
-        onEnd: ({ dx, dy }) =>
+        onEnd: ({ dx, dy }) => {
+          const moved = points()[pressed() ?? -1];
+          if (!moved) return;
+          const tick = Math.max(moved.tick + dx, 0);
           editPoints("Move a point", track, lane.lane, (all) =>
-            all.map((point, index) =>
-              index === pressed() ? { tick: Math.max(point.tick + dx, 0), value: valueAt(range(), upOf(range(), point.value) - dy / 0.8) } : point,
-            ),
-          ),
+            all.map((point, index) => (index === pressed() ? { tick, value: valueAt(range(), upOf(range(), point.value) - dy / 0.8) } : point)),
+          );
+          memory.point = { track, lane: lane.lane, tick };
+          press(null);
+        },
+      };
+      // While a point moves, the lines to it go along.
+      const dragged = now.drag("point");
+      const at = (index: number): readonly [number | Live, number | Live] => {
+        // A row of a point that went is read once more before it goes.
+        const point = points()[index] ?? { tick: 0, value: 0 };
+        return pressed() === index ? [dragged.dx.plus(point.tick), dragged.dy.plus(yOf(point.value))] : [point.tick, yOf(point.value)];
+      };
+      const chosen = () => {
+        const point = memory.point;
+        return point?.track === track && point.lane === lane.lane ? points().findIndex((each) => each.tick === point.tick) : -1;
+      };
+      /** How the readout of a point shows its value: by the unit its name ends in, or as a share of 0 to 1. */
+      const unitOf = () => {
+        const [, number] = splitTarget(lane.target);
+        const found = (/_(hz|db|ms)$/.exec(number)?.[1] ?? (number === "pan" ? "pan" : undefined)) as "hz" | "db" | "ms" | "pan" | undefined;
+        return found ?? (range().min === 0 && range().max === 1 ? "percent" : undefined);
       };
       return (
         <>
           <Rect x={-1e6} y={() => topOf(row())} width={2e6} height={timeline.pointY} color="alpha/5" />
           <For each={points}>
             {(point, index) => {
-              const next = () => points()[index() + 1];
+              const last = () => index() === points().length - 1;
               return [
                 // Flat before the first point and after the last.
-                <Line from={() => [index() === 0 ? 0 : point.tick, yOf(point.value)] as const} to={() => [point.tick, yOf(point.value)] as const} color={colour} width={1.5} />,
-                <Line from={() => [point.tick, yOf(point.value)] as const} to={() => [next()?.tick ?? end(), yOf(next()?.value ?? point.value)] as const}
-                  color={colour} width={1.5} />,
+                <Line from={() => [index() === 0 ? 0 : point.tick, at(index())[1]] as const} to={() => at(index())} color={colour} width={1.5} />,
+                <Line from={() => at(index())} to={() => (last() ? ([end(), at(index())[1]] as const) : at(index() + 1))} color={colour} width={1.5} />,
                 <Rect x={() => timeline.pointX.times(-3.5).plus(point.tick)} y={() => timeline.pointY.times(-3.5).plus(yOf(point.value))}
                   width={timeline.pointX.times(7)} height={timeline.pointY.times(7)} radius={3.5} color={colour} cursor="grab"
                   drag={pointDrag} anchor={() => ({ x: point.tick })} moves={() => (pressed() === index() ? ["point"] : undefined)}
-                  onPress={({ alt }) => (alt ? points().length > 1 && editPoints("Remove a point", track, lane.lane, (all) => all.filter((_, each) => each !== index())) : press(index()))} />,
+                  onPress={({ alt }) => {
+                    if (alt) return points().length > 1 && editPoints("Remove a point", track, lane.lane, (all) => all.filter((_, each) => each !== index()));
+                    press(index());
+                    memory.selected = new Set();
+                    memory.point = { track, lane: lane.lane, tick: point.tick };
+                  }} />,
               ];
             }}
           </For>
+          <Show when={() => chosen() >= 0}>
+            {() => {
+              // By the point as it moves; its readout says what it holds.
+              const [x, y] = [() => timeline.pointX.times(0).plus(at(chosen())[0]), () => timeline.pointY.times(0).plus(at(chosen())[1])];
+              const value = () => points()[chosen()]?.value ?? 0;
+              return [
+                <Rect x={() => x().plus(timeline.pointX.times(-5))} y={() => y().plus(timeline.pointY.times(-5))}
+                  width={timeline.pointX.times(10)} height={timeline.pointY.times(10)} radius={5} color="gray-950" border={colour} borderWidth={1.5} />,
+                <Rect x={() => x().plus(timeline.pointX.times(12))} y={() => y().plus(timeline.pointY.times(-11))} width={timeline.pointX.times(64)} height={timeline.pointY.times(22)}
+                  radius={6} color="gray-100" border="alpha/10" borderWidth={1} />,
+                <Label x={() => x().plus(timeline.pointX.times(44))} y={() => y().plus(timeline.pointY.times(-7))}
+                  text={() => timeline.pointX.times(0).plus(value())} unit={unitOf()} size={12} color="gray-950" align="center" />,
+              ];
+            }}
+          </Show>
         </>
       );
     };

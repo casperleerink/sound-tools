@@ -7,6 +7,7 @@
 //! - `look-editor.png`: the note editor on the first clip of the melody.
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
+//! - `look-point.png`: a point added to the cutoff's lane at bar 7, chosen, with its readout.
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
 //! - `look-returns.png`, `look-sends.png`: the returns Space, a reverb, and Echo, open over the
 //!   master with the panel of Space; folded, with the panel of the bass and its sends.
@@ -287,6 +288,10 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     )?;
     click(&opened, point(px(32.), px(TOP + ROW + 41.)), 1, cx)?;
     save(cx, opened.window.into(), "look-lanes")?;
+    // A click on the cutoff's lane adds a point there, chosen, with its readout.
+    click(&opened, at(6 * BAR, 3.), 1, cx)?;
+    away(&opened, cx)?;
+    save(cx, opened.window.into(), "look-point")?;
     // The row under the lanes of the bass adds one: its numbers by device.
     click(&opened, point(px(60.), px(TOP + 4. * ROW + 20.)), 1, cx)?;
     save(cx, opened.window.into(), "look-add-lane")?;
