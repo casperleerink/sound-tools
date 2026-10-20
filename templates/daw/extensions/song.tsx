@@ -61,8 +61,8 @@ type Clipboard = { from: number; clips: { row: number; track: string; state: Fil
 type TrackRow = Extract<Frozen<OwnedChild<typeof parts>>, { tool: typeof track }>;
 /** A copy of a clip's state to change, from a view's record or a key's. */
 const copyOf = (state: Frozen<FilledStateOfTool<"timeline">>) => JSON.parse(JSON.stringify(state)) as FilledStateOfTool<"timeline">;
-/** A tempo, a time signature or a section being typed: its bar, and the tick a tempo change lands on. */
-type Editing = { kind: "tempo" | "signature" | "section"; bar: number; tick: number } | null;
+/** A section whose name is being typed: its bar, and the tick it starts at. */
+type Editing = { bar: number; tick: number } | null;
 /** What shows under the timeline, one at a time: a track's panel, the master's, a clip's notes or the mixer. */
 type Below = { kind: "track"; name: string } | { kind: "master" } | { kind: "editor"; clip: string } | { kind: "mixer" } | null;
 
@@ -115,15 +115,11 @@ function signaturesOf(runs: Runs, count: number): string[] {
   });
   return each.slice(0, count);
 }
-/** The runs of `signatures`, one a bar. */
-function runsOf(signatures: string[]): { signature: string; bars: number }[] {
-  const runs: { signature: string; bars: number }[] = [];
-  for (const signature of signatures) {
-    const last = runs.at(-1);
-    if (last?.signature === signature) last.bars += 1;
-    else runs.push({ signature, bars: 1 });
-  }
-  return runs;
+/** The bar each run starts at, from 1: where a time signature change is, even to the same one. */
+function changeBars(runs: Runs): number[] {
+  const bars = [1];
+  for (const run of runs.slice(0, -1)) bars.push(bars.at(-1)! + run.bars);
+  return bars;
 }
 /** The tick each bar starts at, up to the first at or past `end`. */
 function barStarts(runs: Runs, end: number): number[] {
@@ -261,7 +257,7 @@ export const song = tool({
     if (memory.mark && ["delete", "backspace", "escape", "enter"].includes(key.key) && !key.cmd) {
       const mark = memory.mark;
       memory.mark = null;
-      if (key.key === "enter") memory.editing = mark.kind === "section" ? { ...mark, kind: "section" } : null;
+      if (key.key === "enter") memory.editing = mark.kind === "section" ? mark : null;
       else if (key.key !== "escape") removeMark(clock, mark);
       return;
     }
@@ -1538,7 +1534,7 @@ export const song = tool({
     const rulerLabel = (index: number): TextPart[] => {
       const here = barSignatures()[index];
       const section = clock.sections.find((each) => each.bar === index + 1);
-      const changes = index === 0 || here !== barSignatures()[index - 1];
+      const changes = changeBars(runs()).includes(index + 1);
       const tempo = clock.tempo_map.tempo_changes.find((change) => change.tick > 0 && change.tick === starts()[index]);
       // The chosen mark in a light box.
       const chosen = (kind: Mark["kind"]) => (memory.mark?.kind === kind && memory.mark.bar === index + 1 ? ("gray-800" as const) : undefined);
@@ -1553,7 +1549,7 @@ export const song = tool({
     const markAt = (index: number): Mark | null => {
       const [bar, tick] = [index + 1, starts()[index] ?? 0];
       if (clock.sections.some((each) => each.bar === bar)) return { kind: "section", bar, tick };
-      if (index > 0 && barSignatures()[index] !== barSignatures()[index - 1]) return { kind: "signature", bar, tick };
+      if (index > 0 && changeBars(runs()).includes(bar)) return { kind: "signature", bar, tick };
       if (tick > 0 && clock.tempo_map.tempo_changes.some((each) => each.tick === tick)) return { kind: "tempo", bar, tick };
       return null;
     };
@@ -1591,7 +1587,7 @@ export const song = tool({
           song.sections = [...song.sections, { bar, name: `Section ${song.sections.length + 1}` }].sort((a, b) => a.bar - b.bar);
         });
       }
-      memory.editing = { kind: "section", bar, tick: starts()[bar - 1] ?? 0 };
+      memory.editing = { bar, tick: starts()[bar - 1] ?? 0 };
     };
     // As the arrangement's: a click plays from the grid, a double click adds a section. The menu
     // adds a tempo change on the grid, and a time signature or a section on the nearest bar line;
@@ -1606,7 +1602,7 @@ export const song = tool({
       const [tick, bar] = [snapped(x), nearestBar(x)];
       const line = starts()[bar - 1] ?? 0;
       const section = clock.sections.find((each) => each.bar === bar);
-      const signature = bar > 1 && signaturesOf(runs(), bar).at(-1) !== signaturesOf(runs(), bar - 1).at(-1);
+      const signature = bar > 1 && changeBars(runs()).includes(bar);
       const tempo = clock.tempo_map.tempo_changes.find((each) => each.tick > 0 && (each.tick === tick || each.tick === line));
       const marked = section !== undefined || signature || tempo !== undefined;
       const picked = await openMenu([
@@ -1615,9 +1611,15 @@ export const song = tool({
         { label: "Section", icon: "section", disabled: section !== undefined },
         ...(marked ? [{ label: "Remove", icon: "trash-2" as const, shortcut: "backspace" as const, separator: true }] : []),
       ]);
-      if (picked === 0) memory.editing = { kind: "tempo", bar: barOf(tick), tick };
-      else if (picked === 1) memory.editing = { kind: "signature", bar, tick: line };
-      else if (picked === 2) addSection(line);
+      // A tempo or a time signature added is chosen with the playhead on it, for the transport to change.
+      if (picked === 0) {
+        addTempo(clock, memory, tick);
+        clock.jump(tick);
+      } else if (picked === 1) {
+        addSignature(clock, bar);
+        memory.mark = { kind: "signature", bar, tick: line };
+        clock.jump(line);
+      } else if (picked === 2) addSection(line);
       else if (picked === 3) {
         const mark = section ? { kind: "section" as const, bar, tick: line } : signature ? { kind: "signature" as const, bar, tick: line } : tempo ? { kind: "tempo" as const, bar, tick: tempo.tick } : null;
         if (mark) removeMark(clock, mark);
@@ -1627,39 +1629,14 @@ export const song = tool({
       const editing = memory.editing;
       memory.editing = null;
       if (!editing) return;
-      const tick = editing.tick;
-      if (editing.kind === "tempo") {
-        const bpm = Number(value);
-        if (!(bpm > 0)) return;
-        clock.update("Change the tempo", (song) => {
-          const rest = song.tempo_map.tempo_changes.filter((each) => each.tick !== tick);
-          song.tempo_map.tempo_changes = [...rest, { tick, bpm }].sort((a, b) => a.tick - b.tick);
-        });
-      } else if (editing.kind === "signature") {
-        if (!/^\d+\/\d+$/.test(value.trim())) return;
-        clock.update("Change the time signature", (song) => {
-          const runs = song.tempo_map.time_signatures;
-          const count = Math.max(editing.bar, runs.reduce((sum, run) => sum + run.bars, 0)) + 1;
-          const each = signaturesOf(runs, count);
-          const old = each[editing.bar - 1];
-          // From the bar to the next change.
-          for (let bar = editing.bar - 1; bar < each.length && each[bar] === old; bar++) each[bar] = value.trim();
-          song.tempo_map.time_signatures = runsOf(each);
-        });
-      } else {
-        clock.update("Name a section", (song) => {
-          const rest = song.sections.filter((each) => each.bar !== editing.bar);
-          song.sections = value.trim() === "" ? rest : [...rest, { bar: editing.bar, name: value.trim() }].sort((a, b) => a.bar - b.bar);
-        });
-      }
+      clock.update("Name a section", (song) => {
+        const rest = song.sections.filter((each) => each.bar !== editing.bar);
+        song.sections = value.trim() === "" ? rest : [...rest, { bar: editing.bar, name: value.trim() }].sort((a, b) => a.bar - b.bar);
+      });
     };
     const editedValue = () => {
       const editing = memory.editing;
-      if (!editing) return "";
-      const tick = editing.tick;
-      if (editing.kind === "tempo") return String([...clock.tempo_map.tempo_changes].reverse().find((each) => each.tick <= tick)?.bpm ?? 120);
-      if (editing.kind === "signature") return signaturesOf(runs(), editing.bar)[editing.bar - 1] ?? "4/4";
-      return clock.sections.find((each) => each.bar === editing.bar)?.name ?? "";
+      return editing ? (clock.sections.find((each) => each.bar === editing.bar)?.name ?? "") : "";
     };
     const loopDrag: Drag = {
       id: "loop",
@@ -1737,7 +1714,7 @@ export const song = tool({
             {() => {
               const editing = memory.editing;
               if (!editing) return null;
-              const label = { tempo: `Tempo at bar ${editing.bar}`, signature: `Time signature from bar ${editing.bar}`, section: `Section at bar ${editing.bar}` }[editing.kind];
+              const label = `Section at bar ${editing.bar}`;
               return (
                 <div key="ruler-edit" style={{ direction: "row", gap: 6, align: "center" }}>
                   <div style={{ fontSize: 11, color: COLOR.text }}>{label}</div>
@@ -1938,7 +1915,11 @@ function startMoved(clip: FilledStateOfTool<"timeline">, dx: number, unit: numbe
  * the grid; stopped, where a click on the ruler put it.
  */
 function addTempoAtPlayhead(clock: Clock, memory: { snap: number; mark: Mark | null }) {
-  const tick = clock.playing && memory.snap > 0 ? Math.round(clock.tick / memory.snap) * memory.snap : Math.round(clock.tick);
+  addTempo(clock, memory, clock.playing && memory.snap > 0 ? Math.round(clock.tick / memory.snap) * memory.snap : Math.round(clock.tick));
+}
+
+/** A tempo change at `tick` with the tempo that plays there, chosen; one there already is chosen. */
+function addTempo(clock: Clock, memory: { mark: Mark | null }, tick: number) {
   const changes = clock.tempo_map.tempo_changes;
   if (!changes.some((change) => change.tick === tick)) {
     const bpm = [...changes].reverse().find((change) => change.tick <= tick)?.bpm ?? 120;
@@ -1948,17 +1929,39 @@ function addTempoAtPlayhead(clock: Clock, memory: { snap: number; mark: Mark | n
   memory.mark = { kind: "tempo", bar: Math.max(starts.findIndex((start) => start > tick), 1), tick };
 }
 
-/** Removes a mark of the ruler as one undo step: a time signature change gives its bars the signature before it. */
+/**
+ * A change at bar `bar` to the time signature that plays there, so nothing moves until the
+ * transport changes it: the run it is in, cut in two. None where one starts already.
+ */
+function addSignature(clock: Clock, bar: number) {
+  const runs = clock.tempo_map.time_signatures;
+  if (changeBars(runs).includes(bar)) return;
+  clock.update("Add a time signature change", (song) => {
+    const all = song.tempo_map.time_signatures.length > 0 ? song.tempo_map.time_signatures : [{ signature: "4/4", bars: 1 }];
+    const firsts = changeBars(all);
+    const index = firsts.findLastIndex((first) => first <= bar);
+    const [run, first] = [all[index]!, firsts[index]!];
+    song.tempo_map.time_signatures = [
+      ...all.slice(0, index),
+      { signature: run.signature, bars: bar - first },
+      // The last run goes on, whatever its count says.
+      { signature: run.signature, bars: Math.max(run.bars - (bar - first), 1) },
+      ...all.slice(index + 1),
+    ];
+  });
+}
+
+/** Removes a mark of the ruler as one undo step: the bars of a time signature change join the run before. */
 function removeMark(clock: Clock, { kind, bar, tick }: Mark) {
   if (kind === "section") clock.update("Remove a section", (song) => (song.sections = song.sections.filter((each) => each.bar !== bar)));
   else if (kind === "tempo") clock.update("Remove a tempo change", (song) => (song.tempo_map.tempo_changes = song.tempo_map.tempo_changes.filter((each) => each.tick !== tick)));
   else {
     clock.update("Remove a time signature change", (song) => {
       const runs = song.tempo_map.time_signatures;
-      const each = signaturesOf(runs, Math.max(bar, runs.reduce((sum, run) => sum + run.bars, 0)) + 1);
-      const [before, old] = [each[bar - 2] ?? "4/4", each[bar - 1]];
-      for (let at = bar - 1; at < each.length && each[at] === old; at++) each[at] = before;
-      song.tempo_map.time_signatures = runsOf(each);
+      const index = changeBars(runs).indexOf(bar);
+      const [before, run] = [runs[index - 1], runs[index]];
+      if (!before || !run) return;
+      song.tempo_map.time_signatures = [...runs.slice(0, index - 1), { ...before, bars: before.bars + run.bars }, ...runs.slice(index + 1)];
     });
   }
 }

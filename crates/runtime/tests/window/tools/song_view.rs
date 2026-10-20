@@ -457,19 +457,29 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     let third = ruler + point(px(LEAD + (2 * BAR + 200) as f32 * ACROSS), px(8.));
     window.click_with(third, MouseButton::Right);
     window.pick("menu-0");
-    window.until_found("div-ruler-edit");
-    window.cx.simulate_input("90");
-    window.cx.simulate_keystrokes("enter");
-    window.until("a tempo change", |window| {
+    let tempo_at = |window: &mut Opened<'_>, bpm: f64| {
         let file = window.project_file();
         file["tempo_map"]["tempo_changes"]
             .as_array()
             .is_some_and(|changes| {
                 changes
                     .iter()
-                    .any(|change| change["tick"] == 2 * BAR + 240 && change["bpm"] == 90.0)
+                    .any(|change| change["tick"] == 2 * BAR + 240 && change["bpm"] == bpm)
             })
+    };
+    // At the tempo there, with the playhead on it: the transport's drag changes it.
+    window.until("a tempo change", |window| tempo_at(window, 120.0));
+    let session = window.session.clone();
+    window.until("the playhead on it", |window| {
+        window.cx.read(|cx| session.read(cx).playhead().read(cx).tick) == Ticks(2 * BAR + 240)
     });
+    window.wait_for_bun();
+    let tempo = window.space_at("transport-tempo") + point(px(10.), px(8.));
+    window.press(tempo);
+    window.drag_to(tempo - point(px(0.), px(10.)));
+    window.drag_to(tempo - point(px(0.), px(20.)));
+    window.release(tempo - point(px(0.), px(20.)));
+    window.until("ten beats a minute faster", |window| tempo_at(window, 130.0));
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Change the tempo"));
 

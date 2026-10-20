@@ -185,6 +185,44 @@ fn a_section_clicked_in_the_ruler_is_chosen_played_from_and_deleted(cx: &mut Tes
 }
 
 #[gpui::test]
+fn a_time_signature_added_in_the_ruler_is_changed_by_a_drag_in_the_transport(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let ruler = window.space_at("ruler");
+    window.click_with(
+        ruler + point(px(LEAD + (2 * BAR) as f32 * ACROSS), px(8.)),
+        MouseButton::Right,
+    );
+    window.pick("menu-1");
+    let signatures = |window: &mut Opened<'_>| window.project_file()["tempo_map"]["time_signatures"].clone();
+    // Bar 3 starts a change to what plays there, and the playhead is on it.
+    window.until("a change at bar 3", |window| {
+        signatures(window)
+            == serde_json::json!([{ "signature": "4/4", "bars": 2 }, { "signature": "4/4", "bars": 1 }])
+    });
+    let session = window.session.clone();
+    window.until("the playhead on bar 3", |window| {
+        window.cx.read(|cx| session.read(cx).playhead().read(cx).tick) == Ticks(2 * BAR)
+    });
+    window.wait_for_bun();
+    // Twenty points up: two beats more, from bar 3 on.
+    let beats = window.space_at("transport-beats") + point(px(7.), px(9.));
+    window.press(beats);
+    window.drag_to(beats - point(px(0.), px(10.)));
+    window.drag_to(beats - point(px(0.), px(20.)));
+    window.release(beats - point(px(0.), px(20.)));
+    window.until("6/4 from bar 3", |window| {
+        signatures(window)
+            == serde_json::json!([{ "signature": "4/4", "bars": 2 }, { "signature": "6/4", "bars": 1 }])
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change the time signature"));
+    assert_eq!(window.problems(), []);
+}
+
+#[gpui::test]
 fn a_region_dragged_with_alt_is_copied_on_the_grid(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();

@@ -2838,7 +2838,7 @@ const TEMPO_DRAG = 2;
 const STRIP = { width: 200, knob: 8 } as const;
 
 /** A readout of a tick of the clock as it moves, in the pill's text. */
-function clockText(key: string, width: number, unit: "position" | "time" | "beats" | "note", color: Color = "gray-950", text: Live = now.tick): UiNode {
+function clockText(key: string, width: number, unit: "position" | "time", color: Color = "gray-950", text: Live = now.tick): UiNode {
   return Space({ key, width, height: 18, children: [Label({ x: 0, y: 0, text, unit, color, size: 14 })] });
 }
 
@@ -2847,13 +2847,70 @@ export interface TransportRecord {
   on: Accessor<boolean>;
   press: () => void;
   disabled?: Accessor<boolean>;
+/** Points of a drag up for the next number of a time signature. */
+const SIGNATURE_DRAG = 10;
+
+/** The run of `runs` that plays at `tick`, the last going on, with its beats and note value. */
+function signatureAt(runs: Frozen<TempoMap>["time_signatures"], tick: number): { run: number; beats: number; note: number } {
+  let start = 0;
+  for (const [run, { signature, bars }] of runs.entries()) {
+    const [beats = 4, note = 4] = signature.split("/").map(Number);
+    start += (bars * beats * 4 * 960) / note;
+    if (tick < start || run === runs.length - 1) return { run, beats, note };
+  }
+  return { run: 0, beats: 4, note: 4 };
+}
+
+/**
+ * One number of the time signature that plays at the playhead, which a drag up or down steps as
+ * one undo step: the beats from 1 to 32, or the note value from a whole note to a thirty-second.
+ */
+function signaturePart(clock: Clock, part: "beats" | "note"): UiNode {
+  const id = `transport-${part}`;
+  const drag = now.drag(id);
+  const [pressed, press] = signal<ReturnType<typeof signatureAt> | null>(null);
+  const [low, high] = part === "beats" ? [1, 32] : [0, 5];
+  // The note value steps by its power of two.
+  const from = (at: ReturnType<typeof signatureAt>) => (part === "beats" ? at.beats : Math.log2(at.note));
+  const steps = drag.dy.over(-SIGNATURE_DRAG);
+  const dragged = () => {
+    const at = pressed();
+    const value = steps.plus(at ? from(at) : 0).clamp(low, high);
+    return part === "beats" ? value : steps.times(0).plus(2).pow(value);
+  };
+  return Space({
+    key: id, width: 14, height: 18, cursor: "ns-resize",
+    onPress: () => press(signatureAt(clock.tempo_map.time_signatures, clock.tick)),
+    drag: {
+      id, axis: "y", snap: { y: SIGNATURE_DRAG },
+      onEnd: ({ dy }) => {
+        const at = pressed();
+        if (!at) return;
+        const value = Math.min(Math.max(from(at) - Math.round(dy / SIGNATURE_DRAG), low), high);
+        const [beats, note] = part === "beats" ? [value, at.note] : [at.beats, 2 ** value];
+        if (beats === at.beats && note === at.note) return;
+        clock.update("Change the time signature", ({ tempo_map }) => {
+          const run = tempo_map.time_signatures[at.run];
+          if (run) run.signature = `${beats}/${note}`;
+          else tempo_map.time_signatures = [{ signature: `${beats}/${note}`, bars: 1 }];
+        });
+      },
+    },
+    children: [
+      Label({ x: 0, y: 0, text: now.tick, unit: part, color: "gray-950", size: 14, opacity: drag.active.negate().plus(1) }),
+      Label({ x: 0, y: 0, text: dragged, color: "gray-950", size: 14, opacity: drag.active }),
+    ],
+  });
+}
+
 }
 
 /**
  * The window's transport, a pill: play and pause, stop, `record` when given, where the piece
  * plays as a bar and a beat and as a time, a strip to move through the piece up to `end` when
  * given, the tempo, which a drag up or down changes as one undo step, the time signature, the
- * computer keys, the click and the meter of what the device plays. Put it in a `TitleBar` to
+ * computer keys, the click and the meter of what the device plays. A drag up or down on a number of
+ * the time signature steps the one that plays at the playhead. Put it in a `TitleBar` to
  * show it where the window's own was. Everything that moves moves without code.
  */
 export function Transport(props: { clock: Clock; record?: TransportRecord; end?: Accessor<number | null> }): UiNode {
@@ -2919,9 +2976,9 @@ export function Transport(props: { clock: Clock; record?: TransportRecord; end?:
       ],
     }),
     h("div", { style: { direction: "row", align: "center" } },
-      clockText("transport-beats", 14, "beats"),
+      signaturePart(clock, "beats"),
       Space({ key: "transport-slash", width: 14, height: 18, children: [Label({ x: 3, y: 2, text: "/", color: "gray-700", size: 12 })] }),
-      clockText("transport-note", 14, "note"),
+      signaturePart(clock, "note"),
     ),
     Button({
       key: "computer-keys", icon: "keyboard-music", variant: () => (clock.computerKeys ? "primary" : "ghost"),
