@@ -1404,7 +1404,7 @@ export const song = tool({
       );
     };
     /** A region of an audio track on row `row`: its file's waveform; drag it to move it, an edge to trim it. */
-    const RegionShapes = ({ each, region, row }: { each: Child; region: ReturnType<typeof regionsOf>[number]; row: Accessor<number> }) => {
+    const RegionShapes = ({ each, region, row, snap }: { each: Child; region: ReturnType<typeof regionsOf>[number]; row: Accessor<number>; snap: number }) => {
       const key = `${each.name}/${region.name}`;
       const chosen = () => memory.region === key;
       // Seconds of its file, as ticks through the tempo map from where it starts.
@@ -1431,7 +1431,33 @@ export const song = tool({
           const draft = owner?.tool === "tape" ? owner.children.find((child) => child.name === region.name) : undefined;
           if (draft?.tool === "region") change(draft.state);
         });
-      const moveRegion: Drag = { id: "region", snap: { x: BEAT, grid: true }, onEnd: ({ dx }) => editRegion("Move a region", (state) => (state.start = Math.max(state.start + dx, 0))) };
+      // On the grid of the corner's snap, onto another audio track, and with alt a copy, as the arrangement's.
+      const moveRegion: Drag = {
+        id: "region",
+        snap: { x: snap || 1, y: 1, grid: snap > 0 },
+        onEnd: ({ dx, dy, alt }) => {
+          const target = layout()[row() + Math.round(dy)]?.each;
+          const to = target?.tool === "tape" && !layout()[row() + Math.round(dy)]?.lane ? target.name : each.name;
+          let moved: string | null = null;
+          update(alt ? "Copy a region" : "Move a region", ({ children }) => {
+            const [from, into] = [children.find((child) => child.name === each.name), children.find((child) => child.name === to)];
+            if (from?.tool !== "tape" || into?.tool !== "tape") return;
+            const draft = from.children.find((child) => child.name === region.name);
+            if (draft?.tool !== "region") return;
+            const start = Math.max(draft.state.start + dx, 0);
+            if (!alt && into === from) {
+              draft.state.start = start;
+              moved = key;
+              return;
+            }
+            const name = freeName(into.children.map((child) => child.name), "region");
+            into.children = [...into.children, { name, tool: "region", state: { ...draft.state, start } }];
+            if (!alt) from.children = from.children.filter((child) => child !== draft);
+            moved = `${into.name}/${name}`;
+          });
+          if (moved) memory.region = moved;
+        },
+      };
       const trimRegion: Drag = {
         id: "trim",
         axis: "x",
@@ -1463,7 +1489,23 @@ export const song = tool({
         memory.region = key;
         memory.selected = new Set();
         memory.below = { kind: "track", name: each.name };
-        if (button === "right") openMenu([{ label: "Delete" }]).then((picked) => picked === 0 && removeRegion(each.name, region.name));
+        if (button === "right") {
+          openMenu([{ label: "Duplicate" }, { label: "Delete", shortcut: "backspace", separator: true }]).then((picked) => {
+            if (picked === 1) removeRegion(each.name, region.name);
+            else if (picked === 0) {
+              let copy: string | null = null;
+              update("Duplicate a region", ({ children }) => {
+                const owner = children.find((child) => child.name === each.name);
+                const draft = owner?.tool === "tape" ? owner.children.find((child) => child.name === region.name) : undefined;
+                if (owner?.tool !== "tape" || draft?.tool !== "region") return;
+                const name = freeName(owner.children.map((child) => child.name), "region");
+                owner.children = [...owner.children, { name, tool: "region", state: { ...draft.state, start: draft.state.start + Math.round(width()) } }];
+                copy = `${owner.name}/${name}`;
+              });
+              if (copy) memory.region = copy;
+            }
+          });
+        }
       };
       return (
         <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? ["region"] : undefined)}>
@@ -1808,7 +1850,10 @@ export const song = tool({
                     <LaneRow track={each.name} lane={lane} row={row} colour={() => colourOf(each)} />
                   ) : (
                     <>
-                      <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} />}</For>
+                      {() => {
+                        const snap = memory.snap;
+                        return <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} snap={snap} />}</For>;
+                      }}
                       {() => {
                         const from = memory.recording;
                         const takes = memory.armed.has(each.name) || each.name === notesTrackOf(children, state.order, memory.track);

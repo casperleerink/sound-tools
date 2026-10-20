@@ -2,7 +2,7 @@
 //! grid of the clips, a clip's start drags with its notes left where they are, a duplicate goes
 //! after the chosen clips and is chosen, and a paste keeps the rows the clips came from.
 
-use gpui::{Modifiers, TestAppContext, point, px};
+use gpui::{Modifiers, MouseButton, MouseUpEvent, TestAppContext, point, px};
 
 use super::Opened;
 use super::song::open_song;
@@ -150,4 +150,35 @@ fn a_section_clicked_in_the_ruler_is_chosen_played_from_and_deleted(cx: &mut Tes
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Remove a section"));
     assert_eq!(window.problems(), []);
+}
+
+#[gpui::test]
+fn a_region_dragged_with_alt_is_copied_on_the_grid(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.drop_sine();
+    let inside = window.on_lane(2 * BAR + 960, 2);
+    window.until_found("button-mixer-toggle");
+    window.click(inside);
+    window.wait_for_bun();
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    };
+    let to = inside + point(px(96. + 4.), px(0.));
+    window.press_with(inside, 1, alt);
+    window.cx.simulate_mouse_move(inside + point(px(20.), px(0.)), MouseButton::Left, alt);
+    window.cx.simulate_mouse_move(to, MouseButton::Left, alt);
+    window.cx.simulate_event(MouseUpEvent {
+        position: to,
+        modifiers: alt,
+        button: MouseButton::Left,
+        click_count: 1,
+    });
+    window.until("a copy", |window| window.has("song/audio-voice/region-2"));
+    // A bar and a bit on, on the sixteenth.
+    assert_eq!(window.record("song/audio-voice/region-2")["start"], 3 * BAR + 240);
+    assert_eq!(window.record("song/audio-voice/region")["start"], 2 * BAR);
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Copy a region"));
 }
