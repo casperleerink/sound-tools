@@ -1146,3 +1146,30 @@ fn a_new_return_opens_the_returns(cx: &mut TestAppContext) {
     window.after_the_runs();
     assert_eq!(window.record("song/ret-c")["title"], "Return 3");
 }
+
+#[gpui::test]
+fn the_keys_choose_move_and_name_the_track_whose_panel_shows(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 3, 3);
+    window.wait_for_bun();
+    let head = window.until_found("div-head-t00");
+    window.click(head);
+    window.until_found("space-knob-t00/send-ret-a.gain_db");
+    // Down chooses the track under it, alt-up moves that one over the first.
+    window.cx.simulate_keystrokes("down");
+    window.until_found("space-knob-t01/send-ret-a.gain_db");
+    window.cx.simulate_keystrokes("alt-up");
+    window.until("the track moved up", |window| {
+        window.record("song")["order"][0] == "t01"
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Move a track"));
+    // Enter names it.
+    window.cx.simulate_keystrokes("enter");
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("cmd-a");
+    window.cx.simulate_input("Keys");
+    window.cx.simulate_keystrokes("enter");
+    window.until("the track named", |window| {
+        window.record("song/t01")["title"] == "Keys"
+    });
+}

@@ -214,7 +214,7 @@ export const song = tool({
     clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, names: {},
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
-  keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r"],
+  keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r", "enter"],
   globalKeys: ["space"],
   onKey: (tool, key) => {
     const { state, memory, update, clock, children } = tool;
@@ -287,6 +287,7 @@ export const song = tool({
       });
       return;
     }
+    if (memory.selected.size === 0 && !memory.region && trackKey(key, tool)) return;
     const tracks = children
       .filter((child): child is TrackRow => child.tool === "track")
       .slice()
@@ -1961,6 +1962,40 @@ function toggleRecordingOf({ memory, send, clock, children }: Pick<Context<unkno
   memory.recording = clock.tick;
   for (const name of new Set([...memory.armed, ...(notes ? [notes] : [])])) if (recordable.includes(name)) record(name, true);
   clock.play();
+}
+
+/**
+ * What a key does to the track whose panel shows while no clip is chosen, as the arrangement's
+ * keys did: enter names it, up and down choose the track above or below, alt-up and alt-down
+ * move it there. Whether it was one of them.
+ */
+function trackKey(key: Key, { state, children, memory, update, select }: Context<unknown, Inputs, Memory, typeof parts>): boolean {
+  const name = memory.below?.kind === "track" ? memory.below.name : null;
+  if (!name || key.cmd || !["enter", "up", "down"].includes(key.key)) return false;
+  if (key.key === "enter") {
+    memory.renaming = name;
+    return true;
+  }
+  const rank = (each: string) => (state.order.includes(each) ? state.order.indexOf(each) : state.order.length);
+  const names = children
+    .filter((child) => child.tool === "track" || child.tool === "tape")
+    .map((child) => child.name)
+    .sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1));
+  const at = names.indexOf(name);
+  if (at < 0) return false;
+  const next = clamp(at + (key.key === "up" ? -1 : 1), 0, names.length - 1);
+  if (key.alt) {
+    if (next === at) return true;
+    names.splice(at, 1);
+    names.splice(next, 0, name);
+    update("Move a track", (song) => (song.state.order = names));
+    return true;
+  }
+  const other = names[next]!;
+  memory.below = { kind: "track", name: other };
+  memory.track = other;
+  select(other);
+  return true;
 }
 
 /** What a key does to the chosen clips: copy, cut, paste, duplicate, delete, nudge. `tracks` are in their order. */
