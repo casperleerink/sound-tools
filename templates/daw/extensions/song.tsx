@@ -917,6 +917,9 @@ export const song = tool({
         <div style={{ width: 1, background: "alpha/5", keep: true }} />
         <div style={{ direction: "row", gap: 4, paddingLeft: 8, paddingRight: 8, paddingTop: 12, paddingBottom: 8, keep: true }}>
           <For each={returns}>{(each) => <Strip each={each} />}</For>
+        </div>
+        <div style={{ width: 1, background: "alpha/5", keep: true }} />
+        <div style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 12, paddingBottom: 8, keep: true }}>
           <Strip master />
         </div>
       </div>
