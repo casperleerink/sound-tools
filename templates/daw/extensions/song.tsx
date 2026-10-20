@@ -807,11 +807,12 @@ export const song = tool({
         editChain(isOff(effect) ? "Turn an effect on" : "Turn an effect off", (effects) => {
           effects.state.off = effects.state.off.includes(effect) ? effects.state.off.filter((each) => each !== effect) : [...effects.state.off, effect];
         });
-      // An effect dragged onto another goes before it.
-      const moveBefore = (moved: string, before: string) =>
+      // An effect dragged onto another goes before it, onto the instrument first, onto Add effect last.
+      const moveBefore = (moved: string, before: string | null) =>
+        order().includes(moved) && moved !== before &&
         editChain("Move an effect", (effects) => {
           const rest = effects.state.order.filter((each) => each !== moved);
-          rest.splice(rest.indexOf(before), 0, moved);
+          rest.splice(before === null ? rest.length : rest.indexOf(before), 0, moved);
           effects.state.order = rest;
         });
       const row = () => strips().find((each) => each.name === name);
@@ -854,18 +855,21 @@ export const song = tool({
                 <div style={{ width: 1, height: CARD, background: "alpha/6", keep: true }} />
               </>
             ) : row()?.tool === "track" ? (
-              <DeviceCard path={`${name}/synth`} onTitle={() => replace("notes", `${name}/synth`, "Change the instrument")} />
+              <div key="instrument" onDrop={({ carried }) => carried && order()[0] !== undefined && moveBefore(carried, order()[0]!)}>
+                <DeviceCard path={`${name}/synth`} onTitle={() => replace("notes", `${name}/synth`, "Change the instrument")} />
+              </div>
             ) : null
           }
           <For each={order}>
             {(effect) => (
-              <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && carried !== effect && moveBefore(carried, effect)}>
+              <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && moveBefore(carried, effect)}>
                 <DeviceCard path={`${name}/chain/${effect}`} on={() => !isOff(effect)} onPower={() => toggle(effect)} onClose={() => remove(effect)}
                   onTitle={() => replace("audio", `${name}/chain/${effect}`, "Change an effect")} />
               </div>
             )}
           </For>
-          <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: "alpha/5", keep: true }} onPress={addEffect}>
+          <div key="add-effect" style={{ direction: "row", align: "center", gap: 4, height: 32, paddingX: 8, radius: 8, hover: "alpha/5", keep: true }} onPress={addEffect}
+            onDrop={({ carried }) => carried && moveBefore(carried, null)}>
             <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
             <Icon name="chevron-down" size={14} color="gray-700" />
           </div>

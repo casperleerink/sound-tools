@@ -190,6 +190,23 @@ fn an_effect_dragged_onto_another_goes_before_it_as_one_undo_step(cx: &mut TestA
 }
 
 #[gpui::test]
+fn an_effect_dragged_onto_add_effect_goes_last(cx: &mut TestAppContext) {
+    let mut window = open_rack(cx);
+    let room = window.until_found("div-effect-room");
+    let to = window.until_found("div-add-effect");
+    let from = room - point(px(0.), px(60.));
+    window.press(from);
+    for step in [0.2, 0.5, 0.8, 1.0] {
+        window.drag_to(from + (to - from) * step);
+        window.find("div-effect-room");
+    }
+    window.release(to);
+    window.until("the room moved last", |window| {
+        window.chain_order() == serde_json::json!(["trim", "room"])
+    });
+}
+
+#[gpui::test]
 fn a_track_is_renamed_in_a_text_field_and_space_types_there(cx: &mut TestAppContext) {
     let mut window = open_rack(cx);
     let name = window.until_found("div-name-t00");
