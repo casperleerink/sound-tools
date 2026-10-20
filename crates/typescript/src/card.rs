@@ -660,6 +660,7 @@ impl TypeScriptCard {
             notes,
             width,
             max_height,
+            search,
         } = menu;
         // A group a run of items of one `group`, under its heading.
         let mut entries: Vec<(Option<String>, MenuGroup)> = Vec::new();
@@ -692,7 +693,19 @@ impl TypeScriptCard {
             .map(|(_, group)| MenuEntry::Group(group))
             .chain(notes.into_iter().map(|note| MenuEntry::Note(note.into())))
             .collect();
-        let menu = match self.menu.take() {
+        // A menu with a search field is another menu than one without.
+        let cached = self.menu.take();
+        let cached = match cached {
+            Some((menu, waiting)) if menu.read(cx).is_searchable() != search => {
+                if let Some(waiting) = waiting {
+                    self.live
+                        .update(cx, |live, _| live.menu_picked(waiting, None));
+                }
+                None
+            }
+            cached => cached,
+        };
+        let menu = match cached {
             Some((menu, waiting)) => {
                 if let Some(waiting) = waiting {
                     self.live
@@ -702,9 +715,13 @@ impl TypeScriptCard {
             }
             None => {
                 let menu = cx.new(|cx| {
-                    DropdownMenu::new("", Vec::new(), cx)
+                    let menu = DropdownMenu::new("", Vec::new(), cx)
                         .trigger(Trigger::Pointer)
-                        .debug_name("menu")
+                        .debug_name("menu");
+                    match search {
+                        true => menu.searchable("Search", cx),
+                        false => menu,
+                    }
                 });
                 cx.subscribe(&menu, |view, _, picked: &MenuPicked, cx| {
                     let item = picked.0.parse().ok();

@@ -7,6 +7,10 @@ import { splitTarget, track } from "./track";
 
 // A song: tracks of clips in time, with their automation, a mixer strip per track, the devices
 // of the chosen track, and a note editor for one clip.
+/** A name or a field in plain words, its unit left out: `osc_1.position` is `Osc 1 position`, `cutoff_hz` is `Cutoff`. */
+const words = (text: string) =>
+  text.replace(/_(hz|db|ms|seconds|cents|octaves|semitones)$/, "").replace(/[._-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
+
 const BEAT = 960;
 // The song shows at least 64 bars of 4/4, and 32 more after what it holds.
 const SHOWN = 64 * 4 * BEAT;
@@ -622,19 +626,22 @@ export const song = tool({
       const found = (await numbers(`${track}/${child}`)).find((each) => each.name === number);
       if (found) memory.ranges = { ...memory.ranges, [`${track}/${target}`]: found };
     };
-    /** The devices of a track whose numbers a lane can move: its synth, its fader and its chain's effects. */
+    /** What a lane of a track can move, a group each, as the arrangement offered them: the track's own volume and pan, its instrument, then its chain's effects in order. */
     const devicesOf = (each: Child) => {
       const effects = each.tool === "track" ? each.children.find((child) => child.name === "chain") : undefined;
       const order = effects?.tool === "chain" ? effects.state.order : [];
-      return [["synth", "Synth"], ["mix", "Fader"], ...order.map((effect) => [`chain/${effect}`, effect])] as [string, string][];
+      const synth = each.tool === "track" ? each.children.find((child) => child.name === "synth")?.tool : undefined;
+      const instrument = typeof synth === "string" ? (synth.split(".").at(-1) ?? synth) : "synth";
+      return [["mix", "Track"], ["synth", words(instrument)], ...order.map((effect) => [`chain/${effect}`, words(effect)])] as [string, string][];
     };
     const addLane = async (each: Child) => {
       if (each.tool !== "track") return;
       const taken = new Set(each.state.automation.map(({ target }) => target));
-      const found = (await Promise.all(devicesOf(each).map(async ([path, label]) => (await numbers(`${each.name}/${path}`)).map((number) => ({ path, label, number })))))
+      const found = (await Promise.all(devicesOf(each).map(async ([path, group]) => (await numbers(`${each.name}/${path}`)).map((number) => ({ path, group, number })))))
         .flat()
         .filter(({ path, number }) => !taken.has(`${path}.${number.name}`));
-      const picked = await openMenu(found.map(({ label, number }) => ({ label: `${label} · ${number.name}` })), { width: 240 });
+      const label = ({ path, number }: (typeof found)[number]) => (path === "mix" && number.name === "gain_db" ? "Volume" : number.label);
+      const picked = await openMenu(found.map((each) => ({ label: label(each), group: each.group })), { width: 240, maxHeight: 320, search: true });
       const chosen = picked === null ? undefined : found[picked];
       if (!chosen) return;
       const target = `${chosen.path}.${chosen.number.name}`;
@@ -666,7 +673,7 @@ export const song = tool({
         if (points.length > 0) child.state.points = points;
       });
     const rangeOf = (track: string, target: string, points: readonly LanePoint[]): MovedNumber =>
-      memory.ranges[`${track}/${target}`] ?? { name: target, min: Math.min(0, ...points.map((point) => point.value)), max: Math.max(1, ...points.map((point) => point.value)), scale: "linear" };
+      memory.ranges[`${track}/${target}`] ?? { name: target, label: words(target), value: null, min: Math.min(0, ...points.map((point) => point.value)), max: Math.max(1, ...points.map((point) => point.value)), scale: "linear" };
     const addPoint = (track: string, { lane, target }: { lane: string; target: string }, x: number, up: number) => {
       const owner = tracks().find((each) => each.name === track);
       const child = owner?.tool === "track" ? owner.children.find((each) => each.name === lane) : undefined;
@@ -965,17 +972,17 @@ export const song = tool({
       </div>
     );
     /** What a lane moves, as a person reads it: `Volume`, `Pan`, or the device and its number, `Filter · Cutoff`. */
-    const laneName = (target: string) => {
+    const laneName = (track: string, target: string) => {
       const [path, number] = splitTarget(target);
-      const words = (text: string) => text.replace(/_(hz|db|ms|seconds)$/, "").replace(/[_-]+/g, " ").replace(/^./, (first) => first.toUpperCase());
-      if (path === "mix") return number === "gain_db" ? "Volume" : words(number);
-      return `${words(path.split("/").at(-1) ?? path)} · ${words(number)}`;
+      const named = memory.ranges[`${track}/${target}`]?.label ?? words(number);
+      if (path === "mix") return number === "gain_db" ? "Volume" : named;
+      return `${words(path.split("/").at(-1) ?? path)} · ${named}`;
     };
     /** A lane's name; right-click it to remove the lane. */
     const LaneHead = ({ track, lane }: { track: string; lane: { lane: string; target: string } }) => (
       <div key={`lane-name-${track}-${lane.lane}`} style={{ grow: true, fontSize: 12, color: "gray-800", truncate: true }}
         onPress={({ button }) => button === "right" && openMenu([{ label: "Remove lane" }]).then((picked) => picked === 0 && removeLane(track, lane.lane))}>
-        {laneName(lane.target)}
+        {() => laneName(track, lane.target)}
       </div>
     );
 

@@ -1063,11 +1063,9 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
   /**
    * Opens a menu of `items` after a press: under the div, button or card title pressed, as a
    * select's list, or where the pointer is after a right press or a press of a space. Answers
-   * the place of the item the composer picked, or `null` when they picked none. `notes` are
-   * quiet lines under the items; `width` is in points, 320 when left out; past `maxHeight`
-   * points the items scroll.
+   * the place of the item the composer picked, or `null` when they picked none.
    */
-  openMenu(items: readonly MenuItem[], options?: { notes?: readonly string[]; width?: number; maxHeight?: number }): Promise<number | null>;
+  openMenu(items: readonly MenuItem[], options?: MenuOptions): Promise<number | null>;
   /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. With `at`, a child's path, `here` says which of them is there. */
   offers(takes: "notes" | "audio", options?: { at?: string }): Promise<Offers>;
   /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */
@@ -1413,8 +1411,22 @@ export interface Offers {
 }
 
 /** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */
+/** How a menu of `openMenu` shows. */
+export interface MenuOptions {
+  /** Quiet lines under the items. */
+  notes?: readonly string[];
+  /** In points; 320 when left out. */
+  width?: number;
+  /** Past this many points the items scroll; 420 when left out. */
+  maxHeight?: number;
+  /** A field above the items that keeps those whose label holds what is typed. */
+  search?: boolean;
+}
+
 export interface MovedNumber {
   name: string;
+  /** What a person reads for it: as its device names it, such as a plugin's parameter, or its name in plain words, `Osc 1 position`. */
+  label: string;
   min: number;
   max: number;
   /** `"log"` for a frequency or a time, `"fader"` for a volume in dB (`-inf` at the bottom). */

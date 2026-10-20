@@ -5,7 +5,7 @@
 
 import { realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
+import type { Child, Clock as SdkClock, Take, Context, PlainKey, Field, Fields, Graph, HeardEvent, Inputs, MenuItem, MenuOptions, MovedNumber, NoteEvent, Offers, OwnedChild, Part, Performer, Section, TempoMap, ToolSpec, ValuesOf } from "./sdk";
 
 const folder = process.cwd();
 /** The files of tools to load, by name: the runtime leaves out those whose code hung or stopped Bun. */
@@ -940,8 +940,8 @@ function ask<Answer>(message: { type: string } & Record<string, unknown>): Promi
 /** What a tool asks the window, for its instance. */
 function askers(instance: string) {
   return {
-    openMenu: (items: readonly MenuItem[], { notes = [], width, maxHeight }: { notes?: readonly string[]; width?: number; maxHeight?: number } = {}) =>
-      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group }) => ({ label, disabled, checked, icon, detail, group })), notes, width, maxHeight }),
+    openMenu: (items: readonly MenuItem[], { notes = [], width, maxHeight, search = false }: MenuOptions = {}) =>
+      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group }) => ({ label, disabled, checked, icon, detail, group })), notes, width, maxHeight, search }),
     offers: (takes: "notes" | "audio", { at }: { at?: string } = {}) => ask<Offers>({ type: "offers", takes, instance, at }),
     numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
     /** The runtime opens the file and copies it under `assets/audio/`. */

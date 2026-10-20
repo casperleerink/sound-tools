@@ -174,6 +174,8 @@ pub(crate) enum EventKind {
 #[derive(Debug, Serialize)]
 pub(crate) struct Moved {
     pub name: String,
+    /// What a person reads for it: as its device names it, or its field in plain words.
+    pub label: String,
     pub min: f32,
     pub max: f32,
     /// `"linear"`, `"log"` or `"fader"`, as the knob of the number travels.
@@ -427,6 +429,9 @@ pub(crate) enum Event {
         width: Option<f32>,
         #[serde(default, rename = "maxHeight")]
         max_height: Option<f32>,
+        /// A field above the items that keeps those whose label holds what is typed.
+        #[serde(default)]
+        search: bool,
     },
     /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
     /// With `at`, the answer says which offer is at that child of `instance` now.

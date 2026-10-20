@@ -1502,6 +1502,7 @@ impl Live {
                 notes,
                 width,
                 max_height,
+                search,
             } => match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
                 Some(card) => {
                     card.menu = Some(OpenedMenu {
@@ -1510,6 +1511,7 @@ impl Live {
                         notes,
                         width,
                         max_height,
+                        search,
                     });
                     cx.notify();
                 }
@@ -1554,7 +1556,7 @@ impl Live {
                 path,
             } => {
                 let numbers = (self.session.upgrade())
-                    .map(|session| moved_numbers(session.read(cx).project(), &instance, &path))
+                    .map(|session| moved_numbers(session.read(cx).project(), &instance, &path, cx))
                     .unwrap_or_default();
                 self.host.send(&Request::Answer {
                     question,
@@ -2077,7 +2079,7 @@ fn frames_of(seconds: f64, session: &Session) -> u64 {
 
 /// What a lane or a cable can move of the child of `instance` at `path`, in the order its
 /// behaviour names them: none for a path that is no instance.
-fn moved_numbers(project: &Project, instance: &InstanceId, path: &str) -> Vec<Moved> {
+fn moved_numbers(project: &Project, instance: &InstanceId, path: &str, cx: &App) -> Vec<Moved> {
     let child = path
         .split('/')
         .filter(|name| !name.is_empty())
@@ -2085,6 +2087,7 @@ fn moved_numbers(project: &Project, instance: &InstanceId, path: &str) -> Vec<Mo
     let Ok(child) = child else {
         return Vec::new();
     };
+    let named = Devices::lane_numbers(project, &child, cx).unwrap_or_default();
     (project.automatable(&child))
         .filter_map(|name| {
             let number = project.automation(&child, name)?;
@@ -2094,8 +2097,11 @@ fn moved_numbers(project: &Project, instance: &InstanceId, path: &str) -> Vec<Mo
                 Scale::Logarithmic => "log",
                 _ => "fader",
             };
+            let label = (named.iter().find(|number| number.field == name))
+                .map_or_else(|| number_name(name), |number| number.name.to_string());
             Some(Moved {
                 name: name.to_string(),
+                label,
                 min: range.min,
                 max: range.max,
                 scale,
@@ -2103,6 +2109,53 @@ fn moved_numbers(project: &Project, instance: &InstanceId, path: &str) -> Vec<Mo
             })
         })
         .collect()
+}
+
+/// A field in plain words, its unit left out: `lfo_rate_hz` is LFO rate, `osc_1.position` is
+/// Osc 1 position, and an object of a list counts from one, so `bands[0].gain_db` is Band 1 gain.
+fn number_name(field: &str) -> String {
+    const UNITS: [&str; 8] = [
+        "_hz",
+        "_db",
+        "_ms",
+        "_seconds",
+        "_cents",
+        "_octaves",
+        "_semitones",
+        "_percent",
+    ];
+    let field = (UNITS.iter())
+        .find_map(|unit| field.strip_suffix(unit))
+        .unwrap_or(field);
+    let mut words = Vec::new();
+    for part in field.split('.') {
+        let (object, index) = match part.split_once('[') {
+            Some((object, index)) => (object, index.trim_end_matches(']').parse::<usize>().ok()),
+            None => (part, None),
+        };
+        let object = match index {
+            Some(_) => object.strip_suffix('s').unwrap_or(object),
+            None => object,
+        };
+        words.extend(
+            object
+                .split('_')
+                .filter(|word| !word.is_empty())
+                .map(|word| match word {
+                    "lfo" => "LFO".to_string(),
+                    "q" => "Q".to_string(),
+                    "db" => "dB".to_string(),
+                    word => word.to_string(),
+                }),
+        );
+        words.extend(index.map(|index| (index + 1).to_string()));
+    }
+    let name = words.join(" ");
+    let mut letters = name.chars();
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => name,
+    }
 }
 
 /// What a view of the project asks offers for: `"notes"` takes notes, anything else sound.
@@ -2139,4 +2192,17 @@ pub(crate) struct OpenedMenu {
     pub notes: Vec<String>,
     pub width: Option<f32>,
     pub max_height: Option<f32>,
+    pub search: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::number_name;
+
+    #[test]
+    fn a_field_reads_in_plain_words() {
+        assert_eq!(number_name("osc_1.position"), "Osc 1 position");
+        assert_eq!(number_name("lfo_rate_hz"), "LFO rate");
+        assert_eq!(number_name("bands[0].gain_db"), "Band 1 gain");
+    }
 }

@@ -273,8 +273,8 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     let name = window.until_found("div-name-t00");
     window.click_with(name, MouseButton::Right);
     window.pick("menu-3");
-    // The first number the synth offers.
-    window.pick("menu-0");
+    // The first number the synth offers, after the track's own volume and pan.
+    window.pick("menu-2");
     window.until("the lane added", |window| {
         window.record("song/t00")["automation"]
             .as_array()

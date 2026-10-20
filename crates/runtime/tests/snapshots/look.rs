@@ -271,6 +271,9 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     )?;
     click(&opened, point(px(32.), px(TOP + ROW + 41.)), 1, cx)?;
     save(cx, opened.window.into(), "look-lanes")?;
+    // The row under the lanes of the bass adds one: its numbers by device.
+    click(&opened, point(px(60.), px(TOP + 4. * ROW + 20.)), 1, cx)?;
+    save(cx, opened.window.into(), "look-add-lane")?;
     drop(opened);
 
     // Track 1 alone, its instrument the test plugin.

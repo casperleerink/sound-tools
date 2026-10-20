@@ -50,6 +50,8 @@ const ICON_TILE: f32 = 24.;
 const SUBMENU_WIDTH: f32 = 280.;
 /// How wide a menu is unless it says.
 pub const MENU_WIDTH: f32 = 320.;
+/// How tall a menu's rows go before they scroll, unless it says: twelve rows and a heading.
+pub const MENU_MAX_HEIGHT: f32 = 420.;
 
 #[derive(Clone, Debug)]
 pub struct MenuItem {
@@ -815,7 +817,7 @@ impl DropdownMenu {
             side: Side::default(),
             align: Align::default(),
             width: MENU_WIDTH,
-            max_height: None,
+            max_height: Some(MENU_MAX_HEIGHT),
             trigger: Trigger::Outline,
             trigger_width: None,
             trigger_height: None,
@@ -924,7 +926,11 @@ impl DropdownMenu {
     /// How wide it is and how tall its groups go before they scroll, for a menu filled again.
     pub fn set_size(&mut self, width: f32, max_height: Option<f32>) {
         self.width = width;
-        self.max_height = max_height;
+        self.max_height = Some(max_height.unwrap_or(MENU_MAX_HEIGHT));
+    }
+
+    pub fn is_searchable(&self) -> bool {
+        self.search.is_some()
     }
 
     /// Scrolls the groups past this height, for a list that may be long, such as the plugins
