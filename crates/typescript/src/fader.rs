@@ -2,8 +2,9 @@
 //! scale, pans it and mutes it, with no click, and keeps the level of what it sends on for a
 //! view. A mixer strip, a send or a master volume is one.
 //!
-//! The volume and the pan are automatable like the numbers of a device. The processor works out
-//! one gain per channel when something moves and ramps to the new pair, so no change clicks.
+//! The volume, the pan and the mute are automatable like the numbers of a device. The processor
+//! works out one gain per channel when something moves and ramps to the new pair, so no change
+//! clicks.
 
 mod decibels;
 
@@ -79,7 +80,9 @@ pub(crate) fn json_tool() -> JsonTool {
 /// The record of the fader, for the SDK: its gain and its pan are numbers a cable moves.
 pub(crate) fn schema() -> ToolSchema {
     ToolSchema {
-        numbers: vec![(GAIN.info(), GAIN.default), (PAN.info(), PAN.default)],
+        numbers: [GAIN, PAN, MUTE]
+            .map(|number| (number.info(), number.default))
+            .into(),
         ..ToolSchema::of::<Record>(&[])
     }
 }
@@ -169,6 +172,17 @@ const PAN: Parameter<Setting> = Parameter {
     get: |setting| setting.pan,
     set: |setting, value| setting.pan = value,
 };
+/// The mute, as a cable moves it: 1 is silent and 0 plays, so a solo silences a track whose
+/// volume a lane moves.
+const MUTE: Parameter<Setting> = Parameter {
+    field: "mute",
+    min: 0.0,
+    max: 1.0,
+    default: 0.0,
+    scale: Scale::Linear,
+    get: |setting| f32::from(u8::from(setting.silent)),
+    set: |setting, value| setting.silent = value >= 0.5,
+};
 
 /// The processor: it multiplies each channel by its gain and ramps to a new one.
 ///
@@ -177,7 +191,7 @@ const PAN: Parameter<Setting> = Parameter {
 /// not cut short the glide of a volume lane that just took over.
 struct Fader {
     /// The record, with the values of its lanes.
-    setting: Automated<Setting, 2>,
+    setting: Automated<Setting, 3>,
     /// The factor of the volume, 0 when silent.
     level: Smoothed,
     pan: Smoothed,
@@ -193,7 +207,7 @@ impl Fader {
     const INPUT: AudioInput = AudioInput::new(0);
     const OUTPUT: AudioOutput = AudioOutput::new(0);
     /// What a lane moves.
-    const AUTOMATION: AutomationInput<Setting, 2> = AutomationInput::new(0, [&GAIN, &PAN]);
+    const AUTOMATION: AutomationInput<Setting, 3> = AutomationInput::new(0, [&GAIN, &PAN, &MUTE]);
 
     /// Starts at `setting`, so a fader that opens or is added is not faded in.
     fn new(setting: Setting, peaks: Peaks) -> Self {
@@ -208,9 +222,10 @@ impl Fader {
     }
 
     /// Aims at the volume and the pan of the record and its lanes, each in its own ramp.
-    fn aim(&mut self, targets: &Targets<Setting, 2>) {
+    fn aim(&mut self, targets: &Targets<Setting, 3>) {
         let setting = *self.setting;
-        self.level.set_target(setting.level(), targets.ramp(&GAIN));
+        let ramp = targets.ramp(&GAIN).max(targets.ramp(&MUTE));
+        self.level.set_target(setting.level(), ramp);
         self.pan.set_target(setting.pan, targets.ramp(&PAN));
         // Taken at once, so the block starts there too.
         if targets.snaps() {

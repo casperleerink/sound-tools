@@ -113,7 +113,7 @@ fn song_with(
         // What a solo turns the other tracks down to.
         (
             "state/song/quiet.json".to_string(),
-            r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": -1000}]}}"#.to_string(),
+            r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": 1}]}}"#.to_string(),
         ),
         (
             "state/song/audio-voice/instance.json".to_string(),

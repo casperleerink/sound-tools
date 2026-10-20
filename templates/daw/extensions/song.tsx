@@ -262,21 +262,22 @@ export const song = tool({
         ? [{ from: { child: "master" }, to: { port: "audio" } } as const]
         : [{ from: { child: "master" }, to: { child: "limit" } } as const, { from: { child: "limit" }, to: { port: "audio" } } as const]),
     ];
-    // A solo turns every other track's fader down to silence, gliding; a return always plays.
+    // A solo mutes every other track's fader, gliding, so a lane that moves its volume plays on under it; a return always plays.
+    const soloedOut = (name: string) => soloed.length > 0 && !soloed.includes(name);
     for (const each of tracks) {
-      if (soloed.length > 0 && !soloed.includes(each.name)) {
-        connections.push({ from: { child: "quiet", number: "value" }, to: { child: `${each.name}/mix` as const, number: "gain_db" } });
-      }
+      if (soloedOut(each.name)) connections.push({ from: { child: "quiet", number: "value" }, to: { child: `${each.name}/mix` as const, number: "mute" } });
     }
-    // A send of a track plays into its return: after the track's fader, or before it for a return that says so.
+    // A send of a track plays into its return: after the track's fader, or before it for a return that says so. A muted or soloed-out track sends nothing either way.
     for (const each of tracks) {
-      if (each.tool !== "track") continue;
+      const mix = each.children.find((child) => child.name === "mix");
+      const silent = soloedOut(each.name) || (mix?.tool === "fader" && mix.state.mute === true);
       for (const back of returns) {
         if (back.tool !== "bus" || !each.children.some((child) => child.name === `send-${back.name}`)) continue;
         const from = back.state.pre_fader ? "chain" : "mix";
         const send = `${each.name}/send-${back.name}` as const;
         connections.push({ from: { child: `${each.name}/${from}` as const }, to: { child: send } });
         connections.push({ from: { child: send }, to: { child: back.name } });
+        if (back.state.pre_fader && silent) connections.push({ from: { child: "quiet", number: "value" }, to: { child: send, number: "mute" } });
       }
     }
     // A sidechain keys an effect of one track with another track, after its fader.
@@ -571,9 +572,9 @@ export const song = tool({
       const names = children.map((child) => child.name);
       const colour = PALETTE[rows().length % PALETTE.length]!.colour;
       update(["Add a track", "Add an audio track", "Add a return"][picked]!, (part) => {
+        const sends = part.children.filter((child) => child.tool === "bus").map((back) => ({ name: `send-${back.name}` as const, tool: "fader" as const, state: { gain_db: "-inf" as const } }));
         if (picked === 0) {
           const name = freeName(names, "track");
-          const sends = part.children.filter((child) => child.tool === "bus").map((back) => ({ name: `send-${back.name}` as const, tool: "fader" as const, state: { gain_db: "-inf" as const } }));
           part.children.push({
             name, tool: track, state: { colour, title: `Track ${tracks().length + 1}` },
             children: [
@@ -585,13 +586,13 @@ export const song = tool({
           part.state.order = [...rows().map((each) => each.name), name];
         } else if (picked === 1) {
           const name = freeName(names, "audio-1") as `audio-${string}`;
-          part.children.push({ name, tool: tape, state: { colour }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }] });
+          part.children.push({ name, tool: tape, state: { colour }, children: [{ name: "rec", tool: "recorder", state: { channels: [0] } }, { name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }, ...sends] });
           part.state.order = [...rows().map((each) => each.name), name];
         } else {
           const name = [..."abcdefghijklmnopqrstuvwxyz"].map((letter) => `ret-${letter}` as const).find((each) => !names.includes(each)) ?? (freeName(names, "ret-z") as `ret-${string}`);
           part.children.push({ name, tool: bus, state: { title: `Return ${returns().length + 1}`, colour: PALETTE[(returns().length + 3) % PALETTE.length]!.colour }, children: [{ name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }] });
           for (const each of part.children) {
-            if (each.tool === "track") each.children.push({ name: `send-${name}` as const, tool: "fader", state: { gain_db: "-inf" } });
+            if (each.tool === "track" || each.tool === "tape") each.children.push({ name: `send-${name}` as const, tool: "fader", state: { gain_db: "-inf" } });
           }
         }
       });
@@ -604,6 +605,7 @@ export const song = tool({
         state.sidechains = state.sidechains.filter(({ effect, from }) => from !== name && !effect.startsWith(`${name}/`));
         for (const each of children) {
           if (each.tool === "track") each.children = each.children.filter((child) => child.name !== `send-${name}`);
+          if (each.tool === "tape") each.children = each.children.filter((child) => child.name !== `send-${name}`);
         }
         children.splice(0, children.length, ...children.filter((child) => child.name !== name));
       });
@@ -658,7 +660,8 @@ export const song = tool({
       const taken = new Set(each.state.automation.map(({ target }) => target));
       const found = (await Promise.all(devicesOf(each).map(async ([path, group]) => (await numbers(`${each.name}/${path}`)).map((number) => ({ path, group, number })))))
         .flat()
-        .filter(({ path, number }) => !taken.has(`${path}.${number.name}`));
+        // The mute is the solo's, as the arrangement offered no lane for it.
+        .filter(({ path, number }) => !taken.has(`${path}.${number.name}`) && !(path === "mix" && number.name === "mute"));
       const label = ({ path, number }: (typeof found)[number]) => (path === "mix" && number.name === "gain_db" ? "Volume" : number.label);
       const picked = await openMenu(found.map((each) => ({ label: label(each), group: each.group })), { width: 240, maxHeight: 320, search: true });
       const chosen = picked === null ? undefined : found[picked];
@@ -869,7 +872,7 @@ export const song = tool({
       );
     };
 
-    const sendsOf = (each: Child) => (each.tool === "track" ? each.children.filter((child) => child.name.startsWith("send-")).map((child) => child.name) : []);
+    const sendsOf = (each: Child) => (each.tool === "track" || each.tool === "tape" ? each.children.filter((child) => child.name.startsWith("send-")).map((child) => child.name) : []);
     /** A fader as the window drew one: a drag up and down turns `gain_db` of the fader `path`, natively. */
     /** A fader over its meter, as the window drew a strip's volume: two bars, green up to -6 dB and yellow above, with a peak line held 1.5 s, and the handle on them, which a drag up and down turns natively. With `device`, the meter is of what the device plays; with `input`, of those channels of the audio input, as while the track is armed. */
     const Volume = ({ path, height, device, input }: { path: string; height: number; device?: boolean; input?: readonly number[] }) => {

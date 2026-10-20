@@ -46,7 +46,7 @@ Settled during rounds 1–14; the round-by-round log is in git history. The last
 - **Clock in the core, everything musical outside it.** `clock.play/pause/stop/jump(to, { atTick })/setRepeat/setClick/update`; the transport bar is ~50 lines of SDK; space plays only where a tool's `globalKeys` takes it.
 - **Device in and out stay `project.json` connection ends.** An `audio-out` child would need the parent's own sound as a source, which ARCHITECTURE rejects (`ownSound`).
 - **`--only <path>`** plays one instance's sound by rerouting `project.json` in memory.
-- **Solo is a cable:** a `lane` holding -1000 dB into every other track's fader gain. Pre-fader sends are the return's choice.
+- **Solo is a cable:** a `lane` holding 1 into every other track's fader `mute`, a number, so a volume lane plays on under it. Pre-fader sends are the return's choice; a silent track's are muted too, as main's were.
 - **No compiled extensions.** Rejected: rebuilding the app, wasm or dylibs from a project: Xcode tools or MSVC and a build when a project opens.
 - **Templates:** a folder of `templates/` is a template; Bare and DAW. The Rust arrangement, `arrangement_wiring` and fit-tempo are deleted.
 
