@@ -51,6 +51,8 @@ pub use bun::{
 };
 pub use card::{TitleBar, embedded_view, run_frame, title_bar_of};
 #[cfg(feature = "test-support")]
+pub use card::node_count;
+#[cfg(feature = "test-support")]
 pub use feeds::shown_by_live_values;
 pub use recorder::{ARMED, HEARD, Heard, RECORDER, RecorderState};
 pub use tools::forget_gone;

@@ -2086,6 +2086,8 @@ function forget(made: Made) {
 }
 
 function remove(made: Made) {
+  // A region whose row goes takes its own nodes out too; one its row took already is gone.
+  if (!nodes.has(made.id)) return;
   made.card.ops.push(["remove", made.id]);
   forget(made);
 }
@@ -2187,11 +2189,21 @@ function place(region: Made, nodesToPlace: Made[], before: Made, into: UiNode[] 
   }
 }
 
+/** Takes `made` out of the parent of the region that ends at `end`. */
+function takeOut(end: Made, made: Made) {
+  const parent = end.region?.parent;
+  if (parent !== null && parent !== undefined) nodes.get(parent)?.children.delete(made);
+  remove(made);
+}
+
 /** A child that is a function: shown again whole when what it read changes; text changes in place. */
 function dynamic(show: Accessor<Child>, into: UiNode[], family: Family) {
   const end = marker();
   let shown: Made[] = [];
   let first: UiNode[] | null = into;
+  // What it showed after the first time is in its parent, not in the row around it: it goes
+  // when that row does.
+  onCleanup(() => shown.forEach((made) => takeOut(end, made)));
   effect(() => {
     const value = show();
     const parent = end.region?.parent;
@@ -2230,8 +2242,12 @@ export function For<T>(props: { each: Accessor<readonly T[]>; children: (item: T
       let rows = new Map<T, Row[]>();
       let order: Row[] = [];
       let first: UiNode[] | null = into;
+      // Rows made after the first are in its parent, not in the row around it: they go when it does.
       onCleanup(() => {
-        for (const row of order) row.dispose();
+        for (const row of order) {
+          row.nodes.forEach((made) => takeOut(end, made));
+          row.dispose();
+        }
       });
       effect(() => {
         const list = props.each();

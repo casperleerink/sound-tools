@@ -947,3 +947,32 @@ fn the_card_of_a_chosen_region_turns_its_fade_in(cx: &mut TestAppContext) {
     assert_eq!(window.undo_label().as_deref(), Some("Change fade in"));
     assert_eq!(window.problems(), []);
 }
+
+#[gpui::test]
+fn a_clip_added_after_the_song_opened_is_drawn_once_after_its_track_lays_out_again(
+    cx: &mut TestAppContext,
+) {
+    let mut window = open_song(cx, 1, 1);
+    window.wait_for_bun();
+    // A clip the song did not have when it opened: its shapes come after the first draw.
+    let empty = window.on_lane(6 * BAR, 0);
+    window.double_click(empty);
+    window.until("the clip added", |window| window.clips().len() == 2);
+    window.after_the_runs();
+    window.wait_for_bun();
+    let shell = window.shell.clone();
+    let nodes = |window: &mut Opened<'_>| {
+        window.cx.read(|cx| {
+            let page = shell.read(cx).main_view().unwrap();
+            sound_typescript::node_count(page, cx)
+        })
+    };
+    let before = nodes(&mut window);
+    // Showing the track's lanes and hiding them again lays its row out anew, twice.
+    let lanes = window.until_found("toggle-lanes-t00");
+    window.click(lanes);
+    window.wait_for_bun();
+    window.click(lanes);
+    window.wait_for_bun();
+    assert_eq!(nodes(&mut window), before);
+}

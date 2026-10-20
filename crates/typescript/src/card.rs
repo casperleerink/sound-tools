@@ -122,6 +122,19 @@ pub fn run_frame(page: &AnyView, cx: &mut App) {
     }
 }
 
+/// How many nodes the window keeps for the page `page`, for tests that a list leaves none behind.
+#[cfg(feature = "test-support")]
+pub fn node_count(page: &AnyView, cx: &App) -> usize {
+    let Ok(page) = page.clone().downcast::<Page>() else {
+        return 0;
+    };
+    let card = page.read(cx).0.read(cx);
+    match card.live.read(cx).tree(card.card) {
+        Some(Ok(table)) => table.entries().count(),
+        _ => 0,
+    }
+}
+
 /// What the page `page` shows in the window's title bar, see [`TitleBar`]. `None` for a view that
 /// is no page of a tool of the project.
 pub fn title_bar_of(page: &AnyView, cx: &mut App) -> Option<Entity<TitleBar>> {

@@ -28,7 +28,7 @@ impl Opened<'_> {
     }
 
     /// Every record of the song's clips, by id.
-    fn clips(&mut self) -> Vec<(String, String)> {
+    pub(super) fn clips(&mut self) -> Vec<(String, String)> {
         let session = self.session.clone();
         self.cx.read(|cx| {
             let project = session.read(cx).project();
