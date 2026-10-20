@@ -72,7 +72,7 @@ M1 Max, release-fast. Repeat with `projects/render_cost.rs` and the ignored test
 
 - Opening grows with the song: about 0.8 µs per binding in Bun, 3.3 s at 10,000 clips. Needs a leaner reactive core or rows made only when they show.
 - A playing frame costs about twice the arrangement's on the scale project.
-- Template features: dragging a ruler marker, a double-click that clears a lane, a foldable returns section, the layer rule of regions (overlapping regions sum; `player.rs` still has the rule), fades as dials rather than handles, a clip moved to another track leaves its automation behind.
+- Template features: dragging a ruler marker, a double-click that clears a lane, a foldable returns section, fades as dials rather than handles, a clip moved to another track leaves its automation behind.
 - A clip moved to another track is a delete and a create: a record's id is its path.
 - Copied notes and copied clips are two clipboards.
 - `"*"` and named children cannot be optional.

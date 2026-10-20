@@ -1,7 +1,7 @@
 //! The song of the DAW template (`templates/daw`) sounds as main's arrangement did: a muted or
 //! soloed-out track sends nothing, before its fader either; a solo silences a track whose
 //! volume a lane moves; an audio track sends into a return; a pitch two clips hold sounds until
-//! both end.
+//! both end; regions that meet hand over with no dip, and of two that overlap one is heard.
 
 use crate::shared_song::song_files;
 use crate::support::{BAR, Harness, clip, write, write_samples};
@@ -161,4 +161,70 @@ fn a_pitch_two_clips_hold_sounds_until_both_notes_end() {
     // From three quarters of the bar on only the second clip's note holds the pitch.
     let held = loudest(&samples[2 * BAR * 3 / 4..2 * BAR * 15 / 16]);
     assert!(held > 1e-2, "{held}");
+}
+
+/// The regions of the audio track, of a file that holds 0.25 from start to end, with the other
+/// tracks and the returns down. What the song plays over the first second.
+fn regions(records: &[(&str, &str)]) -> Vec<f32> {
+    let mut harness = song(&[
+        ("state/song/t00/mix.json", SILENT),
+        ("state/song/t01/mix.json", SILENT),
+        ("state/song/ret-a/mix.json", SILENT),
+        ("state/song/ret-b/mix.json", SILENT),
+    ]);
+    write_samples(&harness, "level.wav", 48_000, 2.0, |_| 0.25);
+    for (name, record) in records {
+        harness.write_and_apply(&format!("state/song/audio-voice/{name}.json"), record);
+    }
+    assert_eq!(harness.project.problems(), []);
+    let samples = play(&mut harness, 48_000);
+    // The left channel.
+    samples.iter().step_by(2).copied().collect()
+}
+
+/// Where one region ends and the next starts, the level holds, as main's audio clips handed over:
+/// one player per track crossfades the two.
+#[test]
+fn two_regions_that_meet_hand_over_with_no_dip() {
+    let left = regions(&[
+        (
+            "a",
+            r#"{"tool": "region", "state": {"asset": "level.wav", "file_end_seconds": 0.5}}"#,
+        ),
+        (
+            "b",
+            r#"{"tool": "region", "state": {"asset": "level.wav", "start": 960, "file_start_seconds": 0.5}}"#,
+        ),
+    ]);
+    let level = left[12_000];
+    assert!(level > 0.1, "{level}");
+    let lowest = left[22_000..26_000]
+        .iter()
+        .fold(f32::MAX, |low, sample| low.min(*sample));
+    assert!(
+        lowest > level * 0.95,
+        "{lowest} at the join, {level} before it"
+    );
+}
+
+/// Where two regions overlap, the last by name is heard, as on main's audio tracks, and not the
+/// two summed.
+#[test]
+fn of_two_regions_that_overlap_the_last_by_name_is_heard() {
+    let left = regions(&[
+        (
+            "a",
+            r#"{"tool": "region", "state": {"asset": "level.wav", "file_end_seconds": 1.0}}"#,
+        ),
+        (
+            "b",
+            r#"{"tool": "region", "state": {"asset": "level.wav", "start": 960, "file_end_seconds": 0.25}}"#,
+        ),
+    ]);
+    let (alone, over) = (left[12_000], left[30_000]);
+    assert!(alone > 0.1, "{alone}");
+    assert!(
+        (over - alone).abs() < 1e-3,
+        "{over} where they overlap, {alone} before"
+    );
 }

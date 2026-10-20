@@ -19,6 +19,7 @@ use sound_core::{
     InputEndpoint, InstanceId, JsonTool, JsonToolDoc, Node, NodeId, OutputEndpoint, ParameterInfo,
     PlayedLanes, Problem, RecordStamp, Ticks, ValueRange, Watch,
 };
+use sound_media::{AudioPlayer, AudioUpdate, Region};
 use sound_notes::{AUDIO_INPUT, AUDIO_OUTPUT, NOTES_INPUT, NoteEvent, NoteFeed, NoteFeedUpdate};
 use sound_signals::{
     ArraySpec, Bang, Cable, Code, ControlSpec, Declarations, Graph, Kind, Machine, Number,
@@ -28,7 +29,7 @@ use sound_signals::{
 use crate::behaviours::{self, Declaration, End, Key};
 use crate::bun::Bun;
 use crate::feeds::played_name;
-use crate::{FOLDER, samples};
+use crate::{FOLDER, region, samples};
 
 /// A tool as `host.ts` sends it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -1397,6 +1398,8 @@ fn wire(
         to.child.as_deref().filter(|_| notes)
     });
     let feeds = feeds(fed, context)?;
+    let regions = region_players(declaration, context)?;
+    let mut joined = BTreeSet::new();
     let mut cables = BTreeSet::new();
     let mut outputs = BTreeMap::new();
     let mut passed = Vec::new();
@@ -1424,6 +1427,14 @@ fn wire(
             continue;
         }
         let output = match (from_child, from_key) {
+            // The one player of the regions into this place, connected once.
+            (Some(child), Key::Port) if is_region(child, from_name, context) => {
+                let to = connection.to.to_string();
+                if !joined.insert(to.clone()) {
+                    continue;
+                }
+                regions.get(&to).copied()
+            }
             (Some(child), _) => context.child_output(child, from_name),
             (None, Key::Port) if from_name == AUDIO_INPUT => Some(own.audio),
             (None, Key::Notes) if from_name == NOTES_INPUT => Some(own.notes),
@@ -1530,6 +1541,66 @@ fn wire(
         }
     }
     Ok(())
+}
+
+/// Whether the child `name` is a region and `port` its sound.
+fn is_region(name: &str, port: &str, context: &BehaviourContext<'_>) -> bool {
+    port == AUDIO_OUTPUT && context.child_tool(name) == Some(region::NAME)
+}
+
+/// One player for the regions that play into each place, by that place, as main's arrangement
+/// played the clips of an audio track: where one ends and the next starts they crossfade, and
+/// where they overlap the last by name is heard. A region whose file is not read yet is left
+/// out: it runs again when it is, and so does this.
+fn region_players(
+    declaration: &Declaration,
+    context: &mut BehaviourContext<'_>,
+) -> Result<BTreeMap<String, OutputEndpoint>, BehaviourError> {
+    let mut places: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+    for connection in &declaration.connections {
+        if let (Some(child), Some((Key::Port, port))) =
+            (connection.from.child.as_deref(), connection.from.port())
+            && is_region(child, port, context)
+        {
+            let to = connection.to.to_string();
+            places.entry(to).or_default().insert(child);
+        }
+    }
+    let records: BTreeMap<String, Region> = (context.child_records())
+        .filter(|(_, tool, _)| *tool == region::NAME)
+        .filter_map(|(name, _, state)| {
+            let record = region::record(&serde_json::from_str(&state.ok()?).ok()?).ok()?;
+            Some((name.to_string(), region::region(&record)))
+        })
+        .collect();
+    let rate = context.prepare_config().sample_rate;
+    let mut players = BTreeMap::new();
+    for (to, children) in places {
+        let player = context.processor(&format!("regions>{to}"), AudioPlayer::new)?;
+        players.insert(to.clone(), OutputEndpoint::new(player, AudioPlayer::OUTPUT));
+        let mut files = Vec::new();
+        let mut regions = Vec::new();
+        for name in children {
+            let Some(region) = records.get(name).cloned() else {
+                continue;
+            };
+            let Some(file) = sound_media::in_memory(context.assets(), &region.asset) else {
+                continue;
+            };
+            // The file itself: one read again is another, as the player holds the one before.
+            files.push(Arc::as_ptr(&file) as usize);
+            regions.push((format!("the region {name:?}"), region));
+        }
+        if context.changed(
+            &format!("regions>{to}"),
+            key(&(format!("{regions:?}"), files)),
+        ) {
+            // Each region says what is wrong with it.
+            let (snapshot, _) = sound_media::snapshot(regions, context.assets(), rate);
+            context.update(player, AudioUpdate::new(snapshot))?;
+        }
+    }
+    Ok(players)
 }
 
 /// What cables play into the numbers of one child, by the name of each number: what a card's

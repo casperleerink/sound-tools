@@ -8,15 +8,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
-    Assets, BehaviourContext, BehaviourError, Frames, InstanceId, JsonTool, JsonToolDoc,
-    OutputEndpoint, Project, State, Ticks, ToolSchema,
+    Assets, BehaviourContext, BehaviourError, Frames, InstanceId, JsonTool, JsonToolDoc, Project,
+    State, Ticks, ToolSchema,
 };
-use sound_media::{
-    AUDIO_FOLDER, Audio, AudioAsset, AudioPlayer, AudioUpdate, Keep, Loader, Region, Stamp,
-};
+use sound_media::{AUDIO_FOLDER, Audio, AudioAsset, Keep, Loader, Region, Stamp};
 
 pub(crate) const NAME: &str = "region";
-const PROCESSOR: &str = "player";
 /// What its parent's view reads of how long it plays, in seconds.
 const SECONDS: &str = "seconds";
 
@@ -78,7 +75,7 @@ pub(crate) fn schema() -> ToolSchema {
 }
 
 /// The record of `state`, or what is wrong with it, by its path.
-fn record(state: &Value) -> Result<Record, String> {
+pub(crate) fn record(state: &Value) -> Result<Record, String> {
     let record: Record = sound_core::parse_state(state)?;
     let seconds = |field: &str, value: f64| match value.is_finite() && value >= 0.0 {
         true => Ok(()),
@@ -142,8 +139,9 @@ pub(crate) fn region(record: &Record) -> Region {
     }
 }
 
-/// One player of one region. A file that is not there is a problem: the region keeps its place
-/// and is silent until the file arrives.
+/// What a region says of itself: how long it plays, and a file that is not there or does not
+/// play. Its parent plays it, with the other regions that play into the same place, see
+/// `tools::region_players`; until its file is read it is silent there.
 fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), BehaviourError> {
     let region = region(&record(state).map_err(BehaviourError::Other)?);
     let rate = context.prepare_config().sample_rate;
@@ -151,9 +149,8 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
     let seconds = sound_media::info(context.assets(), &region.asset)
         .map(|file| region.length(&file, rate) as f64 / f64::from(rate.max(1)));
     context.watch(SECONDS).set(seconds.unwrap_or(0.0) as f32);
-    let player = context.processor(PROCESSOR, AudioPlayer::new)?;
-    context.output("audio", OutputEndpoint::new(player, AudioPlayer::OUTPUT));
-    // A long file is read on a thread of its own: silent until it is there, then this runs again.
+    // A long file is read on a thread of its own: silent until it is there, then this and its
+    // parent run again.
     let _audio = match sound_media::in_memory(context.assets(), &region.asset) {
         Some(audio) => Some(audio),
         None => match read(context.assets(), &region.asset, context.id()) {
@@ -164,11 +161,10 @@ fn apply(state: &Value, context: &mut BehaviourContext<'_>) -> Result<(), Behavi
         },
     };
     let what = format!("the region {:?}", context.id().name());
-    let (snapshot, problems) = sound_media::snapshot([(what, region)], context.assets(), rate);
+    let (_, problems) = sound_media::snapshot([(what, region)], context.assets(), rate);
     for problem in problems {
         context.problem(problem);
     }
-    context.update(player, AudioUpdate::new(snapshot))?;
     Ok(())
 }
 

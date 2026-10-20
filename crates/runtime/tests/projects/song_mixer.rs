@@ -99,39 +99,16 @@ fn the_limiter_after_the_master_holds_the_output_under_its_ceiling() {
     assert!(loudest(&limited) <= ceiling + 1e-6, "{}", loudest(&limited));
 }
 
-/// Two regions that overlap are heard together, and the song lasts to the end of the last one.
+/// The song lasts to the end of the last region.
 #[test]
-fn overlapping_regions_sum_and_the_last_one_ends_the_song() {
+fn the_last_region_ends_the_song() {
     let mut harness = song();
-    write_samples(&harness, "low.wav", 48_000, 2.0, |seconds| {
-        (0.2 * (seconds * 220.0 * std::f64::consts::TAU).sin()) as f32
-    });
-    write_samples(&harness, "high.wav", 48_000, 2.0, |seconds| {
-        (0.1 * (seconds * 330.0 * std::f64::consts::TAU).sin()) as f32
-    });
-    let region = |asset: &str, start: u64| {
-        format!(r#"{{"tool": "region", "state": {{"asset": "{asset}", "start": {start}}}}}"#)
-    };
-    // The tracks silent, so only the regions play.
-    for track in ["t00", "t01"] {
-        harness.write_and_apply(&format!("state/song/{track}/mix.json"), &fader(r#""-inf""#));
-    }
-    harness.write_and_apply("state/song/audio-voice/low.json", &region("low.wav", 0));
-    let low = play(&mut harness, BAR);
-    harness.write_and_apply("state/song/audio-voice/high.json", &region("high.wav", 0));
-    let both = play(&mut harness, BAR);
-    std::fs::remove_file(harness.path("state/song/audio-voice/low.json")).unwrap();
-    harness.apply(&[harness.path("state/song/audio-voice/low.json")]);
-    let high = play(&mut harness, BAR);
-    let summed = (low.iter().zip(&high)).map(|(low, high)| low + high);
-    let most =
-        (both.iter().zip(summed)).fold(0.0_f32, |most, (both, sum)| most.max((both - sum).abs()));
-    assert!(most < 1e-6, "{most}");
+    write_samples(&harness, "high.wav", 48_000, 2.0, |_| 0.1);
     // Two seconds are a bar at 120 bpm: from bar 21 the region ends at bar 22.
     let start = 20 * 3840;
     harness.write_and_apply(
         "state/song/audio-voice/high.json",
-        &region("high.wav", start),
+        &format!(r#"{{"tool": "region", "state": {{"asset": "high.wav", "start": {start}}}}}"#),
     );
     assert_eq!(harness.project.end(), Some(Ticks(start + 3840)));
 }
