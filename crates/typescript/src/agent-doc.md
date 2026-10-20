@@ -212,7 +212,7 @@ Levels, the clock and easing are live values too, so a meter or a light moves on
 - `now.value(name, { played: true })`: a field as it plays, what a lane or a cable plays into it, else its record.
 - `now.elapsed`, seconds, and `.mod`, `.pow`, `.decibels()`. `.smooth(ms)`, `.fall(perSecond)` and `.hold(seconds)` follow a value over frames: a meter's bar is `level.fall(0.5)`, its peak line `level.hold(1.5).fall(0.5)`.
 - `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.elapsed.mod(1).lt(0.5))` blinks.
-- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far. `band` from `low: -1` to `high: 1` draws a waveform.
+- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far. `band` from `low: -1` to `high: 1` draws a waveform; `level` scales it along its width, as a fade. `<Path points>` fills between its points. `now.input(channel)` is the level of the audio input while a recorder is armed.
 
 ## A control loop, the keys
 
