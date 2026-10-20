@@ -342,10 +342,15 @@ fn a_lane_is_added_from_a_track_menu_and_its_points_edited(cx: &mut TestAppConte
     window.until("a point added", |window| points(window) == Some(3));
     window.wait_for_bun();
     window.cx.simulate_keystrokes("delete");
-    window.until("the chosen point deleted", |window| points(window) == Some(2));
+    window.until("the chosen point deleted", |window| {
+        points(window) == Some(2)
+    });
     assert!(
-        (window.record("song/t00/lane-cutoff")["points"].as_array().unwrap().iter())
-            .all(|point| point["tick"] != 3 * BAR)
+        (window.record("song/t00/lane-cutoff")["points"]
+            .as_array()
+            .unwrap()
+            .iter())
+        .all(|point| point["tick"] != 3 * BAR)
     );
 
     // The filter's card shows what the lane plays into its cutoff.
@@ -471,7 +476,10 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     window.until("a tempo change", |window| tempo_at(window, 120.0));
     let session = window.session.clone();
     window.until("the playhead on it", |window| {
-        window.cx.read(|cx| session.read(cx).playhead().read(cx).tick) == Ticks(2 * BAR + 240)
+        window
+            .cx
+            .read(|cx| session.read(cx).playhead().read(cx).tick)
+            == Ticks(2 * BAR + 240)
     });
     window.wait_for_bun();
     let tempo = window.space_at("transport-tempo") + point(px(10.), px(8.));
@@ -479,7 +487,9 @@ fn the_ruler_adds_a_tempo_change_and_a_section_and_drags_a_repeat(cx: &mut TestA
     window.drag_to(tempo - point(px(0.), px(10.)));
     window.drag_to(tempo - point(px(0.), px(20.)));
     window.release(tempo - point(px(0.), px(20.)));
-    window.until("ten beats a minute faster", |window| tempo_at(window, 130.0));
+    window.until("ten beats a minute faster", |window| {
+        tempo_at(window, 130.0)
+    });
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Change the tempo"));
 
@@ -1123,7 +1133,9 @@ fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn a_return_shows_over_the_master_and_its_panel_takes_effects_and_pre_fader(cx: &mut TestAppContext) {
+fn a_return_shows_over_the_master_and_its_panel_takes_effects_and_pre_fader(
+    cx: &mut TestAppContext,
+) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
     // Folded, the song's two returns are one row; it opens on a click.
@@ -1141,7 +1153,10 @@ fn a_return_shows_over_the_master_and_its_panel_takes_effects_and_pre_fader(cx: 
         window.record("song/ret-a")["pre_fader"] == true
     });
     window.after_the_runs();
-    assert_eq!(window.undo_label().as_deref(), Some("Send before the faders"));
+    assert_eq!(
+        window.undo_label().as_deref(),
+        Some("Send before the faders")
+    );
     assert!(window.find("div-add-effect").is_some());
 
     // Right-click: its menu colours it.

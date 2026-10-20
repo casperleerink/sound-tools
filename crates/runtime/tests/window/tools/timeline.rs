@@ -44,7 +44,10 @@ fn with_snap_off_a_clip_moves_to_the_tick_and_with_bars_to_the_bar(cx: &mut Test
     window.until("the clip moved", |window| {
         window.record("song/t01/c00")["start"] != 0
     });
-    assert_eq!(window.record("song/t01/c00")["start"], (37. / ACROSS) as u64);
+    assert_eq!(
+        window.record("song/t01/c00")["start"],
+        (37. / ACROSS) as u64
+    );
 
     window.click(snap);
     window.pick("menu-1");
@@ -163,7 +166,9 @@ fn a_section_clicked_in_the_ruler_is_chosen_played_from_and_deleted(cx: &mut Tes
     window.until_found("div-ruler-edit");
     // Enter keeps the name it has and closes the field.
     window.cx.simulate_keystrokes("enter");
-    window.until("the field closed", |window| window.find("div-ruler-edit").is_none());
+    window.until("the field closed", |window| {
+        window.find("div-ruler-edit").is_none()
+    });
     window.until("a section", |window| {
         window.project_file()["sections"] == serde_json::json!([{ "bar": 3, "name": "Section 1" }])
     });
@@ -172,7 +177,10 @@ fn a_section_clicked_in_the_ruler_is_chosen_played_from_and_deleted(cx: &mut Tes
     window.click(at(2 * BAR, 30.));
     let session = window.session.clone();
     window.until("the playhead on its bar", |window| {
-        window.cx.read(|cx| session.read(cx).playhead().read(cx).tick) == Ticks(2 * BAR)
+        window
+            .cx
+            .read(|cx| session.read(cx).playhead().read(cx).tick)
+            == Ticks(2 * BAR)
     });
     window.wait_for_bun();
     window.cx.simulate_keystrokes("backspace");
@@ -196,7 +204,8 @@ fn a_time_signature_added_in_the_ruler_is_changed_by_a_drag_in_the_transport(
         MouseButton::Right,
     );
     window.pick("menu-1");
-    let signatures = |window: &mut Opened<'_>| window.project_file()["tempo_map"]["time_signatures"].clone();
+    let signatures =
+        |window: &mut Opened<'_>| window.project_file()["tempo_map"]["time_signatures"].clone();
     // Bar 3 starts a change to what plays there, and the playhead is on it.
     window.until("a change at bar 3", |window| {
         signatures(window)
@@ -204,7 +213,10 @@ fn a_time_signature_added_in_the_ruler_is_changed_by_a_drag_in_the_transport(
     });
     let session = window.session.clone();
     window.until("the playhead on bar 3", |window| {
-        window.cx.read(|cx| session.read(cx).playhead().read(cx).tick) == Ticks(2 * BAR)
+        window
+            .cx
+            .read(|cx| session.read(cx).playhead().read(cx).tick)
+            == Ticks(2 * BAR)
     });
     window.wait_for_bun();
     // Twenty points up: two beats more, from bar 3 on.
@@ -218,7 +230,10 @@ fn a_time_signature_added_in_the_ruler_is_changed_by_a_drag_in_the_transport(
             == serde_json::json!([{ "signature": "4/4", "bars": 2 }, { "signature": "6/4", "bars": 1 }])
     });
     window.after_the_runs();
-    assert_eq!(window.undo_label().as_deref(), Some("Change the time signature"));
+    assert_eq!(
+        window.undo_label().as_deref(),
+        Some("Change the time signature")
+    );
     assert_eq!(window.problems(), []);
 }
 
@@ -237,7 +252,9 @@ fn a_region_dragged_with_alt_is_copied_on_the_grid(cx: &mut TestAppContext) {
     };
     let to = inside + point(px(96. + 4.), px(0.));
     window.press_with(inside, 1, alt);
-    window.cx.simulate_mouse_move(inside + point(px(20.), px(0.)), MouseButton::Left, alt);
+    window
+        .cx
+        .simulate_mouse_move(inside + point(px(20.), px(0.)), MouseButton::Left, alt);
     window.cx.simulate_mouse_move(to, MouseButton::Left, alt);
     window.cx.simulate_event(MouseUpEvent {
         position: to,
@@ -247,7 +264,10 @@ fn a_region_dragged_with_alt_is_copied_on_the_grid(cx: &mut TestAppContext) {
     });
     window.until("a copy", |window| window.has("song/audio-voice/region-2"));
     // A bar and a bit on, on the sixteenth.
-    assert_eq!(window.record("song/audio-voice/region-2")["start"], 3 * BAR + 240);
+    assert_eq!(
+        window.record("song/audio-voice/region-2")["start"],
+        3 * BAR + 240
+    );
     assert_eq!(window.record("song/audio-voice/region")["start"], 2 * BAR);
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Copy clips"));
