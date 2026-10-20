@@ -941,7 +941,7 @@ function ask<Answer>(message: { type: string } & Record<string, unknown>): Promi
 function askers(instance: string) {
   return {
     openMenu: (items: readonly MenuItem[], { notes = [], width, maxHeight, search = false }: MenuOptions = {}) =>
-      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group }) => ({ label, disabled, checked, icon, detail, group })), notes, width, maxHeight, search }),
+      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group, separator, shortcut }) => ({ label, disabled, checked, icon, detail, group, separator, shortcut })), notes, width, maxHeight, search }),
     offers: (takes: "notes" | "audio", { at }: { at?: string } = {}) => ask<Offers>({ type: "offers", takes, instance, at }),
     numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
     /** The runtime opens the file and copies it under `assets/audio/`. */
