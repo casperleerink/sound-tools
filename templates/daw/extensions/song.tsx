@@ -287,7 +287,7 @@ export const song = tool({
       });
       return;
     }
-    if (memory.selected.size === 0 && !memory.region && trackKey(key, tool)) return;
+    if (memory.selected.size === 0 && !memory.region && trackKey(key, state.order, tool, (names) => update("Move a track", (song) => (song.state.order = names)))) return;
     const tracks = children
       .filter((child): child is TrackRow => child.tool === "track")
       .slice()
@@ -1969,14 +1969,14 @@ function toggleRecordingOf({ memory, send, clock, children }: Pick<Context<unkno
  * keys did: enter names it, up and down choose the track above or below, alt-up and alt-down
  * move it there. Whether it was one of them.
  */
-function trackKey(key: Key, { state, children, memory, update, select }: Context<unknown, Inputs, Memory, typeof parts>): boolean {
+function trackKey(key: Key, order: readonly string[], { children, memory, select }: Context<unknown, Inputs, Memory, typeof parts>, reorder: (names: string[]) => void): boolean {
   const name = memory.below?.kind === "track" ? memory.below.name : null;
   if (!name || key.cmd || !["enter", "up", "down"].includes(key.key)) return false;
   if (key.key === "enter") {
     memory.renaming = name;
     return true;
   }
-  const rank = (each: string) => (state.order.includes(each) ? state.order.indexOf(each) : state.order.length);
+  const rank = (each: string) => (order.includes(each) ? order.indexOf(each) : order.length);
   const names = children
     .filter((child) => child.tool === "track" || child.tool === "tape")
     .map((child) => child.name)
@@ -1988,7 +1988,7 @@ function trackKey(key: Key, { state, children, memory, update, select }: Context
     if (next === at) return true;
     names.splice(at, 1);
     names.splice(next, 0, name);
-    update("Move a track", (song) => (song.state.order = names));
+    reorder(names);
     return true;
   }
   const other = names[next]!;
