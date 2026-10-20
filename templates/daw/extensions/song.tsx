@@ -1344,30 +1344,28 @@ export const song = tool({
         <Circle x={x} y={top} radius={5} color={hollow ? "gray-950" : "gray-50"} drag={drag} cursor={cursor} />,
         <Circle x={x} y={top} radius={3.5} color={hollow ? "gray-50" : "gray-950"} drag={drag} cursor={cursor} />,
       ];
-      /** What a handle makes while it is dragged, in a pill right of it. */
-      const Readout = ({ x, title, value, unit, held }: { x: Accessor<Live>; title: string; value: Accessor<Live>; unit: "ms" | "db"; held: Live }) => [
-        <Rect x={() => x().plus(point.times(10))} y={top - 11 / ROW} width={point.times(116)} height={22 / ROW} radius={6} color="gray-100" border="alpha/10" borderWidth={1} opacity={held} />,
-        <Label x={() => x().plus(point.times(18))} y={top - 7 / ROW} text={title} size={12} color="gray-950" opacity={held} />,
-        <Label x={() => x().plus(point.times(118))} y={top - 7 / ROW} text={value} unit={unit} size={12} color="gray-950" align="right" opacity={held} />,
+      /** What a handle makes while it is dragged, in a pill right of it `wide` points wide, as `title` and the value. */
+      const readout = (x: Accessor<Live>, title: string, wide: number, value: Accessor<Live>, unit: "ms" | "db", held: Live) => [
+        <Rect x={() => x().plus(point.times(10))} y={top - 2 / ROW} width={point.times(wide)} height={22 / ROW} radius={6} color="gray-100" border="alpha/10" borderWidth={1} opacity={held} />,
+        <Label x={() => x().plus(point.times(17))} y={top + 2 / ROW} text={title} size={12} color="gray-950" opacity={held} />,
+        <Label x={() => x().plus(point.times(wide + 3))} y={top + 2 / ROW} text={value} unit={unit} size={12} color="gray-950" align="right" opacity={held} />,
       ];
+      // A fade's line shows while it has one, and while its handle drags one out.
+      const shown = (ms: () => number, held: Live) => () => held.max(ms() > 0 ? 1 : 0);
       const msOf = (ticks: Live) => ticks.times(60_000 / BEAT).over(now.bpm).max(0);
       const edge = 4 / ROW;
       return (
         <>
-          <Show when={() => region.state.fade_in_ms > 0}>
-            {() => <Path points={() => [[0, bottom], [0, edge], [fadeIn(), edge], [fadeIn(), top]]} color="gray-50/50" />}
-          </Show>
-          <Show when={() => region.state.fade_out_ms > 0}>
-            {() => <Path points={() => [[width(), bottom], [width(), edge], [fadeOut(), edge], [fadeOut(), top]]} color="gray-50/50" />}
-          </Show>
-          <Show when={() => region.state.fade_in_ms > 0}>{() => <Line from={[0, bottom]} to={() => [fadeIn(), top]} color="gray-950" width={1.5} />}</Show>
-          <Show when={() => region.state.fade_out_ms > 0}>{() => <Line from={() => [width(), bottom]} to={() => [fadeOut(), top]} color="gray-950" width={1.5} />}</Show>
+          <Path points={() => [[0, bottom], [0, edge], [fadeIn(), edge], [fadeIn(), top]]} color="gray-50/50" opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
+          <Path points={() => [[width(), bottom], [width(), edge], [fadeOut(), edge], [fadeOut(), top]]} color="gray-50/50" opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
+          <Line from={[0, bottom]} to={() => [fadeIn(), top]} color="gray-950" width={1.5} opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
+          <Line from={() => [width(), bottom]} to={() => [fadeOut(), top]} color="gray-950" width={1.5} opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
           {dot(fadeIn, false, fadeDrag("fade-in"), "ew-resize")}
           {dot(fadeOut, false, fadeDrag("fade-out"), "ew-resize")}
           {dot(() => point.times(0).plus(width() / 2), true, gainDrag, "ns-resize")}
-          <Readout x={fadeIn} title="Fade in" value={() => msOf(fadingIn.dx.plus(fade(region.state.fade_in_ms)))} unit="ms" held={fadingIn.active} />
-          <Readout x={fadeOut} title="Fade out" value={() => msOf(fadingOut.dx.negate().plus(fade(region.state.fade_out_ms)))} unit="ms" held={fadingOut.active} />
-          <Readout x={() => point.times(0).plus(width() / 2)} title="Gain" value={() => gaining.dy.times(-dbPerRow).plus(region.state.gain_db).times(10).round().over(10)} unit="db" held={gaining.active} />
+          {readout(fadeIn, "Fade in", 96, () => msOf(fadingIn.dx.plus(fade(region.state.fade_in_ms))), "ms", fadingIn.active)}
+          {readout(fadeOut, "Fade out", 104, () => msOf(fadingOut.dx.negate().plus(fade(region.state.fade_out_ms))), "ms", fadingOut.active)}
+          {readout(() => point.times(0).plus(width() / 2), "", 48, () => gaining.dy.times(-dbPerRow).plus(region.state.gain_db).times(10).round().over(10), "db", gaining.active)}
         </>
       );
     };
@@ -1389,6 +1387,9 @@ export const song = tool({
       // Seconds of its file, as ticks through the tempo map from where it starts.
       const width = () => ticksAcross(clock.tempo_map.tempo_changes, region.state.start, outputs[`${key}.seconds`] ?? 0);
       const sound = () => now.file(region.state.asset, { from: region.state.file_start_seconds, to: region.state.file_end_seconds });
+      // While its gain handle drags, how much louder it is drawn: the handle is the chosen region's.
+      const dragged = now.tick.times(0).plus(10).pow(now.drag("gain").dy.times((-ROW * 72) / 200 / 20)).min((ROW - 8) / 44);
+      const louder = () => (chosen() ? dragged : now.tick.times(0).plus(1));
       // Drawn as it sounds: its gain, and its fades straight from silence at its ends.
       const level = (): [number, number][] => {
         const gain = Math.pow(10, region.state.gain_db / 20);
@@ -1445,7 +1446,7 @@ export const song = tool({
         <Group x={() => region.state.start} y={() => topOf(row())} moves={() => (chosen() ? ["region"] : undefined)}>
           <Rect x={0} y={4 / ROW} width={width} height={(ROW - 8) / ROW} radius={6} color="alpha/5" border={() => (chosen() ? "gray-950" : "alpha/10")} borderWidth={1}
             drag={moveRegion} onPress={press} cursor="grab" />
-          <Wave x={0} y={(ROW / 2 - 22) / ROW} width={width} height={44 / ROW} list={sound} band low={-1} high={1} level={level} color={() => `${colourOf(each)}/85` as Color} />
+          <Wave x={0} y={() => louder().times(-22 / ROW).plus(0.5)} width={width} height={() => louder().times(44 / ROW)} list={sound} band low={-1} high={1} level={level} color={() => `${colourOf(each)}/85` as Color} />
           <Rect x={0} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimRegion} onPress={press} cursor="ew-resize"
             moves={() => (chosen() ? ["trim"] : undefined)} />
           <Rect x={() => handle.negate().plus(width())} y={0.06} width={handle} height={0.88} color={COLOR.clear} drag={trimEnd} onPress={press} cursor="ew-resize"

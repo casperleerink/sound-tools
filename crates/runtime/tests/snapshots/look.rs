@@ -37,6 +37,9 @@ use crate::song::{ACROSS, ARM, BAR, HEADER, LEAD, ROW, TOGGLES, daw};
 use runtime::window::audio_input::{OpenInput, OpenedInput};
 use sound_core::CaptureWriter;
 
+#[path = "look_takes.rs"]
+pub(crate) mod takes;
+
 /// Where a song's rows start: under the title row and the ruler, whose line is its last point.
 const TOP: f32 = 48.0 + 32.0;
 

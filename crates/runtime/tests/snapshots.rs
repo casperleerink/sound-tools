@@ -283,6 +283,9 @@ fn main() -> Result<()> {
     if runs("look") {
         look::snapshots(&mut cx, &save)?;
     }
+    if runs("takes") {
+        look::takes::snapshots(&mut cx, &save)?;
+    }
     if only.is_some() {
         return Ok(());
     }

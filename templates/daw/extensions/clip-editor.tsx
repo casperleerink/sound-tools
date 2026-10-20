@@ -1,4 +1,4 @@
-import { Button, For, Fragment, h, Icon, Label, Line, memo, now, Rect, selector, signal, Space, untrack, type Accessor, type Color, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type MenuItem, type Note, type Press } from "./sdk";
+import { blend, Button, For, Fragment, h, Icon, Label, Line, memo, now, Rect, selector, signal, Space, untrack, type Accessor, type Color, type Drag, type FilledStateOfTool, type Frozen, type Key, type Memory, type MenuItem, type Note, type Press } from "./sdk";
 
 // The note editor of one timeline, as the window drew it: a header with its track and a ruler,
 // its notes on a grid of pitches, and under them a lane of their velocities or of one of its
@@ -273,6 +273,15 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     if (picked !== null) memory.lane = LANES[picked]!;
   };
 
+  /** 1 while the rectangle being dragged touches `note`, as it chooses it when let go. */
+  const boxed = (note: Note) => {
+    const row = rowOf(note.pitch);
+    return marquee.active
+      .times(marquee.startX.min(marquee.x).lt(note.start + note.length))
+      .times(marquee.startX.max(marquee.x).gt(note.start))
+      .times(marquee.startY.min(marquee.y).lt(row + 1))
+      .times(marquee.startY.max(marquee.y).gt(row));
+  };
   // A chosen note follows the drags, natively, until the code hears the end.
   const NoteShapes = (drags: { move: Drag; resize: Drag }) => (note: Note) => {
     const picked = memo(() => isPicked(noteKey(note)));
@@ -282,7 +291,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     return [
       <Rect x={() => note.start} y={() => rowOf(note.pitch)} width={() => space.pointX.negate().plus(note.length).max(space.pointX.times(2))} height={(ROW - 1) / ROW} radius={3}
         moves={() => (picked() ? ["note-move"] : undefined)} grows={() => (picked() ? ["note-resize"] : undefined)}
-        color={() => (picked() ? "gray-950" : colour())} border={colour} borderWidth={1} cursor="grab" drag={drags.move} onPress={onPress} />,
+        color={() => (picked() ? "gray-950" : blend(colour(), "gray-950", boxed(note)))} border={colour} borderWidth={1} cursor="grab" drag={drags.move} onPress={onPress} />,
       <Rect x={() => note.start + note.length - handle()} y={() => rowOf(note.pitch)} width={handle} height={1}
         moves={() => (picked() ? ["note-move", "note-resize"] : undefined)}
         color="#00000000" cursor="ew-resize" drag={drags.resize} onPress={onPress} anchor={() => ({ x: note.start + note.length })} />,
@@ -293,7 +302,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     const top = () => (VELOCITY_BOTTOM - ((VELOCITY_BOTTOM - VELOCITY_TOP) * note.velocity) / 127) / LANE;
     return (
       <Rect x={() => note.start} y={top} width={space.pointX.times(3)} height={() => VELOCITY_BOTTOM / LANE - top()}
-        moves={() => (picked() ? ["note-velocity"] : undefined)} color={() => (picked() ? "gray-950" : (`${colour()}/70` as Color))}
+        moves={() => (picked() ? ["note-velocity"] : undefined)} color={() => (picked() ? "gray-950" : blend(`${colour()}/70` as Color, "gray-950", boxed(note)))}
         cursor="ns-resize" drag={velocityDrag} onPress={pressNote(note)} />
     );
   };
