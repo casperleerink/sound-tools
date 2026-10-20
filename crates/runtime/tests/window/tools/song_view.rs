@@ -250,8 +250,8 @@ fn a_clip_is_renamed_copied_pasted_and_nudged(cx: &mut TestAppContext) {
     window.click(clip);
     window.cx.simulate_keystrokes("cmd-c");
     window.cx.simulate_keystrokes("cmd-v");
-    window.until("the clip pasted", |window| window.has("song/t01/clip"));
-    let pasted = window.record("song/t01/clip");
+    window.until("the clip pasted", |window| window.has("song/t01/c00-2"));
+    let pasted = window.record("song/t01/c00-2");
     assert_eq!(pasted["start"], 0);
     assert_eq!(pasted["notes"], window.record("song/t01/c00")["notes"]);
     window.after_the_runs();
@@ -260,7 +260,7 @@ fn a_clip_is_renamed_copied_pasted_and_nudged(cx: &mut TestAppContext) {
     // The pasted clip is the chosen one: an arrow nudges it a step of the grid on.
     window.cx.simulate_keystrokes("right");
     window.until("the clip nudged", |window| {
-        window.record("song/t01/clip")["start"] == 240
+        window.record("song/t01/c00-2")["start"] == 240
     });
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move clips"));
@@ -595,7 +595,7 @@ fn a_region_dropped_on_the_audio_track_is_chosen_and_deleted(cx: &mut TestAppCon
         !window.has("song/audio-voice/region")
     });
     window.after_the_runs();
-    assert_eq!(window.undo_label().as_deref(), Some("Remove a region"));
+    assert_eq!(window.undo_label().as_deref(), Some("Remove clips"));
     assert_eq!(window.problems(), []);
 }
 
@@ -870,7 +870,7 @@ fn a_clip_copied_from_its_menu_is_pasted(cx: &mut TestAppContext) {
     window.wait_for_bun();
     window.click(clip);
     window.cx.simulate_keystrokes("cmd-v");
-    window.until("the clip pasted", |window| window.has("song/t01/clip"));
+    window.until("the clip pasted", |window| window.has("song/t01/c00-2"));
     assert_eq!(window.problems(), []);
 }
 

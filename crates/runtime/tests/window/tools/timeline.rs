@@ -250,5 +250,85 @@ fn a_region_dragged_with_alt_is_copied_on_the_grid(cx: &mut TestAppContext) {
     assert_eq!(window.record("song/audio-voice/region-2")["start"], 3 * BAR + 240);
     assert_eq!(window.record("song/audio-voice/region")["start"], 2 * BAR);
     window.after_the_runs();
-    assert_eq!(window.undo_label().as_deref(), Some("Copy a region"));
+    assert_eq!(window.undo_label().as_deref(), Some("Copy clips"));
+}
+
+/// Clips and regions are one selection, as the arrangement's clips of either kind were: a box
+/// over both chooses both, and copy, paste, the arrows and delete take them together.
+#[gpui::test]
+fn clips_and_regions_are_chosen_copied_pasted_nudged_and_deleted_together(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.drop_sine();
+    window.until_found("button-mixer-toggle");
+    // From empty space past the region, up and left over the second track's clip.
+    let (from, to) = (window.on_lane(5 * BAR, 2), window.on_lane(BAR / 2, 1));
+    window.press(from);
+    window.drag_to(from - point(px(20.), px(0.)));
+    window.drag_to(to);
+    window.release(to);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("cmd-c");
+    // At the playhead, the start: each on the row it came from.
+    window.cx.simulate_keystrokes("cmd-v");
+    window.until("both pasted", |window| {
+        window.has("song/t01/c00-2") && window.has("song/audio-voice/region-2")
+    });
+    assert_eq!(window.record("song/t01/c00-2")["start"], 0);
+    assert_eq!(window.record("song/audio-voice/region-2")["start"], 2 * BAR);
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Paste clips"));
+
+    window.cx.simulate_keystrokes("right");
+    window.until("both nudged", |window| {
+        window.record("song/t01/c00-2")["start"] == 240
+            && window.record("song/audio-voice/region-2")["start"] == 2 * BAR + 240
+    });
+    window.after_the_runs();
+    window.cx.simulate_keystrokes("backspace");
+    window.until("both deleted", |window| {
+        !window.has("song/t01/c00-2") && !window.has("song/audio-voice/region-2")
+    });
+    assert!(window.has("song/t01/c00") && window.has("song/audio-voice/region"));
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Remove clips"));
+    assert_eq!(window.problems(), []);
+}
+
+/// A cut takes the automation under a clip along, and a paste puts it down where the clip lands,
+/// as the arrangement's did: the cutoff that opens the first clip opens it at bar 9.
+#[gpui::test]
+fn a_cut_clip_takes_its_automation_and_a_paste_puts_it_down(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let length = window.record("song/t00/c00")["length"].as_u64().unwrap();
+    let points = |window: &mut Opened<'_>| window.record("song/t00/lane-cutoff")["points"].clone();
+    let at_tick = |points: &serde_json::Value, tick: u64| {
+        (points.as_array().into_iter().flatten())
+            .find(|point| point["tick"].as_u64() == Some(tick))
+            .map(|point| point["value"].as_f64().unwrap_or_default().round())
+    };
+    let clip = window.on_lane(BAR / 2, 0);
+    window.click(clip);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("cmd-x");
+    window.until("the clip cut", |window| !window.has("song/t00/c00"));
+    let cut = points(&mut window);
+    // Where it was, the line is straight from its end on.
+    assert_eq!(at_tick(&cut, 0), None, "{cut}");
+    assert!(at_tick(&cut, length).is_some(), "{cut}");
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Cut clips"));
+
+    let ruler = window.space_at("ruler");
+    window.click(ruler + point(px(LEAD + (8 * BAR) as f32 * ACROSS), px(8.)));
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("cmd-v");
+    window.until("the clip pasted", |window| window.has("song/t00/c00"));
+    assert_eq!(window.record("song/t00/c00")["start"], 8 * BAR);
+    let pasted = points(&mut window);
+    assert_eq!(at_tick(&pasted, 8 * BAR), Some(6000.), "{pasted}");
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Paste clips"));
+    assert_eq!(window.problems(), []);
 }
