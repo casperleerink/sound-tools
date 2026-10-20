@@ -1082,19 +1082,17 @@ export const song = tool({
       </div>
     );
 
-    /** A track's header as the window drew it: its dot and name, and under them its automation, arm, mute and solo. */
+    /** A track's header as the window drew it: its dot and name, and under them its automation, arm, mute and solo. A press anywhere on it but its toggles shows its panel, a double press names it, a right press opens its menu. */
     const TrackHead = ({ each }: { each: Child }) => (
-      <div style={() => ({ height: ROW - 8, radius: 6, background: panelOf() === each.name && !memory.region?.startsWith(`${each.name}/`) ? "alpha/5" : COLOR.clear })}>
+      <div style={() => ({ height: ROW - 8, radius: 6, background: panelOf() === each.name && !memory.region?.startsWith(`${each.name}/`) ? "alpha/5" : COLOR.clear })}
+        onPress={({ clicks, button }) => (button === "right" ? trackMenu(each) : clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
         <div style={{ height: 25, paddingTop: 3, paddingLeft: 12, paddingRight: 9, direction: "row", align: "center", gap: 8 }}>
           <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
           {() =>
             memory.renaming === each.name ? (
               <Input value={() => titleOf(each)} width={120} focus onCommit={(title) => rename(each.name, title)} />
             ) : (
-              <div key={`name-${each.name}`} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}
-                onPress={({ clicks, button }) =>
-                  button === "right" ? trackMenu(each) : clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name)
-                }>
+              <div key={`name-${each.name}`} style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-900/40" : "gray-900" })}>
                 {() => titleOf(each)}
               </div>
             )

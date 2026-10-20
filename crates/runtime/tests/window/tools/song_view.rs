@@ -1111,8 +1111,9 @@ fn a_return_shows_over_the_master_and_its_panel_takes_effects_and_pre_fader(cx: 
 fn a_track_panel_ends_with_a_knob_for_each_return(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 2, 2);
     window.wait_for_bun();
-    let name = window.until_found("div-name-t00");
-    window.click(name);
+    // A press on its header where none of its toggles is.
+    let head = window.until_found("div-head-t00");
+    window.click(head);
     window.until_found("div-sends");
     window.until_found("space-knob-t00/send-ret-a.gain_db");
     // The mixer's strip of a return shows the return's panel.
