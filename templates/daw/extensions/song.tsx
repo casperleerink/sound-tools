@@ -274,6 +274,17 @@ export const song = tool({
       });
       return;
     }
+    // Alt-up and alt-down step the chosen region's gain by a decibel.
+    if (memory.region && key.alt && (key.key === "up" || key.key === "down")) {
+      const [owner, name] = memory.region.split("/");
+      const by = key.key === "up" ? 1 : -1;
+      update("Change gain", ({ children }) => {
+        const tape = children.find((child) => child.name === owner);
+        const region = tape?.tool === "tape" ? tape.children.find((child) => child.name === name) : undefined;
+        if (region?.tool === "region") region.state.gain_db = clamp(Math.round((Math.max(region.state.gain_db, -48) + by) * 10) / 10, -48, 24);
+      });
+      return;
+    }
     const tracks = children
       .filter((child): child is TrackRow => child.tool === "track")
       .slice()

@@ -245,3 +245,21 @@ fn a_regions_handles_drag_its_fade_in_and_its_gain(cx: &mut TestAppContext) {
     assert_eq!(window.undo_label().as_deref(), Some("Change gain"));
     assert_eq!(window.problems(), []);
 }
+
+/// Alt-up steps a chosen region's gain by a decibel, as the arrangement's keys did.
+#[gpui::test]
+fn alt_up_steps_a_chosen_regions_gain(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.drop_sine();
+    window.until_found("button-mixer-toggle");
+    let region = window.on_lane(2 * BAR + 960, 2);
+    window.click(region);
+    window.wait_for_bun();
+    window.cx.simulate_keystrokes("alt-up alt-up");
+    window.until("the gain stepped", |window| {
+        window.record("song/audio-voice/region")["gain_db"].as_f64() == Some(2.)
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change gain"));
+}
