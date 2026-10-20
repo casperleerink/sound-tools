@@ -662,8 +662,8 @@ impl TypeScriptCard {
             max_height,
             search,
         } = menu;
-        // A group a run of items of one `group`, under its heading.
-        let mut entries: Vec<(Option<String>, MenuGroup)> = Vec::new();
+        // A group a run of items of one `group`, under its heading; `None` a separator.
+        let mut entries: Vec<(Option<String>, Option<MenuGroup>)> = Vec::new();
         for (index, spec) in items.into_iter().enumerate() {
             let mut item = MenuItem::new(index.to_string(), spec.label)
                 .disabled(spec.disabled)
@@ -674,8 +674,14 @@ impl TypeScriptCard {
             if let Some(detail) = spec.detail {
                 item = item.description(detail);
             }
+            if let Some(keys) = spec.shortcut {
+                item = item.shortcut(shortcut_of(&keys));
+            }
+            if spec.separator {
+                entries.push((None, None));
+            }
             match entries.last_mut() {
-                Some((group, items)) if *group == spec.group => {
+                Some((group, Some(items))) if *group == spec.group => {
                     *items = std::mem::take(items).item(item);
                 }
                 _ => {
@@ -685,12 +691,12 @@ impl TypeScriptCard {
                         Some(heading) => group.label(heading.clone()),
                         None => group,
                     };
-                    entries.push((heading, group));
+                    entries.push((heading, Some(group)));
                 }
             }
         }
         let entries: Vec<MenuEntry> = (entries.into_iter())
-            .map(|(_, group)| MenuEntry::Group(group))
+            .map(|(_, group)| group.map_or(MenuEntry::Separator, MenuEntry::Group))
             .chain(notes.into_iter().map(|note| MenuEntry::Note(note.into())))
             .collect();
         // A menu with a search field is another menu than one without.
@@ -2569,6 +2575,8 @@ impl Placing<'_> {
     /// Where `shape` is and how big, at `left` and `top` in its space; `None` for a group.
     fn geometry(&self, shape: &tree::ShapeProps, (left, top): (f64, f64)) -> Option<Geometry> {
         let (grown_x, grown_y) = self.followed(&shape.grows);
+        let (shrunk_x, shrunk_y) = self.followed(&shape.shrinks);
+        let (grown_x, grown_y) = (grown_x - shrunk_x, grown_y - shrunk_y);
         let reach = |reach: &Option<Reach>| match reach {
             Some(Reach::Point([x, y])) => {
                 (left + self.sources.number(x), top + self.sources.number(y))
@@ -3562,4 +3570,17 @@ mod tests {
         };
         assert_eq!(plain.level_at(0.5), 1.0);
     }
+}
+
+/// A key as the SDK names it, `cmd-alt-c`, as a menu draws it: `mod+alt+c`.
+fn shortcut_of(mut keys: &str) -> String {
+    let mut parts = Vec::new();
+    for (prefix, drawn) in [("cmd-", "mod"), ("ctrl-", "ctrl"), ("alt-", "alt")] {
+        if let Some(rest) = keys.strip_prefix(prefix) {
+            parts.push(drawn);
+            keys = rest;
+        }
+    }
+    parts.push(keys);
+    parts.join("+")
 }

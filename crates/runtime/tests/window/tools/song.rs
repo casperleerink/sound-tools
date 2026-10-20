@@ -50,13 +50,13 @@ fn a_clip_moves_on_the_grid_as_one_file_and_one_undo_step(cx: &mut TestAppContex
     let questions = sound_typescript::asked_behaviours();
     window.press(at);
     window.drag_to(at + point(px(10.), px(0.)));
-    // A bar and a bit on: it lands on the nearest beat line.
-    window.drag_to(at + point(px(96. + 30.), px(0.)));
-    window.release(at + point(px(96. + 30.), px(0.)));
+    // A bar and a bit on: it lands on the nearest sixteenth, the grid a song starts on.
+    window.drag_to(at + point(px(96. + 31.), px(0.)));
+    window.release(at + point(px(96. + 31.), px(0.)));
     window.until("the clip moved", |window| {
         window.record("song/t01/c01")["start"] != 3 * BAR
     });
-    assert_eq!(window.record("song/t01/c01")["start"], 3 * BAR + BAR + 960);
+    assert_eq!(window.record("song/t01/c01")["start"], 3 * BAR + BAR + 5 * 240);
     window.after_the_runs();
     assert_eq!(window.undo_label().as_deref(), Some("Move clips"));
     let after = window.clips();

@@ -1386,6 +1386,10 @@ export interface MenuItem {
   detail?: string;
   /** The heading it is under, with the items next to it of the same group. */
   group?: string;
+  /** A line above it, between it and the items before. */
+  separator?: boolean;
+  /** The keys that do it too, drawn at the end of its row. */
+  shortcut?: KeyName;
 }
 
 /** A device `offers` gives. */
@@ -2389,6 +2393,8 @@ interface Pointed {
   moves?: Bind<readonly string[] | undefined>;
   /** The drags that make it `dx` wider and `dy` taller while they go on, as `moves`: notes being resized. */
   grows?: Bind<readonly string[] | undefined>;
+  /** The drags that make it `dx` narrower and `dy` shorter, as `grows`: a clip whose start moves with `moves` too. */
+  shrinks?: Bind<readonly string[] | undefined>;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
+import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -47,7 +47,7 @@ const PALETTE = [
   { name: "Rosewater", colour: "rosewater" }, { name: "Flamingo", colour: "flamingo" },
 ] as const;
 
-const [MOVES, RESIZES] = [["move"], ["resize"]];
+const [MOVES, RESIZES, START_MOVES] = [["move"], ["resize"], ["resize-start"]];
 const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tape, "ret-*": bus, "*": track } as const;
 const STRIP = 72;
 const MIXER_FADER = 140;
@@ -56,7 +56,7 @@ const KNOB = 72;
 // The fader of the chosen track's panel.
 const PANEL_FADER = 113;
 
-type Clipboard = { from: number; clips: { track: string; state: FilledStateOfTool<"timeline"> }[] };
+type Clipboard = { from: number; clips: { row: number; track: string; state: FilledStateOfTool<"timeline"> }[] };
 /** A track of the song as code reads it. */
 type TrackRow = Extract<Frozen<OwnedChild<typeof parts>>, { tool: typeof track }>;
 /** A copy of a clip's state to change, from a view's record or a key's. */
@@ -417,15 +417,16 @@ export const song = tool({
         }
       });
 
-    const moveDrag: Drag = {
+    // The clips' drags land on the grid of the snap in the corner, a tick apart while it is off.
+    const moveDrag = (snap: number): Drag => ({
       id: "move",
-      snap: { x: BEAT, y: 1, grid: true },
+      snap: { x: snap || 1, y: 1, grid: snap > 0 },
       onEnd: ({ dx, dy, alt }) => choose(moveClips(update, layout(), memory.selected, dx, Math.round(dy), alt)),
-    };
+    });
     const marquee = now.drag("clip-marquee");
     const marqueeDrag: Drag = {
       id: "clip-marquee",
-      onEnd: ({ startX, startY, x, y, shift }) => {
+      onEnd: ({ startX, startY, x, y, shift, cmd }) => {
         const [left, right] = [Math.min(startX, x), Math.max(startX, x)];
         const [top, bottom] = [Math.min(startY, y), Math.max(startY, y)];
         const inside = layout().flatMap(({ each, lane, add }, row) =>
@@ -435,16 +436,16 @@ export const song = tool({
                 .filter(({ state }) => state.start < right && state.start + lengthOf(state) > left)
                 .map((clip) => `${each.name}/${clip.name}`),
         );
-        choose(new Set([...(shift ? memory.selected : []), ...inside]));
+        choose(new Set([...(shift || cmd ? memory.selected : []), ...inside]));
       },
     };
-    const resizeDrag: Drag = {
+    const resizeDrag = (snap: number): Drag => ({
       id: "resize",
       axis: "x",
-      snap: { x: BEAT, grid: true },
+      snap: { x: snap || 1, grid: snap > 0 },
       onEnd: ({ dx }) =>
         editClips("Resize clips", memory.selected, (clip) => {
-          const length = Math.max(lengthOf(clip) + dx, BEAT);
+          const length = Math.max(lengthOf(clip) + dx, snap || BEAT / 4);
           // What starts at or past its new end is cut: a timeline plays nothing there.
           clip.length = length;
           clip.notes = clip.notes.filter((note) => note.start < length);
@@ -453,26 +454,32 @@ export const song = tool({
           clip.mod_wheel = clip.mod_wheel.filter((point) => point.tick < length);
           clip.pressure = clip.pressure.filter((point) => point.tick < length);
         }),
-    };
+    });
+    const resizeStartDrag = (snap: number): Drag => ({
+      id: "resize-start",
+      axis: "x",
+      snap: { x: snap || 1, grid: snap > 0 },
+      onEnd: ({ dx }) => editClips("Resize clips", memory.selected, (clip) => startMoved(clip, dx, snap || BEAT / 4)),
+    });
 
+    // As the arrangement's: what the keys do, and the name.
+    const CLIP_MENU: { label: string; command?: ClipCommand; shortcut?: KeyName; separator?: true }[] = [
+      { label: "Cut", command: "cut", shortcut: "cmd-x" }, { label: "Copy", command: "copy", shortcut: "cmd-c" }, { label: "Duplicate", command: "duplicate", shortcut: "cmd-d" },
+      { label: "Rename", separator: true }, { label: "Delete", command: "delete", shortcut: "backspace", separator: true },
+    ];
     const clipMenu = async (key: string) => {
       if (!memory.selected.has(key)) choose(new Set([key]));
-      const chosen = new Set(memory.selected);
-      const picked = await openMenu([{ label: "Edit notes" }, { label: "Rename" }, { label: "Copy" }, { label: "Duplicate" }, { label: "Delete" }], { width: 240 });
-      if (picked === 0) openClip(key);
-      else if (picked === 1) memory.renamingClip = key;
-      else if (picked === 2) memory.clipboard = copied(tracks(), chosen);
-      else if (picked === 3 || picked === 4) {
-        update(picked === 3 ? "Duplicate clips" : "Remove clips", (part) => removeOrCopy(part, chosen, picked === 3));
-        if (picked === 4) choose(new Set());
-      }
+      const picked = await openMenu(CLIP_MENU.map(({ label, shortcut, separator }) => ({ label, shortcut, separator })), { width: 240 });
+      const item = picked === null ? undefined : CLIP_MENU[picked];
+      if (item?.command) clipCommand(item.command, tracks(), { memory, update, select });
+      else if (item) memory.renamingClip = key;
     };
-    const pressClip = (key: string) => ({ clicks, shift, button }: Press) => {
+    const pressClip = (key: string) => ({ clicks, shift, cmd, button }: Press) => {
       if (button === "right") {
         clipMenu(key);
       } else if (clicks === 2) {
         openClip(key);
-      } else if (shift) {
+      } else if (shift || cmd) {
         const next = new Set(memory.selected);
         if (!next.delete(key)) next.add(key);
         choose(next);
@@ -491,9 +498,10 @@ export const song = tool({
         choose(new Set());
         return;
       }
-      const bar = barOf(x);
-      const start = starts()[bar - 1] ?? 0;
-      const length = (starts()[bar] ?? start + 4 * BEAT) - start;
+      // A bar long, in the cell of the grid under the pointer.
+      const start = Math.max(memory.snap > 0 ? Math.floor(x / memory.snap) * memory.snap : Math.round(x), 0);
+      const bar = barOf(start);
+      const length = (starts()[bar] ?? 0) - (starts()[bar - 1] ?? 0) || 4 * BEAT;
       let added: string | undefined;
       update("Add a clip", ({ children }) => {
         const owner = children.find((child) => child.name === row.each.name);
@@ -1169,11 +1177,12 @@ export const song = tool({
     };
 
     /** A clip of a track on row `row`: its notes, its title, a handle to resize it. */
-    const ClipShapes = ({ each, clip, row }: { each: Child; clip: ReturnType<typeof clipsOf>[number]; row: Accessor<number> }) => {
+    const ClipShapes = ({ each, clip, row, snap }: { each: Child; clip: ReturnType<typeof clipsOf>[number]; row: Accessor<number>; snap: number }) => {
       const key = `${each.name}/${clip.name}`;
       const picked = () => isPicked(key);
       const length = () => lengthOf(clip.state);
       const resizes = () => (picked() ? RESIZES : undefined);
+      const startMoves = () => (picked() ? START_MOVES : undefined);
       // Its notes as the window drew them: a line each, between its lowest and highest pitch.
       const miniature = memo(() => {
         const pitches = clip.state.notes.map((note) => note.pitch);
@@ -1192,7 +1201,7 @@ export const song = tool({
           moves={() => (picked() ? MOVES : undefined)} grows={resizes}>
           <Rect x={0} y={4 / ROW} width={length} height={(ROW - 8) / ROW} radius={6} anchor={{ x: 0, y: 0 }}
             color="alpha/5" border={() => (picked() ? "gray-950" : "alpha/10")} borderWidth={1} opacity={dim}
-            grows={resizes} drag={moveDrag} onPress={pressClip(key)} cursor="grab" />
+            grows={resizes} moves={startMoves} shrinks={startMoves} drag={moveDrag(snap)} onPress={pressClip(key)} cursor="grab" />
           <For each={() => clip.state.notes}>
             {(note) => (
               <Rect x={() => note.start} y={() => { const m = miniature(); return (m.bottom - (note.pitch - m.lowest + 0.5) * m.step - m.height / 2) / ROW; }}
@@ -1201,7 +1210,9 @@ export const song = tool({
           </For>
           <Rect x={() => handle.negate().plus(length())} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
             anchor={() => ({ x: length() })} moves={resizes}
-            drag={resizeDrag} onPress={pressClip(key)} cursor="ew-resize" />
+            drag={resizeDrag(snap)} onPress={pressClip(key)} cursor="ew-resize" />
+          <Rect x={0} y={4 / ROW} width={handle} height={(ROW - 8) / ROW} color={COLOR.clear}
+            moves={startMoves} drag={resizeStartDrag(snap)} onPress={pressClip(key)} cursor="ew-resize" />
         </Group>
       );
     };
@@ -1599,7 +1610,10 @@ export const song = tool({
                         const from = memory.recording;
                         return from !== null && memory.armed.has(each.name) && each.tool === "tape" ? <TakeShapes each={each} row={row} from={from} /> : null;
                       }}
-                      <For each={() => clipsOf(each)}>{(clip) => <ClipShapes each={each} clip={clip} row={row} />}</For>
+                      {() => {
+                        const snap = memory.snap;
+                        return <For each={() => clipsOf(each)}>{(clip) => <ClipShapes each={each} clip={clip} row={row} snap={snap} />}</For>;
+                      }}
                     </>
                   )
                 }
@@ -1646,34 +1660,62 @@ export const song = tool({
   },
 });
 
-/** Removes the clips `chosen` names, `track/clip`, or copies each on after itself. */
-function removeOrCopy({ children }: Part<unknown, typeof parts>, chosen: ReadonlySet<string>, copy: boolean) {
-  for (const row of children) {
-    if (row.tool !== "track") continue;
-    const mine = row.children.filter((clip) => clip.tool === "timeline" && chosen.has(`${row.name}/${clip.name}`));
-    if (!copy) {
-      row.children = row.children.filter((clip) => !mine.includes(clip));
-      continue;
-    }
-    const copies = mine.flatMap((clip) => {
-      if (clip.tool !== "timeline") return [];
-      const length = lengthOf(clip.state);
-      const name = freeName(row.children.map((each) => each.name), clip.name);
-      return [{ name, tool: "timeline" as const, state: { ...clip.state, start: clip.state.start + length } }];
-    });
-    row.children = [...row.children, ...copies];
+/**
+ * A clip whose start moved by `dx`: what it holds stays where it is in the song. The start stops
+ * at tick 0, at the first note and `unit` before the end; a lane cut short keeps the value it had
+ * at the new start, and the pedal what it was there.
+ */
+function startMoved(clip: FilledStateOfTool<"timeline">, dx: number, unit: number) {
+  const length = lengthOf(clip);
+  const by = clamp(dx, -clip.start, Math.min(...clip.notes.map((note) => note.start), length - unit));
+  clip.start += by;
+  clip.length = length - by;
+  for (const note of clip.notes) note.start -= by;
+  const pedal = clip.pedal.filter((change) => change.start >= by).map((change) => ({ ...change, start: change.start - by }));
+  const held = pedal[0]?.start === 0 ? undefined : clip.pedal.filter((change) => change.start < by).at(-1);
+  clip.pedal = held ? [{ ...held, start: 0 }, ...pedal] : pedal;
+  for (const lane of ["bend", "mod_wheel", "pressure"] as const) {
+    const points = clip[lane];
+    const kept = points.filter((point) => point.tick >= by).map((point) => ({ ...point, tick: point.tick - by }));
+    const cut = points.some((point) => point.tick < by) && kept[0]?.tick !== 0;
+    clip[lane] = cut ? [{ tick: 0, value: Math.round(laneAt(points, by, false)) }, ...kept] : kept;
   }
 }
 
-/** The clips `chosen` names, from the earliest one, to paste. */
+/** Removes the clips `chosen` names, `track/clip`. */
+function removeClips({ children }: Part<unknown, typeof parts>, chosen: ReadonlySet<string>) {
+  for (const row of children) {
+    if (row.tool === "track") row.children = row.children.filter((clip) => clip.tool !== "timeline" || !chosen.has(`${row.name}/${clip.name}`));
+  }
+}
+
+/** Copies of the clips `chosen` names right after the last of them ends, each on its track: the keys of the copies. */
+function duplicateClips({ children }: Part<unknown, typeof parts>, chosen: ReadonlySet<string>): Set<string> {
+  const mine = children.flatMap((row) =>
+    row.tool === "track" ? row.children.flatMap((clip) => (clip.tool === "timeline" && chosen.has(`${row.name}/${clip.name}`) ? [{ row, clip }] : [])) : [],
+  );
+  const from = Math.min(...mine.map(({ clip }) => clip.state.start));
+  const span = Math.max(...mine.map(({ clip }) => clip.state.start + lengthOf(clip.state))) - from;
+  const copies = new Set<string>();
+  for (const { row, clip } of mine) {
+    const name = freeName(row.children.map((each) => each.name), clip.name);
+    row.children = [...row.children, { name, tool: "timeline", state: { ...copyOf(clip.state), start: clip.state.start + span } }];
+    copies.add(`${row.name}/${name}`);
+  }
+  return copies;
+}
+
+/** The clips `chosen` names to paste: each with its track's row below the top one's, from the earliest one. */
 function copied(tracks: readonly TrackRow[], chosen: ReadonlySet<string>): Clipboard | null {
   const clips = [...chosen].flatMap((key) => {
     const [trackName, clipName] = key.split("/");
-    const clip = tracks.find((each) => each.name === trackName)?.children.find((child) => child.name === clipName);
-    return clip?.tool === "timeline" ? [{ track: trackName!, state: copyOf(clip.state) }] : [];
+    const row = tracks.findIndex((each) => each.name === trackName);
+    const clip = tracks[row]?.children.find((child) => child.name === clipName);
+    return clip?.tool === "timeline" ? [{ row, track: trackName!, state: copyOf(clip.state) }] : [];
   });
   if (clips.length === 0) return null;
-  return { from: Math.min(...clips.map((clip) => clip.state.start)), clips };
+  const top = Math.min(...clips.map((clip) => clip.row));
+  return { from: Math.min(...clips.map((clip) => clip.state.start)), clips: clips.map((clip) => ({ ...clip, row: clip.row - top })) };
 }
 
 type Rows = readonly { each: { name: string; tool: string } }[];
@@ -1758,42 +1800,56 @@ function carried(points: readonly LanePoint[], log: boolean, range: { start: num
   return [...byTick.values()].sort((a, b) => a.tick - b.tick);
 }
 
+/** What the keys and a clip's menu do to the chosen clips. */
+type ClipCommand = "cut" | "copy" | "duplicate" | "delete";
+
 /** What a key does to the chosen clips: copy, cut, paste, duplicate, delete, nudge. `tracks` are in their order. */
-function clipKey(key: Key, tracks: readonly TrackRow[], { memory, update, clock, select }: Context<unknown, Inputs, Memory, typeof parts>) {
-  const chosen = new Set(memory.selected);
-  if (key.key === "escape") {
+function clipKey(key: Key, tracks: readonly TrackRow[], tool: Context<unknown, Inputs, Memory, typeof parts>) {
+  const { memory, update, clock } = tool;
+  const command: ClipCommand | null = !key.cmd && (key.key === "delete" || key.key === "backspace") ? "delete"
+    : !key.cmd ? null : key.key === "x" ? "cut" : key.key === "c" ? "copy" : key.key === "d" ? "duplicate" : null;
+  if (command) {
+    clipCommand(command, tracks, tool);
+  } else if (key.key === "escape") {
     memory.selected = new Set();
   } else if (key.cmd && key.key === "a") {
     memory.selected = new Set(tracks.flatMap((each) => each.children.filter((child) => child.tool === "timeline").map((child) => `${each.name}/${child.name}`)));
   } else if (key.cmd && key.key === "v" && memory.clipboard) {
-    // At the playhead, on the chosen track or else where they came from.
+    // At the playhead: the top one on the chosen track, else on its own, and the others on the rows below as they were.
     const clipboard = memory.clipboard;
-    const at = Math.round(clock.tick / BEAT) * BEAT;
+    const chosen = tracks.findIndex((each) => each.name === memory.track);
     const pasted = new Set<string>();
     update("Paste clips", ({ children }) => {
-      for (const { track, state } of clipboard.clips) {
-        const owner = children.find((child) => child.name === memory.track && child.tool === "track") ?? children.find((child) => child.name === track);
+      for (const { row, track, state } of clipboard.clips) {
+        const name = chosen < 0 ? track : tracks[chosen + row]?.name;
+        const owner = children.find((child) => child.name === name);
         if (owner?.tool !== "track") continue;
-        const name = freeName(owner.children.map((child) => child.name), "clip");
-        owner.children = [...owner.children, { name, tool: "timeline", state: { ...state, start: at + (state.start - clipboard.from) } }];
-        pasted.add(`${owner.name}/${name}`);
+        const clip = freeName(owner.children.map((child) => child.name), "clip");
+        owner.children = [...owner.children, { name: clip, tool: "timeline", state: { ...state, start: Math.round(clock.tick) + (state.start - clipboard.from) } }];
+        pasted.add(`${owner.name}/${clip}`);
       }
     });
     memory.selected = pasted;
-  } else if (chosen.size === 0) {
-    return;
-  } else if (key.cmd && key.key === "c") {
-    memory.clipboard = copied(tracks, chosen);
-  } else if (key.key === "delete" || key.key === "backspace" || (key.cmd && key.key === "x")) {
-    if (key.cmd) memory.clipboard = copied(tracks, chosen);
-    update(key.cmd ? "Cut clips" : "Remove clips", (part) => removeOrCopy(part, chosen, false));
+  } else if (memory.selected.size > 0 && ["left", "right", "up", "down"].includes(key.key) && !key.cmd) {
+    const step = memory.snap || BEAT / 4;
+    const dx = key.key === "left" ? -step : key.key === "right" ? step : 0;
+    const dy = key.key === "up" ? -1 : key.key === "down" ? 1 : 0;
+    memory.selected = moveClips(update, tracks.map((each) => ({ each })), memory.selected, dx, dy, false);
+  }
+}
+
+/** Cut, copy, duplicate or delete the chosen clips, each as one undo step: the copies of a duplicate are chosen after. */
+function clipCommand(command: ClipCommand, tracks: readonly TrackRow[], { memory, update, select }: Pick<Context<unknown, Inputs, Memory, typeof parts>, "memory" | "update" | "select">) {
+  const chosen = new Set(memory.selected);
+  if (chosen.size === 0) return;
+  if (command === "cut" || command === "copy") memory.clipboard = copied(tracks, chosen);
+  if (command === "duplicate") {
+    let copies = new Set<string>();
+    update("Duplicate clips", (part) => (copies = duplicateClips(part, chosen)));
+    memory.selected = copies;
+  } else if (command !== "copy") {
+    update(command === "cut" ? "Cut clips" : "Remove clips", (part) => removeClips(part, chosen));
     memory.selected = new Set();
     select(null);
-  } else if (key.cmd && key.key === "d") {
-    update("Duplicate clips", (part) => removeOrCopy(part, chosen, true));
-  } else if (["left", "right", "up", "down"].includes(key.key)) {
-    const dx = key.key === "left" ? -BEAT : key.key === "right" ? BEAT : 0;
-    const dy = key.key === "up" ? -1 : key.key === "down" ? 1 : 0;
-    memory.selected = moveClips(update, tracks.map((each) => ({ each })), chosen, dx, dy, false);
   }
 }

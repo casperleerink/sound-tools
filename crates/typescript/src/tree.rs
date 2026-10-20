@@ -195,9 +195,10 @@ props! {
         on_press: bool,
         drag: u64,
         anchor: Axes,
-        /// The drags it moves with, and those it grows with, by their ids.
+        /// The drags it moves with, those it grows with and those it shrinks with, by their ids.
         moves: Vec<String>,
         grows: Vec<String>,
+        shrinks: Vec<String>,
         hover: Color,
         cursor: Cursor,
         opacity: Num,
@@ -751,7 +752,8 @@ impl ShapeProps {
         .flatten()
         .chain(self.points.iter().flatten().flatten())
         .all(|number| number.fixed().is_some());
-        self.moves.is_none() && self.grows.is_none() && self.list.is_none() && reaches && numbers
+        let followed = self.moves.is_none() && self.grows.is_none() && self.shrinks.is_none();
+        followed && self.list.is_none() && reaches && numbers
     }
 
     fn uses(&self) -> Uses {

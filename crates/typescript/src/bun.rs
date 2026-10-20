@@ -234,6 +234,11 @@ pub(crate) struct MenuItemSpec {
     pub detail: Option<String>,
     /// The heading it goes under, with the items before and after it of the same group.
     pub group: Option<String>,
+    /// A line above it.
+    #[serde(default)]
+    pub separator: bool,
+    /// The keys that do it too, as `cmd-c`.
+    pub shortcut: Option<String>,
 }
 
 /// Where the sound and the piece are, which all code of a tool gets.

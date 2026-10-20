@@ -220,7 +220,7 @@ fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
     let clip = window.on_lane(BAR / 2, 1);
     window.wait_for_bun();
     window.click_with(clip, MouseButton::Right);
-    // Edit notes, rename, copy, duplicate, delete.
+    // Cut, copy, duplicate, rename, delete.
     let delete = window.until_found("menu-4");
     window.click(delete);
     window.until("the clip deleted", |window| !window.has("song/t01/c00"));

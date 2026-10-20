@@ -235,7 +235,7 @@ fn a_clip_is_renamed_copied_pasted_and_nudged(cx: &mut TestAppContext) {
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 1);
     window.click_with(clip, MouseButton::Right);
-    window.pick("menu-1");
+    window.pick("menu-3");
     window.until_found("div-clip-name");
     window.cx.simulate_input("Verse");
     window.cx.simulate_keystrokes("enter");
@@ -820,7 +820,7 @@ fn a_clip_copied_from_its_menu_is_pasted(cx: &mut TestAppContext) {
     window.wait_for_bun();
     let clip = window.on_lane(BAR / 2, 1);
     window.click_with(clip, MouseButton::Right);
-    window.pick("menu-2");
+    window.pick("menu-1");
     window.wait_for_bun();
     window.click(clip);
     window.cx.simulate_keystrokes("cmd-v");
