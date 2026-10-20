@@ -7,8 +7,8 @@
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
-//! - `look-picker.png`, `look-effect-picker.png`: the panel of a track whose instrument is the
-//!   test plugin, the menu of its card's title open, and the menu of Add effect.
+//! - `look-picker.png`, `look-effect-picker.png`: the panel of an empty track whose instrument is
+//!   the test plugin, the menu of its card's title open, and the menu of Add effect.
 //! - `look-audio.png`: the piece with a voice and a guitar as audio, playing at 6.3, the second
 //!   region of the voice chosen, and the panel of the voice: its region's card, a compressor and
 //!   a reverb.
@@ -25,8 +25,8 @@ use sound_core::Ticks;
 
 use crate::song::{ACROSS, BAR, HEADER, LEAD, ROW, daw};
 
-/// Where a song's rows start: under the title row, the ruler and its line.
-const TOP: f32 = 48.0 + 32.0 + 1.0;
+/// Where a song's rows start: under the title row and the ruler, whose line is its last point.
+const TOP: f32 = 48.0 + 32.0;
 
 /// The title of the first card of a track's panel, and its Add effect after a plugin's card.
 const PICKER: (f32, f32) = (230., 920. - 216. + 12. + 22.);
@@ -188,8 +188,11 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     ))?;
     let files: Vec<(String, String)> = piece_files(&[("track-1/synth.json", plugin.clone())])
         .into_iter()
+        // Track 1 alone and empty, as the arrangement's picker snapshots had it.
         .filter(|(path, _)| {
-            !path.starts_with("state/song/bass") && !path.starts_with("state/song/melody")
+            !path.starts_with("state/song/bass")
+                && !path.starts_with("state/song/melody")
+                && !path.starts_with("state/song/track-1/clip-")
         })
         .map(|(path, text)| match path.as_str() {
             "state/song/instance.json" => (

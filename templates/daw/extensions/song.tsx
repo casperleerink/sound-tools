@@ -1328,7 +1328,7 @@ export const song = tool({
           </div>
           <div style={{ width: 1, background: "alpha/5", keep: true }} />
           <div style={{ grow: true }}>
-            <Space key="ruler" height={RULER} unit={{ x: ACROSS }} extent={() => ({ x: [-LEAD, end()] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }}
+            <Space key="ruler" height={RULER - 1} unit={{ x: ACROSS }} extent={() => ({ x: [-LEAD, end()] })} scroll={{ x: -LEAD }} zoom={{ x: [0.1, 8] }} follow={{ x: "timeline" }}
               onPress={pressRuler} drag={loopDrag}>
               <For each={starts}>
                 {(tick, bar) => [
@@ -1347,7 +1347,7 @@ export const song = tool({
                 return <Rect x={range.from} y={RULER - 10} width={range.to - range.from} height={8} radius={2} color={clock.repeat ? "gray-900" : "alpha/15"} />;
               }}
               <Rect x={loop.startX.min(loop.x)} y={RULER - 10} width={loop.dx.abs()} height={8} radius={2} color="gray-900" opacity={loop.active} />
-              <Line from={[now.tick, RULER / 2]} to={[now.tick, RULER]} color="gray-950" width={1} />
+              <Line from={[now.tick, RULER / 2]} to={[now.tick, RULER - 1]} color="gray-950" width={1} />
               <Circle x={now.tick} y={RULER / 2} radius={3.5} color="gray-950" />
             </Space>
             <div style={{ height: 1, background: "alpha/5", keep: true }} />

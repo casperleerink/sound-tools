@@ -109,4 +109,10 @@ More SDK, none a new concept:
 - Menu items take `icon`, `detail` and `group`, and `openMenu` notes. `offers()` gives icons and the pickers' notes. A tool's picker then lists devices as the window's do.
 - A `pan` readout; `Knob` draws as the app's; `#rrggbb/NN` colours.
 
-Still different: the menus open at the pointer, not under their trigger; the current device has no tick; the limiter card has its lookahead select. The audio scenes (regions with handles, the Clip card, an armed track's input select) are not compared yet.
+Round 16c adds the audio scene of main (Voice and Guitar, the second voice region chosen) and closes the menus:
+- A `region` has a card, drawn in Rust as main's Clip card: its file on the waveform display, the trim lines, the gain line with its fades, Gain, Fade in and Fade out. It is a block's card, as a reverb's is; the template shows it first in an audio track's panel, then a hairline, then the track's effects. `Views::register_json_card` gives a tool whose record is JSON a card.
+- An audio track (`tape`) has a `chain` and a `title`, as a track has. A chosen region shows its fade and gain handles on the timeline. Its panel has the input select, `In 1 ▾`, which writes the recorder's `channels`.
+- A menu opened by a press of a div, a button or a card title hangs under it and moves into the window, as main's selects do; after a right press or a press of a space it opens at the pointer. `openMenu` takes `width` and `maxHeight`. `offers(takes, { at })` answers `here`, the offer at that child, which a picker ticks.
+- The master's limiter has its power icon (`limit_off` on the song); Mixer is an icon button.
+
+Still different: main's pill showed no position strip until the first change after opening; the template's shows it whenever the song has an end. Main's limiter on the master had no lookahead select; the limiter's card has one, a feature of the device. The armed and recording scenes are not compared: the window has no input level a view can read (`now` reads no input), and the snapshot window no input to open. Fades show as lines without main's shade outside them (no polygon shape). Text and lines differ by a fraction of a point in places.
