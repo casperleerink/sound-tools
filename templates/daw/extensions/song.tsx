@@ -202,7 +202,7 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. R arms a track that has a recorder `rec`, and the record button records every armed one from the playhead: notes into new clips, the audio input into new regions of the armed audio tracks. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below, drag over empty space to choose the clips there; right-click it to rename, copy or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane's point: double-click to add, drag to move, alt-click to remove. The ruler: click to play from there, double-click to add a section, right-click to add a tempo change, a time signature or a section, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it, an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag its right end to resize it, double-click empty space to add one and a clip to edit its notes below, drag over empty space to choose the clips there; right-click it to rename, copy or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there. A lane's point: double-click to add, drag to move, alt-click to remove. The ruler: click to play from there, double-click to add a section, right-click to add a tempo change, a time signature or a section, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it, an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
   state: { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }), limit_off: boolean({ default: false }) },
   children: parts,
   memory: (): Memory => ({
@@ -210,7 +210,7 @@ export const song = tool({
     clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false,
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
-  keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "escape"],
+  keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r"],
   globalKeys: ["space"],
   onKey: (tool, key) => {
     const { state, memory, update, clock, children } = tool;
@@ -220,8 +220,16 @@ export const song = tool({
       return;
     }
     if (!key.down) return;
-    // The editor's notes first, while it has some chosen.
+    if (key.key === "r") {
+      toggleRecordingOf(tool, state.order);
+      return;
+    }
+    // The editor's notes first, while it has some chosen; escape with none closes it.
     const opened = memory.below?.kind === "editor" ? memory.below.clip : null;
+    if (opened && key.key === "escape" && memory.notes.size === 0) {
+      memory.below = { kind: "track", name: opened.split("/")[0] ?? "" };
+      return;
+    }
     if (opened) {
       const [trackName, clipName] = opened.split("/");
       const row = children.find((each) => each.name === trackName);
@@ -262,6 +270,9 @@ export const song = tool({
         ? [{ from: { child: "master" }, to: { port: "audio" } } as const]
         : [{ from: { child: "master" }, to: { child: "limit" } } as const, { from: { child: "limit" }, to: { port: "audio" } } as const]),
     ];
+    // What the song hears, the keyboard while nothing is chosen, plays its first track.
+    const first = notesTrackOf(children, state.order, null);
+    if (first) connections.push({ from: { notes: "notes" }, to: { child: first, notes: "notes" } });
     // A solo mutes every other track's fader, gliding, so a lane that moves its volume plays on under it; a return always plays.
     const soloedOut = (name: string) => soloed.length > 0 && !soloed.includes(name);
     for (const each of tracks) {
@@ -348,23 +359,11 @@ export const song = tool({
     /** The bar `tick` is in, from 1. */
     const barOf = (tick: number) => Math.max(starts().findIndex((start) => start > tick), 1);
 
-    /** Turns the recorders of the armed tracks on or off. */
-    const recordArmed = (on: boolean) => {
-      // The armed audio tracks, and the chosen instrument track, which the keyboard plays.
-      const chosen = tracks().find((each) => each.name === memory.track && recordable(each));
-      const recording = new Set([...memory.armed, ...(chosen ? [chosen.name] : [])]);
-      for (const name of recording) send({ child: `${name}/rec` as const, number: "record" }, on ? 1 : 0);
-    };
-    const toggleRecording = () => {
-      if (memory.recording === null) {
-        memory.recording = clock.tick;
-        recordArmed(true);
-        clock.play();
-      } else {
-        recordArmed(false);
-        memory.recording = null;
-      }
-    };
+    const toggleRecording = () => toggleRecordingOf({ memory, send, clock, children }, state.order);
+    // A pause or a stop ends the recording, as in the arrangement.
+    memo(() => {
+      if (!clock.playing && untrack(() => memory.recording) !== null) untrack(toggleRecording);
+    });
     // An armed track's input is open: its level shows, and a take has its sound from the first frame.
     const toggleArm = (name: string) => {
       const armed = new Set(memory.armed);
@@ -390,7 +389,7 @@ export const song = tool({
     const choose = (keys: Set<string>, track: string | null = null) => {
       memory.selected = keys;
       memory.region = null;
-      memory.track = ([...keys][0] ?? track)?.split("/")[0] ?? memory.track;
+      memory.track = ([...keys][0] ?? track)?.split("/")[0] ?? null;
       const clips = [...keys].flatMap((key) => clipAt(key) ?? []);
       const starts = clips.map((clip) => clip.state.start);
       const ends = clips.map((clip) => clip.state.start + lengthOf(clip.state));
@@ -1484,6 +1483,7 @@ export const song = tool({
           memory={memory}
           edit={(label, change) => editClips(label, [key], change)}
           preview={(pitch) => play(pitch, { child: trackName as `audio-${string}`, seconds: 0.3 })}
+          seek={(tick) => clock.jump((open()?.state.start ?? 0) + tick)}
           openMenu={openMenu}
           onClose={() => (memory.below = { kind: "track", name: trackName ?? "" })}
           height={EDITOR}
@@ -1611,7 +1611,8 @@ export const song = tool({
                       <For each={() => regionsOf(each)}>{(region) => <RegionShapes each={each} region={region} row={row} />}</For>
                       {() => {
                         const from = memory.recording;
-                        return from !== null && memory.armed.has(each.name) && each.tool === "tape" ? <TakeShapes each={each} row={row} from={from} /> : null;
+                        const takes = memory.armed.has(each.name) || each.name === notesTrackOf(children, state.order, memory.track);
+                        return from !== null && takes ? <TakeShapes each={each} row={row} from={from} /> : null;
                       }}
                       {() => {
                         const snap = memory.snap;
@@ -1805,6 +1806,40 @@ function carried(points: readonly LanePoint[], log: boolean, range: { start: num
 
 /** What the keys and a clip's menu do to the chosen clips. */
 type ClipCommand = "cut" | "copy" | "duplicate" | "delete";
+
+/**
+ * The track the keyboard plays and records on: the chosen one, or the first in `order` while
+ * none is; none while an audio track is chosen.
+ */
+function notesTrackOf(children: readonly { name: string; tool: string }[], order: readonly string[], chosen: string | null): string | null {
+  const rank = (name: string) => (order.includes(name) ? order.indexOf(name) : order.length);
+  const tracks = children.filter((child) => child.tool === "track").sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : 1));
+  if (chosen !== null && children.some((child) => child.name === chosen)) return tracks.some((each) => each.name === chosen) ? chosen : null;
+  return tracks[0]?.name ?? null;
+}
+
+/**
+ * Records from the playhead, or ends the recording: every armed track, and the notes of the
+ * keyboard on its track. With nothing armed and an audio track chosen, it arms that one first.
+ */
+function toggleRecordingOf({ memory, send, clock, children }: Pick<Context<unknown, Inputs, Memory, typeof parts>, "memory" | "send" | "clock" | "children">, order: readonly string[]) {
+  const recordable = children.flatMap((each) => ((each.tool === "track" || each.tool === "tape") && each.children.some((child) => child.name === "rec") ? [each.name] : []));
+  const record = (name: string, on: boolean) => send({ child: `${name}/rec` as const, number: "record" }, on ? 1 : 0);
+  if (memory.recording !== null) {
+    for (const name of recordable) record(name, false);
+    memory.recording = null;
+    return;
+  }
+  const chosen = children.find((each) => each.name === memory.track);
+  if (memory.armed.size === 0 && chosen?.tool === "tape" && recordable.includes(chosen.name)) {
+    memory.armed = new Set([chosen.name]);
+    send({ child: `${chosen.name}/rec` as const, number: "arm" }, 1);
+  }
+  const notes = notesTrackOf(children, order, memory.track);
+  memory.recording = clock.tick;
+  for (const name of new Set([...memory.armed, ...(notes ? [notes] : [])])) if (recordable.includes(name)) record(name, true);
+  clock.play();
+}
 
 /** What a key does to the chosen clips: copy, cut, paste, duplicate, delete, nudge. `tracks` are in their order. */
 function clipKey(key: Key, tracks: readonly TrackRow[], tool: Context<unknown, Inputs, Memory, typeof parts>) {

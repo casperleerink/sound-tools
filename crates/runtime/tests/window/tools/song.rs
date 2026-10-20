@@ -191,8 +191,8 @@ fn space_plays_the_song_with_nothing_from_bun(cx: &mut TestAppContext) {
 }
 
 /// A click on a track's name selects it, through `select` of the song's code: the MIDI keyboard
-/// plays that track, where with nothing selected it reached only the song, which plays nothing
-/// it hears. A chosen clip is what Export selection exports.
+/// plays that track, where with nothing selected it plays the first. A chosen clip is what
+/// Export selection exports.
 #[gpui::test]
 fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selection(
     cx: &mut TestAppContext,
@@ -200,7 +200,7 @@ fn a_track_the_song_selects_plays_the_keyboard_and_a_chosen_clip_is_the_selectio
     let mut window = open_song(cx, 4, 12);
     window.wait_for_bun();
     window.play_midi(60);
-    assert_eq!(window.loudest(4_800), 0.0);
+    assert!(window.loudest(4_800) > 0.01);
 
     let lane = window.on_lane(0, 1);
     let name = point(

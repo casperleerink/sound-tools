@@ -29,6 +29,7 @@ mod song;
 mod song_view;
 mod template;
 mod transport;
+mod takes_and_notes;
 
 /// A sine held while the key `a` is down, the keys that went down counted in the record, and
 /// the last note of the MIDI keyboard kept there.
