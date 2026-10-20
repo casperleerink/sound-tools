@@ -322,9 +322,11 @@ impl Held {
             }
         };
         DragNumbers {
+        // Cmd held is off the grid in time, as the arrangement's drags were.
+        let free = self.modifiers.platform;
             start_x: self.start_units.0,
             start_y: self.start_units.1,
-            dx: whole(dx, snap.x, self.anchor.0),
+            dx: if free { dx } else { whole(dx, snap.x, self.anchor.0) },
             dy: whole(dy, snap.y, self.anchor.1),
             active: self.ended.is_none(),
         }

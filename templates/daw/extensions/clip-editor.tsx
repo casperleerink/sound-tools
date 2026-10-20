@@ -193,7 +193,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
   const moveDrag = (snap: number): Drag => ({
     id: "note-move",
     snap: { x: snap || 1, y: 1, grid: snap > 0 },
-    onEnd: ({ dx, dy, alt }) => change(alt ? "Copy notes" : "Move notes", (all, chosen) => moved(all, chosen, dx, -dy, alt)),
+    onEnd: ({ dx, dy, alt }) => change(alt ? "Copy notes" : "Move notes", (all, chosen) => moved(all, chosen, Math.round(dx), -dy, alt)),
     // A plain click on one of several chosen notes chooses it alone.
     onClick: ({ startX, startY, shift, cmd }) => {
       const row = Math.floor(startY);
@@ -207,7 +207,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     snap: { x: snap || 1, grid: snap > 0 },
     onEnd: ({ dx }) =>
       change("Resize notes", (all, chosen) => {
-        const changed = all.map((note, index) => (chosen.has(index) ? { ...note, length: Math.max(note.length + dx, BEAT / 16) } : note));
+        const changed = all.map((note, index) => (chosen.has(index) ? { ...note, length: Math.max(note.length + Math.round(dx), BEAT / 16) } : note));
         const last = [...chosen].at(-1);
         if (last !== undefined && changed[last]) memory.length = changed[last].length;
         return { notes: changed, chosen };

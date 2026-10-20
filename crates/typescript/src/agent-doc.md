@@ -201,7 +201,7 @@ view: ({ state, memory, update, now }) => {
 ```
 
 - `moves` names the drags a shape moves with, `grows` those that make it wider and taller, as the selected notes above: one small change when the selection does. A `<Group x y>` places its shapes from `x`, `y`, and moves them with its own `moves`; with a `clip` of `{ width, height }` they do not show or hear the pointer outside that box: a clip and its notes, which end at its end.
-- `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. Escape lets go of a drag, and its code hears nothing.
+- `snap` with `grid: true` puts the pressed shape on the grid, wherever it started; `anchor` names the point that lands there, such as `{ x: end }` on the handle at the end of a note. With cmd held `dx` does not snap, off the grid in time: round ticks at `onEnd`. Escape lets go of a drag, and its code hears nothing.
 - `follow: { x: "roll" }` shows the scroll and zoom of the space `roll` across, and scrolls it: a ruler, or a lane under it. `scroll` is where a space starts. On a `div`, `follow: { y: "timeline" }` scrolls its children with it, cut off at its edges: the heads of the rows of a timeline.
 - `<>...</>` gives several children where one goes, such as a component that gives two shapes; import `Fragment` with `h`.
 - A drag can also turn a number as it goes, with no code, as a knob does: `{ y: { value: "cutoff" } }`, named as `now.value` names it; for a field the whole drag is one undo step.
@@ -212,7 +212,7 @@ Levels, the clock and easing are live values too, so a meter or a light moves on
 - `now.value(name, { played: true })`: a field as it plays, what a lane or a cable plays into it, else its record.
 - `now.elapsed`, seconds, and `.mod`, `.pow`, `.decibels()`. `.smooth(ms)`, `.fall(perSecond)` and `.hold(seconds)` follow a value over frames: a meter's bar is `level.fall(0.5)`, its peak line `level.hold(1.5).fall(0.5)`.
 - `blend(from, to, by)` is a colour between two: `blend("#3a1418", "#ff4d5e", now.elapsed.mod(1).lt(0.5))` blinks.
-- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far. `band` from `low: -1` to `high: 1` draws a waveform; `level` scales it along its width, as a fade. `<Path points>` fills between its points. `now.input(channel)` is the level of the audio input while a recorder is armed.
+- `<Wave list>` draws a list across its box: `now.scope(path)`, the last sound of a meter; `now.history(value, frames)`, the last values of any live value; `now.file(asset)`, the waveform of a file under `assets/audio/`; `now.take(path)`, what a recorder records so far; `<Notes list={now.take(path)}>` draws its notes. `band` from `low: -1` to `high: 1` draws a waveform; `level` scales it along its width, as a fade. `<Path points>` fills between its points. `now.input(channel)` is the level of the audio input while a recorder is armed.
 
 ## A control loop, the keys
 

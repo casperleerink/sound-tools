@@ -474,7 +474,7 @@ export const song = tool({
     const moveDrag = (snap: number, key: string): Drag => ({
       id: "move",
       snap: { x: snap || 1, y: 1, grid: snap > 0 },
-      onEnd: ({ dx, dy, alt }) => choose(moveClips(update, layout(), memory.selected, dx, Math.round(dy), alt)),
+      onEnd: ({ dx, dy, alt }) => choose(moveClips(update, layout(), memory.selected, Math.round(dx), Math.round(dy), alt)),
       onClick: ({ shift, cmd }) => !shift && !cmd && memory.selected.size > 1 && choose(new Set([key])),
     });
     const marquee = now.drag("clip-marquee");
@@ -499,7 +499,7 @@ export const song = tool({
       snap: { x: snap || 1, grid: snap > 0 },
       onEnd: ({ dx }) =>
         editClips("Resize clips", memory.selected, (clip) => {
-          const length = Math.max(lengthOf(clip) + dx, snap || BEAT / 4);
+          const length = Math.max(lengthOf(clip) + Math.round(dx), snap || BEAT / 4);
           // What starts at or past its new end is cut: a timeline plays nothing there.
           clip.length = length;
           clip.notes = clip.notes.filter((note) => note.start < length);
@@ -513,7 +513,7 @@ export const song = tool({
       id: "resize-start",
       axis: "x",
       snap: { x: snap || 1, grid: snap > 0 },
-      onEnd: ({ dx }) => editClips("Resize clips", memory.selected, (clip) => startMoved(clip, dx, snap || BEAT / 4)),
+      onEnd: ({ dx }) => editClips("Resize clips", memory.selected, (clip) => startMoved(clip, Math.round(dx), snap || BEAT / 4)),
     });
 
     // As the arrangement's: what the keys do, and the name.
@@ -1224,7 +1224,7 @@ export const song = tool({
         onEnd: ({ dx, dy }) => {
           const moved = points()[pressed() ?? -1];
           if (!moved) return;
-          const tick = Math.max(moved.tick + dx, 0);
+          const tick = Math.max(moved.tick + Math.round(dx), 0);
           editPoints("Move a point", track, lane.lane, (all) =>
             all.map((point, index) => (index === pressed() ? { tick, value: valueAt(range(), upOf(range(), point.value) - dy / 0.8) } : point)),
           );
@@ -1444,7 +1444,7 @@ export const song = tool({
             if (from?.tool !== "tape" || into?.tool !== "tape") return;
             const draft = from.children.find((child) => child.name === region.name);
             if (draft?.tool !== "region") return;
-            const start = Math.max(draft.state.start + dx, 0);
+            const start = Math.max(draft.state.start + Math.round(dx), 0);
             if (!alt && into === from) {
               draft.state.start = start;
               moved = key;
@@ -1464,7 +1464,7 @@ export const song = tool({
         snap: { x: BEAT / 4, grid: true },
         onEnd: ({ dx }) =>
           editRegion("Trim a region", (state) => {
-            const ticks = Math.max(dx, -state.start);
+            const ticks = Math.max(Math.round(dx), -state.start);
             const moved = secondsBetween(clock.tempo_map.tempo_changes, state.start, state.start + ticks);
             state.start += ticks;
             state.file_start_seconds = Math.max(state.file_start_seconds + moved, 0);

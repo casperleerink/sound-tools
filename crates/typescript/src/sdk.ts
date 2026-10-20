@@ -1277,7 +1277,10 @@ export type WaveList =
   | { source: "scope"; name: string; channel?: Channel; frames?: number }
   | { source: "history"; of: Num; frames: number; key: string }
   | { source: "file"; asset: string; from?: number | null; to?: number | null }
-  | { source: "take"; name: string };
+  | TakeList;
+
+/** What a recorder records so far, see `now.take`. */
+export type TakeList = { source: "take"; name: string };
 
 /** The names a tool reads with `now.value`: its numbers, its number inputs, and any output, by any name. */
 type ValueNames<State, I extends Inputs> = NumberNames<State> | InputNames<I, "number"> | (string & {});
@@ -1321,8 +1324,8 @@ export interface Now<State = Record<string, unknown>, I extends Inputs = Inputs>
    * Made in the background: it shows once it is ready.
    */
   file(asset: string, options?: { from?: number | null; to?: number | null }): WaveList;
-  /** The sound a `recorder` child by its path records, as it grows, in the form of `file`. */
-  take(name: string): WaveList;
+  /** What a `recorder` child by its path records, as it grows: its sound for a `Wave`, in the form of `file`, and its notes for `Notes`. */
+  take(name: string): TakeList;
   /** The drag of `id`, see `Drag`. */
   drag(id: string): DragValues;
   /** The space of `key`, see `Space`. */
@@ -1512,6 +1515,7 @@ export interface Drag {
   /**
    * Rounds `dx` and `dy` to whole steps, in units. With `grid`, the pressed shape's `anchor` lands
    * on a whole step instead, as a note lands on the lines of a piano roll wherever it started.
+   * While cmd is held `dx` does not snap, off the grid in time: round it where it must be whole.
    */
   snap?: { x?: number; y?: number; grid?: boolean };
   /** Moves along one axis only. */
@@ -2428,6 +2432,12 @@ export type Shape =
          * it: `[x, factor]` from its left, straight between, so a waveform shows its gain and fades.
          */
         | { kind: "wave"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<WaveList>; color: Bind<Paint>; low?: number; high?: number; band?: boolean; size?: number; level?: Bind<readonly (readonly [Num, Num])[]> }
+        /**
+         * The notes a `recorder` records so far, `list` its `now.take`, as a clip draws its own: its
+         * box spans the take from its start at the left to the playhead at the right, a line for
+         * each note between the lowest pitch at its foot and the highest at its top, 12 apart at least.
+         */
+        | { kind: "notes"; x: Bind<Num>; y: Bind<Num>; width: Bind<Num>; height: Bind<Num>; list: Bind<TakeList>; color: Bind<Paint> }
         /** A shape filled between `points`, in order: a fade's shade, a triangle, an outline. */
         | { kind: "path"; points: Bind<readonly (readonly [Num, Num])[]>; color: Bind<Paint> }
       ));
@@ -2457,6 +2467,7 @@ export const Arc = shape("arc");
 export type TextPart = { text: string; color?: Color; weight?: "normal" | "medium" | "semibold"; border?: Color };
 export const Label = shape("text");
 export const Wave = shape("wave");
+export const Notes = shape("notes");
 export const Path = shape("path");
 /** Shapes moved together, see `Shape`. */
 export const Group = ({ children, ...props }: ShapeProps<"group"> & { children?: Child }): UiNode => shapeNode("group", props, [children]);

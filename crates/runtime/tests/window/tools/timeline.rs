@@ -58,6 +58,30 @@ fn with_snap_off_a_clip_moves_to_the_tick_and_with_bars_to_the_bar(cx: &mut Test
 }
 
 #[gpui::test]
+fn a_clip_dragged_with_cmd_held_lands_off_the_grid(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let cmd = Modifiers {
+        platform: true,
+        ..Modifiers::default()
+    };
+    let at = window.on_lane(BAR / 2, 1);
+    window.press(at);
+    for right in [20., 37.] {
+        let to = at + point(px(right), px(0.));
+        window.cx.simulate_mouse_move(to, MouseButton::Left, cmd);
+        window.cx.run_until_parked();
+    }
+    window.release(at + point(px(37.), px(0.)));
+    window.until("the clip moved", |window| {
+        window.record("song/t01/c00")["start"] != 0
+    });
+    // On the sixteenths it would be 1440.
+    assert_eq!(window.record("song/t01/c00")["start"], 1480);
+    assert_eq!(window.problems(), []);
+}
+
+#[gpui::test]
 fn a_clips_start_dragged_left_keeps_its_notes_where_they_are(cx: &mut TestAppContext) {
     let mut window = open_song(cx, 4, 12);
     window.wait_for_bun();
