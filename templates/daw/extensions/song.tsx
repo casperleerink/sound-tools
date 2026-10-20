@@ -906,12 +906,14 @@ export const song = tool({
         <div style={{ width: HEADER - 1, keep: true, paddingTop: 13 }}>
           <div style={{ height: 32, direction: "row", align: "center", gap: 8, paddingLeft: 20, paddingRight: 8 }}>
             <div style={{ width: 8, height: 8, radius: 4, borderWidth: 1.5, borderColor: "gray-800", keep: true }} />
-            <div style={{ grow: true, fontSize: 14, weight: "medium", color: "gray-900" }}>Master</div>
+            <div style={{ grow: true, fontSize: 14, weight: "medium", color: "gray-950" }}>Master</div>
             <Button key="close-master" icon="x" variant="ghost" size="xs" onPress={() => (memory.master = false)} />
           </div>
-          <div style={{ paddingLeft: 8, align: "start", gap: 6 }}>
-            <Volume path="master" height={PANEL_FADER} device />
-            <GainText path="master" />
+          <div style={{ direction: "row", paddingLeft: 8 }}>
+            <div style={{ align: "center", gap: 6, paddingTop: 5 }}>
+              <Volume path="master" height={PANEL_FADER} device />
+              <GainText path="master" />
+            </div>
           </div>
         </div>
         <div style={{ width: 1, background: "alpha/5", keep: true }} />
