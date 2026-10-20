@@ -1061,12 +1061,14 @@ export interface Context<State, I extends Inputs = Inputs, M = unknown, K extend
    */
   select(path: string | null, options?: { span?: { from: number; to: number } }): void;
   /**
-   * Opens a menu of `items` where the pointer is, after a press: the place of the item the
-   * composer picked, or `null` when they picked none.
+   * Opens a menu of `items` after a press: under the div, button or card title pressed, as a
+   * select's list, or where the pointer is after a right press or a press of a space. Answers
+   * the place of the item the composer picked, or `null` when they picked none. `notes` are
+   * quiet lines under the items; `width` is in points, 320 when left out.
    */
-  openMenu(items: readonly MenuItem[], options?: { notes?: readonly string[] }): Promise<number | null>;
-  /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. */
-  offers(takes: "notes" | "audio"): Promise<Offers>;
+  openMenu(items: readonly MenuItem[], options?: { notes?: readonly string[]; width?: number }): Promise<number | null>;
+  /** What the window offers to put in a child: devices that take `"notes"` and play them, or take `"audio"` and change it. Built-in devices, plugins and the tools of the project. With `at`, a child's path, `here` says which of them is there. */
+  offers(takes: "notes" | "audio", options?: { at?: string }): Promise<Offers>;
   /** What a lane or a cable can move of the child at `path`, such as `"bass/filter"`: each number's name and range. */
   numbers(path: string): Promise<MovedNumber[]>;
   /** Puts the device of the offer `key` at the child `path`, at its defaults and in place of what is there, as one undo step `label`. */
@@ -1398,6 +1400,8 @@ export interface Offer {
 export interface Offers {
   offers: Offer[];
   notes: string[];
+  /** The key of the offer at the child `offers` was asked `at`, which a picker ticks. */
+  here: string | null;
 }
 
 /** A number `numbers` gives: what a lane or a cable moves, from `min` to `max`, as its knob travels them. */

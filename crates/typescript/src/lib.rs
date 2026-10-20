@@ -29,6 +29,7 @@ mod performance;
 mod recorder;
 mod records;
 mod region;
+mod region_card;
 mod samples;
 mod timeline;
 mod tools;
@@ -517,6 +518,11 @@ fn write_sdk(extensions: &Path, schemas: &[ToolSchema]) -> std::io::Result<()> {
 }
 
 /// Whether this machine has a Bun to run the tools with. Tests that need one pass without it.
+/// Registers the cards of the blocks of this crate that have one: a region's.
+pub fn register_views(views: &mut sound_ui::Views) {
+    region_card::register(views);
+}
+
 pub fn has_bun() -> bool {
     bun_program().is_some()
 }

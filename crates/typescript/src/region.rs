@@ -21,33 +21,33 @@ const PROCESSOR: &str = "player";
 const SECONDS: &str = "seconds";
 
 /// The loudest a region plays over its file, in decibels.
-const MAX_GAIN_DB: f32 = 24.0;
+pub(crate) const MAX_GAIN_DB: f32 = 24.0;
 /// What a region at this gain or below plays: silence.
 const SILENT_DB: f32 = -96.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct Record {
+pub(crate) struct Record {
     /// The file, under `assets/audio/`, such as `"take-1.wav"`.
-    asset: AudioAsset,
+    pub(crate) asset: AudioAsset,
     /// Where it starts in the song, in ticks: 3840 is a bar of 4/4.
     #[serde(default)]
-    start: Ticks,
+    pub(crate) start: Ticks,
     /// Where in the file it starts playing.
     #[serde(default)]
-    file_start_seconds: f64,
+    pub(crate) file_start_seconds: f64,
     /// Where in the file it stops. The end of the file when left out.
     #[serde(default)]
-    file_end_seconds: Option<f64>,
+    pub(crate) file_end_seconds: Option<f64>,
     /// How much louder or quieter it plays than its file, -96 (silence) to 24.
     #[serde(default)]
-    gain_db: f32,
+    pub(crate) gain_db: f32,
     /// A straight line from silence at its start to its level.
     #[serde(default)]
-    fade_in_ms: f32,
+    pub(crate) fade_in_ms: f32,
     /// A straight line from its level to silence at its end.
     #[serde(default)]
-    fade_out_ms: f32,
+    pub(crate) fade_out_ms: f32,
 }
 
 impl State for Record {
@@ -132,7 +132,7 @@ fn end(project: &Project, state: &Value) -> Option<Ticks> {
 }
 
 /// The region a record plays.
-fn region(record: &Record) -> Region {
+pub(crate) fn region(record: &Record) -> Region {
     let gain = match record.gain_db <= SILENT_DB {
         true => 0.0,
         false => 10_f32.powf(record.gain_db / 20.0),

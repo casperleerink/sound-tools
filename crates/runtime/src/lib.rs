@@ -214,6 +214,7 @@ pub fn views(plugins: WeakPlugins) -> (Views, Devices) {
     reverb::view::register(&mut views, &mut devices);
     utility::view::register(&mut views, &mut devices);
     analyzer::view::register(&mut views, &mut devices);
+    sound_typescript::register_views(&mut views);
     plugin_host::view::register(&mut views, &mut devices, plugins.clone());
     // What the picker says under its offers: that the scan of this machine is still running,
     // and what Steinberg asks of anyone who writes "VST". Their guidelines want the VST

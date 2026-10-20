@@ -106,7 +106,7 @@ export interface EditorProps {
   edit: (label: string, change: (clip: Clip) => void) => void;
   /** Sounds a pitch on the clip's track, as a touched note. */
   preview: (pitch: number) => void;
-  openMenu: (items: readonly MenuItem[]) => Promise<number | null>;
+  openMenu: (items: readonly MenuItem[], options?: { width?: number }) => Promise<number | null>;
   onClose: () => void;
   height: number;
 }
@@ -245,7 +245,7 @@ export function ClipEditor({ clip, bars, name, colour, id, memory, edit, preview
     }
   };
   const chooseLane = async () => {
-    const picked = await openMenu(LANES.map((lane) => ({ label: LANE_NAMES[lane], checked: memory.lane === lane })));
+    const picked = await openMenu(LANES.map((lane) => ({ label: LANE_NAMES[lane], group: "Lane", checked: memory.lane === lane })), { width: 160 });
     if (picked !== null) memory.lane = LANES[picked]!;
   };
 

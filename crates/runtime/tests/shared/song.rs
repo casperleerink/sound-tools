@@ -124,6 +124,10 @@ fn song_with(
             r#"{"tool": "recorder", "state": {"channels": [0]}}"#.to_string(),
         ),
         (
+            "state/song/audio-voice/chain/instance.json".to_string(),
+            r#"{"tool": "chain", "state": {}}"#.to_string(),
+        ),
+        (
             "state/song/audio-voice/mix.json".to_string(),
             r#"{"tool": "fader", "state": {}}"#.to_string(),
         ),

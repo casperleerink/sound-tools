@@ -48,6 +48,8 @@ const MAX_FOUND: usize = 100;
 /// The rounded square an item icon sits on.
 const ICON_TILE: f32 = 24.;
 const SUBMENU_WIDTH: f32 = 280.;
+/// How wide a menu is unless it says.
+pub const MENU_WIDTH: f32 = 320.;
 
 #[derive(Clone, Debug)]
 pub struct MenuItem {
@@ -777,6 +779,8 @@ pub struct DropdownMenu {
     search: Option<Search>,
     /// Where a [`Trigger::Pointer`] menu opened, in the window.
     position: Point<Pixels>,
+    /// Whether a [`Trigger::Pointer`] menu moves inside the window, as one under a trigger does.
+    snapped: bool,
     /// What had the focus before [`Self::open_at`], which gets it back.
     focus_before: Option<FocusHandle>,
 }
@@ -810,7 +814,7 @@ impl DropdownMenu {
             pointer_on: None,
             side: Side::default(),
             align: Align::default(),
-            width: 320.,
+            width: MENU_WIDTH,
             max_height: None,
             trigger: Trigger::Outline,
             trigger_width: None,
@@ -819,6 +823,7 @@ impl DropdownMenu {
             debug_name: None,
             search: None,
             position: Point::default(),
+            snapped: false,
             focus_before: None,
         }
     }
@@ -914,6 +919,10 @@ impl DropdownMenu {
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
         self
+    }
+
+    pub fn set_width(&mut self, width: f32) {
+        self.width = width;
     }
 
     /// Scrolls the groups past this height, for a list that may be long, such as the plugins
@@ -1027,12 +1036,25 @@ impl DropdownMenu {
         cx: &mut Context<Self>,
     ) {
         self.position = position;
+        self.snapped = false;
         self.highlighted = usize::MAX;
         self.set_submenu(None, cx);
         if !self.open {
             self.focus_before = window.focused(cx);
         }
         self.open(window, cx);
+    }
+
+    /// Opens a [`Trigger::Pointer`] menu with its top left at `position`, under what opened it,
+    /// moved up or left as far as it must to stay inside the window, as a select's list does.
+    pub fn open_under(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_at(position, window, cx);
+        self.snapped = true;
     }
 
     pub fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1260,7 +1282,12 @@ impl Render for DropdownMenu {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.trigger == Trigger::Pointer {
             let open = self.open.then(|| {
-                deferred(anchored().position(self.position).child(self.panel(cx))).with_priority(1)
+                let placed = anchored().position(self.position);
+                let placed = match self.snapped {
+                    true => placed.snap_to_window_with_margin(px(8.)),
+                    false => placed,
+                };
+                deferred(placed.child(self.panel(cx))).with_priority(1)
             });
             return div().children(open).into_any_element();
         }

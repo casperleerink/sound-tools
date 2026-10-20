@@ -940,10 +940,9 @@ function ask<Answer>(message: { type: string } & Record<string, unknown>): Promi
 /** What a tool asks the window, for its instance. */
 function askers(instance: string) {
   return {
-    /** The window shows it where the pointer is. */
-    openMenu: (items: readonly MenuItem[], { notes = [] }: { notes?: readonly string[] } = {}) =>
-      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group }) => ({ label, disabled, checked, icon, detail, group })), notes }),
-    offers: (takes: "notes" | "audio") => ask<Offers>({ type: "offers", takes }),
+    openMenu: (items: readonly MenuItem[], { notes = [], width }: { notes?: readonly string[]; width?: number } = {}) =>
+      ask<number | null>({ type: "open_menu", items: items.map(({ label, disabled, checked, icon, detail, group }) => ({ label, disabled, checked, icon, detail, group })), notes, width }),
+    offers: (takes: "notes" | "audio", { at }: { at?: string } = {}) => ask<Offers>({ type: "offers", takes, instance, at }),
     numbers: (path: string) => ask<MovedNumber[]>({ type: "numbers", instance, path }),
     /** The runtime opens the file and copies it under `assets/audio/`. */
     openFile: ({ title = "Choose a file" }: { title?: string } = {}) => ask<string | null>({ type: "open_file", title }),
@@ -1203,7 +1202,7 @@ function defaultOf(field: Field): unknown {
 /** The ops of a tool's view at its defaults, after one tick: a check without a window. */
 function draw(spec: Spec): unknown {
   const memory = freshMemory(spec);
-  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, openMenu: async () => null, offers: async () => [], numbers: async () => [], addOffer() {} };
+  const performs = { play() {}, send() {}, update() {}, select() {}, openFile: async () => null, openMenu: async () => null, offers: async () => ({ offers: [], notes: [], here: null }), numbers: async () => [], addOffer() {} };
   const state = frozen(filledObject(spec.state, {}));
   // What the check plays on the clock goes nowhere.
   const clock = { ...clockFor(""), play() {}, pause() {}, stop() {}, jump() {}, setRepeat() {}, setClick() {}, setComputerKeys() {}, update() {} };

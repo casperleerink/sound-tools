@@ -81,6 +81,24 @@ impl Views {
         );
     }
 
+    /// [`Self::register_card`] for a tool whose record the project keeps as JSON, such as a
+    /// block of the TypeScript kit: the view gets the id and reads the record itself.
+    pub fn register_json_card<V: Render>(
+        &mut self,
+        tool: &'static str,
+        create: impl Fn(Entity<Session>, InstanceId, CardFrame, &mut Window, &mut Context<V>) -> V
+        + 'static,
+    ) {
+        self.cards.insert(
+            tool,
+            Rc::new(move |session, id, frame, window, cx| {
+                session.read(cx).project().tool_of(id)?;
+                let view = cx.new(|cx| create(session.clone(), id.clone(), frame, window, cx));
+                Some(view.into())
+            }),
+        );
+    }
+
     /// What makes the card of a tool that registered none: a tool the project wrote, which
     /// comes and goes while the project is open. It says `None` for a tool it does not know.
     pub fn set_other_cards(

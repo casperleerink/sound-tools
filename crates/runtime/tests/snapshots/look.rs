@@ -9,6 +9,9 @@
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
 //! - `look-picker.png`, `look-effect-picker.png`: the panel of a track whose instrument is the
 //!   test plugin, the menu of its card's title open, and the menu of Add effect.
+//! - `look-audio.png`: the piece with a voice and a guitar as audio, playing at 6.3, the second
+//!   region of the voice chosen, and the panel of the voice: its region's card, a compressor and
+//!   a reverb.
 
 use std::time::Duration;
 
@@ -192,6 +195,14 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     save(cx, opened.window.into(), "look-effect-picker")?;
     drop(opened);
 
+    let mut opened = super::Opened::open_with(cx, &audio_files(), write_audio)?;
+    click(&opened, at(4 * BAR + 3 * 960, 3.), 1, cx)?;
+    // Half a second earlier than the arrangement's 6.3, which `play_from` plays.
+    opened.play_from(Ticks(5 * BAR + 1510), cx)?;
+    wait_for_waveforms(&mut opened, cx)?;
+    save(cx, opened.window.into(), "look-audio")?;
+    drop(opened);
+
     let limiter = json!({ "tool": "limiter", "state": { "ceiling_db": 0, "lookahead_ms": 0, "gain_db": 18 } });
     let mut opened = open(cx, &[("limit.json", limiter)])?;
     opened.play_from(Ticks(0), cx)?;
@@ -310,4 +321,107 @@ fn piece_files(more: &[(&str, Value)]) -> Vec<(String, String)> {
         files.push((path, record.to_string()));
     }
     files
+}
+
+/// Lets the threads make every waveform the window asked for, and draws again.
+fn wait_for_waveforms(opened: &mut super::Opened, cx: &mut HeadlessAppContext) -> Result<()> {
+    for _ in 0..300 {
+        settle(cx);
+        let making = cx.update(|cx| sound_ui::Waveforms::entity(cx).read(cx).making());
+        if making == 0 {
+            opened.advance(800, cx);
+            cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
+            settle(cx);
+            return Ok(());
+        }
+    }
+    anyhow::bail!("the waveforms were not made")
+}
+
+/// A 16-bit mono WAV file at 48 kHz, `seconds` long, of what `sound` gives at each time.
+fn write_wav(path: &std::path::Path, seconds: f64, sound: impl Fn(f64) -> f64) -> Result<()> {
+    std::fs::create_dir_all(path.parent().expect("a folder"))?;
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 48_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    for frame in 0..(seconds * 48_000.) as u64 {
+        let time = frame as f64 / 48_000.;
+        writer.write_sample((sound(time).clamp(-1., 1.) * 32_000.) as i16)?;
+    }
+    writer.finalize()?;
+    Ok(())
+}
+
+/// A noise that is the same every time.
+fn noise(time: f64) -> f64 {
+    let x = (time * 48_000.).floor();
+    ((x * 12.9898).sin() * 43_758.545).fract() * 2. - 1.
+}
+
+/// Something like a voice: syllables in phrases, with gaps between the phrases.
+fn voice(time: f64) -> f64 {
+    let open = if (time * 0.5).fract() < 0.72 { 1. } else { 0. };
+    let syllable = (time * std::f64::consts::PI * 4.3).sin().abs().powf(1.5);
+    let swell = 0.55 + 0.45 * (time * 1.3).sin().abs();
+    let tone = (time * 2. * std::f64::consts::PI * 180.).sin() * 0.6 + noise(time) * 0.4;
+    tone * syllable * swell * open * 0.9
+}
+
+/// Something like a guitar: a strum on every eighth at 120 bpm, each dying away.
+fn strum(time: f64) -> f64 {
+    let since = time % 0.25;
+    let accent = if ((time / 0.25) as u64).is_multiple_of(2) { 1. } else { 0.7 };
+    let tone = (time * 2. * std::f64::consts::PI * 220.).sin() * 0.5 + noise(time) * 0.5;
+    tone * (-since * 14.).exp() * accent * 0.8
+}
+
+/// The files of the voice and the guitar, as the Rust arrangement's audio snapshots wrote them.
+fn write_audio(root: &std::path::Path) -> Result<()> {
+    let audio = root.join("assets/audio");
+    write_wav(&audio.join("voice-take-1.wav"), 4.6, voice)?;
+    write_wav(&audio.join("voice-take-3.wav"), 14.6, |time| voice(time + 3.))?;
+    write_wav(&audio.join("voice-take-4.wav"), 6.5, |time| voice(time + 7.))?;
+    write_wav(&audio.join("guitar.wav"), 24., strum)
+}
+
+/// The piece, and a voice and a guitar as audio tracks: three takes of the voice, the second
+/// trimmed and faded, through a compressor and a reverb, and the guitar in two regions of one file.
+fn audio_files() -> Vec<(String, String)> {
+    let region = |asset: &str, bar: f64, from: f64, to: Option<f64>, gain_db: f64, fades: (f64, f64)| {
+        json!({ "tool": "region", "state": {
+            "asset": asset, "start": (bar * BAR as f64) as u64, "file_start_seconds": from,
+            "file_end_seconds": to, "gain_db": gain_db, "fade_in_ms": fades.0, "fade_out_ms": fades.1,
+        } })
+    };
+    let tape = |title: &str, colour: &str, order: &[&str]| {
+        [
+            ("instance.json", json!({ "tool": "tape", "state": { "colour": colour, "title": title } })),
+            ("rec.json", json!({ "tool": "recorder", "state": { "channels": [0] } })),
+            ("chain/instance.json", json!({ "tool": "chain", "state": { "order": order } })),
+            ("mix.json", json!({ "tool": "fader", "state": {} })),
+        ]
+    };
+    let mut more: Vec<(String, Value)> = Vec::new();
+    for (file, record) in tape("Voice", "mauve", &["compressor", "reverb"]) {
+        more.push((format!("audio-voice/{file}"), record));
+    }
+    for (file, record) in tape("Guitar", "teal", &[]) {
+        more.push((format!("audio-guitar/{file}"), record));
+    }
+    more.extend([
+        ("audio-voice/chain/compressor.json".into(), json!({ "tool": "compressor", "state": { "threshold_db": -18.0, "ratio": 4.0 } })),
+        ("audio-voice/chain/reverb.json".into(), json!({ "tool": "reverb", "state": { "decay_seconds": 2.4, "size": 0.6, "low_cut_hz": 200.0, "mix": 0.25 } })),
+        ("audio-voice/take-0.json".into(), region("voice-take-1.wav", 1.5, 0., None, 0., (0., 0.))),
+        ("audio-voice/take-1.json".into(), region("voice-take-3.wav", 4., 2.1, Some(10.1), -0.9, (150., 260.))),
+        ("audio-voice/take-2.json".into(), region("voice-take-4.wav", 8.5, 0., None, 0., (0., 0.))),
+        ("audio-guitar/take-0.json".into(), region("guitar.wav", 0., 0., Some(16.), 0., (0., 0.))),
+        ("audio-guitar/take-1.json".into(), region("guitar.wav", 8., 16., None, 0., (0., 0.))),
+        ("instance.json".into(), json!({ "tool": "song", "state": { "order": ["track-1", "bass", "melody", "audio-voice", "audio-guitar"] } })),
+    ]);
+    let more: Vec<(&str, Value)> = more.iter().map(|(path, record)| (path.as_str(), record.clone())).collect();
+    piece_files(&more)
 }

@@ -196,6 +196,8 @@ pub(crate) enum Answer<'a> {
     Offers {
         offers: Vec<Offered>,
         notes: Vec<String>,
+        /// The key of the offer at the child it was asked about, as a picker ticks it.
+        here: Option<String>,
     },
     /// What a lane or a cable can move of the child asked about.
     Numbers(Vec<Moved>),
@@ -420,9 +422,19 @@ pub(crate) enum Event {
         /// Quiet lines under the items.
         #[serde(default)]
         notes: Vec<String>,
+        /// How wide it is, in points, where its code says.
+        #[serde(default)]
+        width: Option<f32>,
     },
     /// Code asks what the window offers that takes `takes`, `"notes"` or `"audio"`.
-    Offers { question: u64, takes: String },
+    /// With `at`, the answer says which offer is at that child of `instance` now.
+    Offers {
+        question: u64,
+        takes: String,
+        instance: InstanceId,
+        #[serde(default)]
+        at: Option<String>,
+    },
     /// Code asks what a lane or a cable can move of the child of `instance` at `path`.
     Numbers {
         question: u64,

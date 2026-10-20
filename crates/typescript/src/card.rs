@@ -21,7 +21,7 @@ use sound_core::{InstanceId, ProjectEvent, ValueRange};
 use sound_media::AudioAsset;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
-use sound_ui::components::dropdown_menu::{
+use sound_ui::components::dropdown_menu::{MENU_WIDTH, 
     DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
@@ -36,7 +36,7 @@ use sound_ui::{
     ActiveTheme, ControlEdit, Devices, Metering, Session, Views, Waveforms, typography,
 };
 
-use crate::bun::{EventKind, MenuItemSpec, PageSize};
+use crate::bun::{EventKind, PageSize};
 use crate::feeds::Feeds;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
@@ -45,6 +45,7 @@ use crate::tree::{
     IconProps, InputProps, List, MeterProps, NodeTable, Paint, Props, Reach, Readout, ShapeKind,
     SpaceProps, TextProps, ToggleProps, Turned, Words,
 };
+use crate::window::OpenedMenu;
 use crate::window::{Live, Surface, state_of};
 
 /// How long an ended drag keeps its values at most, when the answer to its end does not come,
@@ -94,6 +95,12 @@ pub(crate) struct TypeScriptCard {
     title_bar: Option<(usize, Vec<usize>)>,
     /// How each meter node falls and holds its peak, by node.
     meters: Rc<RefCell<HashMap<u64, Metering>>>,
+    /// Where each node that hears a press was last laid out, by node, so a menu its press opens
+    /// hangs under it.
+    placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
+    /// Where the next menu opens: under the div, button or title last pressed with the left
+    /// button. `None` opens it at the pointer, as after a press of a space or a right press.
+    anchor: Rc<Cell<Option<Point<Pixels>>>>,
 }
 
 /// The view of the card of `instance` that the page `page` shows, for tests that read what a
@@ -140,7 +147,9 @@ struct CardTitle {
     name: SharedString,
     /// For tests, which find it as `card-title-<instance>`.
     instance: String,
-    on_press: Option<Rc<dyn Fn(&mut App)>>,
+    on_press: Option<Rc<dyn Fn(Option<Bounds<Pixels>>, &mut App)>>,
+    /// Where it was last laid out, so the menu of a press hangs under it.
+    placed: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
 impl Render for CardTitle {
@@ -165,11 +174,21 @@ impl Render for CardTitle {
             .text_color(theme.gray_950)
             .child(div().min_w_0().truncate().child(self.name.clone()));
         match self.on_press.clone() {
-            Some(on_press) => title
-                .cursor_pointer()
-                .hover(move |style| style.bg(hover))
-                .child(Icon::new("chevron-down").size(12.).color(muted))
-                .on_click(move |_, _, cx| on_press(cx)),
+            Some(on_press) => {
+                let placed = self.placed.clone();
+                let mark = self.placed.clone();
+                title
+                    .relative()
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .child(Icon::new("chevron-down").size(12.).color(muted))
+                    .child(
+                        canvas(move |bounds, _, _| mark.set(Some(bounds)), |_, _, _, _| {})
+                            .absolute()
+                            .size_full(),
+                    )
+                    .on_click(move |_, _, cx| on_press(placed.get(), cx))
+            }
             None => title,
         }
     }
@@ -178,6 +197,24 @@ impl Render for CardTitle {
 /// What a drag of a node carries, by its `carry`.
 #[derive(Clone)]
 struct Carried(String);
+
+/// Where a menu hangs under a node laid out at `bounds`: from its bottom left, as a select's list.
+fn under(bounds: Bounds<Pixels>) -> Point<Pixels> {
+    point(bounds.origin.x, bounds.origin.y + bounds.size.height + px(6.))
+}
+
+/// Takes no room and writes where its parent, the node `id`, was laid out into `placed`.
+fn placed(id: u64, placed: &Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>) -> impl IntoElement {
+    let placed = placed.clone();
+    canvas(
+        move |bounds, _, _| {
+            placed.borrow_mut().insert(id, bounds);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
 
 impl Render for Carried {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -298,6 +335,11 @@ fn add_modifiers(value: &mut Value, modifiers: Modifiers) {
 }
 
 impl TypeScriptCard {
+    /// The next menu hangs under the node `id`, as a select's list does, when it was laid out.
+    fn hang_menus_under(&self, id: u64) {
+        self.anchor.set(self.placed.borrow().get(&id).copied().map(under));
+    }
+
     pub(crate) fn new(
         live: Entity<Live>,
         session: Entity<Session>,
@@ -389,6 +431,8 @@ impl TypeScriptCard {
             embedded: HashMap::new(),
             title_bar: None,
             meters: Rc::default(),
+            placed: Rc::default(),
+            anchor: Rc::default(),
         }
     }
 
@@ -396,9 +440,8 @@ impl TypeScriptCard {
     /// another instance, and a menu its code opened. Outside a draw, which may not make them.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let card = self.card;
-        if let Some((question, items, notes)) = self.live.update(cx, |live, _| live.take_menu(card))
-        {
-            self.open_menu(question, items, notes, window, cx);
+        if let Some(menu) = self.live.update(cx, |live, _| live.take_menu(card)) {
+            self.open_menu(menu, window, cx);
         }
         let Some(Ok(table)) = self.live.read(cx).tree(card).cloned() else {
             return;
@@ -537,18 +580,20 @@ impl TypeScriptCard {
             .map_or_else(|| SharedString::from(tool.clone()), |label| label.name);
         let on_press = icons.2.then(|| {
             let card = cx.weak_entity();
-            Rc::new(move |cx: &mut App| {
+            Rc::new(move |bounds: Option<Bounds<Pixels>>, cx: &mut App| {
                 card.update(cx, |view, cx| {
+                    view.anchor.set(bounds.map(under));
                     view.event(node, EventKind::Title, json!({}), cx)
                 })
                 .ok();
-            }) as Rc<dyn Fn(&mut App)>
+            }) as Rc<dyn Fn(Option<Bounds<Pixels>>, &mut App)>
         });
         let instance_name = instance.as_str().to_string();
         let title = cx.new(|_| CardTitle {
             name,
             instance: instance_name,
             on_press,
+            placed: Rc::default(),
         });
         let mut frame = CardFrame::new(format!("card-{}", instance.as_str()), title);
         let shown = Rc::new(Cell::new(on));
@@ -584,16 +629,15 @@ impl TypeScriptCard {
         })
     }
 
-    /// Opens a menu of `items` where the pointer is, which answers `question`. A menu still open
-    /// answers that nothing was picked.
-    fn open_menu(
-        &mut self,
-        question: u64,
-        items: Vec<MenuItemSpec>,
-        notes: Vec<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Opens a menu its code asked for: under the div, button or title pressed last, or where
+    /// the pointer is. A menu still open answers that nothing was picked.
+    fn open_menu(&mut self, menu: OpenedMenu, window: &mut Window, cx: &mut Context<Self>) {
+        let OpenedMenu {
+            question,
+            items,
+            notes,
+            width,
+        } = menu;
         // A group a run of items of one `group`, under its heading.
         let mut entries: Vec<(Option<String>, MenuGroup)> = Vec::new();
         for (index, spec) in items.into_iter().enumerate() {
@@ -657,10 +701,14 @@ impl TypeScriptCard {
                 menu
             }
         };
-        let position = window.mouse_position();
+        let under = self.anchor.take();
         menu.update(cx, |menu, cx| {
             menu.set_entries(entries, cx);
-            menu.open_at(position, window, cx);
+            menu.set_width(width.unwrap_or(MENU_WIDTH));
+            match under {
+                Some(position) => menu.open_under(position, window, cx),
+                None => menu.open_at(window.mouse_position(), window, cx),
+            }
         });
         self.menu = Some((menu, Some(question)));
     }
@@ -824,6 +872,7 @@ impl TypeScriptCard {
             None => (frame.on_press, frame.drag.clone(), frame.node, false, units),
         };
         if on_press {
+            self.anchor.set(None);
             let button = match event.button {
                 MouseButton::Right => "right",
                 _ => "left",
@@ -1462,6 +1511,7 @@ struct Drawing<'a, 'b> {
     inputs: &'a HashMap<u64, (Entity<TextInput>, String)>,
     embedded: &'a HashMap<u64, Embedded>,
     meters: &'a RefCell<HashMap<u64, Metering>>,
+    placed: Rc<RefCell<HashMap<u64, Bounds<Pixels>>>>,
     /// Whether it draws the title bar's div, which the body leaves out.
     in_title_bar: bool,
     /// The title bar's div the body left out.
@@ -1750,7 +1800,7 @@ impl Drawing<'_, '_> {
             ),
         };
         let selector = format!("button-{}", props.key.as_deref().unwrap_or_default());
-        button
+        let button = button
             .variant(variant)
             .size(size)
             .rounded(props.rounded == Some(true))
@@ -1760,6 +1810,7 @@ impl Drawing<'_, '_> {
                 button.on_click(
                     self.cx
                         .listener(move |view, event: &gpui::ClickEvent, _, cx| {
+                            view.hang_menus_under(id);
                             let mut press = json!({
                                 "x": 0, "y": 0, "button": "left", "clicks": event.click_count(),
                             });
@@ -1767,6 +1818,11 @@ impl Drawing<'_, '_> {
                             view.event(id, EventKind::Press, press, cx);
                         }),
                 )
+            });
+        (div().flex_none().relative())
+            .child(button)
+            .when(props.on_press == Some(true), |wrap| {
+                wrap.child(placed(id, &self.placed))
             })
             .into_any_element()
     }
@@ -1791,6 +1847,7 @@ impl Drawing<'_, '_> {
                             .cursor_pointer()
                             .on_click((self.cx).listener(
                                 move |view, event: &gpui::ClickEvent, _, cx| {
+                                    view.hang_menus_under(id);
                                     let mut press = json!({
                                         "x": 0, "y": 0, "button": "left",
                                         "clicks": event.click_count(),
@@ -1799,9 +1856,11 @@ impl Drawing<'_, '_> {
                                     view.event(id, EventKind::Press, press, cx);
                                 },
                             ))
+                            .child(placed(id, &self.placed))
                             .on_mouse_down(
                                 MouseButton::Right,
                                 (self.cx).listener(move |view, event: &MouseDownEvent, _, cx| {
+                                    view.anchor.set(None);
                                     let mut press = json!({
                                         "x": 0, "y": 0, "button": "right",
                                         "clicks": event.click_count,
@@ -2976,6 +3035,7 @@ impl TypeScriptCard {
             inputs: &self.inputs,
             embedded: &self.embedded,
             meters: &self.meters,
+            placed: self.placed.clone(),
             in_title_bar: true,
             title_bar: None,
             cx,
@@ -3093,6 +3153,7 @@ impl Render for TypeScriptCard {
                     inputs: &self.inputs,
                     embedded: &self.embedded,
                     meters: &self.meters,
+                    placed: self.placed.clone(),
                     in_title_bar: false,
                     title_bar: None,
                     cx,

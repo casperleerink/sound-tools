@@ -149,7 +149,7 @@ struct Card {
     events_sent: u64,
     events_answered: u64,
     /// A menu its code opened and the card did not show yet, with its question.
-    menu: Option<(u64, Vec<MenuItemSpec>, Vec<String>)>,
+    menu: Option<OpenedMenu>,
 }
 
 /// What a tree is drawn on.
@@ -792,7 +792,7 @@ impl Live {
     }
 
     /// The menu the code of the card opened, which the card shows now.
-    pub(crate) fn take_menu(&mut self, card: u64) -> Option<(u64, Vec<MenuItemSpec>, Vec<String>)> {
+    pub(crate) fn take_menu(&mut self, card: u64) -> Option<OpenedMenu> {
         self.cards.get_mut(&card)?.menu.take()
     }
 
@@ -1500,15 +1500,35 @@ impl Live {
                 question,
                 items,
                 notes,
+                width,
             } => match (self.last_event_card).and_then(|card| self.cards.get_mut(&card)) {
                 Some(card) => {
-                    card.menu = Some((question, items, notes));
+                    card.menu = Some(OpenedMenu {
+                        question,
+                        items,
+                        notes,
+                        width,
+                    });
                     cx.notify();
                 }
                 None => self.menu_picked(question, None),
             },
-            Event::Offers { question, takes } => {
-                let offers = offered(takes_of(&takes), self.session.upgrade(), cx);
+            Event::Offers {
+                question,
+                takes,
+                instance,
+                at,
+            } => {
+                let session = self.session.upgrade();
+                let here = (session.as_ref().zip(at.as_deref()))
+                    .and_then(|(session, at)| {
+                        let id = (at.split('/'))
+                            .try_fold(instance.clone(), |id, name| id.child(name))
+                            .ok()?;
+                        Devices::label_of(session, &id, cx)
+                    })
+                    .map(|label| label.key.to_string());
+                let offers = offered(takes_of(&takes), session, cx);
                 self.host.send(&Request::Answer {
                     question,
                     answer: Answer::Offers {
@@ -1516,6 +1536,7 @@ impl Live {
                         notes: (Devices::notes_of(cx).iter())
                             .map(ToString::to_string)
                             .collect(),
+                        here,
                     },
                 });
             }
@@ -2107,4 +2128,12 @@ fn offered(takes: Takes, session: Option<Entity<Session>>, cx: &App) -> Vec<Offe
             icon: offer.icon.to_string(),
         })
         .collect()
+}
+
+/// A menu the code of a card opened, which the card shows when it draws next.
+pub(crate) struct OpenedMenu {
+    pub question: u64,
+    pub items: Vec<MenuItemSpec>,
+    pub notes: Vec<String>,
+    pub width: Option<f32>,
 }

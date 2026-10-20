@@ -269,6 +269,12 @@ impl DeviceCard {
         }
     }
 
+    /// Another title, such as a file name where a frame gives the picker of a slot.
+    pub fn title(mut self, title: impl IntoElement) -> Self {
+        self.title = title.into_any_element();
+        self
+    }
+
     /// The expand icon, and whether the card shows its hidden columns.
     pub fn expand(
         mut self,
