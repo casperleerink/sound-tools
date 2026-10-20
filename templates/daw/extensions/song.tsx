@@ -85,6 +85,8 @@ type Memory = {
   repeatRange: { from: number; to: number };
   /** Whether the returns show a row each, or fold to one. */
   returnsOpen: boolean;
+  /** What each device of a track is called, by `track/path`, as its card's title says: for the lanes' names. */
+  names: Record<string, string>;
   /** The chosen point of an automation lane, by its tick, which delete removes. */
   point: { track: string; lane: string; tick: number } | null;
 } & EditorMemory;
@@ -209,7 +211,7 @@ export const song = tool({
   children: parts,
   memory: (): Memory => ({
     selected: new Set(), region: null, below: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
-    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null,
+    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false, point: null, names: {},
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
   keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "alt-up", "alt-down", "escape", "r"],
@@ -677,17 +679,25 @@ export const song = tool({
       const [child, number] = splitTarget(target);
       const found = (await numbers(`${track}/${child}`)).find((each) => each.name === number);
       if (found) memory.ranges = { ...memory.ranges, [`${track}/${target}`]: found };
+      await learnName(track, child);
+    };
+    const learnName = async (track: string, path: string) => {
+      if (path === "mix") return;
+      const { offers: offered, here } = await offers(path === "synth" ? "notes" : "audio", { at: `${track}/${path}` });
+      const name = offered.find((each) => each.key === here)?.name;
+      if (name) memory.names = { ...memory.names, [`${track}/${path}`]: name };
     };
     /** What a lane of a track can move, a group each, as the arrangement offered them: the track's own volume and pan, its instrument, then its chain's effects in order. */
     const devicesOf = (each: Child) => {
       const effects = each.tool === "track" ? each.children.find((child) => child.name === "chain") : undefined;
       const order = effects?.tool === "chain" ? effects.state.order : [];
-      const synth = each.tool === "track" ? each.children.find((child) => child.name === "synth")?.tool : undefined;
-      const instrument = typeof synth === "string" ? (synth.split(".").at(-1) ?? synth) : "synth";
-      return [["mix", "Track"], ["synth", words(instrument)], ...order.map((effect) => [`chain/${effect}`, words(effect)])] as [string, string][];
+      const paths = ["synth", ...order.map((effect) => `chain/${effect}`)];
+      const named = (path: string) => memory.names[`${each.name}/${path}`] ?? words(path.split("/").at(-1) ?? path);
+      return [["mix", "Track"], ...paths.map((path) => [path, named(path)])] as [string, string][];
     };
     const addLane = async (each: Child) => {
       if (each.tool !== "track") return;
+      await Promise.all(devicesOf(each).map(([path]) => learnName(each.name, path)));
       const taken = new Set(each.state.automation.map(({ target }) => target));
       const found = (await Promise.all(devicesOf(each).map(async ([path, group]) => (await numbers(`${each.name}/${path}`)).map((number) => ({ path, group, number })))))
         .flat()
@@ -1162,7 +1172,9 @@ export const song = tool({
       const [path, number] = splitTarget(target);
       const named = memory.ranges[`${track}/${target}`]?.label ?? words(number);
       if (path === "mix") return number === "gain_db" ? "Volume" : named;
-      return `${words(path.split("/").at(-1) ?? path)} · ${named}`;
+      // The device cut short when it is long, so the number shows.
+      const device = memory.names[`${track}/${path}`] ?? words(path.split("/").at(-1) ?? path);
+      return `${device.length > 14 ? `${device.slice(0, 11).trimEnd()}...` : device} · ${named}`;
     };
     /** A lane's name; right-click it to remove the lane. */
     const LaneHead = ({ track, lane }: { track: string; lane: { lane: string; target: string } }) => (
