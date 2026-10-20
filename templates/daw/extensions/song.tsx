@@ -908,14 +908,15 @@ export const song = tool({
       );
     };
     const mostSends = memo(() => Math.max(0, ...rows().map((each) => sendsOf(each).length)));
-    /** A strip per track and return, and the master's strip on the right; its limiter is in the master's panel. */
+    /** A strip per track, then on the right the returns' strips and the master's; its limiter is in the master's panel. */
     const Mixer = () => (
       <div key="mixer" style={{ direction: "row", keep: true }}>
         <div style={{ grow: true, direction: "row", gap: 4, paddingLeft: 8, paddingTop: 12, paddingBottom: 8, scroll: "x" }}>
-          <For each={() => [...rows(), ...returns()]}>{(each) => <Strip each={each} />}</For>
+          <For each={rows}>{(each) => <Strip each={each} />}</For>
         </div>
         <div style={{ width: 1, background: "alpha/5", keep: true }} />
-        <div style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 12, paddingBottom: 8, keep: true }}>
+        <div style={{ direction: "row", gap: 4, paddingLeft: 8, paddingRight: 8, paddingTop: 12, paddingBottom: 8, keep: true }}>
+          <For each={returns}>{(each) => <Strip each={each} />}</For>
           <Strip master />
         </div>
       </div>
