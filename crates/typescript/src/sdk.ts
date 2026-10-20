@@ -2412,8 +2412,9 @@ export type Shape =
         /**
          * Text at `x`, `y`, its top. A live number shows as a readout in `unit`, and a tick, such as
          * `now.tick`, as `"position"` (`5.3`), `"time"` (`1:07`) or `"signature"` (the one there).
+         * Parts make one line in colours and weights of their own, such as a bar number then a name.
          */
-        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live>; unit?: Unit | "pan" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
+        | { kind: "text"; x: Bind<Num>; y: Bind<Num>; text: Bind<string | Live | readonly TextPart[]>; unit?: Unit | "pan" | "position" | "time" | "signature" | "beats" | "note"; color?: Bind<Paint>; size?: number; align?: "left" | "center" | "right" }
         /**
          * The values of `list` across its box, oldest at the left, `low` at its bottom and `high` at
          * its top (-1 and 1 when left out): a line `size` points thick, or with `band` the lowest to
@@ -2445,6 +2446,8 @@ export const Rect = shape("rect");
 export const Circle = shape("circle");
 export const Line = shape("line");
 export const Arc = shape("arc");
+/** A part of a `Label`'s line: in the label's colour and weight unless it names its own. */
+export type TextPart = { text: string; color?: Color; weight?: "normal" | "medium" | "semibold" };
 export const Label = shape("text");
 export const Wave = shape("wave");
 export const Path = shape("path");

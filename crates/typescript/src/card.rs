@@ -43,7 +43,7 @@ use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
     self, Align, Axis, ButtonLook, ButtonProps, ButtonSized, CardProps, Cursor, DivProps, Drag,
     IconProps, InputProps, List, MeterProps, NodeTable, Paint, Props, Reach, Readout, ShapeKind,
-    SpaceProps, TextProps, ToggleProps, Turned, Words,
+    SpaceProps, TextProps, ToggleProps, Turned, Weight, Words,
 };
 use crate::window::OpenedMenu;
 use crate::window::{Live, Surface, state_of};
@@ -1301,6 +1301,8 @@ enum Geometry {
         x: f64,
         y: f64,
         text: SharedString,
+        /// Its parts by their length, with their own colour and weight; none for one part.
+        parts: Rc<[TextPart]>,
         size: f32,
         align: Align,
     },
@@ -1499,12 +1501,20 @@ struct Painted {
     clip: Option<Bounds<Pixels>>,
 }
 
+/// A part of a label's line, by its length in bytes.
+#[derive(Clone, Debug)]
+struct TextPart {
+    len: usize,
+    color: Option<Hsla>,
+    weight: Option<Weight>,
+}
+
 enum PaintedShape {
     Rect(Bounds<Pixels>, f32, Option<(Hsla, f32)>),
     Circle(Point<Pixels>, f32),
     Line(Point<Pixels>, Point<Pixels>, f32),
     Arc(Point<Pixels>, f32, (f32, f32), f32),
-    Text(Point<Pixels>, SharedString, f32, Align),
+    Text(Point<Pixels>, SharedString, Rc<[TextPart]>, f32, Align),
     Wave(Bounds<Pixels>, Rc<Wave>),
     Path(Rc<[Point<Pixels>]>),
 }
@@ -1544,7 +1554,7 @@ impl PaintedShape {
                     point(right + pad, bottom + pad),
                 )
             }
-            Self::Text(origin, text, font, align) => {
+            Self::Text(origin, text, _, font, align) => {
                 let width = px(text.len() as f32 * font * 0.6);
                 let left = match align {
                     Align::Left => origin.x,
@@ -2603,11 +2613,25 @@ impl Placing<'_> {
                 y,
                 text: match &shape.text {
                     Some(Words::Fixed(text)) => text.clone().into(),
+                    Some(Words::Parts(parts)) => (parts.iter())
+                        .map(|part| part.text.as_str())
+                        .collect::<String>()
+                        .into(),
                     Some(Words::Live(live)) => {
                         let value = self.sources.number(live);
                         text_of(value, shape.unit, self.sources.feeds.clock.as_ref()).into()
                     }
                     None => SharedString::default(),
+                },
+                parts: match &shape.text {
+                    Some(Words::Parts(parts)) => (parts.iter())
+                        .map(|part| TextPart {
+                            len: part.text.len(),
+                            color: part.color.as_ref().map(|color| color.0),
+                            weight: part.weight,
+                        })
+                        .collect(),
+                    _ => Rc::new([]),
                 },
                 size: shape.size.unwrap_or(12.0),
                 align: shape.align.unwrap_or(Align::Left),
@@ -2746,9 +2770,10 @@ fn prepaint(
                 x,
                 y,
                 text,
+                parts,
                 size,
                 align,
-            } => PaintedShape::Text(at((*x, *y)), text.clone(), *size, *align),
+            } => PaintedShape::Text(at((*x, *y)), text.clone(), parts.clone(), *size, *align),
             Geometry::Wave {
                 x,
                 y,
@@ -2906,19 +2931,32 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 window.paint_path(path, color);
             }
         }
-        PaintedShape::Text(origin, text, font_size, align) => {
-            let run = TextRun {
-                len: text.len(),
-                font: typography::tabular(),
+        PaintedShape::Text(origin, text, parts, font_size, align) => {
+            let run = |len: usize, color: Hsla, weight: Option<Weight>| TextRun {
+                len,
+                font: gpui::Font {
+                    weight: match weight {
+                        None | Some(Weight::Normal) => gpui::FontWeight::NORMAL,
+                        Some(Weight::Medium) => gpui::FontWeight::MEDIUM,
+                        Some(Weight::Semibold) => gpui::FontWeight::SEMIBOLD,
+                    },
+                    ..typography::tabular()
+                },
                 color,
                 background_color: None,
                 underline: None,
                 strikethrough: None,
             };
-            let shaped =
-                window
-                    .text_system()
-                    .shape_line(text.clone(), px(*font_size), &[run], None);
+            let runs: Vec<TextRun> = match parts.is_empty() {
+                true => vec![run(text.len(), color, None)],
+                false => (parts.iter())
+                    .filter(|part| part.len > 0)
+                    .map(|part| run(part.len, part.color.unwrap_or(color), part.weight))
+                    .collect(),
+            };
+            let shaped = window
+                .text_system()
+                .shape_line(text.clone(), px(*font_size), &runs, None);
             let left = match align {
                 Align::Left => origin.x,
                 Align::Center => origin.x - shaped.width / 2.,

@@ -3,6 +3,7 @@
 //!
 //! - `look-empty.png`: a song with no tracks.
 //! - `look-piece.png`: the piece playing at 6.3, the second clip of the bass chosen.
+//! - `look-sections.png`: the piece with an intro and a verse named on the ruler.
 //! - `look-editor.png`: the note editor on the first clip of the melody.
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
@@ -215,6 +216,19 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     opened.play_from(Ticks(5 * BAR + 1000), cx)?;
     settle(cx);
     save(cx, opened.window.into(), "look-piece")?;
+    drop(opened);
+
+    let mut files = piece_files(&[]);
+    if let Some((_, project)) = files.iter_mut().find(|(path, _)| path == "project.json") {
+        let mut file: Value = serde_json::from_str(project)?;
+        file["sections"] = json!([{ "bar": 1, "name": "Intro" }, { "bar": 5, "name": "Verse" }]);
+        *project = file.to_string();
+    }
+    let mut opened = super::Opened::open(cx, &files)?;
+    // The poll tells Bun the sections.
+    opened.advance(512, cx);
+    settle(cx);
+    save(cx, opened.window.into(), "look-sections")?;
     drop(opened);
 
     let opened = open(cx, &[])?;

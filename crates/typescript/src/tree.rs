@@ -1010,7 +1010,18 @@ pub(crate) enum Reach {
 #[serde(untagged)]
 pub(crate) enum Words {
     Fixed(String),
+    /// Parts of one line, each in a colour and weight of its own.
+    Parts(Vec<Part>),
     Live(Num),
+}
+
+/// A part of a line of text: in the label's colour and weight unless it names its own.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Part {
+    pub text: String,
+    pub color: Option<Color>,
+    pub weight: Option<Weight>,
 }
 
 /// The size of a group's box, in the units of its space.

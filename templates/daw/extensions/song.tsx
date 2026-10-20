@@ -1,4 +1,4 @@
-import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press } from "./sdk";
+import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Key, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -38,7 +38,7 @@ const [LOW, HIGH] = [36, 96];
 const COLOR = {
   back: "#121317", lane: "#17191e", bar: "#2a2d35", text: "#7c808c", chosen: "#e9ebef", playhead: "#7ee0a0",
   note: "#00000080", marquee: "#a9b1ff33", off: "#2a2d35", mute: "#f0b44c", solo: "#7ee0a0", meter: "#7ee0a0", clear: "#00000000",
-  edit: "#a9b1ff", record: "#ff6b6b", repeat: "#a9b1ff55", section: "#f0b44c",
+  edit: "#a9b1ff", record: "#ff6b6b", repeat: "#a9b1ff55",
 } as const;
 const PALETTE = [
   { name: "Blue", colour: "blue" }, { name: "Peach", colour: "peach" }, { name: "Mauve", colour: "mauve" }, { name: "Teal", colour: "teal" },
@@ -1198,9 +1198,12 @@ export const song = tool({
     const loop = now.drag("loop");
     // The ruler's label of bar `index`: its number, with the time signature where one starts.
     const barSignatures = memo(() => signaturesOf(runs(), starts().length));
-    const rulerLabel = (index: number) => {
+    /** A bar's number, its time signature where it changes, and the name of a section that starts there. */
+    const rulerLabel = (index: number): TextPart[] => {
       const here = barSignatures()[index];
-      return index === 0 || here !== barSignatures()[index - 1] ? `${index + 1}  ${here}` : String(index + 1);
+      const section = clock.sections.find((each) => each.bar === index + 1);
+      const bar = index === 0 || here !== barSignatures()[index - 1] ? `${index + 1}  ${here}` : String(index + 1);
+      return section ? [{ text: bar }, { text: `  ${section.name}`, color: "gray-950", weight: "medium" }] : [{ text: bar }];
     };
     const pickSnap = async () => {
       const snaps = snapsOf(4 * BEAT);
@@ -1434,9 +1437,6 @@ export const song = tool({
                   <Rect x={tick} y={RULER - 8} width={timeline.pointX} height={8} color="alpha/10" />,
                   <Label x={() => tick + 8 / ACROSS} y={8} text={() => rulerLabel(bar())} size={12} color="gray-700" />,
                 ]}
-              </For>
-              <For each={() => clock.sections}>
-                {(section) => <Label x={() => (starts()[section.bar - 1] ?? 0) + 8 / ACROSS} y={-4} text={() => section.name} size={10} color="yellow" />}
               </For>
               <For each={() => clock.tempo_map.tempo_changes.filter((change) => change.tick > 0)}>
                 {(change) => <Label x={() => change.tick + 40 / ACROSS} y={8} text={() => `${change.bpm} bpm`} size={12} color="gray-700" />}
