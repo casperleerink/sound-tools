@@ -87,7 +87,20 @@ props! {
         on_close: bool,
         /// Whether its title is a menu: a chevron after it, and a press tells the view.
         on_title: bool,
+        /// The selects of what keys a device with a sidechain input, behind its expand.
+        sidechain: Vec<CardSelect>,
+        /// A pick in one of them tells the view.
+        on_sidechain: bool,
     }
+}
+
+/// A select of a card: what it shows, the label under it, and what its list holds.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CardSelect {
+    pub label: String,
+    pub value: String,
+    pub options: Vec<String>,
 }
 
 props! {

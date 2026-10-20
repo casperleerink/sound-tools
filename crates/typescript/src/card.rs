@@ -19,9 +19,11 @@ use gpui::{
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
 use sound_media::AudioAsset;
+use sound_notes::SIDECHAIN_INPUT;
 use sound_ui::LiveNotes;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
-use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
+use sound_ui::components::cell::{self, CELL_WIDTH};
+use sound_ui::components::device_card::{CardFrame, Column, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::{
     DropdownMenu, MENU_WIDTH, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
@@ -31,6 +33,7 @@ use sound_ui::components::knob::{
     decibels_readout, hertz_readout, milliseconds_readout, pan_readout, percent_readout, short,
 };
 use sound_ui::components::meter::Meter;
+use sound_ui::components::select::Select;
 use sound_ui::components::text_input::{self, TextInput};
 use sound_ui::components::toggle::Toggle;
 use sound_ui::{
@@ -42,9 +45,9 @@ use crate::feeds::Feeds;
 use crate::live::{self, DragNumbers, Sources, SpaceView};
 use crate::tools::{ToolInfo, Unit};
 use crate::tree::{
-    self, Align, Axis, ButtonLook, ButtonProps, ButtonSized, CardProps, Cursor, DivProps, Drag,
-    IconProps, InputProps, List, MeterProps, NodeTable, Paint, Props, Reach, Readout, ShapeKind,
-    SpaceProps, TextProps, ToggleProps, Turned, Weight, Words,
+    self, Align, Axis, ButtonLook, ButtonProps, ButtonSized, CardProps, CardSelect, Cursor,
+    DivProps, Drag, IconProps, InputProps, List, MeterProps, NodeTable, Paint, Props, Reach,
+    Readout, ShapeKind, SpaceProps, TextProps, ToggleProps, Turned, Weight, Words,
 };
 use crate::window::OpenedMenu;
 use crate::window::{Live, Surface, state_of};
@@ -147,11 +150,60 @@ pub fn title_bar_of(page: &AnyView, cx: &mut App) -> Option<Entity<TitleBar>> {
 struct Embedded {
     instance: InstanceId,
     tool: String,
-    /// Whether its power icon and its close icon show, and whether its title is a menu.
-    icons: (bool, bool, bool),
+    /// Whether its power icon and its close icon show, whether its title is a menu, and
+    /// whether it has a sidechain picker.
+    icons: (bool, bool, bool, bool),
     on: Rc<Cell<bool>>,
+    /// The selects of its sidechain picker as its code last said, which the picker reads.
+    sidechain: Rc<RefCell<Vec<CardSelect>>>,
     frame: CardFrame,
     view: Option<AnyView>,
+}
+
+/// The picker of what keys an embedded card, as the arrangement's racks had it: a select over
+/// a select, two cells wide, each with its label under it. A pick tells the code of `card` which
+/// select and which of its options.
+fn sidechain_column(
+    selects: &[CardSelect],
+    card: &WeakEntity<TypeScriptCard>,
+    node: u64,
+) -> Column {
+    const SPAN: usize = 2;
+    let mut cells = selects.iter().enumerate().map(|(place, select)| {
+        let rows = (select.options.iter().enumerate())
+            .map(|(option, label)| MenuItem::new(option.to_string(), label.clone()));
+        // The trigger says the value, and the list ticks the option that says it.
+        let value = (select.options.iter())
+            .position(|option| *option == select.value)
+            .map_or_else(String::new, |option| option.to_string());
+        let card = card.clone();
+        let picker = Select::new(format!("sidechain-{place}"), value)
+            .entries(vec![MenuEntry::Group(MenuGroup::new().items(rows))])
+            .placeholder(select.value.clone())
+            .trigger_width(SPAN as f32 * CELL_WIDTH - 8.)
+            .on_change(move |picked, _, cx| {
+                let Ok(option) = picked.parse::<usize>() else {
+                    return;
+                };
+                let picked = json!({ "select": place, "option": option });
+                card.update(cx, |view, cx| {
+                    view.event(node, EventKind::Sidechain, picked, cx);
+                })
+                .ok();
+            });
+        cell::Cell::new(picker)
+            .span(SPAN)
+            .label(select.label.clone())
+    });
+    let column = Column::new().span(SPAN);
+    let column = match cells.next() {
+        Some(cell) => column.top(cell),
+        None => column,
+    };
+    match cells.next() {
+        Some(cell) => column.bottom(cell),
+        None => column,
+    }
 }
 
 /// The title of an embedded card.
@@ -612,10 +664,16 @@ impl TypeScriptCard {
             .tool_of(&instance)?
             .to_string();
         let on = props.on.unwrap_or(true);
+        let selects = props.sidechain.clone().unwrap_or_default();
+        // Only a device that a sidechain keys has the picker, as the arrangement's racks had it.
+        let keyed = (self.session.read(cx).project())
+            .input_port(&instance, SIDECHAIN_INPUT)
+            .is_some();
         let icons = (
             props.on_power == Some(true),
             props.on_close == Some(true),
             props.on_title == Some(true),
+            keyed && props.on_sidechain == Some(true) && !selects.is_empty(),
         );
         if let Some(old) = self.embedded.remove(&node)
             && old.instance == instance
@@ -623,6 +681,12 @@ impl TypeScriptCard {
             && old.icons == icons
         {
             old.on.set(on);
+            if *old.sidechain.borrow() != selects {
+                old.sidechain.replace(selects);
+                if let Some(view) = &old.view {
+                    App::notify(cx, view.entity_id());
+                }
+            }
             return Some(old);
         }
         let name = (Devices::label_of(&self.session, &instance, cx))
@@ -667,12 +731,18 @@ impl TypeScriptCard {
                 .ok();
             });
         }
+        let sidechain = Rc::new(RefCell::new(selects));
+        if icons.3 {
+            let (card, selects) = (cx.weak_entity(), sidechain.clone());
+            frame = frame.sidechain(move |_| sidechain_column(&selects.borrow(), &card, node));
+        }
         let view = Views::card_of(&self.session, &instance, frame.clone(), window, cx);
         Some(Embedded {
             instance,
             tool,
             icons,
             on: shown,
+            sidechain,
             frame,
             view,
         })

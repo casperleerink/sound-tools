@@ -243,3 +243,90 @@ fn a_clip_menu_deletes_the_clip(cx: &mut TestAppContext) {
     window.until("the clip deleted", |window| !window.has("song/t01/c00"));
     assert_eq!(window.problems(), []);
 }
+
+/// The song with a compressor `comp` after the filter of its first track, whose devices show.
+fn open_compressor(cx: &mut TestAppContext) -> Opened<'_> {
+    let mut files = song_files(2, 1);
+    for (path, record) in &mut files {
+        if path == "project.json" {
+            *record = record.replace(r#""wavetable""#, r#""wavetable", "compressor""#);
+        }
+    }
+    files.retain(|(path, _)| path != "state/song/t00/chain/instance.json");
+    for (path, record) in [
+        (
+            "chain/instance.json",
+            r#"{"tool": "chain", "state": {"order": ["filter", "comp"]}}"#,
+        ),
+        ("chain/comp.json", r#"{"tool": "compressor", "state": {}}"#),
+    ] {
+        files.push((format!("state/song/t00/{path}"), record.to_string()));
+    }
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let mut window = open(cx, &files);
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.until_found("div-effect-comp");
+    window
+}
+
+/// The one key of the song: its track and its tap, `post_fader` when the record leaves it out.
+fn keyed(window: &mut Opened<'_>) -> Option<(String, String)> {
+    let sidechains = window.record("song")["sidechains"].clone();
+    let key = sidechains.as_array()?.first()?.clone();
+    let tap = key["tap"].as_str().unwrap_or("post_fader").to_string();
+    Some((key["from"].as_str()?.to_string(), tap))
+}
+
+/// The sidechain picker is behind the compressor's expand, as the arrangement's was. Another
+/// track keys it after its effects and a tap select shows; its own track keys it only before
+/// its effects, with no tap; Off takes the key away. Each pick is one undo step.
+#[gpui::test]
+fn the_sidechain_picker_keys_the_compressor_from_a_track(cx: &mut TestAppContext) {
+    let mut window = open_compressor(cx);
+    window.wait_for_bun();
+    assert_eq!(window.find("select-sidechain-0"), None);
+    let expand = window.until_found("card-song/t00/chain/comp-expand");
+    window.click(expand);
+    let source = window.until_found("select-sidechain-0");
+    assert_eq!(window.find("select-sidechain-1"), None);
+
+    // Off, Track 1, Track 2, the audio track.
+    window.click(source);
+    window.pick("menu-2");
+    window.until("the key", |window| keyed(window).is_some());
+    window.after_the_runs();
+    assert_eq!(keyed(&mut window), Some(("t01".into(), "post_fx".into())));
+    assert_eq!(window.undo_label().as_deref(), Some("Turn on sidechain"));
+    assert_eq!(window.problems(), []);
+
+    let tap = window.until_found("select-sidechain-1");
+    window.click(tap);
+    window.pick("menu-2");
+    window.until("the tap", |window| {
+        keyed(window).is_some_and(|(_, tap)| tap == "post_fader")
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Change sidechain tap"));
+
+    let source = window.until_found("select-sidechain-0");
+    window.click(source);
+    window.pick("menu-1");
+    window.until("its own track", |window| {
+        keyed(window).is_some_and(|(from, _)| from == "t00")
+    });
+    window.after_the_runs();
+    assert_eq!(keyed(&mut window), Some(("t00".into(), "pre_fx".into())));
+    assert_eq!(window.undo_label().as_deref(), Some("Change sidechain"));
+    assert_eq!(window.problems(), []);
+    assert_eq!(window.find("select-sidechain-1"), None);
+
+    let source = window.until_found("select-sidechain-0");
+    window.click(source);
+    window.pick("menu-0");
+    window.until("no key", |window| keyed(window).is_none());
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Turn off sidechain"));
+}

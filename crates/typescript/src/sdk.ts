@@ -2049,6 +2049,7 @@ interface Made {
   onPower?: () => void;
   onClose?: () => void;
   onTitle?: () => void;
+  onSidechain?: (select: number, option: number) => void;
   drag?: Drag;
   children: Set<Made>;
   /** The region a marker stands for, which puts what it shows before the marker. */
@@ -2130,7 +2131,7 @@ function keptDrag(card: CardRoot, drag: Drag): number {
   return id;
 }
 
-const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onPower", "onClose", "onTitle"]);
+const HANDLERS = new Set(["onPress", "onDrop", "onCommit", "onPower", "onClose", "onTitle", "onSidechain"]);
 
 /** A node of `family` with `props`, bound where a prop is a function, and its children in it. */
 function element(family: Family, props: Record<string, unknown>, children: Child[]): UiNode {
@@ -2547,6 +2548,21 @@ export interface DeviceCardProps {
   onClose?: () => void;
   /** Its title is a menu: a chevron after it, and a press calls this, such as to put another device in its place. */
   onTitle?: () => void;
+  /**
+   * What keys a device with a sidechain input, such as a compressor or a gate: one or two
+   * selects behind its expand, as the window's cards had them. A device without the input
+   * shows none.
+   */
+  sidechain?: Bind<CardSelect[]>;
+  /** A pick in a select of `sidechain`: its place, and the place of the option in its `options`. */
+  onSidechain?: (select: number, option: number) => void;
+}
+
+/** A select of a card: it shows `value`, with `label` under it, and lists `options`. */
+export interface CardSelect {
+  label: string;
+  value: string;
+  options: string[];
 }
 
 /** The card of an instance, see `DeviceCardProps`. */
@@ -3153,7 +3169,7 @@ function takeOps(card: CardRoot): { ops: Op[] } | { error: string } {
 }
 
 /** A press, the end of a drag, a drop, a field's text or a card's icon, on the node `id`. */
-function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "drop" | "power" | "close" | "title", payload: never) {
+function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "drop" | "power" | "close" | "title" | "sidechain", payload: never) {
   const made = nodes.get(id);
   if (!made) return;
   switch (kind) {
@@ -3165,6 +3181,10 @@ function nodeEvent(id: number, kind: "press" | "end" | "click" | "commit" | "dro
       return made.onClose?.();
     case "title":
       return made.onTitle?.();
+    case "sidechain": {
+      const { select, option } = payload as { select: number; option: number };
+      return made.onSidechain?.(select, option);
+    }
     default: {
       const handler = { press: made.onPress, end: made.drag?.onEnd, click: made.drag?.onClick, drop: made.onDrop }[kind];
       return handler?.(payload);

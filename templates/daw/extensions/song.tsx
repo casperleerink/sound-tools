@@ -1,4 +1,4 @@
-import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, Notes, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type ValuesOf, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
+import { Arc, boolean, Button, choice, type CardSelect, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, Notes, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type ValuesOf, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -49,7 +49,9 @@ const PALETTE = [
 
 const [MOVES, RESIZES, START_MOVES] = [["move"], ["resize"], ["resize-start"]];
 const parts = { master: "fader", limit: "limiter", quiet: "lane", "audio-*": tape, "ret-*": bus, "*": track } as const;
-const fields = { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text() }, { max: 64 }), limit_off: boolean({ default: false }) };
+/** Where on a track a sidechain takes its sound, and what its select says, as the arrangement's. */
+const TAPS = [["pre_fx", "Pre FX"], ["post_fx", "Post FX"], ["post_fader", "Post mixer"]] as const;
+const fields = { order: list(text(), { max: 128 }), solo: list(text(), { max: 64 }), sidechains: list({ effect: text(), from: text(), tap: choice({ options: ["pre_fx", "post_fx", "post_fader"], default: "post_fader" }) }, { max: 64 }), limit_off: boolean({ default: false }) };
 /** What the song's code outside its view gets. */
 type Song = Context<ValuesOf<typeof fields>, Inputs, Memory, typeof parts>;
 const STRIP = 72;
@@ -210,7 +212,7 @@ export const song = tool({
   title: "Song",
   when: "You change the song page: its tracks, clips, automation, mixer strips or note editor",
   doc:
-    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag either end to resize it, double-click empty space to add one and a clip (or enter) to edit its notes below, drag over empty space to choose the clips there, shift- or cmd-click to add one; right-click it to cut, copy, duplicate, rename or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there; delete on a track whose panel shows asks, then deletes it. A lane: click to add a point, chosen, drag one to move it, delete removes the chosen one and alt-click any. The returns sit over the master row, each with a panel of its effects; a track's panel ends with a knob per send. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change, a time signature or a section, T adds a tempo change at the playhead, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it (alt copies it, up and down to another audio track), an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays after its fader.",
+    "Tracks of clips in time, and the devices of the chosen track under them. Each `track` child and each audio track `audio-*` plays into the fader `master`, then its limiter `limit` unless `limit_off`; `order` is the order of the tracks, `solo` names the tracks that play alone. A track's R arms its recorder `rec`. The key R or the record button records from the playhead until pressed again or a stop: every armed track, the audio input into new regions, and the keyboard's notes into a new clip of the chosen track, or of the first while none is chosen, which the keyboard plays then. Drags, arrows and new clips land on the snap in the corner. Drag a clip to move it (alt copies it, up and down moves it to another track; on its own track the automation under it goes along), drag either end to resize it, double-click empty space to add one and a clip (or enter) to edit its notes below, drag over empty space to choose the clips there, shift- or cmd-click to add one; right-click it to cut, copy, duplicate, rename or delete it. Cmd-C, cmd-X, cmd-V, cmd-D, delete and the arrows work on the chosen clips, or on the chosen notes while the editor has some; cmd-V pastes copied notes while the editor is open, alt-up and alt-down step the chosen velocities, and escape closes it. A track's menu (right-click its name) renames it, colours it, shows its automation, adds a lane for a number of its devices, or deletes it; drag a track's head onto another to move it there; delete on a track whose panel shows asks, then deletes it. A lane: click to add a point, chosen, drag one to move it, delete removes the chosen one and alt-click any. The returns sit over the master row, each with a panel of its effects; a track's panel ends with a knob per send. The ruler: click to play from there, click a section, time signature or tempo change to choose it (delete removes it, enter names a section), double-click to add a section, right-click to add a tempo change, a time signature or a section, T adds a tempo change at the playhead, drag over it to repeat a range; click the repeat's bar at its foot to turn it on or off, drag it or an end to move it. A region: drag to move it (alt copies it, up and down to another audio track), an edge to trim it; its gain and fades under the timeline. Space plays and pauses, wherever the focus is. Each of `sidechains` keys an effect, by its path such as `t00/chain/comp`, with what a track `from` plays at `tap`: into its effects, out of them or out of its fader; a compressor's or a gate's card picks it behind its expand.",
   state: fields,
   children: parts,
   memory: (): Memory => ({
@@ -340,10 +342,14 @@ export const song = tool({
         if (back.state.pre_fader && silent) connections.push({ from: { child: "quiet", number: "value" }, to: { child: send, number: "mute" } });
       }
     }
-    // A sidechain keys an effect of one track with another track, after its fader.
-    for (const { effect, from } of state.sidechains) {
-      if (!tracks.some((each) => each.name === from)) continue;
-      connections.push({ from: { child: `${from}/mix` as const }, to: { child: effect as `${string}/${string}`, port: "sidechain" } });
+    // A sidechain keys an effect with a track: what plays into its effects, what comes out of them, or what comes out of its fader.
+    for (const { effect, from, tap } of state.sidechains) {
+      const source = tracks.find((each) => each.name === from);
+      if (!source) continue;
+      const before = source.children.filter((child) => child.tool === "region" || child.name === "synth").map((child) => child.name);
+      for (const key of tap === "pre_fx" ? before : [tap === "post_fx" ? "chain" : "mix"]) {
+        connections.push({ from: { child: `${from}/${key}` as `${string}/${string}` }, to: { child: effect as `${string}/${string}`, port: "sidechain" } });
+      }
     }
     return { connections };
   },
@@ -799,14 +805,49 @@ export const song = tool({
       /** Another device in place of the one at `path`: an instrument from what takes notes, an effect from what takes sound. */
       const replace = async (takes: "notes" | "audio", path: string, label: string) => {
         const offer = await pick(takes, path);
-        if (offer) addOffer(offer.key, path, label);
+        if (!offer) return;
+        unkey(path, label);
+        addOffer(offer.key, path, label);
       };
-      const remove = (effect: string) =>
+      /** Takes the sidechain off the effect at `path`, as part of the step `label`: it goes, or another device takes its place. */
+      const unkey = (path: string, label: string) => {
+        if (state.sidechains.some((each) => each.effect === path)) update(label, (song) => (song.state.sidechains = song.state.sidechains.filter((each) => each.effect !== path)));
+      };
+      const remove = (effect: string) => {
+        unkey(`${name}/chain/${effect}`, "Remove an effect");
         editChain("Remove an effect", (effects) => {
           effects.state.order = effects.state.order.filter((each) => each !== effect);
           effects.state.off = effects.state.off.filter((each) => each !== effect);
           effects.children = effects.children.filter((child) => child.name !== effect);
         });
+      };
+      /** The sidechain picker of an effect, as the arrangement's: Off or a track, and where on another track. */
+      const sidechainOf = (effect: string): CardSelect[] => {
+        const keyed = state.sidechains.find((each) => each.effect === `${name}/chain/${effect}`);
+        const source = keyed && rows().find((each) => each.name === keyed.from);
+        const picker = { label: "Sidechain", value: keyed ? (source ? titleOf(source) : keyed.from) : "Off", options: ["Off", ...rows().map(titleOf)] };
+        // Its own track keys it only before its effects, else it would key itself.
+        if (!keyed || keyed.from === name) return [picker];
+        return [picker, { label: "Tap", value: TAPS.find(([tap]) => tap === keyed.tap)?.[1] ?? "", options: TAPS.map(([, label]) => label) }];
+      };
+      const pickSidechain = (effect: string, select: number, option: number) => {
+        const path = `${name}/chain/${effect}`;
+        const keyed = state.sidechains.find((each) => each.effect === path);
+        if (select === 1) {
+          const tap = TAPS[option]?.[0];
+          if (tap) update("Change sidechain tap", (song) => (song.state.sidechains = song.state.sidechains.map((each) => (each.effect === path ? { ...each, tap } : each))));
+          return;
+        }
+        const from = option === 0 ? null : rows()[option - 1]?.name;
+        if (from === undefined) return;
+        const label = from === null ? "Turn off sidechain" : keyed ? "Change sidechain" : "Turn on sidechain";
+        update(label, (song) => {
+          const rest = song.state.sidechains.filter((each) => each.effect !== path);
+          // Another track keeps the tap, or starts after its effects.
+          const tap = from === name ? "pre_fx" : (keyed?.tap ?? "post_fx");
+          song.state.sidechains = from === null ? rest : [...rest, { effect: path, from, tap }];
+        });
+      };
       const toggle = (effect: string) =>
         editChain(isOff(effect) ? "Turn an effect on" : "Turn an effect off", (effects) => {
           effects.state.off = effects.state.off.includes(effect) ? effects.state.off.filter((each) => each !== effect) : [...effects.state.off, effect];
@@ -868,7 +909,8 @@ export const song = tool({
             {(effect) => (
               <div key={`effect-${effect}`} carry={effect} onDrop={({ carried }) => carried && moveBefore(carried, effect)}>
                 <DeviceCard path={`${name}/chain/${effect}`} on={() => !isOff(effect)} onPower={() => toggle(effect)} onClose={() => remove(effect)}
-                  onTitle={() => replace("audio", `${name}/chain/${effect}`, "Change an effect")} />
+                  onTitle={() => replace("audio", `${name}/chain/${effect}`, "Change an effect")}
+                  sidechain={() => sidechainOf(effect)} onSidechain={(select, option) => pickSidechain(effect, select, option)} />
               </div>
             )}
           </For>

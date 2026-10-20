@@ -17,8 +17,9 @@
 //!
 //! In a rack the view of the device draws the whole card, because it owns what the body shows,
 //! and the rack gives it a [`CardFrame`]: the title, which is the picker of the slot, the
-//! power and close icons of an effect. Whether an effect is on is saved on its slot, which is
-//! the rack's, so the frame reads it when the card draws.
+//! power and close icons of an effect, and the sidechain picker of an effect that takes one.
+//! Whether an effect is on is saved on its slot, which is the rack's, so the frame reads it when
+//! the card draws.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -60,6 +61,8 @@ const HIDDEN_GAP: f32 = 8.;
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// Whether a device is on, read when the card draws.
 type IsOn = Rc<dyn Fn(&App) -> bool>;
+/// The column of the sidechain picker, made when the card draws, see [`CardFrame::sidechain`].
+type SidechainColumn = Rc<dyn Fn(&App) -> Column>;
 
 /// What a rack gives the view of the device in one of its slots, so that the view can draw the
 /// whole card with [`CardFrame::card`] and add its display and cells.
@@ -72,6 +75,7 @@ pub struct CardFrame {
     title: AnyView,
     power: Option<(IsOn, Rc<dyn Fn(&mut Window, &mut App)>)>,
     close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
+    sidechain: Option<SidechainColumn>,
 }
 
 impl CardFrame {
@@ -81,6 +85,7 @@ impl CardFrame {
             title: title.into(),
             power: None,
             close: None,
+            sidechain: None,
         }
     }
 
@@ -99,6 +104,19 @@ impl CardFrame {
     pub fn close(mut self, on_close: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.close = Some(Rc::new(on_close));
         self
+    }
+
+    /// The sidechain picker of a device that takes a sidechain: what keys it, which only the
+    /// rack knows. `column` is made every time the card draws, from the record of the rack.
+    pub fn sidechain(mut self, column: impl Fn(&App) -> Column + 'static) -> Self {
+        self.sidechain = Some(Rc::new(column));
+        self
+    }
+
+    /// The column of the sidechain picker, for the view to place. `None` when the rack gives
+    /// none.
+    pub fn sidechain_column(&self, cx: &App) -> Option<Column> {
+        self.sidechain.as_ref().map(|column| column(cx))
     }
 
     /// A card with the id, the title, and the power and close icons of this frame. The view
