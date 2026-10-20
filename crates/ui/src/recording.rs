@@ -1,5 +1,5 @@
-//! Recording as the views see it: which instances are armed, and each audio take while it
-//! grows.
+//! Recording as the views see it: which instances are armed, and each take while it grows: its
+//! sound, and the notes it heard.
 //!
 //! Interface state, like the selection: nothing is saved, and arming is no undo step, like the
 //! click. The window owns the input device and records; views arm and draw the takes. The
@@ -26,6 +26,22 @@ pub struct LiveSound {
     pub start_seconds: f64,
 }
 
+/// The notes a take heard so far, while it records.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveNotes {
+    pub recorder: InstanceId,
+    pub start: Ticks,
+    pub notes: Vec<LiveNote>,
+}
+
+/// A note of a take while it records: a held key has no end yet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LiveNote {
+    pub pitch: u8,
+    pub start: Ticks,
+    pub end: Option<Ticks>,
+}
+
 /// A take that ended, for the code of the parent of its recorder to keep: the record of a child
 /// that would hold it, a `timeline` of notes or a `region` of sound, whose files are written.
 #[derive(Clone, Debug)]
@@ -41,6 +57,7 @@ pub struct FinishedTake {
 pub struct Recording {
     armed: BTreeSet<InstanceId>,
     takes: Vec<LiveTake>,
+    notes: Vec<LiveNotes>,
     input: Vec<f32>,
 }
 
@@ -81,6 +98,18 @@ impl Recording {
     pub fn set_takes(&mut self, takes: Vec<LiveTake>, cx: &mut Context<Self>) {
         self.takes = takes;
         cx.notify();
+    }
+
+    /// The notes of the take of `recorder` that runs.
+    pub fn notes_of(&self, recorder: &InstanceId) -> Option<&LiveNotes> {
+        self.notes.iter().find(|take| take.recorder == *recorder)
+    }
+
+    pub fn set_notes(&mut self, notes: Vec<LiveNotes>, cx: &mut Context<Self>) {
+        if self.notes != notes {
+            self.notes = notes;
+            cx.notify();
+        }
     }
 
     /// The loudest sample of each channel of the audio input at the last poll; none while it is

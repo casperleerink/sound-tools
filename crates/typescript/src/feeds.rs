@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use sound_core::{Clock, InstanceId, Project, RecordStamp, Scope, Ticks, ValueRange};
 use sound_media::Overview;
-use sound_ui::{PeaksReader, Session};
+use sound_ui::{LiveNotes, PeaksReader, Session};
 
 use crate::meter;
 use crate::tree::{Ease, Uses};
@@ -79,6 +79,8 @@ pub(crate) struct Feeds {
     pub files: HashMap<String, Arc<Overview>>,
     /// The takes of recorders as they grow, by the path the tree names the recorder by.
     pub takes: HashMap<String, Rc<[f32]>>,
+    /// The notes of the takes of recorders as they grow, by the same path.
+    pub take_notes: HashMap<String, Rc<LiveNotes>>,
     /// Waveforms as drawn, by file name and the seconds of it, which stay until it changes.
     pub waves: RefCell<HashMap<(String, u64, u64), (u64, Rc<[f32]>)>>,
     records: Records,

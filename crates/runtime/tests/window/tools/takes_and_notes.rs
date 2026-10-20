@@ -7,6 +7,7 @@ use gpui::{
     point, px,
 };
 use serde_json::Value;
+use sound_ui::LiveNote;
 
 use super::Opened;
 use super::song::open_song;
@@ -72,6 +73,26 @@ fn r_with_nothing_chosen_records_the_keyboard_on_the_first_track(cx: &mut TestAp
     let takes = window.takes();
     assert!(takes.iter().all(|take| take.starts_with("song/t00/")), "{takes:?}");
     assert_eq!(window.problems(), []);
+}
+
+/// While it records, a take shows the notes it heard so far: a key still held has no end.
+#[gpui::test]
+fn a_take_shows_its_notes_while_it_records(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    window.tap("r");
+    window.play_on();
+    window.play_midi(60);
+    let recorder = crate::support::id("song/t00/rec");
+    window.until("the held key in the take", |window| {
+        window.play_on();
+        let session = window.session.clone();
+        let notes = window.cx.read(|cx| {
+            let recording = session.read(cx).recording().read(cx);
+            recording.notes_of(&recorder).map(|take| take.notes.clone())
+        });
+        matches!(notes.as_deref(), Some([LiveNote { pitch: 60, end: None, .. }]))
+    });
 }
 
 /// A stop ends the recording: playing again records nothing.

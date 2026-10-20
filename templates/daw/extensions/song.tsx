@@ -1,4 +1,4 @@
-import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
+import { Arc, boolean, Button, Circle, Path, DeviceCard, For, TitleBar, Toggle, Icon, Knob, PeakMeter, type Color, Fragment, Group, h, Input, Label, Line, list, memo, now, Rect, selector, Show, signal, Space, text, tool, Transport, untrack, Wave, Notes, type Accessor, type Connection, type Declaration, type Drag, type Dropped, type FilledStateOfTool, type Frozen, type Context, type Inputs, type Clock, type Key, type KeyName, type Live, type MovedNumber, type OwnedChild, type Part, type Press, type TextPart } from "./sdk";
 import { bus } from "./bus";
 import { chain } from "./chain";
 import { ClipEditor, editorKey, lengthOf, snapsOf, type EditorMemory, type Lane } from "./clip-editor";
@@ -1382,6 +1382,7 @@ export const song = tool({
         <>
           <Path points={() => [[0, bottom], [0, edge], [fadeIn(), edge], [fadeIn(), top]]} color="gray-50/50" opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
           <Path points={() => [[width(), bottom], [width(), edge], [fadeOut(), edge], [fadeOut(), top]]} color="gray-50/50" opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
+          <Notes x={0} y={12 / ROW} width={width} height={(ROW - 24) / ROW} list={now.take(`${each.name}/rec`)} color={() => colourOf(each)} />
           <Line from={[0, bottom]} to={() => [fadeIn(), top]} color="gray-950" width={1.5} opacity={shown(() => region.state.fade_in_ms, fadingIn.active)} />
           <Line from={() => [width(), bottom]} to={() => [fadeOut(), top]} color="gray-950" width={1.5} opacity={shown(() => region.state.fade_out_ms, fadingOut.active)} />
           {dot(fadeIn, false, fadeDrag("fade-in"), "ew-resize")}
@@ -1393,7 +1394,7 @@ export const song = tool({
         </>
       );
     };
-    /** An audio take while it records, as a region looks: over what it lies on, with a red border, its sound so far, from `from` to the playhead. */
+    /** A take while it records, as a region or a clip looks: over what it lies on, with a red border, its sound or its notes so far, from `from` to the playhead. */
     const TakeShapes = ({ each, row, from }: { each: Child; row: Accessor<number>; from: number }) => {
       const width = now.tick.minus(from).max(1);
       return (

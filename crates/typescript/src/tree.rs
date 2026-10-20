@@ -216,7 +216,8 @@ props! {
         unit: Readout,
         size: f32,
         align: Align,
-        /// The values a wave draws, oldest first, and the values at its bottom and its top.
+        /// The values a wave draws, oldest first, and the values at its bottom and its top; the
+        /// take whose notes `Notes` draws.
         list: List,
         /// A group's box from its place, outside which its shapes do not show.
         clip: Clip,
@@ -916,6 +917,7 @@ pub(crate) enum ShapeKind {
     Arc,
     Text,
     Wave,
+    Notes,
     Path,
 }
 

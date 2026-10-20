@@ -7,15 +7,20 @@
 //! - `look-marquee.png`: a rectangle over the middle of the same clip.
 //! - `look-fade.png`: the fade in of the voice's last region dragged in by 0.42 of a bar.
 //! - `look-gain.png`: its gain dragged down by 6 dB.
+//! - `look-take-notes.png`: the keyboard recording on the first track from bar 5, a phrase, its
+//!   last key still held at 7.2.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use midi::Played;
+use sound_core::Ticks;
+use sound_notes::{Pitch, Velocity};
 use gpui::{
     HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformInput, Point, point, px,
 };
 use serde_json::{Value, json};
 
-use super::{TOP, at, audio_files, away, click, piece_files, settle, wait_for_waveforms, write_audio};
+use super::{RECORD, TOP, at, audio_files, away, click, piece_files, settle, wait_for_waveforms, write_audio};
 use crate::song::{BAR, HEADER, ROW};
 
 /// The pointer pressed at `from` with `modifiers` and moved to `to`, the button still down.
@@ -101,5 +106,35 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &crate::Save) -> Resu
         hold(&opened, from, from + by, Modifiers::default(), cx)?;
         save(cx, opened.window.into(), name)?;
     }
+
+    let mut opened = crate::Opened::open(cx, &piece_files(&[]))?;
+    cx.update(|cx| (opened.session).update(cx, |session, _| session.engine().seek(Ticks(4 * BAR))));
+    opened.advance(64, cx);
+    settle(cx);
+    click(&opened, point(px(RECORD.0), px(RECORD.1)), 1, cx)?;
+    let keyboard = cx.update(|cx| {
+        let shell = opened.window.read(cx)?;
+        anyhow::Ok(shell.live_input().read(cx).midi_input())
+    })?;
+    let keyboard = keyboard.context("the keyboard")?;
+    let poll = (48_000. * sound_ui::POLL_INTERVAL.as_secs_f32()) as usize;
+    // A key every eighth of a second and a half, each held for a third of that.
+    let phrase = [60, 64, 67, 72, 71, 67, 65, 62, 64, 69, 72, 76, 74, 71, 67];
+    let velocity = Velocity::new(100).context("a velocity")?;
+    for index in 0..280 {
+        let (key, step) = (index / 18, index % 18);
+        if let Some(pitch) = phrase.get(key).and_then(|pitch| Pitch::new(*pitch).ok()) {
+            match step {
+                0 => _ = keyboard.send(Played::On { pitch, velocity }),
+                6 if key + 1 < phrase.len() => _ = keyboard.send(Played::Off { pitch, velocity: 0 }),
+                _ => {}
+            }
+        }
+        opened.advance(poll, cx);
+        opened.poll_recording(cx)?;
+    }
+    cx.update_window(opened.window.into(), |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    save(cx, opened.window.into(), "look-take-notes")?;
     Ok(())
 }

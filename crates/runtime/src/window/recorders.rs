@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use sound_core::{Clock, EventTap, Frames, InstanceId, Project, Ticks};
 use sound_notes::{NoteEvent, Pedal, RawEvent, RawTake};
 use sound_typescript::{ARMED, HEARD, Heard, RECORDER, RecorderState};
-use sound_ui::{FinishedTake, LiveSound, LiveTake, Session, every_poll};
+use sound_ui::{FinishedTake, LiveNote, LiveNotes, LiveSound, LiveTake, Session, every_poll};
 
 use super::live_input::{Hold, LiveInput, Recorded};
 use crate::recorder::{
@@ -141,6 +141,33 @@ impl Followed {
             steps.push(Step::End(id.clone(), tick, Finished::Notes(take, frame)));
         }
     }
+}
+
+/// The notes of `take` from its keys going down and up, in the order they went down.
+fn live_notes(take: &NotesTake) -> Vec<LiveNote> {
+    let mut notes = Vec::new();
+    let mut down: HashMap<u8, Vec<usize>> = HashMap::new();
+    for (frame, event) in &take.notes {
+        let tick = take.clock.tick_at(Frames(*frame));
+        match event {
+            NoteEvent::On { pitch, .. } => {
+                down.entry(pitch.number()).or_default().push(notes.len());
+                notes.push(LiveNote {
+                    pitch: pitch.number(),
+                    start: tick,
+                    end: None,
+                });
+            }
+            NoteEvent::Off { pitch } => {
+                let first = (down.get_mut(&pitch.number())).and_then(|held| held.pop());
+                if let Some(note) = first.and_then(|index| notes.get_mut(index)) {
+                    note.end = Some(tick);
+                }
+            }
+            _ => {}
+        }
+    }
+    notes
 }
 
 /// What ends what `notes` holds: an off for each key down, and the pedal up when it is down.
@@ -300,6 +327,21 @@ impl Recorders {
         self.poll_audio(cx);
         self.write(records, cx);
         self.follow_hold(cx);
+        self.show_notes(cx);
+    }
+
+    /// The notes of the takes that run, for `Notes` to draw as they grow.
+    fn show_notes(&self, cx: &mut Context<Self>) {
+        let shown = (self.followed.iter())
+            .filter_map(|(id, followed)| Some((id, followed.take.as_ref()?)))
+            .map(|(id, take)| LiveNotes {
+                recorder: id.clone(),
+                start: take.clock.tick_at(Frames(take.start)),
+                notes: live_notes(take),
+            })
+            .collect();
+        let recording = self.session.read(cx).recording().clone();
+        recording.update(cx, |recording, cx| recording.set_notes(shown, cx));
     }
 
     /// Starts a recording of the audio input for the take of sound of `recorder`, from `frame`

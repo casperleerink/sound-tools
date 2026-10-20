@@ -19,6 +19,7 @@ use gpui::{
 use serde_json::{Value, json};
 use sound_core::{InstanceId, ProjectEvent, ValueRange};
 use sound_media::AudioAsset;
+use sound_ui::LiveNotes;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
 use sound_ui::components::dropdown_menu::{
@@ -1331,6 +1332,13 @@ enum Geometry {
         height: f64,
         wave: Rc<Wave>,
     },
+    Notes {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        notes: Rc<Notes>,
+    },
     Path {
         points: Rc<[(f64, f64)]>,
     },
@@ -1344,7 +1352,8 @@ impl Geometry {
             | Self::Circle { x, y, .. }
             | Self::Arc { x, y, .. }
             | Self::Text { x, y, .. }
-            | Self::Wave { x, y, .. } => (x, y),
+            | Self::Wave { x, y, .. }
+            | Self::Notes { x, y, .. } => (x, y),
             Self::Line { from, .. } => from,
             Self::Path { ref points } => points.first().copied().unwrap_or_default(),
         }
@@ -1384,6 +1393,47 @@ impl Wave {
             }
         }
         last.1
+    }
+}
+
+/// The notes of a take as `Notes` draws them, as a clip draws its own: a line each, between the
+/// lowest pitch and the highest, 12 apart at least.
+struct Notes {
+    /// Where each starts and ends, as fractions of the way across, and its pitch above the lowest.
+    lines: Vec<(f32, f32, f32)>,
+    /// How many pitches its height holds.
+    shown: f32,
+    /// How far the lowest pitch's line is above its foot, in pitches.
+    under: f32,
+}
+
+impl Notes {
+    const NONE: Self = Self {
+        lines: Vec::new(),
+        shown: 12.0,
+        under: 0.0,
+    };
+
+    /// The notes of `take` across a box from where it starts to the playhead at `tick`.
+    fn of(take: &LiveNotes, tick: f64) -> Self {
+        let start = take.start.0 as f64;
+        let span = (tick - start).max(1.0);
+        let across = |at: f64| ((at - start) / span).clamp(0.0, 1.0) as f32;
+        let pitches = take.notes.iter().map(|note| note.pitch);
+        let (lowest, highest) = (pitches.clone().min().unwrap_or(0), pitches.max().unwrap_or(0));
+        let range = f32::from(highest - lowest) + 1.0;
+        let shown = range.max(12.0);
+        let lines = (take.notes.iter())
+            .map(|note| {
+                let end = note.end.map_or(tick, |end| end.0 as f64);
+                (across(note.start.0 as f64), across(end), f32::from(note.pitch - lowest))
+            })
+            .collect();
+        Self {
+            lines,
+            shown,
+            under: (shown - range) / 2.0,
+        }
     }
 }
 
@@ -1535,6 +1585,7 @@ enum PaintedShape {
     Arc(Point<Pixels>, f32, (f32, f32), f32),
     Text(Point<Pixels>, SharedString, Rc<[TextPart]>, f32, Align),
     Wave(Bounds<Pixels>, Rc<Wave>),
+    Notes(Bounds<Pixels>, Rc<Notes>),
     Path(Rc<[Point<Pixels>]>),
 }
 
@@ -1547,7 +1598,7 @@ impl PaintedShape {
             )
         };
         match self {
-            Self::Rect(bounds, ..) | Self::Wave(bounds, _) => *bounds,
+            Self::Rect(bounds, ..) | Self::Wave(bounds, _) | Self::Notes(bounds, _) => *bounds,
             Self::Path(points) => {
                 let (mut low, mut high) = (
                     point(px(f32::MAX), px(f32::MAX)),
@@ -1588,7 +1639,7 @@ impl PaintedShape {
     /// Where GPUI paints its primitives among those of the same order: quads, paths, text.
     fn batch_rank(&self) -> u8 {
         match self {
-            Self::Rect(..) | Self::Circle(..) => 0,
+            Self::Rect(..) | Self::Circle(..) | Self::Notes(..) => 0,
             Self::Line(..) | Self::Arc(..) | Self::Wave(..) | Self::Path(..) => 1,
             Self::Text(..) => 2,
         }
@@ -2275,6 +2326,13 @@ impl Extent {
                 width,
                 height,
                 ..
+            }
+            | Geometry::Notes {
+                x,
+                y,
+                width,
+                height,
+                ..
             } => extent((x, x + width), (y, y + height), (1.0, 1.0)),
             Geometry::Circle { x, y, radius } | Geometry::Arc { x, y, radius, .. } => {
                 extent((x, x), (y, y), (radius + 2.0, radius + 2.0))
@@ -2681,6 +2739,19 @@ impl Placing<'_> {
                     }),
                 }
             }
+            ShapeKind::Notes => {
+                let take = match &shape.list {
+                    Some(List::Take { name }) => self.sources.feeds.take_notes.get(name),
+                    _ => None,
+                };
+                Geometry::Notes {
+                    x,
+                    y,
+                    width: self.number(&shape.width),
+                    height: self.number(&shape.height),
+                    notes: Rc::new(take.map_or(Notes::NONE, |take| Notes::of(take, self.sources.tick))),
+                }
+            }
             ShapeKind::Path => Geometry::Path {
                 points: (shape.points.iter().flatten())
                     .map(|[x, y]| (left + self.sources.number(x), top + self.sources.number(y)))
@@ -2805,6 +2876,16 @@ fn prepaint(
             } => {
                 let size = size(px((width * across) as f32), px((height * down) as f32));
                 PaintedShape::Wave(Bounds::new(at((*x, *y)), size), wave.clone())
+            }
+            Geometry::Notes {
+                x,
+                y,
+                width,
+                height,
+                notes,
+            } => {
+                let size = size(px((width * across) as f32), px((height * down) as f32));
+                PaintedShape::Notes(Bounds::new(at((*x, *y)), size), notes.clone())
             }
             Geometry::Path { points } => {
                 PaintedShape::Path(points.iter().map(|each| at(*each)).collect())
@@ -2940,6 +3021,7 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
             }
         }
         PaintedShape::Wave(bounds, wave) => paint_wave(*bounds, wave, color, window),
+        PaintedShape::Notes(bounds, notes) => paint_notes(*bounds, notes, color, window),
         PaintedShape::Path(points) => {
             let mut path = gpui::PathBuilder::fill();
             for (index, each) in points.iter().enumerate() {
@@ -3019,6 +3101,21 @@ fn paint_shape(shape: &PaintedShape, color: Hsla, window: &mut Window, cx: &mut 
                 eprintln!("error: a label of a card: {error}");
             }
         }
+    }
+}
+
+/// Paints each note a line across `bounds`, 2 to 4 points thick, and a point long at least.
+fn paint_notes(bounds: Bounds<Pixels>, notes: &Notes, color: Hsla, window: &mut Window) {
+    let step = f32::from(bounds.size.height) / notes.shown;
+    let thick = step.clamp(2.0, 4.0);
+    let foot = f32::from(bounds.bottom()) - notes.under * step;
+    let width = f32::from(bounds.size.width);
+    for (from, to, above) in &notes.lines {
+        let middle = foot - (above + 0.5) * step;
+        let left = bounds.origin.x + px(width * from);
+        let length = px((width * (to - from)).max(1.0));
+        let line = Bounds::new(point(left, px(middle - thick / 2.0)), size(length, px(thick)));
+        window.paint_quad(gpui::fill(line, color));
     }
 }
 
@@ -3396,6 +3493,12 @@ impl Render for TypeScriptCard {
                 let recorder = self.id.child(name).ok()?;
                 let sound = &recording.take_of(&recorder)?.sound;
                 Some((name.clone(), sound.overview.read(Feeds::take)))
+            })
+            .collect();
+        self.feeds.take_notes = (uses.takes.iter())
+            .filter_map(|name| {
+                let notes = recording.notes_of(&self.id.child(name).ok()?)?;
+                Some((name.clone(), Rc::new(notes.clone())))
             })
             .collect();
         let session = self.session.read(cx);
