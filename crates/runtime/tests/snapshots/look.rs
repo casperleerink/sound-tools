@@ -209,21 +209,31 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     drop(opened);
 
     // The same track with the test plugin twice after it, Warmth and Space, Space turned off.
-    let chain = json!({ "tool": "chain", "state": { "order": ["warmth", "space"], "off": ["space"] } });
+    let chain =
+        json!({ "tool": "chain", "state": { "order": ["warmth", "space"], "off": ["space"] } });
     let effects = [
         ("track-1/chain/instance.json", chain),
         ("track-1/chain/warmth.json", plugin.clone()),
-        ("track-1/chain/space.json", plugin.clone()),
+        ("track-1/chain/space.json", plugin),
     ];
     let files: Vec<(String, String)> = files
         .into_iter()
         .filter(|(path, _)| !path.starts_with("state/song/track-1/chain/"))
-        .chain(effects.into_iter().map(|(path, record)| (format!("state/song/{path}"), record.to_string())))
+        .chain(
+            effects
+                .into_iter()
+                .map(|(path, record)| (format!("state/song/{path}"), record.to_string())),
+        )
         .collect();
     let opened = super::Opened::open(cx, &files)?;
     click(&opened, header(0.), 1, cx)?;
     // Add effect after three cards of a plugin, 200 points each and 12 apart.
-    click(&opened, point(px(ADD_EFFECT.0 + 2. * 212.), px(ADD_EFFECT.1)), 1, cx)?;
+    click(
+        &opened,
+        point(px(ADD_EFFECT.0 + 2. * 212.), px(ADD_EFFECT.1)),
+        1,
+        cx,
+    )?;
     away(&opened, cx)?;
     save(cx, opened.window.into(), "look-effect-picker")?;
     drop(opened);
@@ -407,7 +417,11 @@ fn voice(time: f64) -> f64 {
 /// Something like a guitar: a strum on every eighth at 120 bpm, each dying away.
 fn strum(time: f64) -> f64 {
     let since = time % 0.25;
-    let accent = if ((time / 0.25) as u64).is_multiple_of(2) { 1. } else { 0.7 };
+    let accent = if ((time / 0.25) as u64).is_multiple_of(2) {
+        1.
+    } else {
+        0.7
+    };
     let tone = (time * 2. * std::f64::consts::PI * 220.).sin() * 0.5 + noise(time) * 0.5;
     tone * (-since * 14.).exp() * accent * 0.8
 }
@@ -416,15 +430,24 @@ fn strum(time: f64) -> f64 {
 fn write_audio(root: &std::path::Path) -> Result<()> {
     let audio = root.join("assets/audio");
     write_wav(&audio.join("voice-take-1.wav"), 4.6, voice)?;
-    write_wav(&audio.join("voice-take-3.wav"), 14.6, |time| voice(time + 3.))?;
-    write_wav(&audio.join("voice-take-4.wav"), 6.5, |time| voice(time + 7.))?;
+    write_wav(&audio.join("voice-take-3.wav"), 14.6, |time| {
+        voice(time + 3.)
+    })?;
+    write_wav(&audio.join("voice-take-4.wav"), 6.5, |time| {
+        voice(time + 7.)
+    })?;
     write_wav(&audio.join("guitar.wav"), 24., strum)
 }
 
 /// The piece, and a voice and a guitar as audio tracks: three takes of the voice, the second
 /// trimmed and faded, through a compressor and a reverb, and the guitar in two regions of one file.
 fn audio_files() -> Vec<(String, String)> {
-    let region = |asset: &str, bar: f64, from: f64, to: Option<f64>, gain_db: f64, fades: (f64, f64)| {
+    let region = |asset: &str,
+                  bar: f64,
+                  from: f64,
+                  to: Option<f64>,
+                  gain_db: f64,
+                  fades: (f64, f64)| {
         json!({ "tool": "region", "state": {
             "asset": asset, "start": (bar * BAR as f64) as u64, "file_start_seconds": from,
             "file_end_seconds": to, "gain_db": gain_db, "fade_in_ms": fades.0, "fade_out_ms": fades.1,
@@ -432,9 +455,18 @@ fn audio_files() -> Vec<(String, String)> {
     };
     let tape = |title: &str, colour: &str, order: &[&str]| {
         [
-            ("instance.json", json!({ "tool": "tape", "state": { "colour": colour, "title": title } })),
-            ("rec.json", json!({ "tool": "recorder", "state": { "channels": [0] } })),
-            ("chain/instance.json", json!({ "tool": "chain", "state": { "order": order } })),
+            (
+                "instance.json",
+                json!({ "tool": "tape", "state": { "colour": colour, "title": title } }),
+            ),
+            (
+                "rec.json",
+                json!({ "tool": "recorder", "state": { "channels": [0] } }),
+            ),
+            (
+                "chain/instance.json",
+                json!({ "tool": "chain", "state": { "order": order } }),
+            ),
             ("mix.json", json!({ "tool": "fader", "state": {} })),
         ]
     };
@@ -455,6 +487,9 @@ fn audio_files() -> Vec<(String, String)> {
         ("audio-guitar/take-1.json".into(), region("guitar.wav", 8., 16., None, 0., (0., 0.))),
         ("instance.json".into(), json!({ "tool": "song", "state": { "order": ["track-1", "bass", "melody", "audio-voice", "audio-guitar"] } })),
     ]);
-    let more: Vec<(&str, Value)> = more.iter().map(|(path, record)| (path.as_str(), record.clone())).collect();
+    let more: Vec<(&str, Value)> = more
+        .iter()
+        .map(|(path, record)| (path.as_str(), record.clone()))
+        .collect();
     piece_files(&more)
 }

@@ -5,8 +5,8 @@
 //! expand Start and End.
 
 use gpui::{
-    AnyElement, App, Context, Entity, FontWeight, Point, SharedString, Window, div, point, prelude::*,
-    px,
+    AnyElement, App, Context, Entity, FontWeight, Point, SharedString, Window, div, point,
+    prelude::*, px,
 };
 use serde_json::Value;
 use sound_core::{Clock, Frames, InstanceId, ProjectEvent, Ticks};
@@ -190,7 +190,13 @@ impl RegionCard {
         Some(((seconds / step).round() * step) as f32)
     }
 
-    fn change_start(&mut self, change: ValueChange, file: Info, clock: &Clock, cx: &mut Context<Self>) {
+    fn change_start(
+        &mut self,
+        change: ValueChange,
+        file: Info,
+        clock: &Clock,
+        cx: &mut Context<Self>,
+    ) {
         let live = self.record(cx);
         let origin = match change {
             ValueChange::Drag(_) => {
@@ -234,10 +240,18 @@ impl RegionCard {
 
     /// The gain line with a fade at each end, and its three handles: the fades at its corners,
     /// the gain hollow in the middle.
-    fn gain_line(&self, state: &Record, file: &Info, cx: &mut Context<Self>) -> (Vec<Point<f32>>, Vec<Handle>) {
+    fn gain_line(
+        &self,
+        state: &Record,
+        file: &Info,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Point<f32>>, Vec<Handle>) {
         let length = file.seconds();
         let ms = |seconds: f64| (seconds * 1000.) as f32;
-        let (start, end) = (state.file_start_seconds, state.file_end_seconds.unwrap_or(length));
+        let (start, end) = (
+            state.file_start_seconds,
+            state.file_end_seconds.unwrap_or(length),
+        );
         let across = |seconds: f64| place(seconds as f32, length as f32);
         let up = KnobRange::linear(GAIN_DB.0, GAIN_DB.1).position(state.gain_db);
         let fade_in_end = start + f64::from(state.fade_in_ms) / 1000.;
@@ -248,27 +262,52 @@ impl RegionCard {
             point(across(fade_out_start), up),
             point(across(end), 0.),
         ];
-        let gain_axis = Axis::new(KnobRange::linear(GAIN_DB.0, GAIN_DB.1), state.gain_db.max(GAIN_DB.0), 0.);
+        let gain_axis = Axis::new(
+            KnobRange::linear(GAIN_DB.0, GAIN_DB.1),
+            state.gain_db.max(GAIN_DB.0),
+            0.,
+        );
         let fade_in_range = KnobRange::linear(-ms(start), ms(length - start));
         let fade_out_range = KnobRange::linear(-ms(end), ms(length - end));
         let (file_in, file_out) = (*file, *file);
-        let fade_in_handle = Handle::new("fade-in", Axis::new(fade_in_range, state.fade_in_ms, 0.), Axis::fixed(up))
-            .on_change(weak_callback(cx, move |card, change: ValueChange<Point<f32>>, cx| {
-                let set = |region: &mut Record, ms: f32| region.fade_in_ms = fade_in(region, &file_in, ms);
+        let fade_in_handle = Handle::new(
+            "fade-in",
+            Axis::new(fade_in_range, state.fade_in_ms, 0.),
+            Axis::fixed(up),
+        )
+        .on_change(weak_callback(
+            cx,
+            move |card, change: ValueChange<Point<f32>>, cx| {
+                let set = |region: &mut Record, ms: f32| {
+                    region.fade_in_ms = fade_in(region, &file_in, ms)
+                };
                 card.change(FADE_IN_LABEL, change.map(|at| at.x), set, cx);
-            }));
-        let fade_out_handle = Handle::new("fade-out", Axis::new(fade_out_range, -state.fade_out_ms, 0.), Axis::fixed(up))
-            .on_change(weak_callback(cx, move |card, change: ValueChange<Point<f32>>, cx| {
-                let set = |region: &mut Record, ms: f32| region.fade_out_ms = fade_out(region, &file_out, -ms);
+            },
+        ));
+        let fade_out_handle = Handle::new(
+            "fade-out",
+            Axis::new(fade_out_range, -state.fade_out_ms, 0.),
+            Axis::fixed(up),
+        )
+        .on_change(weak_callback(
+            cx,
+            move |card, change: ValueChange<Point<f32>>, cx| {
+                let set = |region: &mut Record, ms: f32| {
+                    region.fade_out_ms = fade_out(region, &file_out, -ms)
+                };
                 card.change(FADE_OUT_LABEL, change.map(|at| at.x), set, cx);
-            }));
+            },
+        ));
         let middle = (across(fade_in_end) + across(fade_out_start)) / 2.;
         let gain_handle = Handle::new("gain", Axis::fixed(middle), gain_axis)
             .hollow(true)
-            .on_change(weak_callback(cx, |card, change: ValueChange<Point<f32>>, cx| {
-                let set = |region: &mut Record, db: f32| region.gain_db = db;
-                card.change(GAIN_LABEL, change.map(|at| at.y), set, cx);
-            }));
+            .on_change(weak_callback(
+                cx,
+                |card, change: ValueChange<Point<f32>>, cx| {
+                    let set = |region: &mut Record, db: f32| region.gain_db = db;
+                    card.change(GAIN_LABEL, change.map(|at| at.y), set, cx);
+                },
+            ));
         (curve, vec![fade_in_handle, gain_handle, fade_out_handle])
     }
 
@@ -286,20 +325,21 @@ impl RegionCard {
             seconds_label(length)
         );
         let file = *file;
-        let display = WaveformDisplay::new("region-display", DISPLAY_WIDTH, overview, length as f32)
-            .trim(state.file_start_seconds as f32, end as f32)
-            .on_start(weak_callback(cx, move |card, change: ValueChange, cx| {
-                card.change_start(change, file, &clock, cx);
-            }))
-            .on_end(weak_callback(cx, move |card, change: ValueChange, cx| {
-                let set = |region: &mut Record, seconds: f32| {
-                    *region = with_file_end(region, &file, f64::from(seconds));
-                };
-                card.change(TRIM_LABEL, change, set, cx);
-            }))
-            .playhead(self.playing_at)
-            .curve(curve)
-            .caption(caption);
+        let display =
+            WaveformDisplay::new("region-display", DISPLAY_WIDTH, overview, length as f32)
+                .trim(state.file_start_seconds as f32, end as f32)
+                .on_start(weak_callback(cx, move |card, change: ValueChange, cx| {
+                    card.change_start(change, file, &clock, cx);
+                }))
+                .on_end(weak_callback(cx, move |card, change: ValueChange, cx| {
+                    let set = |region: &mut Record, seconds: f32| {
+                        *region = with_file_end(region, &file, f64::from(seconds));
+                    };
+                    card.change(TRIM_LABEL, change, set, cx);
+                }))
+                .playhead(self.playing_at)
+                .curve(curve)
+                .caption(caption);
         handles.into_iter().fold(display, WaveformDisplay::handle)
     }
 
@@ -326,7 +366,8 @@ impl RegionCard {
             .label("Fade in")
             .readout(time_label(state.fade_in_ms))
             .on_change(weak_callback(cx, move |card, change, cx| {
-                let set = |region: &mut Record, ms| region.fade_in_ms = fade_in(region, &file_in, ms);
+                let set =
+                    |region: &mut Record, ms| region.fade_in_ms = fade_in(region, &file_in, ms);
                 card.change(FADE_IN_LABEL, change, set, cx);
             }));
         let fade_out_knob = Knob::new("fade-out")
@@ -336,7 +377,8 @@ impl RegionCard {
             .label("Fade out")
             .readout(time_label(state.fade_out_ms))
             .on_change(weak_callback(cx, move |card, change, cx| {
-                let set = |region: &mut Record, ms| region.fade_out_ms = fade_out(region, &file_out, ms);
+                let set =
+                    |region: &mut Record, ms| region.fade_out_ms = fade_out(region, &file_out, ms);
                 card.change(FADE_OUT_LABEL, change, set, cx);
             }));
         let start = Knob::new("start")
@@ -406,7 +448,12 @@ impl Render for RegionCard {
         };
         let file = match says {
             Ok(file) => file,
-            Err(says) => return card.w(px(PLAIN_CARD_WIDTH)).child(quiet(says)).into_any_element(),
+            Err(says) => {
+                return card
+                    .w(px(PLAIN_CARD_WIDTH))
+                    .child(quiet(says))
+                    .into_any_element();
+            }
         };
         let display = self.display(&state, &file, cx);
         let [gain, fade_in_knob, fade_out_knob, start, end] = self.knobs(&state, &file, cx);

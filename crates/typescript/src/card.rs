@@ -21,8 +21,8 @@ use sound_core::{InstanceId, ProjectEvent, ValueRange};
 use sound_media::AudioAsset;
 use sound_ui::components::button::{Button, ButtonSize, ButtonVariant};
 use sound_ui::components::device_card::{CardFrame, PLAIN_CARD_WIDTH};
-use sound_ui::components::dropdown_menu::{MENU_WIDTH, 
-    DropdownMenu, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
+use sound_ui::components::dropdown_menu::{
+    DropdownMenu, MENU_WIDTH, MenuEntry, MenuGroup, MenuItem, MenuPicked, Trigger,
 };
 use sound_ui::components::gesture::ValueChange;
 use sound_ui::components::icon::Icon;
@@ -201,7 +201,10 @@ struct Carried(String);
 
 /// Where a menu hangs under a node laid out at `bounds`: from its bottom left, as a select's list.
 fn under(bounds: Bounds<Pixels>) -> Point<Pixels> {
-    point(bounds.origin.x, bounds.origin.y + bounds.size.height + px(6.))
+    point(
+        bounds.origin.x,
+        bounds.origin.y + bounds.size.height + px(6.),
+    )
 }
 
 /// Takes no room and writes where its parent, the node `id`, was laid out into `placed`.
@@ -338,7 +341,8 @@ fn add_modifiers(value: &mut Value, modifiers: Modifiers) {
 impl TypeScriptCard {
     /// The next menu hangs under the node `id`, as a select's list does, when it was laid out.
     fn hang_menus_under(&self, id: u64) {
-        self.anchor.set(self.placed.borrow().get(&id).copied().map(under));
+        self.anchor
+            .set(self.placed.borrow().get(&id).copied().map(under));
     }
 
     pub(crate) fn new(
