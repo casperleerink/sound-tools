@@ -50,7 +50,7 @@ type Request =
   | ({ type: "clock" } & Clock)
   | ({ type: "song" } & Song)
   /** A press, a click, or a drag that ended or moved, on a node, with what its handler hears. */
-  | { type: "event"; card: number; node: number; kind: "press" | "end" | "click" | "commit" | "drop" | "power" | "close" | "title" | "sidechain"; payload: unknown; time: number }
+  | { type: "event"; card: number; node: number; kind: "press" | "end" | "click" | "commit" | "cancel" | "drop" | "power" | "close" | "title" | "sidechain"; payload: unknown; time: number }
   | ({ type: "frame"; dt: number; instances: Played[] } & Clock)
   | ({ type: "key"; instance: Played; key: PlainKey; down: boolean; shift: boolean; alt: boolean; cmd: boolean; ctrl: boolean } & Clock)
   | ({ type: "notes"; instance: Played; events: HeardEvent[] } & Clock)
@@ -1150,7 +1150,7 @@ function mount(request: Extract<Request, { type: "mount" }>) {
   try {
     const context = cardContext(instance, spec, known, { size });
     const draw = drawerOf(spec);
-    const root = sdk.host.mount(card, () => draw(context), { state: context.state, fields: spec.state, update: context.update });
+    const root = sdk.host.mount(card, () => draw(context), { state: context.state, children: context.children, fields: spec.state, update: context.update, openMenu: context.openMenu });
     cards.set(card, { root, instance, tool: spec.name, size: room });
     mounting.add(card);
   } catch (error) {
@@ -1215,7 +1215,7 @@ function draw(spec: Spec): unknown {
   }
   const known: Stores = { tool: spec.name, state: structuredClone(state), children: [], watches: {} };
   const drawn = { ...context, state: sdk.host.store(known.state, false), size: sdk.host.store({ ...CHECKED_ROOM }, false) };
-  const root = sdk.host.mount(-1, () => drawerOf(spec)(drawn), { state: drawn.state as never, fields: spec.state, update() {} });
+  const root = sdk.host.mount(-1, () => drawerOf(spec)(drawn), { state: drawn.state as never, children: [], fields: spec.state, update() {}, openMenu: performs.openMenu });
   const taken = sdk.host.takeOps(root);
   root.dispose();
   if ("error" in taken) {

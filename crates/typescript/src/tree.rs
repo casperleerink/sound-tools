@@ -73,6 +73,8 @@ props! {
         /// It takes the keys when it is made.
         focus: bool,
         on_commit: bool,
+        /// Escape tells the view.
+        on_cancel: bool,
     }
 }
 

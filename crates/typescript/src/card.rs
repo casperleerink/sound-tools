@@ -640,7 +640,8 @@ impl TypeScriptCard {
         self.event(node, EventKind::Commit, json!({ "text": text }), cx);
     }
 
-    /// Shows in the field `node` what it last showed or told, and gives the keys back.
+    /// Shows in the field `node` what it last showed or told, gives the keys back and tells
+    /// its code.
     fn revert(&mut self, node: u64, window: &mut Window, cx: &mut Context<Self>) {
         let Some((input, shown)) = self.inputs.get(&node) else {
             return;
@@ -648,6 +649,7 @@ impl TypeScriptCard {
         let shown = shown.clone();
         input.update(cx, |input, cx| input.set_text(shown, cx));
         window.focus(&self.focus, cx);
+        self.event(node, EventKind::Cancel, json!({}), cx);
     }
 
     /// The card of the instance a node shows: the one it had, or a new one when the instance,
