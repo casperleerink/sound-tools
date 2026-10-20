@@ -672,7 +672,7 @@ export const song = tool({
         const owner = children.find((child) => child.name === each.name);
         if (owner?.tool !== "track") return;
         const lane = freeName(owner.children.map((child) => child.name), `lane-${nameFrom(target)}`) as `lane-${string}`;
-        owner.children.push({ name: lane, tool: "lane", state: { points: [{ tick: 0, value }], scale: chosen.number.scale === "log" ? "log" : "linear" } });
+        owner.children.push({ name: lane, tool: "lane", state: { points: [{ tick: 0, value }], scale: chosen.number.scale } });
         owner.state.automation = [...owner.state.automation, { lane, target }];
       });
       memory.ranges = { ...memory.ranges, [`${each.name}/${target}`]: chosen.number };

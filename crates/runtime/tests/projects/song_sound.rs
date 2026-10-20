@@ -116,3 +116,29 @@ fn an_audio_track_sends_into_a_return() {
     let sent = play(&mut harness, BAR);
     assert!(loudest(&sent) > 1e-3, "{}", loudest(&sent));
 }
+
+/// A volume lane of scale `"fader"` moves along the fader's travel, as main's lanes moved a
+/// volume and as the lane is drawn: halfway from -100 dB to 0 dB is about -18.6 dB, not -50.
+#[test]
+fn a_volume_lane_moves_along_the_faders_travel() {
+    let automated = r#"{"tool": "track", "state": {"automation": [{"lane": "lane-vol", "target": "mix.gain_db"}]}}"#;
+    let render = |lane: &str| {
+        let mut harness = song(&[
+            ("state/song/t00/instance.json", automated),
+            ("state/song/t00/lane-vol.json", lane),
+            ("state/song/t01/mix.json", SILENT),
+            ("state/song/ret-a/mix.json", SILENT),
+        ]);
+        play(&mut harness, BAR)
+    };
+    let steady = render(r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": 0}]}}"#);
+    let fade = render(
+        r#"{"tool": "lane", "state": {"points": [{"tick": 0, "value": -100}, {"tick": 3840, "value": 0}], "scale": "fader"}}"#,
+    );
+    // Half a bar in, over 10 ms.
+    let middle = 2 * (BAR / 2 - 240)..2 * (BAR / 2 + 240);
+    let energy = |samples: &[f32]| samples.iter().map(|sample| sample * sample).sum::<f32>();
+    let ratio = (energy(&fade[middle.clone()]) / energy(&steady[middle])).sqrt();
+    let decibels = 20.0 * ratio.log10();
+    assert!((-20.0..-17.0).contains(&decibels), "{decibels} dB");
+}

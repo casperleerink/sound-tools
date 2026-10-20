@@ -8,8 +8,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sound_core::{
-    BehaviourContext, BehaviourError, EventOutput, JsonTool, JsonToolDoc, OutputEndpoint, Ports,
-    PrepareConfig, ProcessContext, Processor, State, ToolSchema,
+    BehaviourContext, BehaviourError, EventOutput, FADER_TOP_DB, JsonTool, JsonToolDoc,
+    OutputEndpoint, Ports, PrepareConfig, ProcessContext, Processor, State, ToolSchema,
 };
 use sound_notes::{Point, check_order};
 use sound_signals::Number;
@@ -29,8 +29,8 @@ struct Record {
     /// after the last the last.
     points: Vec<Point<f32>>,
     /// How the number moves between two points: `"linear"` in a straight line, `"log"` by equal
-    /// ratios in equal times, as a frequency or a time sounds even. A log lane's values are
-    /// above 0.
+    /// ratios in equal times, as a frequency or a time sounds even, `"fader"` along a fader's
+    /// travel, as a volume in decibels moves. A log lane's values are above 0.
     #[serde(default)]
     scale: Scale,
 }
@@ -41,6 +41,7 @@ pub(crate) enum Scale {
     #[default]
     Linear,
     Log,
+    Fader,
 }
 
 impl Scale {
@@ -49,6 +50,9 @@ impl Scale {
         match self {
             Self::Linear => value,
             Self::Log => value.ln(),
+            Self::Fader => {
+                sound_core::Scale::Fader.position(f32::NEG_INFINITY, FADER_TOP_DB, value)
+            }
         }
     }
 
@@ -57,6 +61,9 @@ impl Scale {
         match self {
             Self::Linear => position,
             Self::Log => position.exp(),
+            Self::Fader => {
+                sound_core::Scale::Fader.value(f32::NEG_INFINITY, FADER_TOP_DB, position)
+            }
         }
     }
 }
@@ -98,7 +105,7 @@ fn record(state: &Value) -> Result<Record, String> {
     }
     check_order("state.points", &record.points)?;
     let lowest = match record.scale {
-        Scale::Linear => f32::NEG_INFINITY,
+        Scale::Linear | Scale::Fader => f32::NEG_INFINITY,
         Scale::Log => 0.0,
     };
     let mut points = record.points.iter().enumerate();
@@ -106,7 +113,7 @@ fn record(state: &Value) -> Result<Record, String> {
         points.find(|(_, point)| !point.value.is_finite() || point.value <= lowest)
     {
         let rule = match record.scale {
-            Scale::Linear => "a number",
+            Scale::Linear | Scale::Fader => "a number",
             Scale::Log => "a number above 0 in a lane of scale \"log\"",
         };
         return Err(format!(
