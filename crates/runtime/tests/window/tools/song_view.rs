@@ -1,7 +1,8 @@
 //! The song of the DAW template (`templates/daw`) as a composer uses it: tracks added,
 //! coloured, moved and deleted; a clip renamed, copied, pasted and nudged; automation lanes
 //! added and their points edited; the note editor's lanes and grid; the ruler's tempo changes,
-//! sections and repeat; a region chosen and deleted. Each gesture is one undo step.
+//! sections and repeat; a region chosen and deleted; the returns over the master and a track's
+//! sends. Each gesture is one undo step.
 
 use gpui::{
     Bounds, ExternalPaths, FileDropEvent, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
@@ -1072,4 +1073,64 @@ fn the_mixer_and_a_track_panel_take_turns_under_the_timeline(cx: &mut TestAppCon
     window.wait_for_bun();
     assert!(window.find("div-strip-name-t01").is_none());
     assert!(window.find("button-close-panel").is_none());
+}
+
+#[gpui::test]
+fn a_return_shows_over_the_master_and_its_panel_takes_effects_and_pre_fader(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    // Folded, the song's two returns are one row; it opens on a click.
+    assert!(window.find("div-return-ret-a").is_none());
+    let header = window.until_found("div-returns-header");
+    window.click(header);
+    let row = window.until_found("div-return-ret-a");
+    window.click(row);
+    // Its panel: no solo, where its sends take the sound, and its chain.
+    window.until_found("toggle-pre-fader-ret-a");
+    assert!(window.find("toggle-panel-solo-ret-a").is_none());
+    let pre = window.until_found("toggle-pre-fader-ret-a");
+    window.click(pre);
+    window.until("the return sent before the faders", |window| {
+        window.record("song/ret-a")["pre_fader"] == true
+    });
+    window.after_the_runs();
+    assert_eq!(window.undo_label().as_deref(), Some("Send before the faders"));
+    assert!(window.find("div-add-effect").is_some());
+
+    // Right-click: its menu colours it.
+    let row = window.until_found("div-return-ret-b");
+    window.click_with(row, MouseButton::Right);
+    window.pick("menu-1");
+    window.pick("menu-2");
+    window.until("the return coloured", |window| {
+        window.record("song/ret-b")["colour"] == "mauve"
+    });
+}
+
+#[gpui::test]
+fn a_track_panel_ends_with_a_knob_for_each_return(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 2, 2);
+    window.wait_for_bun();
+    let name = window.until_found("div-name-t00");
+    window.click(name);
+    window.until_found("div-sends");
+    window.until_found("space-knob-t00/send-ret-a.gain_db");
+    // The mixer's strip of a return shows the return's panel.
+    let toggle = window.until_found("button-mixer-toggle");
+    window.click(toggle);
+    let strip = window.until_found("div-strip-name-ret-a");
+    window.click(strip);
+    window.until_found("toggle-pre-fader-ret-a");
+}
+
+#[gpui::test]
+fn a_new_return_opens_the_returns(cx: &mut TestAppContext) {
+    let mut window = open_song(cx, 1, 1);
+    window.wait_for_bun();
+    let add = window.until_found("button-add-return");
+    window.click(add);
+    window.until("the return added", |window| window.has("song/ret-c"));
+    window.until_found("div-return-ret-c");
+    window.after_the_runs();
+    assert_eq!(window.record("song/ret-c")["title"], "Return 3");
 }

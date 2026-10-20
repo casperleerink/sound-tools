@@ -8,6 +8,8 @@
 //! - `look-track-panel.png`: the panel of the bass, with a reverb after its synth.
 //! - `look-lanes.png`: the lanes of the bass: its volume and the cutoff of a filter.
 //! - `look-master.png`: the master's panel, its limiter pushed 18 dB, four seconds in.
+//! - `look-returns.png`, `look-sends.png`: the returns Space, a reverb, and Echo, open over the
+//!   master with the panel of Space; folded, with the panel of the bass and its sends.
 //! - `look-picker.png`, `look-effect-picker.png`: the panel of an empty track whose instrument is
 //!   the test plugin, the menu of its card's title open, and the menu of Add effect.
 //! - `look-audio.png`: the piece with a voice and a guitar as audio, playing at 6.3, the second
@@ -288,6 +290,36 @@ pub(crate) fn snapshots(cx: &mut HeadlessAppContext, save: &super::Save) -> Resu
     // The row under the lanes of the bass adds one: its numbers by device.
     click(&opened, point(px(60.), px(TOP + 4. * ROW + 20.)), 1, cx)?;
     save(cx, opened.window.into(), "look-add-lane")?;
+    drop(opened);
+
+    let bus = |title: &str, colour: &str| json!({ "tool": "bus", "state": { "title": title, "colour": colour } });
+    let send = |gain_db: f32| json!({ "tool": "fader", "state": { "gain_db": gain_db } });
+    let fader = json!({ "tool": "fader", "state": {} });
+    let reverb = json!({ "tool": "reverb", "state": { "decay_seconds": 2.4, "size": 0.6, "mix": 1.0 } });
+    let opened = open(
+        cx,
+        &[
+            ("ret-a/instance.json", bus("Space", "teal")),
+            ("ret-a/mix.json", fader.clone()),
+            ("ret-a/chain/instance.json", json!({ "tool": "chain", "state": { "order": ["reverb"] } })),
+            ("ret-a/chain/reverb.json", reverb),
+            ("ret-b/instance.json", bus("Echo", "mauve")),
+            ("ret-b/mix.json", fader),
+            ("ret-b/chain/instance.json", json!({ "tool": "chain", "state": {} })),
+            ("bass/send-ret-a.json", send(-12.)),
+            ("bass/send-ret-b.json", send(-18.)),
+        ],
+    )?;
+    let bottom = super::WINDOW_HEIGHT - 40.;
+    click(&opened, header(1.), 1, cx)?;
+    away(&opened, cx)?;
+    save(cx, opened.window.into(), "look-sends")?;
+    // The returns' row over the master row, open, and Space's row in it.
+    let panel = 216. + 1.;
+    click(&opened, point(px(60.), px(bottom - panel - 16.)), 1, cx)?;
+    click(&opened, point(px(60.), px(bottom - panel - 60.)), 1, cx)?;
+    away(&opened, cx)?;
+    save(cx, opened.window.into(), "look-returns")?;
     drop(opened);
 
     // Track 1 alone, its instrument the test plugin.

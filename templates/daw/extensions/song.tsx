@@ -83,6 +83,8 @@ type Memory = {
   editing: Editing;
   /** The range the ruler shows to repeat, while the clock does not repeat. */
   repeatRange: { from: number; to: number };
+  /** Whether the returns show a row each, or fold to one. */
+  returnsOpen: boolean;
 } & EditorMemory;
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
@@ -205,7 +207,7 @@ export const song = tool({
   children: parts,
   memory: (): Memory => ({
     selected: new Set(), region: null, below: null, armed: new Set(), recording: null, track: null, renaming: null, renamingClip: null,
-    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT },
+    clipboard: null, lanes: new Set(), ranges: {}, editing: null, repeatRange: { from: 0, to: 4 * 4 * BEAT }, returnsOpen: false,
     notes: new Set(), snap: BEAT / 4, lane: "velocity", length: BEAT / 2, copied: null,
   }),
   keys: ["delete", "backspace", "cmd-a", "cmd-c", "cmd-x", "cmd-v", "cmd-d", "left", "right", "up", "down", "escape"],
@@ -296,6 +298,8 @@ export const song = tool({
     );
     const tracks = () => rows().filter((each): each is TrackRow => each.tool === "track");
     const returns = () => children.filter((child) => child.tool === "bus");
+    /** What has a panel: the tracks and the returns. */
+    const strips = () => [...rows(), ...returns()];
     const lanesOf = (each: Child) =>
       each.tool === "track"
         ? each.state.automation.flatMap(({ lane, target }) =>
@@ -541,7 +545,7 @@ export const song = tool({
     };
     // A text field holds any text: the colour is checked here, a colour of the theme or `#rrggbb`.
     const colourOf = (each: Child): Color => {
-      const colour = each.tool === "track" || each.tool === "tape" ? each.state.colour : undefined;
+      const colour = each.tool === "track" || each.tool === "tape" || each.tool === "bus" ? each.state.colour : undefined;
       const named = PALETTE.find((each) => each.colour === colour)?.colour;
       return named ?? (colour?.startsWith("#") ? (colour as Color) : "blue");
     };
@@ -554,7 +558,7 @@ export const song = tool({
       });
     /** Adds a track of `kind`: 0 an instrument track, 1 an audio track, 2 a return; the menu asks without one. */
     const addTrack = async (kind?: number) => {
-      const picked = kind ?? (await openMenu([{ label: "Instrument track" }, { label: "Audio track" }, { label: "Return" }]));
+      const picked = kind ?? (await openMenu([{ label: "Instrument track" }, { label: "Audio track" }, { label: "Return track" }]));
       if (picked === null) return;
       const names = children.map((child) => child.name);
       const colour = PALETTE[rows().length % PALETTE.length]!.colour;
@@ -577,12 +581,13 @@ export const song = tool({
           part.state.order = [...rows().map((each) => each.name), name];
         } else {
           const name = [..."abcdefghijklmnopqrstuvwxyz"].map((letter) => `ret-${letter}` as const).find((each) => !names.includes(each)) ?? (freeName(names, "ret-z") as `ret-${string}`);
-          part.children.push({ name, tool: bus, state: { title: `Return ${returns().length + 1}` }, children: [{ name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }] });
+          part.children.push({ name, tool: bus, state: { title: `Return ${returns().length + 1}`, colour: PALETTE[(returns().length + 3) % PALETTE.length]!.colour }, children: [{ name: "chain", tool: chain, state: {} }, { name: "mix", tool: "fader", state: {} }] });
           for (const each of part.children) {
             if (each.tool === "track") each.children.push({ name: `send-${name}` as const, tool: "fader", state: { gain_db: "-inf" } });
           }
         }
       });
+      if (picked === 2) memory.returnsOpen = true;
     };
     const deleteTrack = (name: string) => {
       update("Delete a track", ({ state, children }) => {
@@ -610,7 +615,7 @@ export const song = tool({
         if (colour !== null) {
           update("Colour a track", ({ children }) => {
             const owner = children.find((child) => child.name === each.name);
-            if (owner?.tool === "track" || owner?.tool === "tape") owner.state.colour = PALETTE[colour]!.colour;
+            if (owner?.tool === "track" || owner?.tool === "tape" || owner?.tool === "bus") owner.state.colour = PALETTE[colour]!.colour;
           });
         }
       } else if (picked === 2) showLanes(each, !lanesShown);
@@ -702,11 +707,15 @@ export const song = tool({
       return picked === null ? undefined : offered[picked];
     };
 
-    /** The devices of the track `name`: its instrument, which can be changed, its filter and the effects of its chain, which can be added, turned off, removed and dragged into another order. */
+    /**
+     * The devices of the track or return `name`: an instrument, which can be changed, or the card
+     * of an audio track's chosen region, then the effects of its chain, which can be added, turned
+     * off, removed and dragged into another order, and last a track's sends.
+     */
     const Rack = ({ name }: { name: string }) => {
       const chainOf = () => {
-        const row = rows().find((each) => each.name === name);
-        const effects = row?.tool === "track" || row?.tool === "tape" ? row.children.find((child) => child.name === "chain") : undefined;
+        const row = strips().find((each) => each.name === name);
+        const effects = row?.tool === "track" || row?.tool === "tape" || row?.tool === "bus" ? row.children.find((child) => child.name === "chain") : undefined;
         return effects?.tool === "chain" ? effects : undefined;
       };
       const order = () => chainOf()?.state.order ?? [];
@@ -715,7 +724,7 @@ export const song = tool({
       const editChain = (label: string, change: (effects: { state: { order: string[]; off: string[] }; children: { name: string }[] }) => void) =>
         update(label, ({ children }) => {
           const row = children.find((child) => child.name === name);
-          const effects = row?.tool === "track" || row?.tool === "tape" ? row.children.find((child) => child.name === "chain") : undefined;
+          const effects = row?.tool === "track" || row?.tool === "tape" || row?.tool === "bus" ? row.children.find((child) => child.name === "chain") : undefined;
           if (effects?.tool === "chain") change(effects);
         });
       const addEffect = async () => {
@@ -748,7 +757,8 @@ export const song = tool({
           rest.splice(rest.indexOf(before), 0, moved);
           effects.state.order = rest;
         });
-      const row = () => rows().find((each) => each.name === name);
+      const row = () => strips().find((each) => each.name === name);
+      const isReturn = () => row()?.tool === "bus";
       return (
         <div style={{ height: RACK, direction: "row", keep: true }}>
           <div style={{ width: HEADER - 1, keep: true, paddingTop: 12 }}>
@@ -766,9 +776,12 @@ export const song = tool({
                 <Knob value={`${name}/mix.pan`} label="Pan" min={-1} max={1} default={0} unit="pan" bipolar />
                 <div style={{ direction: "row", gap: 4, paddingTop: 6 }}>
                   <Toggle key={`panel-mute-${name}`} label="M" on={() => (row() ? muted(row()!) : false)} color="peach" onPress={() => toggleMute(name)} />
-                  <Toggle key={`panel-solo-${name}`} label="S" on={() => state.solo.includes(name)} color="yellow" onPress={() => toggleSolo(name)} />
+                  <Show when={() => !isReturn()}>
+                    {() => <Toggle key={`panel-solo-${name}`} label="S" on={() => state.solo.includes(name)} color="yellow" onPress={() => toggleSolo(name)} />}
+                  </Show>
                 </div>
                 <Show when={() => row()?.tool === "tape"}>{() => <div style={{ paddingTop: 14 }}><InputSelect name={name} /></div>}</Show>
+                <Show when={isReturn}>{() => <div style={{ paddingTop: 14 }}><PreFader name={name} /></div>}</Show>
               </div>
             </div>
           </div>
@@ -783,9 +796,9 @@ export const song = tool({
                 }}
                 <div style={{ width: 1, height: CARD, background: "alpha/6", keep: true }} />
               </>
-            ) : (
+            ) : row()?.tool === "track" ? (
               <DeviceCard path={`${name}/synth`} onTitle={() => replace("notes", `${name}/synth`, "Change the instrument")} />
-            )
+            ) : null
           }
           <For each={order}>
             {(effect) => (
@@ -799,6 +812,14 @@ export const song = tool({
             <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Add effect</div>
             <Icon name="chevron-down" size={14} color="gray-700" />
           </div>
+          <Show when={() => row()?.tool === "track" && returns().length > 0}>
+            {() => (
+              <>
+                <div style={{ width: 1, height: CARD, background: "alpha/6", keep: true }} />
+                <Sends name={name} />
+              </>
+            )}
+          </Show>
         </div>
         </div>
       );
@@ -901,7 +922,7 @@ export const song = tool({
             {each && each.tool !== "bus" ? <Toggle key={`strip-solo-${each.name}`} label="S" on={() => state.solo.includes(each.name)} color="yellow" onPress={() => toggleSolo(each.name)} /> : null}
           </div>
           <div key={each ? `strip-name-${each.name}` : "strip-name-master"} style={{ width: STRIP - 8, fontSize: 12, color: "gray-800", align: "center", truncate: true }}
-            onPress={() => (each && each.tool !== "bus" ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
+            onPress={() => (each ? openPanel(each.name) : (memory.below = { kind: "master" }))}>
             {() => (each ? titleOf(each) : "Master")}
           </div>
         </div>
@@ -922,6 +943,119 @@ export const song = tool({
         <div style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 12, paddingBottom: 8, keep: true }}>
           <Strip master />
         </div>
+      </div>
+    );
+
+    /** A track's sends: a knob for each return, two to a column, after its effects as a send takes the sound after them. */
+    const Sends = ({ name }: { name: string }) => {
+      const sends = () => {
+        const row = rows().find((each) => each.name === name);
+        return row ? sendsOf(row) : [];
+      };
+      const columns = memo(() => Array.from({ length: Math.ceil(sends().length / 2) }, (_, index) => index));
+      const returnTitle = (send: string) =>
+        untrack(() => {
+          const target = returns().find((one) => `send-${one.name}` === send);
+          return target ? titleOf(target) : send.replace(/^send-/, "");
+        });
+      return (
+        <div key="sends" style={{ height: CARD, radius: 10, background: "gray-200", borderColor: "alpha/6", borderWidth: 1, paddingX: 15, keep: true }}>
+          <div style={{ height: 32, direction: "row", align: "center" }}>
+            <div style={{ fontSize: 14, weight: "medium", color: "gray-950" }}>Sends</div>
+          </div>
+          <div style={{ direction: "row", gap: 8 }}>
+            <For each={columns}>
+              {(column) => (
+                <div>
+                  <For each={() => sends().slice(column * 2, column * 2 + 2)}>
+                    {(send) => <Knob value={`${name}/${send}.gain_db`} label={returnTitle(send)} min={-60} max={6} default={0} unit="db" />}
+                  </For>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      );
+    };
+    /** Whether the sends into the return `name` take the sound before the tracks' faders. */
+    const PreFader = ({ name }: { name: string }) => {
+      const on = () => {
+        const back = returns().find((each) => each.name === name);
+        return back?.tool === "bus" && back.state.pre_fader;
+      };
+      return (
+        <Toggle key={`pre-fader-${name}`} label="Pre fader" on={on}
+          onPress={() =>
+            update(on() ? "Send after the faders" : "Send before the faders", ({ children }) => {
+              const back = children.find((child) => child.name === name);
+              if (back?.tool === "bus") back.state.pre_fader = !back.state.pre_fader;
+            })
+          } />
+      );
+    };
+    // As tall as the master row; four and a half show before they scroll, which says there are more.
+    const RETURN_ROW = MASTER_ROW;
+    /**
+     * The returns, over the master row while the song has any: one row that folds them, with
+     * their names when folded and a plus that adds one; open, a row each with its dot, its name
+     * and M. A press shows its panel, a right-click its menu.
+     */
+    const Returns = () => (
+      <>
+        <div style={{ height: 1, background: "alpha/5", keep: true }} />
+        <div style={{ height: 31, direction: "row", align: "center", keep: true }}>
+          <div style={{ width: HEADER - 1, height: 31, direction: "row", align: "center", paddingRight: 12, keep: true }}>
+            <div key="returns-header" style={{ grow: true, height: 31, direction: "row", align: "center", gap: 5, paddingLeft: 17 }}
+              onPress={() => (memory.returnsOpen = !memory.returnsOpen)}>
+              <Icon name={() => (memory.returnsOpen ? "chevron-down" : "chevron-right")} size={14} color="gray-700" />
+              <div style={{ fontSize: 12, color: "gray-900" }}>Returns</div>
+              <div style={{ fontSize: 12, color: "gray-700" }}>{() => String(returns().length)}</div>
+            </div>
+            <Button key="add-return" icon="plus" variant="ghost" size="xs" onPress={() => addTrack(2)} />
+          </div>
+          <div style={{ width: 1, height: 31, background: "alpha/5" }} />
+          <div key="returns-folded" style={{ grow: true, height: 31, direction: "row", align: "center", gap: 16, paddingLeft: 16 }}
+            onPress={() => (memory.returnsOpen = !memory.returnsOpen)}>
+            <Show when={() => !memory.returnsOpen}>
+              {() => (
+                <For each={returns}>
+                  {(each) => (
+                    <div style={{ direction: "row", align: "center", gap: 6 }}>
+                      <div style={() => ({ width: 6, height: 6, radius: 3, keep: true, background: colourOf(each) })} />
+                      <div style={{ fontSize: 12, color: "gray-700", truncate: true }}>{() => titleOf(each)}</div>
+                    </div>
+                  )}
+                </For>
+              )}
+            </Show>
+          </div>
+        </div>
+        <Show when={() => memory.returnsOpen}>
+          {() => (
+            <div style={() => ({ height: Math.min(returns().length, 4.5) * RETURN_ROW, scroll: "y", keep: true })}>
+              <For each={returns}>{(each) => <ReturnRow each={each} />}</For>
+            </div>
+          )}
+        </Show>
+      </>
+    );
+    const ReturnRow = ({ each }: { each: Child }) => (
+      <div style={{ height: RETURN_ROW, direction: "row", keep: true }}>
+        <div style={{ width: HEADER - 1, height: RETURN_ROW, paddingX: 8, paddingY: 4, keep: true }}>
+          <div key={`return-${each.name}`} style={() => ({ grow: true, direction: "row", align: "center", gap: 8, paddingLeft: 12, paddingRight: 4, radius: 6, background: panelOf() === each.name ? "alpha/5" : COLOR.clear })}
+            onPress={({ clicks, button }) => (button === "right" ? trackMenu(each) : clicks === 2 ? (memory.renaming = each.name) : openPanel(each.name))}>
+            <div style={() => ({ width: 8, height: 8, radius: 4, keep: true, background: muted(each) ? `${colourOf(each)}/40` as Color : colourOf(each) })} />
+            {() =>
+              memory.renaming === each.name ? (
+                <Input value={() => titleOf(each)} width={110} focus onCommit={(title) => rename(each.name, title)} />
+              ) : (
+                <div style={() => ({ grow: true, fontSize: 14, weight: "medium", truncate: true, color: muted(each) ? "gray-950/40" : "gray-950" })}>{() => titleOf(each)}</div>
+              )
+            }
+            <Toggle key={`mute-${each.name}`} label="M" on={() => muted(each)} color="peach" onPress={() => toggleMute(each.name)} />
+          </div>
+        </div>
+        <div style={{ width: 1, height: RETURN_ROW, background: "alpha/5" }} />
       </div>
     );
 
@@ -1478,6 +1612,7 @@ export const song = tool({
             </Space>
           </div>
         </div>
+        <Show when={() => returns().length > 0}>{() => <Returns />}</Show>
         <div style={{ height: 1, background: "alpha/5", keep: true }} />
         <div style={{ height: MASTER_ROW - 1, direction: "row", align: "center", keep: true }}>
           <div style={{ width: HEADER - 1, height: MASTER_ROW - 1, paddingX: 8, paddingY: 4, keep: true }}>
@@ -1498,7 +1633,7 @@ export const song = tool({
             shown?.kind === "editor" ? openEditor()
             : shown?.kind === "mixer" ? <Mixer />
             : shown?.kind === "master" ? <MasterPanel />
-            : shown?.kind === "track" && rows().some((each) => each.name === shown.name) ? <Rack name={shown.name} />
+            : shown?.kind === "track" && strips().some((each) => each.name === shown.name) ? <Rack name={shown.name} />
             : null;
           // The hairline under the master row is the top of what opens under it.
           return below === null ? null : (
